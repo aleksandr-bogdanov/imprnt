@@ -1,0 +1,17 @@
+Date: 2026-06-02
+Subject: STS2 BigQuery migration — sync with Maya
+
+Maya: Thanks for making time. Where are we on the STS2 to BigQuery migration?
+Alex: The legacy STS2 warehouse is still the source of truth for identity events. I've mirrored the schema into BigQuery and backfilled 90 days. The daily delta load runs on Airflow now.
+Maya: Good. Who owns the Airflow side after you?
+Alex: Right now it's just me. Raj Patel knows the DAG but he's on the payments squad, so he's not a real owner. We need to decide ownership before this goes to prod.
+Maya: Agreed. Let's make Tech Foundations the owning team and put it in the on-call rotation. I'll raise that with the EM this week.
+Alex: One thing I want to flag. I assumed BigQuery would partition the identity_events table by event_date automatically because that's how STS2 was set up. It doesn't — ingestion-time partitioning was on by default and our queries filter on event_date, so we were scanning the whole table. Cost was 40x what it should be for two days before I caught it.
+Maya: Ouch. So what's the fix?
+Alex: I'll rebuild the table with explicit partitioning on event_date and clustering on tenant_id. That drops the scan cost back to normal. I'll have it done by Friday.
+Maya: Do it. And write that partitioning gotcha down somewhere the team will see it, because someone will hit it again.
+Alex: Will do. There's an open question I can't resolve alone: do we keep STS2 running in parallel as a fallback for a full quarter, or cut over after two weeks of validation?
+Maya: Let's decide that with the data once you have two weeks of parallel-run numbers. Don't cut over blind.
+Alex: Makes sense. Last thing — the downstream finance dashboards read from STS2 directly. Someone needs to point them at the BigQuery views.
+Maya: That's a dependency on the finance data team. I'll loop in their lead. You focus on the partitioning fix and the parallel-run validation.
+Alex: Sounds good. I'll send you the parallel-run dashboard link by next week.

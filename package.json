@@ -1,0 +1,36 @@
+{
+  "name": "knowful",
+  "version": "0.1.0",
+  "description": "Deterministic-first, plain-markdown knowledge vault. Code does the bulk transform; the LLM only touches the irreducibly-semantic 20%. Native grep retrieval, zero MCP on the vault.",
+  "type": "module",
+  "bin": {
+    "knowful": "scripts/cli.ts"
+  },
+  "scripts": {
+    "ingest": "bun scripts/ingest.ts",
+    "recall": "bun scripts/recall.ts",
+    "hot": "bun scripts/cli.ts hot"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "license": "MIT",
+  "author": "Aleksandr Bogdanov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aleksandr-bogdanov/knowful.git"
+  },
+  "keywords": [
+    "knowledge-base",
+    "markdown",
+    "second-brain",
+    "deterministic",
+    "cli",
+    "agent-context"
+  ],
+  "files": [
+    "scripts",
+    "templates",
+    "CLAUDE.md"
+  ]
+}

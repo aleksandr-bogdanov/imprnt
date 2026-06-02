@@ -1,0 +1,12 @@
+# Your actual private knowledge base — never committed.
+# `knowful init` scaffolds these from templates/.
+/vault/
+/raw/
+.manifest.json
+
+# Runtime
+node_modules/
+*.log
+.DS_Store
+
+# examples/ IS committed — it's the synthetic demo of the loop.
