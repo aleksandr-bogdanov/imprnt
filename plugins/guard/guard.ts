@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// knowful guard — deterministic destructive-command blocklist (opt-in plugin).
+// imprint guard — deterministic destructive-command blocklist (opt-in plugin).
 //
 //   bun plugins/guard/guard.ts "<command>"     # or pipe the command on stdin
 //

@@ -1,15 +1,15 @@
 #!/usr/bin/env bun
-// knowful snapshot <src> --dest <relpath> [--vault DIR]
+// imprint snapshot <src> --dest <relpath> [--vault DIR]
 //
 // Mirror a source file or directory tree into raw/<relpath>, immutable + hashed + manifested. This is
 // the deterministic, dumb half of a migration: PROVENANCE ONLY — copy the bytes, record the hash, no
 // classification and no notes. Copies ALL kinds, including binaries (CSVs, PDFs, images). The LLM reads
-// raw/ afterward and fans each source out into vault notes; `knowful check` then reconciles coverage.
+// raw/ afterward and fans each source out into vault notes; `imprint check` then reconciles coverage.
 //
 // raw/ is keyed by SOURCE (one folder per source): the CALLER picks the dest mirror, so the judgment of
 // WHAT to include stays explicit at the call site and this tool stays a pure copy:
-//   knowful snapshot ~/.claude/PAI/USER/TELOS --dest pai/USER/TELOS
-//   knowful snapshot ./tax2025.csv          --dest tax-2025
+//   imprint snapshot ~/.claude/PAI/USER/TELOS --dest pai/USER/TELOS
+//   imprint snapshot ./tax2025.csv          --dest tax-2025
 import { readdirSync, readFileSync, copyFileSync, mkdirSync, existsSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative, basename } from "node:path";
@@ -26,7 +26,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const src = positional[0];
 if (!src || !dest) {
-  console.error("usage: knowful snapshot <src> --dest <relpath> [--vault DIR]");
+  console.error("usage: imprint snapshot <src> --dest <relpath> [--vault DIR]");
   process.exit(1);
 }
 if (!existsSync(src)) { console.error(`no such source: ${src}`); process.exit(1); }

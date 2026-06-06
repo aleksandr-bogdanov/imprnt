@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// knowful ingest <file|text> [--text "<bytes>"] [--stdin] [--slug S] [--vault DIR]
+// imprint ingest <file|text> [--text "<bytes>"] [--stdin] [--slug S] [--vault DIR]
 //
 // Input is shape-agnostic: a file path, --stdin, --text, or a bare arg that isn't a path (treated
 // AS the bytes). EVERY shape gets the same provenance — raw/ snapshot, content hash, manifest,
@@ -63,7 +63,7 @@ function targetFolder(type: string, domain: string): string | null {
   return null;
 }
 
-// --- knowful ingest --apply <file> / --apply-all ---------------------------
+// --- imprint ingest --apply <file> / --apply-all ---------------------------
 // The SECOND (and last) core↔plugin contact, the partner of `check --all`. A plugin proposes a note
 // by dropping a PRE-ENRICHED markdown file (real `type`/`domain`/`summary`/`tags` + body) into its
 // own `plugins/<name>/proposed/`; `--apply` files it into the vault. This is the propose-then-approve
@@ -130,7 +130,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   saveManifest(vault, manifest);
 
   // Resolve participants/links the same way the transcript path does: an unresolved person -> needs-review.
-  // We only auto-resolve PEOPLE (the resolver's domain); other wikilink targets are checked by `knowful check`.
+  // We only auto-resolve PEOPLE (the resolver's domain); other wikilink targets are checked by `imprint check`.
   const participants = fmList(fm, "participants").map(linkSlug);
   const owner = linkSlug(fmScalar(fm, "owner"));
   const peopleLinks = [...participants, ...(owner ? [owner] : [])]
@@ -162,7 +162,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   for (let i = 0; i < a.length; i++) if (a[i] === "--vault") applyVault = a[++i];
 
   if (a.includes("--apply-all")) {
-    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`knowful init\` first`); process.exit(1); }
+    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`imprint init\` first`); process.exit(1); }
     const here = dirname(fileURLToPath(import.meta.url));
     const pluginsDir = join(here, "..", "plugins");
     const staged: string[] = [];
@@ -187,8 +187,8 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   const applyIdx = a.indexOf("--apply");
   if (applyIdx >= 0) {
     const file = a[applyIdx + 1];
-    if (!file || file.startsWith("--")) { console.error("usage: knowful ingest --apply <file> [--vault DIR]"); process.exit(1); }
-    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`knowful init\` first`); process.exit(1); }
+    if (!file || file.startsWith("--")) { console.error("usage: imprint ingest --apply <file> [--vault DIR]"); process.exit(1); }
+    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`imprint init\` first`); process.exit(1); }
     console.log(`ingest --apply ${file}`);
     const r = applyStaged(file, applyVault);
     process.exit(r === "conflict" || r === "error" ? 1 : 0);
@@ -229,7 +229,7 @@ if (useStdin) {
 } else {
   const arg = positional[0];
   if (!arg) {
-    console.error('usage: knowful ingest <file|text> [--text "<bytes>"] [--stdin] [--slug S] [--vault DIR]');
+    console.error('usage: imprint ingest <file|text> [--text "<bytes>"] [--stdin] [--slug S] [--vault DIR]');
     process.exit(1);
   }
   if (existsSync(arg)) { text = readFileSync(arg, "utf8"); src = arg; isFile = true; }
@@ -315,7 +315,7 @@ if (!isFile) {
   console.log(`  no skeleton written — this is bytes, not a transcript. next (the one LLM step):`);
   console.log(`  read ${rawPath}, then file it: an entity -> people/ orgs/ holdings/; a held position ->`);
   console.log(`  identity/; else by domain (health/ finances/ work/ life/). Write type + summary + tags`);
-  console.log(`  (from vault/_tags.md) + kind, and link >=1 existing entity. Then \`knowful check\`.`);
+  console.log(`  (from vault/_tags.md) + kind, and link >=1 existing entity. Then \`imprint check\`.`);
   process.exit(0);
 }
 
@@ -330,7 +330,7 @@ const fm = [
   "type: event",
   `date: ${date}`,
   `participants: [${people.join(", ")}]`,
-  "summary:                      # LLM writes one line — `knowful check` reads it to build index.md",
+  "summary:                      # LLM writes one line — `imprint check` reads it to build index.md",
   "tags: []                      # LLM fills from the approved vocabulary (vault/_tags.md)",
   "project:                      # LLM links the project this event touched",
   `source: "[[${rawRel}]]"`,
@@ -385,4 +385,4 @@ console.log(`  note     -> ${notePath}  (${speakers.size} participants, ${turnCo
 if (unresolved.length) console.log(`  ⚠ ${unresolved.length} unresolved participant(s) -> needs-review: ${unresolved.join(", ")}`);
 console.log(`  deterministic skeleton only. next (the one LLM step): the agent fills`);
 console.log(`  summary + Summary/Decisions/Actions/Questions, assigns tags from vault/_tags.md,`);
-console.log(`  and links people + projects (resolving the flagged participants). Then \`knowful check\`.`);
+console.log(`  and links people + projects (resolving the flagged participants). Then \`imprint check\`.`);

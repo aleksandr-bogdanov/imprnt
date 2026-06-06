@@ -1,4 +1,4 @@
-# knowful — how it works (the plain version)
+# imprint — how it works (the plain version)
 
 A personal knowledge base you own, designed to be used *by you and by an AI assistant* — without a database, without the cloud, and without paying an AI to do boring work.
 
@@ -13,7 +13,7 @@ Your work generates a stream of context: 1:1s, meeting transcripts, decisions, w
 1. **You can't find anything.** Six months in, you *know* you discussed something, but you can't dig it out.
 2. **Your AI assistant knows nothing.** Every chat starts cold. You re-explain your projects, your team, your history — every time.
 
-knowful fixes both: dump things in, and later ask "what do I know about X?" — and get a real answer, including from an AI agent that can then help you act on it.
+imprint fixes both: dump things in, and later ask "what do I know about X?" — and get a real answer, including from an AI agent that can then help you act on it.
 
 ## The core idea
 
@@ -68,7 +68,7 @@ Director of Identity; owns the access-platform project.
 - Seen in [[events/2026-06-02-access-sync]]
 ```
 
-- **Frontmatter** (the `---` block) is YAML — simple `key: value` lines. Every note has `type`, `tags`, and a one-line `summary` (the AI writes it once; a deterministic pass reads it to build `index.md`). The **H1 (`# Title`) is the title** (no `title:` key). A note in a domain folder also carries `domain:` so it's self-describing (and `knowful check` fails if folder and field disagree); `source:` is a clickable wikilink back to the immutable snapshot it came from; entity-valued fields are links too (`owner: "[[people/alex]]"`). Then fields specific to its type. **This is the part the tools read and query.**
+- **Frontmatter** (the `---` block) is YAML — simple `key: value` lines. Every note has `type`, `tags`, and a one-line `summary` (the AI writes it once; a deterministic pass reads it to build `index.md`). The **H1 (`# Title`) is the title** (no `title:` key). A note in a domain folder also carries `domain:` so it's self-describing (and `imprint check` fails if folder and field disagree); `source:` is a clickable wikilink back to the immutable snapshot it came from; entity-valued fields are links too (`owner: "[[people/alex]]"`). Then fields specific to its type. **This is the part the tools read and query.**
 - **The body** is for humans: a `#` title, `##` sections, prose, and `[[links]]` to other notes. `{extracted}` = taken straight from the source; `{inferred}` = the AI concluded it — so you can always tell facts from guesses.
 - **The file's name is its permanent ID** (its "slug", e.g. `people/boris-carter.md`). Other notes link to that ID, never to the display name — which is what makes corrections cheap (see below).
 
@@ -122,7 +122,7 @@ The system does **not** grade itself or score whether retrieval "worked" — tha
 
 The only thing that's always there is the **ingest** tool (plus search and a tidy-up check). Everything else — task sync, a file librarian, an anti-slop ruleset for your assistant, a connections viewer — is an **optional add-on** ("plugin") you install or delete with one command. Nothing is forced on you. It stays small, and anyone who forks it keeps only what they use.
 
-The add-ons follow one rule that keeps the core from quietly bloating (the way these systems usually die): **the core never knows any add-on exists.** The test is simple — you can add or delete any add-on without editing a single line of core code. An add-on reads your notes like any script would, writes only inside its own folder (to change a note it *suggests* the change and you approve it), keeps its data out of search unless it proposes a real note you accept, and runs only when you run it — never as a hidden background process. An "always-on" add-on (like a behavior ruleset for your assistant) hands you a chunk of text *you* paste into your assistant's settings; deleting that line turns it off. The whole point: **the old system imposed its features on you; knowful lets you compose only the ones you want, with a real off-switch.** Full rules: `plugins/README.md`.
+The add-ons follow one rule that keeps the core from quietly bloating (the way these systems usually die): **the core never knows any add-on exists.** The test is simple — you can add or delete any add-on without editing a single line of core code. An add-on reads your notes like any script would, writes only inside its own folder (to change a note it *suggests* the change and you approve it), keeps its data out of search unless it proposes a real note you accept, and runs only when you run it — never as a hidden background process. An "always-on" add-on (like a behavior ruleset for your assistant) hands you a chunk of text *you* paste into your assistant's settings; deleting that line turns it off. The whole point: **the old system imposed its features on you; imprint lets you compose only the ones you want, with a real off-switch.** Full rules: `plugins/README.md`.
 
 ## Safety net: the originals are never touched
 

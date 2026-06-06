@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// knowful recall "<query>" [--vault DIR] [--limit N]
+// imprint recall "<query>" [--vault DIR] [--limit N]
 //
 // Ranked retrieval over the vault using real BM25 — deterministic, local, zero LLM, zero deps.
 // This is the CHEAP/DUMB default ranker, on purpose: the READ path runs thousands of times, so it
@@ -36,7 +36,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const query = positional.join(" ").trim();
 if (!query) {
-  console.error('usage: knowful recall "<query>" [--vault DIR] [--limit N]');
+  console.error('usage: imprint recall "<query>" [--vault DIR] [--limit N]');
   process.exit(1);
 }
 
@@ -81,7 +81,7 @@ function walk(dir: string): string[] {
 }
 
 let files: string[] = [];
-try { files = walk(vault); } catch { console.error(`no vault at ${vault} — run \`knowful init\` first`); process.exit(1); }
+try { files = walk(vault); } catch { console.error(`no vault at ${vault} — run \`imprint init\` first`); process.exit(1); }
 
 // Parse the frontmatter `tags: [...]` into NORMALIZED canonical tags (write and search agree on one
 // concept = one tag), and `aliases: [...]` (the note's own alternate names — an identity surface).

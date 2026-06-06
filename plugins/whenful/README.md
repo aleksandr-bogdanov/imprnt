@@ -1,6 +1,6 @@
 # whenful — task mirror plugin
 
-Surfaces the live status of your Whenful tasks on the knowful notes they belong to, without putting
+Surfaces the live status of your Whenful tasks on the imprint notes they belong to, without putting
 task management into the vault. Tasks stay in Whenful; the vault stays knowledge. The bridge is a join
 table (`links.tsv`) plus a local mirror (`mirror/`) of task state, refreshed only when you run `sync`.
 
@@ -16,9 +16,9 @@ table (`links.tsv`) plus a local mirror (`mirror/`) of task state, refreshed onl
 - `mirror/<task_id>.md` — the local cache of each linked task's state. Render status at read off these;
   never call the server to display. Safe to delete and rebuild from a full sync.
 - `proposed/` — staging for notes the plugin proposes into the vault (you approve via
-  `knowful ingest --apply`). Used sparingly — a summary, never one note per task.
+  `imprint ingest --apply`). Used sparingly — a summary, never one note per task.
 - `whenful.ts` — `sync` (the only wire-crosser) and `check` (delegates to `check.ts`).
-- `check.ts` — the plugin's own integrity check; `knowful check --all` finds and runs it.
+- `check.ts` — the plugin's own integrity check; `imprint check --all` finds and runs it.
 
 ## Install
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-// knowful · whenful plugin — integrity check.
+// imprint · whenful plugin — integrity check.
 //
 //   bun plugins/whenful/check.ts        exits 0 if the plugin's data is sound, non-zero if not.
 //
-// This is the file the core's `knowful check --all` aggregator globs (plugins/*/check.ts). The core
+// This is the file the core's `imprint check --all` aggregator globs (plugins/*/check.ts). The core
 // reads ONLY this script's exit code and forwards its stdout verbatim — it never parses the text. So we
 // print a rich, human-readable diagnosis and let the exit code carry the pass/fail. No LLM, pure reads.
 //

@@ -1,7 +1,7 @@
 # Implementation plan — STS2 partitioning fix (drafted from `recall`)
 
 > This is the end of the loop. It was drafted by an agent **from the retrieved context only** —
-> `knowful recall "STS2 BigQuery"` + `recall "partition cost"` surfaced the project note, the
+> `imprint recall "STS2 BigQuery"` + `recall "partition cost"` surfaced the project note, the
 > meeting note, and (ranked first) the mistake note. The agent read those four files and nothing
 > else. No database, no embeddings — just grep over markdown.
 

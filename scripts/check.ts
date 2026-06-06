@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// knowful check [--vault DIR]
+// imprint check [--vault DIR]
 //
 // The integrity "robot" — an EXPLICIT command you run, never a background hook. Deterministic, no LLM.
 // Three checks + one regenerate, all pure reads over the corpus:
@@ -23,7 +23,7 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === "--vault") vault = args[++i];
   else if (args[i] === "--all") all = true; // also run each plugins/*/check.ts (convention discovery)
 }
-if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`knowful init\` first`); process.exit(1); }
+if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`imprint init\` first`); process.exit(1); }
 
 // Entity folders are link TARGETS — they may legitimately have few outgoing links, so they're exempt
 // from the disconnected-note check. Everything else (domains + forms) should connect to the graph.
@@ -84,7 +84,7 @@ const uncovered = [...new Set(rawEntries.map(norm))].filter((r) => !refNorm.has(
 // --- report ---------------------------------------------------------------
 const cap = (xs: string[], n = 25) => xs.slice(0, n).concat(xs.length > n ? [`  … +${xs.length - n} more`] : []);
 
-console.log(`knowful check — ${notes.length} notes in ${vault}\n`);
+console.log(`imprint check — ${notes.length} notes in ${vault}\n`);
 
 if (orphans.length) { console.log(`⚠ orphan links (${orphans.length}) — target note missing:`); console.log(cap(orphans).join("\n"), "\n"); }
 else console.log("✓ no orphan links");

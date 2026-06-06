@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// knowful — dispatcher. Subcommands are thin; the real work is in sibling scripts.
+// imprint — dispatcher. Subcommands are thin; the real work is in sibling scripts.
 import { cpSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,7 +40,7 @@ switch (cmd) {
       console.log("");
     }
     const p = join(vault, "hot.md");
-    if (!existsSync(p)) { console.error(`no hot.md at ${p} — run \`knowful init\``); process.exit(1); }
+    if (!existsSync(p)) { console.error(`no hot.md at ${p} — run \`imprint init\``); process.exit(1); }
     console.log(readFileSync(p, "utf8"));
     break;
   }
@@ -63,20 +63,20 @@ switch (cmd) {
     console.log(`  domains:  ${domains.join(", ")}`);
     console.log(`  forms:    ${forms.join(", ")}`);
     console.log("  + raw/ for immutable by-source snapshots.");
-    console.log("snapshot a source (`knowful snapshot <path> --dest pai/...`) or ingest one, then `knowful check`.");
+    console.log("snapshot a source (`imprint snapshot <path> --dest pai/...`) or ingest one, then `imprint check`.");
     break;
   }
   default:
-    console.log(`knowful — deterministic-first markdown knowledge vault
+    console.log(`imprint — deterministic-first markdown knowledge vault
 
 usage:
-  knowful init                              scaffold ./vault (entities/domains/forms) and ./raw
-  knowful snapshot <src> --dest <relpath>   mirror a file/dir into raw/<relpath> (immutable, hashed) — the migration's deterministic half
-  knowful ingest <file|text> [--vault D]    snapshot a source -> raw/; a transcript file also gets an event skeleton (no LLM)
-  knowful recall "<query>" [--vault D]      synonym-aware BM25 ranking over the vault
-  knowful check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.ts
-  knowful ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
-  knowful hot [--vault D]                   needs-review + the session primer
+  imprint init                              scaffold ./vault (entities/domains/forms) and ./raw
+  imprint snapshot <src> --dest <relpath>   mirror a file/dir into raw/<relpath> (immutable, hashed) — the migration's deterministic half
+  imprint ingest <file|text> [--vault D]    snapshot a source -> raw/; a transcript file also gets an event skeleton (no LLM)
+  imprint recall "<query>" [--vault D]      synonym-aware BM25 ranking over the vault
+  imprint check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.ts
+  imprint ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
+  imprint hot [--vault D]                   needs-review + the session primer
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
 the vault is plain markdown. an agent greps it directly — no MCP, no DB.

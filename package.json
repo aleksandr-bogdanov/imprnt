@@ -1,10 +1,10 @@
 {
-  "name": "knowful",
+  "name": "imprint",
   "version": "0.1.0",
   "description": "Deterministic-first, plain-markdown knowledge vault. Code does the bulk transform; the LLM only touches the irreducibly-semantic 20%. Native grep retrieval, zero MCP on the vault.",
   "type": "module",
   "bin": {
-    "knowful": "scripts/cli.ts"
+    "imprint": "scripts/cli.ts"
   },
   "scripts": {
     "ingest": "bun scripts/ingest.ts",
@@ -18,7 +18,7 @@
   "author": "Aleksandr Bogdanov",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aleksandr-bogdanov/knowful.git"
+    "url": "git+https://github.com/aleksandr-bogdanov/imprint.git"
   },
   "keywords": [
     "knowledge-base",

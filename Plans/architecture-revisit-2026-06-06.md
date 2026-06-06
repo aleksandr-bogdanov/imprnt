@@ -9,7 +9,7 @@ v2 organized the vault by **entity type** (`people/ orgs/ projects/ things/ prin
 
 The fix, taken from PAI's `USER/` layout: **organize by life-area (domain), the way a human actually looks for their own knowledge.** The machine doesn't care — `recall` is grep + BM25 and ignores folders entirely — so folder layout is a pure human-browsing choice, and domain is what humans browse by.
 
-The one thing kept from v2 (and PAI's actual gap): **entities get their own cross-cutting folders.** A person/institution/holding is referenced from many domains, so it needs one canonical home, not duplication across domain folders. That's the single improvement knowful has over PAI, which never had resolvable entities.
+The one thing kept from v2 (and PAI's actual gap): **entities get their own cross-cutting folders.** A person/institution/holding is referenced from many domains, so it needs one canonical home, not duplication across domain folders. That's the single improvement imprint has over PAI, which never had resolvable entities.
 
 ### Proposed layout
 
@@ -80,22 +80,22 @@ Scaling path — gets *faster at local arithmetic*, never adds a model:
 
 Audited every PAI hook/subsystem. Two are worth having, **both as explicit commands, not hooks/daemons**:
 
-1. **Conversation → vault harvest.** Finish the `wrapitup` skill so it feeds `knowful ingest` — consciously persist a chat's learnings into the vault at session end. (90% built; needs the last inch.)
-2. **Integrity check + regenerate.** `knowful check` — flag orphaned `[[links]]`, notes resolving no entity, and regenerate `index.md` (deterministic, on demand).
+1. **Conversation → vault harvest.** Finish the `wrapitup` skill so it feeds `imprint ingest` — consciously persist a chat's learnings into the vault at session end. (90% built; needs the last inch.)
+2. **Integrity check + regenerate.** `imprint check` — flag orphaned `[[links]]`, notes resolving no entity, and regenerate `index.md` (deterministic, on demand).
 
-Everything else (LoadContext auto-inject, satisfaction/learning self-scoring, relationship memory, security pipeline, observability, Pulse daemon, voice) is either out of scope for a private local vault or the auto-magic knowful deliberately rejects. Reason the robot felt useless: it was a filing cabinet inside a robot suit, and the suit billed rent (token tax + misfires).
+Everything else (LoadContext auto-inject, satisfaction/learning self-scoring, relationship memory, security pipeline, observability, Pulse daemon, voice) is either out of scope for a private local vault or the auto-magic imprint deliberately rejects. Reason the robot felt useless: it was a filing cabinet inside a robot suit, and the suit billed rent (token tax + misfires).
 
 ## TODO
 
-### knowful core — build (lean, explicit commands)
-- [ ] **harvest:** finish `wrapitup` → `knowful ingest` bridge (conversation → vault)
-- [ ] **integrity:** `knowful check` (orphan links + unresolved entities + regenerate `index.md`)
+### imprint core — build (lean, explicit commands)
+- [ ] **harvest:** finish `wrapitup` → `imprint ingest` bridge (conversation → vault)
+- [ ] **integrity:** `imprint check` (orphan links + unresolved entities + regenerate `index.md`)
 - [ ] **restructure:** migrate vault from type-first to domain-first (entities + domains + forms); `notes/` dissolves; `things/`→`holdings/`; `principles/`+telos→`identity/`
 - [ ] **raw/ rework:** by-source structure (mirror-tree / `transcripts/` / bundles); copy all source kinds; replace `--` flattening
 - [ ] **contract:** fold all the above into `CLAUDE.md` + `docs/architecture.md` (+ regenerate the d2 diagram)
 
 ### Pluggable modules — opt-in, NOT core
-> Resolved: these aren't knowful core and aren't PAI-only either — they're **pluggable modules**. Self-contained, opt-in, `rm -rf`-able dirs that compose onto the lean vault. This is the moat (opt-in composability): core never grows to absorb them; you add what you want. Each is its own module spec when/if built.
+> Resolved: these aren't imprint core and aren't PAI-only either — they're **pluggable modules**. Self-contained, opt-in, `rm -rf`-able dirs that compose onto the lean vault. This is the moat (opt-in composability): core never grows to absorb them; you add what you want. Each is its own module spec when/if built.
 - [ ] DA persona (e.g. Taylor) — pluggable
 - [ ] notifications / voice — pluggable
 - [ ] Algorithm / ISA (verification methodology) — pluggable

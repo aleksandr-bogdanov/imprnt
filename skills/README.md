@@ -1,4 +1,4 @@
-# knowful — skills (the agent entry points)
+# imprint — skills (the agent entry points)
 
 These are the **shareable entry points**. You never run the CLI by hand; you talk to an agent,
 the agent runs a skill, the skill runs the CLI for the deterministic part and does the one LLM
@@ -11,13 +11,13 @@ Three skills, all opt-in:
 
 ## Install (opt-in, never auto-wired)
 
-knowful does **not** symlink itself into your agent's skill directory (that's the monolith
+imprint does **not** symlink itself into your agent's skill directory (that's the monolith
 sin). You copy in only what you want:
 
 ```sh
 cp -r skills/Ingest skills/Recall skills/Hot ~/.claude/skills/   # or your agent's skills dir
 ```
 
-Each skill is a self-contained dir — `rm -rf` any you don't use. The skills assume the knowful
-CLI is reachable (either `knowful` on PATH, or `bun <knowful-repo>/scripts/cli.ts`) and a vault
+Each skill is a self-contained dir — `rm -rf` any you don't use. The skills assume the imprint
+CLI is reachable (either `imprint` on PATH, or `bun <imprint-repo>/scripts/cli.ts`) and a vault
 path (default `./vault`, override with `--vault`).

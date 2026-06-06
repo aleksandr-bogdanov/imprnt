@@ -1,9 +1,9 @@
 ---
-name: knowful-recall
-description: Load SCOPED context from the knowful vault by topic. Turn the user's question into keywords + candidate tags, run the deterministic ranked recall, read only the top hits, and present the relevant notes — never the whole vault, never auto-injected. USE WHEN load context, load my context about, what do I know about, pull context on, recall, brief me on, knowful recall.
+name: imprint-recall
+description: Load SCOPED context from the imprint vault by topic. Turn the user's question into keywords + candidate tags, run the deterministic ranked recall, read only the top hits, and present the relevant notes — never the whole vault, never auto-injected. USE WHEN load context, load my context about, what do I know about, pull context on, recall, brief me on, imprint recall.
 ---
 
-# knowful — Recall (load scoped context)
+# imprint — Recall (load scoped context)
 
 The user asks for context on a topic in plain language ("load my context on AMT"). You are the two
 ends of a hybrid: you turn the question into search terms, the CLI does the deterministic ranking, and

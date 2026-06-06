@@ -29,13 +29,13 @@ Replace the current `plugins/README.md` (the old module README, already updated 
 - **Core ↔ plugin contact = exactly two convention-based aggregators**, both dumb/uniform/zero per-plugin logic: `check --all` (globs `plugins/*/check.ts`) and `ingest --apply` (files staged notes from `plugins/*/proposed/`). Both discover by filename/dir convention, never by import.
 - **The MCP boundary** (article-grade, keep it): no protocol between agent and vault; a network client (REST, or MCP if the service offers it) is allowed ONLY at a plugin's remote-sync edge, batched, results cached locally. "MCP is a way to query; a plugin is a way to not have to query."
 
-### 3. Core: `knowful check --all`
-- Extend `scripts/check.ts` (or `cli.ts`) so `knowful check --all` runs the existing core check, THEN globs `plugins/*/check.ts`, spawns each as a Bun subprocess (`bun <path>`), **reads exit code only** (0 = sound, non-zero = issue), and **forwards each plugin's stdout verbatim**. Aggregate: overall exit non-zero if any plugin failed. Never parse plugin output.
+### 3. Core: `imprint check --all`
+- Extend `scripts/check.ts` (or `cli.ts`) so `imprint check --all` runs the existing core check, THEN globs `plugins/*/check.ts`, spawns each as a Bun subprocess (`bun <path>`), **reads exit code only** (0 = sound, non-zero = issue), and **forwards each plugin's stdout verbatim**. Aggregate: overall exit non-zero if any plugin failed. Never parse plugin output.
 - Fence (document inline): core may provide read-only AGGREGATION helpers, never write/orchestration helpers.
-- `knowful check` (no `--all`) keeps current behavior (core only).
+- `imprint check` (no `--all`) keeps current behavior (core only).
 
-### 4. Core: `knowful ingest --apply`
-- Add to `scripts/ingest.ts` (+ `cli.ts` dispatch): `knowful ingest --apply <file>` and `knowful ingest --apply-all`.
+### 4. Core: `imprint ingest --apply`
+- Add to `scripts/ingest.ts` (+ `cli.ts` dispatch): `imprint ingest --apply <file>` and `imprint ingest --apply-all`.
 - `--apply <file>` takes a **pre-enriched** staged note (real frontmatter: `type`, `domain`/folder, `summary`, `tags`, body). It:
   1. Snapshots the staged note into `raw/` for provenance (reuse existing snapshot+hash+manifest path).
   2. Files it into `vault/` at the folder implied by its `type`/`domain` (entity → people/orgs/holdings; domain note → its domain folder; form → events/mistakes).

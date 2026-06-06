@@ -10,7 +10,7 @@ updated: ""
 > When it grows past a screen, promote detail into the relevant project note.
 
 ## ⚠ Needs review
-<!-- `knowful hot` prints open needs-review items above this file. Clear them as you go. -->
+<!-- `imprint hot` prints open needs-review items above this file. Clear them as you go. -->
 
 ## Review-due (optional)
 <!-- perishable facts with a `review_by:` that's come due. Surfaced on demand only — never a loop. -->

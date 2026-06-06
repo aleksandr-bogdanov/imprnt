@@ -1,4 +1,4 @@
-# knowful — opt-in plugins
+# imprint — opt-in plugins
 
 The core is tiny and dumb on purpose: your notes (markdown) plus three commands —
 `ingest` (add a note), `recall` (search), `check` (tidy up). **Everything else is a
@@ -7,8 +7,8 @@ here runs unless you wire it in.
 
 This file is the **plugin contract** — the standing rules every plugin follows. The
 contract exists for one reason: to stop the core from slowly growing to know about every
-plugin. That growth is what killed the system knowful replaces (the core became a "robot
-suit" that billed rent). The contract is what keeps knowful composable instead.
+plugin. That growth is what killed the system imprint replaces (the core became a "robot
+suit" that billed rent). The contract is what keeps imprint composable instead.
 
 ---
 
@@ -71,7 +71,7 @@ moment you delete the line.
    settings. The vault never force-feeds the assistant on its own. Turn it off = delete the
    line you pasted. Fair warning: install two that contradict each other and you sort it out —
    there's no referee. That's the cost of *you* choosing what's on, and it's the whole moat:
-   **the old system imposed; knowful composes.**
+   **the old system imposed; imprint composes.**
 
 6. **Everything is a command you run.** Nothing runs in the background by itself. Want hourly
    sync? *You* schedule it (cron/launchd/whatever). No plugin quietly starts a background
@@ -96,7 +96,7 @@ each plugin. The core shares no code as a contract. The reason isn't purity — 
 reversibility: if you later wish you'd shared, pulling duplicated copies into one file is a
 five-minute change that breaks nobody; un-publishing a shared tool that plugins already
 import is a breaking change and a magnet for "can it also do X?" creep. Copy is the move you
-can undo. The contract guarantees the **format**, so a shared `@knowful/frontmatter` reader
+can undo. The contract guarantees the **format**, so a shared `@imprint/frontmatter` reader
 can always be added later as an optional extra without touching this contract.
 
 **Core ↔ plugin contact: exactly two convention-based aggregators.** The core touches plugins
@@ -104,20 +104,20 @@ in only two places, and both are dumb, uniform, and carry zero per-plugin logic 
 discover plugins by **filename/dir convention**, never by importing a plugin and never by
 naming a specific one:
 
-- **`knowful check --all`** runs the core check, then globs `plugins/*/check.ts`, runs each as
+- **`imprint check --all`** runs the core check, then globs `plugins/*/check.ts`, runs each as
   a subprocess, and **reads the exit code only** (0 = sound, non-zero = something's off),
   forwarding the plugin's own stdout verbatim. It never parses or interprets what a plugin
   says. The principled fence (what makes "one helper" safe rather than arbitrary): **the core
   may provide read-only *aggregation* helpers, never write/orchestration helpers.** `check`
   qualifies because it's idempotent and changes nothing.
-- **`knowful ingest --apply`** files a pre-enriched staged note that a plugin has dropped into
+- **`imprint ingest --apply`** files a pre-enriched staged note that a plugin has dropped into
   `plugins/*/proposed/` — the propose-then-approve escape hatch (rule 8) made concrete. It
   snapshots the staged note for provenance, files it into the right `vault/` folder, resolves
   its links, and deletes the staged copy. `--apply-all` globs `plugins/*/proposed/*.md` and
   applies each — same uniform handling, no per-plugin branch.
 
 > **Not Kubernetes-style liveness/readiness.** Those exist to auto-restart live services and
-> route traffic — knowful has no daemons and no orchestrator (rule 6), so "is it alive?" has
+> route traffic — imprint has no daemons and no orchestrator (rule 6), so "is it alive?" has
 > no meaning here. The only real health question is "is this plugin's data *sound*?" — which
 > is exactly what `check` already answers. A plugin's `check.ts` can *say* what's wrong in
 > its stdout ("mirror is 3 days stale — run `whenful sync`"); the core just forwards that
@@ -149,10 +149,14 @@ that reads the cache, never the wire.
   for you to approve. Tracks files deterministically (hash/manifest) in its own folder; on
   ingest, hands the file off into `raw/` so the note gets a rot-proof provenance link. Clean
   fit for propose-then-approve.
-- **Anti-slop behavior.** Hands you a fixed text chunk you paste into the assistant's settings;
-  delete the line to turn it off. It produces *config text*, not notes — so it's a
+- **Characters (your digital people).** Each *digital person* — the DA, and later a council
+  member, a red-team skeptic — is defined by one character file (`plugins/characters/<name>.md`):
+  its personality, voice, standards, the way it works. You wire a character into the assistant's
+  prompt; delete the line to turn it off. It produces *character text*, not notes — a
   config-extension plugin (rule 5), a different class from the two above, with no referee for
-  conflicts. Named honestly rather than pretended away.
+  conflicts (install two contradictory characters and that's on you). The clean parallel:
+  `vault/people/` holds the **real** people you know; `plugins/characters/` holds your **digital**
+  people. Taylor is the first.
 
 ## Explicitly out of scope for v1 (the C5 stop condition)
 
@@ -182,6 +186,15 @@ folder, and its own `check.ts` the `check --all` aggregator finds. The `sync` co
 documented **stub** today — it states the Whenful API contract it will call and makes **no**
 live network request — wiring the real API is the next session.
 
+### characters/ — your digital people ✅ first one built (Taylor)
+
+The DA's character, as a wired-in fragment — the thing that makes the assistant *itself* and
+not raw Claude. One file per digital person (`plugins/characters/<name>.md`); `taylor.md` is the
+first. Install = add `@plugins/characters/taylor.md` to your agent's prompt; remove = delete the
+line. The cast grows over time — a council or a red team is just a *group of characters* you
+convene (not built yet; the word generalizes now so nothing needs renaming when it does). Real
+people live in `vault/people/`; digital people live here.
+
 ### bm25/ — ranked recall ✅ CORE (not a plugin)
 
 BM25 is **not** here — it's the core ranker, built into `scripts/recall.ts`. It's pure local
@@ -193,5 +206,5 @@ plain tiered grep floods or misses on a real ~150-note vault. There is no `bm25/
 ### graph/ — orphan + duplicate lint ⏳ deferred (adapt from PAI)
 
 Lift `~/.claude/PAI/TOOLS/KnowledgeGraph.ts` (BFS over frontmatter tags + wikilinks +
-`related:`; `stats` / `hubs` / `related` / `find`). Repoint to knowful's folders. Use isolated-
+`related:`; `stats` / `hubs` / `related` / `find`). Repoint to imprint's folders. Use isolated-
 node detection to push orphans into `_needs-review.md`. Deterministic, no LLM.

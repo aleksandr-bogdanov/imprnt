@@ -1,7 +1,10 @@
-# knowful — vault contract
+# imprint — vault contract
 
-> The schema for the vault. When an agent works inside a knowful vault, this is the standing context it needs. Keep it small.
+> The schema for the vault. When an agent works inside an imprint vault, this is the standing context it needs. Keep it small.
 > Headline: **the LLM builds the tools; the tools do the work.**
+
+<!-- DA character — the characters/ plugin on-switch (digital person: Taylor). Delete this line to turn it off. -->
+@plugins/characters/taylor.md
 
 ## Entry point: you talk, the assistant runs the tools
 
@@ -29,7 +32,7 @@ The same line, step by step (note *who* and *why* — frequency is the axis):
 | Read *unstructured* prose to find that structure | **LLM** | there's nothing to parse — it takes reading |
 | Decide the note's **type** + folder + write `summary` + extract decisions/actions with judgment + assign tags + set `kind` | **LLM** | irreducibly semantic — the conscious ~20% |
 | **File** the note into its folder | **code** | once the type + folder are decided, writing is mechanical |
-| Generate `index.md` from each note's `summary` + tags + links | **code** | a map-of-content is a deterministic read over frontmatter — `knowful check` rebuilds it |
+| Generate `index.md` from each note's `summary` + tags + links | **code** | a map-of-content is a deterministic read over frontmatter — `imprint check` rebuilds it |
 | Append the one `log.md` chronological line | **LLM** (the conscious step) | the title + one-line gist is a fresh judgment the agent that made the note writes |
 | Entity resolution: exact + `aliases[]` grep, MERGE on hit | **code** | the common case is a lookup, not a judgment |
 | Adjudicate a *genuinely ambiguous* identity / propose new `aliases` | **LLM** | only the uncertain ones — not every resolution |
@@ -82,15 +85,15 @@ vault/
 
 **holdings/ vs reference — the cut is CHANGING STATE, not the word "tool."** Anything you follow over time is a holding: a premium, a dose, a balance, a status, a renewal. A paid subscription with a cost/renewal (a BVG Abo) is a holding even if you'd call it a "service." Static stuff with no state to track is **not** a holding — a free CLI, your dotfiles, tech-stack preferences are pure reference → file them in their domain (`work/`, `health/`). This cut is what keeps `holdings/` a real tracked-entity type instead of drifting back into a `things/` junk drawer.
 
-**Domains are user-defined.** Alex's are `identity/ health/ finances/ work/ life/`; a consultant's would be `clients/`, a researcher's `topics/`. knowful ships the mechanism + sensible defaults, not a fixed domain set. `type:` in frontmatter (below) records *what each note is* even when it sits in a domain folder, so nothing is lost by filing topically.
+**Domains are user-defined.** Alex's are `identity/ health/ finances/ work/ life/`; a consultant's would be `clients/`, a researcher's `topics/`. imprint ships the mechanism + sensible defaults, not a fixed domain set. `type:` in frontmatter (below) records *what each note is* even when it sits in a domain folder, so nothing is lost by filing topically.
 
 ## Frontmatter contract
 
 `type` is **singular** and records *what the object is*, independent of which folder it browses in: `person`, `org`, `holding`, `project`, `principle`, `note`, `mistake`, `event`. Entities and forms file into a folder of the same name (`person` → `people/`); `principle` and `note` file by **domain** (a belief → `identity/`, a tax fact → `finances/`). The folder is the drawer; `type` is the truth.
 
-Every note carries `type`, `tags`, and **`summary`** — a single line the LLM writes once at ingest. `summary` is the field the READ side leans on deterministically: `knowful check` builds `index.md` purely from each note's `summary` + tags + links, no LLM (it falls back to the H1 title if `summary` is absent). **The H1 (`# Title`) is the title** — no `title:` key, no universal `created:`. Use `updated:` on notes that change; events carry their own time fields.
+Every note carries `type`, `tags`, and **`summary`** — a single line the LLM writes once at ingest. `summary` is the field the READ side leans on deterministically: `imprint check` builds `index.md` purely from each note's `summary` + tags + links, no LLM (it falls back to the H1 title if `summary` is absent). **The H1 (`# Title`) is the title** — no `title:` key, no universal `created:`. Use `updated:` on notes that change; events carry their own time fields.
 
-**Self-describing placement + links.** A note in a **domain folder** (`identity/health/finances/work/life/projects`) carries **`domain: <that folder>`** in frontmatter — so the note knows its life-area without parsing the path; `knowful check` fails if folder and field disagree (the redundancy `type:` already has with entity folders, made a checked invariant). Entity/form notes need **no** `domain` (their `type` already mirrors their folder; an entity is cross-cutting, with no single domain). **`source:` is a wikilink** to the immutable snapshot — `source: "[[raw/pai/...]]"` (no `.md`) — clickable in Obsidian when the vault is opened at the repo root so `raw/` resolves; `recall` never searches `raw/` and `check` never treats a `raw/` link as an orphan. **Entity-valued fields are wikilinks too** — `owner: "[[people/alex]]"`, `participants: ["[[people/...]]"]`, `policyholder`, `beneficiary` — so ownership/authorship edges are real graph links, not bare strings (the principal is a first-class entity: `people/alex`).
+**Self-describing placement + links.** A note in a **domain folder** (`identity/health/finances/work/life/projects`) carries **`domain: <that folder>`** in frontmatter — so the note knows its life-area without parsing the path; `imprint check` fails if folder and field disagree (the redundancy `type:` already has with entity folders, made a checked invariant). Entity/form notes need **no** `domain` (their `type` already mirrors their folder; an entity is cross-cutting, with no single domain). **`source:` is a wikilink** to the immutable snapshot — `source: "[[raw/pai/...]]"` (no `.md`) — clickable in Obsidian when the vault is opened at the repo root so `raw/` resolves; `recall` never searches `raw/` and `check` never treats a `raw/` link as an orphan. **Entity-valued fields are wikilinks too** — `owner: "[[people/alex]]"`, `participants: ["[[people/...]]"]`, `policyholder`, `beneficiary` — so ownership/authorship edges are real graph links, not bare strings (the principal is a first-class entity: `people/alex`).
 
 - **people**: `team · role` *(opt: `owns[] · aliases[] · status`)*
 - **orgs**: `kind(employer|insurer|authority|bank|vendor)` *(opt: `aliases[]`)*
@@ -114,14 +117,14 @@ Optional on any note: `review_by: <date>` for perishable facts. Surfaced **only 
 1. **snapshot + parse (code)** — copy the source into `raw/<source>/` (one folder per source, immutable), hash, write any deterministic skeleton, update the manifest. Incremental: unchanged sources skip. A multi-topic source stays ONE `raw/` entry even when it fans out into many vault notes — provenance is keyed to origin, not topic.
 2. **classify + enrich (LLM, the conscious step)** — for each object in the source: pick `type`, choose the folder (entity / domain / form per the filing decision), write the one-line `summary`, pull decisions/actions/questions with judgment, assign tags + `kind`, propose `aliases`, ensure ≥1 link to another entity.
 3. **resolve + file (code)** — grep names + `aliases` across `people/ orgs/ holdings/`, MERGE on hit (never duplicate; rename → old name to `aliases`, keep the slug), write the note. Append the one `log.md` line (the LLM's gist).
-4. **regenerate + soft-fail (code)** — `knowful check` rebuilds `index.md` from every `summary`, and flags any note that links nothing / resolves no entity / has an orphan `[[link]]` into `needs-review`, surfaced atop `hot.md`. Never block; never silently drop.
+4. **regenerate + soft-fail (code)** — `imprint check` rebuilds `index.md` from every `summary`, and flags any note that links nothing / resolves no entity / has an orphan `[[link]]` into `needs-review`, surfaced atop `hot.md`. Never block; never silently drop.
 
 ## The two robot commands (explicit, never a daemon)
 
-knowful keeps exactly two "robot" helpers stolen from the system it replaces, and both are **commands you run**, never background hooks — the auto-magic is what made that system bill rent.
+imprint keeps exactly two "robot" helpers stolen from the system it replaces, and both are **commands you run**, never background hooks — the auto-magic is what made that system bill rent.
 
-- **`knowful check`** — integrity + regenerate. Flags orphan `[[links]]`, notes that resolve no entity, and unclassified snapshots; rebuilds `index.md` deterministically from every note's `summary` + tags + links. Run it after an ingest or any hand-edit.
-- **harvest** — the conversation→vault bridge: at the end of a chat, `wrapitup` hands the session's durable learnings to `knowful ingest`, so a decision made in conversation becomes a filed note. Conscious, on demand, never automatic.
+- **`imprint check`** — integrity + regenerate. Flags orphan `[[links]]`, notes that resolve no entity, and unclassified snapshots; rebuilds `index.md` deterministically from every note's `summary` + tags + links. Run it after an ingest or any hand-edit.
+- **harvest** — the conversation→vault bridge: at the end of a chat, `wrapitup` hands the session's durable learnings to `imprint ingest`, so a decision made in conversation becomes a filed note. Conscious, on demand, never automatic.
 
 ## Updating & contradictions
 
@@ -152,9 +155,9 @@ Core is the vault + `ingest → recall → check`. Everything else (Whenful sync
 - **Read** direct (parse the note format); core publishes **no importable code as a contract** — plugins **copy** the ~12-line header reader (reversible; promote to a shared lib later only if duplication actually hurts).
 - **Write** single-writer-per-path: a plugin writes only its own folder and **proposes** vault-note changes for `ingest`/you to apply — never mutates a note. Frontmatter labels are **slug-namespaced** (`whenful.synced`), read-your-own-only; core ignores unknown keys.
 - **`recall` searches `vault/` only, forever** — sibling dirs + `raw/` are outside the corpus by construction. A plugin surfaces into search only by **proposing one low-frequency summary note** (the escape hatch).
-- **Behavior plugins** are a separate class: ship a fixed-size fragment the **user wires into the agent's system prompt**; the vault never auto-injects; remove = delete the wire-in. No referee for conflicting fragments — user owns composition. (PAI imposed; knowful composes.)
+- **Behavior plugins** are a separate class: ship a fixed-size fragment the **user wires into the agent's system prompt**; the vault never auto-injects; remove = delete the wire-in. No referee for conflicting fragments — user owns composition. (PAI imposed; imprint composes.)
 - **Commands only, no forced daemon** — the user schedules sync. Install/remove is manual (README `## Install` / `## Remove` + `rm -rf`); no registry.
-- **Core ↔ plugin contact = exactly two convention-based aggregators**, both dumb and uniform: `knowful check --all` globs `plugins/*/check.ts`, runs each, reads **exit code only**, forwards stdout verbatim — never parses plugin output; `knowful ingest --apply` files staged notes the plugins drop in `plugins/*/proposed/`. Both discover by filename/dir convention, never by import, never by naming a specific plugin. Fence: core may provide read-only *aggregation* helpers, never write/orchestration. (Not k8s liveness/readiness — nothing runs; `check` = "is the data sound.")
+- **Core ↔ plugin contact = exactly two convention-based aggregators**, both dumb and uniform: `imprint check --all` globs `plugins/*/check.ts`, runs each, reads **exit code only**, forwards stdout verbatim — never parses plugin output; `imprint ingest --apply` files staged notes the plugins drop in `plugins/*/proposed/`. Both discover by filename/dir convention, never by import, never by naming a specific plugin. Fence: core may provide read-only *aggregation* helpers, never write/orchestration. (Not k8s liveness/readiness — nothing runs; `check` = "is the data sound.")
 
 ## Out of scope (on purpose)
 No task management. No auto-injected context. No background loop. No self-grading. No MCP/vector/embeddings on the vault. No sensitivity machinery (it's private by being private). **No `out/` zone for deliverables** — a produced artifact (an article, an export) lives in your artifacts dir and a vault note points to it; the vault holds knowledge, not outputs. Every plugin is a self-contained dir you can `rm -rf`. "It belongs" is not a reason to add it. (Plugin-contract out-of-scope list lives in `plugins/README.md`.)

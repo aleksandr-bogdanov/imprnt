@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// knowful · whenful plugin — task mirror.
+// imprint · whenful plugin — task mirror.
 //
 //   bun plugins/whenful/whenful.ts sync     refresh mirror/<id>.md from Whenful   (STUB — no live call yet)
 //   bun plugins/whenful/whenful.ts check    integrity (delegates to ./check.ts)
@@ -33,7 +33,7 @@ function readLinks(): Link[] {
 const cmd = process.argv[2];
 
 if (cmd === "check") {
-  // The integrity logic lives in check.ts (the file the `knowful check --all` aggregator globs). Run it
+  // The integrity logic lives in check.ts (the file the `imprint check --all` aggregator globs). Run it
   // as a subprocess so there's ONE implementation and the exit code propagates unchanged.
   const proc = Bun.spawnSync(["bun", join(here, "check.ts")], { stdout: "inherit", stderr: "inherit" });
   process.exit(proc.exitCode ?? 1);
@@ -61,7 +61,7 @@ if (cmd === "sync") {
   //            mirror is a pure cache: it is always safe to delete and rebuild from a full sync.
   //
   //   SCOPE:   sync ONLY refreshes the mirror and the join-table-referenced tasks. It never writes a
-  //            vault note (that's `knowful ingest --apply` on a proposed/ file) and never runs on its
+  //            vault note (that's `imprint ingest --apply` on a proposed/ file) and never runs on its
   //            own (the user schedules it). See docs: https://whenful.com  /  the Whenful repo's API.
   // ─────────────────────────────────────────────────────────────────────────────────────────────────
   mkdirSync(MIRROR_DIR, { recursive: true });

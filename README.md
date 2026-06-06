@@ -1,16 +1,16 @@
-# knowful
+# imprint
 
 A deterministic-first, plain-markdown knowledge vault you own. Deterministic code does the
 bulk transform at ~zero token cost; the LLM is spent only on the irreducibly-semantic ~20%
 (clean, extract, synthesize). Retrieval is native grep — **no MCP, no vector DB, no embeddings
 over the vault.** Open the same folder in Obsidian for a human graph view.
 
-> Sibling to [Whenful](https://whenful.com): Whenful answers *when* do I do my tasks; knowful
+> Sibling to [Whenful](https://whenful.com): Whenful answers *when* do I do my tasks; imprint
 > holds *what* I know.
 
 ## Architecture
 
-![knowful architecture](docs/architecture.png)
+![imprint architecture](docs/architecture.png)
 
 Agents drive a shareable **skill**; the skill splits every job into a **deterministic CLI**
 (runs off-context, ~zero tokens) and one **in-session semantic pass** (the LLM via your Claude
@@ -36,8 +36,8 @@ stale on every edit. So the storage is commodity. The discipline is the product:
 ## Install
 
 ```sh
-git clone https://github.com/aleksandr-bogdanov/knowful.git
-cd knowful
+git clone https://github.com/aleksandr-bogdanov/imprint.git
+cd imprint
 bun install            # no runtime deps; this just links the CLI
 bun scripts/cli.ts init   # scaffold ./vault and ./raw from templates/
 ```
@@ -53,12 +53,12 @@ resolution will link you automatically from then on.
 
 ```sh
 # 1. capture — drop a raw transcript in raw/, then parse it deterministically (no LLM)
-knowful ingest raw/2026-06-02-sts2-1on1.txt
+imprint ingest raw/2026-06-02-sts2-1on1.txt
 
 # 2. clean — let the agent fill the Summary and extend people/ + projects/ (the only LLM step)
 
 # 3. recall — BM25 ranking over the vault (deterministic, local, no LLM)
-knowful recall "STS2 BigQuery"
+imprint recall "STS2 BigQuery"
 
 # 4. plan — feed the retrieved context to the agent to draft an implementation plan
 ```
@@ -71,10 +71,10 @@ the implementation plan drafted from a `recall`.
 
 | Command | What it does | LLM? |
 |---------|--------------|------|
-| `knowful init` | Scaffold `vault/` + `raw/` from `templates/` | no |
-| `knowful ingest <file> [--vault DIR]` | Parse a raw transcript → structured event note; update delta-manifest | no |
-| `knowful recall "<query>" [--vault DIR]` | BM25 ranking over title/tags/body (field-boosted, synonym-aware) | no |
-| `knowful hot [--vault DIR]` | Print `vault/hot.md` (the session primer) | no |
+| `imprint init` | Scaffold `vault/` + `raw/` from `templates/` | no |
+| `imprint ingest <file> [--vault DIR]` | Parse a raw transcript → structured event note; update delta-manifest | no |
+| `imprint recall "<query>" [--vault DIR]` | BM25 ranking over title/tags/body (field-boosted, synonym-aware) | no |
+| `imprint hot [--vault DIR]` | Print `vault/hot.md` (the session primer) | no |
 
 The vault contract — note formats, conventions, the deterministic-first rule — is in
 [`CLAUDE.md`](CLAUDE.md), which an agent auto-loads when working in the vault.

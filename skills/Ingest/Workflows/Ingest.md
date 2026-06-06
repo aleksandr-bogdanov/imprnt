@@ -1,7 +1,7 @@
 # Ingest — workflow
 
 Vault defaults to `./vault`; pass `--vault <dir>` through every CLI call if the user named one.
-Let `KF` = the knowful repo (run the CLI as `bun $KF/scripts/cli.ts ...`, or `knowful ...` if linked).
+Let `KF` = the imprint repo (run the CLI as `bun $KF/scripts/cli.ts ...`, or `imprint ...` if linked).
 
 The 8 types: **people · orgs · projects · things · principles · notes · mistakes · events**.
 Three orthogonal axes: **type** (folder) = what object · **kind** (field) = what form · **tags** = what topic.
@@ -17,9 +17,9 @@ no seeded tag falls through to body-only literal matching with no synonym normal
 ## Step 1 — snapshot + skeleton (CLI, no LLM)
 
 ```sh
-knowful ingest <file-path> [--vault DIR]          # a file on disk (transcript, doc, export)
-knowful ingest --text "<bytes>" [--vault DIR]     # an inline fact or pasted prose (no temp file)
-knowful ingest --stdin --slug <s> [--vault DIR]   # pipe bytes in; --slug names the snapshot
+imprint ingest <file-path> [--vault DIR]          # a file on disk (transcript, doc, export)
+imprint ingest --text "<bytes>" [--vault DIR]     # an inline fact or pasted prose (no temp file)
+imprint ingest --stdin --slug <s> [--vault DIR]   # pipe bytes in; --slug names the snapshot
 ```
 
 Input is **shape-agnostic** — file path, `--text`, `--stdin`, or a bare arg that isn't a path (treated

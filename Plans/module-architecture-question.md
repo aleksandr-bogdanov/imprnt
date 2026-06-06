@@ -11,12 +11,12 @@
 2. `CLAUDE.md` (the vault contract — the schema and doctrine).
 3. `modules/README.md` (the thin module contract that already exists + the `guard/` example).
 4. `scripts/recall.ts` (the read path — proof that core is already permissive).
-5. The 5 doctrine memories in `~/.claude/projects/-Users-abogdanov-IdeaProjects-knowful/memory/` (`knowful-conscious-llm`, `knowful-llm-cost-criterion`, `knowful-build-methodology`, `knowful-architecture-v3`, `knowful-v3-build-state`).
+5. The 5 doctrine memories in `~/.claude/projects/-Users-abogdanov-IdeaProjects-imprint/memory/` (`imprint-conscious-llm`, `imprint-llm-cost-criterion`, `imprint-build-methodology`, `imprint-architecture-v3`, `imprint-v3-build-state`).
 6. `docs/architecture-revisit-2026-06-06.md` (the v3 layout decisions).
 
 ## State in one breath
 
-knowful v3 is built and fully migrated (114 notes, `check` clean). Core = the markdown vault + the schema + the `ingest -> recall(BM25) -> check` loop. The principle locked this session: **"everything else is a pluggable module"** (Whenful sync, a documents librarian, an agent-behavior ruleset, graph lint, the guard, eventually DA/voice). `modules/` already exists with a thin contract. The unsolved question is the contract itself.
+imprint v3 is built and fully migrated (114 notes, `check` clean). Core = the markdown vault + the schema + the `ingest -> recall(BM25) -> check` loop. The principle locked this session: **"everything else is a pluggable module"** (Whenful sync, a documents librarian, an agent-behavior ruleset, graph lint, the guard, eventually DA/voice). `modules/` already exists with a thin contract. The unsolved question is the contract itself.
 
 ## The question
 
@@ -40,11 +40,11 @@ So the "first-class module attribute" (`tasks: [wf:id]`) is **already supported*
 
 1. **READ access.** How does a module read vault notes? Direct fs walk, a core-provided read/query API (so modules do not each reimplement frontmatter parsing), or reuse `recall` as a library? Tradeoff: duplication vs coupling.
 2. **WRITE access.** May a module write **into** `vault/` (create notes, mutate existing-note frontmatter), or only into its own sibling dir? If two modules can write the same note's frontmatter, how is collision prevented? Candidate stance: modules **never mutate vault notes directly**; they write their own sibling dir and propose changes that `ingest`/the user applies. Keeps the vault single-writer.
-3. **FRONTMATTER ownership + namespacing.** Modules add keys; core ignores them. Do we need a reserved namespace so two modules do not collide on a key name? Does `check` gain a way to fan out to module checks (`knowful check --all` runs core + each installed module's check)?
+3. **FRONTMATTER ownership + namespacing.** Modules add keys; core ignores them. Do we need a reserved namespace so two modules do not collide on a key name? Does `check` gain a way to fan out to module checks (`imprint check --all` runs core + each installed module's check)?
 4. **SIBLING DIRS + recall exclusion.** Formalize as a stable promise: `recall` only ever searches `vault/`. Modules get their own top-level dirs. `raw/` (provenance) is also never searched.
 5. **SYSTEM-CONTEXT contribution (the behavior module).** A module wants to be always-loaded into the agent. The mechanism must be: the module ships a fixed-size context fragment, the **user wires it into their agent's system-prompt config**, the **vault never auto-injects**. This is the seam that lets "always-on" exist without becoming the PAI sin. Removable = delete the wire-in line / `rm -rf` the module.
 6. **LIFECYCLE.** How is a module installed and removed? Today: wire-in-yourself + `rm -rf`. Is a documented README "install" section the whole story, or is a discovery helper warranted? Bias: keep it manual + documented; resist a registry/manifest unless a real need forces it.
-7. **DAEMON discipline.** Modules may want background sync/watch. Rule: core and modules ship **commands**; scheduling them (cron/launchd/watcher) is the user's opt-in, never a forced daemon. The local mirror stays warm because **you** scheduled a token-free code sync, not because knowful runs a daemon.
+7. **DAEMON discipline.** Modules may want background sync/watch. Rule: core and modules ship **commands**; scheduling them (cron/launchd/watcher) is the user's opt-in, never a forced daemon. The local mirror stays warm because **you** scheduled a token-free code sync, not because imprint runs a daemon.
 
 ## Doctrine constraints (do not violate)
 
@@ -59,16 +59,16 @@ So the "first-class module attribute" (`tasks: [wf:id]`) is **already supported*
 
 ## The three instances to spec AFTER the contract (each can be its own chat)
 
-**A. Whenful sync.** Direction: Whenful server is authoritative, the vault is a client. Mirror lives in `whenful/`, linked `[[whenful/14519]]` (clickable locally) with a direct `whenful.com/task/<id>` URL as the no-mirror fallback. Frontmatter bridge `tasks: [wf:14519]`. A triage process = one knowful **case note** (identity, reference numbers, reasoning) + a `## Status log` where each step line can carry a `[[whenful/id]]`; done steps render done from the mirror, open steps are live tasks. Whenful owns "is step N done"; the note owns "what is this case and why." Sync is pure code, on-demand or user-scheduled, zero tokens, no daemon. Bidirectional is acceptable because client-server with `updated_at` is a solved problem (read the Whenful repo and lift its multi-device sync model). This instance is **blocked on dimensions 1, 2, 3, 4, 7** of the contract.
+**A. Whenful sync.** Direction: Whenful server is authoritative, the vault is a client. Mirror lives in `whenful/`, linked `[[whenful/14519]]` (clickable locally) with a direct `whenful.com/task/<id>` URL as the no-mirror fallback. Frontmatter bridge `tasks: [wf:14519]`. A triage process = one imprint **case note** (identity, reference numbers, reasoning) + a `## Status log` where each step line can carry a `[[whenful/id]]`; done steps render done from the mirror, open steps are live tasks. Whenful owns "is step N done"; the note owns "what is this case and why." Sync is pure code, on-demand or user-scheduled, zero tokens, no daemon. Bidirectional is acceptable because client-server with `updated_at` is a solved problem (read the Whenful repo and lift its multi-device sync model). This instance is **blocked on dimensions 1, 2, 3, 4, 7** of the contract.
 
 **B. Documents librarian.** Canonical file homes (the Yandex `_documents` root), deterministic file tracking (hash/manifest), LLM only on a **new** file to classify and file it. Relationship to `raw/`: **separate layers** — the librarian tracks all your files (most never become notes); `raw/` is per-note provenance. Handoff: when you ingest a note from a document, `ingest` copies that document into `raw/` from the librarian's canonical path, so the note gets a rot-proof `[[raw/...]]` link. Article line Alex wants: "the digital assistant helps you track files in a deterministic way without wasting excessive tokens." Blocked on dimensions 1, 2, 7.
 
-**C. Behavior module.** The anti-slop ruleset (and later voice, etc.) shipped as a fixed-size fragment, wired into the agent's system prompt by the user, removable. The whole moat in one sentence: **PAI imposed, knowful composes** — same always-on capability, opposite default, real off-switch. Blocked on dimension 5.
+**C. Behavior module.** The anti-slop ruleset (and later voice, etc.) shipped as a fixed-size fragment, wired into the agent's system prompt by the user, removable. The whole moat in one sentence: **PAI imposed, imprint composes** — same always-on capability, opposite default, real off-switch. Blocked on dimension 5.
 
 ## Open questions for Alex (answer these in the session)
 
 1. Do modules get a core-provided read API, or read the vault directly? (Duplication vs coupling.)
 2. Single-writer vault (modules only write sibling dirs + propose note changes), or may modules mutate note frontmatter directly?
-3. `knowful check --all` fanning out to module checks, or each module's check run separately?
+3. `imprint check --all` fanning out to module checks, or each module's check run separately?
 4. Is the contract purely a written README convention, or does it need any code (a tiny module-discovery helper)? Bias: convention-only.
 5. Bound the scope: the contract should be the **minimum that unblocks instances A/B/C**, not a general plugin framework. What is explicitly out of scope for v1 of the contract?
