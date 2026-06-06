@@ -74,11 +74,12 @@ usage:
   knowful snapshot <src> --dest <relpath>   mirror a file/dir into raw/<relpath> (immutable, hashed) — the migration's deterministic half
   knowful ingest <file|text> [--vault D]    snapshot a source -> raw/; a transcript file also gets an event skeleton (no LLM)
   knowful recall "<query>" [--vault D]      synonym-aware BM25 ranking over the vault
-  knowful check [--vault D]                 integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md
+  knowful check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.ts
+  knowful ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
   knowful hot [--vault D]                   needs-review + the session primer
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
 the vault is plain markdown. an agent greps it directly — no MCP, no DB.
-recall ranks with BM25 (core, in recall.ts). opt-in modules live in modules/ (guard built; graph to adapt from PAI).`);
+recall ranks with BM25 (core, in recall.ts). opt-in plugins live in plugins/ (guard built; graph to adapt from PAI).`);
     if (cmd && cmd !== "help" && cmd !== "--help") process.exit(1);
 }

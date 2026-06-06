@@ -120,7 +120,9 @@ The system does **not** grade itself or score whether retrieval "worked" — tha
 
 ## Built in pieces
 
-The only thing that's always there is the **ingest** tool. Everything else — fancier search, a connections viewer, a contradiction-finder — is an **optional add-on** you install or delete with one command. Nothing is forced on you. It stays small, and anyone who forks it keeps only what they use.
+The only thing that's always there is the **ingest** tool (plus search and a tidy-up check). Everything else — task sync, a file librarian, an anti-slop ruleset for your assistant, a connections viewer — is an **optional add-on** ("plugin") you install or delete with one command. Nothing is forced on you. It stays small, and anyone who forks it keeps only what they use.
+
+The add-ons follow one rule that keeps the core from quietly bloating (the way these systems usually die): **the core never knows any add-on exists.** The test is simple — you can add or delete any add-on without editing a single line of core code. An add-on reads your notes like any script would, writes only inside its own folder (to change a note it *suggests* the change and you approve it), keeps its data out of search unless it proposes a real note you accept, and runs only when you run it — never as a hidden background process. An "always-on" add-on (like a behavior ruleset for your assistant) hands you a chunk of text *you* paste into your assistant's settings; deleting that line turns it off. The whole point: **the old system imposed its features on you; knowful lets you compose only the ones you want, with a real off-switch.** Full rules: `plugins/README.md`.
 
 ## Safety net: the originals are never touched
 

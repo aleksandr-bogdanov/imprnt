@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-// knowful guard — deterministic destructive-command blocklist (opt-in module).
+// knowful guard — deterministic destructive-command blocklist (opt-in plugin).
 //
-//   bun modules/guard/guard.ts "<command>"     # or pipe the command on stdin
+//   bun plugins/guard/guard.ts "<command>"     # or pipe the command on stdin
 //
 // Exits 2 + a reason if the command is obviously dangerous; exits 0 otherwise.
 // No LLM, no analysis — just a short list of "don't do the obviously dumb thing".

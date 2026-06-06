@@ -1,0 +1,6 @@
+# whenful join table — one row per task↔note link. TAB-separated. Starts empty.
+# format: task_id<TAB>note_slug<TAB>step_label?
+#   task_id    — the Whenful task id (string), the key into mirror/<task_id>.md
+#   note_slug  — the vault note this task belongs to, as folder/slug (e.g. projects/whenful)
+#   step_label — OPTIONAL: a human label for which step of the note this task is (third column)
+# Lines starting with # are comments. The plugin owns this file; the core never reads it.

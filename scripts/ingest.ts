@@ -19,14 +19,180 @@
 //     (people | orgs | projects | things | principles | notes | mistakes | events) is a SEMANTIC
 //     judgment — the conscious LLM step in the Ingest skill, NOT this CLI. The CLI's only universal
 //     job for every source is the `raw/` snapshot below; classification + filing is the agent's.
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, extname, join, relative } from "node:path";
+import { basename, extname, join, relative, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadManifest, saveManifest } from "./lib/manifest.ts";
 import { personResolved, flagNeedsReview } from "./lib/resolve.ts";
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+}
+
+// --- frontmatter helpers (deterministic — STRUCTURE only, no LLM) ----------
+function frontmatter(raw: string): string {
+  return raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+}
+function fmScalar(fm: string, key: string): string {
+  return (fm.match(new RegExp(`^${key}:\\s*(.+)$`, "im"))?.[1] ?? "").trim().replace(/^["']|["']$/g, "");
+}
+function fmList(fm: string, key: string): string[] {
+  const line = fm.match(new RegExp(`^${key}:\\s*\\[(.*?)\\]`, "im"))?.[1] ?? "";
+  return line.split(",").map((s) => s.trim().replace(/^["'\[]+|["'\]]+$/g, "")).filter(Boolean);
+}
+// A wikilink target -> its bare slug ("[[people/alex]]" -> "people/alex", "alex" -> "alex").
+function linkSlug(s: string): string {
+  return s.trim().replace(/^\[\[/, "").replace(/\]\]$/, "").replace(/#.*$/, "").replace(/\|.*$/, "").replace(/\.md$/, "").trim();
+}
+
+// type -> vault folder. The folder is mechanical ONCE the type/domain are decided (the LLM already
+// decided them when it enriched the staged note); we never re-classify here. Entities + forms file
+// into a folder named for their type; a topical note (`principle`/`note`) files into its `domain:`.
+const TYPE_FOLDER: Record<string, string> = {
+  person: "people", org: "orgs", holding: "holdings",
+  project: "projects", event: "events", mistake: "mistakes",
+};
+const DOMAIN_FOLDERS = new Set(["identity", "health", "finances", "work", "life", "projects"]);
+
+function targetFolder(type: string, domain: string): string | null {
+  if (TYPE_FOLDER[type]) return TYPE_FOLDER[type];
+  if (type === "principle" || type === "note") {
+    return DOMAIN_FOLDERS.has(domain) ? domain : null; // a domain note MUST name a valid domain
+  }
+  return null;
+}
+
+// --- knowful ingest --apply <file> / --apply-all ---------------------------
+// The SECOND (and last) core↔plugin contact, the partner of `check --all`. A plugin proposes a note
+// by dropping a PRE-ENRICHED markdown file (real `type`/`domain`/`summary`/`tags` + body) into its
+// own `plugins/<name>/proposed/`; `--apply` files it into the vault. This is the propose-then-approve
+// escape hatch made concrete — code does the mechanical filing, the LLM already did the meaning.
+// Discovery is by convention (plugins/*/proposed/*.md), uniform, no per-plugin branch.
+function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflict" | "error" {
+  if (!existsSync(staged)) { console.error(`no such staged note: ${staged}`); return "error"; }
+  const text = readFileSync(staged, "utf8");
+  const fm = frontmatter(text);
+  const type = fmScalar(fm, "type");
+  const domain = fmScalar(fm, "domain");
+  if (!type) { console.error(`  ✗ ${staged}: no \`type:\` in frontmatter — can't file a note with no type`); return "error"; }
+
+  const folder = targetFolder(type, domain);
+  if (!folder) {
+    console.error(`  ✗ ${staged}: type \`${type}\`${domain ? ` / domain \`${domain}\`` : ""} maps to no vault folder`);
+    console.error(`     entities: person|org|holding · forms: event|mistake · project · a principle/note needs a valid domain:`);
+    return "error";
+  }
+
+  const title = text.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+  const slug = slugify(fmScalar(fm, "slug") || title || basename(staged, ".md"));
+  if (!slug) { console.error(`  ✗ ${staged}: can't derive a slug (no H1 title, no slug:)`); return "error"; }
+
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+  const noteRel = `${folder}/${slug}`;
+  const notePath = join(vault, `${noteRel}.md`);
+
+  // Idempotency + contradiction discipline. Same path + identical bytes -> no-op (re-applying is free).
+  // Same path + DIFFERENT bytes -> we do NOT silently overwrite; we flag it for the contradiction
+  // workflow (`> superseded by`), exactly as a hand-edit conflict would be handled.
+  if (existsSync(notePath)) {
+    const existingHash = createHash("sha256").update(readFileSync(notePath, "utf8")).digest("hex").slice(0, 16);
+    if (existingHash === hash) {
+      console.log(`  = ${noteRel} already filed, identical content (hash ${hash}) — no-op`);
+      // The staged copy is redundant once the vault note matches it byte-for-byte; clear it.
+      rmSync(staged);
+      return "noop";
+    }
+    console.error(`  ! ${noteRel} exists with DIFFERENT content — not overwriting (contradiction discipline)`);
+    flagNeedsReview(vault, `- [ ] proposed note conflicts with existing [[${noteRel}]] — staged at \`${staged}\` (hash ${hash} vs ${existingHash}); reconcile or stamp \`> superseded by\``);
+    return "conflict";
+  }
+
+  // Snapshot the staged note into raw/ for provenance, reusing the same content-addressed scheme as the
+  // bytes path: identical bytes never collide, distinct bytes never clobber, reuse an existing snapshot.
+  const manifest = loadManifest(vault);
+  const manifestKey = `sha256:${hash}`;
+  const priorSnapshot = Object.values(manifest).find((e) => e.hash === hash && e.raw && existsSync(e.raw))?.raw;
+  const rawDir = join(vault, "..", "raw", "proposed");
+  let rawPath: string;
+  if (priorSnapshot) {
+    rawPath = priorSnapshot;
+  } else {
+    mkdirSync(rawDir, { recursive: true });
+    rawPath = join(rawDir, `${slug}-${hash}.md`);
+    if (!existsSync(rawPath)) writeFileSync(rawPath, text);
+  }
+
+  // File the note (mechanical — type/domain already decided), record provenance in the manifest.
+  mkdirSync(join(vault, folder), { recursive: true });
+  writeFileSync(notePath, text);
+  manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawPath };
+  saveManifest(vault, manifest);
+
+  // Resolve participants/links the same way the transcript path does: an unresolved person -> needs-review.
+  // We only auto-resolve PEOPLE (the resolver's domain); other wikilink targets are checked by `knowful check`.
+  const participants = fmList(fm, "participants").map(linkSlug);
+  const owner = linkSlug(fmScalar(fm, "owner"));
+  const peopleLinks = [...participants, ...(owner ? [owner] : [])]
+    .filter((l) => l.startsWith("people/"))
+    .map((l) => l.slice("people/".length));
+  let unresolved = 0;
+  for (const personSlug of new Set(peopleLinks)) {
+    if (!personResolved(vault, personSlug, personSlug.replace(/-/g, " "))) {
+      unresolved++;
+      flagNeedsReview(vault, `- [ ] unresolved person \`people/${personSlug}\` — from [[${noteRel}]] (applied from \`${staged}\`)`);
+    }
+  }
+
+  // Filed cleanly -> the staged copy has served its purpose; delete it from plugins/*/proposed/.
+  rmSync(staged);
+
+  console.log(`  ✓ filed ${noteRel}  (type: ${type}${domain ? `, domain: ${domain}` : ""})`);
+  console.log(`     snapshot -> ${rawPath}${priorSnapshot ? "  (reused — identical bytes already snapshotted)" : ""}`);
+  console.log(`     staged copy removed: ${staged}`);
+  if (unresolved) console.log(`     ⚠ ${unresolved} unresolved person link(s) -> needs-review`);
+  return "filed";
+}
+
+// Dispatch the apply modes before the shape-agnostic ingest path. `--apply <file>` files one staged
+// note; `--apply-all` globs plugins/*/proposed/*.md (convention discovery) and files each uniformly.
+{
+  const a = process.argv.slice(2);
+  let applyVault = "./vault";
+  for (let i = 0; i < a.length; i++) if (a[i] === "--vault") applyVault = a[++i];
+
+  if (a.includes("--apply-all")) {
+    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`knowful init\` first`); process.exit(1); }
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pluginsDir = join(here, "..", "plugins");
+    const staged: string[] = [];
+    if (existsSync(pluginsDir)) {
+      for (const entry of readdirSync(pluginsDir)) {
+        const proposed = join(pluginsDir, entry, "proposed");
+        if (!existsSync(proposed) || !statSync(proposed).isDirectory()) continue;
+        for (const f of readdirSync(proposed)) if (f.endsWith(".md")) staged.push(join(proposed, f));
+      }
+    }
+    staged.sort();
+    console.log(`ingest --apply-all — ${staged.length} staged note(s) across plugins/*/proposed/`);
+    let filed = 0, noop = 0, conflict = 0, error = 0;
+    for (const s of staged) {
+      const r = applyStaged(s, applyVault);
+      if (r === "filed") filed++; else if (r === "noop") noop++; else if (r === "conflict") conflict++; else error++;
+    }
+    console.log(`\n${filed} filed, ${noop} no-op, ${conflict} conflict, ${error} error.`);
+    process.exit(conflict + error ? 1 : 0);
+  }
+
+  const applyIdx = a.indexOf("--apply");
+  if (applyIdx >= 0) {
+    const file = a[applyIdx + 1];
+    if (!file || file.startsWith("--")) { console.error("usage: knowful ingest --apply <file> [--vault DIR]"); process.exit(1); }
+    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`knowful init\` first`); process.exit(1); }
+    console.log(`ingest --apply ${file}`);
+    const r = applyStaged(file, applyVault);
+    process.exit(r === "conflict" || r === "error" ? 1 : 0);
+  }
 }
 
 // --- arg parsing -----------------------------------------------------------

@@ -11,13 +11,18 @@
 // check PRINTS its findings (the agent reads them); it does not block and does not mutate notes.
 // The only file it writes is index.md.
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { generateIndex, collectNotes } from "./lib/moc.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
 const args = process.argv.slice(2);
 let vault = "./vault";
-for (let i = 0; i < args.length; i++) if (args[i] === "--vault") vault = args[++i];
+let all = false;
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--vault") vault = args[++i];
+  else if (args[i] === "--all") all = true; // also run each plugins/*/check.ts (convention discovery)
+}
 if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`knowful init\` first`); process.exit(1); }
 
 // Entity folders are link TARGETS — they may legitimately have few outgoing links, so they're exempt
@@ -100,3 +105,39 @@ console.log(`↻ regenerated index.md — ${count} notes across ${folders} folde
 
 const issues = orphans.length + disconnected.length + domainIssues.length + uncovered.length;
 console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
+
+// --- plugin aggregation (--all only) --------------------------------------
+// The ONE core↔plugin contact for integrity (the other is `ingest --apply`). Both discover by
+// convention, never by import, never by naming a plugin. The FENCE that keeps this from becoming a
+// "plugin API": core may provide read-only AGGREGATION here, never write/orchestration. Concretely we
+// glob plugins/*/check.ts, run each as its own `bun` subprocess, READ THE EXIT CODE ONLY (0 = sound,
+// non-zero = issue), and forward the plugin's stdout/stderr VERBATIM — we never parse what it prints.
+// Core-only `check` (no --all) is untouched and always exits 0; --all exits non-zero iff a plugin failed.
+if (all) {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const pluginsDir = join(here, "..", "plugins");
+  const checks: string[] = [];
+  if (existsSync(pluginsDir)) {
+    for (const entry of readdirSync(pluginsDir)) {
+      const p = join(pluginsDir, entry, "check.ts");
+      if (statSync(join(pluginsDir, entry)).isDirectory() && existsSync(p)) checks.push(p);
+    }
+  }
+  checks.sort();
+
+  console.log(`\n— plugins (${checks.length}) —`);
+  if (checks.length === 0) console.log("  (no plugins/*/check.ts found)");
+
+  let failed = 0;
+  for (const checkPath of checks) {
+    const name = relative(pluginsDir, dirname(checkPath)).split("\\").join("/");
+    // Inherit stdio: the plugin's stdout/stderr stream straight through, untouched. We read only `.exitCode`.
+    const proc = Bun.spawnSync(["bun", checkPath], { stdout: "inherit", stderr: "inherit" });
+    const ok = proc.exitCode === 0;
+    if (!ok) failed++;
+    console.log(`  ${ok ? "✓" : "✗"} plugins/${name}/check.ts → exit ${proc.exitCode}`);
+  }
+
+  if (failed) { console.log(`\n${failed} plugin check(s) failed.`); process.exit(1); }
+  if (checks.length) console.log(`\nall plugin checks passed.`);
+}
