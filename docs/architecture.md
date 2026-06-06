@@ -28,17 +28,21 @@ It's the same reason you don't add up a spreadsheet by hand — you build the sp
 No database. No app lock-in. Just markdown (`.md`) text files in folders on your disk:
 
 ```
-people/        one file per person: role, team, what they own
-orgs/          one file per institution: employer, insurer, Behörde, bank, vendor
-projects/      one file per bounded effort with a status: decisions, links
-things/        the tools/services/datasets/assets/products/policies you work with
-principles/    one file per held position: belief, mental model, strategy, mission (the identity spine)
-notes/         reference knowledge that isn't an entity: how-tos, ratings, preferences, frameworks
-mistakes/      lessons learned: what I believed, what was actually true
-events/        one file per 1:1, meeting, or other dated occurrence
+# entities — cross-cutting, one canonical home each, linked from everywhere
+people/      a person
+orgs/        an institution: employer, insurer, Behörde, bank, vendor
+holdings/    an owned thing with tracked, changing state: a policy, a med + dose, an account, a subscription
+
+# domains — your life-areas (you define these); most content lives here
+identity/    the spine: mission, goals, beliefs, mental models, the positions you hold
+health/  ·  finances/  ·  work/  ·  life/  ·  projects/
+
+# forms — distinct by how you use them
+events/      a dated occurrence (a 1:1, a meeting)
+mistakes/    a lesson learned
 ```
 
-Eight folders, each a genuinely different *kind of object you use differently* — not topics (a topic is a tag). One file per *thing*. Open them in any editor, or in Obsidian for a nice connections-graph. They're yours forever — nothing to get locked into, nothing that can disappear or send you a bill.
+Three kinds of folder, each a genuinely different reason to exist. **The folders are browse-drawers, not the search axis** — search is grep + BM25 and ignores them entirely. So you organize by *life-area* (the way you actually look for your own knowledge); entities get one cross-cutting home each because they're referenced from everywhere; and a note's `type:` field records *what it is* (a principle, a policy) even when it lives in a domain folder. The domain set is yours to define — these are one person's; a consultant's would be `clients/`, a researcher's `topics/`. Open them in any editor, or in Obsidian. They're yours forever — nothing to lock into, nothing that can disappear or send you a bill.
 
 ## What a note actually looks like
 
@@ -64,7 +68,7 @@ Director of Identity; owns the access-platform project.
 - Seen in [[events/2026-06-02-access-sync]]
 ```
 
-- **Frontmatter** (the `---` block) is YAML — simple `key: value` lines. Every note has `type` and `tags`; the **H1 (`# Title`) is the title** (there's no `title:` key, and no universal `created:` — use `updated:` on notes that change). Then fields specific to its type (`role`/`team`/`aliases` for a person; `status`/`owner` for a project; `date`/`participants` for an event). **This is the part the tools read and query.**
+- **Frontmatter** (the `---` block) is YAML — simple `key: value` lines. Every note has `type`, `tags`, and a one-line `summary` (the AI writes it once; a deterministic pass reads it to build `index.md`). The **H1 (`# Title`) is the title** (no `title:` key). A note in a domain folder also carries `domain:` so it's self-describing (and `knowful check` fails if folder and field disagree); `source:` is a clickable wikilink back to the immutable snapshot it came from; entity-valued fields are links too (`owner: "[[people/alex]]"`). Then fields specific to its type. **This is the part the tools read and query.**
 - **The body** is for humans: a `#` title, `##` sections, prose, and `[[links]]` to other notes. `{extracted}` = taken straight from the source; `{inferred}` = the AI concluded it — so you can always tell facts from guesses.
 - **The file's name is its permanent ID** (its "slug", e.g. `people/boris-carter.md`). Other notes link to that ID, never to the display name — which is what makes corrections cheap (see below).
 
