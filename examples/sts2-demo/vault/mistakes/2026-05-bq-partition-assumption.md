@@ -1,7 +1,7 @@
 ---
 type: mistake
 tags: ["bigquery", "partitioning", "cost", "sts2"]
-workstream: "[[workstreams/sts2-bigquery-migration]]"
+project: "[[projects/sts2-bigquery-migration]]"
 ---
 
 # BigQuery didn't inherit STS2's partitioning
@@ -20,7 +20,7 @@ don't pay for the same lesson twice.
   before backfilling.
 
 ## Trigger for recall
-Before creating *any* BigQuery table in this migration, re-read this. ^[inferred]
+Before creating *any* BigQuery table in this migration, re-read this. {inferred}
 
 ## Related
-- [[workstreams/sts2-bigquery-migration]] · [[meetings/2026-06-02-sts2-bigquery-migration-sync-with-maya]]
+- [[projects/sts2-bigquery-migration]] · [[events/2026-06-02-sts2-bigquery-migration-sync-with-maya]]

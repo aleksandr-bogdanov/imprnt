@@ -8,6 +8,17 @@ over the vault.** Open the same folder in Obsidian for a human graph view.
 > Sibling to [Whenful](https://whenful.com): Whenful answers *when* do I do my tasks; knowful
 > holds *what* I know.
 
+## Architecture
+
+![knowful architecture](docs/architecture.png)
+
+Agents drive a shareable **skill**; the skill splits every job into a **deterministic CLI**
+(runs off-context, ~zero tokens) and one **in-session semantic pass** (the LLM via your Claude
+subscription/OAuth — never `claude -p`). Everything lands in an **owned markdown vault** you
+grep — no MCP on the vault. Whenful (tasks) and Obsidian (human view) are optional.
+
+Source: [`docs/architecture.d2`](docs/architecture.d2) — re-render with `d2 docs/architecture.d2 docs/architecture.svg`.
+
 ## Why
 
 A knowledge base for an LLM agent does not need a database the agent queries through a
@@ -33,22 +44,27 @@ bun scripts/cli.ts init   # scaffold ./vault and ./raw from templates/
 
 Requires [Bun](https://bun.sh) ≥ 1.3.
 
+**One-time onboarding: create your own `people/<you>.md`.** You appear in nearly every transcript, so
+add a self-note first (`vault/people/alex.md` for the owner) — otherwise every ingest flags you into
+`needs-review`. It's just a note: ask the agent to "file a person note for me" once, and entity
+resolution will link you automatically from then on.
+
 ## The loop
 
 ```sh
 # 1. capture — drop a raw transcript in raw/, then parse it deterministically (no LLM)
 knowful ingest raw/2026-06-02-sts2-1on1.txt
 
-# 2. clean — let the agent fill the Summary and extend people/ + workstreams/ (the only LLM step)
+# 2. clean — let the agent fill the Summary and extend people/ + projects/ (the only LLM step)
 
-# 3. recall — tiered grep over the vault (or just use rg)
+# 3. recall — BM25 ranking over the vault (deterministic, local, no LLM)
 knowful recall "STS2 BigQuery"
 
 # 4. plan — feed the retrieved context to the agent to draft an implementation plan
 ```
 
 A complete worked example lives in [`examples/sts2-demo/`](examples/sts2-demo/): a synthetic
-1:1 transcript, the note `ingest` produces from it, the people/workstream/mistake notes, and
+1:1 transcript, the note `ingest` produces from it, the people/project/mistake notes, and
 the implementation plan drafted from a `recall`.
 
 ## Commands
@@ -56,8 +72,8 @@ the implementation plan drafted from a `recall`.
 | Command | What it does | LLM? |
 |---------|--------------|------|
 | `knowful init` | Scaffold `vault/` + `raw/` from `templates/` | no |
-| `knowful ingest <file> [--vault DIR]` | Parse a raw transcript → structured meeting note; update delta-manifest | no |
-| `knowful recall "<query>" [--vault DIR]` | Tiered grep (title → tags → body), ranked | no |
+| `knowful ingest <file> [--vault DIR]` | Parse a raw transcript → structured event note; update delta-manifest | no |
+| `knowful recall "<query>" [--vault DIR]` | BM25 ranking over title/tags/body (field-boosted, synonym-aware) | no |
 | `knowful hot [--vault DIR]` | Print `vault/hot.md` (the session primer) | no |
 
 The vault contract — note formats, conventions, the deterministic-first rule — is in

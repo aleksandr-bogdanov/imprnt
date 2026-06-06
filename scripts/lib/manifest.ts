@@ -3,8 +3,8 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-export type ManifestEntry = { hash: string; note: string; ingested: string };
-export type Manifest = Record<string, ManifestEntry>; // keyed by source path
+export type ManifestEntry = { hash: string; note: string; ingested: string; raw?: string; src?: string };
+export type Manifest = Record<string, ManifestEntry>; // keyed by source path (or vault-relative raw path for snapshots)
 
 export function manifestPath(vault: string): string {
   return join(vault, ".manifest.json");

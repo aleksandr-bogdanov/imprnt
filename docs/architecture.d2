@@ -1,0 +1,42 @@
+# knowful — workflow (left-to-right). Starts at Claude, ends at Claude.
+# Render: d2 docs/architecture.d2 docs/architecture.svg
+direction: right
+
+claude_in: "Claude — entrypoint" {
+  style.fill: "#dbeafe"
+  t: "you ask · drop a transcript / recording"
+}
+
+skill: "Skill (shareable)" {
+  t: "EatRecording -> EatTranscript"
+  t2: "recording -> Deepgram -> transcript"
+}
+
+cli: "knowful CLI — the deterministic magic" {
+  style.fill: "#ecfdf5"
+  t: "off-context · ~free · zero LLM"
+  w: "ASR-corrections · metadata · clean->disk · INDEX · grep"
+}
+
+cortex: "Cortex — your personal knowledge store" {
+  t: "owned markdown · grep · no MCP"
+  a: "raw / clean transcripts"
+  b: "people · projects · events · things · mistakes · notes"
+}
+
+claude_out: "Claude — synthesis & answer" {
+  style.fill: "#dbeafe"
+  t: "the judgment 20% · answer · plan"
+  r: "OAuth · never claude -p"
+}
+
+whenful: "Whenful — tasks (MCP · stdio)" { style.stroke-dash: 3 }
+obsidian: "Obsidian — human view" { style.stroke-dash: 3 }
+
+claude_in -> skill: "invoke"
+skill -> cli: "deterministic 80%"
+cli -> cortex: "write · grep"
+cortex -> claude_out: "retrieved context"
+claude_out -> claude_in: "next turn" { style.stroke-dash: 2 }
+cortex -> whenful { style.stroke-dash: 3 }
+cortex -> obsidian { style.stroke-dash: 3 }

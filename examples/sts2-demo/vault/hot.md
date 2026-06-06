@@ -6,8 +6,8 @@ updated: 2026-06-02
 
 # Hot — what's active right now
 
-## Active workstream
-[[workstreams/sts2-bigquery-migration]] — moving identity events off legacy STS2 onto BigQuery.
+## Active project
+[[projects/sts2-bigquery-migration]] — moving identity events off legacy STS2 onto BigQuery.
 
 ## Recent decisions
 - Tech Foundations becomes the owning team + on-call for the Airflow load (Maya → EM this week).

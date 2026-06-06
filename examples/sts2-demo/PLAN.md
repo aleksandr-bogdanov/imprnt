@@ -1,15 +1,15 @@
 # Implementation plan — STS2 partitioning fix (drafted from `recall`)
 
 > This is the end of the loop. It was drafted by an agent **from the retrieved context only** —
-> `knowful recall "STS2 BigQuery"` + `recall "partition cost"` surfaced the workstream note, the
+> `knowful recall "STS2 BigQuery"` + `recall "partition cost"` surfaced the project note, the
 > meeting note, and (ranked first) the mistake note. The agent read those four files and nothing
 > else. No database, no embeddings — just grep over markdown.
 
 ## Context the agent pulled in (and why each mattered)
 - [[mistakes/2026-05-bq-partition-assumption]] — **read first** (recall ranked it #1). The 40x
   cost came from assuming partitioning is inherited. This plan must not repeat it.
-- [[workstreams/sts2-bigquery-migration]] — current state, owner, open risks.
-- [[meetings/2026-06-02-sts2-bigquery-migration-sync-with-maya]] — the Friday deadline and the
+- [[projects/sts2-bigquery-migration]] — current state, owner, open risks.
+- [[events/2026-06-02-sts2-bigquery-migration-sync-with-maya]] — the Friday deadline and the
   cluster-on-`tenant_id` decision.
 
 ## Plan
