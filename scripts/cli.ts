@@ -12,7 +12,15 @@ const [cmd, ...rest] = process.argv.slice(2);
 
 function vaultArg(): string {
   const i = rest.indexOf("--vault");
-  return i >= 0 ? rest[i + 1] : (process.env.IMPRINT_VAULT ?? "./vault");
+  if (i >= 0) {
+    const val = rest[i + 1];
+    if (val === undefined) {
+      console.error("usage: --vault <dir> (missing directory after --vault)");
+      process.exit(1);
+    }
+    return val;
+  }
+  return process.env.IMPRINT_VAULT ?? "./vault";
 }
 
 // Delegated scripts parse process.argv.slice(2) themselves. Strip the subcommand token
@@ -48,7 +56,7 @@ switch (cmd) {
   case "plugin": {
     // Generic plugin wiring. Toggles one @import line per plugin in CLAUDE.local.md at the
     // repo root. No per-plugin logic: it works on plugins/<name>/ by convention only.
-    const [sub, spec] = rest;
+    const [sub, ...specs] = rest;
     if (sub === "list") {
       const dirs = listPluginDirs(root);
       if (!dirs.length) { console.log("no plugins found under plugins/"); break; }
@@ -61,18 +69,27 @@ switch (cmd) {
       break;
     }
     if (sub === "add") {
-      if (!spec) { console.error("usage: imprint plugin add <name> | <name>/<file.md>"); process.exit(1); }
-      const { entry, added } = addPlugin(root, spec);
-      console.log(added ? `wired @${entry}` : `already wired @${entry}`);
+      if (!specs.length) { console.error("usage: imprint plugin add <name>[/<file.md>] [<name> ...]"); process.exit(1); }
+      // One report line per spec, idempotent. Skip specs that fail (dangling entry) but keep
+      // wiring the good ones, then exit non-zero if any spec failed.
+      let failed = false;
+      for (const spec of specs) {
+        const { entry, added, error } = addPlugin(root, spec);
+        if (error) { console.error(`${spec}: ${error}`); failed = true; continue; }
+        console.log(added ? `wired @${entry}` : `already wired @${entry}`);
+      }
+      if (failed) process.exit(1);
       break;
     }
     if (sub === "rm") {
-      if (!spec) { console.error("usage: imprint plugin rm <name>"); process.exit(1); }
-      const removed = rmPlugin(root, spec);
-      console.log(removed ? `unwired ${spec} (${removed} line${removed === 1 ? "" : "s"})` : `${spec} was not wired`);
+      if (!specs.length) { console.error("usage: imprint plugin rm <name> [<name> ...]"); process.exit(1); }
+      for (const spec of specs) {
+        const removed = rmPlugin(root, spec);
+        console.log(removed ? `unwired ${spec} (${removed} line${removed === 1 ? "" : "s"})` : `${spec} was not wired`);
+      }
       break;
     }
-    console.error("usage: imprint plugin list | add <name> | rm <name>");
+    console.error("usage: imprint plugin list | add <name>[/<file.md>] [<name> ...] | rm <name> [<name> ...]");
     process.exit(1);
   }
   case "init": {
@@ -109,8 +126,8 @@ usage:
   imprint ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
   imprint hot [--vault D]                   needs-review + the session primer
   imprint plugin list                       show gallery plugins and which are enabled
-  imprint plugin add <name>[/<file.md>]     wire a plugin into CLAUDE.local.md (idempotent)
-  imprint plugin rm <name>                  unwire a plugin from CLAUDE.local.md
+  imprint plugin add <name>[/<file.md>] ... wire one or more plugins into CLAUDE.local.md (idempotent)
+  imprint plugin rm <name> ...              unwire one or more plugins from CLAUDE.local.md
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
 the vault is plain markdown. an agent greps it directly — no MCP, no DB.
