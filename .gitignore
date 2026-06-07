@@ -10,9 +10,13 @@ CLAUDE.local.md
 # Personal plugins — your private DA instance + voice overlay, never in the public gallery.
 plugins/_personal/
 
+# Build scratch — transient implementation plans, local working notes only. Never shipped.
+Plans/
+
 # Runtime
 node_modules/
 *.log
 .DS_Store
+.idea/
 
 # examples/ IS committed — it's the synthetic demo of the loop.
