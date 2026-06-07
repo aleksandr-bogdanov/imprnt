@@ -14,6 +14,8 @@ clean, but don't contort a normal reply to dodge a hyphen. The cost of slop scal
 
 Framework scaffolding (template skeletons, field labels) is exempt everywhere - only *prose* is judged.
 
+**Data is exempt too.** These bans govern narrative writing. Tables, rated lists, records, IDs, numbers, doses, prices, verbatim legal/clause text are DATA - keep them structured, in full. Never drop or collapse a table to obey an anti-slop rule. Losing the data to tidy the prose is the worst slop of all.
+
 ## [A] Forbidden punctuation / typography
 
 - Em-dash and en-dash (`—`, `–`). Never. Use a plain hyphen-minus `-` or split into two sentences. Forget these characters exist.

@@ -118,6 +118,15 @@ Optional on any note: `review_by: <date>` for perishable facts. Surfaced **only 
 3. **resolve + file (code)** — grep names + `aliases` across `people/ orgs/ holdings/`, MERGE on hit (never duplicate; rename → old name to `aliases`, keep the slug), write the note. Append the one `log.md` line (the LLM's gist).
 4. **regenerate + soft-fail (code)** — `imprint check` rebuilds `index.md` from every `summary`, and flags any note that links nothing / resolves no entity / has an orphan `[[link]]` into `needs-review`, surfaced atop `hot.md`. Never block; never silently drop.
 
+## Fidelity: the data IS the knowledge (the cardinal ingest rule)
+
+**The note must carry the source's structured payload — tables, lists, entries, IDs, numbers, dates, prices, doses, contact details, verbatim legal/clause text.** `recall` searches `vault/` ONLY; anything left in `raw/` is **invisible**. So the summary is *in addition to* the data, never *instead of* it.
+
+- **NEVER summarize a catalog to prose and point at the snapshot.** "The live table lives in the source" is the failure that silently deletes knowledge — the rows ARE the note. A rated list, a price table, a backlog, an account/cadastral/contract/insurance number, a verbatim AVB clause: copy it INTO the note, in full, never rounded or paraphrased.
+- **enrich = ADD (summary, tags, links, `kind`), never REMOVE.** Reformatting prose↔prose is fine; dropping a table, an enumeration, or a specific figure is data loss. Preserve tables AS tables, enumerations AS enumerations.
+- **Anti-slop governs PROSE, not DATA.** The "no bullet-flood / paragraphs over bullets" rule is about narrative writing. A rated catalog or a record table is data — keep it structured; it is exempt.
+- **The lookup test (apply before declaring a note done):** could you answer a specific question from the VAULT note alone — "what tier is Hasseröder", "what's my Sozialversicherungsnummer", "what are the Voronezh flat's cadastral details", "what's the Generali Unfall payout schedule"? If the answer is only in `raw/`, you dropped the knowledge. Re-derive.
+
 ## The two robot commands (explicit, never a daemon)
 
 imprint keeps exactly two "robot" helpers stolen from the system it replaces, and both are **commands you run**, never background hooks — the auto-magic is what made that system bill rent.
