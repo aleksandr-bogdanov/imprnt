@@ -392,7 +392,10 @@ const isTranscript = isFile && looksLikeTranscript(speakers, hasMetaHeader, hasE
 // is content-addressed (`<date>-<slug>-<hash>`), so identical bytes never collide and distinct bytes
 // never clobber — no disambiguation dance needed. Reuse an existing snapshot of these exact bytes.
 const slugBasis = slugHint || subject || [...speakers].join("-") || (isFile ? basename(src, extname(src)) : text.slice(0, 60));
-const subjectSlug = slugify(slugBasis || "source");
+// Fall back on the SLUGIFIED result being empty, not on slugBasis being falsy. All-non-Latin text
+// (e.g. Cyrillic) is truthy yet slugifies to "" once non-[a-z0-9] is stripped, so a basis-level OR
+// would short-circuit on the truthy source and leave a leading-hyphen name. Compute, then default.
+const subjectSlug = slugify(slugBasis) || "source";
 const noteSlug = `${date}-${subjectSlug}`;
 // raw/ is keyed by source: a transcript file is a dated dump -> raw/transcripts/; a non-transcript
 // file or loose bytes is unclassified -> raw/adhoc/ (it still gets the full snapshot + provenance).

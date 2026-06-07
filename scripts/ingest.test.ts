@@ -292,6 +292,30 @@ test("a genuine inline-text fact (no path shape) still ingests as bytes", () => 
   expect(needsReview(vault)).toContain("unclassified source");
 });
 
+// --- [P3] cosmetic: all-non-Latin inline bytes (e.g. Cyrillic) slugify to "" once non-[a-z0-9] is
+// stripped. The fallback must fire on the SLUGIFIED result being empty, not on the source text being
+// falsy, so the raw snapshot is named with the "source" default rather than a leading-hyphen
+// "-<hash>.md". Pre-fix the filename started with "-" because the basis was truthy Cyrillic. ---------
+test("all-non-Latin inline bytes get a raw snapshot named with the source fallback, not a leading hyphen", () => {
+  const { vault, raw } = setup();
+  const r = run(["ingest", "Воронеж это город", "--vault", vault]);
+  expect(r.code).toBe(0);
+
+  // The adhoc raw snapshot exists and its filename does NOT start with a hyphen.
+  const adhoc = join(raw, "adhoc");
+  expect(existsSync(adhoc)).toBe(true);
+  const snaps = readdirSync(adhoc).filter((f) => f.endsWith(".md"));
+  expect(snaps.length).toBe(1);
+  expect(snaps[0].startsWith("-")).toBe(false);
+  expect(snaps[0].startsWith("source-")).toBe(true);
+
+  // The manifest tracks the snapshot (raw points at the created file).
+  const manifest = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
+  const entry = Object.values(manifest).find((e: any) => e.raw && e.raw.endsWith(snaps[0])) as any;
+  expect(entry).toBeDefined();
+  expect(existsSync(entry.raw)).toBe(true);
+});
+
 // --- finding 3: inline text containing a slash (multi-word, has whitespace) is ingested as bytes,
 // NOT refused as a missing path. A single-token slash path with no spaces still errors. ------------
 test("inline text with a slash still ingests as bytes (not refused as a missing path)", () => {
