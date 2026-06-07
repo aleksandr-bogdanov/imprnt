@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { installPlugin, purgePlugin, OFFICIAL } from "./install.ts";
+import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./install.ts";
 
 // A synthetic plugin PACKAGE source dir: a package.json with files[], the shipped runtime files,
 // plus src/ and a stray file that files[] excludes. installPlugin runs `npm pack` on this, so the
@@ -97,4 +97,28 @@ test("purgePlugin removes an installed dir, refuses _-prefixed, no-ops when abse
 test("OFFICIAL lists the gallery names by convention", () => {
   expect(OFFICIAL).toContain("whenful");
   expect(OFFICIAL).toContain("anti-slop");
+});
+
+test("coreChannel reads edge from an -edge. version, latest otherwise", () => {
+  const edge = mkdtempSync(join(tmpdir(), "imprnt-pkgroot-edge-"));
+  writeFileSync(join(edge, "package.json"), JSON.stringify({ name: "imprnt", version: "0.3.3-edge.418" }));
+  expect(coreChannel(edge)).toBe("edge");
+
+  const stable = mkdtempSync(join(tmpdir(), "imprnt-pkgroot-stable-"));
+  writeFileSync(join(stable, "package.json"), JSON.stringify({ name: "imprnt", version: "0.3.2" }));
+  expect(coreChannel(stable)).toBe("latest");
+});
+
+test("coreChannel falls back to latest when package.json is missing or unreadable", () => {
+  expect(coreChannel(join(tmpdir(), "imprnt-no-such-pkgroot-xyz"))).toBe("latest");
+});
+
+test("channel:'edge' is ignored for a --from install (local dir wins, still copies)", () => {
+  const src = mkPluginSrc("demo");
+  const proj = tmpProject();
+  // An edge core installing a local plugin must still install from the dir, not chase a registry tag.
+  const r = installPlugin(proj, "demo", { from: src, channel: "edge" });
+  expect(r.error).toBeUndefined();
+  expect(r.copied).toBe(true);
+  expect(readFileSync(join(proj, "plugins", "demo", "agent.md"), "utf8")).toContain("demo agent");
 });

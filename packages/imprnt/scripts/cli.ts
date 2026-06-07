@@ -6,7 +6,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNeedsReview } from "./lib/resolve.ts";
 import { listPluginDirs, isEnabled, addPlugin, rmPlugin } from "./lib/plugins.ts";
-import { installPlugin, purgePlugin, OFFICIAL } from "./lib/install.ts";
+import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install.ts";
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
 
@@ -88,6 +88,8 @@ switch (cmd) {
         else names.push(specs[i]!);
       }
       if (!names.length) { console.error("usage: imprnt plugin add <name> [--from <dir>] [--force] | <name>/<file.md>"); process.exit(1); }
+      // An edge core pulls edge plugins (latest fallback); a stable core pulls latest. Read once.
+      const channel = coreChannel(pkgRoot);
       // One report line per name, idempotent. A failed name doesn't stop the others; exit non-zero if any failed.
       let failed = false;
       for (const name of names) {
@@ -99,7 +101,7 @@ switch (cmd) {
           continue;
         }
         // Bare name: fetch+copy the package into plugins/<name>/, then wire its agent.md.
-        const r = installPlugin(proj, name, { from, force });
+        const r = installPlugin(proj, name, { from, force, channel });
         if (r.error) { console.error(`${name}: ${r.error}`); failed = true; continue; }
         if (r.copied) console.log(`installed ${name} → plugins/${name}/`);
         else if (r.skipped) console.log(`plugins/${name}/ already present (use --force to refresh)`);
