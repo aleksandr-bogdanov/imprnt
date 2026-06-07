@@ -35,6 +35,17 @@ stale on every edit. So the storage is commodity. The discipline is the product:
 
 ## Install
 
+Requires [Bun](https://bun.sh) ≥ 1.3.
+
+The package distributes via npm. These are aspirational until the first publish lands:
+
+```sh
+bunx imprint init      # run without installing
+npm i -g imprint       # or install the global CLI
+```
+
+Until then, run from a clone:
+
 ```sh
 git clone https://github.com/aleksandr-bogdanov/imprint.git
 cd imprint
@@ -42,12 +53,23 @@ bun install            # no runtime deps; this just links the CLI
 bun scripts/cli.ts init   # scaffold ./vault and ./raw from templates/
 ```
 
-Requires [Bun](https://bun.sh) ≥ 1.3.
+The commands below use `imprint` for brevity. From a clone, that's `bun scripts/cli.ts`.
+
+## Setup
+
+```sh
+imprint init                         # scaffold vault/ and raw/ from templates/
+export IMPRINT_VAULT=~/notes/vault   # optional: point at a vault elsewhere (defaults to ./vault)
+imprint plugin add character/scribe.md anti-slop   # enable the default DA + anti-slop rules
+```
+
+`imprint plugin add` wires each plugin into `CLAUDE.local.md` (your gitignored, per-machine toggle
+file), so the agent loads them every session. See [`plugins/README.md`](plugins/README.md) for the
+gallery and the full plugin contract.
 
 **One-time onboarding: create your own `people/<you>.md`.** You appear in nearly every transcript, so
-add a self-note first (`vault/people/alex.md` for the owner) — otherwise every ingest flags you into
-`needs-review`. It's just a note: ask the agent to "file a person note for me" once, and entity
-resolution will link you automatically from then on.
+add a self-note first - otherwise every ingest flags you into `needs-review`. It's just a note: ask
+the agent to "file a person note for me" once, and entity resolution will link you from then on.
 
 ## The loop
 

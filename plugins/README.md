@@ -23,6 +23,30 @@ The practical test — the litmus for the whole contract:
 
 If adding a plugin forces you to touch the core, the plugin is wrong — not the core.
 
+## Using plugins
+
+The plugin gallery lives in this folder. Each top-level dir (`guard/`, `character/`, `anti-slop/`,
+`whenful/`) is one installable plugin. Enable and disable them with one command:
+
+```sh
+imprint plugin list                  # show every plugin and whether it's enabled
+imprint plugin add anti-slop         # wires @plugins/anti-slop/agent.md
+imprint plugin add character/scribe.md   # wires that exact file (multi-file plugins)
+imprint plugin rm anti-slop          # removes the wiring line
+```
+
+`imprint plugin add` auto-wires `CLAUDE.local.md` — it appends the `@import` line for you (creating
+the file if it's missing), and `rm` strips it back out. Both are idempotent. This is the on-switch the
+contract describes, made one command instead of a hand-edit. You can still hand-edit `CLAUDE.local.md`
+directly if you prefer; the command just does the same edit. `CLAUDE.local.md` stays the single source
+of truth for what's enabled.
+
+**Gallery vs `_personal/`.** The dirs above are the public gallery — generic, shippable plugins. There
+is one more, `_personal/`, which is **gitignored** and never ships: it holds your own private DA
+instance and voice overlay (a copy of a gallery plugin you've edited to make yours). To personalize a
+plugin, copy it into `_personal/`, edit it, and `imprint plugin add _personal/<file>.md`. `imprint
+plugin list` skips `_personal/` so your private cast never shows up in the public listing.
+
 Stated more precisely (the rule the litmus is a cheap proxy for): **a plugin may depend on
 exactly two things — your `vault/` notes (and their frontmatter format) and its own folder.
 Nothing else.** Not core internals, not core code, not another plugin, not another
@@ -38,11 +62,13 @@ code never reads `agent.md`; only the assistant does.
 
 Install is therefore one line: add `@plugins/<name>/agent.md` as an import to **`CLAUDE.local.md`**
 — your gitignored, per-machine toggle file, which Claude Code auto-loads right after the committed
-`CLAUDE.md`. Never wire plugins into the committed `CLAUDE.md`: that ships the contract clean, and a
-fresh clone (no `CLAUDE.local.md`) loads **zero** plugins by default — opt-in for real. That single
-line is the whole on-switch. Remove is deleting that line and `rm -rf plugins/<name>`. This is the
-real off-switch the old system never had — the assistant learns a plugin by being handed its
-fragment, and forgets it the moment you delete the line.
+`CLAUDE.md`. `imprint plugin add <name>` appends that line for you (or hand-edit `CLAUDE.local.md`
+yourself — same edit). Never wire plugins into the committed `CLAUDE.md`: that ships the contract
+clean, and a fresh clone (no `CLAUDE.local.md`) loads **zero** plugins by default — opt-in for real.
+That single line is the whole on-switch. Remove is `imprint plugin rm <name>` (deletes the line) plus
+`rm -rf plugins/<name>` if you want the files gone too. This is the real off-switch the old system
+never had — the assistant learns a plugin by being handed its fragment, and forgets it the moment you
+delete the line.
 
 ## The rules, in plain English
 
@@ -80,10 +106,11 @@ fragment, and forgets it the moment you delete the line.
    process just by being installed. (This is the exact thing that made the old system bill
    rent.)
 
-7. **Install/remove is by hand.** Each plugin's README has a `## Install` section (the two or
-   three wire-in steps — at minimum the `@plugins/<name>/agent.md` line above) and a
-   `## Remove` section ("delete the line + `rm -rf` the folder"). No app store, no registry,
-   no install command.
+7. **Install/remove is one generic command (or by hand).** `imprint plugin add/rm` wires and
+   unwires the `@import` line in `CLAUDE.local.md` — generic, by dir convention, with zero
+   per-plugin logic in core (a plugin with extra wire-in steps documents them in its own README).
+   You can always hand-edit `CLAUDE.local.md` instead. No app store, no registry, no plugin-aware
+   core. Each plugin's README has a `## Install` and `## Remove` section.
 
 8. **One escape hatch for the search problem.** Because search ignores plugin folders, a
    plugin's data is invisible there. So a plugin *may* propose **one** short, low-frequency
@@ -151,14 +178,14 @@ that reads the cache, never the wire.
   for you to approve. Tracks files deterministically (hash/manifest) in its own folder; on
   ingest, hands the file off into `raw/` so the note gets a rot-proof provenance link. Clean
   fit for propose-then-approve.
-- **Characters (your digital people).** Each *digital person* — the DA, and later a council
-  member, a red-team skeptic — is defined by one character file (`plugins/characters/<name>.md`):
+- **Character (your digital people).** Each *digital person* — the DA, and later a council
+  member, a red-team skeptic — is defined by one character file (`plugins/character/<name>.md`):
   its personality, voice, standards, the way it works. You wire a character into the assistant's
   prompt; delete the line to turn it off. It produces *character text*, not notes — a
   config-extension plugin (rule 5), a different class from the two above, with no referee for
   conflicts (install two contradictory characters and that's on you). The clean parallel:
-  `vault/people/` holds the **real** people you know; `plugins/characters/` holds your **digital**
-  people. Taylor is the first.
+  `vault/people/` holds the **real** people you know; `plugins/character/` holds your **digital**
+  people. Scribe is the shipped default.
 
 ## Explicitly out of scope for v1 (the C5 stop condition)
 
@@ -188,14 +215,21 @@ folder, and its own `check.ts` the `check --all` aggregator finds. The `sync` co
 documented **stub** today — it states the Whenful API contract it will call and makes **no**
 live network request — wiring the real API is the next session.
 
-### characters/ — your digital people ✅ first one built (Taylor)
+### character/ — your digital people ✅ shipped default (Scribe)
 
 The DA's character, as a wired-in fragment — the thing that makes the assistant *itself* and
-not raw Claude. One file per digital person (`plugins/characters/<name>.md`); `taylor.md` is the
-first. Install = add `@plugins/characters/taylor.md` to your agent's prompt; remove = delete the
-line. The cast grows over time — a council or a red team is just a *group of characters* you
-convene (not built yet; the word generalizes now so nothing needs renaming when it does). Real
-people live in `vault/people/`; digital people live here.
+not raw Claude. One file per digital person (`plugins/character/<name>.md`); `scribe.md` is the
+generalized default you copy and personalize. Install = `imprint plugin add character/scribe.md`;
+remove = `imprint plugin rm character`. The cast grows over time — a council or a red team is just a
+*group of characters* you convene (not built yet; the word generalizes now so nothing needs renaming
+when it does). Real people live in `vault/people/`; digital people live here.
+
+### anti-slop/ — universal anti-AI-slop rules ✅ built
+
+The ruleset that keeps the agent's prose from reading like AI — banned punctuation, words, phrases,
+and rhetorical patterns. An always-on behavior plugin (rule 5): it hands the agent a fixed chunk of
+text, writes no notes, touches nothing in the vault. Install = `imprint plugin add anti-slop`; remove
+= `imprint plugin rm anti-slop`. Copy it into `_personal/` and extend it to add your own register.
 
 ### bm25/ — ranked recall ✅ CORE (not a plugin)
 

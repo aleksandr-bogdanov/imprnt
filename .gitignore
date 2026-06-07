@@ -7,6 +7,9 @@
 # Personal, per-machine plugin toggles — your @import wiring, never shipped.
 CLAUDE.local.md
 
+# Personal plugins — your private DA instance + voice overlay, never in the public gallery.
+plugins/_personal/
+
 # Runtime
 node_modules/
 *.log

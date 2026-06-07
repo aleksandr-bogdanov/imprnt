@@ -4,6 +4,7 @@ import { cpSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNeedsReview } from "./lib/resolve.ts";
+import { listPluginDirs, isEnabled, addPlugin, rmPlugin } from "./lib/plugins.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -44,6 +45,36 @@ switch (cmd) {
     console.log(readFileSync(p, "utf8"));
     break;
   }
+  case "plugin": {
+    // Generic plugin wiring. Toggles one @import line per plugin in CLAUDE.local.md at the
+    // repo root. No per-plugin logic: it works on plugins/<name>/ by convention only.
+    const [sub, spec] = rest;
+    if (sub === "list") {
+      const dirs = listPluginDirs(root);
+      if (!dirs.length) { console.log("no plugins found under plugins/"); break; }
+      console.log("plugins:");
+      for (const name of dirs) {
+        const mark = isEnabled(root, name) ? "[on] " : "[off]";
+        console.log(`  ${mark} ${name}`);
+      }
+      console.log("\nenable: imprint plugin add <name>   disable: imprint plugin rm <name>");
+      break;
+    }
+    if (sub === "add") {
+      if (!spec) { console.error("usage: imprint plugin add <name> | <name>/<file.md>"); process.exit(1); }
+      const { entry, added } = addPlugin(root, spec);
+      console.log(added ? `wired @${entry}` : `already wired @${entry}`);
+      break;
+    }
+    if (sub === "rm") {
+      if (!spec) { console.error("usage: imprint plugin rm <name>"); process.exit(1); }
+      const removed = rmPlugin(root, spec);
+      console.log(removed ? `unwired ${spec} (${removed} line${removed === 1 ? "" : "s"})` : `${spec} was not wired`);
+      break;
+    }
+    console.error("usage: imprint plugin list | add <name> | rm <name>");
+    process.exit(1);
+  }
   case "init": {
     // v3 layout: entity folders (cross-cutting) + domain folders (life-areas) + form folders, all flat
     // under vault/. raw/ holds immutable by-source snapshots. Topic is a tag, never a folder.
@@ -77,6 +108,9 @@ usage:
   imprint check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.ts
   imprint ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
   imprint hot [--vault D]                   needs-review + the session primer
+  imprint plugin list                       show gallery plugins and which are enabled
+  imprint plugin add <name>[/<file.md>]     wire a plugin into CLAUDE.local.md (idempotent)
+  imprint plugin rm <name>                  unwire a plugin from CLAUDE.local.md
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
 the vault is plain markdown. an agent greps it directly — no MCP, no DB.

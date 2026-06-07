@@ -31,6 +31,9 @@
   "files": [
     "scripts",
     "templates",
-    "CLAUDE.md"
+    "plugins",
+    "!plugins/_personal",
+    "CLAUDE.md",
+    "README.md"
   ]
 }
