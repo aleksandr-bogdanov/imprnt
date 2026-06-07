@@ -6,14 +6,29 @@
 // Exits 2 + a reason if the command is obviously dangerous; exits 0 otherwise.
 // No LLM, no analysis — just a short list of "don't do the obviously dumb thing".
 // Wire it as a PreToolUse guard on Bash if you ever let the agent run shell.
+//
+// Known limitation: this is a regex blocklist, not a shell parser. A command whose
+// quoted ARGUMENT merely mentions a dangerous pattern (git commit -m "remove rm -rf /")
+// can false-positive. Guard errs on the side of blocking, which is the right default for
+// a safety hook. Distinguishing a real command from a quoted string needs full shell
+// parsing and is out of scope.
+const HOME_OR_SYSTEM = "(\\/|~|\\$HOME|\\/Users|\\/etc|\\/usr|\\/var|\\/bin|\\/System|\\/Library)(\\s|\\/|$)";
 const DENY: { re: RegExp; why: string }[] = [
-  { re: /\brm\s+-[a-z]*r[a-z]*f?\b[^\n]*\s(\/|~|\$HOME|\/Users|\/etc|\/usr|\/var|\/bin|\/System|\/Library)(\s|\/|$)/, why: "rm -rf on a home/system path" },
+  // rm with short bundled flags: -rf, -fr, -r -f, -r --force, etc. (an r-flag, an f somewhere).
+  { re: new RegExp(`\\brm\\s+-[a-z]*r[a-z]*f?\\b[^\\n]*\\s${HOME_OR_SYSTEM}`), why: "rm -rf on a home/system path" },
+  // rm with GNU long flags: --recursive and --force in any order, possibly interspersed with paths.
+  { re: new RegExp(`\\brm\\b(?=[^\\n]*--recursive\\b)(?=[^\\n]*--force\\b)[^\\n]*\\s${HOME_OR_SYSTEM}`), why: "rm --recursive --force on a home/system path" },
   { re: /\bsudo\b/, why: "sudo / privilege escalation" },
   { re: /\b(mkfs|dd)\b[^\n]*\bof=\/dev\//, why: "writing to a raw device" },
   { re: />\s*\/dev\/(sd|nvme|disk)/, why: "redirect to a raw disk" },
   { re: /:\s*\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/, why: "fork bomb" },
   { re: /\bchmod\s+-R\s+0?777\s+\//, why: "recursive 777 on a system path" },
-  { re: /\bgit\s+push\b[^\n]*--force[^\n]*\b(main|master)\b/, why: "force-push to main/master" },
+  // force-push: a `git push` line carrying a force flag (-f / --force / --force-with-lease) AND a
+  // main/master token, in EITHER order (order-independent via two lookaheads).
+  { re: /\bgit\s+push\b(?=[^\n]*(?:--force(?:-with-lease)?\b|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*\b))(?=[^\n]*\b(?:main|master)\b)/, why: "force-push to main/master" },
+  // bare `git push -f` / `git push --force` with no remote argument force-pushes the CURRENT branch,
+  // which is frequently main/master. Block it too. (A remote like `origin` opts out of this rule.)
+  { re: /\bgit\s+push\s+(?:--force(?:-with-lease)?|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*)\s*$/, why: "bare force-push (current branch, often main/master)" },
 ];
 
 const argCmd = process.argv.slice(2).join(" ").trim();
