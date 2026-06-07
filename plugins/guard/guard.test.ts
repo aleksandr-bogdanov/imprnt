@@ -46,6 +46,8 @@ const rows: Row[] = [
   { label: "P2 git -C path push -f main", cmd: "git -C /repo push -f origin main", expectedExit: 2 },
   { label: "P2 git -C path push main --force", cmd: "git -C /repo push origin main --force", expectedExit: 2 },
   { label: "P2 git -c key=val push -f master", cmd: "git -c user.x=y push -f origin master", expectedExit: 2 },
+  // ---- P3 many leading global options within the raised 16-token cap (must now block, exit 2) ---
+  { label: "P3 git 5x -c push --force main", cmd: "git -c a=1 -c b=2 -c c=3 -c d=4 -c e=5 push --force main", expectedExit: 2 },
 
   // ---- ALLOW CASES (must NOT block; exit 0) -------------------------------------------------------
   { label: "rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },

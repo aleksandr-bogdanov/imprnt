@@ -22,19 +22,25 @@ table (`links.tsv`) plus a local mirror (`mirror/`) of task state, refreshed onl
 
 ## Install
 
-1. Add the entry-point fragment to the project `CLAUDE.md` (or paste it in):
+1. Wire the entry-point fragment in:
+   ```sh
+   imprint plugin add whenful
    ```
-   @plugins/whenful/agent.md
-   ```
-2. Add task↔note rows to `plugins/whenful/links.tsv`.
+   That wires `@plugins/whenful/agent.md` into `CLAUDE.local.md` (gitignored, per-machine - Claude Code
+   auto-loads it right after the committed `CLAUDE.md`). Or hand-edit `CLAUDE.local.md` and add the line
+   yourself. Never wire it into the committed `CLAUDE.md`, that keeps personal wiring out of the shipped
+   contract.
+2. Add task->note rows to `plugins/whenful/links.tsv`.
 3. Refresh the mirror: `bun plugins/whenful/whenful.ts sync` *(stub today)*.
 
-That's the whole on-switch. Schedule `sync` yourself (cron/launchd) if you want it periodic — there is
+That's the whole on-switch. Schedule `sync` yourself (cron/launchd) if you want it periodic. There is
 no daemon.
 
 ## Remove
 
-1. Delete the `@plugins/whenful/agent.md` import line from the project `CLAUDE.md`.
-2. `rm -rf plugins/whenful`
+```sh
+imprint plugin rm whenful
+```
 
-Nothing in the core (`scripts/`) references this plugin, so removing it touches no core code.
+Or delete the import line by hand. To drop the files entirely, `rm -rf plugins/whenful`. Nothing in the
+core (`scripts/`) references this plugin, so removing it touches no core code.

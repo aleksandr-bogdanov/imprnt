@@ -86,6 +86,32 @@ test("check exits 0 on a clean links.tsv (every link resolves, mirror fresh)", (
   expect(r.stdout).toContain("sound.");
 });
 
+test("check soft-fails (non-zero) when the mirror is older than the stale threshold (>7 days)", () => {
+  const { pluginDir, vault } = makeRepo();
+  mkdirSync(join(vault, "projects"), { recursive: true });
+  writeFileSync(join(vault, "projects", "whenful.md"), "# Whenful\n");
+  writeLinks(pluginDir, ["task-1\tprojects/whenful\t"]);
+  // Stamp a sync 8 days in the past (> STALE_DAYS of 7). check.ts parses the stamp's date.
+  const eightDaysAgo = new Date(Date.now() - 8 * 86_400_000);
+  writeFileSync(join(pluginDir, "mirror", ".last-sync"), eightDaysAgo.toISOString() + "\n");
+
+  const r = run(pluginDir, "check.ts");
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stdout).toContain("stale");
+});
+
+test("check exits non-zero on an unparseable .last-sync stamp", () => {
+  const { pluginDir, vault } = makeRepo();
+  mkdirSync(join(vault, "projects"), { recursive: true });
+  writeFileSync(join(vault, "projects", "whenful.md"), "# Whenful\n");
+  writeLinks(pluginDir, ["task-1\tprojects/whenful\t"]);
+  writeFileSync(join(pluginDir, "mirror", ".last-sync"), "not-a-date garbage\n");
+
+  const r = run(pluginDir, "check.ts");
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stdout).toContain("unparseable");
+});
+
 test("check exits non-zero on an orphan link (note_slug has no vault note)", () => {
   const { pluginDir } = makeRepo();
   writeLinks(pluginDir, ["task-9\tprojects/does-not-exist\t"]);
