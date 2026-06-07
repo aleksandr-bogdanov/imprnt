@@ -1,5 +1,7 @@
 // Tag vocabulary: load vault/_tags.md, normalize a term through the synonym map.
-// Deterministic, no LLM. The map is bidirectional — applied at write AND at search.
+// Deterministic, no LLM. The map is bidirectional, applied at write AND at search.
+// Under `## Tags`, only tag-list lines (comma-separated kebab tokens) count. Prose lines in the
+// section are ignored on load and never touched on append.
 //
 // The vocabulary is AUTO-GROWING, not a gated allowlist: ingest applies the best-fitting tag, and
 // `imprint check` syncs anything new into the list via `appendTags` below. Coining a tag needs no
@@ -15,6 +17,19 @@ function section(text: string, name: string): string {
   return text.match(new RegExp(`##\\s*${name}\\s*\\n([\\s\\S]*?)(?:\\n##\\s|\\s*$)`, "i"))?.[1] ?? "";
 }
 
+// A kebab-case tag token: lowercase letters, digits, hyphens.
+const TAG_TOKEN = /^[a-z0-9-]+$/;
+
+// True if a line under `## Tags` is part of the tag list (comma-separated kebab tokens, or a single
+// kebab token). Prose lines (spaces inside a token, or non-tag punctuation) are not tag lines.
+function isTagLine(line: string): boolean {
+  const t = line.trim();
+  if (t === "" || t.startsWith("##") || t.startsWith("<!--")) return false;
+  const tokens = t.split(",").map((s) => s.trim()).filter((s) => s !== "");
+  if (tokens.length === 0) return false;
+  return tokens.every((tok) => TAG_TOKEN.test(tok));
+}
+
 export function loadTags(vault: string): TagVocab {
   const approved = new Set<string>();
   const synonyms = new Map<string, string>();
@@ -22,8 +37,12 @@ export function loadTags(vault: string): TagVocab {
   if (!existsSync(p)) return { approved, synonyms };
   const text = readFileSync(p, "utf8");
 
-  for (const t of section(text, "Tags").split(/[,\n]/).map((s) => s.trim().toLowerCase())) {
-    if (t && !t.startsWith("<!--")) approved.add(t);
+  // Only the tag-list lines under `## Tags` count. Prose lines in the section are ignored.
+  for (const line of section(text, "Tags").split(/\r?\n/)) {
+    if (!isTagLine(line)) continue;
+    for (const t of line.split(",").map((s) => s.trim().toLowerCase())) {
+      if (t) approved.add(t);
+    }
   }
   for (const line of section(text, "Synonyms").split(/\r?\n/)) {
     const m = line.match(/^(.*?)\s*->\s*(\S+)\s*$/);
@@ -50,12 +69,13 @@ export function appendTags(vault: string, newTags: string[]): string[] {
   const lines = readFileSync(p, "utf8").split("\n");
   const h = lines.findIndex((l) => /^##\s*Tags\s*$/i.test(l.trim()));
   if (h < 0) return [];
-  // Find the last contiguous content line under the header (skip leading blanks, stop at next ## / blank).
+  // The tag list is the contiguous run of tag lines right under the header (skipping a leading
+  // blank). Append to the LAST line of that run. A prose line ends the run and is never touched.
   let last = -1;
   for (let i = h + 1; i < lines.length; i++) {
     const t = lines[i].trim();
     if (t === "") { if (last >= 0) break; else continue; }
-    if (t.startsWith("##")) break;
+    if (!isTagLine(lines[i])) break;
     last = i;
   }
   if (last < 0) lines.splice(h + 1, 0, newTags.join(", "));
