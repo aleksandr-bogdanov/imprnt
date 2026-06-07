@@ -1,4 +1,4 @@
-// imprint — dispatcher. Subcommands are thin; the real work is in sibling scripts.
+// imprnt — dispatcher. Subcommands are thin; the real work is in sibling scripts.
 // No shebang: the shipped bin gets `#!/usr/bin/env node` injected at build time (--banner), and
 // dev runs this via `bun scripts/cli.ts`. A source shebang would survive bundling and collide.
 import { cpSync, mkdirSync, existsSync, readFileSync } from "node:fs";
@@ -26,7 +26,7 @@ function vaultArg(): string {
     }
     return val;
   }
-  return process.env.IMPRINT_VAULT ?? "./vault";
+  return process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
 }
 
 // Delegated scripts parse process.argv.slice(2) themselves. Strip the subcommand token
@@ -55,13 +55,13 @@ switch (cmd) {
       console.log("");
     }
     const p = join(vault, "hot.md");
-    if (!existsSync(p)) { console.error(`no hot.md at ${p} — run \`imprint init\``); process.exit(1); }
+    if (!existsSync(p)) { console.error(`no hot.md at ${p} — run \`imprnt init\``); process.exit(1); }
     console.log(readFileSync(p, "utf8"));
     break;
   }
   case "plugin": {
     // Plugin commands operate on the user's PROJECT root (not the installed package): plugins/ and
-    // CLAUDE.local.md live there. `add <name>` fetches the package imprint-plugin-<name> and copies
+    // CLAUDE.local.md live there. `add <name>` fetches the package imprnt-plugin-<name> and copies
     // it into plugins/<name>/ before wiring; `add <name>/<file.md>` just wires a local file (the
     // _personal cast). No per-plugin logic in core.
     const proj = projectRoot();
@@ -73,7 +73,7 @@ switch (cmd) {
       for (const name of dirs) console.log(`  ${isEnabled(proj, name) ? "[on] " : "[off]"} ${name}`);
       const available = OFFICIAL.filter((o) => !dirs.includes(o));
       if (available.length) console.log(`\navailable to add: ${available.join(", ")}`);
-      console.log("\nenable: imprint plugin add <name>   disable: imprint plugin rm <name> [--purge]");
+      console.log("\nenable: imprnt plugin add <name>   disable: imprnt plugin rm <name> [--purge]");
       break;
     }
     if (sub === "add") {
@@ -86,7 +86,7 @@ switch (cmd) {
         else if (specs[i] === "--force") force = true;
         else names.push(specs[i]!);
       }
-      if (!names.length) { console.error("usage: imprint plugin add <name> [--from <dir>] [--force] | <name>/<file.md>"); process.exit(1); }
+      if (!names.length) { console.error("usage: imprnt plugin add <name> [--from <dir>] [--force] | <name>/<file.md>"); process.exit(1); }
       // One report line per name, idempotent. A failed name doesn't stop the others; exit non-zero if any failed.
       let failed = false;
       for (const name of names) {
@@ -113,7 +113,7 @@ switch (cmd) {
       let purge = false;
       const names: string[] = [];
       for (const s of specs) { if (s === "--purge") purge = true; else names.push(s); }
-      if (!names.length) { console.error("usage: imprint plugin rm <name> [--purge] [<name> ...]"); process.exit(1); }
+      if (!names.length) { console.error("usage: imprnt plugin rm <name> [--purge] [<name> ...]"); process.exit(1); }
       for (const name of names) {
         const removed = rmPlugin(proj, name);
         let msg = removed ? `unwired ${name} (${removed} line${removed === 1 ? "" : "s"})` : `${name} was not wired`;
@@ -122,7 +122,7 @@ switch (cmd) {
       }
       break;
     }
-    console.error("usage: imprint plugin list | add <name> [--from <dir>] [--force] | rm <name> [--purge]");
+    console.error("usage: imprnt plugin list | add <name> [--from <dir>] [--force] | rm <name> [--purge]");
     process.exit(1);
   }
   case "init": {
@@ -151,23 +151,23 @@ switch (cmd) {
     console.log(`  domains:  ${domains.join(", ")}`);
     console.log(`  forms:    ${forms.join(", ")}`);
     console.log("  + raw/ for immutable by-source snapshots.");
-    console.log("snapshot a source (`imprint snapshot <path> --dest pai/...`) or ingest one, then `imprint check`.");
+    console.log("snapshot a source (`imprnt snapshot <path> --dest pai/...`) or ingest one, then `imprnt check`.");
     break;
   }
   default:
-    console.log(`imprint — deterministic-first markdown knowledge vault
+    console.log(`imprnt — deterministic-first markdown knowledge vault
 
 usage:
-  imprint init                              scaffold ./vault (entities/domains/forms) and ./raw
-  imprint snapshot <src> --dest <relpath>   mirror a file/dir into raw/<relpath> (immutable, hashed) — the migration's deterministic half
-  imprint ingest <file|text> [--vault D]    snapshot a source -> raw/; a transcript file also gets an event skeleton (no LLM)
-  imprint recall "<query>" [--vault D]      synonym-aware BM25 ranking over the vault
-  imprint check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.ts
-  imprint ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
-  imprint hot [--vault D]                   needs-review + the session primer
-  imprint plugin list                       show installed plugins (on/off) + official ones available to add
-  imprint plugin add <name> [--from D]      fetch imprint-plugin-<name>, copy into plugins/, wire it (idempotent; --force refreshes)
-  imprint plugin rm <name> [--purge]        unwire a plugin; --purge also deletes plugins/<name>/
+  imprnt init                              scaffold ./vault (entities/domains/forms) and ./raw
+  imprnt snapshot <src> --dest <relpath>   mirror a file/dir into raw/<relpath> (immutable, hashed) — the migration's deterministic half
+  imprnt ingest <file|text> [--vault D]    snapshot a source -> raw/; a transcript file also gets an event skeleton (no LLM)
+  imprnt recall "<query>" [--vault D]      synonym-aware BM25 ranking over the vault
+  imprnt check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.ts
+  imprnt ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
+  imprnt hot [--vault D]                   needs-review + the session primer
+  imprnt plugin list                       show installed plugins (on/off) + official ones available to add
+  imprnt plugin add <name> [--from D]      fetch imprnt-plugin-<name>, copy into plugins/, wire it (idempotent; --force refreshes)
+  imprnt plugin rm <name> [--purge]        unwire a plugin; --purge also deletes plugins/<name>/
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
 the vault is plain markdown. an agent greps it directly — no MCP, no DB.

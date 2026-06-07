@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { loadManifest, saveManifest, manifestPath } from "./manifest.ts";
 
 function vaultDir(): string {
-  return mkdtempSync(join(tmpdir(), "imprint-manifest-"));
+  return mkdtempSync(join(tmpdir(), "imprnt-manifest-"));
 }
 
 // --- bug 3: a corrupt manifest must NOT silently lose prior provenance ----------------------------

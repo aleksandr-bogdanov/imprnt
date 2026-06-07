@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// imprint recall "<query>" [--vault DIR] [--limit N]
+// imprnt recall "<query>" [--vault DIR] [--limit N]
 //
 // Ranked retrieval over the vault using real BM25 — deterministic, local, zero LLM, zero deps.
 // This is the CHEAP/DUMB default ranker, on purpose: the READ path runs thousands of times, so it
@@ -23,7 +23,7 @@ import { join, relative } from "node:path";
 import { loadTags, normalize, type TagVocab } from "./lib/tags.ts";
 
 const args = process.argv.slice(2);
-let vault = process.env.IMPRINT_VAULT ?? "./vault";
+let vault = process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
 let limit = 15; // tight by default — narrow, don't dump
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
@@ -44,7 +44,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const query = positional.join(" ").trim();
 if (!query) {
-  console.error('usage: imprint recall "<query>" [--vault DIR] [--limit N]');
+  console.error('usage: imprnt recall "<query>" [--vault DIR] [--limit N]');
   process.exit(1);
 }
 
@@ -132,7 +132,7 @@ function walk(dir: string): string[] {
 }
 
 let files: string[] = [];
-try { files = walk(vault); } catch { console.error(`no vault at ${vault} — run \`imprint init\` first`); process.exit(1); }
+try { files = walk(vault); } catch { console.error(`no vault at ${vault} — run \`imprnt init\` first`); process.exit(1); }
 
 // Parse the frontmatter `tags: [...]` into NORMALIZED canonical tags (write and search agree on one
 // concept = one tag), and `aliases: [...]` (the note's own alternate names — an identity surface).

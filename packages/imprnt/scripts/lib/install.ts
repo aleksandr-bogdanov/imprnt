@@ -15,13 +15,13 @@ import { join, basename, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 // Official plugin names, for `plugin list` discovery when nothing is installed yet. A hint string,
-// NOT a registry: each maps by convention to the npm package `imprint-plugin-<name>`. Adding an
+// NOT a registry: each maps by convention to the npm package `imprnt-plugin-<name>`. Adding an
 // official plugin is a one-line edit here; core fetches nothing to produce this list.
 export const OFFICIAL = ["anti-slop", "character", "whenful", "guard"];
 
 export type InstallResult = { copied: boolean; dest: string; skipped?: boolean; error?: string };
 
-// Fetch `imprint-plugin-<name>` (or a local dir via `from`) and copy its shipped files into
+// Fetch `imprnt-plugin-<name>` (or a local dir via `from`) and copy its shipped files into
 // projectRoot/plugins/<name>/. Idempotent: an existing plugins/<name>/agent.md skips the fetch
 // unless `force`. Returns what happened; the caller wires the @import line separately.
 export function installPlugin(
@@ -32,10 +32,10 @@ export function installPlugin(
   const dest = join(projectRoot, "plugins", name);
   if (existsSync(join(dest, "agent.md")) && !opts.force) return { copied: false, dest, skipped: true };
 
-  const spec = opts.from ? resolve(opts.from) : `imprint-plugin-${name}`;
+  const spec = opts.from ? resolve(opts.from) : `imprnt-plugin-${name}`;
   if (opts.from && !existsSync(spec)) return { copied: false, dest, error: `--from path not found: ${spec}` };
 
-  const tmp = mkdtempSync(join(tmpdir(), "imprint-pkg-"));
+  const tmp = mkdtempSync(join(tmpdir(), "imprnt-pkg-"));
   try {
     const pack = spawnSync("npm", ["pack", spec, "--pack-destination", tmp, "--silent"], { encoding: "utf8" });
     if (pack.status !== 0) {
@@ -50,7 +50,7 @@ export function installPlugin(
 
     const src = join(tmp, "package"); // npm tarballs always root at package/
     if (!existsSync(join(src, "agent.md"))) {
-      return { copied: false, dest, error: `${spec} has no agent.md — not an imprint plugin?` };
+      return { copied: false, dest, error: `${spec} has no agent.md — not an imprnt plugin?` };
     }
     // Mirror today's hand-authored plugin layout: agent.md + check.js + seed dirs, no package.json.
     // force:true is required: bun's cpSync skips overwrites when a filter is present unless it is set.

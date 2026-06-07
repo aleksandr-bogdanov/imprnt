@@ -1,4 +1,4 @@
-// imprint · whenful plugin — task mirror. Shipped as built whenful.js (node banner).
+// imprnt · whenful plugin — task mirror. Shipped as built whenful.js (node banner).
 //
 //   node plugins/whenful/whenful.js sync     refresh mirror/<id>.md from Whenful   (STUB — no live call yet)
 //   node plugins/whenful/whenful.js check    integrity (delegates to ./check.js)
@@ -33,7 +33,7 @@ function readLinks(): Link[] {
 const cmd = process.argv[2];
 
 if (cmd === "check") {
-  // The integrity logic lives in check.js (the built file the `imprint check --all` aggregator globs).
+  // The integrity logic lives in check.js (the built file the `imprnt check --all` aggregator globs).
   // Run it as a node subprocess so there's ONE implementation and the exit code propagates unchanged.
   const proc = spawnSync(process.execPath, [join(here, "check.js")], { stdio: "inherit" });
   process.exit(proc.status ?? 1);
@@ -61,7 +61,7 @@ if (cmd === "sync") {
   //            mirror is a pure cache: it is always safe to delete and rebuild from a full sync.
   //
   //   SCOPE:   sync ONLY refreshes the mirror and the join-table-referenced tasks. It never writes a
-  //            vault note (that's `imprint ingest --apply` on a proposed/ file) and never runs on its
+  //            vault note (that's `imprnt ingest --apply` on a proposed/ file) and never runs on its
   //            own (the user schedules it). See docs: https://whenful.com  /  the Whenful repo's API.
   // ─────────────────────────────────────────────────────────────────────────────────────────────────
   mkdirSync(MIRROR_DIR, { recursive: true });
@@ -104,5 +104,5 @@ if (cmd === "sync") {
   process.exit(0);
 }
 
-console.error("usage: bun plugins/whenful/whenful.ts <sync|check>");
+console.error("usage: node plugins/whenful/whenful.js <sync|check>");
 process.exit(1);

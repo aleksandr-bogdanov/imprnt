@@ -1,15 +1,15 @@
 ---
-name: imprint-ingest
-description: Ingest any source (meeting transcript, pasted doc, prose dump, or a single fact) into the imprint vault. The CLI snapshots the source verbatim into raw/ and, for transcripts, writes the deterministic event skeleton. You then do the ONE conscious LLM pass — classify the note's TYPE among the 8, write the summary, extract decisions/actions/questions with judgment, assign tags from the approved vocabulary, set kind, resolve or create the entities the note touches, and clear them from needs-review. USE WHEN ingest, eat this, add to imprint, process meeting, log this 1:1, file this note, save this, imprint ingest.
+name: imprnt-ingest
+description: Ingest any source (meeting transcript, pasted doc, prose dump, or a single fact) into the imprnt vault. The CLI snapshots the source verbatim into raw/ and, for transcripts, writes the deterministic event skeleton. You then do the ONE conscious LLM pass — classify the note's TYPE among the 8, write the summary, extract decisions/actions/questions with judgment, assign tags from the approved vocabulary, set kind, resolve or create the entities the note touches, and clear them from needs-review. USE WHEN ingest, eat this, add to imprnt, process meeting, log this 1:1, file this note, save this, imprnt ingest.
 ---
 
-# imprint — Ingest
+# imprnt — Ingest
 
 Turn a raw source into a typed, resolved, tagged vault note.
 The CLI does the mechanical structure (snapshot, hash, transcript skeleton — free); you do the meaning,
 including **the note's TYPE** — the conscious ~20% (the only paid step).
 
-Read the vault contract (`<imprint>/CLAUDE.md`) once, then execute `Workflows/Ingest.md`.
+Read the vault contract (`<imprnt>/CLAUDE.md`) once, then execute `Workflows/Ingest.md`.
 
 **The code/LLM split (from the contract):**
 - **Code, free:** snapshot source → `raw/` (immutable, hash, incremental skip), parse structured input,

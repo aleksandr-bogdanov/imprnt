@@ -1,7 +1,7 @@
 {
-  "name": "imprint-plugin-whenful",
+  "name": "imprnt-plugin-whenful",
   "version": "0.1.0",
-  "description": "imprint plugin: a local mirror of your Whenful tasks, rendered at read. Keeps task state in its own folder; never edits a vault note.",
+  "description": "imprnt plugin: a local mirror of your Whenful tasks, rendered at read. Keeps task state in its own folder; never edits a vault note.",
   "type": "module",
   "files": [
     "agent.md",
@@ -19,8 +19,8 @@
     "prepack": "bun run build"
   },
   "keywords": [
-    "imprint",
-    "imprint-plugin",
+    "imprnt",
+    "imprnt-plugin",
     "whenful",
     "tasks"
   ],

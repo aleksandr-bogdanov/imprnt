@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { personResolved, flagNeedsReview, openNeedsReview } from "./resolve.ts";
 
 function tmpVault(): string {
-  return mkdtempSync(join(tmpdir(), "imprint-resolve-"));
+  return mkdtempSync(join(tmpdir(), "imprnt-resolve-"));
 }
 
 function writePerson(vault: string, name: string, body: string): void {

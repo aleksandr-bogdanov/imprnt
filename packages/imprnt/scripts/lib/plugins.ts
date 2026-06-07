@@ -11,7 +11,7 @@ const HEADER = `# Personal plugin toggles (this machine only)
 
 > Gitignored. Claude Code auto-loads this right after CLAUDE.md, so whatever you @import here is
 > wired into the agent every session. This is the on/off switch: add a line to enable a plugin,
-> delete or comment it to disable. Managed by \`imprint plugin add/rm\`, or hand-edit it.
+> delete or comment it to disable. Managed by \`imprnt plugin add/rm\`, or hand-edit it.
 
 `;
 

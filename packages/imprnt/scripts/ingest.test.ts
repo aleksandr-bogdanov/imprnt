@@ -7,10 +7,10 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = join(here, "cli.ts");
 
-// One temp workspace per test. Layout mirrors `imprint init`: a vault/ with the form folders we need
+// One temp workspace per test. Layout mirrors `imprnt init`: a vault/ with the form folders we need
 // plus a sibling raw/. We pass --vault explicitly so nothing touches the real repo vault.
 function setup(): { root: string; vault: string; raw: string } {
-  const root = mkdtempSync(join(tmpdir(), "imprint-test-"));
+  const root = mkdtempSync(join(tmpdir(), "imprnt-test-"));
   const vault = join(root, "vault");
   const raw = join(root, "raw");
   for (const d of ["people", "events", "orgs", "holdings", "identity", "health", "finances", "work", "life", "projects", "mistakes"]) {
@@ -277,7 +277,7 @@ test("non-transcript prose file gets no event note, just snapshot + needs-review
 // --- bug 5: a non-existent path arg errors with "no such file" -----------------------------------
 test("a non-existent file path arg errors instead of being treated as text", () => {
   const { vault } = setup();
-  const r = run(["ingest", "/tmp/does-not-exist-imprint.txt", "--vault", vault]);
+  const r = run(["ingest", "/tmp/does-not-exist-imprnt.txt", "--vault", vault]);
   expect(r.code).toBe(1);
   expect(r.err).toContain("no such file");
   // Nothing snapshotted.
@@ -433,7 +433,7 @@ test("--apply files a staged note and re-applying identical bytes is a no-op", (
 });
 
 // --- regression: an applied note must carry a `source:` back-link to its raw/proposed snapshot, so
-// `imprint check`'s coverage scan does NOT flag that snapshot as an uncovered snapshot forever. Before
+// `imprnt check`'s coverage scan does NOT flag that snapshot as an uncovered snapshot forever. Before
 // the fix the note was filed verbatim with no source:, the manifest recorded the raw/proposed snapshot,
 // and check saw a raw entry no note pointed back at -> the snapshot was listed under "uncovered
 // snapshots" on every check run. After the fix the filed note carries `source: "[[raw/proposed/...]]"`

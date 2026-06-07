@@ -1,4 +1,4 @@
-# imprint-plugin-guard
+# imprnt-plugin-guard
 
 A deterministic blocklist for dangerous shell commands. No LLM, no analysis - a short regex list
 that catches the obvious foot-guns (force-push to main/master, `rm -rf` of a home or system path,
@@ -7,7 +7,7 @@ and similar) and exits non-zero so a hook can stop the command.
 ## Install
 
 ```sh
-imprint plugin add guard
+imprnt plugin add guard
 ```
 
 This copies the built `guard.js` and `agent.md` into your project's `plugins/guard/`.

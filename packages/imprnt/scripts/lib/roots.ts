@@ -10,11 +10,11 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-// IMPRINT_ROOT overrides (mirrors IMPRINT_VAULT); otherwise walk up from `start` to the first
-// ancestor that looks like an imprint project (has vault/ or CLAUDE.local.md); otherwise fall back
+// IMPRNT_ROOT overrides (mirrors IMPRNT_VAULT; legacy IMPRINT_ROOT/IMPRINT_VAULT still read); otherwise walk up from `start` to the first
+// ancestor that looks like an imprnt project (has vault/ or CLAUDE.local.md); otherwise fall back
 // to `start` — the `init`-in-an-empty-dir case, before any marker exists.
 export function projectRoot(start: string = process.cwd()): string {
-  const override = process.env.IMPRINT_ROOT;
+  const override = process.env.IMPRNT_ROOT ?? process.env.IMPRINT_ROOT;
   if (override) return override;
   let dir = start;
   for (;;) {

@@ -1,15 +1,15 @@
 {
-  "name": "imprint-plugin-character",
+  "name": "imprnt-plugin-character",
   "version": "0.1.0",
-  "description": "imprint plugin: Scribe, a generalized default digital-assistant character. Copy, personalize, and rename to make it yours.",
+  "description": "imprnt plugin: Scribe, a generalized default digital-assistant character. Copy, personalize, and rename to make it yours.",
   "type": "module",
   "files": [
     "agent.md",
     "README.md"
   ],
   "keywords": [
-    "imprint",
-    "imprint-plugin",
+    "imprnt",
+    "imprnt-plugin",
     "character",
     "persona"
   ],

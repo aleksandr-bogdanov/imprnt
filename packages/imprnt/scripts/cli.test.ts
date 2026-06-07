@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const realRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function tmpRepo(): string {
-  const root = mkdtempSync(join(tmpdir(), "imprint-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "imprnt-cli-"));
   // The CLI only imports from scripts/ for the paths we test (plugin + vaultArg). Copy scripts/.
   cpSync(join(realRoot, "scripts"), join(root, "scripts"), { recursive: true });
   // Fake plugins gallery: a real entry, plus a guard-style dir with no agent.md.
@@ -77,7 +77,7 @@ test("plugin add a b wires BOTH (bug 1)", async () => {
 function mkPluginSrc(root: string, name: string, withAgent = true): string {
   const dir = join(root, `src-${name}`);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: `imprint-plugin-${name}`, version: "0.0.1", files: withAgent ? ["agent.md", "check.js"] : ["check.js"] }));
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: `imprnt-plugin-${name}`, version: "0.0.1", files: withAgent ? ["agent.md", "check.js"] : ["check.js"] }));
   if (withAgent) writeFileSync(join(dir, "agent.md"), `# ${name}\n`);
   writeFileSync(join(dir, "check.js"), "console.log(1);\n");
   return dir;

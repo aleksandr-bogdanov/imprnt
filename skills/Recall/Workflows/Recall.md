@@ -1,6 +1,6 @@
 # Recall — workflow
 
-Let `KF` = the imprint repo. Vault defaults to `./vault` (pass `--vault DIR` if the user named one).
+Let `KF` = the imprnt repo. Vault defaults to `./vault` (pass `--vault DIR` if the user named one).
 This is the hybrid: **LLM (shapes the question into keywords) → code (`recall` ranks with BM25) → LLM
 (reads top hits)**. The LLM is at the two ends only; it is never in the middle.
 
@@ -22,7 +22,7 @@ scores and ranks — there's no false "no matches" from a single absent word.
 ## Step 2 — BM25 ranked search (CLI, free)
 
 ```sh
-imprint recall "<keywords>" [--vault DIR]
+imprnt recall "<keywords>" [--vault DIR]
 ```
 
 `recall` normalizes each word through `vault/_tags.md` (`AMT → taxes`), then BM25-ranks every note over

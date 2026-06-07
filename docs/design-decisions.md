@@ -1,14 +1,14 @@
 # Design decisions
 
-The durable calls behind imprint and why they were made. Evergreen rationale only. The session
+The durable calls behind imprnt and why they were made. Evergreen rationale only. The session
 narrative that produced them lives elsewhere. This is the record of what was decided and what
 would have to change for the decision to flip.
 
 ---
 
-## The name: imprint (was knowful)
+## The name: imprnt (was knowful)
 
-The project was renamed from its working name "knowful" to **imprint**. The name carries the
+The project was renamed from its working name "knowful" to **imprnt**. The name carries the
 act: you press knowledge into a durable, owned form and it stays. It reads cleanly for a fresh
 user with no in-joke to explain. References to "knowful" survive only in frozen git history.
 
@@ -60,7 +60,7 @@ you map onto the contract rather than re-derive from scratch.
 
 Tags are an auto-growing vocabulary, not a gated allowlist. At ingest the LLM applies the
 best-fitting tag and coins a new one if none fits. There is no human-approval gate, because a
-tag is just a string the note already holds. `imprint check` syncs new tags into `_tags.md`
+tag is just a string the note already holds. `imprnt check` syncs new tags into `_tags.md`
 deterministically.
 
 The discipline that keeps the list lean moved off the write path to a non-blocking audit:
@@ -80,7 +80,7 @@ grep plus BM25 and ignores folders, so layout is a pure human-browsing choice.
 The one thing kept from the type-first design is that entities (people, orgs, holdings) get their
 own cross-cutting folders, because an entity is referenced from many domains and needs one
 canonical home. That resolvable-entity graph is the single real improvement over the system
-imprint replaces, which never had it. The domain set itself is user-defined: imprint ships the
+imprnt replaces, which never had it. The domain set itself is user-defined: imprnt ships the
 mechanism and sensible defaults, not a fixed list.
 
 ## The plugin contract: the core never knows a plugin exists
@@ -96,19 +96,19 @@ proposes vault-note changes rather than mutating notes (single-writer vault). Fr
 are slug-namespaced (`whenful.synced`) and read-your-own-only. `recall` searches `vault/` only,
 forever, so a plugin surfaces into search only by proposing one low-frequency summary note.
 
-The reason for the rule is the failure it prevents. The system imprint replaces let its core
+The reason for the rule is the failure it prevents. The system imprnt replaces let its core
 grow to know about every feature until the core became a "robot suit" that billed rent (a token
-tax plus misfires). The contract is what keeps imprint composable instead. The slogan: the old
-system imposed, imprint composes, with a real off-switch.
+tax plus misfires). The contract is what keeps imprnt composable instead. The slogan: the old
+system imposed, imprnt composes, with a real off-switch.
 
 ## Core touches plugins in exactly two convention-based aggregators
 
 Both are dumb, uniform, and carry zero per-plugin logic. They discover plugins by filename or
 directory convention, never by importing one and never by naming one.
 
-- `imprint check --all` globs `plugins/*/check.js` (the plugin's built artifact), runs each with
+- `imprnt check --all` globs `plugins/*/check.js` (the plugin's built artifact), runs each with
   `node`, reads the exit code only, and forwards stdout verbatim. It never parses plugin output.
-- `imprint ingest --apply` files staged notes a plugin drops in `plugins/*/proposed/`.
+- `imprnt ingest --apply` files staged notes a plugin drops in `plugins/*/proposed/`.
 
 The fence that makes "one helper" safe rather than arbitrary: the core may provide read-only
 aggregation helpers, never write or orchestration helpers.
@@ -143,16 +143,16 @@ the plugin MCP boundary above.
 
 Core and plugins ship commands. Scheduling them (cron, launchd, a watcher) is the user's opt-in.
 Nothing runs in the background just by being installed. The local mirror stays warm because you
-scheduled a token-free code sync, not because imprint runs a daemon. Background auto-magic is
+scheduled a token-free code sync, not because imprnt runs a daemon. Background auto-magic is
 exactly what made the prior system bill rent.
 
 ## Run off-PAI by splitting HOME
 
-imprint was extracted from the personal-AI system it replaces (PAI), which auto-loads a global
-config from the home directory. To develop and run imprint as a standalone system, point Claude
-Code at a clean HOME so it loads imprint's own project context rather than PAI's global
-machinery. This keeps the two decoupled, proves imprint stands on its own with no hidden
-dependency on the parent system, and stops PAI's auto-injection from leaking into an imprint
+imprnt was extracted from the personal-AI system it replaces (PAI), which auto-loads a global
+config from the home directory. To develop and run imprnt as a standalone system, point Claude
+Code at a clean HOME so it loads imprnt's own project context rather than PAI's global
+machinery. This keeps the two decoupled, proves imprnt stands on its own with no hidden
+dependency on the parent system, and stops PAI's auto-injection from leaking into an imprnt
 session. The decision is the decoupling. The HOME split is the mechanism that enforces it.
 
 ## Privacy by being private, no sensitivity machinery

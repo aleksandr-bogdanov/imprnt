@@ -9,11 +9,11 @@
         "typescript": "^5.7.2",
       },
     },
-    "packages/imprint": {
-      "name": "imprint",
+    "packages/imprnt": {
+      "name": "imprnt",
       "version": "0.1.0",
       "bin": {
-        "imprint": "dist/cli.js",
+        "imprnt": "dist/cli.js",
       },
       "devDependencies": {
         "@types/bun": "^1.3.14",
@@ -21,15 +21,15 @@
       },
     },
     "packages/plugin-anti-slop": {
-      "name": "imprint-plugin-anti-slop",
+      "name": "imprnt-plugin-anti-slop",
       "version": "0.1.0",
     },
     "packages/plugin-character": {
-      "name": "imprint-plugin-character",
+      "name": "imprnt-plugin-character",
       "version": "0.1.0",
     },
     "packages/plugin-guard": {
-      "name": "imprint-plugin-guard",
+      "name": "imprnt-plugin-guard",
       "version": "0.1.0",
       "devDependencies": {
         "@types/bun": "^1.3.14",
@@ -37,7 +37,7 @@
       },
     },
     "packages/plugin-whenful": {
-      "name": "imprint-plugin-whenful",
+      "name": "imprnt-plugin-whenful",
       "version": "0.1.0",
       "devDependencies": {
         "@types/bun": "^1.3.14",
@@ -52,15 +52,15 @@
 
     "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
-    "imprint": ["imprint@workspace:packages/imprint"],
+    "imprnt": ["imprnt@workspace:packages/imprnt"],
 
-    "imprint-plugin-anti-slop": ["imprint-plugin-anti-slop@workspace:packages/plugin-anti-slop"],
+    "imprnt-plugin-anti-slop": ["imprnt-plugin-anti-slop@workspace:packages/plugin-anti-slop"],
 
-    "imprint-plugin-character": ["imprint-plugin-character@workspace:packages/plugin-character"],
+    "imprnt-plugin-character": ["imprnt-plugin-character@workspace:packages/plugin-character"],
 
-    "imprint-plugin-guard": ["imprint-plugin-guard@workspace:packages/plugin-guard"],
+    "imprnt-plugin-guard": ["imprnt-plugin-guard@workspace:packages/plugin-guard"],
 
-    "imprint-plugin-whenful": ["imprint-plugin-whenful@workspace:packages/plugin-whenful"],
+    "imprnt-plugin-whenful": ["imprnt-plugin-whenful@workspace:packages/plugin-whenful"],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 

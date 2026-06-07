@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// imprint check [--vault DIR]
+// imprnt check [--vault DIR]
 //
 // The integrity "robot" — an EXPLICIT command you run, never a background hook. Deterministic, no LLM.
 // Three checks + one regenerate, all pure reads over the corpus:
@@ -22,7 +22,7 @@ import { loadTags, normalize, appendTags } from "./lib/tags.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
 const args = process.argv.slice(2);
-let vault = process.env.IMPRINT_VAULT ?? "./vault";
+let vault = process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
 let all = false;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--vault") {
@@ -32,7 +32,7 @@ for (let i = 0; i < args.length; i++) {
   }
   else if (args[i] === "--all") all = true; // also run each plugins/*/check.ts (convention discovery)
 }
-if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`imprint init\` first`); process.exit(1); }
+if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`imprnt init\` first`); process.exit(1); }
 
 // Entity folders are link TARGETS — they may legitimately have few outgoing links, so they're exempt
 // from the disconnected-note check. Everything else (domains + forms) should connect to the graph.
@@ -154,7 +154,7 @@ const uncovered = [...new Set(rawEntries.map(norm))].filter((r) => !refNorm.has(
 // --- report ---------------------------------------------------------------
 const cap = (xs: string[], n = 25) => xs.slice(0, n).concat(xs.length > n ? [`  … +${xs.length - n} more`] : []);
 
-console.log(`imprint check — ${notes.length} notes in ${vault}\n`);
+console.log(`imprnt check — ${notes.length} notes in ${vault}\n`);
 
 if (orphans.length) { console.log(`⚠ orphan links (${orphans.length}) — target note missing:`); console.log(cap(orphans).join("\n"), "\n"); }
 else console.log("✓ no orphan links");
@@ -185,7 +185,7 @@ console.log(`↻ regenerated index.md — ${count} notes across ${folders} folde
 const issues = orphans.length + disconnected.length + domainIssues.length + untagged.length + uncovered.length + dupPairs.length;
 console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
 // check still PRINTS everything and never blocks or mutates a note — only the exit CODE reflects health,
-// so `imprint check` is usable in CI and `&&` chains. Core issues alone make the process exit non-zero.
+// so `imprnt check` is usable in CI and `&&` chains. Core issues alone make the process exit non-zero.
 // With --all the final exit is the max of core issues and any plugin failure (computed below).
 
 // --- plugin aggregation (--all only) --------------------------------------

@@ -12,7 +12,7 @@ by removing the import line.
 ## Install
 
 ```sh
-imprint plugin add anti-slop
+imprnt plugin add anti-slop
 ```
 
 That wires `@plugins/anti-slop/agent.md` into `CLAUDE.local.md` (gitignored, per-machine - Claude Code
@@ -27,7 +27,7 @@ into the private `_personal/` folder, extend it, and wire that one instead.
 ```sh
 cp plugins/anti-slop/agent.md plugins/_personal/voice.md
 # edit plugins/_personal/voice.md, then:
-imprint plugin add _personal/voice.md
+imprnt plugin add _personal/voice.md
 ```
 
 `plugins/_personal/` is gitignored, so your personal voice overlay never ships.
@@ -35,7 +35,7 @@ imprint plugin add _personal/voice.md
 ## Remove
 
 ```sh
-imprint plugin rm anti-slop
+imprnt plugin rm anti-slop
 ```
 
 Or delete the import line by hand.

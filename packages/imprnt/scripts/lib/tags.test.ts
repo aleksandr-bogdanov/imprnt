@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { loadTags, normalize, appendTags } from "./tags.ts";
 
 function tmpVault(tagsContent?: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "imprint-tags-"));
+  const dir = mkdtempSync(join(tmpdir(), "imprnt-tags-"));
   if (tagsContent !== undefined) writeFileSync(join(dir, "_tags.md"), tagsContent);
   return dir;
 }

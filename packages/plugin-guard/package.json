@@ -1,7 +1,7 @@
 {
-  "name": "imprint-plugin-guard",
+  "name": "imprnt-plugin-guard",
   "version": "0.1.0",
-  "description": "imprint plugin: a deterministic blocklist for dangerous shell commands. Wire guard.js as a PreToolUse hook on Bash.",
+  "description": "imprnt plugin: a deterministic blocklist for dangerous shell commands. Wire guard.js as a PreToolUse hook on Bash.",
   "type": "module",
   "files": [
     "agent.md",
@@ -15,8 +15,8 @@
     "prepack": "bun run build"
   },
   "keywords": [
-    "imprint",
-    "imprint-plugin",
+    "imprnt",
+    "imprnt-plugin",
     "guard",
     "safety"
   ],

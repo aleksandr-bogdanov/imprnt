@@ -1,4 +1,4 @@
-// imprint guard — deterministic destructive-command blocklist (opt-in plugin).
+// imprnt guard — deterministic destructive-command blocklist (opt-in plugin).
 // Shipped as built guard.js (node banner); run as `node plugins/guard/guard.js "<cmd>"` or via a hook.
 //
 //   node plugins/guard/guard.js "<command>"    # or pipe the command on stdin
