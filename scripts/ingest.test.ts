@@ -142,6 +142,83 @@ test("two different transcripts with the same date+subject each get their own no
   expect(needsReview(vault)).toContain("slug collision");
 });
 
+// --- round-3 finding: the DISAMBIGUATED no-op path must verify the FULL source_hash, not just that
+// a file exists at <slug>-<hash8>. We cannot practically force a real hash8 collision, so we test the
+// two reachable invariants the source_hash compare protects:
+//   (a) re-ingesting the SAME second (colliding) source is a clean idempotent no-op - manifest stable,
+//       the disambiguated note unchanged, no extra note created.
+//   (b) a THIRD distinct source colliding on the SAME base slug gets its OWN distinct note (its own
+//       hash8 suffix), not misfiled onto either prior note, with its manifest entry + source_hash
+//       pointing at its own note.
+// A regression where the disambiguated branch no-ops on existsSync WITHOUT comparing source_hash would
+// still pass (a) by luck (same bytes -> same hash8 file -> existsSync true -> no-op), but the compare
+// is what makes (a) CORRECT rather than accidental: under a real hash8 collision the un-checked branch
+// would point a distinct source's manifest at the wrong note and never write its bytes. (b) exercises
+// the surrounding base-slug disambiguation that the same source_hash helper drives, confirming three
+// distinct same-slug sources each keep their own note + manifest row.
+test("disambiguated path is idempotent for the same colliding source and gives a third distinct source its own note", () => {
+  const { vault } = setup();
+  const srcA = join(vault, "..", "a.txt");
+  const srcB = join(vault, "..", "b.txt");
+  const srcC = join(vault, "..", "c.txt");
+  // Same subject + date -> same base slug. DIFFERENT bytes -> three distinct sources.
+  writeFileSync(srcA, "subject: standup\ndate: 2025-09-09\nAlice: one.\nBob: two.\n");
+  writeFileSync(srcB, "subject: standup\ndate: 2025-09-09\nCarol: three.\nDave: four.\n");
+  writeFileSync(srcC, "subject: standup\ndate: 2025-09-09\nEve: five.\nFrank: six.\n");
+
+  expect(run(["ingest", srcA, "--vault", vault]).code).toBe(0);
+  expect(run(["ingest", srcB, "--vault", vault]).code).toBe(0); // B disambiguated onto -<hash8>
+
+  const baseNote = join(vault, "events", "2025-09-09-standup.md");
+  expect(existsSync(baseNote)).toBe(true);
+  const eventsAfterB = readdirSync(join(vault, "events")).filter((f) => f.endsWith(".md")).sort();
+  expect(eventsAfterB.length).toBe(2); // base + B disambiguated
+  const bDisambig = eventsAfterB.find((f) => f !== "2025-09-09-standup.md")!;
+  const bNoteBefore = readFileSync(join(vault, "events", bDisambig), "utf8");
+
+  const manifestBefore = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
+  const bEntryBefore = manifestBefore[srcB];
+  expect(bEntryBefore.note).toBe(join(vault, "events", bDisambig));
+
+  // (a) Re-ingest the SAME colliding source B. The delta-manifest skip catches an UNCHANGED file
+  // source, so to actually exercise the disambiguated note write-path we drop B's manifest row first,
+  // forcing the code back through the slug-collision branch. It must land on the SAME disambiguated
+  // note (full source_hash matches) and no-op, not create a second copy or misfile.
+  const manifestNoB = { ...manifestBefore };
+  delete manifestNoB[srcB];
+  writeFileSync(join(vault, ".manifest.json"), JSON.stringify(manifestNoB, null, 2));
+
+  const rReB = run(["ingest", srcB, "--vault", vault]);
+  expect(rReB.code).toBe(0);
+  expect(rReB.out.toLowerCase()).toContain("no-op");
+  // No extra note created, the disambiguated note is byte-identical, manifest re-points at the same note.
+  expect(readdirSync(join(vault, "events")).filter((f) => f.endsWith(".md")).length).toBe(2);
+  expect(readFileSync(join(vault, "events", bDisambig), "utf8")).toBe(bNoteBefore);
+  const manifestAfterReB = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
+  expect(manifestAfterReB[srcB].note).toBe(join(vault, "events", bDisambig));
+
+  // (b) A THIRD distinct source on the same base slug gets its OWN note, not misfiled onto base or B.
+  const rC = run(["ingest", srcC, "--vault", vault]);
+  expect(rC.code).toBe(0);
+  const eventsAfterC = readdirSync(join(vault, "events")).filter((f) => f.endsWith(".md")).sort();
+  expect(eventsAfterC.length).toBe(3); // base + B + C, all distinct
+  const cDisambig = eventsAfterC.find((f) => f !== "2025-09-09-standup.md" && f !== bDisambig)!;
+  const cNote = readFileSync(join(vault, "events", cDisambig), "utf8");
+  expect(cNote).toContain("[[people/eve]]");
+  expect(cNote).toContain("[[people/frank]]");
+  expect(cNote).not.toContain("[[people/carol]]");
+  expect(cNote).not.toContain("[[people/alice]]");
+  // C's recorded source_hash is its own, distinct from B's.
+  const cHash = cNote.match(/^source_hash:\s*(\S+)$/m)![1];
+  const bHash = readFileSync(join(vault, "events", bDisambig), "utf8").match(/^source_hash:\s*(\S+)$/m)![1];
+  expect(cHash).not.toBe(bHash);
+  // C's manifest entry points at C's own note with C's own hash, B's row untouched.
+  const manifestAfterC = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
+  expect(manifestAfterC[srcC].note).toBe(join(vault, "events", cDisambig));
+  expect(manifestAfterC[srcC].hash).toBe(cHash);
+  expect(manifestAfterC[srcB].note).toBe(join(vault, "events", bDisambig));
+});
+
 // --- finding 2: an email (From:/To:/Subject:) is NOT a transcript -> snapshot + needs-review, no
 // fabricated event with [[people/from]] / [[people/to]] participants ------------------------------
 test("an email is not detected as a transcript and gets no fabricated event note", () => {
