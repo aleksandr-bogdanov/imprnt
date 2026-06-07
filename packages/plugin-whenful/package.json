@@ -28,7 +28,7 @@
   "author": "Aleksandr Bogdanov",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aleksandr-bogdanov/imprint.git",
+    "url": "git+https://github.com/aleksandr-bogdanov/imprnt.git",
     "directory": "packages/plugin-whenful"
   },
   "devDependencies": {
