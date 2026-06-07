@@ -5,6 +5,8 @@
 
 <!-- DA character — the characters/ plugin on-switch (digital person: Taylor). Delete this line to turn it off. -->
 @plugins/characters/taylor.md
+<!-- Full anti-slop / writing voice spec — always-on (a behavior rule must be, or it fires too late). Trim to lighten later; never make it on-demand. -->
+@plugins/characters/writing.md
 
 ## Entry point: you talk, the assistant runs the tools
 
