@@ -26,16 +26,28 @@ function localPath(root: string): string {
   return join(root, "CLAUDE.local.md");
 }
 
+// Does the file an entry points at actually exist under the repo root? `add` checks this so it
+// never wires a dangling @import (a missing plugin dir, or a <name> with no agent.md).
+export function entryExists(root: string, entry: string): boolean {
+  const p = join(root, entry);
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function importLine(entry: string): string {
   return `@${entry}`;
 }
 
-// Every top-level dir under plugins/ except _personal/ (private) and any file (README.md).
+// Every top-level dir under plugins/ except _-prefixed ones (private, non-gallery convention)
+// and any file (README.md). Dotfiles are skipped too.
 export function listPluginDirs(root: string): string[] {
   const dir = join(root, "plugins");
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
-    .filter((name) => name !== "_personal" && !name.startsWith("."))
+    .filter((name) => !name.startsWith("_") && !name.startsWith("."))
     .filter((name) => {
       try {
         return statSync(join(dir, name)).isDirectory();
@@ -62,9 +74,21 @@ export function isEnabled(root: string, name: string): boolean {
 }
 
 // Wire a plugin in. Creates CLAUDE.local.md with a header on first add. Idempotent: a line
-// already present is left alone. Returns the import target, plus whether it was newly added.
-export function addPlugin(root: string, spec: string): { entry: string; added: boolean } {
+// already present is left alone. Refuses to wire a dangling @import: if the resolved entry file
+// does not exist under plugins/, returns an error and writes nothing. Returns the import target,
+// whether it was newly added, and an optional error string for the caller to report.
+export function addPlugin(
+  root: string,
+  spec: string,
+): { entry: string; added: boolean; error?: string } {
   const entry = entryFor(spec);
+  if (!entryExists(root, entry)) {
+    return {
+      entry,
+      added: false,
+      error: `no such plugin entry: ${entry}; expected an agent.md or a <name>/<file>.md`,
+    };
+  }
   const line = importLine(entry);
   const p = localPath(root);
   let content = existsSync(p) ? readFileSync(p, "utf8") : HEADER;
