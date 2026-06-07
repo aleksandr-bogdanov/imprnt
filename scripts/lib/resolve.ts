@@ -12,7 +12,9 @@ export function personResolved(vault: string, slug: string, displayName: string)
   const needle = displayName.toLowerCase();
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".md")) continue;
-    const fm = readFileSync(join(dir, f), "utf8").match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    // Accept CRLF (`\r\n`) fences so Windows-authored notes parse frontmatter. Without `\r?` the closing
+    // `---\r` line never matches and aliases fall through, so a CRLF person note never resolves. Mirrors recall.ts.
+    const fm = readFileSync(join(dir, f), "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
     const aliases = (fm.match(/aliases:\s*\[(.*?)\]/i)?.[1] ?? "").toLowerCase();
     // v2 emits no `title:` key (H1 is the title); alias-matching carries resolution.
     if (aliases.split(",").some((a) => a.trim().replace(/["']/g, "") === needle)) return true;
