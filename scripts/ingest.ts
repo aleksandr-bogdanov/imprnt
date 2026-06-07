@@ -471,18 +471,34 @@ if (existsSync(notePath)) {
     process.exit(0);
   }
   // Differing (or unreadable) source_hash -> a genuine slug collision. Disambiguate the new note.
-  // If the disambiguated slug somehow also exists, that means these exact new bytes were already
-  // filed here, so leave it in place rather than rewriting it.
   effectiveSlug = `${noteSlug}-${hash.slice(0, 8)}`;
   notePath = join(dir, `${effectiveSlug}.md`);
   flagNeedsReview(vault, `- [ ] slug collision: existing [[events/${noteSlug}]] vs new [[events/${effectiveSlug}]] (hash ${hash}); two different sources mapped to the same date+subject slug — reconcile`);
   console.log(`! ${src}: slug \`events/${noteSlug}\` already holds a different source -> filing new note under \`events/${effectiveSlug}\``);
   console.log(`  existing note kept untouched -> ${join(dir, `${noteSlug}.md`)}`);
-  if (existsSync(notePath)) {
-    manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawPath };
-    saveManifest(vault, manifest);
-    console.log(`  disambiguated note already exists from identical bytes -> ${notePath}  (no-op)`);
-    process.exit(0);
+  // The disambiguated slug uses only the first 8 hex of the source hash (32 bits), but source_hash
+  // and the manifest carry the full hash. So if the disambiguated note already exists we must NOT
+  // assume it is these exact bytes: read its recorded source_hash and compare the FULL hash, exactly
+  // as the base-slug branch above does.
+  //   - full hashes MATCH   -> genuine no-op, these exact bytes were already filed here (idempotent
+  //     re-ingest). Refresh provenance and leave the note alone.
+  //   - full hashes DIFFER  -> an astronomically rare hash8 collision between two DISTINCT sources.
+  //     The second source still needs its OWN note, so step to the next numbered slot (-2, -3, ...)
+  //     and check again. Never no-op onto or overwrite the other source's note.
+  let counter = 1;
+  while (existsSync(notePath)) {
+    const existingDisambigHash = fmScalar(frontmatter(readFileSync(notePath, "utf8")), "source_hash");
+    if (existingDisambigHash === hash) {
+      manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawPath };
+      saveManifest(vault, manifest);
+      console.log(`  disambiguated note already exists from identical bytes -> ${notePath}  (no-op)`);
+      process.exit(0);
+    }
+    // A distinct source already holds this disambiguated slug (hash8 collision) -> next numbered slot.
+    counter++;
+    effectiveSlug = `${noteSlug}-${hash.slice(0, 8)}-${counter}`;
+    notePath = join(dir, `${effectiveSlug}.md`);
+    console.log(`  hash8 collision with a distinct source -> trying \`events/${effectiveSlug}\` instead`);
   }
 }
 
