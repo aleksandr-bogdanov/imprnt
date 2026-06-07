@@ -25,9 +25,12 @@ const FOLDER_ORDER = [
 ];
 
 function frontmatter(raw: string): string {
-  return raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+  // Accept CRLF (`\r\n`) fences so Windows-authored notes parse frontmatter. Without `\r?` the closing
+  // `---\r` line never matches and summary/tags fall through, dropping them from index.md. Mirrors recall.ts.
+  return raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
 }
 function fmScalar(fm: string, key: string): string {
+  // `.trim()` also drops a trailing `\r` left on a per-line value when the note uses CRLF endings.
   return (fm.match(new RegExp(`^${key}:\\s*(.+)$`, "im"))?.[1] ?? "").trim().replace(/^["']|["']$/g, "");
 }
 function fmList(fm: string, key: string): string[] {
