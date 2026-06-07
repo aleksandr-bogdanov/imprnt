@@ -14,7 +14,7 @@ import {
 // A throwaway repo root with a plugins/ tree. We never touch the real CLAUDE.local.md: every
 // test wires against the temp root's own CLAUDE.local.md.
 function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "imprint-plugins-"));
+  const root = mkdtempSync(join(tmpdir(), "imprnt-plugins-"));
   mkdirSync(join(root, "plugins"), { recursive: true });
   return root;
 }
@@ -66,7 +66,7 @@ test("listPluginDirs skips files (README.md) and dotfiles, returns sorted dirs",
 });
 
 test("listPluginDirs returns empty when plugins/ is absent", () => {
-  const root = mkdtempSync(join(tmpdir(), "imprint-noplugins-"));
+  const root = mkdtempSync(join(tmpdir(), "imprnt-noplugins-"));
   expect(listPluginDirs(root)).toEqual([]);
 });
 

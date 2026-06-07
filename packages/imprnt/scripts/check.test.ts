@@ -1,4 +1,4 @@
-// Tests for `imprint check`: exit-code health signal (bug 1) and entity-aware disconnected detection
+// Tests for `imprnt check`: exit-code health signal (bug 1) and entity-aware disconnected detection
 // (bug 2), plus regression coverage for index.md regen and clean-vault behavior. Each test gets its
 // own temp vault and runs check.ts as a real subprocess so we assert both stdout AND the exit code.
 import { test, expect } from "bun:test";
@@ -14,7 +14,7 @@ const repoRoot = join(here, "..");
 // A minimal vault: the folders check/moc walk plus the control files. _tags.md carries a `## Tags`
 // list so the vocabulary-sync and dup-audit paths run.
 function makeVault(): string {
-  const dir = mkdtempSync(join(tmpdir(), "imprint-check-"));
+  const dir = mkdtempSync(join(tmpdir(), "imprnt-check-"));
   const folders = [
     "people", "orgs", "holdings",
     "identity", "health", "finances", "work", "life", "projects",
@@ -160,7 +160,7 @@ test("missing _tags.md is tolerated", () => {
   Bun.spawnSync(["rm", join(dir, "_tags.md")]);
   note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
   const { out } = runCheck(dir);
-  expect(out).toContain("imprint check");
+  expect(out).toContain("imprnt check");
   expect(out).not.toContain("tag vocabulary in sync");
 });
 
@@ -168,7 +168,7 @@ test("note with no frontmatter is tolerated", () => {
   const dir = makeVault();
   writeFileSync(join(dir, "people/raw.md"), "# Just a heading\n\nSee [[people/raw]].");
   const { out, code } = runCheck(dir);
-  expect(out).toContain("imprint check");
+  expect(out).toContain("imprnt check");
   // no frontmatter -> no tags -> flagged untagged -> non-zero, but must not crash.
   expect(out).toContain("untagged notes");
   expect(code).not.toBe(0);
@@ -444,13 +444,13 @@ test("sources: list of [[raw/...]] wikilinks marks every entry covered (not just
 // Copy the smallest repo that lets <copy>/scripts/check.ts run and glob <copy>/plugins. We omit the
 // real plugins/ entirely and recreate it with only our stubs, so aggregation is fully deterministic.
 function makeRepoCopy(): string {
-  const copy = mkdtempSync(join(tmpdir(), "imprint-repo-"));
+  const copy = mkdtempSync(join(tmpdir(), "imprnt-repo-"));
   cpSync(join(repoRoot, "scripts"), join(copy, "scripts"), { recursive: true });
   cpSync(join(repoRoot, "templates"), join(copy, "templates"), { recursive: true });
   cpSync(join(repoRoot, "package.json"), join(copy, "package.json"));
   cpSync(join(repoRoot, "tsconfig.json"), join(copy, "tsconfig.json"));
   // Symlink the hoisted monorepo-root node_modules so `bun` resolves @types/bun etc. (workspaces
-  // hoist deps to the repo root, two levels above packages/imprint).
+  // hoist deps to the repo root, two levels above packages/imprnt).
   symlinkSync(join(repoRoot, "..", "..", "node_modules"), join(copy, "node_modules"));
   mkdirSync(join(copy, "plugins"), { recursive: true });
   return copy;
@@ -478,7 +478,7 @@ test("--all surfaces a failing plugin: aggregate exit non-zero and plugin stdout
     stubPlugin(copy, "boom", "PLUGIN_BOOM_OUTPUT", 1);
     const vault = makeCleanVault();
     const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault], {
-      env: { ...process.env, IMPRINT_ROOT: copy },
+      env: { ...process.env, IMPRNT_ROOT: copy },
     });
     const out = proc.stdout.toString() + proc.stderr.toString();
     // core is clean, but the plugin exited 1 -> aggregate must be non-zero (the failed-plugin path).
@@ -499,7 +499,7 @@ test("--all with only a passing plugin and a clean core exits 0", () => {
     stubPlugin(copy, "ok", "PLUGIN_OK_OUTPUT", 0);
     const vault = makeCleanVault();
     const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault], {
-      env: { ...process.env, IMPRINT_ROOT: copy },
+      env: { ...process.env, IMPRNT_ROOT: copy },
     });
     const out = proc.stdout.toString() + proc.stderr.toString();
     expect(out).toContain("clean.");

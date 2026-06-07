@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// imprint ingest <file|text> [--text "<bytes>"] [--stdin] [--slug S] [--vault DIR]
+// imprnt ingest <file|text> [--text "<bytes>"] [--stdin] [--slug S] [--vault DIR]
 //
 // Input is shape-agnostic: a file path, --stdin, --text, or a bare arg that isn't a path (treated
 // AS the bytes). EVERY shape gets the same provenance — raw/ snapshot, content hash, manifest,
@@ -104,7 +104,7 @@ function targetFolder(type: string, domain: string): string | null {
   return null;
 }
 
-// --- imprint ingest --apply <file> / --apply-all ---------------------------
+// --- imprnt ingest --apply <file> / --apply-all ---------------------------
 // The SECOND (and last) core↔plugin contact, the partner of `check --all`. A plugin proposes a note
 // by dropping a PRE-ENRICHED markdown file (real `type`/`domain`/`summary`/`tags` + body) into its
 // own `plugins/<name>/proposed/`; `--apply` files it into the vault. This is the propose-then-approve
@@ -138,7 +138,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   const notePath = join(vault, `${noteRel}.md`);
 
   // The filed note must carry a `source:` wikilink back at the raw/proposed snapshot the apply records,
-  // or `imprint check`'s coverage scan flags that manifest raw entry as an uncovered snapshot forever
+  // or `imprnt check`'s coverage scan flags that manifest raw entry as an uncovered snapshot forever
   // (no note points back at it). If the plugin already supplied its own `source:`, we keep the note's
   // content verbatim and DON'T duplicate it; in that case we make the manifest raw entry agree with the
   // note's existing source: instead of the fresh snapshot, so the entry and the note still point at the
@@ -202,7 +202,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   saveManifest(vault, manifest);
 
   // Resolve participants/links the same way the transcript path does: an unresolved person -> needs-review.
-  // We only auto-resolve PEOPLE (the resolver's domain); other wikilink targets are checked by `imprint check`.
+  // We only auto-resolve PEOPLE (the resolver's domain); other wikilink targets are checked by `imprnt check`.
   const participants = fmList(fm, "participants").map(linkSlug);
   const owner = linkSlug(fmScalar(fm, "owner"));
   const peopleLinks = [...participants, ...(owner ? [owner] : [])]
@@ -233,7 +233,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
 // note; `--apply-all` globs plugins/*/proposed/*.md (convention discovery) and files each uniformly.
 {
   const a = process.argv.slice(2);
-  let applyVault = process.env.IMPRINT_VAULT ?? "./vault";
+  let applyVault = process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
   for (let i = 0; i < a.length; i++) if (a[i] === "--vault") {
     const v = a[++i];
     if (v === undefined) { console.error("--vault requires a directory argument"); process.exit(1); }
@@ -241,7 +241,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   }
 
   if (a.includes("--apply-all")) {
-    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`imprint init\` first`); process.exit(1); }
+    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`imprnt init\` first`); process.exit(1); }
     // Glob the user's PROJECT plugins/, where `plugin add` copies installed plugins (not the package).
     const pluginsDir = join(projectRoot(), "plugins");
     const staged: string[] = [];
@@ -266,8 +266,8 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   const applyIdx = a.indexOf("--apply");
   if (applyIdx >= 0) {
     const file = a[applyIdx + 1];
-    if (!file || file.startsWith("--")) { console.error("usage: imprint ingest --apply <file> [--vault DIR]"); process.exit(1); }
-    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`imprint init\` first`); process.exit(1); }
+    if (!file || file.startsWith("--")) { console.error("usage: imprnt ingest --apply <file> [--vault DIR]"); process.exit(1); }
+    if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`imprnt init\` first`); process.exit(1); }
     console.log(`ingest --apply ${file}`);
     const r = applyStaged(file, applyVault);
     process.exit(r === "conflict" || r === "error" ? 1 : 0);
@@ -283,7 +283,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
 // get the same raw/ snapshot + hash + manifest + reingest-no-op guarantee as files. When the source
 // is bytes (not a transcript file), we skip the transcript skeleton and let the LLM classify TYPE.
 const args = process.argv.slice(2);
-let vault = process.env.IMPRINT_VAULT ?? "./vault";
+let vault = process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
 let inlineText: string | undefined;
 let useStdin = false;
 let slugHint = "";
@@ -312,7 +312,7 @@ if (useStdin) {
 } else {
   const arg = positional[0];
   if (!arg) {
-    console.error('usage: imprint ingest <file|text> [--text "<bytes>"] [--stdin] [--slug S] [--vault DIR]');
+    console.error('usage: imprnt ingest <file|text> [--text "<bytes>"] [--stdin] [--slug S] [--vault DIR]');
     process.exit(1);
   }
   if (existsSync(arg)) { text = readFileSync(arg, "utf8"); src = arg; isFile = true; }
@@ -435,7 +435,7 @@ if (!isTranscript) {
   console.log(`  no skeleton written — not a confident transcript. next (the one LLM step):`);
   console.log(`  read ${rawPath}, then file it: an entity -> people/ orgs/ holdings/; a held position ->`);
   console.log(`  identity/; else by domain (health/ finances/ work/ life/). Write type + summary + tags`);
-  console.log(`  (from vault/_tags.md) + kind, and link >=1 existing entity. Then \`imprint check\`.`);
+  console.log(`  (from vault/_tags.md) + kind, and link >=1 existing entity. Then \`imprnt check\`.`);
   process.exit(0);
 }
 
@@ -450,7 +450,7 @@ const fm = [
   "type: event",
   `date: ${date}`,
   `participants: [${people.join(", ")}]`,
-  "summary:                      # LLM writes one line — `imprint check` reads it to build index.md",
+  "summary:                      # LLM writes one line — `imprnt check` reads it to build index.md",
   "tags: []                      # LLM fills the best-fit tag (vault/_tags.md); coin a new one if none fits, check syncs it",
   "project:                      # LLM links the project this event touched",
   `source: "[[${rawRel}]]"`,
@@ -565,4 +565,4 @@ console.log(`  note     -> ${notePath}  (${speakers.size} participants, ${turnCo
 if (unresolved.length) console.log(`  ⚠ ${unresolved.length} unresolved participant(s) -> needs-review: ${unresolved.join(", ")}`);
 console.log(`  deterministic skeleton only. next (the one LLM step): the agent fills`);
 console.log(`  summary + Summary/Decisions/Actions/Questions, assigns tags from vault/_tags.md,`);
-console.log(`  and links people + projects (resolving the flagged participants). Then \`imprint check\`.`);
+console.log(`  and links people + projects (resolving the flagged participants). Then \`imprnt check\`.`);

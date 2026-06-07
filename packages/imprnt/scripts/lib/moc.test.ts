@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { generateIndex, collectNotes } from "./moc.ts";
 
 function tmpVault(): string {
-  return mkdtempSync(join(tmpdir(), "imprint-moc-"));
+  return mkdtempSync(join(tmpdir(), "imprnt-moc-"));
 }
 
 function writeNote(vault: string, folder: string, name: string, body: string): void {

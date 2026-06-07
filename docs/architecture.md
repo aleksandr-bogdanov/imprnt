@@ -1,4 +1,4 @@
-# imprint - how it works (the plain version)
+# imprnt - how it works (the plain version)
 
 A personal knowledge base you own, built to be used by you and by an AI assistant. No database,
 no cloud, and no paying an AI to do boring work.
@@ -17,7 +17,7 @@ lessons learned the hard way. It piles up, and two things go wrong:
 2. **Your AI assistant knows nothing.** Every chat starts cold. You re-explain your projects,
    your team, and your history every time.
 
-imprint fixes both. Dump things in, and later ask "what do I know about X?" to get a real
+imprnt fixes both. Dump things in, and later ask "what do I know about X?" to get a real
 answer, including from an AI agent that can then help you act on it.
 
 ## The core idea
@@ -94,7 +94,7 @@ Director of Identity, owns the access-platform project.
 - **Frontmatter** (the `---` block) is YAML: simple `key: value` lines. Every note has `type`,
   `tags`, and a one-line `summary` (the AI writes it once, a deterministic pass reads it to
   build `index.md`). The **H1 (`# Title`) is the title**, so there is no `title:` key. A note in
-  a domain folder also carries `domain:` so it is self-describing, and `imprint check` fails if
+  a domain folder also carries `domain:` so it is self-describing, and `imprnt check` fails if
   folder and field disagree. `source:` is a clickable wikilink back to the immutable snapshot
   the note came from. Entity-valued fields are links too (`owner: "[[people/alex]]"`). This is
   the part the tools read and query.
@@ -123,7 +123,7 @@ the AI:
 3. **Resolve and file (plain code, no AI).** Grep names and `aliases` across the entity folders.
    If this person is already on file under a nickname, merge rather than create a duplicate.
    Write the note, append the one chronological line to `log.md`.
-4. **Regenerate and soft-fail (plain code).** `imprint check` rebuilds `index.md` and flags any
+4. **Regenerate and soft-fail (plain code).** `imprnt check` rebuilds `index.md` and flags any
    note that links nothing, resolves no entity, has an orphan link, or carries no tags into
    `needs-review`. It never blocks and never silently drops.
 
@@ -204,7 +204,7 @@ keeps lean.
 `vault/_tags.md` holds the tag values plus a bidirectional synonym map. At ingest the AI applies
 the best-fitting tag. If none fits, it coins a new one (kebab-case, one concept) and uses it.
 There is no human-approval gate, because a tag is just a string the note already holds.
-`imprint check` then syncs every tag the notes carry into `_tags.md` for free. So a new domain
+`imprnt check` then syncs every tag the notes carry into `_tags.md` for free. So a new domain
 (wardrobe, shoes, a client) never hits a wall: tag the note, run `check`, the vocabulary catches
 up.
 
@@ -258,11 +258,11 @@ The shipped gallery lives in `plugins/`:
 
 A behavior plugin like `character/` or `anti-slop/` works by handing the assistant a fixed chunk
 of text that you wire into its config. The mechanism is `CLAUDE.local.md`, a gitignored
-per-machine file Claude Code auto-loads right after the committed `CLAUDE.md`. `imprint plugin
+per-machine file Claude Code auto-loads right after the committed `CLAUDE.md`. `imprnt plugin
 add <name>` appends the one `@import` line for you, and `rm` strips it back out. A fresh clone
 has no `CLAUDE.local.md`, so it loads zero plugins by default. Deleting the line is the real
-off-switch the old system never had. The whole point: the system imprint replaces imposed its
-features on you, imprint lets you compose only the ones you want, with a real off-switch. Full
+off-switch the old system never had. The whole point: the system imprnt replaces imposed its
+features on you, imprnt lets you compose only the ones you want, with a real off-switch. Full
 rules are in `plugins/README.md`.
 
 ## Safety net: the originals are never touched

@@ -26,10 +26,10 @@ no group-convening machinery exists; this folder is just the cast.
 Enable Scribe with the plugin command:
 
 ```sh
-imprint plugin add character
+imprnt plugin add character
 ```
 
-That fetches `imprint-plugin-character`, copies it into `plugins/character/`, and wires
+That fetches `imprnt-plugin-character`, copies it into `plugins/character/`, and wires
 `@plugins/character/agent.md` into `CLAUDE.local.md` (gitignored, per-machine - Claude
 Code auto-loads it right after the committed `CLAUDE.md`). Or hand-edit `CLAUDE.local.md` and add the
 line yourself. Never wire it into the committed `CLAUDE.md` - that keeps personal wiring out of the
@@ -43,7 +43,7 @@ edit the voice, and wire that one instead.
 ```sh
 cp plugins/character/agent.md plugins/_personal/mychar.md
 # edit plugins/_personal/mychar.md, then:
-imprint plugin add _personal/mychar.md
+imprnt plugin add _personal/mychar.md
 ```
 
 `plugins/_personal/` is gitignored, so your private character never ships and never lands in the
@@ -52,7 +52,7 @@ public gallery.
 ## Remove
 
 ```sh
-imprint plugin rm character
+imprnt plugin rm character
 ```
 
 Or delete the import line by hand. To drop the file entirely, `rm plugins/character/<name>.md`. No

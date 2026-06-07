@@ -6,7 +6,7 @@
 
 ## What this plugin is
 
-Whenful is the user's task scheduler (whenful.com). This plugin lets an imprint note show the **live
+Whenful is the user's task scheduler (whenful.com). This plugin lets an imprnt note show the **live
 status of the tasks attached to it** without putting task management into the vault. Tasks stay in
 Whenful; the vault stays knowledge. The bridge is a join table plus a local mirror of task state.
 
@@ -19,7 +19,7 @@ Whenful; the vault stays knowledge. The bridge is a join table plus a local mirr
   one file per task. Refreshed only by `sync`. **Render task status at read time off these files —
   never call the Whenful server to display status.** The server is touched only by `sync`.
 - `plugins/whenful/proposed/` — staging for any note the plugin proposes into the vault (you approve
-  it via `imprint ingest --apply`). Used sparingly — only to graduate a *summary*, never one note per
+  it via `imprnt ingest --apply`). Used sparingly — only to graduate a *summary*, never one note per
   task.
 
 ## Commands (you run these; nothing runs on its own)
@@ -29,7 +29,7 @@ Whenful; the vault stays knowledge. The bridge is a join table plus a local mirr
   never a daemon. *(Today this is a documented stub — it makes no live call yet. Live wiring is the
   next session.)*
 - `node plugins/whenful/check.js` — the plugin's own integrity check (mirror staleness + orphan links).
-  The core finds it via `imprint check --all`.
+  The core finds it via `imprnt check --all`.
 
 ## How to surface a note's tasks
 
@@ -46,6 +46,6 @@ When the user opens or asks about a vault note and wants its tasks:
 - **Render-at-read off the mirror, never the server.** Only `sync` talks to Whenful.
 - **Never write task state into vault notes.** The link lives in `links.tsv`; the state lives in the
   mirror. To put something durable in the vault, propose a summary note into `proposed/` and let the
-  user `imprint ingest --apply` it.
+  user `imprnt ingest --apply` it.
 - **Slug-namespace any label** you ever add to a note (`whenful.*`) — but prefer the join table over
   labels-in-notes; v1 keeps the link out of the note body entirely.

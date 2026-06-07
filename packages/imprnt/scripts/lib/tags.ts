@@ -4,7 +4,7 @@
 // section are ignored on load and never touched on append.
 //
 // The vocabulary is AUTO-GROWING, not a gated allowlist: ingest applies the best-fitting tag, and
-// `imprint check` syncs anything new into the list via `appendTags` below. Coining a tag needs no
+// `imprnt check` syncs anything new into the list via `appendTags` below. Coining a tag needs no
 // human approval — a tag is just a string the note already carries. The discipline that keeps the
 // list lean moved to a non-blocking audit (check flags near-duplicate tags for a conscious synonym
 // merge), off the write path. One concept = one tag is still the goal, enforced by that audit.
@@ -62,7 +62,7 @@ export function normalize(vocab: TagVocab, term: string): string {
 
 // Auto-grow the vocabulary: append new canonical tags to _tags.md's `## Tags` list, preserving all
 // surrounding formatting (touches only the tag line). Deterministic, no LLM. Returns the tags added.
-// Guards: no-op if _tags.md is absent (that's `imprint init`'s job, not check's) or nothing is new.
+// Guards: no-op if _tags.md is absent (that's `imprnt init`'s job, not check's) or nothing is new.
 export function appendTags(vault: string, newTags: string[]): string[] {
   const p = join(vault, "_tags.md");
   if (!existsSync(p) || newTags.length === 0) return [];

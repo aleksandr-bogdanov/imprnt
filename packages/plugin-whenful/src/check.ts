@@ -1,8 +1,8 @@
-// imprint · whenful plugin — integrity check. Shipped as built check.js (node banner).
+// imprnt · whenful plugin — integrity check. Shipped as built check.js (node banner).
 //
 //   node plugins/whenful/check.js       exits 0 if the plugin's data is sound, non-zero if not.
 //
-// This is the file the core's `imprint check --all` aggregator globs (plugins/*/check.ts). The core
+// This is the file the core's `imprnt check --all` aggregator globs (plugins/*/check.ts). The core
 // reads ONLY this script's exit code and forwards its stdout verbatim — it never parses the text. So we
 // print a rich, human-readable diagnosis and let the exit code carry the pass/fail. No LLM, pure reads.
 //

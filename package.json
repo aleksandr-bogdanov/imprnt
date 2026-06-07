@@ -1,9 +1,9 @@
 {
-  "name": "imprint-monorepo",
+  "name": "imprnt-monorepo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Monorepo for imprint (core CLI) and the imprint-plugin-* gallery. Not published — each package under packages/ publishes itself.",
+  "description": "Monorepo for imprnt (core CLI) and the imprnt-plugin-* gallery. Not published — each package under packages/ publishes itself.",
   "workspaces": [
     "packages/*"
   ],

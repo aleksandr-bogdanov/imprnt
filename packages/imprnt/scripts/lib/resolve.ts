@@ -1,7 +1,7 @@
 // Entity resolution (deterministic) + needs-review surfacing.
 // A person is "resolved" if a people/<slug>.md exists, or any person note lists the
 // name as an alias. Unresolved entities are soft-failed to _needs-review.md,
-// which `imprint hot` prints in your face — the only lint that works on a single-user system.
+// which `imprnt hot` prints in your face — the only lint that works on a single-user system.
 import { existsSync, readdirSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

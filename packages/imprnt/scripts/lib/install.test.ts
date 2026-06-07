@@ -8,10 +8,10 @@ import { installPlugin, purgePlugin, OFFICIAL } from "./install.ts";
 // plus src/ and a stray file that files[] excludes. installPlugin runs `npm pack` on this, so the
 // test exercises the exact packing the registry would do.
 function mkPluginSrc(name: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "imprint-pluginsrc-"));
+  const dir = mkdtempSync(join(tmpdir(), "imprnt-pluginsrc-"));
   writeFileSync(
     join(dir, "package.json"),
-    JSON.stringify({ name: `imprint-plugin-${name}`, version: "0.0.1", files: ["agent.md", "check.js", "proposed"] }),
+    JSON.stringify({ name: `imprnt-plugin-${name}`, version: "0.0.1", files: ["agent.md", "check.js", "proposed"] }),
   );
   writeFileSync(join(dir, "agent.md"), `# ${name} agent\n`);
   writeFileSync(join(dir, "check.js"), `console.log("${name} ok");\n`);
@@ -24,7 +24,7 @@ function mkPluginSrc(name: string): string {
 }
 
 function tmpProject(): string {
-  const root = mkdtempSync(join(tmpdir(), "imprint-proj-"));
+  const root = mkdtempSync(join(tmpdir(), "imprnt-proj-"));
   mkdirSync(join(root, "plugins"), { recursive: true });
   return root;
 }
@@ -70,8 +70,8 @@ test("installPlugin errors when --from path is missing", () => {
 });
 
 test("installPlugin errors when the package has no agent.md", () => {
-  const dir = mkdtempSync(join(tmpdir(), "imprint-noagent-"));
-  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "imprint-plugin-bad", version: "0.0.1", files: ["check.js"] }));
+  const dir = mkdtempSync(join(tmpdir(), "imprnt-noagent-"));
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "imprnt-plugin-bad", version: "0.0.1", files: ["check.js"] }));
   writeFileSync(join(dir, "check.js"), "console.log(1);\n");
   const proj = tmpProject();
   const r = installPlugin(proj, "bad", { from: dir });

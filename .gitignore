@@ -17,9 +17,9 @@ Plans/
 dist/
 
 # Shipped-doc copies — each package's `shipdocs` copies these from the repo root at publish time.
-packages/imprint/CLAUDE.md
-packages/imprint/README.md
-packages/imprint/LICENSE
+packages/imprnt/CLAUDE.md
+packages/imprnt/README.md
+packages/imprnt/LICENSE
 
 # Built plugin artifacts — compiled from each plugin's src/ by its build script, shipped, not committed.
 packages/plugin-*/check.js
