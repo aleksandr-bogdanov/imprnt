@@ -1,6 +1,6 @@
 // Delta-manifest: track processed sources by content hash so re-ingestion is incremental.
 // One JSON file per vault. Plain, greppable, no DB.
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 export type ManifestEntry = { hash: string; note: string; ingested: string; raw?: string; src?: string };
@@ -16,7 +16,15 @@ export function loadManifest(vault: string): Manifest {
   try {
     return JSON.parse(readFileSync(p, "utf8")) as Manifest;
   } catch {
-    return {};
+    // A corrupt/partial manifest must NEVER be silently dropped: returning {} here and then saving
+    // would overwrite the file and lose every prior provenance entry. The safer choice is to move the
+    // corrupt file aside to a numbered sidecar (never clobbering an earlier backup) so the bytes are
+    // preserved for manual recovery, and abort loudly so the caller does not proceed on empty state.
+    let n = 0;
+    let backup = `${p}.corrupt-${n}`;
+    while (existsSync(backup)) backup = `${p}.corrupt-${++n}`;
+    renameSync(p, backup);
+    throw new Error(`manifest is corrupt and could not be parsed: ${p}\n  backed up to ${backup} — inspect it, then retry. provenance was not lost.`);
   }
 }
 

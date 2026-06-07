@@ -30,6 +30,27 @@ function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 }
 
+// Known source file extensions a user would pass as a path. A single-line inline fact never ends in
+// one of these, so this stays a safe discriminator alongside the separator check.
+const PATH_EXTS = new Set([".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pdf", ".rtf", ".html", ".htm", ".vtt", ".srt"]);
+
+// True if the arg is SHAPED like a file path: it contains a path separator, or it is a single token
+// (no whitespace) ending in a known file extension. An inline fact ("call Bob tomorrow") matches
+// neither, so it is still treated as bytes; a mistyped "notes/2025.txt" is caught as a missing file.
+function looksLikePath(arg: string): boolean {
+  if (arg.includes("/") || arg.includes("\\")) return true;
+  if (!/\s/.test(arg) && PATH_EXTS.has(extname(arg).toLowerCase())) return true;
+  return false;
+}
+
+// Conservative transcript detector. The contract says ONLY a transcript gets the deterministic event
+// skeleton; any other prose is snapshotted and left for the LLM to classify. We fire only when the
+// shape is unambiguous: at least two DISTINCT speaker labels, or an explicit meta header
+// (subject:/date:/topic:/attendees:/participants:). A single stray "Word:" line never qualifies.
+function looksLikeTranscript(speakers: Set<string>, hasMetaHeader: boolean): boolean {
+  return speakers.size >= 2 || hasMetaHeader;
+}
+
 // --- frontmatter helpers (deterministic — STRUCTURE only, no LLM) ----------
 function frontmatter(raw: string): string {
   return raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
@@ -111,7 +132,10 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   // Snapshot the staged note into raw/ for provenance, reusing the same content-addressed scheme as the
   // bytes path: identical bytes never collide, distinct bytes never clobber, reuse an existing snapshot.
   const manifest = loadManifest(vault);
-  const manifestKey = `sha256:${hash}`;
+  // Namespace the apply key by kind so an applied note never shares a manifest slot with an
+  // inline-bytes ingest of byte-identical content (`bytes:sha256:...`); identical bytes from two
+  // different source kinds must keep distinct provenance rows.
+  const manifestKey = `apply:sha256:${hash}`;
   const priorSnapshot = Object.values(manifest).find((e) => e.hash === hash && e.raw && existsSync(e.raw))?.raw;
   const rawDir = join(vault, "..", "raw", "proposed");
   let rawPath: string;
@@ -233,15 +257,24 @@ if (useStdin) {
     process.exit(1);
   }
   if (existsSync(arg)) { text = readFileSync(arg, "utf8"); src = arg; isFile = true; }
+  else if (looksLikePath(arg)) {
+    // The arg is shaped like a file path (has a separator or a known extension) but does not exist.
+    // Treating it as inline text would silently snapshot the literal path string as content, hiding a
+    // typo. Error instead. A genuine inline dump has no path-like shape and still falls through below.
+    console.error(`no such file: ${arg}`);
+    process.exit(1);
+  }
   else { text = arg; src = "<text>"; } // not a path -> the arg IS the source bytes (an inline fact)
 }
 if (!text.trim()) { console.error("empty source — nothing to ingest"); process.exit(1); }
 
 // --- delta manifest (incremental — skip unchanged sources) -----------------
 // File sources key on their path; bytes sources (inline/stdin) have no path, so key on the content
-// hash itself — reingesting identical bytes stays a no-op either way.
+// hash itself — reingesting identical bytes stays a no-op either way. The bytes key is NAMESPACED
+// (`bytes:sha256:...`) so it can never collide with an `--apply` entry of identical bytes
+// (`apply:sha256:...`), which would otherwise clobber the other's provenance under a shared key.
 const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
-const manifestKey = isFile ? src : `sha256:${hash}`;
+const manifestKey = isFile ? src : `bytes:sha256:${hash}`;
 const manifest = loadManifest(vault);
 if (manifest[manifestKey]?.hash === hash) {
   console.log(`unchanged (hash ${hash}) — skipping ${src}. note: ${manifest[manifestKey].note}`);
@@ -254,22 +287,33 @@ const dateMatch = fname.match(/(\d{4}-\d{2}-\d{2})/) || text.match(/^\s*date:\s*
 const date = dateMatch ? dateMatch[1] : new Date().toISOString().slice(0, 10);
 
 const lines = text.split(/\r?\n/);
-const SPEAKER = /^([A-Z][A-Za-z .'-]{1,40}):\s*(.*)$/;
+// A meta line is `key: value` where key is one of the conventional header keys, matched
+// case-INSENSITIVELY so lowercase `subject:`/`date:`/`topic:` are parsed too (not just capitalized
+// forms). Meta keys are checked BEFORE the speaker pattern so a header is never counted as a speaker.
 const META_KEYS = new Set(["date", "subject", "topic", "note", "notes", "attendees", "participants"]);
+const META = /^([A-Za-z][A-Za-z]*):\s*(.*)$/;
+// A speaker label is a SHORT capitalized name (1 to 3 words, letters/spaces/.'-) followed by a colon.
+// Keeping it short and word-bounded stops a sentence fragment that happens to contain a colon
+// ("I think: ...", "Note: long prose ...") from being mistaken for a speaker turn.
+const SPEAKER = /^([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2}):\s+\S.*$/;
 const speakers = new Set<string>();
 let subject = "";
 let turnCount = 0;
+let hasMetaHeader = false;
 for (const line of lines) {
-  const m = line.match(SPEAKER);
-  if (!m) continue;
-  const key = m[1].trim().toLowerCase();
-  if (META_KEYS.has(key)) {
-    if (key === "subject" || key === "topic") subject = m[2].trim();
+  const meta = line.match(META);
+  if (meta && META_KEYS.has(meta[1].trim().toLowerCase())) {
+    hasMetaHeader = true;
+    const key = meta[1].trim().toLowerCase();
+    if ((key === "subject" || key === "topic") && !subject) subject = meta[2].trim();
     continue;
   }
+  const m = line.match(SPEAKER);
+  if (!m) continue;
   speakers.add(m[1].trim());
   turnCount++;
 }
+const isTranscript = isFile && looksLikeTranscript(speakers, hasMetaHeader);
 
 // --- snapshot the source into raw/ (verbatim, immutable) -------------------
 // Universal first move for EVERY source (file OR inline bytes): write the bytes into raw/ so any
@@ -279,8 +323,9 @@ for (const line of lines) {
 const slugBasis = slugHint || subject || [...speakers].join("-") || (isFile ? basename(src, extname(src)) : text.slice(0, 60));
 const subjectSlug = slugify(slugBasis || "source");
 const noteSlug = `${date}-${subjectSlug}`;
-// raw/ is keyed by source: a transcript file is a dated dump -> raw/transcripts/; loose bytes -> raw/adhoc/.
-const rawDir = join(vault, "..", "raw", isFile ? "transcripts" : "adhoc");
+// raw/ is keyed by source: a transcript file is a dated dump -> raw/transcripts/; a non-transcript
+// file or loose bytes is unclassified -> raw/adhoc/ (it still gets the full snapshot + provenance).
+const rawDir = join(vault, "..", "raw", isTranscript ? "transcripts" : "adhoc");
 
 const priorSnapshot = Object.values(manifest).find((e) => e.hash === hash && e.raw && existsSync(e.raw))?.raw;
 let rawPath: string;
@@ -297,12 +342,13 @@ if (priorSnapshot) {
   }
 }
 
-// --- bytes source: snapshot only, no skeleton (LLM classifies TYPE) --------
-// An inline fact or a pasted prose dump has no known type, so the CLI does NOT guess it: it records
-// the raw/ snapshot in the manifest and hands off to the conscious LLM step, which picks one of the 8
-// types and creates the note. This is the same handoff the Ingest workflow already does for any
-// non-transcript source — we just give it the same provenance (snapshot + hash + manifest + no-op).
-if (!isFile) {
+// --- non-transcript source: snapshot only, no skeleton (LLM classifies TYPE) --------
+// An inline fact, a pasted prose dump, OR a non-transcript prose FILE has no known type, so the CLI
+// does NOT guess it: it records the raw/ snapshot in the manifest and hands off to the conscious LLM
+// step, which picks one of the 8 types and creates the note. Only a CONFIDENT transcript gets the
+// deterministic event skeleton below; everything else just gets provenance + a needs-review handoff,
+// so a plain prose file is never forced into a bogus `# 1:1 -` event with empty participants.
+if (!isTranscript) {
   manifest[manifestKey] = { hash, note: "", ingested: new Date().toISOString(), raw: rawPath };
   saveManifest(vault, manifest);
   // Coverage ledger: a snapshotted-but-unclassified source has no note yet. If the LLM classify
@@ -312,7 +358,7 @@ if (!isFile) {
   flagNeedsReview(vault, `- [ ] unclassified source \`${rawPath}\` — snapshotted, needs TYPE + note`);
   console.log(`snapshotted ${src}`);
   console.log(`  snapshot -> ${rawPath}${priorSnapshot ? "  (reused — identical bytes already snapshotted)" : "  (immutable)"}`);
-  console.log(`  no skeleton written — this is bytes, not a transcript. next (the one LLM step):`);
+  console.log(`  no skeleton written — not a confident transcript. next (the one LLM step):`);
   console.log(`  read ${rawPath}, then file it: an entity -> people/ orgs/ holdings/; a held position ->`);
   console.log(`  identity/; else by domain (health/ finances/ work/ life/). Write type + summary + tags`);
   console.log(`  (from vault/_tags.md) + kind, and link >=1 existing entity. Then \`imprint check\`.`);
@@ -368,6 +414,23 @@ const note = `${fm}\n\n${body}`;
 const dir = join(vault, "events");
 mkdirSync(dir, { recursive: true });
 const notePath = join(dir, `${noteSlug}.md`);
+
+// Re-ingest discipline (contradiction handling, mirroring `--apply`): if a note ALREADY exists at this
+// slug, NEVER clobber it with the empty deterministic skeleton. The existing note may carry the LLM's
+// enrichment (summary, tags, links, decisions) which the skeleton would destroy. We still refresh the
+// snapshot + manifest (the source bytes are new provenance) and surface a needs-review line so the
+// changed source is reconciled by hand, exactly as a conflicting `--apply` would be.
+if (existsSync(notePath)) {
+  manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawPath };
+  saveManifest(vault, manifest);
+  flagNeedsReview(vault, `- [ ] source changed for existing note [[events/${noteSlug}]] — new snapshot \`${rawPath}\` (hash ${hash}); reconcile the enriched note against the updated transcript (existing note NOT overwritten)`);
+  console.log(`! ${src}: event note already exists -> not overwriting (contradiction discipline)`);
+  console.log(`  note kept   -> ${notePath}  (any LLM enrichment preserved)`);
+  console.log(`  snapshot -> ${rawPath}${priorSnapshot ? "  (reused — identical bytes already snapshotted)" : "  (immutable)"}`);
+  console.log(`  ⚠ source changed -> needs-review: reconcile the note against the new snapshot.`);
+  process.exit(0);
+}
+
 writeFileSync(notePath, note);
 
 manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawPath };
