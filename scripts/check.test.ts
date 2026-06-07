@@ -36,6 +36,22 @@ function runCheck(dir: string, extra: string[] = []): { code: number; out: strin
   return { code: proc.exitCode, out: proc.stdout.toString() + proc.stderr.toString() };
 }
 
+// The exact slugs printed under the "disconnected notes" header. check.ts prints each flagged note as
+// its own two-space-indented line, then a blank line ends the section. We collect those lines and strip
+// the indent so callers can do exact-equality membership checks (no substring or prefix false-matches).
+function disconnectedList(out: string): string[] {
+  const lines = out.split("\n");
+  const start = lines.findIndex((l) => l.includes("disconnected notes"));
+  if (start === -1) return [];
+  const slugs: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^  (\S.*)$/);
+    if (!m) break; // blank line or next section ends the list
+    slugs.push(m[1].trim());
+  }
+  return slugs;
+}
+
 // --- bug 1: exit code reflects health -------------------------------------
 
 test("clean vault exits 0", () => {
@@ -82,9 +98,10 @@ test("domain note linking only another domain note is disconnected", () => {
   note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
   const { code, out } = runCheck(dir);
   expect(out).toContain("disconnected notes");
-  // a/ links only a domain note -> flagged; b/ links an entity -> not flagged.
-  expect(out).toContain("health/a");
-  expect(out).not.toMatch(/disconnected[\s\S]*?\n  health\/b\b/);
+  // a/ links only a domain note -> flagged on its own line; b/ links an entity -> not flagged.
+  const dis = disconnectedList(out);
+  expect(dis).toContain("health/a");
+  expect(dis).not.toContain("health/b");
   expect(code).not.toBe(0);
 });
 
@@ -102,7 +119,7 @@ test("domain note linking only raw/ is disconnected", () => {
   note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna\n\nLink [[people/anna]].");
   const { out } = runCheck(dir);
   expect(out).toContain("disconnected notes");
-  expect(out).toContain("health/a");
+  expect(disconnectedList(out)).toContain("health/a");
 });
 
 test("entity note linking nothing is NOT disconnected", () => {
@@ -110,7 +127,7 @@ test("entity note linking nothing is NOT disconnected", () => {
   note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
   const { out } = runCheck(dir);
   // anna is in an entity folder and links nothing, yet must not be flagged.
-  expect(out).not.toMatch(/disconnected[\s\S]*people\/anna/);
+  expect(disconnectedList(out)).not.toContain("people/anna");
 });
 
 test("bare-slug link to an entity counts as connected", () => {
@@ -161,4 +178,57 @@ test("empty vault does not crash and regenerates index", () => {
   const { out } = runCheck(dir);
   expect(out).toContain("regenerated index.md");
   expect(existsSync(join(dir, "index.md"))).toBe(true);
+});
+
+// A freshly scaffolded / empty vault has zero notes and therefore zero issues. It MUST exit 0 - a
+// regression that made the empty case exit 1 would greet every new user with a failure on first run.
+test("empty vault exits 0", () => {
+  const dir = makeVault();
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+// --- per-issue exit-code coverage -----------------------------------------
+// Each issue type must drive a non-zero exit (the CI health signal). orphan / untagged / duplicate-tag
+// are asserted above. disconnected is asserted in its own section. domain-mismatch is the last gap.
+
+test("vault with a domain mismatch exits non-zero", () => {
+  const dir = makeVault();
+  // note sits in health/ but declares domain: work -> folder != domain field.
+  note(dir, "health/a.md", "domain: work\ntags: [health]", "# A\n\nSee [[people/anna]].");
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("domain mismatches");
+  expect(code).not.toBe(0);
+});
+
+// --- --all aggregation exit code ------------------------------------------
+// --all globs the REPO plugins dir via import.meta.url, so a temp vault cannot inject fake plugins.
+// We test the fully reachable path: core issues alone must make --all exit non-zero, regardless of
+// whether the repo's own plugin checks pass. The failing-plugin path (a plugin exit != 0 increments
+// `failed` and forces a non-zero exit) is covered by inspection - that code predates round-1 and was
+// already exiting non-zero before the aggregation change.
+
+test("--all with a dirty core exits non-zero even if repo plugins pass", () => {
+  const dir = makeVault();
+  // an orphan link is a core issue. --all must surface it as a non-zero exit no matter the plugins.
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  note(dir, "health/checkup.md", "domain: health\ntags: [health]", "# Checkup\n\nLinks [[people/anna]] and [[people/ghost]].");
+  const { code, out } = runCheck(dir, ["--all"]);
+  expect(out).toContain("orphan links");
+  expect(out).toContain("— plugins");
+  expect(code).not.toBe(0);
+});
+
+test("--all with a clean core and passing repo plugins exits 0", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  note(dir, "health/checkup.md", "domain: health\ntags: [health]", "# Checkup\n\nSaw [[people/anna]].");
+  const { code, out } = runCheck(dir, ["--all"]);
+  expect(out).toContain("clean.");
+  expect(out).toContain("— plugins");
+  // exit 0 only holds when every repo plugin check also passes. If a repo plugin is intentionally
+  // failing this assertion documents that - relax it then, the core-clean path itself is sound.
+  expect(code).toBe(0);
 });
