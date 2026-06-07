@@ -2,13 +2,14 @@
 // (bug 2), plus regression coverage for index.md regen and clean-vault behavior. Each test gets its
 // own temp vault and runs check.ts as a real subprocess so we assert both stdout AND the exit code.
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, symlinkSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CHECK = join(here, "check.ts");
+const repoRoot = join(here, "..");
 
 // A minimal vault: the folders check/moc walk plus the control files. _tags.md carries a `## Tags`
 // list so the vocabulary-sync and dup-audit paths run.
@@ -231,4 +232,194 @@ test("--all with a clean core and passing repo plugins exits 0", () => {
   // exit 0 only holds when every repo plugin check also passes. If a repo plugin is intentionally
   // failing this assertion documents that - relax it then, the core-clean path itself is sound.
   expect(code).toBe(0);
+});
+
+// --- uncovered snapshots (manifest coverage) ------------------------------
+// The earlier tests never write a .manifest.json, so rawEntries is empty and the coverage check is a
+// no-op (it prints nothing and contributes 0 to the issues sum). These tests put real raw entries in
+// the manifest so the check actually runs: an entry no note points back to is an uncovered snapshot
+// (reported + counted in the exit code), and one a note references via source:/sources: is covered.
+
+// The manifest shape is Record<sourceKey, ManifestEntry> with ManifestEntry carrying a `raw` field
+// (vault-relative raw path, the snapshot form, or an absolute path from ingest - check.ts normalizes
+// both to `raw/...`). `note` is the derived note path. We mirror exactly what snapshot/ingest write.
+function writeManifest(dir: string, m: Record<string, { hash: string; note: string; ingested: string; raw?: string; src?: string }>): void {
+  writeFileSync(join(dir, ".manifest.json"), JSON.stringify(m, null, 2) + "\n");
+}
+
+// The lines printed under the "uncovered snapshots" header, for exact membership. Unlike the
+// disconnected list, uncovered items are printed WITHOUT a leading indent (they are normalized raw
+// paths joined straight onto the console.log), so we collect every non-blank line up to the blank
+// terminator and trim it.
+function uncoveredList(out: string): string[] {
+  const lines = out.split("\n");
+  const start = lines.findIndex((l) => l.includes("uncovered snapshots"));
+  if (start === -1) return [];
+  const items: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t === "") break; // blank line ends the section
+    items.push(t);
+  }
+  return items;
+}
+
+test("a manifest raw entry no note points back to is an uncovered snapshot and exits non-zero", () => {
+  const dir = makeVault();
+  // a clean, fully-connected, tagged note - the ONLY issue is the orphaned raw entry below.
+  note(dir, "health/checkup.md", "domain: health\ntags: [health]", "# Checkup\n\nSaw [[people/anna]].");
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  // a raw snapshot that NO note references back via source:/sources:.
+  writeManifest(dir, {
+    "raw/scan/result.md": { hash: "abc", note: "", ingested: "2026-01-01T00:00:00Z", raw: "raw/scan/result.md", src: "/some/source" },
+  });
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("uncovered snapshots");
+  expect(uncoveredList(out)).toContain("raw/scan/result");
+  // the uncovered count feeds the issues sum, so the process must exit non-zero. A regression that
+  // dropped uncovered.length from that sum would still print the warning but exit 0 - this catches it.
+  expect(code).not.toBe(0);
+});
+
+test("a manifest raw entry a note references via source: is covered (not reported)", () => {
+  const dir = makeVault();
+  // the note points back at the raw snapshot through source: "[[raw/...]]" (the scalar wikilink form).
+  note(
+    dir,
+    "health/checkup.md",
+    "domain: health\ntags: [health]\nsource: \"[[raw/scan/result]]\"",
+    "# Checkup\n\nSaw [[people/anna]]."
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  writeManifest(dir, {
+    "raw/scan/result.md": { hash: "abc", note: "health/checkup.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/scan/result.md" },
+  });
+  const { code, out } = runCheck(dir);
+  // the single raw entry is covered, so the affirmative line shows and nothing is flagged.
+  expect(out).toContain("every raw snapshot has a derived note");
+  expect(out).not.toContain("uncovered snapshots");
+  expect(uncoveredList(out)).not.toContain("raw/scan/result");
+  expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+// --- source: / sources: back-reference parsing ----------------------------
+// Both forms feed the same referencedRaw set that the coverage check subtracts from the manifest's raw
+// entries. The scalar source: accepts a [[raw/...]] wikilink; the sources: [] list parsing stops at the
+// first ] so it does NOT survive [[...]] brackets - it covers PLAIN string entries (the form check.ts
+// can actually read). We assert each form marks its entry covered, mixed with an uncovered control.
+
+test("source: '[[raw/foo/bar]]' marks that raw entry covered", () => {
+  const dir = makeVault();
+  note(
+    dir,
+    "work/report.md",
+    "domain: work\ntags: [work]\nsource: \"[[raw/foo/bar]]\"",
+    "# Report\n\nSee [[people/anna]]."
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  // two raw entries: foo/bar is referenced, foo/other is not -> exactly one uncovered.
+  writeManifest(dir, {
+    "raw/foo/bar.md": { hash: "h1", note: "work/report.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/foo/bar.md" },
+    "raw/foo/other.md": { hash: "h2", note: "", ingested: "2026-01-01T00:00:00Z", raw: "raw/foo/other.md" },
+  });
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("uncovered snapshots");
+  expect(uncoveredList(out)).not.toContain("raw/foo/bar"); // covered by source:
+  expect(uncoveredList(out)).toContain("raw/foo/other"); // the unreferenced control
+  expect(code).not.toBe(0);
+});
+
+test("sources: ['raw/a', 'raw/b'] list form marks both entries covered", () => {
+  const dir = makeVault();
+  // The list parser splits on commas and strips quotes/brackets; plain string entries are what it
+  // reads cleanly (a [[...]] wikilink inside the list would be truncated at the first ]). Both a and b
+  // are covered, so a vault whose only raw entries are a and b is fully covered and exits 0.
+  note(
+    dir,
+    "work/report.md",
+    "domain: work\ntags: [work]\nsources: [\"raw/a\", \"raw/b\"]",
+    "# Report\n\nSee [[people/anna]]."
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  writeManifest(dir, {
+    "raw/a.md": { hash: "h1", note: "work/report.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/a.md" },
+    "raw/b.md": { hash: "h2", note: "work/report.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/b.md" },
+  });
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("every raw snapshot has a derived note");
+  expect(out).not.toContain("uncovered snapshots");
+  expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+// --- --all plugin aggregation against an injected stub plugin --------------
+// --all globs the running repo's plugins/ via import.meta.url, so to inject a stub we copy a minimal
+// but functional repo (scripts + templates + manifests, node_modules symlinked) into a temp dir, drop
+// our own plugins/<x>/check.ts, and run THAT copy's check.ts. The copy lets us control exactly which
+// plugin checks exist, so the failing-plugin aggregation path (untested before) is exercised directly.
+
+// Copy the smallest repo that lets <copy>/scripts/check.ts run and glob <copy>/plugins. We omit the
+// real plugins/ entirely and recreate it with only our stubs, so aggregation is fully deterministic.
+function makeRepoCopy(): string {
+  const copy = mkdtempSync(join(tmpdir(), "imprint-repo-"));
+  cpSync(join(repoRoot, "scripts"), join(copy, "scripts"), { recursive: true });
+  cpSync(join(repoRoot, "templates"), join(copy, "templates"), { recursive: true });
+  cpSync(join(repoRoot, "package.json"), join(copy, "package.json"));
+  cpSync(join(repoRoot, "tsconfig.json"), join(copy, "tsconfig.json"));
+  // Symlink node_modules from the real repo so `bun` resolves @types/bun etc. without a fresh install.
+  symlinkSync(join(repoRoot, "node_modules"), join(copy, "node_modules"));
+  mkdirSync(join(copy, "plugins"), { recursive: true });
+  return copy;
+}
+
+// Drop a plugins/<name>/check.ts that prints `msg` to stdout and exits with `exitCode`.
+function stubPlugin(copy: string, name: string, msg: string, exitCode: number): void {
+  const d = join(copy, "plugins", name);
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "check.ts"), `console.log(${JSON.stringify(msg)});\nprocess.exit(${exitCode});\n`);
+}
+
+// A clean temp vault (NOT the real repo vault) for the copied repo's core check to run against.
+function makeCleanVault(): string {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  note(dir, "health/checkup.md", "domain: health\ntags: [health]", "# Checkup\n\nSaw [[people/anna]].");
+  return dir;
+}
+
+test("--all surfaces a failing plugin: aggregate exit non-zero and plugin stdout forwarded", () => {
+  const copy = makeRepoCopy();
+  try {
+    stubPlugin(copy, "boom", "PLUGIN_BOOM_OUTPUT", 1);
+    const vault = makeCleanVault();
+    const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault]);
+    const out = proc.stdout.toString() + proc.stderr.toString();
+    // core is clean, but the plugin exited 1 -> aggregate must be non-zero (the failed-plugin path).
+    expect(out).toContain("clean."); // core had no issues
+    expect(proc.exitCode).not.toBe(0);
+    // stdout is forwarded verbatim (stdio inherited), and the per-plugin status line is printed.
+    expect(out).toContain("PLUGIN_BOOM_OUTPUT");
+    expect(out).toContain("plugins/boom/check.ts → exit 1");
+    expect(out).toContain("1 plugin check(s) failed.");
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
+});
+
+test("--all with only a passing plugin and a clean core exits 0", () => {
+  const copy = makeRepoCopy();
+  try {
+    stubPlugin(copy, "ok", "PLUGIN_OK_OUTPUT", 0);
+    const vault = makeCleanVault();
+    const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault]);
+    const out = proc.stdout.toString() + proc.stderr.toString();
+    expect(out).toContain("clean.");
+    expect(out).toContain("PLUGIN_OK_OUTPUT");
+    expect(out).toContain("plugins/ok/check.ts → exit 0");
+    expect(out).toContain("all plugin checks passed.");
+    expect(proc.exitCode).toBe(0);
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
 });
