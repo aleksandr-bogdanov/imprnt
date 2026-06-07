@@ -331,7 +331,7 @@ const fm = [
   `date: ${date}`,
   `participants: [${people.join(", ")}]`,
   "summary:                      # LLM writes one line — `imprint check` reads it to build index.md",
-  "tags: []                      # LLM fills from the approved vocabulary (vault/_tags.md)",
+  "tags: []                      # LLM fills the best-fit tag (vault/_tags.md); coin a new one if none fits, check syncs it",
   "project:                      # LLM links the project this event touched",
   `source: "[[${rawRel}]]"`,
   `source_hash: ${hash}`,

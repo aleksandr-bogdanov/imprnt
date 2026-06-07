@@ -5,15 +5,19 @@
 // Three checks + one regenerate, all pure reads over the corpus:
 //   1. orphan [[links]]      — a wikilink whose target note doesn't exist
 //   2. disconnected notes    — a domain/form note that links no entity at all (graph island)
-//   3. uncovered snapshots   — a raw/ source no vault note points back to (the migration to-do ledger)
+//   3. untagged notes        — a note with no tags (findable by body/title only — the tag axis is empty)
+//   4. uncovered snapshots   — a raw/ source no vault note points back to (the migration to-do ledger)
 //   + regenerate index.md from every note's `summary` (deterministic map-of-content)
 //
-// check PRINTS its findings (the agent reads them); it does not block and does not mutate notes.
-// The only file it writes is index.md.
+// check PRINTS its findings (the agent reads them); it does not block and never mutates notes.
+// It writes two non-note control files: index.md (regenerated) and _tags.md (auto-grown — any new
+// tag a note carries is synced into the vocabulary, no human gate; near-duplicate tags are flagged
+// for a conscious synonym merge, never auto-merged).
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateIndex, collectNotes } from "./lib/moc.ts";
+import { loadTags, normalize, appendTags } from "./lib/tags.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
 const args = process.argv.slice(2);
@@ -50,6 +54,7 @@ function resolves(target: string): boolean {
 const orphans: string[] = [];
 const disconnected: string[] = [];
 const domainIssues: string[] = [];
+const untagged: string[] = [];
 const referencedRaw = new Set<string>();
 
 for (const n of notes) {
@@ -59,6 +64,11 @@ for (const n of notes) {
   const links = [...raw.matchAll(LINK)].map((m) => m[1].trim()).filter((l) => !l.startsWith("raw/"));
   for (const l of links) if (!resolves(l)) orphans.push(`  ${n.slug}  →  [[${l}]]`);
   if (!ENTITY_FOLDERS.has(n.folder) && links.length === 0) disconnected.push(`  ${n.slug}`);
+
+  // untagged: every note carries ≥1 tag (the topic/search axis). An empty `tags: []` is the exact
+  // symptom that motivated the auto-growing vocabulary — coining is now free, so there's no excuse for
+  // a blank. Flag it (non-blocking) so it can never silently ship findable-by-body-only again.
+  if (n.tags.length === 0) untagged.push(`  ${n.slug}`);
 
   // self-describing domain: a note in a domain folder must carry `domain: <that folder>` so folder and
   // field can't drift. Entities/forms are self-described by `type` and carry no domain.
@@ -72,6 +82,38 @@ for (const n of notes) {
   if (src) referencedRaw.add(src.replace(/^\.\//, ""));
   const srcs = raw.match(/^sources:\s*\[(.*?)\]/im)?.[1] ?? "";
   for (const s of srcs.split(",").map((x) => x.trim().replace(/^["'\[]+|["'\]]+$/g, "")).filter(Boolean)) referencedRaw.add(s.replace(/^\.\//, ""));
+}
+
+// --- tag vocabulary sync + dedup audit ------------------------------------
+// Auto-grow: collect every tag the notes carry (normalized through the synonym map), append any that
+// the vocabulary doesn't already know. No human approval — a tag is a string the note already holds.
+// Then a non-blocking audit flags near-duplicate tags (prefix / edit-distance-1) so they can be merged
+// into a synonym consciously. We never auto-merge — picking the canonical is judgment, not arithmetic.
+const hasTagsFile = existsSync(join(vault, "_tags.md"));
+let addedTags: string[] = [];
+const dupPairs: string[] = [];
+if (hasTagsFile) {
+  const vocab = loadTags(vault);
+  const usedCanon = new Set<string>();
+  for (const n of notes) for (const t of n.tags) { const c = normalize(vocab, t); if (c) usedCanon.add(c); }
+  const newTags = [...usedCanon].filter((c) => !vocab.approved.has(c)).sort();
+  addedTags = appendTags(vault, newTags);
+
+  const lev = (a: string, b: string): number => {
+    const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 0; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length];
+  };
+  const tagArr = [...new Set([...vocab.approved, ...addedTags])].sort();
+  for (let i = 0; i < tagArr.length; i++) for (let j = i + 1; j < tagArr.length; j++) {
+    const a = tagArr[i], b = tagArr[j];
+    const short = a.length <= b.length ? a : b, long = a.length <= b.length ? b : a;
+    const prefixDup = short.length >= 4 && long.startsWith(short) && long.length - short.length <= 3;
+    const near = Math.abs(a.length - b.length) <= 1 && lev(a, b) <= 1;
+    if (prefixDup || near) dupPairs.push(`  ${a} ~ ${b}`);
+  }
 }
 
 // uncovered snapshots: raw entries in the manifest that no note references back
@@ -95,6 +137,15 @@ else console.log("✓ every domain/form note links the graph");
 if (domainIssues.length) { console.log(`⚠ domain mismatches (${domainIssues.length}) — folder ≠ domain: field:`); console.log(cap(domainIssues).join("\n"), "\n"); }
 else console.log("✓ every domain note's folder matches its domain: field");
 
+if (untagged.length) { console.log(`⚠ untagged notes (${untagged.length}) — no tags, findable by body/title only:`); console.log(cap(untagged).join("\n"), "\n"); }
+else console.log("✓ every note carries at least one tag");
+
+if (hasTagsFile) {
+  if (addedTags.length) console.log(`↑ synced ${addedTags.length} new tag(s) into _tags.md: ${addedTags.join(", ")}`);
+  else console.log("✓ tag vocabulary in sync");
+  if (dupPairs.length) { console.log(`⚠ candidate duplicate tags (${dupPairs.length}) — add a synonym in _tags.md to merge:`); console.log(cap(dupPairs).join("\n"), "\n"); }
+}
+
 if (rawEntries.length) {
   if (uncovered.length) { console.log(`⚠ uncovered snapshots (${uncovered.length}/${new Set(rawEntries.map(norm)).size}) — raw source no note points back to:`); console.log(cap(uncovered).join("\n"), "\n"); }
   else console.log("✓ every raw snapshot has a derived note");
@@ -103,7 +154,7 @@ if (rawEntries.length) {
 const { count, folders } = generateIndex(vault);
 console.log(`↻ regenerated index.md — ${count} notes across ${folders} folders`);
 
-const issues = orphans.length + disconnected.length + domainIssues.length + uncovered.length;
+const issues = orphans.length + disconnected.length + domainIssues.length + untagged.length + uncovered.length + dupPairs.length;
 console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
 
 // --- plugin aggregation (--all only) --------------------------------------

@@ -61,7 +61,7 @@ vault/
   index.md               generated map of content — code builds it from each note's `summary`
   hot.md                 ~500-tok primer + needs-review + (optional) review-due list
   log.md                 append-only chronological stream
-  _tags.md               approved tags + bidirectional synonym map
+  _tags.md               auto-growing tag vocabulary + bidirectional synonym map (check syncs it)
 
   # entities — cross-cutting, one canonical home, linked from every domain
   people/<slug>.md       a human
@@ -107,9 +107,11 @@ Three orthogonal axes, each doing real work: **type** (frontmatter) = what objec
 
 Optional on any note: `review_by: <date>` for perishable facts. Surfaced **only on demand** via `hot.md` — never a background loop, never a separate command.
 
-## Tags come from a fixed list
+## Tags: an auto-growing vocabulary (not a gated list)
 
-`vault/_tags.md` holds approved tag values + a bidirectional synonym map. Ingest applies only approved tags; a genuinely new tag is a one-line, human-approved addition. One concept = one tag, applied the same at write and at search. Because the LLM generates query keywords at recall time, the synonym map is a deterministic assist, not the whole retrieval brain — keep it lean, avoid over-broad canonicals that collapse specific terms.
+`vault/_tags.md` holds the tag values + a bidirectional synonym map. The vocabulary **grows automatically** — there is **no human-approval gate**. At ingest the LLM applies the **best-fitting tag**; if none fits, it **coins a new one** (kebab-case, one concept) and uses it. `imprint check` then **syncs every tag the notes carry into `_tags.md`** deterministically (a tag is just a string the note already holds — no LLM, no approval). So a new domain (wardrobe, shoes, a client) never hits a wall: tag the note, run `check`, the vocabulary catches up.
+
+The discipline that keeps the list lean moved **off the write path** to a non-blocking audit: `check` flags **near-duplicate tags** (prefix or edit-distance-1, e.g. `finance ~ finances`, `shoe ~ shoes`) so they can be merged into a **synonym** consciously. `check` never auto-merges — picking the canonical is judgment, not arithmetic, and that's the one tag step that stays an LLM/human call. Before coining, the LLM should still scan the existing list + synonyms and reuse a fit; one concept = one tag remains the goal, now enforced by the dedup audit rather than a pre-approval. The synonym map is a deterministic assist applied the same at write and at search — keep it lean, avoid over-broad canonicals that collapse specific terms.
 
 ## The ingest pass
 
@@ -131,7 +133,7 @@ Optional on any note: `review_by: <date>` for perishable facts. Surfaced **only 
 
 imprint keeps exactly two "robot" helpers stolen from the system it replaces, and both are **commands you run**, never background hooks — the auto-magic is what made that system bill rent.
 
-- **`imprint check`** — integrity + regenerate. Flags orphan `[[links]]`, notes that resolve no entity, and unclassified snapshots; rebuilds `index.md` deterministically from every note's `summary` + tags + links. Run it after an ingest or any hand-edit.
+- **`imprint check`** — integrity + regenerate. Flags orphan `[[links]]`, notes that resolve no entity, **untagged notes** (empty `tags:` — the topic axis is blank), unclassified snapshots, and near-duplicate tags; rebuilds `index.md` deterministically from every note's `summary` + tags + links, and **syncs new tags into `_tags.md`** (the auto-growing vocabulary). Run it after an ingest or any hand-edit. Writes only the two non-note control files (`index.md`, `_tags.md`); never mutates a note. (The dedup audit catches *spelling*-near tags only; *semantic* synonyms like `clothing`/`wardrobe` are the LLM's call at write time + a `_tags.md` synonym entry — code never merges meaning.)
 - **harvest** — the conversation→vault bridge: at the end of a chat, `wrapitup` hands the session's durable learnings to `imprint ingest`, so a decision made in conversation becomes a filed note. Conscious, on demand, never automatic.
 
 ## Updating & contradictions
