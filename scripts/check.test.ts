@@ -305,9 +305,9 @@ test("a manifest raw entry a note references via source: is covered (not reporte
 
 // --- source: / sources: back-reference parsing ----------------------------
 // Both forms feed the same referencedRaw set that the coverage check subtracts from the manifest's raw
-// entries. The scalar source: accepts a [[raw/...]] wikilink; the sources: [] list parsing stops at the
-// first ] so it does NOT survive [[...]] brackets - it covers PLAIN string entries (the form check.ts
-// can actually read). We assert each form marks its entry covered, mixed with an uncovered control.
+// entries. The scalar source: accepts a [[raw/...]] wikilink; the sources: [] list form is greedy to the
+// last bracket so [[...]] wikilink entries survive too. We assert each form marks its entry covered,
+// mixed with an uncovered control.
 
 test("source: '[[raw/foo/bar]]' marks that raw entry covered", () => {
   const dir = makeVault();
@@ -350,6 +350,28 @@ test("sources: ['raw/a', 'raw/b'] list form marks both entries covered", () => {
   expect(out).toContain("every raw snapshot has a derived note");
   expect(out).not.toContain("uncovered snapshots");
   expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+test("sources: list of [[raw/...]] wikilinks marks every entry covered (not just the first)", () => {
+  const dir = makeVault();
+  // Greedy capture to the last bracket: a wikilink list must not truncate at the first inner "]".
+  note(
+    dir,
+    "work/report.md",
+    "domain: work\ntags: [work]\nsources: [\"[[raw/a]]\", \"[[raw/b]]\"]",
+    "# Report\n\nSee [[people/anna]]."
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  writeManifest(dir, {
+    "raw/a.md": { hash: "h1", note: "work/report.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/a.md" },
+    "raw/b.md": { hash: "h2", note: "work/report.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/b.md" },
+  });
+  const { code, out } = runCheck(dir);
+  // Pre-fix, raw/b was reported uncovered because the non-greedy regex stopped inside [[raw/a]].
+  expect(uncoveredList(out)).not.toContain("raw/a");
+  expect(uncoveredList(out)).not.toContain("raw/b");
+  expect(out).toContain("every raw snapshot has a derived note");
   expect(code).toBe(0);
 });
 
