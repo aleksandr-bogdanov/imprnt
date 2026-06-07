@@ -10,6 +10,7 @@ name: Edge
 on:
   push:
     branches: [master]
+  workflow_dispatch: {} # manual run republishes ALL packages to @edge (escape hatch / re-test)
 
 # Serialize edge runs; never interrupt a publish midway. run_number keeps versions unique regardless.
 concurrency:
@@ -52,7 +53,13 @@ jobs:
           TURBO_SCM_BASE: ${{ steps.base.outputs.base }}
           TURBO_SCM_HEAD: ${{ github.sha }}
           RUN_NUMBER: ${{ github.run_number }}
-        run: bunx turbo ls --affected --output=json | node .github/scripts/edge-matrix.mjs
+        run: |
+          # A manual dispatch republishes everything; a push publishes only what changed.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            bunx turbo ls --output=json | node .github/scripts/edge-matrix.mjs
+          else
+            bunx turbo ls --affected --output=json | node .github/scripts/edge-matrix.mjs
+          fi
 
   publish:
     name: Publish ${{ matrix.name }}@edge
