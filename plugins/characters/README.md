@@ -22,15 +22,17 @@ no group-convening machinery exists; this folder is just the cast.
 
 ## Install
 
-Add the character to your agent's prompt. For Claude Code, add one import line to the project
-`CLAUDE.md`:
+Add the character to **`CLAUDE.local.md`** (gitignored, per-machine — Claude Code auto-loads it after
+the committed `CLAUDE.md`). Not the committed `CLAUDE.md` — that keeps personal wiring out of the
+shipped contract:
 
 ```
 @plugins/characters/taylor.md
+@plugins/characters/writing.md
 ```
 
-That single line is the on-switch. (Or paste the file's contents into whatever system-prompt
-mechanism your agent uses.)
+Those lines are the on-switch. (Or paste the files' contents into whatever system-prompt mechanism
+your agent uses.)
 
 ## Remove
 

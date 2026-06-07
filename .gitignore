@@ -1,8 +1,11 @@
 # Your actual private knowledge base — never committed.
-# `knowful init` scaffolds these from templates/.
+# `imprint init` scaffolds these from templates/.
 /vault/
 /raw/
 .manifest.json
+
+# Personal, per-machine plugin toggles — your @import wiring, never shipped.
+CLAUDE.local.md
 
 # Runtime
 node_modules/

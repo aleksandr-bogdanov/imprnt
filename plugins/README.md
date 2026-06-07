@@ -36,11 +36,13 @@ agent everything it needs: what the plugin is, where its data / local mirror / j
 lives, the commands it exposes, and any always-on rules the agent should follow. The core
 code never reads `agent.md`; only the assistant does.
 
-Install is therefore one line: add `@plugins/<name>/agent.md` as an import to the project
-`CLAUDE.md` (or paste the fragment in). That single line is the whole on-switch. Remove is
-deleting that line and `rm -rf plugins/<name>`. This is the real off-switch the old system
-never had — the assistant learns a plugin by being handed its fragment, and forgets it the
-moment you delete the line.
+Install is therefore one line: add `@plugins/<name>/agent.md` as an import to **`CLAUDE.local.md`**
+— your gitignored, per-machine toggle file, which Claude Code auto-loads right after the committed
+`CLAUDE.md`. Never wire plugins into the committed `CLAUDE.md`: that ships the contract clean, and a
+fresh clone (no `CLAUDE.local.md`) loads **zero** plugins by default — opt-in for real. That single
+line is the whole on-switch. Remove is deleting that line and `rm -rf plugins/<name>`. This is the
+real off-switch the old system never had — the assistant learns a plugin by being handed its
+fragment, and forgets it the moment you delete the line.
 
 ## The rules, in plain English
 

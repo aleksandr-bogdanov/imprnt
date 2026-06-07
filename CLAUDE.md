@@ -3,10 +3,7 @@
 > The schema for the vault. When an agent works inside an imprint vault, this is the standing context it needs. Keep it small.
 > Headline: **the LLM builds the tools; the tools do the work.**
 
-<!-- DA character — the characters/ plugin on-switch (digital person: Taylor). Delete this line to turn it off. -->
-@plugins/characters/taylor.md
-<!-- Full anti-slop / writing voice spec — always-on (a behavior rule must be, or it fires too late). Trim to lighten later; never make it on-demand. -->
-@plugins/characters/writing.md
+<!-- Plugins are NOT wired here — this committed contract ships clean. Enable them per-machine in CLAUDE.local.md (gitignored), which Claude Code auto-loads after this file. See ## Modules and plugins/README.md. -->
 
 ## Entry point: you talk, the assistant runs the tools
 
@@ -153,7 +150,7 @@ A migration is the one-time bulk WRITE — snapshot every chosen source into `ra
 Core is the vault + `ingest → recall → check`. Everything else (Whenful sync, a documents librarian, an anti-slop behavior ruleset, graph lint, the guard) is a **pluggable plugin**. Full contract + the worked instances: `plugins/README.md`. The standing rules:
 
 - **The one rule:** core never knows a plugin exists. Litmus — **you can add or remove any plugin with zero edits to `scripts/`.** A plugin depends on exactly two things: `vault/` notes (+ their frontmatter *format*) and its own sibling folder. Nothing else — not core code, not another plugin, not another plugin's folder/labels.
-- **Entry point = the agent fragment.** Each plugin ships `plugins/<name>/agent.md` — a fixed-size fragment that tells the *agent* (never the core code) what the plugin is, where its data/mirror/join-table lives, its commands, and any always-on rules. Install = add one `@plugins/<name>/agent.md` import line to this file; remove = delete that line + `rm -rf plugins/<name>`.
+- **Entry point = the agent fragment.** Each plugin ships `plugins/<name>/agent.md` — a fixed-size fragment that tells the *agent* (never the core code) what the plugin is, where its data/mirror/join-table lives, its commands, and any always-on rules. Install = add one `@plugins/<name>/agent.md` import line to **`CLAUDE.local.md`** (gitignored, per-machine; Claude Code auto-loads it after this contract — never wire plugins into this committed file); remove = delete that line + `rm -rf plugins/<name>`.
 - **Read** direct (parse the note format); core publishes **no importable code as a contract** — plugins **copy** the ~12-line header reader (reversible; promote to a shared lib later only if duplication actually hurts).
 - **Write** single-writer-per-path: a plugin writes only its own folder and **proposes** vault-note changes for `ingest`/you to apply — never mutates a note. Frontmatter labels are **slug-namespaced** (`whenful.synced`), read-your-own-only; core ignores unknown keys.
 - **`recall` searches `vault/` only, forever** — sibling dirs + `raw/` are outside the corpus by construction. A plugin surfaces into search only by **proposing one low-frequency summary note** (the escape hatch).
