@@ -103,7 +103,9 @@ for (const n of notes) {
   // coverage: every raw path a note points back to (source: "[[raw/...]]" wikilink, or sources:[])
   const src = raw.match(/^source:\s*["']?(.+?)["']?\s*$/im)?.[1]?.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
   if (src) referencedRaw.add(src.replace(/^\.\//, ""));
-  const srcs = raw.match(/^sources:\s*\[(.*?)\]/im)?.[1] ?? "";
+  // Greedy capture to the LAST bracket so wikilink entries (sources: ["[[raw/a]]", "[[raw/b]]"])
+  // are not truncated at the first inner "]". Inline list form only (one line, no newline in the value).
+  const srcs = raw.match(/^sources:\s*\[(.*)\]/im)?.[1] ?? "";
   for (const s of srcs.split(",").map((x) => x.trim().replace(/^["'\[]+|["'\]]+$/g, "")).filter(Boolean)) referencedRaw.add(s.replace(/^\.\//, ""));
 }
 
