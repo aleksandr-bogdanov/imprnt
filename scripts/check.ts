@@ -24,7 +24,11 @@ const args = process.argv.slice(2);
 let vault = process.env.IMPRINT_VAULT ?? "./vault";
 let all = false;
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === "--vault") vault = args[++i];
+  if (args[i] === "--vault") {
+    const v = args[++i];
+    if (v === undefined) { console.error("--vault requires a directory argument"); process.exit(1); }
+    vault = v;
+  }
   else if (args[i] === "--all") all = true; // also run each plugins/*/check.ts (convention discovery)
 }
 if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`imprint init\` first`); process.exit(1); }
