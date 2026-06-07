@@ -76,7 +76,7 @@ imprnt init           # scaffold ./vault and ./raw, drop CLAUDE.md into the proj
 To develop imprnt itself you need [Bun](https://bun.sh) >= 1.3 (the build and test tool). From a clone:
 
 ```sh
-git clone https://github.com/aleksandr-bogdanov/imprint.git
+git clone https://github.com/aleksandr-bogdanov/imprnt.git
 cd imprnt
 bun install                               # link the workspaces (core + plugins)
 bun run build                             # build packages/imprnt/dist/cli.js (the Node bundle)

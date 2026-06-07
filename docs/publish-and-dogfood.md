@@ -74,8 +74,8 @@ Restore the PERSONAL cast (Taylor + voice) - private, never published, copied fr
 
 ```sh
 mkdir -p plugins/_personal
-cp ~/IdeaProjects/imprint/plugins/_personal/taylor.md plugins/_personal/
-cp ~/IdeaProjects/imprint/plugins/_personal/voice.md  plugins/_personal/
+cp ~/IdeaProjects/imprnt/plugins/_personal/taylor.md plugins/_personal/
+cp ~/IdeaProjects/imprnt/plugins/_personal/voice.md  plugins/_personal/
 imprnt plugin add _personal/taylor.md _personal/voice.md
 
 # if you run Taylor, drop the generic character so they don't both load
