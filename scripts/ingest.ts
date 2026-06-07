@@ -75,6 +75,13 @@ function linkSlug(s: string): string {
   return s.trim().replace(/^\[\[/, "").replace(/\]\]$/, "").replace(/#.*$/, "").replace(/\|.*$/, "").replace(/\.md$/, "").trim();
 }
 
+// Insert one `source:` line into the leading `--- ... ---` frontmatter block, right before the closing
+// fence, leaving every other byte of the note untouched (surgical - no reformat). Deterministic: same
+// note + same target always yields the same bytes, so the apply no-op compare below still holds.
+function injectSource(text: string, target: string): string {
+  return text.replace(/^(---\n[\s\S]*?\n)(---)/, `$1source: "[[${target}]]"\n$2`);
+}
+
 // type -> vault folder. The folder is mechanical ONCE the type/domain are decided (the LLM already
 // decided them when it enriched the staged note); we never re-classify here. Entities + forms file
 // into a folder named for their type; a topical note (`principle`/`note`) files into its `domain:`.
@@ -117,23 +124,40 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   const slug = slugify(fmScalar(fm, "slug") || title || basename(staged, ".md"));
   if (!slug) { console.error(`  ✗ ${staged}: can't derive a slug (no H1 title, no slug:)`); return "error"; }
 
+  // The snapshot hash is over the ORIGINAL staged bytes (the verbatim provenance copy). The snapshot
+  // name is `${slug}-${hash}.md`, deterministic from these bytes, so the raw-relative path the filed
+  // note will point its `source:` at is known up front, before any filing or idempotency check.
   const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+  const rawRel = `raw/proposed/${slug}-${hash}`;
   const noteRel = `${folder}/${slug}`;
   const notePath = join(vault, `${noteRel}.md`);
 
-  // Idempotency + contradiction discipline. Same path + identical bytes -> no-op (re-applying is free).
-  // Same path + DIFFERENT bytes -> we do NOT silently overwrite; we flag it for the contradiction
+  // The filed note must carry a `source:` wikilink back at the raw/proposed snapshot the apply records,
+  // or `imprint check`'s coverage scan flags that manifest raw entry as an uncovered snapshot forever
+  // (no note points back at it). If the plugin already supplied its own `source:`, we keep the note's
+  // content verbatim and DON'T duplicate it; in that case we make the manifest raw entry agree with the
+  // note's existing source: instead of the fresh snapshot, so the entry and the note still point at the
+  // same raw path and check reports it covered. If there is no source:, we inject one pointing at the
+  // raw/proposed snapshot. Either way: exactly one raw entry, exactly one note source:, and they agree.
+  const stagedSource = fmScalar(fm, "source");
+  const finalText = stagedSource ? text : injectSource(text, rawRel);
+  // Idempotency keys on what we actually FILE (the note may now carry an injected source:), so a
+  // re-apply of the same staged note still hashes to the same filed bytes and stays a clean no-op.
+  const fileHash = createHash("sha256").update(finalText).digest("hex").slice(0, 16);
+
+  // Idempotency + contradiction discipline. Same path + identical filed bytes -> no-op (re-applying is
+  // free). Same path + DIFFERENT bytes -> we do NOT silently overwrite; we flag it for the contradiction
   // workflow (`> superseded by`), exactly as a hand-edit conflict would be handled.
   if (existsSync(notePath)) {
     const existingHash = createHash("sha256").update(readFileSync(notePath, "utf8")).digest("hex").slice(0, 16);
-    if (existingHash === hash) {
-      console.log(`  = ${noteRel} already filed, identical content (hash ${hash}) — no-op`);
+    if (existingHash === fileHash) {
+      console.log(`  = ${noteRel} already filed, identical content (hash ${fileHash}) — no-op`);
       // The staged copy is redundant once the vault note matches it byte-for-byte; clear it.
       rmSync(staged);
       return "noop";
     }
     console.error(`  ! ${noteRel} exists with DIFFERENT content — not overwriting (contradiction discipline)`);
-    flagNeedsReview(vault, `- [ ] proposed note conflicts with existing [[${noteRel}]] — staged at \`${staged}\` (hash ${hash} vs ${existingHash}); reconcile or stamp \`> superseded by\``);
+    flagNeedsReview(vault, `- [ ] proposed note conflicts with existing [[${noteRel}]] — staged at \`${staged}\` (hash ${fileHash} vs ${existingHash}); reconcile or stamp \`> superseded by\``);
     return "conflict";
   }
 
@@ -152,13 +176,19 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   } else {
     mkdirSync(rawDir, { recursive: true });
     rawPath = join(rawDir, `${slug}-${hash}.md`);
+    // Snapshot the ORIGINAL staged bytes verbatim - the injected source: lives only in the filed note.
     if (!existsSync(rawPath)) writeFileSync(rawPath, text);
   }
+  // The manifest raw entry MUST agree with the filed note's source: so `check` reports it covered (both
+  // normalize through `raw/...`). With no staged source we inject one at the snapshot, so record the
+  // physical snapshot path (which also lets a later identical apply reuse it). When the plugin supplied
+  // its own source:, we leave the note verbatim and record the manifest entry to match THAT source.
+  const rawEntry = stagedSource ? linkSlug(stagedSource) : rawPath;
 
   // File the note (mechanical — type/domain already decided), record provenance in the manifest.
   mkdirSync(join(vault, folder), { recursive: true });
-  writeFileSync(notePath, text);
-  manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawPath };
+  writeFileSync(notePath, finalText);
+  manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawEntry };
   saveManifest(vault, manifest);
 
   // Resolve participants/links the same way the transcript path does: an unresolved person -> needs-review.
