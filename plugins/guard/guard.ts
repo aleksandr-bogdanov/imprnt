@@ -27,13 +27,13 @@ const DENY: { re: RegExp; why: string }[] = [
   // main/master token, in EITHER order (order-independent via two lookaheads).
   // Git global options may sit between `git` and `push` (e.g. `git -C /repo push`, `git -c k=v push`,
   // `git --git-dir=... push`). We tolerate a bounded run of intervening non-space tokens so those
-  // forms are still caught. The count is capped (no unbounded/nested quantifier) to avoid ReDoS and
-  // to keep matching scoped to a plausible git command rather than far-apart words in prose.
-  { re: /\bgit\b(?:\s+\S+){0,8}?\s+push\b(?=[^\n]*(?:--force(?:-with-lease)?\b|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*\b))(?=[^\n]*\b(?:main|master)\b)/, why: "force-push to main/master" },
+  // forms are still caught. The count is capped at 16 (no unbounded/nested quantifier) to avoid ReDoS:
+  // the bound is a deliberate heuristic, a real force-push with 16+ leading global options is implausible.
+  { re: /\bgit\b(?:\s+\S+){0,16}?\s+push\b(?=[^\n]*(?:--force(?:-with-lease)?\b|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*\b))(?=[^\n]*\b(?:main|master)\b)/, why: "force-push to main/master" },
   // bare `git push -f` / `git push --force` with no remote argument force-pushes the CURRENT branch,
   // which is frequently main/master. Block it too. (A remote like `origin` opts out of this rule.)
-  // Same bounded tolerance for git global options between `git` and `push`.
-  { re: /\bgit\b(?:\s+\S+){0,8}?\s+push\s+(?:--force(?:-with-lease)?|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*)\s*$/, why: "bare force-push (current branch, often main/master)" },
+  // Same bounded tolerance (cap 16) for git global options between `git` and `push`.
+  { re: /\bgit\b(?:\s+\S+){0,16}?\s+push\s+(?:--force(?:-with-lease)?|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*)\s*$/, why: "bare force-push (current branch, often main/master)" },
 ];
 
 const argCmd = process.argv.slice(2).join(" ").trim();
