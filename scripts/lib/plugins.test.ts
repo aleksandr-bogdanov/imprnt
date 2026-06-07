@@ -130,6 +130,25 @@ test("add of <name>/<file.md> wires that exact file", () => {
   expect(readLocal(root)).toContain("@plugins/character/scribe.md");
 });
 
+// --- _personal personalization path (documented "make it yours" flow) ---
+// The list-exclusion (listPluginDirs hides _-prefixed dirs) and the add path (entryFor/addPlugin)
+// are different functions. addPlugin must still WIRE an _personal/<file>.md entry even though
+// listPluginDirs hides _personal. This test guards the documented flow against a future change to
+// the exclusion logic leaking into the add path. It would FAIL if add ever started excluding
+// _-prefixed specs: addPlugin would return added=false / an error, no line would be written, and
+// isEnabled would report false.
+test("add of _personal/<file.md> wires it and isEnabled reports it, though listPluginDirs hides _personal", () => {
+  const root = tmpRoot();
+  // Create the entry file so the round-1 existence guard passes.
+  mkPlugin(root, "_personal", { "voice.md": "x" });
+  const res = addPlugin(root, "_personal/voice.md");
+  expect(res).toEqual({ entry: "plugins/_personal/voice.md", added: true });
+  expect(readLocal(root)).toContain("@plugins/_personal/voice.md");
+  expect(isEnabled(root, "_personal")).toBe(true);
+  // The gallery listing still hides _personal even though it is wired.
+  expect(listPluginDirs(root)).not.toContain("_personal");
+});
+
 // --- multi-spec behavior simulated as the cli loop does it (bug 1) ---
 
 test("adding two specs in sequence wires BOTH (bug 1)", () => {
@@ -143,6 +162,18 @@ test("adding two specs in sequence wires BOTH (bug 1)", () => {
   const local = readLocal(root);
   expect(local).toContain("@plugins/character/scribe.md");
   expect(local).toContain("@plugins/anti-slop/agent.md");
+});
+
+test("multi-spec: a duplicate spec in one call is idempotent (single line)", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "anti-slop", { "agent.md": "x" });
+  // The cli add loop calls addPlugin once per spec, so `add a a` lands here twice.
+  const first = addPlugin(root, "anti-slop");
+  const second = addPlugin(root, "anti-slop");
+  expect(first.added).toBe(true);
+  expect(second.added).toBe(false);
+  const lines = readLocal(root).split("\n").filter((l) => l.trim() === "@plugins/anti-slop/agent.md");
+  expect(lines.length).toBe(1);
 });
 
 test("multi-spec: a bad spec errors but the good ones still wire", () => {

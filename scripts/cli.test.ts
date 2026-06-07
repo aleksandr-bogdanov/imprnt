@@ -99,6 +99,33 @@ test("multi-spec add: bad spec skipped with error, good one wired, overall exit 
   expect(local).not.toContain("@plugins/doesnotexist");
 });
 
+test("plugin add _personal/<file.md> wires the documented personalization path (exit 0)", async () => {
+  const root = tmpRepo();
+  // The documented "make it yours" flow: drop a private file under plugins/_personal/ and wire it.
+  // listPluginDirs hides _personal from the gallery, but add must still wire it. This end-to-end
+  // test would FAIL if the cli/add path ever excluded _-prefixed specs - exit would be 1 and no
+  // @plugins/_personal line would land in CLAUDE.local.md.
+  mkdirSync(join(root, "plugins", "_personal"), { recursive: true });
+  writeFileSync(join(root, "plugins", "_personal", "voice.md"), "x");
+  const r = await runCli(root, ["plugin", "add", "_personal/voice.md"]);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("wired @plugins/_personal/voice.md");
+  expect(readLocal(root)).toContain("@plugins/_personal/voice.md");
+  // The gallery listing still does not surface _personal as a toggleable plugin.
+  const list = await runCli(root, ["plugin", "list"]);
+  expect(list.stdout).not.toContain("_personal");
+});
+
+test("plugin add a a (duplicate spec in one call) is idempotent: a single line", async () => {
+  const root = tmpRepo();
+  const r = await runCli(root, ["plugin", "add", "anti-slop", "anti-slop"]);
+  expect(r.code).toBe(0);
+  const lines = readLocal(root)
+    .split("\n")
+    .filter((l) => l.trim() === "@plugins/anti-slop/agent.md");
+  expect(lines.length).toBe(1);
+});
+
 test("plugin rm accepts multiple specs", async () => {
   const root = tmpRepo();
   await runCli(root, ["plugin", "add", "anti-slop", "character/scribe.md"]);
