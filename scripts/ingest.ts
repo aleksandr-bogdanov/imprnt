@@ -34,12 +34,15 @@ function slugify(s: string): string {
 // one of these, so this stays a safe discriminator alongside the separator check.
 const PATH_EXTS = new Set([".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pdf", ".rtf", ".html", ".htm", ".vtt", ".srt"]);
 
-// True if the arg is SHAPED like a file path: it contains a path separator, or it is a single token
-// (no whitespace) ending in a known file extension. An inline fact ("call Bob tomorrow") matches
-// neither, so it is still treated as bytes; a mistyped "notes/2025.txt" is caught as a missing file.
+// True if the arg is SHAPED like a file path: a SINGLE TOKEN (no internal whitespace) that either
+// contains a path separator or ends in a known file extension. The no-whitespace guard applies to
+// BOTH branches: a multi-word inline fact ("Met Anna, see foo/bar", "ratio 3/4", "and/or", a URL with
+// surrounding words) has spaces, so it is never mistaken for a path and is always ingested as bytes.
+// A genuine mistyped path ("notes/2025.txt") is one whitespace-free token, so it is caught as missing.
 function looksLikePath(arg: string): boolean {
+  if (/\s/.test(arg)) return false;
   if (arg.includes("/") || arg.includes("\\")) return true;
-  if (!/\s/.test(arg) && PATH_EXTS.has(extname(arg).toLowerCase())) return true;
+  if (PATH_EXTS.has(extname(arg).toLowerCase())) return true;
   return false;
 }
 
@@ -47,8 +50,13 @@ function looksLikePath(arg: string): boolean {
 // skeleton; any other prose is snapshotted and left for the LLM to classify. We fire only when the
 // shape is unambiguous: at least two DISTINCT speaker labels, or an explicit meta header
 // (subject:/date:/topic:/attendees:/participants:). A single stray "Word:" line never qualifies.
-function looksLikeTranscript(speakers: Set<string>, hasMetaHeader: boolean): boolean {
-  return speakers.size >= 2 || hasMetaHeader;
+// An email is excluded: it carries a `Subject:` (a meta header) but is NOT a meeting, so when email
+// headers (From:/To:/...) are present and there are fewer than two speakers, the meta-header trigger
+// is suppressed and the email falls to snapshot + needs-review for the LLM to classify.
+function looksLikeTranscript(speakers: Set<string>, hasMetaHeader: boolean, hasEmailHeader: boolean): boolean {
+  if (speakers.size >= 2) return true;
+  if (hasEmailHeader) return false;
+  return hasMetaHeader;
 }
 
 // --- frontmatter helpers (deterministic — STRUCTURE only, no LLM) ----------
@@ -183,7 +191,11 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
 {
   const a = process.argv.slice(2);
   let applyVault = process.env.IMPRINT_VAULT ?? "./vault";
-  for (let i = 0; i < a.length; i++) if (a[i] === "--vault") applyVault = a[++i];
+  for (let i = 0; i < a.length; i++) if (a[i] === "--vault") {
+    const v = a[++i];
+    if (v === undefined) { console.error("--vault requires a directory argument"); process.exit(1); }
+    applyVault = v;
+  }
 
   if (a.includes("--apply-all")) {
     if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`imprint init\` first`); process.exit(1); }
@@ -234,7 +246,11 @@ let useStdin = false;
 let slugHint = "";
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === "--vault") vault = args[++i];
+  if (args[i] === "--vault") {
+    const v = args[++i];
+    if (v === undefined) { console.error("--vault requires a directory argument"); process.exit(1); }
+    vault = v;
+  }
   else if (args[i] === "--text") inlineText = args[++i];
   else if (args[i] === "--stdin") useStdin = true;
   else if (args[i] === "--slug") slugHint = args[++i];
@@ -292,6 +308,12 @@ const lines = text.split(/\r?\n/);
 // forms). Meta keys are checked BEFORE the speaker pattern so a header is never counted as a speaker.
 const META_KEYS = new Set(["date", "subject", "topic", "note", "notes", "attendees", "participants"]);
 const META = /^([A-Za-z][A-Za-z]*):\s*(.*)$/;
+// Email header keys. `From:`/`To:`/`Cc:` etc. otherwise match the speaker pattern, so a plain email
+// (From: a@b.com / To: c@d.com) would be miscounted as a 2-speaker transcript and fabricated into a
+// bogus event with participants [[people/from]] / [[people/to]]. We exclude these from speaker
+// detection (case-insensitive) so an email is not a transcript and falls to snapshot + needs-review.
+const EMAIL_HEADER_KEYS = new Set(["from", "to", "cc", "bcc", "reply-to", "sent"]);
+const EMAIL_HEADER = /^([A-Za-z][A-Za-z-]*):\s/;
 // A speaker label is a SHORT capitalized name (1 to 3 words, letters/spaces/.'-) followed by a colon.
 // Keeping it short and word-bounded stops a sentence fragment that happens to contain a colon
 // ("I think: ...", "Note: long prose ...") from being mistaken for a speaker turn.
@@ -300,6 +322,7 @@ const speakers = new Set<string>();
 let subject = "";
 let turnCount = 0;
 let hasMetaHeader = false;
+let hasEmailHeader = false;
 for (const line of lines) {
   const meta = line.match(META);
   if (meta && META_KEYS.has(meta[1].trim().toLowerCase())) {
@@ -308,12 +331,17 @@ for (const line of lines) {
     if ((key === "subject" || key === "topic") && !subject) subject = meta[2].trim();
     continue;
   }
+  // Skip email header lines (From:/To:/Cc:/...) before the speaker check so an email is never read as
+  // a 2-speaker transcript. The `From`/`To` keys are not meta keys, so without this they would slip
+  // through to SPEAKER below and fabricate [[people/from]] / [[people/to]] participants.
+  const eh = line.match(EMAIL_HEADER);
+  if (eh && EMAIL_HEADER_KEYS.has(eh[1].toLowerCase())) { hasEmailHeader = true; continue; }
   const m = line.match(SPEAKER);
   if (!m) continue;
   speakers.add(m[1].trim());
   turnCount++;
 }
-const isTranscript = isFile && looksLikeTranscript(speakers, hasMetaHeader);
+const isTranscript = isFile && looksLikeTranscript(speakers, hasMetaHeader, hasEmailHeader);
 
 // --- snapshot the source into raw/ (verbatim, immutable) -------------------
 // Universal first move for EVERY source (file OR inline bytes): write the bytes into raw/ so any
@@ -413,22 +441,49 @@ Snapshot: \`${rawPath}\` (sha256:${hash}), copied verbatim from \`${src}\`. Immu
 const note = `${fm}\n\n${body}`;
 const dir = join(vault, "events");
 mkdirSync(dir, { recursive: true });
-const notePath = join(dir, `${noteSlug}.md`);
 
-// Re-ingest discipline (contradiction handling, mirroring `--apply`): if a note ALREADY exists at this
-// slug, NEVER clobber it with the empty deterministic skeleton. The existing note may carry the LLM's
-// enrichment (summary, tags, links, decisions) which the skeleton would destroy. We still refresh the
-// snapshot + manifest (the source bytes are new provenance) and surface a needs-review line so the
-// changed source is reconciled by hand, exactly as a conflicting `--apply` would be.
+// The effective slug/path. These start at the date+subject slug and only change if that slug already
+// holds a DIFFERENT source, in which case we disambiguate (below) so the new source gets its own note.
+let effectiveSlug = noteSlug;
+let notePath = join(dir, `${noteSlug}.md`);
+
+// Re-ingest + collision discipline. If a note ALREADY exists at this slug, two distinct things can be
+// true and they need DIFFERENT handling, so we compare the NEW source bytes against the source the
+// existing note was built from (its recorded `source_hash:`):
+//   - hashes MATCH   -> same source, identical bytes. This rarely reaches here (the manifest skip
+//     above catches an unchanged source), so treat it as a benign no-op and just refresh provenance.
+//   - hashes DIFFER  -> the slug is a COLLISION: a different source maps to the same date+subject
+//     slug (two different meetings titled the same on the same day, OR the same source re-ingested
+//     with edited bytes). Either way the existing note may carry LLM enrichment we must NOT destroy,
+//     AND the new source is a distinct transcript that must NOT be lost. So we file the NEW source
+//     under a DISAMBIGUATED slug (`<slug>-<first 8 of hash>`), point the new source's manifest entry
+//     at the NEW note, and surface a slug-collision needs-review line. No overwrite, no "source
+//     changed" misdiagnosis - the new source is its own note, the existing note is untouched.
 if (existsSync(notePath)) {
-  manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawPath };
-  saveManifest(vault, manifest);
-  flagNeedsReview(vault, `- [ ] source changed for existing note [[events/${noteSlug}]] — new snapshot \`${rawPath}\` (hash ${hash}); reconcile the enriched note against the updated transcript (existing note NOT overwritten)`);
-  console.log(`! ${src}: event note already exists -> not overwriting (contradiction discipline)`);
-  console.log(`  note kept   -> ${notePath}  (any LLM enrichment preserved)`);
-  console.log(`  snapshot -> ${rawPath}${priorSnapshot ? "  (reused — identical bytes already snapshotted)" : "  (immutable)"}`);
-  console.log(`  ⚠ source changed -> needs-review: reconcile the note against the new snapshot.`);
-  process.exit(0);
+  const existingFm = frontmatter(readFileSync(notePath, "utf8"));
+  const existingSourceHash = fmScalar(existingFm, "source_hash");
+  if (existingSourceHash && existingSourceHash === hash) {
+    // Same source bytes already filed at this slug. Refresh provenance and leave the note alone.
+    manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawPath };
+    saveManifest(vault, manifest);
+    console.log(`= ${src}: event note already filed from identical bytes (hash ${hash}) — no-op`);
+    console.log(`  note kept   -> ${notePath}`);
+    process.exit(0);
+  }
+  // Differing (or unreadable) source_hash -> a genuine slug collision. Disambiguate the new note.
+  // If the disambiguated slug somehow also exists, that means these exact new bytes were already
+  // filed here, so leave it in place rather than rewriting it.
+  effectiveSlug = `${noteSlug}-${hash.slice(0, 8)}`;
+  notePath = join(dir, `${effectiveSlug}.md`);
+  flagNeedsReview(vault, `- [ ] slug collision: existing [[events/${noteSlug}]] vs new [[events/${effectiveSlug}]] (hash ${hash}); two different sources mapped to the same date+subject slug — reconcile`);
+  console.log(`! ${src}: slug \`events/${noteSlug}\` already holds a different source -> filing new note under \`events/${effectiveSlug}\``);
+  console.log(`  existing note kept untouched -> ${join(dir, `${noteSlug}.md`)}`);
+  if (existsSync(notePath)) {
+    manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawPath };
+    saveManifest(vault, manifest);
+    console.log(`  disambiguated note already exists from identical bytes -> ${notePath}  (no-op)`);
+    process.exit(0);
+  }
 }
 
 writeFileSync(notePath, note);
@@ -439,7 +494,7 @@ saveManifest(vault, manifest);
 // --- resolve participants (deterministic): flag unknown people to needs-review ---
 const unresolved = [...speakers].filter((name) => !personResolved(vault, slugify(name), name));
 for (const name of unresolved) {
-  flagNeedsReview(vault, `- [ ] unresolved person \`${name}\` — from [[events/${noteSlug}]] (${date})`);
+  flagNeedsReview(vault, `- [ ] unresolved person \`${name}\` — from [[events/${effectiveSlug}]] (${date})`);
 }
 
 console.log(`ingested ${src}`);
