@@ -72,31 +72,56 @@ test("plugin add a b wires BOTH (bug 1)", async () => {
   expect(local).toContain("@plugins/anti-slop/agent.md");
 });
 
-test("plugin add nonexistent errors, exits 1, wires nothing (bug 3)", async () => {
+// Build a synthetic plugin package source dir (the `--from` target): files[] keeps it to the
+// shipped tree, so this exercises the exact npm-pack path a published plugin would.
+function mkPluginSrc(root: string, name: string, withAgent = true): string {
+  const dir = join(root, `src-${name}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: `imprint-plugin-${name}`, version: "0.0.1", files: withAgent ? ["agent.md", "check.js"] : ["check.js"] }));
+  if (withAgent) writeFileSync(join(dir, "agent.md"), `# ${name}\n`);
+  writeFileSync(join(dir, "check.js"), "console.log(1);\n");
+  return dir;
+}
+
+test("plugin add <name> --from <dir> fetches, copies into plugins/, and wires it", async () => {
   const root = tmpRepo();
-  const r = await runCli(root, ["plugin", "add", "doesnotexist"]);
-  expect(r.code).toBe(1);
-  expect(r.stderr).toContain("no such plugin entry");
-  expect(readLocal(root)).not.toContain("@plugins/doesnotexist");
+  const src = mkPluginSrc(root, "demo");
+  const r = await runCli(root, ["plugin", "add", "demo", "--from", src]);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("installed demo");
+  expect(existsSync(join(root, "plugins", "demo", "agent.md"))).toBe(true);
+  expect(existsSync(join(root, "plugins", "demo", "check.js"))).toBe(true);
+  expect(readLocal(root)).toContain("@plugins/demo/agent.md");
 });
 
-test("plugin add guard (no agent.md) errors (bug 3)", async () => {
+test("plugin add with a missing --from errors, exits 1, wires nothing", async () => {
   const root = tmpRepo();
-  const r = await runCli(root, ["plugin", "add", "guard"]);
+  const r = await runCli(root, ["plugin", "add", "ghost", "--from", join(root, "nope")]);
   expect(r.code).toBe(1);
-  expect(r.stderr).toContain("no such plugin entry");
-  expect(readLocal(root)).not.toContain("@plugins/guard");
+  expect(r.stderr).toMatch(/not found/);
+  expect(readLocal(root)).not.toContain("@plugins/ghost");
+});
+
+test("plugin add a package with no agent.md errors, wires nothing", async () => {
+  const root = tmpRepo();
+  const src = mkPluginSrc(root, "bad", false);
+  const r = await runCli(root, ["plugin", "add", "bad", "--from", src]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("no agent.md");
+  expect(readLocal(root)).not.toContain("@plugins/bad");
 });
 
 test("multi-spec add: bad spec skipped with error, good one wired, overall exit 1", async () => {
   const root = tmpRepo();
-  const r = await runCli(root, ["plugin", "add", "anti-slop", "doesnotexist"]);
+  // anti-slop pre-exists locally (installPlugin skips the fetch, then wires). The `missing/nope.md`
+  // is a local wire-only spec with no such file -> errors. Mixed success + failure, exit 1.
+  const r = await runCli(root, ["plugin", "add", "anti-slop", "missing/nope.md"]);
   expect(r.code).toBe(1);
   expect(r.stdout).toContain("wired @plugins/anti-slop/agent.md");
   expect(r.stderr).toContain("no such plugin entry");
   const local = readLocal(root);
   expect(local).toContain("@plugins/anti-slop/agent.md");
-  expect(local).not.toContain("@plugins/doesnotexist");
+  expect(local).not.toContain("@plugins/missing");
 });
 
 test("plugin add _personal/<file.md> wires the documented personalization path (exit 0)", async () => {

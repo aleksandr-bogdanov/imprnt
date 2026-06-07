@@ -14,8 +14,9 @@
 // tag a note carries is synced into the vocabulary, no human gate; near-duplicate tags are flagged
 // for a conscious synonym merge, never auto-merged).
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, relative, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { projectRoot } from "./lib/roots.ts";
 import { generateIndex, collectNotes } from "./lib/moc.ts";
 import { loadTags, normalize, appendTags } from "./lib/tags.ts";
 import { loadManifest } from "./lib/manifest.ts";
@@ -196,28 +197,30 @@ console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
 // Core `check` exits non-zero when it has issues (bug-1 fix); --all exits non-zero when the core has
 // issues OR any plugin failed (the max of both).
 if (all) {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const pluginsDir = join(here, "..", "plugins");
+  // Glob the user's PROJECT plugins/, where `plugin add` copies installed plugins (not the package).
+  const pluginsDir = join(projectRoot(), "plugins");
   const checks: string[] = [];
   if (existsSync(pluginsDir)) {
     for (const entry of readdirSync(pluginsDir)) {
-      const p = join(pluginsDir, entry, "check.ts");
+      const p = join(pluginsDir, entry, "check.js");
       if (statSync(join(pluginsDir, entry)).isDirectory() && existsSync(p)) checks.push(p);
     }
   }
   checks.sort();
 
   console.log(`\n— plugins (${checks.length}) —`);
-  if (checks.length === 0) console.log("  (no plugins/*/check.ts found)");
+  if (checks.length === 0) console.log("  (no plugins/*/check.js found)");
 
   let failed = 0;
   for (const checkPath of checks) {
     const name = relative(pluginsDir, dirname(checkPath)).split("\\").join("/");
-    // Inherit stdio: the plugin's stdout/stderr stream straight through, untouched. We read only `.exitCode`.
-    const proc = Bun.spawnSync(["bun", checkPath], { stdout: "inherit", stderr: "inherit" });
-    const ok = proc.exitCode === 0;
+    // Run the plugin's built check.js with node, stdio inherited so its output streams through
+    // verbatim. We read ONLY the exit code (process.execPath = the node binary running us).
+    const proc = spawnSync(process.execPath, [checkPath], { stdio: "inherit" });
+    const code = proc.status ?? 1;
+    const ok = code === 0;
     if (!ok) failed++;
-    console.log(`  ${ok ? "✓" : "✗"} plugins/${name}/check.ts → exit ${proc.exitCode}`);
+    console.log(`  ${ok ? "✓" : "✗"} plugins/${name}/check.js → exit ${code}`);
   }
 
   if (failed) console.log(`\n${failed} plugin check(s) failed.`);

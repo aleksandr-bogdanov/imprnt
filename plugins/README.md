@@ -19,33 +19,37 @@ nothing about them.
 
 The practical test — the litmus for the whole contract:
 
-> **You can add or delete any plugin without editing a single line of core code (`scripts/`).**
+> **You can add or delete any plugin without editing a single line of core code (`packages/imprint/`).**
 
 If adding a plugin forces you to touch the core, the plugin is wrong — not the core.
 
 ## Using plugins
 
-The plugin gallery lives in this folder. Each top-level dir (`guard/`, `character/`, `anti-slop/`,
-`whenful/`) is one installable plugin. Enable and disable them with one command:
+Each plugin is its own npm package, `imprint-plugin-<name>`. Installing one fetches the package and
+copies its files into your project's `plugins/<name>/`, then wires it:
 
 ```sh
-imprint plugin list                  # show every plugin and whether it's enabled
-imprint plugin add anti-slop         # wires @plugins/anti-slop/agent.md
-imprint plugin add character/scribe.md   # wires that exact file (multi-file plugins)
-imprint plugin rm anti-slop          # removes the wiring line
+imprint plugin list                  # installed plugins (on/off) + official ones available to add
+imprint plugin add anti-slop         # fetch imprint-plugin-anti-slop, copy in, wire @plugins/anti-slop/agent.md
+imprint plugin add whenful --from packages/plugin-whenful   # install from a local dir (pre-publish/dev)
+imprint plugin rm anti-slop          # unwire; add --purge to also delete plugins/anti-slop/
 ```
 
-`imprint plugin add` auto-wires `CLAUDE.local.md` — it appends the `@import` line for you (creating
-the file if it's missing), and `rm` strips it back out. Both are idempotent. This is the on-switch the
-contract describes, made one command instead of a hand-edit. You can still hand-edit `CLAUDE.local.md`
-directly if you prefer; the command just does the same edit. `CLAUDE.local.md` stays the single source
-of truth for what's enabled.
+Why copy into the project rather than load from `node_modules`: Claude Code's `@import` resolves files
+only inside the project root, so a plugin's `agent.md` has to live at `plugins/<name>/agent.md`. `add`
+runs `npm pack` on the package (a registry name, or a local dir with `--from`), extracts the tarball of
+exactly its shipped `files[]`, copies that into `plugins/<name>/`, and appends the `@import` line to
+`CLAUDE.local.md` (creating the file if missing). `rm` strips the line back out, and `--purge` also
+deletes the copied dir. Everything is idempotent. The project `plugins/` dir is the self-contained,
+offline, `rm`-able record. npm is just the transport. You can still hand-edit `CLAUDE.local.md`
+directly. It stays the single source of truth for what's enabled.
 
-**Gallery vs `_personal/`.** The dirs above are the public gallery — generic, shippable plugins. There
-is one more, `_personal/`, which is **gitignored** and never ships: it holds your own private DA
-instance and voice overlay (a copy of a gallery plugin you've edited to make yours). To personalize a
-plugin, copy it into `_personal/`, edit it, and `imprint plugin add _personal/<file>.md`. `imprint
-plugin list` skips `_personal/` so your private cast never shows up in the public listing.
+**Gallery vs `_personal/`.** The packages above are the public gallery - generic, shippable. There is
+one more place, `plugins/_personal/`, which is **gitignored** and never published: it holds your own
+private DA instance and voice overlay (a copy of a gallery plugin you've edited to make yours). To
+personalize, copy a plugin into `_personal/`, edit it, and `imprint plugin add _personal/<file>.md` - a
+`<name>/<file.md>` spec wires a local file directly, no fetch. `imprint plugin list` skips `_personal/`
+so your private cast never shows up in the public listing.
 
 Stated more precisely (the rule the litmus is a cheap proxy for): **a plugin may depend on
 exactly two things — your `vault/` notes (and their frontmatter format) and its own folder.
@@ -65,10 +69,10 @@ Install is therefore one line: add `@plugins/<name>/agent.md` as an import to **
 `CLAUDE.md`. `imprint plugin add <name>` appends that line for you (or hand-edit `CLAUDE.local.md`
 yourself — same edit). Never wire plugins into the committed `CLAUDE.md`: that ships the contract
 clean, and a fresh clone (no `CLAUDE.local.md`) loads **zero** plugins by default — opt-in for real.
-That single line is the whole on-switch. Remove is `imprint plugin rm <name>` (deletes the line) plus
-`rm -rf plugins/<name>` if you want the files gone too. This is the real off-switch the old system
-never had — the assistant learns a plugin by being handed its fragment, and forgets it the moment you
-delete the line.
+That single line is the whole on-switch. Remove is `imprint plugin rm <name>` (deletes the line), plus
+`--purge` if you want the copied dir gone too. This is the real off-switch the old system never had —
+the assistant learns a plugin by being handed its fragment, and forgets it the moment you delete the
+line.
 
 ## The rules, in plain English
 
@@ -106,11 +110,13 @@ delete the line.
    process just by being installed. (This is the exact thing that made the old system bill
    rent.)
 
-7. **Install/remove is one generic command (or by hand).** `imprint plugin add/rm` wires and
-   unwires the `@import` line in `CLAUDE.local.md` — generic, by dir convention, with zero
-   per-plugin logic in core (a plugin with extra wire-in steps documents them in its own README).
-   You can always hand-edit `CLAUDE.local.md` instead. No app store, no registry, no plugin-aware
-   core. Each plugin's README has a `## Install` and `## Remove` section.
+7. **Install/remove is one generic command (or by hand).** `imprint plugin add <name>` fetches
+   `imprint-plugin-<name>`, copies its files into `plugins/<name>/`, and wires the `@import` line in
+   `CLAUDE.local.md` - generic, by naming convention, with zero per-plugin logic in core (a plugin with
+   extra wire-in steps documents them in its own README). `rm` unwires, and `--purge` deletes the copied
+   dir. You can always hand-edit `CLAUDE.local.md` instead. No app store, no registry the core reads
+   (the list of official names is a hint string, not a registry), no plugin-aware core. Each plugin's
+   README has a `## Install` and `## Remove` section.
 
 8. **One escape hatch for the search problem.** Because search ignores plugin folders, a
    plugin's data is invisible there. So a plugin *may* propose **one** short, low-frequency
@@ -133,12 +139,12 @@ in only two places, and both are dumb, uniform, and carry zero per-plugin logic 
 discover plugins by **filename/dir convention**, never by importing a plugin and never by
 naming a specific one:
 
-- **`imprint check --all`** runs the core check, then globs `plugins/*/check.ts`, runs each as
-  a subprocess, and **reads the exit code only** (0 = sound, non-zero = something's off),
-  forwarding the plugin's own stdout verbatim. It never parses or interprets what a plugin
-  says. The principled fence (what makes "one helper" safe rather than arbitrary): **the core
-  may provide read-only *aggregation* helpers, never write/orchestration helpers.** `check`
-  qualifies because it's idempotent and changes nothing.
+- **`imprint check --all`** runs the core check, then globs `plugins/*/check.js` (the plugin's built
+  artifact), runs each with `node` as a subprocess, and **reads the exit code only** (0 = sound,
+  non-zero = something's off), forwarding the plugin's own stdout verbatim. It never parses or
+  interprets what a plugin says. The principled fence (what makes "one helper" safe rather than
+  arbitrary): **the core may provide read-only *aggregation* helpers, never write/orchestration
+  helpers.** `check` qualifies because it's idempotent and changes nothing.
 - **`imprint ingest --apply`** files a pre-enriched staged note that a plugin has dropped into
   `plugins/*/proposed/` — the propose-then-approve escape hatch (rule 8) made concrete. It
   snapshots the staged note for provenance, files it into the right `vault/` folder, resolves
@@ -148,7 +154,7 @@ naming a specific one:
 > **Not Kubernetes-style liveness/readiness.** Those exist to auto-restart live services and
 > route traffic — imprint has no daemons and no orchestrator (rule 6), so "is it alive?" has
 > no meaning here. The only real health question is "is this plugin's data *sound*?" — which
-> is exactly what `check` already answers. A plugin's `check.ts` can *say* what's wrong in
+> is exactly what `check` already answers. A plugin's `check.js` can *say* what's wrong in
 > its stdout ("mirror is 3 days stale — run `whenful sync`"); the core just forwards that
 > text. Rich message from the plugin, dumb pass/fail read by the core.
 
@@ -179,13 +185,13 @@ that reads the cache, never the wire.
   ingest, hands the file off into `raw/` so the note gets a rot-proof provenance link. Clean
   fit for propose-then-approve.
 - **Character (your digital people).** Each *digital person* — the DA, and later a council
-  member, a red-team skeptic — is defined by one character file (`plugins/character/<name>.md`):
-  its personality, voice, standards, the way it works. You wire a character into the assistant's
-  prompt; delete the line to turn it off. It produces *character text*, not notes — a
-  config-extension plugin (rule 5), a different class from the two above, with no referee for
-  conflicts (install two contradictory characters and that's on you). The clean parallel:
-  `vault/people/` holds the **real** people you know; `plugins/character/` holds your **digital**
-  people. Scribe is the shipped default.
+  member, a red-team skeptic — is defined by one character file (the character plugin's `agent.md`,
+  Scribe by default, or a personalized copy in `plugins/_personal/`): its personality, voice,
+  standards, the way it works. You wire a character into the assistant's prompt, and delete the line
+  to turn it off. It produces *character text*, not notes — a config-extension plugin (rule 5), a
+  different class from the two above, with no referee for conflicts (install two contradictory
+  characters and that's on you). The clean parallel: `vault/people/` holds the **real** people you
+  know, and your character plugins hold your **digital** people. Scribe is the shipped default.
 
 ## Explicitly out of scope for v1 (the C5 stop condition)
 
@@ -200,40 +206,41 @@ anything.
 
 ## Built plugins
 
-### guard/ — destructive-command guard ✅ built
+### guard — destructive-command guard ✅ built
 
-A deterministic blocklist. `bun plugins/guard/guard.ts "<command>"` exits `2` on obviously
+A deterministic blocklist. `node plugins/guard/guard.js "<command>"` exits `2` on obviously
 dangerous commands (`rm -rf` on home/system paths, `sudo`, fork bombs, force-push to
 main…) and `0` otherwise. Wire it as a PreToolUse hook on Bash if you let the agent run
 shell. No LLM.
 
-### whenful/ — task mirror ✅ shell built (live sync deferred)
+### whenful — task mirror ✅ shell built (live sync deferred)
 
 The first plugin to exercise the whole contract end-to-end: an `agent.md` fragment, a
 `links.tsv` join table, a local `mirror/` cache rendered at read, a `proposed/` staging
-folder, and its own `check.ts` the `check --all` aggregator finds. The `sync` command is a
+folder, and its own built `check.js` the `check --all` aggregator finds. The `sync` command is a
 documented **stub** today — it states the Whenful API contract it will call and makes **no**
 live network request — wiring the real API is the next session.
 
-### character/ — your digital people ✅ shipped default (Scribe)
+### character — your digital people ✅ shipped default (Scribe)
 
-The DA's character, as a wired-in fragment — the thing that makes the assistant *itself* and
-not raw Claude. One file per digital person (`plugins/character/<name>.md`); `scribe.md` is the
-generalized default you copy and personalize. Install = `imprint plugin add character/scribe.md`;
-remove = `imprint plugin rm character`. The cast grows over time — a council or a red team is just a
-*group of characters* you convene (not built yet; the word generalizes now so nothing needs renaming
-when it does). Real people live in `vault/people/`; digital people live here.
+The DA's character, as a wired-in fragment — the thing that makes the assistant *itself* and not raw
+Claude. The `imprint-plugin-character` package ships **Scribe** as its `agent.md`, a generalized default
+you copy and personalize. Install = `imprint plugin add character`; remove = `imprint plugin rm
+character`. Your own digital person is a personalized copy in `plugins/_personal/`, wired with `imprint
+plugin add _personal/<name>.md`. The cast grows over time — a council or a red team is just a *group of
+characters* you convene (not built yet; the word generalizes now so nothing needs renaming when it
+does). Real people live in `vault/people/`; digital people live here.
 
-### anti-slop/ — universal anti-AI-slop rules ✅ built
+### anti-slop — universal anti-AI-slop rules ✅ built
 
 The ruleset that keeps the agent's prose from reading like AI — banned punctuation, words, phrases,
 and rhetorical patterns. An always-on behavior plugin (rule 5): it hands the agent a fixed chunk of
 text, writes no notes, touches nothing in the vault. Install = `imprint plugin add anti-slop`; remove
 = `imprint plugin rm anti-slop`. Copy it into `_personal/` and extend it to add your own register.
 
-### bm25/ — ranked recall ✅ CORE (not a plugin)
+### bm25 — ranked recall ✅ CORE (not a plugin)
 
-BM25 is **not** here — it's the core ranker, built into `scripts/recall.ts`. It's pure local
+BM25 is **not** here — it's the core ranker, built into `packages/imprint/scripts/recall.ts`. It's pure local
 arithmetic (term frequency × idf, with title/tag/body field boosts), zero LLM, zero deps, so it's
 the *cheap* default the READ path runs thousands of times — exactly the kind of thing that belongs
 in core, not behind an opt-in. The earlier "start with plain grep, defer BM25" plan was the error:

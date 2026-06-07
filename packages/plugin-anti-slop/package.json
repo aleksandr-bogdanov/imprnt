@@ -1,0 +1,23 @@
+{
+  "name": "imprint-plugin-anti-slop",
+  "version": "0.1.0",
+  "description": "imprint plugin: universal anti-AI-slop rules (banned punctuation, words, phrases, rhetorical patterns) for any prose the agent produces.",
+  "type": "module",
+  "files": [
+    "agent.md",
+    "README.md"
+  ],
+  "keywords": [
+    "imprint",
+    "imprint-plugin",
+    "anti-slop",
+    "writing"
+  ],
+  "license": "MIT",
+  "author": "Aleksandr Bogdanov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aleksandr-bogdanov/imprint.git",
+    "directory": "packages/plugin-anti-slop"
+  }
+}

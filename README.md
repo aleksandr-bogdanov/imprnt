@@ -25,10 +25,25 @@ product:
   tables as tables, IDs, numbers, dates, verbatim clause text. `recall` searches `vault/`
   only, so anything left in `raw/` is invisible. The summary is in addition to the data,
   never instead of it.
-- **Opt-in and composable.** Tiny core, three commands. Everything else is a self-contained
-  plugin directory you `rm -rf` with zero cross-dependencies. You add the plugins you need.
+- **Opt-in and composable.** Tiny core, three commands. Everything else is a separate
+  `imprint-plugin-*` package you add or remove, with zero cross-dependencies. You install only the
+  plugins you need.
 - **Owned.** Plain files on your disk. They cannot 404, cannot bloat, cannot hold your
   context hostage.
+
+## Memory vs vault - correct usage patterns
+
+> TODO (placeholder): the single most confusing thing for newcomers. The AI assistant's own
+> "memory" feature is not the imprint vault, and conflating them defeats the point. Fill this in.
+>
+> Points to cover:
+> - **vault** = your knowledge (finances, health, people, projects), version-of-record on disk,
+>   read by `recall`. **Assistant memory** = the agent's private cross-session scratchpad.
+> - Why the vault wins for anything durable: it is yours, plain-text, traceable to a `raw/`
+>   source, and you can see it. A private agent memory is the opaque auto-injected context
+>   imprint exists to kill.
+> - What (if anything) legitimately belongs in agent memory vs. what belongs in the vault,
+>   CLAUDE.md, or the repo - and the rule of thumb for deciding.
 
 ## The core loop
 
@@ -50,37 +65,37 @@ arithmetic with zero deps.
 
 ## Install
 
-Requires [Bun](https://bun.sh) >= 1.3.
-
-The package distributes via npm. These commands are aspirational until the first publish lands:
+Runs on [Node](https://nodejs.org) >= 18. You do not need Bun to use it. Distribution is npm (these
+are aspirational until the first publish lands):
 
 ```sh
-bunx imprint init      # run without installing
-npm i -g imprint       # or install the global CLI
+npm i -g imprint       # install the global CLI
+imprint init           # scaffold ./vault and ./raw, drop CLAUDE.md into the project
 ```
 
-Until then, run from a clone:
+To develop imprint itself you need [Bun](https://bun.sh) >= 1.3 (the build and test tool). From a clone:
 
 ```sh
 git clone https://github.com/aleksandr-bogdanov/imprint.git
 cd imprint
-bun install                  # no runtime deps, this just links the CLI
-bun scripts/cli.ts init      # scaffold ./vault and ./raw from templates/
+bun install                               # link the workspaces (core + plugins)
+bun run build                             # build packages/imprint/dist/cli.js (the Node bundle)
+bun packages/imprint/scripts/cli.ts init  # run the CLI from source
 ```
 
-The commands below use `imprint` for brevity. From a clone that is `bun scripts/cli.ts`.
+The commands below use `imprint` for brevity. From a clone that is `bun packages/imprint/scripts/cli.ts`.
 
 ## Setup
 
 ```sh
-imprint init                                       # scaffold vault/ and raw/ from templates/
-export IMPRINT_VAULT=~/notes/vault                 # optional: point at a vault elsewhere (defaults to ./vault)
-imprint plugin add character/scribe.md anti-slop   # enable the default assistant + anti-slop rules
+imprint init                            # scaffold vault/ + raw/, drop the vault contract (CLAUDE.md)
+export IMPRINT_VAULT=~/notes/vault      # point at a vault elsewhere (defaults to ./vault)
+imprint plugin add character anti-slop  # fetch + enable the default assistant and anti-slop rules
 ```
 
-`imprint plugin add` wires each plugin into `CLAUDE.local.md`, your gitignored per-machine
-toggle file, so the agent loads them every session. A fresh clone has no `CLAUDE.local.md` and
-loads zero plugins by default.
+`imprint plugin add <name>` fetches `imprint-plugin-<name>`, copies it into your project's `plugins/`,
+and wires it into `CLAUDE.local.md` - your gitignored per-machine toggle file, which the agent loads
+every session. A fresh install has no `CLAUDE.local.md` and loads zero plugins by default.
 
 **One-time onboarding: create your own `people/<you>.md`.** You appear in nearly every
 transcript, so add a self-note first. Otherwise every ingest flags you into `needs-review`. Ask
@@ -88,18 +103,19 @@ the agent to "file a person note for me" once, and entity resolution links you f
 
 ## Plugin gallery
 
-Core is the vault plus `ingest`, `recall`, `check`. Everything past that is a plugin you drop
-in or delete. The shipped gallery:
+Core is the vault plus `ingest`, `recall`, `check`. Everything past that is a separately-installable
+`imprint-plugin-*` package you add or remove. The shipped gallery:
 
-| Plugin | What it does | Class |
-|--------|--------------|-------|
-| `character/` | The assistant's voice and standards. `scribe.md` is the generalized default you copy and personalize. | behavior |
-| `anti-slop/` | Banned punctuation, words, phrases, and rhetorical patterns that keep prose from reading like AI. | behavior |
-| `whenful/` | A local mirror of your [Whenful](https://whenful.com) tasks, rendered at read. Live sync deferred. | data |
-| `guard/` | A deterministic blocklist for dangerous shell commands. Wire it as a PreToolUse hook. | safety |
+| Package | What it does | Class |
+|---------|--------------|-------|
+| `imprint-plugin-character` | The assistant's voice and standards. Scribe is the generalized default you copy and personalize. | behavior |
+| `imprint-plugin-anti-slop` | Banned punctuation, words, phrases, and rhetorical patterns that keep prose from reading like AI. | behavior |
+| `imprint-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, rendered at read. Live sync deferred. | data |
+| `imprint-plugin-guard` | A deterministic blocklist for dangerous shell commands. Wire it as a PreToolUse hook. | safety |
 
-The one rule the contract holds to: the core never knows a plugin exists. You can add or
-remove any plugin with zero edits to `scripts/`. Full contract and the worked instances are in
+Add one with `imprint plugin add <name>` (the short name, e.g. `imprint plugin add whenful`). The one
+rule the contract holds to: the core never knows a plugin exists. You can add or remove any plugin with
+zero edits to `packages/imprint/`. Full contract and the worked instances are in
 [`plugins/README.md`](plugins/README.md).
 
 ## Commands
@@ -110,15 +126,18 @@ remove any plugin with zero edits to `scripts/`. Full contract and the worked in
 | `imprint snapshot <src> --dest <relpath>` | Mirror a file or dir into `raw/<relpath>`, immutable and hashed | no |
 | `imprint ingest <file> [--vault DIR]` | Snapshot a source into `raw/`, write the deterministic note skeleton | no |
 | `imprint recall "<query>" [--vault DIR]` | BM25 ranking over title/tags/body, synonym-aware | no |
-| `imprint check [--all] [--vault DIR]` | Integrity, regenerate `index.md`, sync tags; `--all` also runs each `plugins/*/check.ts` | no |
+| `imprint check [--all] [--vault DIR]` | Integrity, regenerate `index.md`, sync tags. `--all` also runs each `plugins/*/check.js` | no |
 | `imprint hot [--vault DIR]` | Print needs-review and the session primer | no |
-| `imprint plugin list \| add \| rm` | Toggle gallery plugins in `CLAUDE.local.md` | no |
+| `imprint plugin list` | Installed plugins (on/off) plus official ones available to add | no |
+| `imprint plugin add <name> [--from D]` | Fetch `imprint-plugin-<name>`, copy into `plugins/`, wire `CLAUDE.local.md` | no |
+| `imprint plugin rm <name> [--purge]` | Unwire a plugin. `--purge` also deletes `plugins/<name>/` | no |
 
 ## Docs
 
 - [`docs/architecture.md`](docs/architecture.md) - how the whole thing works, in plain English. Start here.
 - [`docs/design-decisions.md`](docs/design-decisions.md) - the durable calls and why they were made.
-- [`docs/shipping.md`](docs/shipping.md) - the distribution model and the personal-vs-generic split.
+- [`docs/shipping.md`](docs/shipping.md) - the monorepo build, the package split, and the personal-vs-generic line.
+- [`docs/publish-and-dogfood.md`](docs/publish-and-dogfood.md) - publish the packages, then reinstall from npm as a real user.
 - [`CLAUDE.md`](CLAUDE.md) - the vault contract: note formats, frontmatter, conventions. An agent auto-loads it inside the vault.
 
 A minimal worked example lives in [`examples/sts2-demo/`](examples/sts2-demo/): a synthetic

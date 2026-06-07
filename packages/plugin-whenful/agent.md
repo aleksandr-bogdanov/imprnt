@@ -24,11 +24,11 @@ Whenful; the vault stays knowledge. The bridge is a join table plus a local mirr
 
 ## Commands (you run these; nothing runs on its own)
 
-- `bun plugins/whenful/whenful.ts sync` — the **only command that crosses the wire**. It refreshes the
-  `mirror/<id>.md` files from Whenful. The user schedules it (cron/launchd) or runs it by hand; it is
-  never a daemon. *(Today this is a documented stub — it makes no live call yet; live wiring is the
+- `node plugins/whenful/whenful.js sync` — the **only command that crosses the wire**. It refreshes the
+  `mirror/<id>.md` files from Whenful. The user schedules it (cron/launchd) or runs it by hand. It is
+  never a daemon. *(Today this is a documented stub — it makes no live call yet. Live wiring is the
   next session.)*
-- `bun plugins/whenful/check.ts` — the plugin's own integrity check (mirror staleness + orphan links).
+- `node plugins/whenful/check.js` — the plugin's own integrity check (mirror staleness + orphan links).
   The core finds it via `imprint check --all`.
 
 ## How to surface a note's tasks
@@ -39,7 +39,7 @@ When the user opens or asks about a vault note and wants its tasks:
 2. For each matched `task_id`, read `plugins/whenful/mirror/<task_id>.md` and show its live status
    (title, state, due, the optional step label from the join table).
 3. If the mirror is stale (the plugin's `check` will say so) or a task's mirror file is missing, tell
-   the user to run `bun plugins/whenful/whenful.ts sync` — do **not** reach for the server yourself.
+   the user to run `node plugins/whenful/whenful.js sync` — do **not** reach for the server yourself.
 
 ## Rules (always-on while this fragment is installed)
 

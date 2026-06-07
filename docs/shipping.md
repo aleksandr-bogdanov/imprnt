@@ -1,46 +1,93 @@
 # Shipping model
 
-How imprint is distributed and how the personal-vs-generic split works. Evergreen.
+How imprint is built and distributed, and how the personal-vs-generic split works. Evergreen.
 
-## One package, one gallery
+## A monorepo that publishes many packages
 
-imprint ships as a single npm package: the core CLI plus a bundled gallery of generic plugins. Not a
-monorepo of hidden bundles, not a separate gallery repo. The core lives in `scripts/`, the gallery in
-`plugins/`. Distribution is `bunx imprint` or `npm i -g imprint`.
+imprint is a [bun workspaces](https://bun.sh/docs/install/workspaces) monorepo. One git repo, one
+`bun install`, develop everything together. At publish time it produces several independent npm
+packages:
 
-The core stays tiny and plugin-blind. It never imports a plugin and never names one. Everything past
-the three core commands (`ingest`, `recall`, `check`) is a plugin you drop in or delete.
+- **`imprint`** (`packages/imprint/`) - the core CLI. The three commands `ingest`, `recall`, `check`,
+  plus `init`, `snapshot`, `hot`, and `plugin`.
+- **`imprint-plugin-anti-slop`, `imprint-plugin-character`, `imprint-plugin-guard`,
+  `imprint-plugin-whenful`** (`packages/plugin-*/`) - the gallery, each its own package.
 
-## Plugins install by one generic command
+The naming convention is `imprint-plugin-<name>`, the same shape ESLint uses (`eslint-plugin-*`). It
+means anyone can publish a plugin later without joining an npm org. The core stays plugin-blind: it
+never imports a plugin and never names one. Everything past the core commands is a package you install
+or skip.
 
-`imprint plugin add/rm/list` is the install mechanism. It operates on `plugins/<name>/` by convention
-and appends or removes one `@import` line in `CLAUDE.local.md`, with zero per-plugin logic in core:
+This reverses an earlier call ("one package, one bundled gallery"). The reason for the change: a
+bundled gallery is not "separate installables". Making each plugin its own package is what lets
+`imprint plugin add anti-slop` pull exactly that one thing, and lets the gallery grow without bloating
+the core download.
+
+## Ship Node, build with Bun
+
+The thing a user installs runs on **Node** (the runtime everyone already has), so `npm i -g imprint`
+works with no "first go install Bun" wall. Bun is a dev and build tool only:
+
+- Develop and test in Bun (fast, `bun test`, run the `.ts` source directly).
+- Build with `bun build --target=node`, which compiles the TypeScript into a single self-contained
+  `dist/cli.js` that Node runs. Source is detached from the deliverable: the package ships `dist/`,
+  not `scripts/`.
+
+The same split applies to a code plugin: its `src/*.ts` is the source, and its build emits a Node-
+runnable `check.js` / `guard.js` / `whenful.js` that ships. The `check --all` aggregator runs a
+plugin's `check.js` with `node`, so the read path needs no Bun either.
+
+## Plugins install by fetch-and-copy
+
+Claude Code's `@import` in `CLAUDE.local.md` resolves files only inside the project root, never
+`node_modules`. So a plugin's `agent.md` has to physically live at `plugins/<name>/agent.md` in your
+project. `imprint plugin add <name>` makes that happen:
 
 ```sh
-imprint plugin list                    # available plugins + which are enabled
-imprint plugin add anti-slop           # wires @plugins/anti-slop/agent.md
-imprint plugin add character/scribe.md # wires that exact file (multi-file plugins)
-imprint plugin rm anti-slop            # removes the wiring line
+imprint plugin list                  # installed plugins (on/off) + official ones available to add
+imprint plugin add anti-slop         # fetch imprint-plugin-anti-slop, copy into plugins/, wire it
+imprint plugin add whenful --from packages/plugin-whenful   # install from a local dir (pre-publish/dev)
+imprint plugin rm anti-slop          # unwire (add --purge to also delete plugins/anti-slop/)
 ```
 
-`CLAUDE.local.md` is the gitignored, per-machine toggle file Claude Code auto-loads after the
-committed `CLAUDE.md`. It stays the single source of truth for what's enabled. The command just edits
-it for you; you can hand-edit it instead. A fresh clone has no `CLAUDE.local.md`, so it loads zero
-plugins by default. Opt-in for real.
+Under the hood `add` runs `npm pack <spec>` (a registry name, or a local dir with `--from`), which
+yields a tarball of exactly the package's `files[]` - the built artifacts, never `src/`. It extracts
+that, copies the tree into `plugins/<name>/` (minus the npm manifest), and wires
+`@plugins/<name>/agent.md` into `CLAUDE.local.md`. The project `plugins/` dir is the self-contained,
+offline, `rm`-able source of truth. npm is just the transport.
 
-The litmus the model holds to: adding a gallery plugin is dropping a dir, never a `scripts/` edit.
+`CLAUDE.local.md` is the gitignored, per-machine toggle file Claude Code auto-loads after the
+project's `CLAUDE.md`. It stays the single record of what is enabled. A fresh install has none, so it
+loads zero plugins by default. Opt-in for real. The litmus the core holds to: adding a plugin is
+`imprint plugin add`, never a `packages/imprint/` edit.
 
 ## Generic ships, personal stays private
 
-The gallery is generic and shippable. The shipped character is **Scribe**, a generalized default DA.
-The shipped anti-slop is the universal anti-AI-slop core. Both are starting points you copy and make
-yours.
+The gallery is generic and shippable. The shipped character is **Scribe**, a generalized default
+digital assistant. The shipped anti-slop is the universal anti-AI-slop core. Both are starting points
+you copy and make yours.
 
-Your private instance lives in `plugins/_personal/`, which is **gitignored** and never ships. It holds
-your own DA (a personalized copy of Scribe) and your own voice overlay (a personalized copy of the
-anti-slop core). To personalize: copy a gallery plugin into `_personal/`, edit it, and
-`imprint plugin add _personal/<file>.md`. `imprint plugin list` skips `_personal/`, so your private
-cast never shows up in the public listing.
+Your private instance lives in your project's `plugins/_personal/`, which is **gitignored** and never
+published. It holds your own DA (a personalized copy of Scribe) and your own voice overlay. To
+personalize: copy a gallery plugin into `_personal/`, edit it, and `imprint plugin add
+_personal/<file>.md` (a bare `<name>/<file.md>` spec wires a local file directly, no fetch). `imprint
+plugin list` skips `_personal/`, so your private cast never shows up in the public listing.
 
-Because `_personal/` is gitignored, npm won't pack it either. The package ships `scripts`, `templates`,
-`plugins` (the generic gallery), `CLAUDE.md`, and `README.md`. Your private content stays on your disk.
+## What each package ships
+
+| Package | Ships | Built? |
+|---------|-------|--------|
+| `imprint` | `dist/cli.js`, `templates/`, `CLAUDE.md`, `README.md`, `LICENSE` | core bundle via `bun build` |
+| `imprint-plugin-anti-slop` | `agent.md`, `README.md` | no (markdown only) |
+| `imprint-plugin-character` | `agent.md`, `README.md` | no (markdown only) |
+| `imprint-plugin-guard` | `agent.md`, `guard.js`, `README.md` | `guard.js` via `prepack` |
+| `imprint-plugin-whenful` | `agent.md`, `check.js`, `whenful.js`, `links.tsv`, `proposed/`, `mirror/`, `README.md` | `check.js`+`whenful.js` via `prepack` |
+
+Core builds and ships its docs through `prepublishOnly` (it runs `shipdocs` to copy `CLAUDE.md` /
+`README.md` / `LICENSE` from the repo root, then typecheck, test, build). Each code plugin builds its
+artifacts through `prepack`, so a published tarball always carries the compiled `.js`.
+
+## Publishing
+
+The step-by-step runbook - publish all packages, then wipe the local install and reinstall from npm as
+a real user - lives in [`publish-and-dogfood.md`](publish-and-dogfood.md).

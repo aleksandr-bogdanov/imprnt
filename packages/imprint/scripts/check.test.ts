@@ -435,10 +435,11 @@ test("sources: list of [[raw/...]] wikilinks marks every entry covered (not just
 });
 
 // --- --all plugin aggregation against an injected stub plugin --------------
-// --all globs the running repo's plugins/ via import.meta.url, so to inject a stub we copy a minimal
-// but functional repo (scripts + templates + manifests, node_modules symlinked) into a temp dir, drop
-// our own plugins/<x>/check.ts, and run THAT copy's check.ts. The copy lets us control exactly which
-// plugin checks exist, so the failing-plugin aggregation path (untested before) is exercised directly.
+// --all globs projectRoot()/plugins/. To inject stubs deterministically we copy a minimal but
+// functional repo (scripts + templates + manifests, node_modules symlinked) into a temp dir, drop
+// our own plugins/<x>/check.ts, and run THAT copy's check.ts with IMPRINT_ROOT pointed at the copy so
+// projectRoot() resolves there (not the real repo we're running from). The copy lets us control
+// exactly which plugin checks exist, so the failing-plugin aggregation path is exercised directly.
 
 // Copy the smallest repo that lets <copy>/scripts/check.ts run and glob <copy>/plugins. We omit the
 // real plugins/ entirely and recreate it with only our stubs, so aggregation is fully deterministic.
@@ -448,17 +449,19 @@ function makeRepoCopy(): string {
   cpSync(join(repoRoot, "templates"), join(copy, "templates"), { recursive: true });
   cpSync(join(repoRoot, "package.json"), join(copy, "package.json"));
   cpSync(join(repoRoot, "tsconfig.json"), join(copy, "tsconfig.json"));
-  // Symlink node_modules from the real repo so `bun` resolves @types/bun etc. without a fresh install.
-  symlinkSync(join(repoRoot, "node_modules"), join(copy, "node_modules"));
+  // Symlink the hoisted monorepo-root node_modules so `bun` resolves @types/bun etc. (workspaces
+  // hoist deps to the repo root, two levels above packages/imprint).
+  symlinkSync(join(repoRoot, "..", "..", "node_modules"), join(copy, "node_modules"));
   mkdirSync(join(copy, "plugins"), { recursive: true });
   return copy;
 }
 
-// Drop a plugins/<name>/check.ts that prints `msg` to stdout and exits with `exitCode`.
+// Drop a plugins/<name>/check.js (plain JS, the built artifact the aggregator globs + runs with
+// process.execPath) that prints `msg` to stdout and exits with `exitCode`.
 function stubPlugin(copy: string, name: string, msg: string, exitCode: number): void {
   const d = join(copy, "plugins", name);
   mkdirSync(d, { recursive: true });
-  writeFileSync(join(d, "check.ts"), `console.log(${JSON.stringify(msg)});\nprocess.exit(${exitCode});\n`);
+  writeFileSync(join(d, "check.js"), `console.log(${JSON.stringify(msg)});\nprocess.exit(${exitCode});\n`);
 }
 
 // A clean temp vault (NOT the real repo vault) for the copied repo's core check to run against.
@@ -474,14 +477,16 @@ test("--all surfaces a failing plugin: aggregate exit non-zero and plugin stdout
   try {
     stubPlugin(copy, "boom", "PLUGIN_BOOM_OUTPUT", 1);
     const vault = makeCleanVault();
-    const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault]);
+    const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault], {
+      env: { ...process.env, IMPRINT_ROOT: copy },
+    });
     const out = proc.stdout.toString() + proc.stderr.toString();
     // core is clean, but the plugin exited 1 -> aggregate must be non-zero (the failed-plugin path).
     expect(out).toContain("clean."); // core had no issues
     expect(proc.exitCode).not.toBe(0);
     // stdout is forwarded verbatim (stdio inherited), and the per-plugin status line is printed.
     expect(out).toContain("PLUGIN_BOOM_OUTPUT");
-    expect(out).toContain("plugins/boom/check.ts → exit 1");
+    expect(out).toContain("plugins/boom/check.js → exit 1");
     expect(out).toContain("1 plugin check(s) failed.");
   } finally {
     rmSync(copy, { recursive: true, force: true });
@@ -493,11 +498,13 @@ test("--all with only a passing plugin and a clean core exits 0", () => {
   try {
     stubPlugin(copy, "ok", "PLUGIN_OK_OUTPUT", 0);
     const vault = makeCleanVault();
-    const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault]);
+    const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault], {
+      env: { ...process.env, IMPRINT_ROOT: copy },
+    });
     const out = proc.stdout.toString() + proc.stderr.toString();
     expect(out).toContain("clean.");
     expect(out).toContain("PLUGIN_OK_OUTPUT");
-    expect(out).toContain("plugins/ok/check.ts → exit 0");
+    expect(out).toContain("plugins/ok/check.js → exit 0");
     expect(out).toContain("all plugin checks passed.");
     expect(proc.exitCode).toBe(0);
   } finally {
