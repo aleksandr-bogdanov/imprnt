@@ -1,7 +1,7 @@
 {
   "name": "imprint",
   "version": "0.1.0",
-  "description": "Deterministic-first, plain-markdown knowledge vault. Code does the bulk transform; the LLM only touches the irreducibly-semantic 20%. Native grep retrieval, zero MCP on the vault.",
+  "description": "Deterministic-first, plain-markdown knowledge vault. Code does the bulk transform. The LLM only touches the irreducibly-semantic 20%. Native grep plus BM25 retrieval, zero MCP on the vault.",
   "type": "module",
   "bin": {
     "imprint": "scripts/cli.ts"
@@ -36,8 +36,11 @@
     "templates",
     "plugins",
     "!plugins/_personal",
+    "docs",
+    "examples",
     "CLAUDE.md",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "devDependencies": {
     "@types/bun": "^1.3.14"
