@@ -60,8 +60,11 @@ function looksLikeTranscript(speakers: Set<string>, hasMetaHeader: boolean, hasE
 }
 
 // --- frontmatter helpers (deterministic — STRUCTURE only, no LLM) ----------
+// Accept CRLF (`\r\n`) fences so Windows-authored notes parse frontmatter, mirroring recall.ts. Without
+// `\r?` the closing `---\r` line never matches, frontmatter() returns "", and a valid CRLF staged note
+// is wrongly refused with "no type:". The two readers must agree on the same fence shape.
 function frontmatter(raw: string): string {
-  return raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+  return raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
 }
 function fmScalar(fm: string, key: string): string {
   return (fm.match(new RegExp(`^${key}:\\s*(.+)$`, "im"))?.[1] ?? "").trim().replace(/^["']|["']$/g, "");
@@ -78,8 +81,10 @@ function linkSlug(s: string): string {
 // Insert one `source:` line into the leading `--- ... ---` frontmatter block, right before the closing
 // fence, leaving every other byte of the note untouched (surgical - no reformat). Deterministic: same
 // note + same target always yields the same bytes, so the apply no-op compare below still holds.
+// Accept CRLF (`\r?\n`) fences so a Windows-authored note parses and the inserted `source:` line reuses
+// the note's OWN newline style (captured as `$2`), never mixing LF into a CRLF block and breaking YAML.
 function injectSource(text: string, target: string): string {
-  return text.replace(/^(---\n[\s\S]*?\n)(---)/, `$1source: "[[${target}]]"\n$2`);
+  return text.replace(/^(---\r?\n[\s\S]*?)(\r?\n)(---)/, `$1$2source: "[[${target}]]"$2$3`);
 }
 
 // type -> vault folder. The folder is mechanical ONCE the type/domain are decided (the LLM already
@@ -170,20 +175,25 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   const manifestKey = `apply:sha256:${hash}`;
   const priorSnapshot = Object.values(manifest).find((e) => e.hash === hash && e.raw && existsSync(e.raw))?.raw;
   const rawDir = join(vault, "..", "raw", "proposed");
-  let rawPath: string;
-  if (priorSnapshot) {
+  // Only the no-source case writes a raw/proposed snapshot - that snapshot is the provenance we inject a
+  // source: at. When the staged note already carries its OWN source:, that source IS the provenance, so
+  // writing a raw/proposed file here would strand it on disk: nothing (no manifest entry, no note
+  // source:) would reference it. So in the stagedSource case we record the note's own source as the
+  // manifest raw entry and write no snapshot at all.
+  let rawPath = "";        // the physical snapshot path, only set in the no-source branch
+  let rawEntry: string;    // the manifest raw entry, kept in agreement with the filed note's source:
+  if (stagedSource) {
+    rawEntry = linkSlug(stagedSource);
+  } else if (priorSnapshot) {
     rawPath = priorSnapshot;
+    rawEntry = rawPath;
   } else {
     mkdirSync(rawDir, { recursive: true });
     rawPath = join(rawDir, `${slug}-${hash}.md`);
     // Snapshot the ORIGINAL staged bytes verbatim - the injected source: lives only in the filed note.
     if (!existsSync(rawPath)) writeFileSync(rawPath, text);
+    rawEntry = rawPath;
   }
-  // The manifest raw entry MUST agree with the filed note's source: so `check` reports it covered (both
-  // normalize through `raw/...`). With no staged source we inject one at the snapshot, so record the
-  // physical snapshot path (which also lets a later identical apply reuse it). When the plugin supplied
-  // its own source:, we leave the note verbatim and record the manifest entry to match THAT source.
-  const rawEntry = stagedSource ? linkSlug(stagedSource) : rawPath;
 
   // File the note (mechanical — type/domain already decided), record provenance in the manifest.
   mkdirSync(join(vault, folder), { recursive: true });
@@ -210,7 +220,10 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   rmSync(staged);
 
   console.log(`  ✓ filed ${noteRel}  (type: ${type}${domain ? `, domain: ${domain}` : ""})`);
-  console.log(`     snapshot -> ${rawPath}${priorSnapshot ? "  (reused — identical bytes already snapshotted)" : ""}`);
+  // No raw/proposed snapshot is written when the note brought its own source: - report that source as the
+  // provenance instead, so the line never prints an undefined path.
+  if (stagedSource) console.log(`     source -> ${rawEntry}  (note's own source: kept - no redundant snapshot)`);
+  else console.log(`     snapshot -> ${rawPath}${priorSnapshot ? "  (reused — identical bytes already snapshotted)" : ""}`);
   console.log(`     staged copy removed: ${staged}`);
   if (unresolved) console.log(`     ⚠ ${unresolved} unresolved person link(s) -> needs-review`);
   return "filed";
