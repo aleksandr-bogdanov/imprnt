@@ -1,0 +1,184 @@
+# Single publish entry point — npm Trusted Publishing validates the ENTRY workflow, so BOTH edge and
+# stable must funnel through this one file (configure each package's trusted publisher → publish.yml).
+#
+#   push to master          → edge channel: affected packages publish to @edge (auto, ungated)
+#   manual run, mode=edge    → edge channel: ALL packages republished to @edge (escape hatch)
+#   manual run, mode=release → stable channel: affected-since-last-release publish to @latest, behind
+#                              the npm-production approval gate, then tag + GitHub Release
+#
+# Edge versions = {last-stable+1 patch}-edge.{run_number}. Stable = patch-bump of current latest.
+# Independent per-package versions; a frozen package is never republished. The actual npm publish is
+# done by the reusable _publish.yml (OIDC + provenance, no tokens).
+name: Publish
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "edge = republish all to @edge; release = gated stable to @latest"
+        type: choice
+        options: [release, edge]
+        default: release
+      dry_run:
+        description: "release mode only: plan, publish nothing"
+        type: boolean
+        default: false
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      any: ${{ steps.matrix.outputs.any }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      base: ${{ steps.base.outputs.base }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.10
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - name: Resolve diff baseline
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.mode }}" = "release" ]; then
+            # stable: diff against the last release
+            if git rev-parse -q --verify refs/tags/last-release >/dev/null; then
+              BASE="$(git rev-parse last-release)"
+            else
+              BASE="$(git rev-list --max-parents=0 HEAD | tail -1)"
+            fi
+          else
+            # edge from a push: diff against the push's base (fallback HEAD~1 for new branch/zeros)
+            BEFORE='${{ github.event.before }}'
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              BEFORE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+            fi
+            BASE="$BEFORE"
+          fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+      - name: Compute matrix
+        id: matrix
+        env:
+          TURBO_SCM_BASE: ${{ steps.base.outputs.base }}
+          TURBO_SCM_HEAD: ${{ github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.mode }}" = "release" ]; then
+            bunx turbo ls --affected --output=json | node .github/scripts/release-matrix.mjs
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.mode }}" = "edge" ]; then
+            bunx turbo ls --output=json | node .github/scripts/edge-matrix.mjs            # ALL packages
+          else
+            bunx turbo ls --affected --output=json | node .github/scripts/edge-matrix.mjs # affected
+          fi
+
+  # ---- EDGE: push, or manual mode=edge. No gate. ----
+  edge:
+    name: Publish ${{ matrix.name }}@edge
+    needs: plan
+    if: >-
+      needs.plan.outputs.any == 'true' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'edge'))
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/_publish.yml
+    with:
+      package: ${{ matrix.package }}
+      version: ${{ matrix.version }}
+      tag: edge
+
+  test:
+    name: Tests (non-blocking, edge)
+    needs: plan
+    if: github.event_name == 'push' && needs.plan.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.10
+      - run: bun install --frozen-lockfile
+      - run: bunx turbo run typecheck test
+
+  # ---- STABLE: manual mode=release. Gated, then tag + GitHub Release. ----
+  approve:
+    name: Approve production release
+    needs: plan
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'release' &&
+      inputs.dry_run == false && needs.plan.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    environment: npm-production # required reviewer — pauses here for manual approval
+    steps:
+      - run: |
+          echo "Releasing to latest:"
+          echo '${{ needs.plan.outputs.matrix }}'
+
+  release:
+    name: Publish ${{ matrix.name }}@latest
+    needs: approve
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/_publish.yml
+    with:
+      package: ${{ matrix.package }}
+      version: ${{ matrix.version }}
+      tag: latest
+
+  finalize:
+    name: Tag + GitHub Release
+    needs: [plan, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - name: Tag released packages + move last-release baseline
+        env:
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "$MATRIX" | node -e 'for (const it of JSON.parse(require("fs").readFileSync(0,"utf8")).include) console.log(`${it.name}-v${it.version}`)' > /tmp/tags.txt
+          while read -r tag; do
+            [ -n "$tag" ] && git tag -a "$tag" -m "$tag" && echo "tagged $tag"
+          done < /tmp/tags.txt
+          git tag -f last-release
+          git push origin --tags --force
+      - name: Create GitHub Release (minimal auto notes — no prose)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+          BASE: ${{ needs.plan.outputs.base }}
+        run: |
+          BUMPS="$(echo "$MATRIX" | node -e 'for(const it of JSON.parse(require("fs").readFileSync(0,"utf8")).include)console.log(`- \`${it.name}\` → ${it.version}`)')"
+          COMMITS="$(git log "$BASE"..HEAD --pretty='- %s' --no-merges | head -50)"
+          TAG="release-$(date -u +%Y%m%d-%H%M%S)"
+          BODY="$(printf '## Packages\n%s\n\n## Changes\n%s\n' "$BUMPS" "$COMMITS")"
+          gh release create "$TAG" --title "imprnt release $TAG" --notes "$BODY" --target "$GITHUB_SHA"

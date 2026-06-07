@@ -27,7 +27,7 @@ frustration with release commands — do not do it unless the user explicitly pa
 - **Versions are independent.** Each affected package bumps **one patch** from its current npm
   `latest`. A package whose files didn't change since the last release is NOT bumped or republished.
 - "Affected since last release" = Turbo `--affected` diffed against the moving `last-release` git tag.
-- Publishing is **OIDC + provenance from CI** (`.github/workflows/release.yml` → `_publish.yml`). There
+- Publishing is **OIDC + provenance from CI** (`.github/workflows/publish.yml` → `_publish.yml`). There
   are **no tokens** and you do **not** run `npm publish` locally. The workflow pauses at the
   `npm-production` environment for the user's manual approval before anything hits `latest`.
 
@@ -59,12 +59,12 @@ Run from `~/IdeaProjects/imprnt`.
 
 3. **Fire the workflow.**
    ```sh
-   gh workflow run release.yml                       # normal
-   gh workflow run release.yml -f dry_run=true       # for --dry-run
+   gh workflow run publish.yml -f mode=release                    # normal
+   gh workflow run publish.yml -f mode=release -f dry_run=true    # for --dry-run
    ```
    Then surface the run and tell the user to **approve the `npm-production` gate** in the Actions UI:
    ```sh
-   gh run list --workflow=release.yml --limit 1
+   gh run list --workflow=publish.yml --limit 1
    ```
    Give them the run URL. The release proceeds once they approve; do not wait silently.
 
