@@ -42,6 +42,10 @@ const rows: Row[] = [
   { label: "redirect to /dev/sda", cmd: "echo x > /dev/sda", expectedExit: 2 },
   { label: "bare git push -f (current branch)", cmd: "git push -f", expectedExit: 2 },
   { label: "bare git push --force", cmd: "git push --force", expectedExit: 2 },
+  // ---- P2 git global options between `git` and `push` (must now block, exit 2) -----------------
+  { label: "P2 git -C path push -f main", cmd: "git -C /repo push -f origin main", expectedExit: 2 },
+  { label: "P2 git -C path push main --force", cmd: "git -C /repo push origin main --force", expectedExit: 2 },
+  { label: "P2 git -c key=val push -f master", cmd: "git -c user.x=y push -f origin master", expectedExit: 2 },
 
   // ---- ALLOW CASES (must NOT block; exit 0) -------------------------------------------------------
   { label: "rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },
@@ -51,10 +55,23 @@ const rows: Row[] = [
   { label: "git push origin main (no force)", cmd: "git push origin main", expectedExit: 0 },
   { label: "git push origin feature -f (non-main branch)", cmd: "git push origin feature -f", expectedExit: 0 },
   { label: "git push -u origin main (set upstream, no force)", cmd: "git push -u origin main", expectedExit: 0 },
+  { label: "git --force-with-lease origin feature (non-main, ALLOW)", cmd: "git push --force-with-lease origin feature", expectedExit: 0 },
+  { label: "git -C path status (non-push git -C, ALLOW)", cmd: "git -C /repo status", expectedExit: 0 },
 
   // ---- USAGE (no arg, exit 1) --------------------------------------------------------------------
   { label: "no-arg usage", cmd: null, expectedExit: 1 },
 ];
+
+// ReDoS guard: a long crafted input must complete quickly (not hang). Exit code may be 0 or 2,
+// but the process must return well under a generous timeout.
+test("ReDoS guard: 30k-char crafted input returns quickly", () => {
+  const evil = "git " + " push".repeat(6000); // ~30k chars of repeated `git`/`push`-ish tokens
+  const start = Date.now();
+  const code = exitOf(evil);
+  const elapsed = Date.now() - start;
+  expect(code === 0 || code === 2).toBe(true);
+  expect(elapsed).toBeLessThan(5000);
+});
 
 for (const { label, cmd, expectedExit } of rows) {
   test(`${label} -> exit ${expectedExit}`, () => {

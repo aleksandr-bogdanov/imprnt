@@ -25,10 +25,15 @@ const DENY: { re: RegExp; why: string }[] = [
   { re: /\bchmod\s+-R\s+0?777\s+\//, why: "recursive 777 on a system path" },
   // force-push: a `git push` line carrying a force flag (-f / --force / --force-with-lease) AND a
   // main/master token, in EITHER order (order-independent via two lookaheads).
-  { re: /\bgit\s+push\b(?=[^\n]*(?:--force(?:-with-lease)?\b|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*\b))(?=[^\n]*\b(?:main|master)\b)/, why: "force-push to main/master" },
+  // Git global options may sit between `git` and `push` (e.g. `git -C /repo push`, `git -c k=v push`,
+  // `git --git-dir=... push`). We tolerate a bounded run of intervening non-space tokens so those
+  // forms are still caught. The count is capped (no unbounded/nested quantifier) to avoid ReDoS and
+  // to keep matching scoped to a plausible git command rather than far-apart words in prose.
+  { re: /\bgit\b(?:\s+\S+){0,8}?\s+push\b(?=[^\n]*(?:--force(?:-with-lease)?\b|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*\b))(?=[^\n]*\b(?:main|master)\b)/, why: "force-push to main/master" },
   // bare `git push -f` / `git push --force` with no remote argument force-pushes the CURRENT branch,
   // which is frequently main/master. Block it too. (A remote like `origin` opts out of this rule.)
-  { re: /\bgit\s+push\s+(?:--force(?:-with-lease)?|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*)\s*$/, why: "bare force-push (current branch, often main/master)" },
+  // Same bounded tolerance for git global options between `git` and `push`.
+  { re: /\bgit\b(?:\s+\S+){0,8}?\s+push\s+(?:--force(?:-with-lease)?|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*)\s*$/, why: "bare force-push (current branch, often main/master)" },
 ];
 
 const argCmd = process.argv.slice(2).join(" ").trim();
