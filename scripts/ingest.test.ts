@@ -472,6 +472,70 @@ test("--apply keeps an existing source: verbatim and still reports the snapshot 
   if (uncoveredIdx >= 0) expect(c.out.slice(uncoveredIdx)).not.toContain("raw/proposed/beth-custom");
 });
 
+// --- finding (CRLF): a staged note with `\r\n` frontmatter is read correctly by --apply (its type is
+// parsed, it is filed, a source: is injected/kept) and check reports it covered. Pre-fix the LF-only
+// frontmatter() regex returned "", so type read empty and apply refused with "no type:". ------------
+test("--apply reads a CRLF staged note, files it, injects source:, and check reports it covered", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "win.md");
+  // A Windows-authored note: every line ends in CRLF, including the frontmatter fences.
+  const content = ["---", "type: person", "tags: [test]", "---", "", "# Win", "", "bio"].join("\r\n") + "\r\n";
+  writeFileSync(staged, content);
+
+  const r = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r.code).toBe(0);
+  // Type was read (not refused), so the note filed into people/.
+  expect(r.err).not.toContain("no `type:`");
+  const filed = join(vault, "people", "win.md");
+  expect(existsSync(filed)).toBe(true);
+  const note = readFileSync(filed, "utf8");
+  // A source: back-link was injected. The injected line keeps the note's CRLF style (no lone LF mixed in).
+  expect(note).toMatch(/^source: "\[\[raw\/proposed\/[^\]]+\]\]"\r$/m);
+
+  // check reports the snapshot covered (manifest raw entry and the note's source: agree).
+  const c = run(["check", "--vault", vault]);
+  expect(c.out).toContain("✓ every raw snapshot has a derived note");
+});
+
+// --- finding 2: --apply of a note that supplies its OWN source: writes NO redundant raw/proposed
+// snapshot, so no stranded file is left on disk. The manifest raw entry and the note's source: agree
+// and check reports it covered. Pre-fix a raw/proposed/<slug>-<hash>.md was always written and then
+// referenced by nothing. -------------------------------------------------------------------------
+test("--apply of a note with its own source: leaves no orphaned raw/proposed snapshot", () => {
+  const { vault, raw } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "carl.md");
+  // The note points its source: at an existing raw artifact (the real provenance).
+  const ownSource = "raw/adhoc/carl-origin";
+  mkdirSync(join(raw, "adhoc"), { recursive: true });
+  writeFileSync(join(raw, "adhoc", "carl-origin.md"), "origin bytes");
+  const content = `---\ntype: person\ntags: [test]\nsource: "[[${ownSource}]]"\n---\n\n# Carl\n\nbio\n`;
+  writeFileSync(staged, content);
+
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+
+  // No raw/proposed file was written at all - the note's own source is the provenance.
+  const proposedRaw = join(raw, "proposed");
+  const proposedFiles = existsSync(proposedRaw) ? readdirSync(proposedRaw) : [];
+  expect(proposedFiles.length).toBe(0);
+
+  // The filed note keeps its single original source: and the manifest entry agrees with it.
+  const note = readFileSync(join(vault, "people", "carl.md"), "utf8");
+  expect((note.match(/^source:/gm) ?? []).length).toBe(1);
+  expect(note).toContain(`source: "[[${ownSource}]]"`);
+  const manifest = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
+  const applyKey = Object.keys(manifest).find((k) => k.startsWith("apply:sha256:"))!;
+  expect(manifest[applyKey].raw).toBe(ownSource);
+
+  // check reports it covered (no uncovered snapshot for this note).
+  const c = run(["check", "--vault", vault]);
+  const uncoveredIdx = c.out.indexOf("uncovered snapshots");
+  if (uncoveredIdx >= 0) expect(c.out.slice(uncoveredIdx)).not.toContain(ownSource);
+});
+
 // --- CLEAN re-verify: --apply conflict refusal (different bytes -> kept, flagged, exit 1) ----------
 test("--apply refuses to overwrite a note with different bytes", () => {
   const { vault } = setup();
