@@ -408,6 +408,70 @@ test("--apply files a staged note and re-applying identical bytes is a no-op", (
   expect(existsSync(staged)).toBe(false);
 });
 
+// --- regression: an applied note must carry a `source:` back-link to its raw/proposed snapshot, so
+// `imprint check`'s coverage scan does NOT flag that snapshot as an uncovered snapshot forever. Before
+// the fix the note was filed verbatim with no source:, the manifest recorded the raw/proposed snapshot,
+// and check saw a raw entry no note pointed back at -> the snapshot was listed under "uncovered
+// snapshots" on every check run. After the fix the filed note carries `source: "[[raw/proposed/...]]"`
+// and check reports it covered. Re-applying the same staged note stays a clean no-op. ---------------
+test("--apply injects a source: back-link so check does not flag the snapshot as uncovered", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "alex.md");
+  // A staged note with NO source: field (the broken path). It carries a tag so the only check signal
+  // we are exercising is snapshot coverage, not the unrelated untagged check.
+  const content = "---\ntype: person\ntags: [test]\n---\n\n# Alex\n\nbio\n";
+  writeFileSync(staged, content);
+
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+
+  // The filed note carries a source: wikilink into its raw/proposed snapshot (no trailing .md).
+  const filed = join(vault, "people", "alex.md");
+  const note = readFileSync(filed, "utf8");
+  expect(note).toMatch(/^source: "\[\[raw\/proposed\/[^\]]+\]\]"$/m);
+  expect(note).not.toMatch(/\.md\]\]/); // wikilink target has no .md suffix
+
+  // The manifest raw entry and the note's source: agree, so check reports the snapshot covered.
+  const c = run(["check", "--vault", vault]);
+  // The applied note's snapshot is NOT listed under uncovered snapshots.
+  const snapshot = readdirSync(join(vault, "..", "raw", "proposed")).find((f) => f.endsWith(".md"))!;
+  const snapBase = "raw/proposed/" + snapshot.replace(/\.md$/, "");
+  expect(c.out).toContain("✓ every raw snapshot has a derived note");
+  // Defensive: even if the headline copy changes, the snapshot path must not appear as uncovered.
+  const uncoveredIdx = c.out.indexOf("uncovered snapshots");
+  if (uncoveredIdx >= 0) expect(c.out.slice(uncoveredIdx)).not.toContain(snapBase);
+
+  // Re-applying the same staged note is still a clean no-op (deterministic injected source:).
+  writeFileSync(staged, content);
+  const r2 = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r2.code).toBe(0);
+  expect(r2.out.toLowerCase()).toContain("no-op");
+  expect(existsSync(staged)).toBe(false);
+});
+
+// --- regression: a staged note that ALREADY has its own source: is filed verbatim (source: not
+// duplicated) and the manifest raw entry agrees with it, so check still reports it covered. ---------
+test("--apply keeps an existing source: verbatim and still reports the snapshot covered", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "beth.md");
+  const content = '---\ntype: person\ntags: [test]\nsource: "[[raw/proposed/beth-custom]]"\n---\n\n# Beth\n\nbio\n';
+  writeFileSync(staged, content);
+
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+
+  const note = readFileSync(join(vault, "people", "beth.md"), "utf8");
+  // The single, original source: line is preserved - not duplicated.
+  expect((note.match(/^source:/gm) ?? []).length).toBe(1);
+  expect(note).toContain('source: "[[raw/proposed/beth-custom]]"');
+
+  const c = run(["check", "--vault", vault]);
+  const uncoveredIdx = c.out.indexOf("uncovered snapshots");
+  if (uncoveredIdx >= 0) expect(c.out.slice(uncoveredIdx)).not.toContain("raw/proposed/beth-custom");
+});
+
 // --- CLEAN re-verify: --apply conflict refusal (different bytes -> kept, flagged, exit 1) ----------
 test("--apply refuses to overwrite a note with different bytes", () => {
   const { vault } = setup();
