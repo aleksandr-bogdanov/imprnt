@@ -1,7 +1,10 @@
-# Reusable publish job — the ONLY workflow that runs `npm publish`, so npm Trusted Publishing has a
-# single workflow file to trust (configure each package's trusted publisher to point here).
+# Reusable publish job — the actual `npm publish`, called by publish.yml for both edge and stable.
 #
-# It authenticates to npm via OIDC (no tokens anywhere) and ships provenance attestations (public repo
+# IMPORTANT: npm Trusted Publishing validates the ENTRY-POINT (caller) workflow, NOT this reusable
+# file. So the trusted publisher on each package must point at `publish.yml` (the single entry), and
+# everything funnels through it. This file just does the work.
+#
+# It authenticates to npm via OIDC (no tokens) and ships provenance attestations (public repo
 # required). It builds the one package via Turbo and publishes with --ignore-scripts, so it never runs
 # the package's test/prepublish lifecycle — the CALLER decides test-gating (edge: non-blocking;
 # release: gated before this is called). Version is set transiently and never committed.
@@ -34,14 +37,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.10
-      # NOTE: deliberately NO registry-url here. setup-node's registry-url writes an .npmrc with
-      # always-auth + `_authToken=${NODE_AUTH_TOKEN}` (empty), which makes npm attempt broken token
-      # auth and SHADOW OIDC Trusted Publishing → 404 "no permission". Without it, npm defaults to
-      # registry.npmjs.org and, finding no token but an id-token + a configured trusted publisher,
-      # authenticates via OIDC. (npm provenance still signs either way; the difference is publish auth.)
+      # registry-url IS required: it configures the registry so npm attempts OIDC. Do NOT set
+      # NODE_AUTH_TOKEN — with no token but an id-token present and a trusted publisher configured,
+      # npm authenticates via OIDC. (Removing registry-url makes npm skip OIDC entirely → ENEEDAUTH.)
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
+          registry-url: https://registry.npmjs.org
       - name: Ensure npm supports Trusted Publishing (>= 11.5)
         run: npm install -g npm@latest && npm --version
       - name: Install deps
