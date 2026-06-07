@@ -37,6 +37,7 @@ const LINK = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g;
 
 const notes = collectNotes(vault);
 const allSlugs = new Set(notes.map((n) => n.slug));
+const folderOf = new Map<string, string>(notes.map((n) => [n.slug, n.folder]));
 const byBasename = new Map<string, string[]>();
 for (const n of notes) {
   const base = n.slug.includes("/") ? n.slug.slice(n.slug.lastIndexOf("/") + 1) : n.slug;
@@ -48,6 +49,21 @@ function resolves(target: string): boolean {
   if (!t) return false;
   if (t.includes("/")) return allSlugs.has(t) || existsSync(join(vault, `${t}.md`));
   return byBasename.has(t); // bare slug — resolvable if any folder holds it
+}
+
+// The folder(s) a link target resolves to. A slug link maps to its one note's folder; a bare slug
+// can match several folders, so we return every folder that holds a note of that basename. A target
+// that exists on disk but isn't a collected note (e.g. a deep path) yields no folder. Deterministic.
+function targetFolders(target: string): string[] {
+  const t = target.trim().replace(/^\.\//, "").replace(/\.md$/, "");
+  if (!t) return [];
+  if (t.includes("/")) { const f = folderOf.get(t); return f ? [f] : []; }
+  return (byBasename.get(t) ?? []).map((s) => folderOf.get(s)).filter((f): f is string => !!f);
+}
+
+// True if a link target resolves to a note in an entity folder (people/orgs/holdings).
+function linksEntity(target: string): boolean {
+  return targetFolders(target).some((f) => ENTITY_FOLDERS.has(f));
 }
 
 // --- checks ---------------------------------------------------------------
@@ -63,7 +79,10 @@ for (const n of notes) {
   // sits OUTSIDE the searchable vault — never count them as orphans, nor as graph links.
   const links = [...raw.matchAll(LINK)].map((m) => m[1].trim()).filter((l) => !l.startsWith("raw/"));
   for (const l of links) if (!resolves(l)) orphans.push(`  ${n.slug}  →  [[${l}]]`);
-  if (!ENTITY_FOLDERS.has(n.folder) && links.length === 0) disconnected.push(`  ${n.slug}`);
+  // A domain/form note is disconnected unless at least ONE of its wikilinks resolves to an entity
+  // note (people/orgs/holdings). A link to another domain/form note, or to raw/..., does not count.
+  // Entity folders are exempt — an entity need not link an entity.
+  if (!ENTITY_FOLDERS.has(n.folder) && !links.some(linksEntity)) disconnected.push(`  ${n.slug}`);
 
   // untagged: every note carries ≥1 tag (the topic/search axis). An empty `tags: []` is the exact
   // symptom that motivated the auto-growing vocabulary — coining is now free, so there's no excuse for
@@ -156,6 +175,9 @@ console.log(`↻ regenerated index.md — ${count} notes across ${folders} folde
 
 const issues = orphans.length + disconnected.length + domainIssues.length + untagged.length + uncovered.length + dupPairs.length;
 console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
+// check still PRINTS everything and never blocks or mutates a note — only the exit CODE reflects health,
+// so `imprint check` is usable in CI and `&&` chains. Core issues alone make the process exit non-zero.
+// With --all the final exit is the max of core issues and any plugin failure (computed below).
 
 // --- plugin aggregation (--all only) --------------------------------------
 // The ONE core↔plugin contact for integrity (the other is `ingest --apply`). Both discover by
@@ -163,7 +185,8 @@ console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
 // "plugin API": core may provide read-only AGGREGATION here, never write/orchestration. Concretely we
 // glob plugins/*/check.ts, run each as its own `bun` subprocess, READ THE EXIT CODE ONLY (0 = sound,
 // non-zero = issue), and forward the plugin's stdout/stderr VERBATIM — we never parse what it prints.
-// Core-only `check` (no --all) is untouched and always exits 0; --all exits non-zero iff a plugin failed.
+// Core `check` exits non-zero when it has issues (bug-1 fix); --all exits non-zero when the core has
+// issues OR any plugin failed (the max of both).
 if (all) {
   const here = dirname(fileURLToPath(import.meta.url));
   const pluginsDir = join(here, "..", "plugins");
@@ -189,6 +212,10 @@ if (all) {
     console.log(`  ${ok ? "✓" : "✗"} plugins/${name}/check.ts → exit ${proc.exitCode}`);
   }
 
-  if (failed) { console.log(`\n${failed} plugin check(s) failed.`); process.exit(1); }
-  if (checks.length) console.log(`\nall plugin checks passed.`);
+  if (failed) console.log(`\n${failed} plugin check(s) failed.`);
+  else if (checks.length) console.log(`\nall plugin checks passed.`);
+
+  if (failed || issues) process.exit(1);
+} else if (issues) {
+  process.exit(1);
 }
