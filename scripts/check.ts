@@ -36,7 +36,9 @@ if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`imprint 
 // Entity folders are link TARGETS — they may legitimately have few outgoing links, so they're exempt
 // from the disconnected-note check. Everything else (domains + forms) should connect to the graph.
 const ENTITY_FOLDERS = new Set(["people", "orgs", "holdings"]);
-const DOMAIN_FOLDERS = new Set(["identity", "health", "finances", "work", "life", "projects"]);
+// projects/ is self-describing by type (type:project mirrors the folder), like events/mistakes, so it
+// carries no domain: field and is exempt from the domain-match check. It is NOT in DOMAIN_FOLDERS.
+const DOMAIN_FOLDERS = new Set(["identity", "health", "finances", "work", "life"]);
 const LINK = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g;
 
 const notes = collectNotes(vault);

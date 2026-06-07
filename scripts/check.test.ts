@@ -204,6 +204,65 @@ test("vault with a domain mismatch exits non-zero", () => {
   expect(code).not.toBe(0);
 });
 
+// --- projects/ is self-describing by type (exempt from domain-match) ------
+// A type:project note lives in projects/ because its folder mirrors its type, exactly like events and
+// mistakes. So it carries no domain: field and must NOT be flagged as a domain mismatch, regardless of
+// whether it has no domain or a non-matching one. The entity-link (disconnected) check is separate and
+// still applies, and the domain-match check still works for the real domain folders.
+
+// The exact slugs printed under the "domain mismatches" header, stripped of the trailing reason text
+// so callers can do exact-equality membership on the slug. Each flagged note is "  <slug>  — ...".
+function domainMismatchSlugs(out: string): string[] {
+  const lines = out.split("\n");
+  const start = lines.findIndex((l) => l.includes("domain mismatches"));
+  if (start === -1) return [];
+  const slugs: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^  (\S.*?)\s+—/);
+    if (!m) break; // blank line or next section ends the list
+    slugs.push(m[1].trim());
+  }
+  return slugs;
+}
+
+test("project note with a mismatched domain: is NOT flagged as a domain mismatch", () => {
+  const dir = makeVault();
+  // a project note declaring domain: work would, pre-fix, be flagged folder(projects) != domain(work).
+  note(dir, "projects/x.md", "type: project\ndomain: work\ntags: [work]", "# X\n\nFor [[people/anna]].");
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const { out } = runCheck(dir);
+  expect(domainMismatchSlugs(out)).not.toContain("projects/x");
+});
+
+test("project note with NO domain: is NOT flagged as a domain mismatch", () => {
+  const dir = makeVault();
+  note(dir, "projects/x.md", "type: project\ntags: [work]", "# X\n\nFor [[people/anna]].");
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const { out } = runCheck(dir);
+  expect(domainMismatchSlugs(out)).not.toContain("projects/x");
+});
+
+test("project note linking no entity is STILL flagged disconnected (exemption is domain-only)", () => {
+  const dir = makeVault();
+  // links nothing in people/orgs/holdings -> must remain a disconnected graph island.
+  note(dir, "projects/x.md", "type: project\ntags: [work]", "# X\n\nNo entity links here.");
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("disconnected notes");
+  expect(disconnectedList(out)).toContain("projects/x");
+  expect(code).not.toBe(0);
+});
+
+test("a real domain folder note with a mismatched domain: is STILL flagged", () => {
+  const dir = makeVault();
+  // the domain-match check must keep working for the real domain folders after exempting projects/.
+  note(dir, "health/x.md", "domain: work\ntags: [health]", "# X\n\nSee [[people/anna]].");
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("domain mismatches");
+  expect(domainMismatchSlugs(out)).toContain("health/x");
+  expect(code).not.toBe(0);
+});
+
 // --- --all aggregation exit code ------------------------------------------
 // --all globs the REPO plugins dir via import.meta.url, so a temp vault cannot inject fake plugins.
 // We test the fully reachable path: core issues alone must make --all exit non-zero, regardless of
