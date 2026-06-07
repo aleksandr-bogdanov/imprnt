@@ -12,8 +12,18 @@
 //   imprint snapshot ./tax2025.csv          --dest tax-2025
 import { readdirSync, readFileSync, copyFileSync, mkdirSync, existsSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, relative, basename } from "node:path";
+import { join, relative, basename, resolve, sep } from "node:path";
 import { loadManifest, saveManifest } from "./lib/manifest.ts";
+
+// Guard a user-supplied dest relpath so it can never escape raw/. A `../`-laden dest would otherwise
+// resolve outside rawRoot and let snapshot write into vault/ or anywhere writable, breaking the
+// "raw/ immutable" contract. Resolve both paths and require the dest to stay strictly inside rawRoot.
+function destWithinRaw(rawRoot: string, dest: string): string | null {
+  const rootResolved = resolve(rawRoot);
+  const destResolved = resolve(rootResolved, dest);
+  if (destResolved !== rootResolved && !destResolved.startsWith(rootResolved + sep)) return null;
+  return destResolved;
+}
 
 const args = process.argv.slice(2);
 let vault = process.env.IMPRINT_VAULT ?? "./vault";
@@ -32,7 +42,11 @@ if (!src || !dest) {
 if (!existsSync(src)) { console.error(`no such source: ${src}`); process.exit(1); }
 
 const rawRoot = join(vault, "..", "raw");
-const destRoot = join(rawRoot, dest);
+const destRoot = destWithinRaw(rawRoot, dest);
+if (!destRoot) {
+  console.error(`refusing --dest '${dest}': it escapes raw/ (resolves outside ${resolve(rawRoot)}). raw/ is immutable — pick a dest inside it.`);
+  process.exit(1);
+}
 const manifest = loadManifest(vault);
 
 const SKIP = new Set([".git", ".DS_Store", "node_modules", ".manifest.json"]);
