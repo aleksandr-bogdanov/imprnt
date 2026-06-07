@@ -8,6 +8,7 @@ import { openNeedsReview } from "./lib/resolve.ts";
 import { listPluginDirs, isEnabled, addPlugin, rmPlugin } from "./lib/plugins.ts";
 import { installPlugin, purgePlugin, OFFICIAL } from "./lib/install.ts";
 import { projectRoot } from "./lib/roots.ts";
+import { collectNotes } from "./lib/moc.ts";
 
 // packageRoot: the install location, source for templates/ + CLAUDE.md. Computed from THIS entry
 // file, which sits one level under the root in both dev (scripts/cli.ts) and the bundle (dist/cli.js).
@@ -132,12 +133,21 @@ switch (cmd) {
     const domains = ["identity", "health", "finances", "work", "life", "projects"];
     const forms = ["events", "mistakes"];
     const vaultDirs = [...entities, ...domains, ...forms];
+    // init is idempotent: it only ever creates what's missing and never touches a note. Track what
+    // actually changed so the summary states the truth — a fresh scaffold vs. topping up an existing
+    // vault — instead of unconditionally claiming to have scaffolded one.
+    const vaultPath = join(process.cwd(), "vault");
+    const vaultExisted = existsSync(vaultPath);
+    let createdDirs = 0;
     for (const d of ["vault", ...vaultDirs.map((t) => `vault/${t}`), "raw"]) {
-      mkdirSync(join(process.cwd(), d), { recursive: true });
+      const abs = join(process.cwd(), d);
+      if (!existsSync(abs)) createdDirs++;
+      mkdirSync(abs, { recursive: true });
     }
+    const added: string[] = [];
     for (const f of ["index.md", "hot.md", "log.md", "_tags.md"]) {
-      const dst = join(process.cwd(), "vault", f);
-      if (!existsSync(dst)) cpSync(join(pkgRoot, "templates", f), dst);
+      const dst = join(vaultPath, f);
+      if (!existsSync(dst)) { cpSync(join(pkgRoot, "templates", f), dst); added.push(`vault/${f}`); }
     }
     // Drop the vault contract into the project so an installed agent loads it. The dev clone
     // already has CLAUDE.md at root; this is what makes a fresh `npm i -g` install self-describing,
@@ -145,13 +155,27 @@ switch (cmd) {
     const claudeMd = join(process.cwd(), "CLAUDE.md");
     if (!existsSync(claudeMd) && existsSync(join(pkgRoot, "CLAUDE.md"))) {
       cpSync(join(pkgRoot, "CLAUDE.md"), claudeMd);
+      added.push("CLAUDE.md");
     }
-    console.log("scaffolded ./vault:");
-    console.log(`  entities: ${entities.join(", ")}`);
-    console.log(`  domains:  ${domains.join(", ")}`);
-    console.log(`  forms:    ${forms.join(", ")}`);
-    console.log("  + raw/ for immutable by-source snapshots.");
-    console.log("snapshot a source (`imprnt snapshot <path> --dest pai/...`) or ingest one, then `imprnt check`.");
+
+    if (!vaultExisted) {
+      // Brand-new vault: show the layout so the user learns the shape, then point at the next step.
+      console.log("initialized vault at ./vault");
+      console.log(`  entities: ${entities.join(", ")}`);
+      console.log(`  domains:  ${domains.join(", ")}`);
+      console.log(`  forms:    ${forms.join(", ")}`);
+      console.log("  + raw/ for immutable by-source snapshots");
+      console.log("next: ingest a source (`imprnt ingest <file>`), then `imprnt check`.");
+    } else {
+      // Existing vault: lead with the count so it's obvious the notes were found, not made, and
+      // report only the idempotent top-up. Never imply anything was created or overwritten.
+      const noteCount = collectNotes(vaultPath).length;
+      console.log(`found existing vault at ./vault — ${noteCount} note${noteCount === 1 ? "" : "s"}, left untouched`);
+      if (added.length) console.log(`  added missing control file${added.length === 1 ? "" : "s"}: ${added.join(", ")}`);
+      else if (createdDirs) console.log(`  added ${createdDirs} missing folder${createdDirs === 1 ? "" : "s"}`);
+      else console.log("  already initialized — nothing to add");
+      console.log("run `imprnt check` to validate the graph.");
+    }
     break;
   }
   default:
