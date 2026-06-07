@@ -9,7 +9,10 @@
   "scripts": {
     "ingest": "bun scripts/ingest.ts",
     "recall": "bun scripts/recall.ts",
-    "hot": "bun scripts/cli.ts hot"
+    "hot": "bun scripts/cli.ts hot",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "check": "bun scripts/cli.ts check"
   },
   "engines": {
     "bun": ">=1.3.0"
@@ -35,5 +38,8 @@
     "!plugins/_personal",
     "CLAUDE.md",
     "README.md"
-  ]
+  ],
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
 }
