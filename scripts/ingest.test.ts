@@ -62,8 +62,11 @@ test("2-speaker transcript writes a correct event skeleton", () => {
   expect(note).toMatch(/source: "\[\[raw\/transcripts\//);
 });
 
-// --- bug 1: re-ingest a CHANGED transcript -> existing enriched note PRESERVED --------------------
-test("re-ingesting a changed transcript does not overwrite an enriched note", () => {
+// --- bug 1: re-ingest a CHANGED transcript -> existing enriched note PRESERVED, new bytes get their
+// OWN note under a disambiguated slug, collision flagged. (Corrected round-2 behavior: edited bytes
+// at the same slug are a distinct source, so they are filed separately, not claimed as the same source
+// "changing". This is more honest - it never silently strands the new version.) ------------------
+test("re-ingesting a changed transcript preserves the enriched note and files the new bytes under a disambiguated slug", () => {
   const { vault } = setup();
   const src = join(vault, "..", "t.txt");
   writeFileSync(src, TRANSCRIPT_2SPK);
@@ -81,17 +84,80 @@ test("re-ingesting a changed transcript does not overwrite an enriched note", ()
   writeFileSync(src, TRANSCRIPT_2SPK + "Bob: one more thing, different now.\n");
   const r = run(["ingest", src, "--vault", vault]);
 
-  // Non-fatal, clear message, note untouched.
+  // Non-fatal, clear message, existing note untouched.
   expect(r.code).toBe(0);
   const after = readFileSync(notePath, "utf8");
   expect(after).toContain("ENRICHED-BODY-MARKER");
   expect(after).toContain("status: enriched");
   expect(after).toContain("a hard-won decision");
-  // Provenance + needs-review surfaced.
-  expect(needsReview(vault)).toContain("source changed for existing note");
-  // Manifest hash updated to the new source bytes.
+  // The new bytes are filed under a disambiguated slug (same base, -<hash8> suffix), NOT lost.
+  const events = readdirSync(join(vault, "events"));
+  const disambig = events.find((f) => f.startsWith("2025-03-04-q3-planning-") && f.endsWith(".md"));
+  expect(disambig).toBeDefined();
+  // Honest needs-review: a slug collision to reconcile, NOT a "source changed" misdiagnosis.
+  expect(needsReview(vault)).toContain("slug collision");
+  expect(needsReview(vault)).not.toContain("source changed for existing note");
+  // Manifest hash updated to the new source bytes, and its note points at the NEW disambiguated note.
   const manifest = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
   expect(manifest[src]).toBeDefined();
+  expect(manifest[src].note).toBe(join(vault, "events", disambig!));
+});
+
+// --- finding 1: two DIFFERENT transcripts, SAME date+subject -> both notes exist, manifest for the
+// 2nd points at the 2nd (correct) note, collision flagged, existing note unchanged ----------------
+test("two different transcripts with the same date+subject each get their own note", () => {
+  const { vault } = setup();
+  const srcA = join(vault, "..", "a.txt");
+  const srcB = join(vault, "..", "b.txt");
+  // Same subject + date, DIFFERENT participants and content.
+  writeFileSync(srcA, "subject: sync\ndate: 2025-07-01\nAlice: first meeting.\nBob: yes.\n");
+  writeFileSync(srcB, "subject: sync\ndate: 2025-07-01\nCarol: different meeting.\nDave: indeed.\n");
+
+  expect(run(["ingest", srcA, "--vault", vault]).code).toBe(0);
+  const noteA = join(vault, "events", "2025-07-01-sync.md");
+  expect(existsSync(noteA)).toBe(true);
+  const beforeA = readFileSync(noteA, "utf8");
+  expect(beforeA).toContain("[[people/alice]]");
+
+  // Second, distinct transcript collides on the slug.
+  const r = run(["ingest", srcB, "--vault", vault]);
+  expect(r.code).toBe(0);
+
+  // First note unchanged (still Alice/Bob, not overwritten with Carol/Dave).
+  expect(readFileSync(noteA, "utf8")).toBe(beforeA);
+
+  // Second note exists under a disambiguated slug with the CORRECT (Carol/Dave) content.
+  const events = readdirSync(join(vault, "events"));
+  const disambig = events.find((f) => f.startsWith("2025-07-01-sync-") && f.endsWith(".md"));
+  expect(disambig).toBeDefined();
+  const noteB = readFileSync(join(vault, "events", disambig!), "utf8");
+  expect(noteB).toContain("[[people/carol]]");
+  expect(noteB).toContain("[[people/dave]]");
+  expect(noteB).not.toContain("[[people/alice]]");
+
+  // Manifest entry for source B points at the NEW note.
+  const manifest = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
+  expect(manifest[srcB].note).toBe(join(vault, "events", disambig!));
+  // Collision surfaced for reconciliation.
+  expect(needsReview(vault)).toContain("slug collision");
+});
+
+// --- finding 2: an email (From:/To:/Subject:) is NOT a transcript -> snapshot + needs-review, no
+// fabricated event with [[people/from]] / [[people/to]] participants ------------------------------
+test("an email is not detected as a transcript and gets no fabricated event note", () => {
+  const { vault } = setup();
+  const src = join(vault, "..", "mail.txt");
+  writeFileSync(src, "From: a@b.com\nTo: c@d.com\nSubject: quick question\n\nCan you send me the report by Friday? Thanks.\n");
+  const r = run(["ingest", src, "--vault", vault]);
+  expect(r.code).toBe(0);
+  // No event note fabricated.
+  const events = readdirSync(join(vault, "events"));
+  expect(events.length).toBe(0);
+  // Snapshotted + handed to the LLM via needs-review.
+  expect(needsReview(vault)).toContain("unclassified source");
+  // No bogus people/from or people/to anywhere.
+  expect(needsReview(vault)).not.toContain("people/from");
+  expect(needsReview(vault)).not.toContain("people/to");
 });
 
 // --- bug 2: snapshot --dest with ../ is rejected, nothing escapes raw/ ----------------------------
@@ -147,6 +213,55 @@ test("a genuine inline-text fact (no path shape) still ingests as bytes", () => 
   expect(r.code).toBe(0);
   expect(r.out.toLowerCase()).toContain("snapshot");
   expect(needsReview(vault)).toContain("unclassified source");
+});
+
+// --- finding 3: inline text containing a slash (multi-word, has whitespace) is ingested as bytes,
+// NOT refused as a missing path. A single-token slash path with no spaces still errors. ------------
+test("inline text with a slash still ingests as bytes (not refused as a missing path)", () => {
+  const { vault } = setup();
+  const r = run(["ingest", "see foo/bar in the repo", "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(r.err).not.toContain("no such file");
+  expect(r.out.toLowerCase()).toContain("snapshot");
+  expect(needsReview(vault)).toContain("unclassified source");
+});
+
+test("a single-token mistyped slash path (no spaces) still errors", () => {
+  const { vault } = setup();
+  const r = run(["ingest", "nope/missing.txt", "--vault", vault]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("no such file");
+});
+
+// --- finding 4: a dangling --vault / --dest gives a clean error, not a raw TypeError --------------
+test("ingest with a dangling --vault errors cleanly", () => {
+  const { vault } = setup();
+  const src = join(vault, "..", "t.txt");
+  writeFileSync(src, TRANSCRIPT_2SPK);
+  const r = run(["ingest", src, "--vault"]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("--vault requires a directory argument");
+  expect(r.err).not.toContain("TypeError");
+});
+
+test("snapshot with a dangling --vault errors cleanly", () => {
+  const { vault } = setup();
+  const src = join(vault, "..", "x.txt");
+  writeFileSync(src, "bytes");
+  const r = run(["snapshot", src, "--dest", "x", "--vault"]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("--vault requires a directory argument");
+  expect(r.err).not.toContain("TypeError");
+});
+
+test("snapshot with a dangling --dest errors cleanly", () => {
+  const { vault } = setup();
+  const src = join(vault, "..", "x.txt");
+  writeFileSync(src, "bytes");
+  const r = run(["snapshot", src, "--dest"]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("--dest requires a path argument");
+  expect(r.err).not.toContain("TypeError");
 });
 
 // --- bug 6: lowercase subject: is parsed into the slug/title -------------------------------------

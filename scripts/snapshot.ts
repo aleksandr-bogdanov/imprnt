@@ -30,8 +30,16 @@ let vault = process.env.IMPRINT_VAULT ?? "./vault";
 let dest = "";
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === "--vault") vault = args[++i];
-  else if (args[i] === "--dest") dest = args[++i];
+  if (args[i] === "--vault") {
+    const v = args[++i];
+    if (v === undefined) { console.error("--vault requires a directory argument"); process.exit(1); }
+    vault = v;
+  }
+  else if (args[i] === "--dest") {
+    const d = args[++i];
+    if (d === undefined) { console.error("--dest requires a path argument"); process.exit(1); }
+    dest = d;
+  }
   else positional.push(args[i]);
 }
 const src = positional[0];
