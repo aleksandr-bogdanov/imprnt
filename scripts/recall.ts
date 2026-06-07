@@ -8,7 +8,7 @@
 // then reads — never to return most of the vault, never an MCP/embedding/vector index.
 //
 // Scoring (standard BM25 with field boosts):
-//   - Each note is tokenized into terms (lowercased, split on non-alphanumerics).
+//   - Each note is tokenized into terms (lowercased, split on non Unicode-letter/number characters).
 //   - A term's occurrences in the TITLE/aliases count 3x, in TAGS 2x, in BODY 1x — folded into the
 //     term frequency, so "voronezh" in a title outweighs "voronezh" buried in prose. One BM25 pass.
 //   - idf(t) = ln(1 + (N - df + 0.5) / (df + 0.5));  k1 = 1.5, b = 0.75.
@@ -27,9 +27,17 @@ let vault = process.env.IMPRINT_VAULT ?? "./vault";
 let limit = 15; // tight by default — narrow, don't dump
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === "--vault") vault = args[++i];
+  if (args[i] === "--vault") {
+    const v = args[++i];
+    if (v === undefined) { console.error("--vault requires a directory argument"); process.exit(1); }
+    vault = v;
+  }
   else if (args[i] === "--limit") {
-    const n = parseInt(args[++i], 10);
+    const tok = args[++i];
+    // Reject a missing value or trailing garbage (parseInt would silently accept "5abc"). The whole
+    // token must be a positive integer.
+    if (tok === undefined || !/^[0-9]+$/.test(tok)) { console.error("--limit must be a positive integer"); process.exit(1); }
+    const n = parseInt(tok, 10);
     if (!Number.isFinite(n) || n <= 0) { console.error("--limit must be a positive integer"); process.exit(1); }
     limit = n;
   } else positional.push(args[i]);
@@ -53,16 +61,48 @@ const STOPWORDS = new Set([
   "current", "latest", "where", "how", "when", "which", "who", "notes",
 ]);
 
+// Tokenize on Unicode letters and numbers so non-ASCII content (Cyrillic, German umlauts, ß) tokenizes
+// to whole words instead of being stripped. The same tokenizer runs on both the query and the note
+// body/title/tags so the write and read sides agree on word boundaries. Lowercasing is locale-agnostic.
 const tokenize = (text: string): string[] =>
-  text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+// A synonym key in _tags.md can be multi-token or accented (`big-query`, `on-call`, `net worth`). The
+// alnum/Unicode tokenizer splits those into pieces, so a query like `big-query` would never reach the
+// `big-query -> bigquery` synonym via per-token normalize. To make those keys reachable from the query
+// side, scan the raw whitespace-split query for any synonym key (single token AND adjacent n-grams) and,
+// for each match, contribute the canonical's TOKENS as extra query terms. The per-token path below still
+// runs, so single-token synonyms keep working too.
+//   Returns the tokenized canonicals discovered from multi-token/hyphenated synonym keys.
+const phraseSynonymTokens = (q: string): string[] => {
+  const out: string[] = [];
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  // Try the whole phrase, then every contiguous n-gram down to single words, joined by both space and
+  // hyphen (a key may be written either way). A hit maps to its canonical, which we then tokenize.
+  for (let n = words.length; n >= 1; n--) {
+    for (let i = 0; i + n <= words.length; i++) {
+      const span = words.slice(i, i + n);
+      for (const key of [span.join(" "), span.join("-")]) {
+        const canon = normalize(vocab, key);
+        if (canon !== key) out.push(...tokenize(canon));
+      }
+    }
+  }
+  return out;
+};
 
 // Each query word -> a group of acceptable variants {word, canonical tag}. The best-scoring variant of
 // each group contributes to the note's score (OR within a group, additive across groups). Stopwords are
 // dropped from the query terms; if that empties the query we keep the originals.
 const rawTerms = tokenize(query);
 const contentTerms = rawTerms.filter((w) => !STOPWORDS.has(w));
-const queryTerms = (contentTerms.length ? contentTerms : rawTerms)
-  .map((w) => [...new Set([w, normalize(vocab, w)])]);
+const baseTerms = contentTerms.length ? contentTerms : rawTerms;
+const queryTerms = baseTerms.map((w) => [...new Set([w, normalize(vocab, w)])]);
+// Add a group per token discovered from a multi-token/hyphenated synonym key. Each canonical token is
+// its own group so it scores additively alongside the literal query terms.
+for (const t of phraseSynonymTokens(query)) {
+  if (!STOPWORDS.has(t)) queryTerms.push([t]);
+}
 if (!queryTerms.length) { console.error("empty query after tokenizing"); process.exit(1); }
 
 // Generated/control files are NOT part of the search corpus: index.md aggregates every note's summary
@@ -74,8 +114,12 @@ function walk(dir: string): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry.startsWith(".") || entry.startsWith("_") || CONTROL.has(entry)) continue;
     const p = join(dir, entry);
-    if (statSync(p).isDirectory()) out.push(...walk(p));
-    else if (entry.endsWith(".md")) out.push(p);
+    // Be tolerant per entry. A broken symlink or otherwise unreadable entry makes statSync/readdir throw.
+    // Skip just that entry so one bad node never aborts the whole walk or hides a populated vault.
+    try {
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (entry.endsWith(".md")) out.push(p);
+    } catch { continue; }
   }
   return out;
 }
@@ -104,8 +148,11 @@ const df = new Map<string, number>(); // document frequency: how many notes cont
 
 for (const path of files) {
   const raw = readFileSync(path, "utf8");
-  const fm = raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
-  const body = raw.slice(fm ? raw.indexOf("\n---", 4) + 4 : 0);
+  // Accept CRLF (`\r\n`) fences so Windows-authored notes parse frontmatter. Without `\r?` the closing
+  // `---\r` line never matches and the whole frontmatter falls through to the body, losing tag boosts.
+  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const fm = fmMatch?.[1] ?? "";
+  const body = fmMatch ? raw.slice(fmMatch.index! + fmMatch[0].length) : raw;
 
   const titleText = raw.match(/^#\s+(.+)$/m)?.[1] ?? "";
   const aliases = frontmatterList(fm, "aliases").join(" ");
