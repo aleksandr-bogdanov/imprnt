@@ -54,6 +54,36 @@ test("CRLF frontmatter summary carries no trailing carriage return", () => {
   expect(note.summary).not.toContain("\r");
 });
 
+// A note filed at work/index.md (slug index) is genuine knowledge, not a control file. Pre-fix the
+// basename "index.md" was excluded at ANY depth, so the note never appeared in the generated index.md.
+// The top-level control files (index.md, hot.md, log.md, _tags.md) stay excluded and are not counted.
+test("a nested control-basename note (work/index.md) is collected and listed; top-level controls are excluded", () => {
+  const vault = tmpVault();
+  // a real nested note whose basename collides with a control file
+  writeNote(vault, "work", "index.md", "---\nsummary: Quarterly plan.\ntags: [work]\n---\n\n# Index\n\nbody\n");
+  // a normal note so the folder count is meaningful
+  writeNote(vault, "people", "jane.md", "---\nsummary: A person.\n---\n\n# Jane\n\nbody\n");
+  // top-level control files that must NOT be collected
+  writeFileSync(join(vault, "hot.md"), "---\ntype: hot\n---\n\n# Hot\n\nprimer\n");
+  writeFileSync(join(vault, "log.md"), "---\ntype: log\n---\n\n# Log\n\nchronological\n");
+  writeFileSync(join(vault, "_tags.md"), "---\ntype: tags\n---\n\n# tags\n");
+
+  const slugs = collectNotes(vault).map((n) => n.slug).sort();
+  expect(slugs).toEqual(["people/jane", "work/index"]);
+
+  generateIndex(vault);
+  const index = readFileSync(join(vault, "index.md"), "utf8");
+  // the nested note is listed exactly once
+  expect(index).toContain("- [[work/index]] — Quarterly plan.  `work`");
+  // the generated index.md must not list the top-level controls or itself
+  expect(index).not.toContain("[[hot]]");
+  expect(index).not.toContain("[[log]]");
+  expect(index).not.toContain("[[index]]");
+  expect(index).not.toContain("[[_tags]]");
+  // header count reflects only the two real notes
+  expect(index).toContain("2 notes across 2 folders");
+});
+
 test("a note with no summary falls back to the H1 title", () => {
   const vault = tmpVault();
   const fm = "---\ntype: note\n---\n\n# My Heading\n\nbody\n";

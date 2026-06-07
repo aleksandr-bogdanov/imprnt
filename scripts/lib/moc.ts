@@ -16,7 +16,11 @@ export type NoteMeta = {
   tags: string[];
 };
 
-const CONTROL = new Set(["index.md", "hot.md", "log.md"]);
+// Control files are anchored to the vault ROOT only - a real note filed at a nested path like
+// work/index.md shares the basename of a control file but is genuine knowledge, so it must be collected
+// and listed. We exclude a file only when its path relative to the vault root has no directory component
+// and equals one of these basenames (depth 0). Mirrors the same anchoring in recall.ts so they agree.
+const CONTROL = new Set(["index.md", "hot.md", "log.md", "_tags.md"]);
 // Folder display order: entities, then domains, then forms, then anything user-defined.
 const FOLDER_ORDER = [
   "people", "orgs", "holdings",
@@ -38,20 +42,25 @@ function fmList(fm: string, key: string): string[] {
   return line.split(",").map((s) => s.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
 }
 
-function walk(dir: string): string[] {
+function walk(vault: string, dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     if (entry.startsWith(".") || entry.startsWith("_")) continue; // dotfiles + _tags/_needs-review
     const p = join(dir, entry);
-    if (statSync(p).isDirectory()) out.push(...walk(p));
-    else if (entry.endsWith(".md") && !CONTROL.has(entry)) out.push(p);
+    if (statSync(p).isDirectory()) out.push(...walk(vault, p));
+    else if (entry.endsWith(".md")) {
+      // A control basename counts only at the vault root - relative path with no directory separator.
+      const rel = relative(vault, p);
+      if (!rel.includes("/") && !rel.includes("\\") && CONTROL.has(rel)) continue;
+      out.push(p);
+    }
   }
   return out;
 }
 
 export function collectNotes(vault: string): NoteMeta[] {
   const notes: NoteMeta[] = [];
-  for (const path of walk(vault)) {
+  for (const path of walk(vault, vault)) {
     const raw = readFileSync(path, "utf8");
     const fm = frontmatter(raw);
     const rel = relative(vault, path).split("\\").join("/");

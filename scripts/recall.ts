@@ -108,12 +108,19 @@ if (!queryTerms.length) { console.error("empty query after tokenizing"); process
 // Generated/control files are NOT part of the search corpus: index.md aggregates every note's summary
 // + tags, so leaving it in would flood every query (it matches almost everything); log.md and hot.md
 // are chronological/primer surfaces, not knowledge. `_`-prefixed (_tags, _needs-review) already skipped.
-const CONTROL = new Set(["index.md", "hot.md", "log.md"]);
+// Control files are anchored to the vault ROOT only - a real note filed at any nested path like
+// work/index.md keeps the basename of a control file but is genuine knowledge, so it must be searched.
+// We exclude a file only when its path relative to the vault root has no directory component and equals
+// one of these basenames (depth 0). raw/ is dropped wholesale - raw snapshots are not the search corpus.
+const CONTROL = new Set(["index.md", "hot.md", "log.md", "_tags.md"]);
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
-    if (entry.startsWith(".") || entry.startsWith("_") || CONTROL.has(entry)) continue;
+    if (entry.startsWith(".") || entry.startsWith("_")) continue;
     const p = join(dir, entry);
+    // A control basename counts only at the vault root - relative path with no directory separator.
+    const rel = relative(vault, p);
+    if (!rel.includes("/") && !rel.includes("\\") && CONTROL.has(rel)) continue;
     // Be tolerant per entry. A broken symlink or otherwise unreadable entry makes statSync/readdir throw.
     // Skip just that entry so one bad node never aborts the whole walk or hides a populated vault.
     try {

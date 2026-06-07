@@ -1,7 +1,7 @@
 // Tests for scripts/recall.ts. recall.ts runs its CLI logic at import time (top-level), so each test
 // spawns it as a subprocess with Bun.spawnSync and asserts on stdout/exit. One temp vault per test.
 import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, symlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -160,6 +160,28 @@ test("--limit 3 still works", () => {
   expect(r.code).toBe(0);
   const lines = r.stdout.split("\n").filter((l) => /^\s+\[\d/.test(l));
   expect(lines.length).toBe(3);
+});
+
+// --- bug 7: control basename at a nested path is a real note, not a skipped control file -----------
+// A note filed at work/index.md (slug index, e.g. an H1 of "# Index" or ingest --apply with that slug)
+// must be searchable. Pre-fix the basename "index.md" was excluded at ANY depth, so this note was
+// silently invisible to recall. The real top-level vault/index.md stays excluded.
+test("a note at a nested control basename (work/index.md) is searchable; top-level index.md is not", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  mkdirSync(join(v, "work"));
+  // nested note carrying a unique term - this is a genuine note despite the index.md basename
+  note(v, join("work", "index.md"), `---\ntags: []\n---\n# Index\n\nThe zzzunique term lives here.\n`);
+  // the real top-level control file also carries the unique term but must never surface
+  writeFileSync(join(v, "index.md"), `---\ntype: index\n---\n# Index\n\nzzzunique aggregate.\n`);
+
+  const r = recall("zzzunique", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("work/index.md");
+  expect(r.stdout).not.toContain("no matches");
+  // the top-level control file is still excluded from the corpus
+  const lines = r.stdout.split("\n").filter((l) => /^\s+\[\d/.test(l));
+  expect(lines.some((l) => /\]\s+index\.md$/.test(l))).toBe(false);
 });
 
 // --- sanity: BM25 ranking - title beats body ------------------------------------------------------
