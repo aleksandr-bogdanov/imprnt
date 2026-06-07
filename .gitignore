@@ -33,3 +33,6 @@ node_modules/
 .idea/
 
 # examples/ IS committed — it's the synthetic demo of the loop.
+
+# Turborepo local cache
+.turbo/
