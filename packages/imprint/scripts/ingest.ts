@@ -21,10 +21,10 @@
 //     job for every source is the `raw/` snapshot below; classification + filing is the agent's.
 import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, extname, join, relative, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, extname, join, relative } from "node:path";
 import { loadManifest, saveManifest } from "./lib/manifest.ts";
 import { personResolved, flagNeedsReview } from "./lib/resolve.ts";
+import { projectRoot } from "./lib/roots.ts";
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
@@ -242,8 +242,8 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
 
   if (a.includes("--apply-all")) {
     if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`imprint init\` first`); process.exit(1); }
-    const here = dirname(fileURLToPath(import.meta.url));
-    const pluginsDir = join(here, "..", "plugins");
+    // Glob the user's PROJECT plugins/, where `plugin add` copies installed plugins (not the package).
+    const pluginsDir = join(projectRoot(), "plugins");
     const staged: string[] = [];
     if (existsSync(pluginsDir)) {
       for (const entry of readdirSync(pluginsDir)) {
@@ -304,7 +304,7 @@ let src: string;       // a human-readable origin label (path, or "<text>" / "<s
 let text: string;      // the source bytes
 let isFile = false;
 if (useStdin) {
-  text = await Bun.stdin.text();
+  text = readFileSync(0, "utf8"); // read all of stdin (fd 0) to EOF, sync — no Bun, no await
   src = "<stdin>";
 } else if (inlineText !== undefined) {
   text = inlineText;

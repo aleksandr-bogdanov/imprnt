@@ -1,14 +1,14 @@
-#!/usr/bin/env bun
-// imprint · whenful plugin — task mirror.
+// imprint · whenful plugin — task mirror. Shipped as built whenful.js (node banner).
 //
-//   bun plugins/whenful/whenful.ts sync     refresh mirror/<id>.md from Whenful   (STUB — no live call yet)
-//   bun plugins/whenful/whenful.ts check    integrity (delegates to ./check.ts)
+//   node plugins/whenful/whenful.js sync     refresh mirror/<id>.md from Whenful   (STUB — no live call yet)
+//   node plugins/whenful/whenful.js check    integrity (delegates to ./check.js)
 //
 // Contract reminders (see plugins/README.md): this plugin depends on exactly two things — the vault's
 // note FORMAT and its own folder. It NEVER edits a vault note; it keeps task state in its OWN mirror
 // and the task↔note links in its OWN join table (links.tsv). Render-at-read off the mirror; the ONLY
 // thing that crosses the wire is `sync`, batched and user-run — never a daemon.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,10 +33,10 @@ function readLinks(): Link[] {
 const cmd = process.argv[2];
 
 if (cmd === "check") {
-  // The integrity logic lives in check.ts (the file the `imprint check --all` aggregator globs). Run it
-  // as a subprocess so there's ONE implementation and the exit code propagates unchanged.
-  const proc = Bun.spawnSync(["bun", join(here, "check.ts")], { stdout: "inherit", stderr: "inherit" });
-  process.exit(proc.exitCode ?? 1);
+  // The integrity logic lives in check.js (the built file the `imprint check --all` aggregator globs).
+  // Run it as a node subprocess so there's ONE implementation and the exit code propagates unchanged.
+  const proc = spawnSync(process.execPath, [join(here, "check.js")], { stdio: "inherit" });
+  process.exit(proc.status ?? 1);
 }
 
 if (cmd === "sync") {

@@ -17,8 +17,8 @@ table (`links.tsv`) plus a local mirror (`mirror/`) of task state, refreshed onl
   never call the server to display. Safe to delete and rebuild from a full sync.
 - `proposed/` — staging for notes the plugin proposes into the vault (you approve via
   `imprint ingest --apply`). Used sparingly — a summary, never one note per task.
-- `whenful.ts` — `sync` (the only wire-crosser) and `check` (delegates to `check.ts`).
-- `check.ts` — the plugin's own integrity check; `imprint check --all` finds and runs it.
+- `whenful.js` — `sync` (the only wire-crosser) and `check` (delegates to `check.js`).
+- `check.js` — the plugin's own integrity check. `imprint check --all` finds and runs it.
 
 ## Install
 
@@ -31,7 +31,7 @@ table (`links.tsv`) plus a local mirror (`mirror/`) of task state, refreshed onl
    yourself. Never wire it into the committed `CLAUDE.md`, that keeps personal wiring out of the shipped
    contract.
 2. Add task->note rows to `plugins/whenful/links.tsv`.
-3. Refresh the mirror: `bun plugins/whenful/whenful.ts sync` *(stub today)*.
+3. Refresh the mirror: `node plugins/whenful/whenful.js sync` *(stub today)*.
 
 That's the whole on-switch. Schedule `sync` yourself (cron/launchd) if you want it periodic. There is
 no daemon.

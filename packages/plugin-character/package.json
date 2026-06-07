@@ -1,0 +1,23 @@
+{
+  "name": "imprint-plugin-character",
+  "version": "0.1.0",
+  "description": "imprint plugin: Scribe, a generalized default digital-assistant character. Copy, personalize, and rename to make it yours.",
+  "type": "module",
+  "files": [
+    "agent.md",
+    "README.md"
+  ],
+  "keywords": [
+    "imprint",
+    "imprint-plugin",
+    "character",
+    "persona"
+  ],
+  "license": "MIT",
+  "author": "Aleksandr Bogdanov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aleksandr-bogdanov/imprint.git",
+    "directory": "packages/plugin-character"
+  }
+}

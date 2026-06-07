@@ -1,7 +1,8 @@
-# character/ - your digital people
+# character - your digital people
 
-Each *digital person* the assistant can be (or convene) is defined by one character file here:
-its personality, voice, standards, the way it works. The shipped default is **Scribe** (`scribe.md`).
+Each *digital person* the assistant can be (or convene) is defined by one character file: its
+personality, voice, standards, the way it works. This package ships **Scribe** as its `agent.md`, the
+generalized default.
 
 This is a **config-extension plugin**: it produces character text the *agent* reads, not notes in
 the vault. The clean parallel - `vault/people/` holds the **real** people you know; `character/`
@@ -25,10 +26,11 @@ no group-convening machinery exists; this folder is just the cast.
 Enable Scribe with the plugin command:
 
 ```sh
-imprint plugin add character/scribe.md
+imprint plugin add character
 ```
 
-That wires `@plugins/character/scribe.md` into `CLAUDE.local.md` (gitignored, per-machine - Claude
+That fetches `imprint-plugin-character`, copies it into `plugins/character/`, and wires
+`@plugins/character/agent.md` into `CLAUDE.local.md` (gitignored, per-machine - Claude
 Code auto-loads it right after the committed `CLAUDE.md`). Or hand-edit `CLAUDE.local.md` and add the
 line yourself. Never wire it into the committed `CLAUDE.md` - that keeps personal wiring out of the
 shipped contract.
@@ -39,7 +41,7 @@ Scribe is a generalized default. To make it yours: copy it into the private `_pe
 edit the voice, and wire that one instead.
 
 ```sh
-cp plugins/character/scribe.md plugins/_personal/mychar.md
+cp plugins/character/agent.md plugins/_personal/mychar.md
 # edit plugins/_personal/mychar.md, then:
 imprint plugin add _personal/mychar.md
 ```

@@ -106,8 +106,8 @@ system imposed, imprint composes, with a real off-switch.
 Both are dumb, uniform, and carry zero per-plugin logic. They discover plugins by filename or
 directory convention, never by importing one and never by naming one.
 
-- `imprint check --all` globs `plugins/*/check.ts`, runs each, reads the exit code only, and
-  forwards stdout verbatim. It never parses plugin output.
+- `imprint check --all` globs `plugins/*/check.js` (the plugin's built artifact), runs each with
+  `node`, reads the exit code only, and forwards stdout verbatim. It never parses plugin output.
 - `imprint ingest --apply` files staged notes a plugin drops in `plugins/*/proposed/`.
 
 The fence that makes "one helper" safe rather than arbitrary: the core may provide read-only

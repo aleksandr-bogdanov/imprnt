@@ -1,7 +1,7 @@
-#!/usr/bin/env bun
 // imprint guard — deterministic destructive-command blocklist (opt-in plugin).
+// Shipped as built guard.js (node banner); run as `node plugins/guard/guard.js "<cmd>"` or via a hook.
 //
-//   bun plugins/guard/guard.ts "<command>"     # or pipe the command on stdin
+//   node plugins/guard/guard.js "<command>"    # or pipe the command on stdin
 //
 // Exits 2 + a reason if the command is obviously dangerous; exits 0 otherwise.
 // No LLM, no analysis — just a short list of "don't do the obviously dumb thing".
@@ -12,6 +12,8 @@
 // can false-positive. Guard errs on the side of blocking, which is the right default for
 // a safety hook. Distinguishing a real command from a quoted string needs full shell
 // parsing and is out of scope.
+import { readFileSync } from "node:fs";
+
 const HOME_OR_SYSTEM = "(\\/|~|\\$HOME|\\/Users|\\/etc|\\/usr|\\/var|\\/bin|\\/System|\\/Library)(\\s|\\/|$)";
 const DENY: { re: RegExp; why: string }[] = [
   // rm with short bundled flags: -rf, -fr, -r -f, -r --force, etc. (an r-flag, an f somewhere).
@@ -37,7 +39,7 @@ const DENY: { re: RegExp; why: string }[] = [
 ];
 
 const argCmd = process.argv.slice(2).join(" ").trim();
-const cmd = argCmd || (await Bun.stdin.text()).trim();
+const cmd = argCmd || readFileSync(0, "utf8").trim(); // piped stdin to EOF, sync — no Bun, no await
 if (!cmd) { console.error('usage: guard "<command>"'); process.exit(1); }
 
 for (const d of DENY) {

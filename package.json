@@ -1,21 +1,16 @@
 {
-  "name": "imprint",
+  "name": "imprint-monorepo",
   "version": "0.1.0",
-  "description": "Deterministic-first, plain-markdown knowledge vault. Code does the bulk transform. The LLM only touches the irreducibly-semantic 20%. Native grep plus BM25 retrieval, zero MCP on the vault.",
+  "private": true,
   "type": "module",
-  "bin": {
-    "imprint": "scripts/cli.ts"
-  },
+  "description": "Monorepo for imprint (core CLI) and the imprint-plugin-* gallery. Not published — each package under packages/ publishes itself.",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "ingest": "bun scripts/ingest.ts",
-    "recall": "bun scripts/recall.ts",
-    "hot": "bun scripts/cli.ts hot",
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "check": "bun scripts/cli.ts check"
-  },
-  "engines": {
-    "bun": ">=1.3.0"
+    "typecheck": "bun run --filter '*' typecheck",
+    "build": "bun run --filter '*' build"
   },
   "license": "MIT",
   "author": "Aleksandr Bogdanov",
@@ -23,26 +18,8 @@
     "type": "git",
     "url": "git+https://github.com/aleksandr-bogdanov/imprint.git"
   },
-  "keywords": [
-    "knowledge-base",
-    "markdown",
-    "second-brain",
-    "deterministic",
-    "cli",
-    "agent-context"
-  ],
-  "files": [
-    "scripts",
-    "templates",
-    "plugins",
-    "!plugins/_personal",
-    "docs",
-    "examples",
-    "CLAUDE.md",
-    "README.md",
-    "LICENSE"
-  ],
   "devDependencies": {
-    "@types/bun": "^1.3.14"
+    "@types/bun": "^1.3.14",
+    "typescript": "^5.7.2"
   }
 }

@@ -249,7 +249,7 @@ accept, and runs only when you run it, never as a hidden background process.
 
 The shipped gallery lives in `plugins/`:
 
-- **character/** is your assistant's voice and standards. `scribe.md` is the generalized default
+- **character** is your assistant's voice and standards. Scribe is the generalized default
   you copy and personalize.
 - **anti-slop/** is the ruleset that keeps the assistant's prose from reading like AI.
 - **whenful/** keeps a local mirror of your Whenful tasks, rendered at read time (live sync is

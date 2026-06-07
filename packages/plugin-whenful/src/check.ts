@@ -1,7 +1,6 @@
-#!/usr/bin/env bun
-// imprint · whenful plugin — integrity check.
+// imprint · whenful plugin — integrity check. Shipped as built check.js (node banner).
 //
-//   bun plugins/whenful/check.ts        exits 0 if the plugin's data is sound, non-zero if not.
+//   node plugins/whenful/check.js       exits 0 if the plugin's data is sound, non-zero if not.
 //
 // This is the file the core's `imprint check --all` aggregator globs (plugins/*/check.ts). The core
 // reads ONLY this script's exit code and forwards its stdout verbatim — it never parses the text. So we
