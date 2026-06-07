@@ -9,7 +9,7 @@
 // a tarball of EXACTLY the package's files[] (built check.js, agent.md, seed dirs — never src/ or
 // tests). We extract it and copy, minus the npm manifest. `--from <dir>` is how you install a plugin
 // before it is published, and how the monorepo wires its own plugins.
-import { existsSync, mkdtempSync, cpSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, cpSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -19,6 +19,34 @@ import { spawnSync } from "node:child_process";
 // official plugin is a one-line edit here; core fetches nothing to produce this list.
 export const OFFICIAL = ["anti-slop", "character", "whenful", "guard"];
 
+export type Channel = "edge" | "latest";
+
+// The running core's release channel, read from its own shipped package.json (the sibling of
+// dist/cli.js — npm always ships it, and the publish flow sets the version before building, so an edge
+// build's package.json reads e.g. 0.3.3-edge.418). An edge core installs plugins from the matching
+// `edge` dist-tag (falling back to latest when a plugin has no edge build), so a bleeding-edge core is
+// dogfooded against bleeding-edge plugins. A stable core — or any unreadable/odd version — uses latest.
+export function coreChannel(pkgRoot: string): Channel {
+  try {
+    const v = JSON.parse(readFileSync(join(pkgRoot, "package.json"), "utf8")).version;
+    return typeof v === "string" && v.includes("-edge.") ? "edge" : "latest";
+  } catch {
+    return "latest";
+  }
+}
+
+// One `npm pack` into tmp; returns the tarball filename or a human error. The spec is a registry name
+// (optionally dist-tagged, e.g. imprnt-plugin-guard@edge) or a local dir.
+function npmPack(spec: string, tmp: string): { tgz?: string; error?: string } {
+  const pack = spawnSync("npm", ["pack", spec, "--pack-destination", tmp, "--silent"], { encoding: "utf8" });
+  if (pack.status !== 0) {
+    const why = (pack.stderr || "").trim() || (pack.error ? String(pack.error.message) : `exit ${pack.status}`);
+    return { error: `npm pack failed for ${spec}: ${why}` };
+  }
+  const tgz = pack.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+  return tgz ? { tgz } : { error: `npm pack produced no tarball for ${spec}` };
+}
+
 export type InstallResult = { copied: boolean; dest: string; skipped?: boolean; error?: string };
 
 // Fetch `imprnt-plugin-<name>` (or a local dir via `from`) and copy its shipped files into
@@ -27,30 +55,42 @@ export type InstallResult = { copied: boolean; dest: string; skipped?: boolean; 
 export function installPlugin(
   projectRoot: string,
   name: string,
-  opts: { from?: string; force?: boolean } = {},
+  opts: { from?: string; force?: boolean; channel?: Channel } = {},
 ): InstallResult {
   const dest = join(projectRoot, "plugins", name);
   if (existsSync(join(dest, "agent.md")) && !opts.force) return { copied: false, dest, skipped: true };
 
-  const spec = opts.from ? resolve(opts.from) : `imprnt-plugin-${name}`;
-  if (opts.from && !existsSync(spec)) return { copied: false, dest, error: `--from path not found: ${spec}` };
+  if (opts.from && !existsSync(resolve(opts.from))) {
+    return { copied: false, dest, error: `--from path not found: ${resolve(opts.from)}` };
+  }
+
+  // What to fetch, in order. A local dir is the only spec. A registry install is `imprnt-plugin-<name>`;
+  // an edge core tries the `@edge` dist-tag first, then falls back to the default (latest) when the
+  // plugin has no edge build published. Latest cores ask for the bare name (npm resolves it to latest).
+  const base = `imprnt-plugin-${name}`;
+  const specs = opts.from
+    ? [resolve(opts.from)]
+    : opts.channel === "edge"
+      ? [`${base}@edge`, base]
+      : [base];
 
   const tmp = mkdtempSync(join(tmpdir(), "imprnt-pkg-"));
   try {
-    const pack = spawnSync("npm", ["pack", spec, "--pack-destination", tmp, "--silent"], { encoding: "utf8" });
-    if (pack.status !== 0) {
-      const why = (pack.stderr || "").trim() || (pack.error ? String(pack.error.message) : `exit ${pack.status}`);
-      return { copied: false, dest, error: `npm pack failed for ${spec}: ${why}` };
+    let tgz: string | undefined;
+    let lastErr: string | undefined;
+    for (const spec of specs) {
+      const r = npmPack(spec, tmp);
+      if (r.tgz) { tgz = r.tgz; break; }
+      lastErr = r.error;
     }
-    const tgz = pack.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
-    if (!tgz) return { copied: false, dest, error: `npm pack produced no tarball for ${spec}` };
+    if (!tgz) return { copied: false, dest, error: lastErr ?? `npm pack produced no tarball for ${base}` };
 
     const ex = spawnSync("tar", ["-xzf", join(tmp, tgz), "-C", tmp], { encoding: "utf8" });
     if (ex.status !== 0) return { copied: false, dest, error: `tar extract failed: ${(ex.stderr || "").trim()}` };
 
     const src = join(tmp, "package"); // npm tarballs always root at package/
     if (!existsSync(join(src, "agent.md"))) {
-      return { copied: false, dest, error: `${spec} has no agent.md — not an imprnt plugin?` };
+      return { copied: false, dest, error: `${name} has no agent.md — not an imprnt plugin?` };
     }
     // Mirror today's hand-authored plugin layout: agent.md + check.js + seed dirs, no package.json.
     // force:true is required: bun's cpSync skips overwrites when a filter is present unless it is set.
