@@ -11,7 +11,7 @@ const [cmd, ...rest] = process.argv.slice(2);
 
 function vaultArg(): string {
   const i = rest.indexOf("--vault");
-  return i >= 0 ? rest[i + 1] : "./vault";
+  return i >= 0 ? rest[i + 1] : (process.env.IMPRINT_VAULT ?? "./vault");
 }
 
 // Delegated scripts parse process.argv.slice(2) themselves. Strip the subcommand token

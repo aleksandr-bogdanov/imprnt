@@ -23,7 +23,7 @@ import { join, relative } from "node:path";
 import { loadTags, normalize, type TagVocab } from "./lib/tags.ts";
 
 const args = process.argv.slice(2);
-let vault = "./vault";
+let vault = process.env.IMPRINT_VAULT ?? "./vault";
 let limit = 15; // tight by default — narrow, don't dump
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {

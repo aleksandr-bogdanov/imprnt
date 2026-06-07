@@ -17,7 +17,7 @@ import { generateIndex, collectNotes } from "./lib/moc.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
 const args = process.argv.slice(2);
-let vault = "./vault";
+let vault = process.env.IMPRINT_VAULT ?? "./vault";
 let all = false;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--vault") vault = args[++i];

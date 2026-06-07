@@ -16,7 +16,7 @@ import { join, relative, basename } from "node:path";
 import { loadManifest, saveManifest } from "./lib/manifest.ts";
 
 const args = process.argv.slice(2);
-let vault = "./vault";
+let vault = process.env.IMPRINT_VAULT ?? "./vault";
 let dest = "";
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {

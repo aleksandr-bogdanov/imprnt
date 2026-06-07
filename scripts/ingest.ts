@@ -158,7 +158,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
 // note; `--apply-all` globs plugins/*/proposed/*.md (convention discovery) and files each uniformly.
 {
   const a = process.argv.slice(2);
-  let applyVault = "./vault";
+  let applyVault = process.env.IMPRINT_VAULT ?? "./vault";
   for (let i = 0; i < a.length; i++) if (a[i] === "--vault") applyVault = a[++i];
 
   if (a.includes("--apply-all")) {
@@ -204,7 +204,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
 // get the same raw/ snapshot + hash + manifest + reingest-no-op guarantee as files. When the source
 // is bytes (not a transcript file), we skip the transcript skeleton and let the LLM classify TYPE.
 const args = process.argv.slice(2);
-let vault = "./vault";
+let vault = process.env.IMPRINT_VAULT ?? "./vault";
 let inlineText: string | undefined;
 let useStdin = false;
 let slugHint = "";
