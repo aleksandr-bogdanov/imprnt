@@ -6,12 +6,6 @@ would have to change for the decision to flip.
 
 ---
 
-## The name: imprnt (was knowful)
-
-The project was renamed from its working name "knowful" to **imprnt**. The name carries the
-act: you press knowledge into a durable, owned form and it stays. It reads cleanly for a fresh
-user with no in-joke to explain. References to "knowful" survive only in frozen git history.
-
 ## Deterministic-first means ration the LLM by frequency
 
 The core discipline is not "avoid the LLM." It is invest the LLM where it pays and keep it out

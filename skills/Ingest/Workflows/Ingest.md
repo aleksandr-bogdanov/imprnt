@@ -9,9 +9,9 @@ Three orthogonal axes: **type** (folder) = what object · **kind** (field) = wha
 ## Step 0 — seed the vocab from your domains before first ingest (one-time)
 
 Before the first ingest into a fresh vault, make sure `vault/_tags.md` covers YOUR actual domains —
-not just the shipped DH/work set. The template ships seeded for Alex's life domains (insurance,
-citizenship, health, family, housing, voronezh, kita, music, finances) + DH work; if a domain you'll
-file is missing, add the tag + its synonyms as one human-approved line each. A recall on a domain with
+not just the default set. The template ships with a small generic seed (identity, health, finances,
+work, life, projects); if a domain you'll file is missing, add the tag + its synonyms as one
+human-approved line each. A recall on a domain with
 no seeded tag falls through to body-only literal matching with no synonym normalization — seed first.
 
 ## Step 1 — snapshot + skeleton (CLI, no LLM)
@@ -61,7 +61,7 @@ Read the source from `raw/` (and the skeleton note if one was produced), then:
 4. **Decisions / Action items / Open questions** (events) or the body (other types) — extract with
    judgment, not keywords. Attribute owners. Mark `{extracted}` vs `{inferred}`. Empty → say so.
 5. **Tags** — set `tags:` using ONLY values from `vault/_tags.md`, mapped through its synonym map
-   (`finanzamt → taxes`). Need a tag that isn't there? Ask before adding one line. Never free-form.
+   (`pipeline → etl`). Need a tag that isn't there? Ask before adding one line. Never free-form.
    Prefer the specific tag over a broad one — BM25 weights a rare tag above a common one, so a specific tag discriminates; a tag on most notes barely scores.
 6. **Resolve entities** — for each flagged item in `_needs-review.md` (and any entity the note names):
    grep the relevant folder for the name and for `aliases:` matches.

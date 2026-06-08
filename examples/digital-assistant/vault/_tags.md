@@ -15,7 +15,7 @@ This file ships with a small generic seed so search has a tag tier from the firs
 with your own life-areas and grow the list as you go.
 
 ## Tags
-identity, health, finances, work, life, projects, people
+identity, health, finances, work, life, projects, people, books, family, sleep
 
 ## Synonyms
 pipeline, ingestion, data-pipeline -> etl

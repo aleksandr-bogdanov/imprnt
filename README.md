@@ -1,148 +1,147 @@
 # imprnt
 
-A deterministic-first, plain-markdown knowledge vault you own. The LLM builds the tools,
-the tools do the work. Code does the bulk transform at near-zero token cost. The LLM is
-spent only on the irreducibly-semantic part: read unstructured prose, decide what each note
-is, write the summary, pull the decisions, wire the links. Retrieval is local BM25 over plain
-files. No MCP, no vector DB, no embeddings over the vault. Open the same folder in Obsidian
-for a human graph view.
+> "You can think of the model as the brain, the harness as the body, and the tools it uses working in
+> a runtime."
+> - Jensen Huang, NVIDIA (GTC Taipei keynote, June 2026)
 
-> Sibling to [Whenful](https://whenful.com): Whenful answers *when* do I do my tasks, imprnt
-> holds *what* I know.
+imprnt is the long-term memory your AI assistant uses. You talk to Claude in plain language, and Claude
+uses imprnt to file what you tell it and recall what you need later. The knowledge lives as plain
+markdown files on your disk that you own. There is a command-line engine underneath, but you do not run
+it by hand. Claude runs it for you. imprnt is the tool layer Huang is pointing at, holding the part
+that lasts.
 
-## What it is
+It is the memory your assistant is missing: one that survives the session, that you can read with your
+own eyes, that no company can switch off.
 
-A folder of markdown on your disk that both you and an AI assistant read directly. The
-assistant never queries a database through a protocol. It greps the files. Grep over the vault
-costs about 100 tokens. An MCP or vector layer over the same files costs orders of magnitude
-more and goes stale on every edit. So the storage is commodity and the discipline is the
-product:
+> Sibling to [Whenful](https://whenful.com): Whenful answers *when* do I do my tasks, imprnt holds
+> *what* I know.
 
-- **Deterministic-first means ration the LLM by where it runs.** A step that runs once per
-  item (understand, classify, summarize) earns the LLM. A step that runs thousands of times
-  (search) stays pure local code. Frequency draws the line, not a blanket "avoid the LLM."
-- **The data is the knowledge.** A note carries the source's structured payload in full:
-  tables as tables, IDs, numbers, dates, verbatim clause text. `recall` searches `vault/`
-  only, so anything left in `raw/` is invisible. The summary is in addition to the data,
-  never instead of it.
-- **Opt-in and composable.** Tiny core, three commands. Everything else is a separate
-  `imprnt-plugin-*` package you add or remove, with zero cross-dependencies. You install only the
-  plugins you need.
-- **Owned.** Plain files on your disk. They cannot 404, cannot bloat, cannot hold your
-  context hostage.
+## What it feels like to use
 
-## Memory vs vault - correct usage patterns
+You do not learn commands. You talk to your assistant, and it keeps your knowledge for you.
 
-> TODO (placeholder): the single most confusing thing for newcomers. The AI assistant's own
-> "memory" feature is not the imprnt vault, and conflating them defeats the point. Fill this in.
->
-> Points to cover:
-> - **vault** = your knowledge (finances, health, people, projects), version-of-record on disk,
->   read by `recall`. **Assistant memory** = the agent's private cross-session scratchpad.
-> - Why the vault wins for anything durable: it is yours, plain-text, traceable to a `raw/`
->   source, and you can see it. A private agent memory is the opaque auto-injected context
->   imprnt exists to kill.
-> - What (if anything) legitimately belongs in agent memory vs. what belongs in the vault,
->   CLAUDE.md, or the repo - and the rule of thumb for deciding.
+```
+You:    Here is my 1:1 with Boris from this morning. [paste or drop the transcript]
+Claude: Filed it. Created people/boris-carter, updated projects/access-platform with the new
+        cutover date, and logged the meeting under events/.
 
-## The core loop
+(weeks later)
 
-```sh
-# 1. ingest - snapshot a source into raw/ (immutable), file structured notes into vault/
-imprnt ingest raw/transcripts/2026-06-02-sts2-1on1.txt
-
-# 2. recall - BM25 ranking over title/tags/body (deterministic, local, no LLM)
-imprnt recall "STS2 BigQuery"
-
-# 3. check - integrity + regenerate index.md, sync the tag vocabulary, flag what needs review
-imprnt check
+You:    What did we decide about the access-platform cutover?
+Claude: From your notes: the cutover moved to July 15, gated on the two-week parallel-run numbers.
+        Boris owns it. The earlier June date is marked superseded.
 ```
 
-The LLM sits at the two ends of `recall` and nowhere in the middle: it shapes your question
-into keywords at the front, reads the top hits at the back. `recall` ranks with BM25 (term
-frequency times inverse document frequency, with title and tag field boosts), pure local
-arithmetic with zero deps.
+Behind those two replies, Claude ran the imprnt engine: it filed the transcript into structured notes,
+then ranked your vault to answer the question. You saw a conversation. The work was plain, cheap, local
+code.
 
-## Install
+## Why plain files (the idea in one minute)
 
-Runs on [Node](https://nodejs.org) >= 18. You do not need Bun to use it. Distribution is npm (these
-are aspirational until the first publish lands):
+Your assistant could keep your knowledge in a vector database or a hidden memory feature. imprnt keeps
+it as plain files instead, for a practical reason: it makes your assistant cheap, honest, and yours.
 
-```sh
-npm i -g imprnt       # install the global CLI
-imprnt init           # scaffold ./vault and ./raw, drop CLAUDE.md into the project
-```
+- **Your assistant reads the files directly.** To find something it runs a local search over a folder,
+  about 100 tokens. The same lookup through a vector database or an MCP server costs orders of magnitude
+  more and goes stale every time a note changes. Plain files keep the read path almost free, so your
+  assistant can lean on your whole history.
+- **The model is spent only where it is irreplaceable.** Reading a messy transcript and deciding what
+  it means is worth the model, and it happens once per source. Searching happens thousands of times, so
+  it stays plain local code. Frequency draws the line.
+- **The note keeps the real data.** Tables stay tables. Numbers, dates, IDs, and exact wording are
+  preserved in full, with a summary added on top, so Claude answers from facts, not a paraphrase.
+- **You own it.** Plain text on your disk. It cannot 404, cannot bloat, cannot hold your context
+  hostage, and it opens in [Obsidian](https://obsidian.md) for a human graph view of the same folder.
 
-To develop imprnt itself you need [Bun](https://bun.sh) >= 1.3 (the build and test tool). From a clone:
+## Setup (once)
 
-```sh
-git clone https://github.com/aleksandr-bogdanov/imprnt.git
-cd imprnt
-bun install                               # link the workspaces (core + plugins)
-bun run build                             # build packages/imprnt/dist/cli.js (the Node bundle)
-bun packages/imprnt/scripts/cli.ts init  # run the CLI from source
-```
-
-The commands below use `imprnt` for brevity. From a clone that is `bun packages/imprnt/scripts/cli.ts`.
-
-## Setup
+You install the engine so your assistant has the tool, point your vault at a folder, and then you just
+talk. Runs on [Node](https://nodejs.org) version 18 or newer.
 
 ```sh
-imprnt init                            # scaffold vault/ + raw/, drop the vault contract (CLAUDE.md)
-export IMPRNT_VAULT=~/notes/vault      # point at a vault elsewhere (defaults to ./vault)
-imprnt plugin add character anti-slop  # fetch + enable the default assistant and anti-slop rules
+npm i -g imprnt        # install the engine Claude will drive
+imprnt init            # scaffold your vault and drop CLAUDE.md, the contract Claude reads
 ```
 
-`imprnt plugin add <name>` fetches `imprnt-plugin-<name>`, copies it into your project's `plugins/`,
-and wires it into `CLAUDE.local.md` - your gitignored per-machine toggle file, which the agent loads
-every session. A fresh install has no `CLAUDE.local.md` and loads zero plugins by default.
+`imprnt init` writes a `CLAUDE.md` into the project. That file teaches your assistant how your vault
+works (the note formats and conventions), and Claude loads it automatically whenever it works in that
+folder. From then on you talk to Claude and it does the rest.
 
-**One-time onboarding: create your own `people/<you>.md`.** You appear in nearly every
-transcript, so add a self-note first. Otherwise every ingest flags you into `needs-review`. Ask
-the agent to "file a person note for me" once, and entity resolution links you from then on.
+Point your vault at a folder elsewhere if you like:
 
-## Plugin gallery
+```sh
+export IMPRNT_VAULT=~/notes/vault   # defaults to ./vault
+```
 
-Core is the vault plus `ingest`, `recall`, `check`. Everything past that is a separately-installable
-`imprnt-plugin-*` package you add or remove. The shipped gallery:
+The first thing to ask your assistant: "file a person note for me." You appear in nearly every
+transcript, so a self-note lets it link you to everything from then on.
 
-| Package | What it does | Class |
-|---------|--------------|-------|
-| `imprnt-plugin-character` | The assistant's voice and standards. Scribe is the generalized default you copy and personalize. | behavior |
-| `imprnt-plugin-anti-slop` | Banned punctuation, words, phrases, and rhetorical patterns that keep prose from reading like AI. | behavior |
-| `imprnt-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, rendered at read. Live sync deferred. | data |
-| `imprnt-plugin-guard` | A deterministic blocklist for dangerous shell commands. Wire it as a PreToolUse hook. | safety |
+## What your assistant does for you
 
-Add one with `imprnt plugin add <name>` (the short name, e.g. `imprnt plugin add whenful`). The one
-rule the contract holds to: the core never knows a plugin exists. You can add or remove any plugin with
-zero edits to `packages/imprnt/`. Full contract and the worked instances are in
+These are the engine's jobs. You trigger them by asking, in plain language. Claude picks the right one.
+
+| You say something like | Claude runs | What happens |
+|------------------------|-------------|--------------|
+| "Save this transcript / note / doc." | ingest | Snapshots the source untouched, files structured notes into your vault. |
+| "What do I know about X?" / "What did we decide on Y?" | recall | Ranks your notes locally (BM25) and answers from the top hits. |
+| "Tidy up / what needs my attention?" | check, hot | Rebuilds the index, syncs tags, surfaces anything that needs review. |
+
+The engine itself uses no AI for any of this. The model sits only at the two ends: turning your ask
+into a search at the front, reading the results at the back. Everything in between is free local code.
+
+## Plugins (give your assistant new behavior)
+
+Core is your vault plus the file, recall, and tidy jobs. Everything else is a behavior you add to your
+assistant with one ask ("add the anti-slop plugin"), each a separate `imprnt-plugin-*` package:
+
+| Package | What it gives your assistant |
+|---------|------------------------------|
+| `imprnt-plugin-character` | A voice and standards to write in. "Scribe" is the default you copy and personalize. |
+| `imprnt-plugin-anti-slop` | Rules that keep its prose from reading like AI. |
+| `imprnt-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, shown inline at read. |
+| `imprnt-plugin-guard` | A deterministic blocklist for dangerous shell commands. |
+
+Adding one copies it into your project and wires it into `CLAUDE.local.md`, the per-machine file your
+assistant loads each session. A fresh setup loads zero plugins until you add them. The contract is in
 [`plugins/README.md`](plugins/README.md).
 
-## Commands
+## Memory vs. vault, the one thing newcomers conflate
 
-| Command | What it does | LLM? |
-|---------|--------------|------|
-| `imprnt init` | Scaffold `vault/` and `raw/` from `templates/` | no |
-| `imprnt snapshot <src> --dest <relpath>` | Mirror a file or dir into `raw/<relpath>`, immutable and hashed | no |
-| `imprnt ingest <file> [--vault DIR]` | Snapshot a source into `raw/`, write the deterministic note skeleton | no |
-| `imprnt recall "<query>" [--vault DIR]` | BM25 ranking over title/tags/body, synonym-aware | no |
-| `imprnt check [--all] [--vault DIR]` | Integrity, regenerate `index.md`, sync tags. `--all` also runs each `plugins/*/check.js` | no |
-| `imprnt hot [--vault DIR]` | Print needs-review and the session primer | no |
-| `imprnt plugin list` | Installed plugins (on/off) plus official ones available to add | no |
-| `imprnt plugin add <name> [--from D]` | Fetch `imprnt-plugin-<name>`, copy into `plugins/`, wire `CLAUDE.local.md` | no |
-| `imprnt plugin rm <name> [--purge]` | Unwire a plugin. `--purge` also deletes `plugins/<name>/` | no |
+Your assistant has its own **memory** feature, a private scratchpad it writes to itself. That is a
+different thing from the imprnt vault, and treating them as one defeats the point.
+
+| | imprnt **vault** | assistant **memory** |
+|---|---|---|
+| Holds | your knowledge: finances, health, people, projects | the agent's working notes about helping you |
+| Lives | plain files on your disk, the version of record | inside the assistant, opaque to you |
+| You can | read it, edit it, trace each note to its source | barely see it |
+
+Anything durable and about your life goes in the vault, where it is yours and you can read it. Keep the
+assistant's private memory thin.
+
+## Examples
+
+Two worked vaults live in [`examples/`](examples/), each showing the same flow of talking to an
+assistant that files and recalls for you:
+
+- **[`digital-assistant/`](examples/digital-assistant/)** is a personal vault for one person: identity,
+  health, finances, people, daily life.
+- **[`organization/`](examples/organization/)** is a small company's vault: employees, a customer, a
+  project with a ranked backlog, a decision, and a postmortem.
 
 ## Docs
 
-- [`docs/architecture.md`](docs/architecture.md) - how the whole thing works, in plain English. Start here.
-- [`docs/design-decisions.md`](docs/design-decisions.md) - the durable calls and why they were made.
-- [`docs/shipping.md`](docs/shipping.md) - the monorepo build, the package split, and the personal-vs-generic line.
-- [`docs/publish-and-dogfood.md`](docs/publish-and-dogfood.md) - publish the packages, then reinstall from npm as a real user.
-- [`CLAUDE.md`](CLAUDE.md) - the vault contract: note formats, frontmatter, conventions. An agent auto-loads it inside the vault.
+- [`docs/architecture.md`](docs/architecture.md), how the whole thing works, in plain English. Start here.
+- [`docs/design-decisions.md`](docs/design-decisions.md), the durable calls and why they were made.
+- [`docs/releasing.md`](docs/releasing.md), how a change becomes a published package.
+- [`CLAUDE.md`](CLAUDE.md), the contract your assistant reads inside the vault: note formats, conventions.
 
-A minimal worked example lives in [`examples/sts2-demo/`](examples/sts2-demo/): a synthetic
-1:1 transcript, the notes ingested from it, and a plan drafted from a `recall`. It is a small
-demo of the loop, pending a fuller rebuild.
+## Hacking on imprnt
+
+The engine is built with [Bun](https://bun.sh) and [Turborepo](https://turborepo.com) (dev tools only,
+never needed by people who use it through their assistant). Clone, `bun install`, `bun run build`,
+`bun run test`. The architecture and the contributor map are in
+[`docs/architecture.md`](docs/architecture.md).
 
 ## License
 

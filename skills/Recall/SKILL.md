@@ -12,8 +12,8 @@ vault — that's the unconscious trap the ranker exists to prevent.
 
 Execute `Workflows/Recall.md`.
 
-**Principle:** the synonym map (`vault/_tags.md`) normalizes a word to a canonical tag, so "AMT" /
-"Steueramt" / "Finanzamt" all hit `taxes`. `recall` BM25-ranks over title/tags/body (rare terms and
+**Principle:** the synonym map (`vault/_tags.md`) normalizes a word to a canonical tag, so "pipeline" and
+"ingestion" both hit `etl`. `recall` BM25-ranks over title/tags/body (rare terms and
 title/tag hits weighted up) and returns a TIGHT set, so you get the relevant notes, not the vault. If
 the map misses a synonym you recognize, recall again on the canonical term — and if the user confirms
 the match, append the synonym to `_tags.md` (correction-only learning; never score whether it "worked").

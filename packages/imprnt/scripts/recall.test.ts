@@ -39,12 +39,12 @@ type: tags
 # tags
 
 ## Tags
-bigquery, insurance, voronezh
+bigquery, insurance, harbor
 
 ## Synonyms
 bq, big-query -> bigquery
-berufsunfähigkeit, disability -> insurance
-voronezh-house, dacha -> voronezh
+rückerstattung, refund -> insurance
+marina, dock -> harbor
 `;
 
 function note(dir: string, name: string, body: string) {
@@ -56,7 +56,7 @@ test("hyphenated synonym query (big-query) ranks a note tagged bigquery", () => 
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
   note(v, "warehouse.md", `---\ntags: [bigquery]\n---\n# Warehouse\n\nThe nightly load runs here.\n`);
-  note(v, "unrelated.md", `---\ntags: [voronezh]\n---\n# House\n\nA place to live.\n`);
+  note(v, "unrelated.md", `---\ntags: [harbor]\n---\n# House\n\nA place to live.\n`);
 
   const r = recall("big-query", v);
   expect(r.code).toBe(0);
@@ -68,23 +68,23 @@ test("hyphenated synonym query (big-query) ranks a note tagged bigquery", () => 
 test("Cyrillic query ranks a matching note (non-ASCII not dropped)", () => {
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
-  note(v, "house.md", `---\ntags: [voronezh]\n---\n# Дом\n\nДом в городе Воронеж, старый.\n`);
+  note(v, "house.md", `---\ntags: [harbor]\n---\n# Дом\n\nДом в городе Москва, старый.\n`);
   note(v, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant.\n`);
 
-  const r = recall("Воронеж", v);
+  const r = recall("Москва", v);
   expect(r.code).toBe(0);
   expect(r.stdout).toContain("house.md");
   expect(r.stdout).not.toContain("no matches");
 });
 
-test("German umlaut query (berufsunfähigkeit) ranks via synonym, and ß/umlaut body word is matchable", () => {
+test("German umlaut query (rückerstattung) ranks via synonym, and ß/umlaut body word is matchable", () => {
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
-  note(v, "insurance.md", `---\ntags: [insurance]\n---\n# Versicherung\n\nMeine Berufsunfähigkeit ist groß.\n`);
+  note(v, "insurance.md", `---\ntags: [insurance]\n---\n# Versicherung\n\nDie Auszahlung ist groß.\n`);
   note(v, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant.\n`);
 
   // synonym key reaches the insurance-tagged note
-  const bySyn = recall("berufsunfähigkeit", v);
+  const bySyn = recall("rückerstattung", v);
   expect(bySyn.code).toBe(0);
   expect(bySyn.stdout).toContain("insurance.md");
 
@@ -98,11 +98,11 @@ test("German umlaut query (berufsunfähigkeit) ranks via synonym, and ß/umlaut 
 test("broken symlink in vault still returns valid notes", () => {
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
-  note(v, "real.md", `---\ntags: [voronezh]\n---\n# Real\n\nVoronezh content here.\n`);
+  note(v, "real.md", `---\ntags: [harbor]\n---\n# Real\n\nHarbor content here.\n`);
   // a dangling symlink whose target does not exist - statSync would throw on it
   symlinkSync(join(v, "does-not-exist.md"), join(v, "broken.md"));
 
-  const r = recall("voronezh", v);
+  const r = recall("harbor", v);
   expect(r.code).toBe(0);
   expect(r.stdout).toContain("real.md");
   expect(r.stderr).not.toContain("no vault");
@@ -113,11 +113,11 @@ test("CRLF note's tags get tag-level matching", () => {
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
   // CRLF line endings throughout. The tag note has the term ONLY in the tag, the body note ONLY in body.
-  const crlf = `---\r\ntags: [voronezh]\r\n---\r\n# Some Title\r\n\r\nUnrelated prose about weather.\r\n`;
+  const crlf = `---\r\ntags: [harbor]\r\n---\r\n# Some Title\r\n\r\nUnrelated prose about weather.\r\n`;
   writeFileSync(join(v, "tagged.md"), crlf);
-  note(v, "bodyonly.md", `---\ntags: [bigquery]\n---\n# Title\n\nvoronezh appears once in body.\n`);
+  note(v, "bodyonly.md", `---\ntags: [bigquery]\n---\n# Title\n\nharbor appears once in body.\n`);
 
-  const r = recall("voronezh", v);
+  const r = recall("harbor", v);
   expect(r.code).toBe(0);
   // The CRLF note matches via its tag (2x boost), proving frontmatter parsed. If frontmatter were
   // treated as body, the tag term would still appear but only at body weight - so assert it ranks
@@ -143,9 +143,9 @@ test("dangling --vault exits 1 with a usage error and no stack trace", () => {
 test("--limit 5abc exits 1", () => {
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
-  note(v, "a.md", `---\ntags: [voronezh]\n---\n# A\n\nvoronezh content.\n`);
+  note(v, "a.md", `---\ntags: [harbor]\n---\n# A\n\nharbor content.\n`);
 
-  const r = recall("voronezh", v, "--limit", "5abc");
+  const r = recall("harbor", v, "--limit", "5abc");
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("--limit");
 });
@@ -154,9 +154,9 @@ test("--limit 3 still works", () => {
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
   for (let i = 0; i < 5; i++) {
-    note(v, `n${i}.md`, `---\ntags: [voronezh]\n---\n# Note ${i}\n\nvoronezh content ${i}.\n`);
+    note(v, `n${i}.md`, `---\ntags: [harbor]\n---\n# Note ${i}\n\nharbor content ${i}.\n`);
   }
-  const r = recall("voronezh", v, "--limit", "3");
+  const r = recall("harbor", v, "--limit", "3");
   expect(r.code).toBe(0);
   const lines = r.stdout.split("\n").filter((l) => /^\s+\[\d/.test(l));
   expect(lines.length).toBe(3);
@@ -188,10 +188,10 @@ test("a note at a nested control basename (work/index.md) is searchable; top-lev
 test("a term in the title outranks the same term only in the body", () => {
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
-  note(v, "intitle.md", `---\ntags: []\n---\n# Voronezh Trip\n\nGeneric prose, nothing special.\n`);
-  note(v, "inbody.md", `---\ntags: []\n---\n# Generic Title\n\nWe talked about voronezh once.\n`);
+  note(v, "intitle.md", `---\ntags: []\n---\n# Harbor Trip\n\nGeneric prose, nothing special.\n`);
+  note(v, "inbody.md", `---\ntags: []\n---\n# Generic Title\n\nWe talked about harbor once.\n`);
 
-  const r = recall("voronezh", v);
+  const r = recall("harbor", v);
   expect(r.code).toBe(0);
   const titleIdx = r.stdout.indexOf("intitle.md");
   const bodyIdx = r.stdout.indexOf("inbody.md");

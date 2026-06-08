@@ -59,10 +59,11 @@ test("loadTags handles the shipped templates/_tags.md format", () => {
   const shipped = readFileSync(join(import.meta.dir, "../../templates/_tags.md"), "utf8");
   const v = tmpVault(shipped);
   const vocab = loadTags(v);
-  expect(vocab.approved.has("etl")).toBe(true);
-  expect(vocab.approved.has("bigquery")).toBe(true);
+  expect(vocab.approved.has("identity")).toBe(true);
   expect(vocab.approved.has("finances")).toBe(true);
-  expect(vocab.synonyms.get("bq")).toBe("bigquery");
+  expect(vocab.approved.has("projects")).toBe(true);
+  expect(vocab.synonyms.get("pipeline")).toBe("etl");
+  expect(vocab.synonyms.get("money")).toBe("finances");
   // The prose paragraphs above ## Tags must not leak in as tags.
   for (const t of vocab.approved) expect(t).toMatch(/^[a-z0-9-]+$/);
   rmSync(v, { recursive: true });
