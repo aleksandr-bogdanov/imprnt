@@ -1,0 +1,20 @@
+Meridian engineering planning, 2026-05-18. Present: Priya, Tom, Lena, Marcus.
+
+Priya: Billing v2 is the quarter's priority. The double-charge incident in April cost us trust with
+Bramble Plumbing and two smaller accounts. We do not ship new pricing until billing is solid.
+
+Tom: Agreed. Backlog as I see it: the idempotency keys on charge creation are the must-fix, that is
+what caused the double charge. Then the dunning emails, then the usage-based metering. I would call
+idempotency P0, dunning P1, metering P2.
+
+Lena: I need the invoice redesign in there, customers cannot read the current one. Call it P1.
+
+Marcus: Support angle: 60% of billing tickets last month were "why was I charged twice" or "I cannot
+find my invoice". Both go away if we fix idempotency and the invoice.
+
+Priya: Decision: Tom owns billing-v2. Idempotency first, target a fix in two weeks. We also formalize
+on-call. Right now Tom is the only one who can fix prod billing, that is a bus factor of one. Tom and
+Marcus split a weekly on-call rotation starting June.
+
+Tom: One more lesson from April: we had no alert on duplicate charges. Adding a metric and a pager
+alert is part of the idempotency work.

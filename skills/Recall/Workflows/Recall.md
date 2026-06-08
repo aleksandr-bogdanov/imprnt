@@ -10,7 +10,7 @@ From the user's plain-language ask, pick the few keywords + candidate tags that 
 query. You already hold the question — this is the cheap conscious end. BM25 scores each note by how
 distinctive your terms are (a rare term counts more than a common one) and weights title/tag hits above
 body, so the goal is **the few words that name the thing**, not a sentence:
-- **Reduce to 1-3 topical content words.** "what's the STATUS of the Voronezh MOVE" → `voronezh`;
+- **Reduce to 1-3 topical content words.** "what's the STATUS of the office MOVE" → `office move`;
   "what do I BELIEVE about money" → `beliefs finances` (or just `money`).
 - **Drop intent/filler words** — `status`, `move`, `about`, `what`, `current`, etc. (the engine also
   strips a lean stopword list, but tighter input is better input).

@@ -10,7 +10,7 @@
 // Scoring (standard BM25 with field boosts):
 //   - Each note is tokenized into terms (lowercased, split on non Unicode-letter/number characters).
 //   - A term's occurrences in the TITLE/aliases count 3x, in TAGS 2x, in BODY 1x — folded into the
-//     term frequency, so "voronezh" in a title outweighs "voronezh" buried in prose. One BM25 pass.
+//     term frequency, so "harbor" in a title outweighs "harbor" buried in prose. One BM25 pass.
 //   - idf(t) = ln(1 + (N - df + 0.5) / (df + 0.5));  k1 = 1.5, b = 0.75.
 //   - score = Σ_query-terms idf(t) * (tf*(k1+1)) / (tf + k1*(1 - b + b*dl/avgdl)).
 //   - idf subsumes the old df-weighting (a rare matched term scores; a common one barely moves the

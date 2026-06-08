@@ -127,7 +127,7 @@ The discipline that keeps the list lean moved **off the write path** to a non-bl
 - **NEVER summarize a catalog to prose and point at the snapshot.** "The live table lives in the source" is the failure that silently deletes knowledge — the rows ARE the note. A rated list, a price table, a backlog, an account/cadastral/contract/insurance number, a verbatim AVB clause: copy it INTO the note, in full, never rounded or paraphrased.
 - **enrich = ADD (summary, tags, links, `kind`), never REMOVE.** Reformatting prose↔prose is fine; dropping a table, an enumeration, or a specific figure is data loss. Preserve tables AS tables, enumerations AS enumerations.
 - **Anti-slop governs PROSE, not DATA.** The "no bullet-flood / paragraphs over bullets" rule is about narrative writing. A rated catalog or a record table is data — keep it structured; it is exempt.
-- **The lookup test (apply before declaring a note done):** could you answer a specific question from the VAULT note alone — "what tier is Hasseröder", "what's my Sozialversicherungsnummer", "what are the Voronezh flat's cadastral details", "what's the Generali Unfall payout schedule"? If the answer is only in `raw/`, you dropped the knowledge. Re-derive.
+- **The lookup test (apply before declaring a note done):** could you answer a specific question from the VAULT note alone, for example "which plan tier is this account on", "what is the policy number", "what are the property's registration details", "what is the payout schedule"? If the answer is only in `raw/`, you dropped the knowledge. Re-derive.
 
 ## The two robot commands (explicit, never a daemon)
 
