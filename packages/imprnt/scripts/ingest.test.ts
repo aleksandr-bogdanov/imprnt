@@ -298,7 +298,7 @@ test("a genuine inline-text fact (no path shape) still ingests as bytes", () => 
 // "-<hash>.md". Pre-fix the filename started with "-" because the basis was truthy Cyrillic. ---------
 test("all-non-Latin inline bytes get a raw snapshot named with the source fallback, not a leading hyphen", () => {
   const { vault, raw } = setup();
-  const r = run(["ingest", "Воронеж это город", "--vault", vault]);
+  const r = run(["ingest", "Москва это город", "--vault", vault]);
   expect(r.code).toBe(0);
 
   // The adhoc raw snapshot exists and its filename does NOT start with a hyphen.
