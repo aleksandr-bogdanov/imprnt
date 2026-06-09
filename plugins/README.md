@@ -74,6 +74,10 @@ That single line is the whole on-switch. Remove is `imprnt plugin rm <name>` (de
 the assistant learns a plugin by being handed its fragment, and forgets it the moment you delete the
 line.
 
+The same enable list travels: outside the project, the `imp` launcher reads `CLAUDE.local.md`, inlines
+the enabled fragments into the session it spawns (`--append-system-prompt`), and skips that inside the
+project where Claude Code loads them natively. One list, managed in one place, honored everywhere.
+
 ## The rules, in plain English
 
 1. **Reading your notes** — a plugin opens the files and reads them like any script would.
