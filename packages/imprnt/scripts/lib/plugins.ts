@@ -63,6 +63,18 @@ function readLocal(root: string): string {
   return existsSync(p) ? readFileSync(p, "utf8") : "";
 }
 
+// The @import targets currently wired in CLAUDE.local.md, in file order, without the leading
+// `@`. This is the ONE parser of the line format: `imp` inlines these same fragments when it
+// launches a session outside the project (lib/launch.ts), so the write side (add/rm) and the
+// read side can never disagree on what "enabled" means.
+export function importTargets(root: string): string[] {
+  return readLocal(root)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("@"))
+    .map((l) => l.slice(1));
+}
+
 // A plugin counts as enabled if CLAUDE.local.md has an uncommented @import line pointing
 // anywhere inside plugins/<name>/. Both `add <name>` and `add <name>/<file>` land here.
 export function isEnabled(root: string, name: string): boolean {

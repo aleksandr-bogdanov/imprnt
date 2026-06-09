@@ -4,10 +4,11 @@
   "description": "Deterministic-first, plain-markdown knowledge vault. Code does the bulk transform. The LLM only touches the irreducibly-semantic 20%. Native grep plus BM25 retrieval, zero MCP on the vault.",
   "type": "module",
   "bin": {
-    "imprnt": "dist/cli.js"
+    "imprnt": "dist/cli.js",
+    "imp": "dist/imp.js"
   },
   "scripts": {
-    "build": "bun build scripts/cli.ts --target=node --outfile=dist/cli.js --banner '#!/usr/bin/env node' && chmod +x dist/cli.js",
+    "build": "bun build scripts/cli.ts scripts/imp.ts --target=node --outdir=dist --banner '#!/usr/bin/env node' && chmod +x dist/cli.js dist/imp.js",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "shipdocs": "cp ../../CLAUDE.md ../../README.md ../../LICENSE .",
