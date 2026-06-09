@@ -30,7 +30,7 @@ for (let i = 0; i < args.length; i++) {
     if (v === undefined) { console.error("--vault requires a directory argument"); process.exit(1); }
     vault = v;
   }
-  else if (args[i] === "--all") all = true; // also run each plugins/*/check.ts (convention discovery)
+  else if (args[i] === "--all") all = true; // also run each plugins/*/check.js (convention discovery)
 }
 if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`imprnt init\` first`); process.exit(1); }
 
@@ -192,7 +192,7 @@ console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
 // The ONE core↔plugin contact for integrity (the other is `ingest --apply`). Both discover by
 // convention, never by import, never by naming a plugin. The FENCE that keeps this from becoming a
 // "plugin API": core may provide read-only AGGREGATION here, never write/orchestration. Concretely we
-// glob plugins/*/check.ts, run each as its own `bun` subprocess, READ THE EXIT CODE ONLY (0 = sound,
+// glob plugins/*/check.js, run each as its own `node` subprocess, READ THE EXIT CODE ONLY (0 = sound,
 // non-zero = issue), and forward the plugin's stdout/stderr VERBATIM — we never parse what it prints.
 // Core `check` exits non-zero when it has issues (bug-1 fix); --all exits non-zero when the core has
 // issues OR any plugin failed (the max of both).

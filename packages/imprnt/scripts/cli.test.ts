@@ -1,5 +1,5 @@
 import { test, expect, beforeAll } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -25,10 +25,23 @@ function tmpRepo(): string {
 
 type Run = { code: number; stdout: string; stderr: string };
 
-async function runCli(root: string, args: string[], env: Record<string, string> = {}): Promise<Run> {
-  const proc = Bun.spawn(["bun", join(root, "scripts", "cli.ts"), ...args], {
+// One spawn helper for both bins. EVERY child is sandboxed: XDG_CONFIG_HOME points into the tmp
+// root (init writes the registry there, never into the developer's real ~/.config/imprnt) and
+// the IMPRNT_* env overrides are blanked (empty string reads as unset) so the developer's shell
+// can't steer resolution. Piped stdio also means the child sees NO TTY, which is itself under
+// test for bare imp.
+async function run(entry: string, root: string, args: string[], env: Record<string, string> = {}): Promise<Run> {
+  const proc = Bun.spawn([process.execPath, join(root, "scripts", entry), ...args], {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: join(root, "xdg"),
+      IMPRNT_ROOT: "",
+      IMPRINT_ROOT: "",
+      IMPRNT_VAULT: "",
+      IMPRINT_VAULT: "",
+      ...env,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -39,6 +52,9 @@ async function runCli(root: string, args: string[], env: Record<string, string> 
   const code = await proc.exited;
   return { code, stdout, stderr };
 }
+
+const runCli = (root: string, args: string[], env: Record<string, string> = {}) => run("cli.ts", root, args, env);
+const runImp = (root: string, args: string[], env: Record<string, string> = {}) => run("imp.ts", root, args, env);
 
 function readLocal(root: string): string {
   const p = join(root, "CLAUDE.local.md");
@@ -171,4 +187,89 @@ test("unknown top-level subcommand exits 1", async () => {
   const root = tmpRepo();
   const r = await runCli(root, ["nonsense"]);
   expect(r.code).toBe(1);
+});
+
+// --- the imp entry layer (imp bin, lair, context, init registration) ---
+
+test("bare imp without a TTY prints help and exits 0 (never spawns claude)", async () => {
+  const root = tmpRepo();
+  const r = await runImp(root, []);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("imp lair");
+  expect(r.stdout).toContain("the front door");
+});
+
+test("engine subcommands work identically under the imp bin", async () => {
+  const root = tmpRepo();
+  const r = await runImp(root, ["plugin", "list"]);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("plugins:");
+});
+
+test("imp lair with no vault project anywhere exits 1 with the init hint", async () => {
+  const root = tmpRepo();
+  const r = await runImp(root, ["lair"]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("imprnt init");
+});
+
+// A dir only counts as a vault project when vault/ holds the generated index.md (the hardened
+// walk-up marker), so the fixtures scaffold both.
+function mkVault(root: string): void {
+  mkdirSync(join(root, "vault"), { recursive: true });
+  writeFileSync(join(root, "vault", "index.md"), "# index\n");
+}
+
+test("imp lair with a vault but no claude on PATH exits 1 with the install hint", async () => {
+  const root = tmpRepo();
+  mkVault(root);
+  const r = await runImp(root, ["lair"], { PATH: "" });
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("`claude` not found");
+});
+
+test("imp with leading claude flags tries to launch even without a TTY (piped -p is legitimate)", async () => {
+  const root = tmpRepo();
+  mkVault(root);
+  const r = await runImp(root, ["-p", "hello"], { PATH: "" });
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("`claude` not found");
+  expect(r.stdout).not.toContain("the front door"); // not the help text
+});
+
+test("imprnt context prints the vault contract; without one it exits 1", async () => {
+  const root = tmpRepo();
+  mkVault(root);
+  writeFileSync(join(root, "CLAUDE.md"), "# the contract\n");
+  const hit = await runImp(root, ["context"]);
+  expect(hit.code).toBe(0);
+  expect(hit.stdout).toBe("# the contract\n");
+
+  const bare = tmpRepo();
+  const miss = await runImp(bare, ["context"]);
+  expect(miss.code).toBe(1);
+  expect(miss.stderr).toContain("imprnt init");
+});
+
+test("init registers the project as the default vault; a second init keeps it unless --register", async () => {
+  const a = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(a, "templates"), { recursive: true });
+  const xdg = join(a, "xdg");
+  const first = await runImp(a, ["init"], { XDG_CONFIG_HOME: xdg });
+  expect(first.code).toBe(0);
+  expect(first.stdout).toContain("registered as imp's default vault project");
+  // The child registers its process.cwd(), which resolves symlinks (macOS /var -> /private/var),
+  // so compare against the realpath of the tmp dirs.
+  const config = JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8"));
+  expect(config.vaults.personal).toBe(realpathSync(a));
+
+  const b = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(b, "templates"), { recursive: true });
+  const second = await runImp(b, ["init"], { XDG_CONFIG_HOME: xdg });
+  expect(second.stdout).toContain("kept the existing default vault project");
+  expect(JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8")).vaults.personal).toBe(realpathSync(a));
+
+  const forced = await runImp(b, ["init", "--register"], { XDG_CONFIG_HOME: xdg });
+  expect(forced.stdout).toContain("registered as imp's default vault project");
+  expect(JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8")).vaults.personal).toBe(realpathSync(b));
 });

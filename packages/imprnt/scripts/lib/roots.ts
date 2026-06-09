@@ -13,6 +13,11 @@ import { dirname, join } from "node:path";
 // IMPRNT_ROOT overrides (mirrors IMPRNT_VAULT; legacy IMPRINT_ROOT/IMPRINT_VAULT still read); otherwise walk up from `start` to the first
 // ancestor that looks like an imprnt project (has vault/ or CLAUDE.local.md); otherwise fall back
 // to `start` — the `init`-in-an-empty-dir case, before any marker exists.
+//
+// NOTE: lib/registry.ts vaultProjectRoot() has a near-twin walk-up with DIFFERENT markers and a
+// DIFFERENT fallback, on purpose: this one answers "where do plugin wiring and aggregators live"
+// (CLAUDE.local.md counts, pre-init dirs fall back to start), that one answers "which dir is a
+// real initialized vault" (vault/index.md required, registry fallback). Do not unify them.
 export function projectRoot(start: string = process.cwd()): string {
   const override = process.env.IMPRNT_ROOT ?? process.env.IMPRINT_ROOT;
   if (override) return override;

@@ -9,6 +9,8 @@ import { listPluginDirs, isEnabled, addPlugin, rmPlugin } from "./lib/plugins.ts
 import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install.ts";
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
+import { registerVault, vaultProjectRoot, configPath } from "./lib/registry.ts";
+import { buildLaunch, launchClaude } from "./lib/launch.ts";
 
 // packageRoot: the install location, source for templates/ + CLAUDE.md. Computed from THIS entry
 // file, which sits one level under the root in both dev (scripts/cli.ts) and the bundle (dist/cli.js).
@@ -16,6 +18,10 @@ import { collectNotes } from "./lib/moc.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, "..");
 const [cmd, ...rest] = process.argv.slice(2);
+
+// Set by the imp.ts entry. The two bins share this dispatcher; only the BARE behavior differs:
+// `imp` opens a Claude session where you stand, `imprnt` prints help (safe for scripts/agents).
+const asImp = (globalThis as Record<string, unknown>).__IMPRNT_IMP__ === true;
 
 function vaultArg(): string {
   const i = rest.indexOf("--vault");
@@ -28,6 +34,18 @@ function vaultArg(): string {
     return val;
   }
   return process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
+}
+
+// lair + context cannot proceed without the vault home, and they must give the SAME hint from
+// the same broken state. Bare `imp` (the default case) deliberately does not use this: it warns
+// and launches plain claude instead, so imp stays useful before any init.
+function requireVaultHome(): string {
+  const home = vaultProjectRoot();
+  if (!home) {
+    console.error("no vault project found — run `imprnt init` in your vault project first");
+    process.exit(1);
+  }
+  return home;
 }
 
 // Delegated scripts parse process.argv.slice(2) themselves. Strip the subcommand token
@@ -58,6 +76,25 @@ switch (cmd) {
     const p = join(vault, "hot.md");
     if (!existsSync(p)) { console.error(`no hot.md at ${p} — run \`imprnt init\``); process.exit(1); }
     console.log(readFileSync(p, "utf8"));
+    break;
+  }
+  case "lair": {
+    // The assistant's home: the same launch with cwd swapped to the vault project. Context and
+    // plugin wiring load natively there (CLAUDE.md + CLAUDE.local.md in cwd), so nothing is
+    // injected, and personal history + permission grants accumulate in one resumable place.
+    process.exit(launchClaude(requireVaultHome(), rest));
+  }
+  case "context": {
+    // The demand-paged contract: prints the vault project's CLAUDE.md. The pointer injected into
+    // every imp session tells agents to run this before writing a note, so the ~9k tokens of
+    // filing rules are paid only by sessions that actually write, at the moment they write.
+    const home = requireVaultHome();
+    const contract = join(home, "CLAUDE.md");
+    if (!existsSync(contract)) {
+      console.error(`no CLAUDE.md at ${home} — run \`imprnt init\` there to drop the contract`);
+      process.exit(1);
+    }
+    process.stdout.write(readFileSync(contract, "utf8"));
     break;
   }
   case "plugin": {
@@ -160,6 +197,13 @@ switch (cmd) {
       added.push("CLAUDE.md");
     }
 
+    // Register this project so `imp` and `imprnt context` find the vault from any directory.
+    // First init becomes the default; an existing different default is kept and reported, never
+    // silently replaced — `imprnt init --register` here switches it on purpose.
+    const reg = registerVault(process.cwd(), { force: rest.includes("--register") });
+    if (reg.status === "registered") console.log(`registered as imp's default vault project (${configPath()})`);
+    else if (reg.status === "kept") console.log(`kept the existing default vault project (${reg.current}) — run \`imprnt init --register\` here to switch`);
+
     if (!vaultExisted) {
       // Brand-new vault: show the layout so the user learns the shape, then point at the next step.
       console.log("initialized vault at ./vault");
@@ -167,7 +211,7 @@ switch (cmd) {
       console.log(`  domains:  ${domains.join(", ")}`);
       console.log(`  forms:    ${forms.join(", ")}`);
       console.log("  + raw/ for immutable by-source snapshots");
-      console.log("next: ingest a source (`imprnt ingest <file>`), then `imprnt check`.");
+      console.log("next: type `imp` to talk, or ingest a source (`imprnt ingest <file>`), then `imprnt check`.");
     } else {
       // Existing vault: lead with the count so it's obvious the notes were found, not made, and
       // report only the idempotent top-up. Never imply anything was created or overwritten.
@@ -180,15 +224,38 @@ switch (cmd) {
     }
     break;
   }
-  default:
+  default: {
+    // Bare `imp` (or `imp <claude flags>`) opens a Claude session where you stand. The TTY guard
+    // covers ONLY the bare form: a script or agent calling it bare gets the help text below,
+    // never a surprise interactive session. Explicit claude flags launch regardless — piped
+    // one-shot modes (`imp -p "..." | tee`) are exactly what those flags are for. Unknown WORDS
+    // still fall through to help + exit 1 under both bins, so a typo'd subcommand never turns
+    // into a claude prompt.
+    const isHelp = cmd === "help" || cmd === "--help" || cmd === "-h";
+    const bare = cmd === undefined;
+    const wantsLaunch = asImp && !isHelp && (bare || cmd.startsWith("-"));
+    if (wantsLaunch && (!bare || (process.stdin.isTTY && process.stdout.isTTY))) {
+      const home = vaultProjectRoot();
+      if (!home) {
+        console.error("imp: no vault registered yet — run `imprnt init` in your vault project to give your assistant a memory. Launching plain claude.");
+      }
+      const { args, env } = buildLaunch({ cwd: process.cwd(), vaultProject: home, pkgRoot, passthrough: bare ? [] : [cmd, ...rest] });
+      process.exit(launchClaude(process.cwd(), args, env));
+    }
     console.log(`imprnt — deterministic-first markdown knowledge vault
 
-usage:
-  imprnt init                              scaffold ./vault (entities/domains/forms) and ./raw
+the front door (the \`imp\` bin):
+  imp                                      open your assistant HERE: claude + your cast + the vault pointer
+  imp lair                                 open it in your vault project — full contract, resumable history
+  imp -c | --resume | <claude flags>       flags pass through to claude
+
+engine (same subcommands under \`imp\` or \`imprnt\`):
+  imprnt init [--register]                 scaffold ./vault (entities/domains/forms) and ./raw, register as imp's default vault
   imprnt snapshot <src> --dest <relpath>   mirror a file/dir into raw/<relpath> (immutable, hashed) — the migration's deterministic half
   imprnt ingest <file|text> [--vault D]    snapshot a source -> raw/; a transcript file also gets an event skeleton (no LLM)
   imprnt recall "<query>" [--vault D]      synonym-aware BM25 ranking over the vault
-  imprnt check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.ts
+  imprnt context                           print the vault contract — agents run this before writing any note
+  imprnt check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.js
   imprnt ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
   imprnt hot [--vault D]                   needs-review + the session primer
   imprnt plugin list                       show installed plugins (on/off) + official ones available to add
@@ -196,7 +263,7 @@ usage:
   imprnt plugin rm <name> [--purge]        unwire a plugin; --purge also deletes plugins/<name>/
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
-the vault is plain markdown. an agent greps it directly — no MCP, no DB.
-recall ranks with BM25 (core, in recall.ts). opt-in plugins live in plugins/ (guard built; graph to adapt from PAI).`);
-    if (cmd && cmd !== "help" && cmd !== "--help") process.exit(1);
+the vault is plain markdown. an agent greps it directly — no MCP, no DB.`);
+    if (cmd && !isHelp) process.exit(1);
+  }
 }
