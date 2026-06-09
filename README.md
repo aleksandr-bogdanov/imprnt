@@ -1,24 +1,27 @@
 # imprnt
 
-> "You can think of the model as the brain, the harness as the body, and the tools it uses working in
-> a runtime."
+> The long-term memory your AI assistant is missing. Plain markdown, on your disk, yours forever.
+
+[![CI](https://github.com/aleksandr-bogdanov/imprnt/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/aleksandr-bogdanov/imprnt/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![node >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
+
+Your assistant starts every chat blank. You re-explain your projects, your people, and your
+decisions every time, and whatever it learns dies with the session. imprnt fixes that. You talk,
+your assistant files what matters into plain text files on your disk, and weeks later it answers
+from your real history. You can read every note with your own eyes, and no company can switch
+them off.
+
+> "You can think of the model as the brain, the harness as the body, and the tools it uses working
+> in a runtime."
 > - Jensen Huang, NVIDIA (GTC Taipei keynote, June 2026)
 
-imprnt is the long-term memory your AI assistant uses. You talk to Claude in plain language, and Claude
-uses imprnt to file what you tell it and recall what you need later. The knowledge lives as plain
-markdown files on your disk that you own. There is a command-line engine underneath, but you do not run
-it by hand. Claude runs it for you. imprnt is the tool layer Huang is pointing at, holding the part
-that lasts.
+imprnt is the tool layer Huang is pointing at, holding the part that lasts. Sibling to
+[Whenful](https://whenful.com): Whenful answers *when* do I do my tasks, imprnt holds *what* I know.
 
-It is the memory your assistant is missing: one that survives the session, that you can read with your
-own eyes, that no company can switch off.
+## See it work
 
-> Sibling to [Whenful](https://whenful.com): Whenful answers *when* do I do my tasks, imprnt holds
-> *what* I know.
-
-## What it feels like to use
-
-You do not learn commands. You talk to your assistant, and it keeps your knowledge for you.
+You do not learn commands. You talk, and your assistant keeps your knowledge for you.
 
 ```
 You:    Here is my 1:1 with Boris from this morning. [paste or drop the transcript]
@@ -32,53 +35,62 @@ Claude: From your notes: the cutover moved to July 15, gated on the two-week par
         Boris owns it. The earlier June date is marked superseded.
 ```
 
-Behind those two replies, Claude ran the imprnt engine: it filed the transcript into structured notes,
-then ranked your vault to answer the question. You saw a conversation. The work was plain, cheap, local
-code.
+Behind those two replies, Claude ran the imprnt engine: it filed the transcript into structured,
+linked notes, then ranked your vault to answer the question. You saw a conversation. The work was
+plain, cheap, local code.
 
-## Why plain files (the idea in one minute)
+## Why plain files win
 
-Your assistant could keep your knowledge in a vector database or a hidden memory feature. imprnt keeps
-it as plain files instead, for a practical reason: it makes your assistant cheap, honest, and yours.
+A vector database or a hidden memory feature could hold your knowledge too. Plain files make your
+assistant cheap, honest, and yours:
 
-- **Your assistant reads the files directly.** To find something it runs a local search over a folder,
-  about 100 tokens. The same lookup through a vector database or an MCP server costs orders of magnitude
-  more and goes stale every time a note changes. Plain files keep the read path almost free, so your
-  assistant can lean on your whole history.
-- **The model is spent only where it is irreplaceable.** Reading a messy transcript and deciding what
-  it means is worth the model, and it happens once per source. Searching happens thousands of times, so
-  it stays plain local code. Frequency draws the line.
-- **The note keeps the real data.** Tables stay tables. Numbers, dates, IDs, and exact wording are
-  preserved in full, with a summary added on top, so Claude answers from facts, not a paraphrase.
-- **You own it.** Plain text on your disk. It cannot 404, cannot bloat, cannot hold your context
-  hostage, and it opens in [Obsidian](https://obsidian.md) for a human graph view of the same folder.
+- **Reads cost almost nothing.** Your assistant finds a note by running a local ranked search
+  (BM25) over a folder, about 100 tokens. The same lookup through a vector database or an MCP
+  server costs orders of magnitude more and goes stale every time a note changes. Cheap reads mean
+  your assistant can lean on your whole history, every session.
+- **The model works once, where it counts.** Reading a messy transcript and deciding what it means
+  is worth the model, and it happens once per source. Searching happens thousands of times, so it
+  stays plain local code. Frequency draws the line.
+- **The data survives in full.** Tables stay tables. Numbers, dates, IDs, and exact wording are
+  kept verbatim, with a summary added on top, so your assistant answers from facts, not a
+  paraphrase.
+- **Corrections cost one edit.** Notes link by permanent ID. Fix a person's note once and every
+  meeting, project, and decision that mentions them is right.
+- **Yours, in the strongest sense.** Plain text on your disk. It opens in any editor, graphs in
+  [Obsidian](https://obsidian.md), and cannot 404, bloat, or hold your context hostage.
 
-## Setup (once)
-
-You install the engine so your assistant has the tool, point your vault at a folder, and then you just
-talk. Runs on [Node](https://nodejs.org) version 18 or newer.
-
-```sh
-npm i -g imprnt        # install the engine Claude will drive
-imprnt init            # scaffold your vault and drop CLAUDE.md, the contract Claude reads
-```
-
-`imprnt init` writes a `CLAUDE.md` into the project. That file teaches your assistant how your vault
-works (the note formats and conventions), and Claude loads it automatically whenever it works in that
-folder. From then on you talk to Claude and it does the rest.
-
-Point your vault at a folder elsewhere if you like:
+## Start in two minutes
 
 ```sh
-export IMPRNT_VAULT=~/notes/vault   # defaults to ./vault
+npm i -g imprnt        # install the engine your assistant drives
+imprnt init            # scaffold your vault, drop CLAUDE.md (the contract your assistant reads)
+imp                    # open your assistant and talk
 ```
+
+`imprnt init` scaffolds the vault, writes the `CLAUDE.md` contract that teaches your assistant
+how it works, and registers the folder so `imp` finds it from anywhere. Runs on
+[Node](https://nodejs.org) 18 or newer, driving [Claude Code](https://claude.com/claude-code) as
+the assistant.
+
+`imp` is the front door, and you can type it instead of `claude` in any directory:
+
+- **`imp`** opens Claude where you stand. Your enabled plugins ride along, and your vault is
+  within reach, so a coding session can answer "who owns the downstream consumers?" from your
+  own notes. Typing `imp` instead of `claude` is the whole opt-in: stock `claude` stays stock,
+  and nothing is ever injected into sessions you didn't ask it into.
+- **`imp lair`** opens Claude inside the vault project, your assistant's home. The full contract
+  loads there, and your personal conversations accumulate in one resumable place.
+
+Want the vault folder somewhere other than `./vault`? Set `export IMPRNT_VAULT=~/notes/vault` in
+your shell profile and both the engine and imp follow it.
 
 The first thing to ask your assistant: "file a person note for me." You appear in nearly every
 transcript, so a self-note lets it link you to everything from then on.
 
-## What your assistant does for you
+## What your assistant runs
 
-These are the engine's jobs. You trigger them by asking, in plain language. Claude picks the right one.
+These are the engine's jobs. You trigger them by asking, in plain language. Claude picks the
+right one.
 
 | You say something like | Claude runs | What happens |
 |------------------------|-------------|--------------|
@@ -86,13 +98,14 @@ These are the engine's jobs. You trigger them by asking, in plain language. Clau
 | "What do I know about X?" / "What did we decide on Y?" | recall | Ranks your notes locally (BM25) and answers from the top hits. |
 | "Tidy up / what needs my attention?" | check, hot | Rebuilds the index, syncs tags, surfaces anything that needs review. |
 
-The engine itself uses no AI for any of this. The model sits only at the two ends: turning your ask
-into a search at the front, reading the results at the back. Everything in between is free local code.
+The engine itself uses no AI for any of this. The model sits only at the two ends: turning your
+ask into a search at the front, reading the results at the back. Everything in between is free
+local code.
 
-## Plugins (give your assistant new behavior)
+## Plugins: new behavior with one ask
 
-Core is your vault plus the file, recall, and tidy jobs. Everything else is a behavior you add to your
-assistant with one ask ("add the anti-slop plugin"), each a separate `imprnt-plugin-*` package:
+Core is your vault plus the file, recall, and tidy jobs. Everything else is a behavior you add by
+asking ("add the anti-slop plugin"), each a separate `imprnt-plugin-*` package:
 
 | Package | What it gives your assistant |
 |---------|------------------------------|
@@ -101,14 +114,14 @@ assistant with one ask ("add the anti-slop plugin"), each a separate `imprnt-plu
 | `imprnt-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, shown inline at read. |
 | `imprnt-plugin-guard` | A deterministic blocklist for dangerous shell commands. |
 
-Adding one copies it into your project and wires it into `CLAUDE.local.md`, the per-machine file your
-assistant loads each session. A fresh setup loads zero plugins until you add them. The contract is in
-[`plugins/README.md`](plugins/README.md).
+Adding one copies it into your project and wires it into `CLAUDE.local.md`, the per-machine file
+your assistant loads each session. A fresh setup loads zero plugins until you add them. The full
+contract is in [`plugins/README.md`](plugins/README.md).
 
-## Memory vs. vault, the one thing newcomers conflate
+## Vault vs assistant memory
 
-Your assistant has its own **memory** feature, a private scratchpad it writes to itself. That is a
-different thing from the imprnt vault, and treating them as one defeats the point.
+Your assistant ships its own memory feature, a private scratchpad it writes for itself. That is a
+different thing from the vault, and treating them as one defeats the point.
 
 | | imprnt **vault** | assistant **memory** |
 |---|---|---|
@@ -116,18 +129,18 @@ different thing from the imprnt vault, and treating them as one defeats the poin
 | Lives | plain files on your disk, the version of record | inside the assistant, opaque to you |
 | You can | read it, edit it, trace each note to its source | barely see it |
 
-Anything durable and about your life goes in the vault, where it is yours and you can read it. Keep the
-assistant's private memory thin.
+Anything durable and about your life goes in the vault, where it is yours and you can read it.
+Keep the assistant's private memory thin.
 
 ## Examples
 
 Two worked vaults live in [`examples/`](examples/), each showing the same flow of talking to an
 assistant that files and recalls for you:
 
-- **[`digital-assistant/`](examples/digital-assistant/)** is a personal vault for one person: identity,
-  health, finances, people, daily life.
-- **[`organization/`](examples/organization/)** is a small company's vault: employees, a customer, a
-  project with a ranked backlog, a decision, and a postmortem.
+- **[`digital-assistant/`](examples/digital-assistant/)** is a personal vault for one person:
+  identity, health, finances, people, daily life.
+- **[`organization/`](examples/organization/)** is a small company's vault: employees, a customer,
+  a project with a ranked backlog, a decision, and a postmortem.
 
 ## Docs
 
@@ -138,9 +151,9 @@ assistant that files and recalls for you:
 
 ## Hacking on imprnt
 
-The engine is built with [Bun](https://bun.sh) and [Turborepo](https://turborepo.com) (dev tools only,
-never needed by people who use it through their assistant). Clone, `bun install`, `bun run build`,
-`bun run test`. The architecture and the contributor map are in
+The engine is built with [Bun](https://bun.sh) and [Turborepo](https://turborepo.com) (dev tools
+only, never needed by people who use it through their assistant). Clone, `bun install`,
+`bun run build`, `bun run test`. The architecture and the contributor map are in
 [`docs/architecture.md`](docs/architecture.md).
 
 ## License

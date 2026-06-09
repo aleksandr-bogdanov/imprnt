@@ -52,7 +52,7 @@ people/      a person
 orgs/        an institution: employer, insurer, bank, government office, vendor
 holdings/    an owned thing with changing state: a policy, a medication and dose, an account
 
-# domains - your life-areas (you choose these); most content lives here
+# domains - your life-areas (you choose these), most content lives here
 identity/    the spine: mission, goals, beliefs, the positions you hold
 health/   finances/   work/   life/   projects/
 
@@ -78,6 +78,7 @@ Every note has two parts: a structured header a program can read, and a human bo
 type: person
 updated: 2026-06-04
 tags: [identity, access-platform]
+summary: Director of Identity, owns the access-platform migration
 role: Director, Identity
 aliases: [Carl Carter, B. Carter, Boris]   # every name this person has gone by
 ---
@@ -94,7 +95,7 @@ Director of Identity. Owns the access-platform migration.
 - The header (the `---` block) is simple `key: value` lines. Every note has `type`, `tags`, and a
   one-line `summary`. The `# Title` line is the title, so there is no `title:` field. A note in a
   domain folder also carries a `domain:` field so it describes itself, and `imprnt check` complains if
-  the folder and the field disagree. Entity references are links too, like `owner: "[[people/alex]]"`.
+  the folder and the field disagree. Entity references are links too, like `owner: "[[people/sam]]"`.
 - The body is for you: a title, sections, prose, and `[[links]]` to other notes.
 - The file name is the note's permanent ID, like `people/boris-carter.md`. Other notes link to that
   ID, never to the display name. That one rule is what makes corrections cheap (see below).
@@ -225,6 +226,30 @@ a real off-switch. Full rules are in `plugins/README.md`.
 Your raw sources are kept forever, one folder per source under `raw/`. So if you ever want to change
 how notes are structured, you re-run ingest over the originals and get the new layout for free. You are
 never stuck in an old format, and any claim in a note traces back to its snapshot.
+
+## How a session starts: imp
+
+You reach your assistant through one command, `imp`, installed alongside the engine. It works
+from any directory, in two forms:
+
+- `imp` opens a Claude session where you stand. Your enabled plugins (your assistant's voice and
+  standards) ride along, plus a small pointer that tells the assistant three things: your vault
+  exists, search it with `imprnt recall` when you reference your own world, and run
+  `imprnt context` before writing anything into it. The directory's own context loads as normal,
+  so a coding session stays a coding session that can also reach your memory.
+- `imp lair` opens the session inside the vault project itself, your assistant's home. The
+  contract and plugin wiring load natively from the folder, and your personal conversations
+  accumulate in one place, so resuming yesterday's thread works.
+
+Typing `imp` instead of `claude` is the entire opt-in. Stock `claude` stays stock, and nothing
+is ever wired into your global assistant config. The full contract (the filing rules) is never
+paid for up front outside the lair either: a session that decides to file something runs
+`imprnt context` at that moment and reads the rules then. The same frequency rule that keeps the
+model out of the read path keeps the contract out of sessions that only read.
+
+`imprnt init` registers the vault project in `~/.config/imprnt/` so imp can find it from
+anywhere. `IMPRNT_ROOT` overrides that for scripts, and standing inside any vault project always
+beats the registered default, so a second vault (a team's, in a work repo) needs no setup at all.
 
 ## Using it with an AI assistant
 

@@ -9,7 +9,11 @@ imprnt is a [bun workspaces](https://bun.sh/docs/install/workspaces) monorepo. O
 packages:
 
 - **`imprnt`** (`packages/imprnt/`) - the core CLI. The three commands `ingest`, `recall`, `check`,
-  plus `init`, `snapshot`, `hot`, and `plugin`.
+  plus `init`, `snapshot`, `hot`, `context`, and `plugin`. The package installs two bin names from
+  one dispatcher: `imprnt` for machinery (bare prints help, safe for scripts and agents) and `imp`
+  for humans (bare opens a Claude session, `imp lair` opens it in the vault project). The split
+  lives in a tiny second entry file (`scripts/imp.ts`) rather than argv sniffing, because npm's
+  Windows shims rewrite argv.
 - **`imprnt-plugin-anti-slop`, `imprnt-plugin-character`, `imprnt-plugin-guard`,
   `imprnt-plugin-whenful`** (`packages/plugin-*/`) - the gallery, each its own package.
 
@@ -77,7 +81,7 @@ plugin list` skips `_personal/`, so your private cast never shows up in the publ
 
 | Package | Ships | Built? |
 |---------|-------|--------|
-| `imprnt` | `dist/cli.js`, `templates/`, `CLAUDE.md`, `README.md`, `LICENSE` | core bundle via `bun build` |
+| `imprnt` | `dist/cli.js`, `dist/imp.js`, `templates/`, `CLAUDE.md`, `README.md`, `LICENSE` | both bundles via `bun build` |
 | `imprnt-plugin-anti-slop` | `agent.md`, `README.md` | no (markdown only) |
 | `imprnt-plugin-character` | `agent.md`, `README.md` | no (markdown only) |
 | `imprnt-plugin-guard` | `agent.md`, `guard.js`, `README.md` | `guard.js` via `prepack` |

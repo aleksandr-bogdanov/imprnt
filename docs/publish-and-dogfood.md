@@ -4,7 +4,7 @@ A runbook for shipping the monorepo to npm, then removing the local dev setup an
 the way any user would. Follow it by hand, or paste it into a fresh Claude Code session as the task.
 
 The point is honesty: prove the published packages install and run on Node alone, with the personal
-cast (Taylor + voice) restored from local files that never go to npm.
+cast (your private character + voice) restored from local files that never go to npm.
 
 ## What ships
 
@@ -60,7 +60,7 @@ imprnt --help        # runs on Node, no Bun on PATH required
 cd ~/imprint-vault
 export IMPRNT_VAULT=~/imprint-vault/vault   # (keep this in your shell profile)
 
-imprnt init          # drops CLAUDE.md + any missing control files, never overwrites your notes
+imprnt init          # drops CLAUDE.md + missing control files, registers this dir as imp's default
 ```
 
 Reinstall the gallery from npm:
@@ -70,15 +70,17 @@ imprnt plugin add anti-slop character whenful guard
 imprnt plugin list   # all four [on], copied into ./plugins/
 ```
 
-Restore the PERSONAL cast (Taylor + voice) - private, never published, copied from the clone:
+Restore the PERSONAL cast (your private character + voice) - private, never published, copied from
+the clone:
 
 ```sh
 mkdir -p plugins/_personal
-cp ~/IdeaProjects/imprnt/plugins/_personal/taylor.md plugins/_personal/
-cp ~/IdeaProjects/imprnt/plugins/_personal/voice.md  plugins/_personal/
-imprnt plugin add _personal/taylor.md _personal/voice.md
+CHAR=my-character VOICE=my-voice     # set to your actual _personal file names
+cp ~/IdeaProjects/imprnt/plugins/_personal/$CHAR.md plugins/_personal/
+cp ~/IdeaProjects/imprnt/plugins/_personal/$VOICE.md plugins/_personal/
+imprnt plugin add _personal/$CHAR.md _personal/$VOICE.md
 
-# if you run Taylor, drop the generic character so they don't both load
+# if you run a personal character, drop the generic one so they don't both load
 imprnt plugin rm character --purge
 ```
 
@@ -88,7 +90,16 @@ imprnt plugin rm character --purge
 imprnt plugin list                 # gallery + _personal cast, on/off as expected
 imprnt check --all                 # core integrity + each plugin's check.js under Node
 imprnt recall "tax"                # a real query returns ranked hits
+imprnt context | head              # prints the vault contract from any directory
 ls plugins/whenful                  # built check.js + whenful.js, agent.md, no src/
+```
+
+Then the front door, from a directory that is NOT the vault project:
+
+```sh
+cd ~/some-coding-repo
+imp                                # opens claude with your cast + the vault pointer riding along
+imp lair                           # opens claude in the vault project itself
 ```
 
 If all four behave, the published install path is proven end to end.

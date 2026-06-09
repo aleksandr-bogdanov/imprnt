@@ -82,7 +82,7 @@ mechanism and sensible defaults, not a fixed list.
 Core is the vault plus `ingest`, `recall`, `check`. Everything else is a plugin. The one rule,
 and its litmus:
 
-> You can add or remove any plugin with zero edits to `scripts/`.
+> You can add or remove any plugin with zero edits to `packages/imprnt/`.
 
 A plugin depends on exactly two things: your `vault/` notes (and their frontmatter format) and
 its own sibling folder. Nothing else. It reads notes directly, writes only its own folder, and
@@ -156,6 +156,53 @@ secret-fencing, because the vault is meant to hold everything including medical,
 personal data. The only rule is that it never goes near a public repo, which `.gitignore` guards
 if the directory is ever git-init'd. Publishing a subset is an export-time filter you run
 consciously, not a tax paid on every note at ingest.
+
+## imp is the front door, imprnt stays the engine (decided 2026-06-09)
+
+The package ships two bin names running one dispatcher, split by audience. `imp` is for humans:
+typed bare in any directory, it opens a Claude session there with the imprnt context riding
+along. `imp lair` is the same machine with one parameter changed, the working directory becomes
+the registered vault project. `imprnt` is for machinery: typed bare it prints help, and agents
+and scripts call its subcommands (`imprnt recall`, `imprnt check`) exactly as before. Engine
+subcommands work under both names, so `imp plugin add` reads like the package manager it is.
+
+The session model this replaces was a fork between a dedicated launcher and global injection
+into the assistant's config. Both lost. Global injection pays tokens in every session forever
+(the rent-billing the project exists to reject), and a launcher-only model left the vault
+unreachable from the coding repos where most of the day happens. The resolution is per-keystroke
+consent: typing `imp` instead of `claude` IS the wire-in. Stock `claude` stays stock, nothing is
+written into the assistant's global config, and each session carries the context because the
+user asked for it by name. Bare `imp` launches only when stdin is a TTY, so a script calling it
+bare gets help text, never a surprise interactive session.
+
+There are no modes. Everything that looks like one falls out of the assistant's own directory
+mechanics: in the lair, the contract and the plugin wiring load natively from cwd (so imp skips
+injection there), and personal history and permission grants accumulate in one resumable place.
+
+## Session context is demand-paged by frequency
+
+What an imp session carries up front is decided by the same axis as everything else: how often
+it is needed. Always loaded: the user's enabled behavior plugins (the cast), plus a ~150-token
+pointer with three jobs. It says what exists (a persistent vault of the user's people, projects,
+decisions, history), when to reach for it (when the user references their own world, search with
+`imprnt recall` before claiming ignorance), and the one entry point for writing (run
+`imprnt context` and follow it before filing or editing any note).
+
+The full vault contract is never loaded up front outside the lair. `imprnt context` prints it on
+demand, so the ~9k tokens of filing rules are paid only by the sessions that actually write,
+at the moment they write. Read-heavy days cost a pointer. The failure mode of an agent writing
+without the rules is already netted: `check` flags the malformed note into needs-review, nothing
+is silently lost. This would flip only if just-in-time loading demonstrably produced broken notes
+faster than needs-review catches them.
+
+## The vault project is registered at init, never discovered by magic
+
+`imprnt init` records the project path in `~/.config/imprnt/` (the first init becomes the
+default), which is what lets `imp` and `imp lair` work from any directory with zero manual
+shell-profile steps. `IMPRNT_ROOT` still overrides for scripting. The registry is a map of named
+vaults that v1 only ever fills with one entry: the shape exists so a second vault (a team vault
+in a work repo) is a config entry later, never an architecture change. Multi-vault switching
+itself is not built until a real need names it.
 
 ## Out of scope, on purpose
 
