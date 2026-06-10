@@ -710,3 +710,104 @@ test("round-8 content nouns are not stopworded (timeline/period/plan/info/detail
     expect(r.stdout).not.toContain("no matches");
   }
 });
+
+// --- deep-audit finding (P2): apostrophes inside a word are stripped, not split ---------------------
+// The tokenizer split on every non-letter/number, so an apostrophe was a word boundary: don't -> [don,
+// t], Elena's -> [elena, s], we're -> [we, re]. The 1-2 letter remnants (s, t, m, re, ll, ve, d) are
+// not stopwords, so they indexed notes AND survived in queries, polluting BM25: a possessive query
+// injected a phantom term that matched every note carrying any OTHER possessive. The fix strips the
+// apostrophe inside a word before splitting, on the single tokenize entry point, so the index and the
+// query stay identical. Both the straight ' (U+0027) and the curly ' (U+2019) are handled.
+
+// the exact repro: a possessive query must not inject a phantom remnant that pulls in an unrelated note
+// ranked purely on its own possessives. A query with the apostrophe stripped must rank the same notes as
+// the same query written without the apostrophe (only the real content terms drive the score).
+test("a possessive query does not inject a phantom remnant (Sam's vs Sam ranks the same notes)", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // the answer carries the content term "doctor". The decoy carries NO content term the query is about,
+  // only its own possessive ("Lena's"), so a phantom "s" from the query would be the only thing pulling
+  // it in.
+  note(v, "answer.md", `---\ntags: []\n---\n# Doctor Visit\n\nNotes from the doctor appointment.\n`);
+  note(v, "decoy.md", `---\ntags: []\n---\n# Schedule\n\nLena's calendar and the team's rota.\n`);
+
+  // possessive form and plain form must agree: same matched notes, decoy excluded both ways.
+  const poss = recall("Sam's doctor", v);
+  const plain = recall("Sam doctor", v);
+  expect(poss.code).toBe(0);
+  expect(plain.code).toBe(0);
+  // the decoy (matched only by a phantom "s") must NOT appear in the possessive query.
+  expect(poss.stdout).not.toContain("decoy.md");
+  // the possessive query's matched note set equals the plain query's.
+  const matched = (out: string) =>
+    out.split("\n").filter((l) => /^\s+\[\d/.test(l)).map((l) => l.replace(/^\s+\[[\d.]+\]\s+/, "")).sort();
+  expect(matched(poss.stdout)).toEqual(matched(plain.stdout));
+});
+
+// a lone possessive/contraction remnant must not be a search term at all - "s" or "don't" stripped to a
+// non-content shape must not match notes purely on the apostrophe-remnant their prose carries.
+test("a lone possessive remnant (s) does not match notes on their possessives", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // both notes carry possessives; pre-fix `recall "s"` matched them on the phantom remnant.
+  note(v, "a.md", `---\ntags: []\n---\n# A\n\nSam's plan and Jonas's notes.\n`);
+  note(v, "b.md", `---\ntags: []\n---\n# B\n\nElena's books.\n`);
+
+  const r = recall("s", v);
+  expect(r.code).toBe(0);
+  // "s" is not a real term in any note once apostrophes are stripped, so nothing matches on it.
+  expect(r.stdout).toContain("no matches");
+  expect(r.stdout).not.toContain("a.md");
+  expect(r.stdout).not.toContain("b.md");
+});
+
+// index and query agree: a body word written with an apostrophe is found by a query without it, and the
+// reverse. Stripping (don't -> dont) is applied identically on both sides, so "dont" and "don't" are the
+// same term.
+test("a contraction in a note (don't) is found by a query without the apostrophe (dont), and vice versa", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // unique terms so the match is unambiguous. One note holds the apostrophe form, the other the plain.
+  note(v, "withapos.md", `---\ntags: []\n---\n# Rule\n\nwe zzdon't ship on fridays.\n`);
+  note(v, "noapos.md", `---\ntags: []\n---\n# Rule Two\n\nwe zzwont ship on fridays.\n`);
+
+  // body has the apostrophe form, query has the plain form.
+  const byPlain = recall("zzdont", v);
+  expect(byPlain.code).toBe(0);
+  expect(byPlain.stdout).toContain("withapos.md");
+  expect(byPlain.stdout).not.toContain("no matches");
+
+  // body has the plain form, query has the apostrophe form - both strip to the same term.
+  const byApos = recall("zzwon't", v);
+  expect(byApos.code).toBe(0);
+  expect(byApos.stdout).toContain("noapos.md");
+  expect(byApos.stdout).not.toContain("no matches");
+});
+
+// the curly right single quote (U+2019, what macOS/iOS and word processors autoinsert) must tokenize
+// identically to the straight ASCII apostrophe, so a note authored in either form is found by a query in
+// either form.
+test("a curly-apostrophe word (Elena’s) tokenizes the same as the straight form", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // the note's body uses the CURLY apostrophe (U+2019). A unique stem proves the strip composed.
+  note(v, "curly.md", `---\ntags: []\n---\n# Curly\n\nzzelena’s reading list.\n`);
+  note(v, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant.\n`);
+
+  // straight-apostrophe query reaches the curly-apostrophe note.
+  const straight = recall("zzelena's", v);
+  expect(straight.code).toBe(0);
+  expect(straight.stdout).toContain("curly.md");
+  expect(straight.stdout).not.toContain("no matches");
+
+  // curly-apostrophe query reaches it too (both forms strip to zzelenas).
+  const curly = recall("zzelena’s", v);
+  expect(curly.code).toBe(0);
+  expect(curly.stdout).toContain("curly.md");
+  expect(curly.stdout).not.toContain("no matches");
+
+  // and a no-apostrophe query for the same stem also matches - the strip joined the pieces.
+  const bare = recall("zzelenas", v);
+  expect(bare.code).toBe(0);
+  expect(bare.stdout).toContain("curly.md");
+});

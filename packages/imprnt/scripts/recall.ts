@@ -124,8 +124,19 @@ const STOPWORDS = new Set([
 // different terms, and an NFD-form word loses its accent to the `\p{N}/\p{L}` split (the bare combining
 // mark is dropped). NFC matches the write side: tags.ts kebab also NFC-composes, so a tag check
 // certifies is a tag recall finds.
+// Strip apostrophes WITHIN a word before the split, so a contraction/possessive joins into one token
+// (don't -> dont, Elena's -> elenas, we're -> were) instead of splitting into the word + a 1-2 letter
+// remnant (don -> [don, t], elena's -> [elena, s]). Those remnants (s, t, m, re, ll, ve, d) are not
+// stopwords, so left in they would index notes AND survive in queries, and a possessive query would
+// inject a phantom term that matches every note carrying any OTHER possessive - polluting BM25.
+// Stripping (not splitting-and-keeping-the-stem) is the simpler fix and keeps the word recognizable
+// (dont reads as don't, where don would not). Done HERE, the one tokenize entry point, so the index
+// side and the query side strip identically and always agree. Both the straight ' (U+0027) and the
+// curly right single quote ' (U+2019, what macOS/iOS and word processors autoinsert) are removed; each
+// is a single codepoint so NFC composition does not change them, and the strip runs after NFC so order
+// is moot.
 const tokenize = (text: string): string[] =>
-  text.normalize("NFC").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  text.normalize("NFC").toLowerCase().replace(/['’]/gu, "").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 
 // A MULTI-token or hyphenated synonym key (`big-query`, `on-call`, `net worth`) is split into pieces
 // by the alnum/Unicode tokenizer, so `big-query` would never reach the `big-query -> bigquery` synonym
