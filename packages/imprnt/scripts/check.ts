@@ -21,7 +21,7 @@ import { readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "
 import { spawnSync } from "node:child_process";
 import { join, relative, dirname } from "node:path";
 import { projectRoot } from "./lib/roots.ts";
-import { generateIndex, collectNotes, frontmatter, stripQuotes } from "./lib/moc.ts";
+import { generateIndex, collectNotes, frontmatter, stripQuotes, stripCode } from "./lib/moc.ts";
 import { loadTags, normalize, appendTags } from "./lib/tags.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
@@ -107,9 +107,15 @@ for (const n of notes) {
   // Field reads (domain:/source:/sources:) are constrained to the FRONTMATTER block - a body line
   // quoting the schema (`domain: health` in prose) must never satisfy a check or claim coverage.
   const fm = frontmatter(raw);
+  // Scan for wikilinks over the CODE-STRIPPED body so a `[[...]]` inside a fenced block or an inline
+  // `code` span is not counted as a link. A developer's howto carries Bash test syntax (`[[ -f x ]]`)
+  // or a documented `[[people/...]]` example in a fence - neither is a graph edge, so neither should be
+  // an orphan nor satisfy the entity-link/disconnected check. stripCode preserves layout, so genuine
+  // links OUTSIDE code are matched exactly as before. The same `links` array feeds BOTH the orphan scan
+  // and the disconnected/entity-link check, keeping the two consistent.
   // `raw/...` links are intentional provenance into the evidence locker (the `source:` field), which
   // sits OUTSIDE the searchable vault — never count them as orphans, nor as graph links.
-  const links = [...raw.matchAll(LINK)].map((m) => m[1].trim()).filter((l) => !l.startsWith("raw/"));
+  const links = [...stripCode(raw).matchAll(LINK)].map((m) => m[1].trim()).filter((l) => !l.startsWith("raw/"));
   for (const l of links) if (!resolves(l)) {
     orphans.push(`  ${n.slug}  →  [[${l}]]`);
     review.push(`- [ ] orphan link [[${l}]] — from [[${n.slug}]], target note missing`);

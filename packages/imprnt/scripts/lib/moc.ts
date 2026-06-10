@@ -28,6 +28,41 @@ const FOLDER_ORDER = [
   "events", "mistakes",
 ];
 
+// Blank out Markdown code so a regex scan over note text never mistakes code for content. Two readers
+// need this: moc's H1 fallback (a `#` shell comment in a fence is not a heading) and check's link scan
+// (a `[[ -f x ]]` Bash test or a documented `[[people/...]]` example in a fence is not a wikilink). We
+// REPLACE code with spaces of the same length and keep every `\n`, so line numbers AND column offsets
+// are unchanged - the H1 `^#` anchor and check's matchAll both see the same line/char positions they
+// would on the original, only with code spans neutralized. Handles fenced blocks (``` and ~~~, with an
+// optional info string) and single-line inline spans (`code`). A fence is matched line-wise: an opening
+// fence line at any indent opens the block, the next line whose trimmed start repeats that fence marker
+// closes it. Inline spans are matched per line so an unterminated backtick can't eat the rest of the
+// document.
+const FENCE = /^(\s*)(```+|~~~+)/;
+export function stripCode(raw: string): string {
+  const blank = (s: string) => s.replace(/[^\n]/g, " "); // keep newlines, blank everything else
+  const lines = raw.split("\n");
+  const out: string[] = [];
+  let fence: string | null = null; // the open fence marker (```... or ~~~...), null when outside a block
+  for (const line of lines) {
+    if (fence) {
+      out.push(blank(line));
+      // A closing fence is a line whose trimmed text starts with the SAME marker char run that opened it.
+      if (line.trim().startsWith(fence)) fence = null;
+      continue;
+    }
+    const m = line.match(FENCE);
+    if (m) {
+      fence = m[2]; // remember the exact marker (``` vs ~~~, length and char) so only its kind closes it
+      out.push(blank(line));
+      continue;
+    }
+    // Outside a fence: blank inline `code` spans (the backticked run only, leaving surrounding prose).
+    out.push(line.replace(/`[^`\n]*`/g, blank));
+  }
+  return out.join("\n");
+}
+
 // Strip a single leading UTF-8 BOM (U+FEFF). An editor that writes a BOM puts it before the `---`
 // fence, which then never matches `^---`, dropping ALL frontmatter to body weight and leaking
 // frontmatter values into the searchable body. Both core readers (this file + recall.ts) call this
@@ -148,7 +183,10 @@ export function collectNotes(vault: string): NoteMeta[] {
     const rel = relative(vault, path).split("\\").join("/");
     const folder = rel.includes("/") ? rel.slice(0, rel.indexOf("/")) : ".";
     const slug = rel.replace(/\.md$/, "");
-    const title = raw.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? slug;
+    // H1 fallback over the CODE-STRIPPED text: a `#` comment inside a fenced code block before the real
+    // heading must not be taken as the title. stripCode preserves line/column layout, so the `^#` anchor
+    // still lands on the genuine first H1.
+    const title = stripCode(raw).match(/^#\s+(.+)$/m)?.[1]?.trim() ?? slug;
     const summary = fmScalar(fm, "summary") || title;
     notes.push({ path, folder, slug, title, summary, type: fmScalar(fm, "type"), tags: fmList(fm, "tags") });
   }

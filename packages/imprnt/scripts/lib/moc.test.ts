@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { generateIndex, collectNotes, fmList, frontmatter } from "./moc.ts";
+import { generateIndex, collectNotes, fmList, frontmatter, stripCode } from "./moc.ts";
 
 function tmpVault(): string {
   return mkdtempSync(join(tmpdir(), "imprnt-moc-"));
@@ -248,4 +248,49 @@ test("a folded-scalar summary (summary: >) yields the joined text, not the > ind
   expect(note.summary).toContain("A folded summary that");
   expect(note.summary).toContain("spans two lines.");
   expect(note.tags).toEqual(["beta"]);
+});
+
+// --- code-aware H1 fallback (P2 + its exotic sibling) ---------------------------------------------
+// moc's H1 regex (`/^#\s+(.+)$/m`) and check's link scan both read the raw note text with no awareness
+// of fenced code blocks or inline code. stripCode blanks both so a `#` comment or a `[[...]]` inside a
+// fence is not mistaken for an H1 or a wikilink. These pin the helper and the title-fallback path.
+
+test("stripCode blanks a fenced code block but preserves line count", () => {
+  const raw = "line one\n```bash\nif [[ -f x ]]; then echo hi; fi\n```\nline five\n";
+  const out = stripCode(raw);
+  expect(out.split("\n").length).toBe(raw.split("\n").length);
+  // the fenced wikilink-looking syntax is gone
+  expect(out).not.toContain("[[ -f x ]]");
+  // prose outside the fence is untouched
+  expect(out).toContain("line one");
+  expect(out).toContain("line five");
+});
+
+test("stripCode blanks an inline code span but keeps surrounding prose", () => {
+  const raw = "run `[[ -d dir ]]` to test the directory\n";
+  const out = stripCode(raw);
+  expect(out).not.toContain("[[ -d dir ]]");
+  expect(out).toContain("run ");
+  expect(out).toContain("to test the directory");
+});
+
+test("stripCode also handles ~~~ fences", () => {
+  const raw = "intro\n~~~\n# not a heading\n~~~\noutro\n";
+  const out = stripCode(raw);
+  expect(out).not.toContain("# not a heading");
+  expect(out).toContain("intro");
+  expect(out).toContain("outro");
+});
+
+// A `#` comment inside a code fence sits BEFORE the real H1. With no summary, the title falls back to
+// the H1 - pre-fix the regex grabbed the shell comment line, putting the wrong text in index.md.
+test("an H1 fallback ignores a `#` comment inside a code fence before the real heading", () => {
+  const vault = tmpVault();
+  const body = "```bash\n# install the thing first\nbrew install foo\n```\n\n# Real Heading\n\nbody\n";
+  writeNote(vault, "work", "howto.md", `---\ntype: note\ntags: [howto]\n---\n\n${body}`);
+  const note = collectNotes(vault).find((n) => n.slug === "work/howto")!;
+  // pre-fix: note.summary === "install the thing first" (the fenced shell comment)
+  expect(note.summary).toBe("Real Heading");
+  const line = indexLineFor(vault, "work/howto");
+  expect(line).toBe("- [[work/howto]] — Real Heading  `howto`");
 });
