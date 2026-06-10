@@ -5,7 +5,7 @@
 // CLAUDE.local.md lives at the repo root next to the committed CLAUDE.md, because Claude Code
 // resolves `@import` lines from there. We append/remove exactly one line and keep it idempotent.
 import { existsSync, readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 
 const HEADER = `# Personal plugin toggles (this machine only)
 
@@ -24,15 +24,42 @@ export function entryFor(spec: string): string {
 
 // Containment guard for every user-supplied plugin spec. The commands rm/cp/wire whatever the
 // spec resolves to, so `..`, `foo/..`, or an absolute path would reach OUTSIDE plugins/ (a bare
-// `rm .. --purge` used to delete the whole project). The resolved target must sit strictly
-// inside <root>/plugins/ - plugins/ itself does not count. Returns the error, undefined when safe.
+// `rm .. --purge` used to delete the whole project). Two checks, both required:
+//
+//  1. The resolved target must sit strictly inside <root>/plugins/ - plugins/ itself does not count.
+//  2. The spec must be in canonical form (no `./` and no embedded `..`). A spec like `./_personal`
+//     or `guard/../_personal` can resolve INSIDE plugins/ yet route around every literal-string
+//     guard downstream: the wired @import line (`@plugins/guard/../_personal/voice.md`) becomes
+//     un-removable by a natural rm, and the purge `_`-prefix protection keys on the literal string,
+//     so a non-canonical spec slips past it and deletes the private cast. Comparing the spec to its
+//     own relative-from-plugins canonical form rejects both `./` and embedded `..` in one check.
+//
+// A LONE trailing slash is tolerated, not rejected: shell dir tab-completion appends it
+// (`rm anti-slop/`), it is harmless noise, and each command strips it (rmPlugin) or fails it
+// cleanly later (add, via the entryExists file check). It is normalized away before the canonical
+// comparison so it never trips check #2.
+//
+// Returns the error, undefined when safe.
 export function specError(root: string, spec: string): string | undefined {
+  const norm = spec.endsWith("/") ? spec.slice(0, -1) : spec;
   const base = resolve(root, "plugins");
-  const target = resolve(base, spec);
+  const target = resolve(base, norm);
   if (target === base || !target.startsWith(base + sep)) {
     return `invalid plugin spec "${spec}" - must name something inside plugins/`;
   }
+  // canonical = the path you'd get walking from plugins/ to the resolved target, with forward
+  // slashes (the spec format). A deviation (./, embedded ..) means the spec was non-canonical.
+  const canonical = relative(base, target).split(sep).join("/");
+  if (norm !== canonical) {
+    return `invalid plugin spec "${spec}" - use the canonical form "${canonical}" (no ./ or ..)`;
+  }
   return undefined;
+}
+
+// The basename the spec resolves to, used by guards that must key on the REAL target, not the
+// literal spec string. specError already forces canonical specs, so this is the resolved leaf.
+export function resolvedBasename(root: string, spec: string): string {
+  return basename(resolve(root, "plugins", spec));
 }
 
 function localPath(root: string): string {
@@ -90,26 +117,40 @@ function lineEnding(content: string): string {
   return crlf > lf ? "\r\n" : "\n";
 }
 
-// The @import targets currently wired in CLAUDE.local.md, in file order, without the leading
-// `@`. This is the ONE parser of the line format: `imp` inlines these same fragments when it
-// launches a session outside the project (lib/launch.ts), so the write side (add/rm) and the
-// read side can never disagree on what "enabled" means.
-export function importTargets(root: string): string[] {
-  return readLocal(root)
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith("@"))
-    .map((l) => l.slice(1));
+// The live (uncommented, unfenced) @import lines of CLAUDE.local.md, trimmed, in file order.
+// This is the ONE line scanner both the read side (importTargets/isEnabled) and `imp`'s inliner
+// agree on. Claude Code does NOT evaluate @imports inside a ``` code fence, so a fenced line must
+// be skipped here too - otherwise it would load in every outside session yet never in the lair
+// (the two the launcher promises match), and `plugin list` would report a fenced plugin [on].
+// A fence opens/closes on a line that starts with ``` or ~~~ (an info string like ```md is fine).
+function liveImportLines(root: string): string[] {
+  const out: string[] = [];
+  let inFence = false;
+  for (const raw of readLocal(root).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith("```") || line.startsWith("~~~")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && line.startsWith("@")) out.push(line);
+  }
+  return out;
 }
 
-// A plugin counts as enabled if CLAUDE.local.md has an uncommented @import line pointing
-// anywhere inside plugins/<name>/. Both `add <name>` and `add <name>/<file>` land here.
+// The @import targets currently wired in CLAUDE.local.md, in file order, without the leading
+// `@`. `imp` inlines these same fragments when it launches a session outside the project
+// (lib/launch.ts), so the write side (add/rm) and the read side can never disagree on what
+// "enabled" means.
+export function importTargets(root: string): string[] {
+  return liveImportLines(root).map((l) => l.slice(1));
+}
+
+// A plugin counts as enabled if CLAUDE.local.md has a live @import line pointing anywhere inside
+// plugins/<name>/. Both `add <name>` and `add <name>/<file>` land here. A commented or fenced
+// line is not live, so it is not enabled.
 export function isEnabled(root: string, name: string): boolean {
   const prefix = `@plugins/${name}/`;
-  return readLocal(root)
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .some((l) => l.startsWith(prefix));
+  return liveImportLines(root).some((l) => l.startsWith(prefix));
 }
 
 // Wire a plugin in. Creates CLAUDE.local.md with a header on first add. Idempotent: a line
@@ -156,6 +197,11 @@ export function addPlugin(
 export function rmPlugin(root: string, spec: string): number {
   const p = localPath(root);
   if (!existsSync(p)) return 0;
+  // Shell dir tab-completion appends a trailing slash (`rm anti-slop/`). Without stripping it,
+  // includes("/") flips to the exact-file matcher `@plugins/anti-slop/`, which never equals the
+  // wired `@plugins/anti-slop/agent.md` - a silent no-op that reports success. Treat a lone
+  // trailing slash as the bare-name (group) form.
+  if (spec.endsWith("/")) spec = spec.slice(0, -1);
   const gone = spec.includes("/")
     ? (l: string) => l === importLine(entryFor(spec))
     : (l: string) => l.startsWith(`@plugins/${spec}/`);

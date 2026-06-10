@@ -136,6 +136,37 @@ test("installPlugin refuses a name that escapes plugins/ (no copy into the proje
   expect(existsSync(join(proj, "agent.md"))).toBe(false);
 });
 
+// --- the _personal cast survives a non-canonical purge spec (finding 1) ---
+// The private cast (plugins/_personal/) is gitignored, never published, UNRECOVERABLE. The purge
+// guard used to be a literal name.startsWith("_") check, so a spec that RESOLVES to a _-prefixed
+// dir but does not literally start with "_" (./_personal, guard/../_personal) slipped past it and
+// deleted the cast. specError must reject the non-canonical spec before purge runs.
+
+test("purgePlugin refuses './_personal' and the private cast survives (finding 1)", () => {
+  const proj = tmpProject();
+  mkdirSync(join(proj, "plugins", "_personal"), { recursive: true });
+  writeFileSync(join(proj, "plugins", "_personal", "voice.md"), "PRIVATE");
+  expect(purgePlugin(proj, "./_personal")).toBe(false);
+  expect(existsSync(join(proj, "plugins", "_personal", "voice.md"))).toBe(true);
+});
+
+test("purgePlugin refuses 'guard/../_personal' and the private cast survives (finding 1)", () => {
+  const proj = tmpProject();
+  mkdirSync(join(proj, "plugins", "_personal"), { recursive: true });
+  writeFileSync(join(proj, "plugins", "_personal", "voice.md"), "PRIVATE");
+  // Resolves to plugins/_personal but does not literally start with "_".
+  expect(purgePlugin(proj, "guard/../_personal")).toBe(false);
+  expect(existsSync(join(proj, "plugins", "_personal", "voice.md"))).toBe(true);
+});
+
+test("purgePlugin refuses a trailing-slash _personal/ spec (finding 1)", () => {
+  const proj = tmpProject();
+  mkdirSync(join(proj, "plugins", "_personal"), { recursive: true });
+  writeFileSync(join(proj, "plugins", "_personal", "voice.md"), "PRIVATE");
+  expect(purgePlugin(proj, "_personal/")).toBe(false);
+  expect(existsSync(join(proj, "plugins", "_personal", "voice.md"))).toBe(true);
+});
+
 // --- npm pack failures carry npm's real reason ---
 
 test("npm pack failure surfaces npm's actual error, not a bare exit code", () => {

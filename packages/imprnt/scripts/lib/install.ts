@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, cpSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { specError } from "./plugins.ts";
+import { specError, resolvedBasename } from "./plugins.ts";
 
 // Official plugin names, for `plugin list` discovery when nothing is installed yet. A hint string,
 // NOT a registry: each maps by convention to the npm package `imprnt-plugin-<name>`. Adding an
@@ -118,12 +118,14 @@ export function installPlugin(
 }
 
 // Delete an installed plugin's dir (the `rm -rf plugins/<name>` the contract describes, as a flag).
-// Guarded three ways: never touches a _-prefixed dir (the private cast), refuses any name that
-// resolves outside plugins/ (`..` used to collapse to the project root and delete EVERYTHING),
-// and a missing dir is a clean no-op.
+// Guarded three ways: refuses any name that is non-canonical or resolves outside plugins/
+// (specError - `..` used to collapse to the project root and delete EVERYTHING, and `./_personal`
+// resolved into the private cast while dodging the literal `_` check below), never touches a
+// _-prefixed dir (the private cast - checked on the RESOLVED basename, not the literal string, so a
+// spec that resolves to a _-prefixed dir can never slip past), and a missing dir is a clean no-op.
 export function purgePlugin(projectRoot: string, name: string): boolean {
-  if (name.startsWith("_")) return false;
   if (specError(projectRoot, name)) return false;
+  if (resolvedBasename(projectRoot, name).startsWith("_")) return false;
   const dir = join(projectRoot, "plugins", name);
   if (!existsSync(dir)) return false;
   rmSync(dir, { recursive: true, force: true });
