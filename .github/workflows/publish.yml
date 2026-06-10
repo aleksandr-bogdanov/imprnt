@@ -135,8 +135,11 @@ jobs:
           echo '${{ needs.plan.outputs.matrix }}'
 
   release:
+    # needs BOTH: approve for the gate, plan for the matrix. The needs context only exposes directly
+    # listed jobs, so approve alone leaves needs.plan.outputs.matrix empty (the matrix would expand
+    # to nothing and the job is silently skipped).
     name: Publish ${{ matrix.name }}@latest
-    needs: approve
+    needs: [plan, approve]
     permissions:
       contents: read
       id-token: write
