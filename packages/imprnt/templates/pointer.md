@@ -1,7 +1,7 @@
 # imprnt vault (the user's long-term memory)
 
-This user keeps a persistent knowledge vault at {{VAULT_PROJECT}} — people, orgs, projects,
-decisions, finances, health, history.
+This user keeps a persistent knowledge vault at {{VAULT_PROJECT}} holding people, orgs, projects,
+decisions, finances, health, and history.
 
 - When the user references their own world (a person, a past decision, a deadline, anything not
   in this workspace), search the vault before saying you don't know:
