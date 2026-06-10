@@ -9,6 +9,7 @@ import {
   isEnabled,
   addPlugin,
   rmPlugin,
+  importTargets,
 } from "./plugins.ts";
 
 // A throwaway repo root with a plugins/ tree. We never touch the real CLAUDE.local.md: every
@@ -293,6 +294,117 @@ test("addPlugin refuses .. and an absolute spec", () => {
   expect(addPlugin(root, "..").error).toContain("invalid plugin spec");
   expect(addPlugin(root, join(root, "plugins")).error).toContain("invalid plugin spec");
   expect(existsSync(join(root, "CLAUDE.local.md"))).toBe(false);
+});
+
+// --- non-canonical spec rejection (findings 1 + 3) ---
+// A spec that RESOLVES inside plugins/ but is not its own canonical form (./x, a/../b, a
+// trailing slash) used to pass the old containment check, because that only looked at where the
+// resolved path landed. It would then wire a literal `@plugins/guard/../_personal/voice.md` line
+// that the natural `rm` could never match, and it routes around every literal-string guard
+// downstream (the _personal protection in purge). Reject any non-canonical spec at the door.
+
+test("addPlugin refuses a leading ./ spec even though it resolves inside plugins/ (finding 3)", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "_personal", { "voice.md": "x" });
+  const res = addPlugin(root, "./_personal/voice.md");
+  expect(res.added).toBe(false);
+  expect(res.error).toContain("invalid plugin spec");
+  expect(existsSync(join(root, "CLAUDE.local.md"))).toBe(false);
+});
+
+test("addPlugin refuses an embedded .. spec that resolves back inside plugins/ (finding 3)", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "_personal", { "voice.md": "x" });
+  mkPlugin(root, "guard", { "agent.md": "x" });
+  // guard/../_personal/voice.md resolves to plugins/_personal/voice.md - inside plugins/, but the
+  // wired line `@plugins/guard/../_personal/voice.md` is un-removable by a natural rm.
+  const res = addPlugin(root, "guard/../_personal/voice.md");
+  expect(res.added).toBe(false);
+  expect(res.error).toContain("invalid plugin spec");
+  expect(existsSync(join(root, "CLAUDE.local.md"))).toBe(false);
+});
+
+test("addPlugin does not wire a dangling line for a trailing-slash spec", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "anti-slop", { "agent.md": "x" });
+  // A trailing slash is tolerated input (tab-completion noise), but entryFor("anti-slop/") points
+  // at a dir, not a file, so the entryExists guard rejects it cleanly - nothing dangling is wired.
+  const res = addPlugin(root, "anti-slop/");
+  expect(res.added).toBe(false);
+  expect(res.error).toContain("no such plugin entry");
+  expect(existsSync(join(root, "CLAUDE.local.md"))).toBe(false);
+});
+
+// --- rm trailing-slash handling (finding 2) ---
+// Shell dir tab-completion appends a trailing slash. `rm anti-slop/` used to flip the
+// includes("/") branch to the exact-file matcher `@plugins/anti-slop/`, which never equals the
+// wired `@plugins/anti-slop/agent.md` - a silent no-op that REPORTED success while the plugin
+// stayed wired. A single trailing slash must be treated as the bare-name (group) form.
+
+test("rm of a tab-completed bare name (trailing slash) actually unwires (finding 2)", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "anti-slop", { "agent.md": "x" });
+  addPlugin(root, "anti-slop");
+  const removed = rmPlugin(root, "anti-slop/");
+  expect(removed).toBe(1);
+  expect(readLocal(root)).not.toContain("@plugins/anti-slop/agent.md");
+});
+
+test("rm of a tab-completed _personal/ (trailing slash) removes the whole group (finding 2)", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "_personal", { "voice.md": "x", "taylor.md": "x" });
+  addPlugin(root, "_personal/voice.md");
+  addPlugin(root, "_personal/taylor.md");
+  expect(rmPlugin(root, "_personal/")).toBe(2);
+  expect(readLocal(root)).not.toContain("@plugins/_personal");
+});
+
+// --- importTargets / isEnabled ignore FENCED @import lines (finding 4) ---
+// Claude Code does NOT evaluate @imports inside a ``` code fence, but imp's inline/list logic used
+// to. A fenced @import would load in every outside session yet never in the lair (the launcher
+// promises those match), and `plugin list` would report a fenced plugin [on]. Lines inside a fence
+// must be skipped by the ONE parser (importTargets) and by isEnabled.
+
+test("importTargets skips an @import inside a code fence (finding 4)", () => {
+  const root = tmpRoot();
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    [
+      "@plugins/anti-slop/agent.md",
+      "",
+      "```",
+      "@plugins/character/scribe.md",
+      "```",
+      "",
+      "@plugins/guard/agent.md",
+    ].join("\n"),
+  );
+  const targets = importTargets(root);
+  expect(targets).toEqual(["plugins/anti-slop/agent.md", "plugins/guard/agent.md"]);
+  expect(targets).not.toContain("plugins/character/scribe.md");
+});
+
+test("importTargets handles a fence with an info string (```md) and tildes", () => {
+  const root = tmpRoot();
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    [
+      "~~~md",
+      "@plugins/anti-slop/agent.md",
+      "~~~",
+      "@plugins/guard/agent.md",
+    ].join("\n"),
+  );
+  expect(importTargets(root)).toEqual(["plugins/guard/agent.md"]);
+});
+
+test("isEnabled reports a fenced @import as NOT enabled (finding 4)", () => {
+  const root = tmpRoot();
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    ["```", "@plugins/character/scribe.md", "```"].join("\n"),
+  );
+  expect(isEnabled(root, "character")).toBe(false);
 });
 
 // --- rm symmetry: a file spec removes exactly its line, a bare name removes the group ---
