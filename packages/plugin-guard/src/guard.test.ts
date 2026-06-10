@@ -96,6 +96,27 @@ const rows: Row[] = [
   { label: "AUDIT2-P2 cat img > /dev/rdisk0 (macOS raw node)", cmd: "cat img > /dev/rdisk0", expectedExit: 2 },
   { label: "AUDIT2-P2 redirect to /dev/rdisk1", cmd: "echo x > /dev/rdisk1", expectedExit: 2 },
 
+  // ---- AUDIT3 #1 [P0]: root path FOLLOWED BY a glob / dot - the trailing boundary excluded * and . ---
+  // rm -rf /* is THE common catastrophic emission. The old HOME_OR_SYSTEM trailing class did not
+  // accept * or a second . after the root token, so /*, /., /.., /*.bak, /.??* all slipped through.
+  { label: "AUDIT3-P0 rm -rf /* (root glob, the common wipe)", cmd: "rm -rf /*", expectedExit: 2 },
+  { label: "AUDIT3-P0 rm -rf /.", cmd: "rm -rf /.", expectedExit: 2 },
+  { label: "AUDIT3-P0 rm -rf /..", cmd: "rm -rf /..", expectedExit: 2 },
+  { label: "AUDIT3-P0 rm -rf /*.bak (root glob with suffix)", cmd: "rm -rf /*.bak", expectedExit: 2 },
+  { label: "AUDIT3-P0 rm -rf /.??* (root dotglob)", cmd: "rm -rf /.??*", expectedExit: 2 },
+
+  // ---- AUDIT3 #2 [P0]: path BEFORE flags - GNU getopt permutes argv, so this still wipes / on Linux ---
+  // The old rule asserted the recursive flag came BEFORE the path. rm / -rf reverses that.
+  { label: "AUDIT3-P0 rm / -rf (path before flags)", cmd: "rm / -rf", expectedExit: 2 },
+  { label: "AUDIT3-P0 rm /etc -rf (path before flags)", cmd: "rm /etc -rf", expectedExit: 2 },
+  { label: "AUDIT3-P0 rm /usr/bin -rf (path before flags)", cmd: "rm /usr/bin -rf", expectedExit: 2 },
+  { label: "AUDIT3-P0 rm -f / -r (path between flags)", cmd: "rm -f / -r", expectedExit: 2 },
+
+  // ---- AUDIT3 #3 [P1]: tilde-user home (~root, ~alex) - a username letter was not in the trailing class ---
+  { label: "AUDIT3-P1 rm -rf ~root (tilde-user home)", cmd: "rm -rf ~root", expectedExit: 2 },
+  { label: "AUDIT3-P1 rm -rf ~alex (tilde-user home)", cmd: "rm -rf ~alex", expectedExit: 2 },
+  { label: "AUDIT3-P1 rm ~root -rf (tilde-user, path before flags)", cmd: "rm ~root -rf", expectedExit: 2 },
+
   // ---- ALLOW CASES (must NOT block; exit 0) -------------------------------------------------------
   { label: "rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },
   { label: "rm -rf node_modules", cmd: "rm -rf node_modules", expectedExit: 0 },
@@ -122,6 +143,17 @@ const rows: Row[] = [
   { label: "AUDIT2-ALLOW rm -rf ./etc/config (relative etc)", cmd: "rm -rf ./etc/config", expectedExit: 0 },
   { label: "AUDIT2-ALLOW dd if=/dev/disk0 of=backup.img (read from device)", cmd: "dd if=/dev/disk0 of=backup.img", expectedExit: 0 },
   { label: "AUDIT2-ALLOW cat x > ./dev/null-ish (relative dev path)", cmd: "cat x > ./dev/null-ish", expectedExit: 0 },
+
+  // ---- AUDIT3 ALLOW: the order-independent rm rework must NOT widen into relative globs / tmp / safe names ---
+  // Relative globs (./* src/*) and /tmp are safe targets. The dangerous-path predicate requires the
+  // path to START at root or home, never a relative prefix, so these stay allowed.
+  { label: "AUDIT3-ALLOW rm -rf /tmp/* (tmp glob, not a system dir)", cmd: "rm -rf /tmp/*", expectedExit: 0 },
+  { label: "AUDIT3-ALLOW rm -rf ./* (relative glob)", cmd: "rm -rf ./*", expectedExit: 0 },
+  { label: "AUDIT3-ALLOW rm -rf src/* (relative subdir glob)", cmd: "rm -rf src/*", expectedExit: 0 },
+  { label: "AUDIT3-ALLOW rm --recursive ./build (long flag, relative)", cmd: "rm --recursive ./build", expectedExit: 0 },
+  { label: "AUDIT3-ALLOW mkfs.ext4 ./image.img (image file, relative)", cmd: "mkfs.ext4 ./image.img", expectedExit: 0 },
+  { label: "AUDIT3-ALLOW confirm -r option (rm not a command token)", cmd: "confirm -r option", expectedExit: 0 },
+  { label: "AUDIT3-ALLOW warm -rf cache (rm not a command token)", cmd: "warm -rf cache", expectedExit: 0 },
 
   // ---- USAGE (no arg, exit 1) --------------------------------------------------------------------
   { label: "no-arg usage", cmd: null, expectedExit: 1 },

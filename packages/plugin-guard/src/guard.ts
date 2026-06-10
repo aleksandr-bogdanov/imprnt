@@ -14,22 +14,64 @@
 // parsing and is out of scope.
 import { readFileSync } from "node:fs";
 
-// The path token may be quoted (rm -rf "/" - ShellCheck-idiomatic) and may be followed by a quote,
-// a closing paren, a command separator (; &) or end-of-line (bash -c 'rm -rf ~', rm -rf ~;).
-// The leading boundary tolerates a short run of empty quote-pairs / a lone opening quote so the shell
-// collapse rm -rf ""/"" -> rm -rf / (empty quotes vanish, "" + / + "" joins to /) is still caught.
-// The HOME var has a brace sibling ${HOME}. A widened trailing boundary catches the trailing shapes -
-// still a regex, not a parser.
-const HOME_OR_SYSTEM = "(?:[\"']{2}){0,3}[\"']?(\\/|~|\\$HOME|\\$\\{HOME\\}|\\/Users|\\/etc|\\/usr|\\/var|\\/bin|\\/System|\\/Library)(\\s|\\/|[\"');&]|$)";
+// ---------------------------------------------------------------------------------------------------
+// rm blocking, decomposed into ORDER-INDEPENDENT predicates.
+//
+// The old rm rule coupled flag-order to path-order inside one regex (a lookahead asserting the
+// recursive flag came BEFORE the path, then `[^\n]*\s<path>`). Three audit rounds each found a new
+// ordering/glob bypass against that coupling: flags before path, then non-r flag first, then path
+// before flags / root-glob / tilde-user. Patching the one regex each time only moved the seam.
+//
+// This round blocks rm when ALL THREE hold, each tested INDEPENDENTLY over the whole command, so no
+// ordering of {rm, recursive-flag, dangerous-path} can slip through:
+//   (a) RM_CMD       - the `rm` token is invoked as a command (env-prefix tolerated, the documented
+//                      regex-not-a-parser posture kept). `\brm\b` already excludes confirm/warm.
+//   (b) RM_RECURSIVE - a recursive flag appears in ANY token: a short flag run containing r or R
+//                      (-rf, -fr, -Rf, -r, -f -r ...), or the GNU long flag --recursive. -R is the
+//                      BSD/macOS synonym. A flag token starts with `-` after whitespace/quote.
+//   (c) DANGEROUS_PATH - a root/home path appears in ANY token (see below).
+//
+// (c) is the predicate the prior rounds kept under-specifying. A dangerous path is one that resolves
+// to root or a home, REGARDLESS of what trails it. The trailing class now also accepts a glob/dot run
+// (so /*, /., /.., /*.bak, /.??* are caught - the root-glob class, THE common catastrophic rm) and a
+// tilde-username (~root, ~alex). The path must START at root (`/...`) or home (`~`, `$HOME`), never a
+// relative prefix, so ./* src/* /tmp/* stay allowed (/tmp is not a system dir). A leading boundary
+// tolerates collapsed empty quote-pairs (rm -rf ""/"" -> /) and a lone opening quote (rm -rf "/").
+const Q = `["']`; // a single quote char (either kind)
+// A root or home ROOT TOKEN, the dangerous head of a path. `/` alone, the listed system dirs, the
+// home forms. Each is matched at the START of a path token; what trails is handled by PATH_TAIL.
+const ROOT_TOKEN =
+  "(?:" +
+  "\\/(?:etc|usr|var|bin|lib|sys|dev|boot|System|Library|Users)(?![A-Za-z0-9_])" + // /etc /usr ... (not /etcetera)
+  "|~[A-Za-z_][A-Za-z0-9_-]*" + // ~root ~alex - tilde + username
+  "|\\$\\{HOME\\}" + // ${HOME}
+  "|\\$HOME(?![A-Za-z0-9_])" + // $HOME (not $HOMEDIR)
+  "|~" + // bare ~  (home)
+  "|\\/" + // bare /  (root) - LAST so the longer system-dir alternatives win first
+  ")";
+// What may legally trail a dangerous root token and keep it dangerous: end-of-token (space, quote,
+// separator, paren, EOL) OR a path/glob continuation (/sub, /*, /.., *, ., *.bak, .??*). The glob
+// continuation is what the prior rounds dropped, which let /* and /. through. Bounded, no nesting.
+const PATH_TAIL = "(?:[\\s\"'();&]|$|[\\/.*?][^\\s\"';&]*)";
+// The full dangerous-path predicate: optional collapsed empty quotes + optional opening quote, then a
+// root token, then a legal tail. Tested against the WHOLE command - position-independent by design.
+const DANGEROUS_PATH = `(?:${Q}{2}){0,3}${Q}?${ROOT_TOKEN}${PATH_TAIL}`;
+// A recursive flag in any token: a short flag run carrying r/R, or the long --recursive. The flag
+// token is anchored to a flag position ((?<=\s|["']|^)-) so a path like /usr/bin -rf still trips (b)
+// via the -rf token, while a bare word containing "r" never does.
+const RM_RECURSIVE = `(?:(?<=[\\s"'])${Q}?-[a-zA-Z]*[rR][a-zA-Z]*\\b|--recursive\\b)`;
+// rm invoked as a command. \brm\b excludes confirm/warm (no word boundary before their "rm" run).
+const RM_CMD = "\\brm\\b";
+
 const DENY: { re: RegExp; why: string }[] = [
-  // rm with a recursive flag and a home/system path. The recursive flag may sit in any flag token,
-  // not just the first (rm -f -r /, rm -v -rf /, rm -i -rf /) - the flag-order bug the old anchored
-  // pattern had. A flag token is a dash-run of letters, optionally quoted (rm "-rf" /). The lookahead
-  // asserts SOME short flag token before the path carries r/R (the recursive flag). -R is the BSD/macOS
-  // synonym for -r. A trailing f is incidental: the recursive flag is the dangerous one for rm.
-  { re: new RegExp(`\\brm\\b(?=(?:\\s+["']?--?[a-zA-Z][a-zA-Z-]*["']?)*\\s+["']?-[a-zA-Z]*[rR])[^\\n]*\\s${HOME_OR_SYSTEM}`), why: "rm -rf on a home/system path" },
-  // rm with the GNU long recursive flag (--recursive), with or without --force, in any order.
-  { re: new RegExp(`\\brm\\b(?=[^\\n]*\\s--recursive\\b)[^\\n]*\\s${HOME_OR_SYSTEM}`), why: "rm --recursive on a home/system path" },
+  // rm: block when (a) rm is the command AND (b) a recursive flag appears anywhere AND (c) a
+  // dangerous root/home path appears anywhere. Three independent lookaheads, so flag-order,
+  // path-order, and glob shape no longer interact. Folds the old short-flag and --recursive rules
+  // into one decomposition: rm --recursive --force / and rm --recursive / both satisfy (b)+(c).
+  {
+    re: new RegExp(`${RM_CMD}(?=[^\\n]*${RM_RECURSIVE})(?=[^\\n]*\\s${DANGEROUS_PATH})`),
+    why: "rm -rf / --recursive on a root/home/system path",
+  },
   { re: /\bsudo\b/, why: "sudo / privilege escalation" },
   { re: /\bdd\b[^\n]*\bof=\/dev\//, why: "writing to a raw device" },
   // mkfs takes the device positionally (mkfs.ext4 /dev/sda), never of= - match /dev/ as an argument.
