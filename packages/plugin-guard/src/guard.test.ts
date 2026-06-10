@@ -150,6 +150,20 @@ const rows: Row[] = [
   { label: "AUDIT5-P2 rm -rf /mnt (Linux mounts)", cmd: "rm -rf /mnt", expectedExit: 2 },
   { label: "AUDIT5-P2 rm -rf /srv (Linux service data)", cmd: "rm -rf /srv", expectedExit: 2 },
 
+  // ---- AUDIT6 #1 [P1 FALSE NEGATIVE]: chmod recursive 777 in any flag/mode order (must now block, exit 2) ----
+  // The old chmod rule demanded the literal token order -R then 777 then /, so every realistic
+  // reordering of the SAME catastrophic command bypassed (exited 0). Decomposed like rm into
+  // order-independent predicates: chmod cmd + a recursive flag in any token + the 777 mode in any
+  // token + a dangerous path in any token. -fR is the natural way an agent writes a recursive forced chmod.
+  { label: "AUDIT6-P1 chmod -fR 777 / (forced+recursive run, reordered)", cmd: "chmod -fR 777 /", expectedExit: 2 },
+  { label: "AUDIT6-P1 chmod -Rf 777 / (recursive+forced run)", cmd: "chmod -Rf 777 /", expectedExit: 2 },
+  { label: "AUDIT6-P1 chmod 777 -R / (mode before flag)", cmd: "chmod 777 -R /", expectedExit: 2 },
+  { label: "AUDIT6-P1 chmod --recursive 777 / (GNU long flag)", cmd: "chmod --recursive 777 /", expectedExit: 2 },
+  { label: "AUDIT6-P1 chmod -v -R 777 / (verbose flag first)", cmd: "chmod -v -R 777 /", expectedExit: 2 },
+  { label: "AUDIT6-P1 chmod -fR 777 /etc (reordered, system dir)", cmd: "chmod -fR 777 /etc", expectedExit: 2 },
+  { label: "AUDIT6-P1 chmod 777 -R /etc (mode first, system dir)", cmd: "chmod 777 -R /etc", expectedExit: 2 },
+  { label: "AUDIT6-P1 chmod -R 0777 /usr (leading-zero mode, system dir)", cmd: "chmod -R 0777 /usr", expectedExit: 2 },
+
   // ---- ALLOW CASES (must NOT block; exit 0) -------------------------------------------------------
   { label: "rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },
   { label: "rm -rf node_modules", cmd: "rm -rf node_modules", expectedExit: 0 },
@@ -213,6 +227,21 @@ const rows: Row[] = [
   { label: "AUDIT5-ALLOW rm -rf ./opt/cache (relative opt)", cmd: "rm -rf ./opt/cache", expectedExit: 0 },
   { label: "AUDIT5-ALLOW rm -rf /tmp/opt (under /tmp, not a system dir)", cmd: "rm -rf /tmp/opt", expectedExit: 0 },
   { label: "AUDIT5-ALLOW rm -rf src/run (relative subdir)", cmd: "rm -rf src/run", expectedExit: 0 },
+
+  // ---- AUDIT6 ALLOW [P2 FALSE POSITIVE]: chmod 777 on a non-system path must NOT block (exit 0) ---
+  // The old chmod rule's trailing \s+\/ matched ANY absolute path, so a recursive 777 on /tmp, /app,
+  // /workspace, /data was wrongly blocked - inconsistent with the rm rule's /tmp + /var/tmp carve-out.
+  // Reusing the rm DANGEROUS_PATH machinery means only root/home/system paths trip; these stay green.
+  { label: "AUDIT6-ALLOW chmod -R 777 /tmp (tmp, not a system dir)", cmd: "chmod -R 777 /tmp", expectedExit: 0 },
+  { label: "AUDIT6-ALLOW chmod -R 777 /tmp/shared (under /tmp)", cmd: "chmod -R 777 /tmp/shared", expectedExit: 0 },
+  { label: "AUDIT6-ALLOW chmod -R 777 /var/tmp/cache (legacy temp)", cmd: "chmod -R 777 /var/tmp/cache", expectedExit: 0 },
+  { label: "AUDIT6-ALLOW chmod -R 777 /app (non-system absolute path)", cmd: "chmod -R 777 /app", expectedExit: 0 },
+  { label: "AUDIT6-ALLOW chmod -R 777 /workspace (non-system absolute path)", cmd: "chmod -R 777 /workspace", expectedExit: 0 },
+  { label: "AUDIT6-ALLOW chmod -R 777 /data (non-system absolute path)", cmd: "chmod -R 777 /data", expectedExit: 0 },
+  { label: "AUDIT6-ALLOW chmod -R 777 ./build (relative path)", cmd: "chmod -R 777 ./build", expectedExit: 0 },
+  { label: "AUDIT6-ALLOW chmod 755 ./bin (non-777 mode, relative)", cmd: "chmod 755 ./bin", expectedExit: 0 },
+  { label: "AUDIT6-ALLOW chmod +x script.sh (no recursive, no 777)", cmd: "chmod +x script.sh", expectedExit: 0 },
+  { label: "AUDIT6-ALLOW chmod -R 777 node_modules (relative target)", cmd: "chmod -R 777 node_modules", expectedExit: 0 },
 
   // ---- USAGE (no arg, exit 1) --------------------------------------------------------------------
   { label: "no-arg usage", cmd: null, expectedExit: 1 },
