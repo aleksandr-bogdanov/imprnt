@@ -26,9 +26,10 @@ import { readFileSync } from "node:fs";
 // ordering of {rm, recursive-flag, dangerous-path} can slip through:
 //   (a) RM_CMD       - the `rm` token is invoked as a command (env-prefix tolerated, the documented
 //                      regex-not-a-parser posture kept). `\brm\b` already excludes confirm/warm.
-//   (b) RM_RECURSIVE - a recursive flag appears in ANY token: a short flag run containing r or R
+//   (b) RECURSIVE    - a recursive flag appears in ANY token: a short flag run containing r or R
 //                      (-rf, -fr, -Rf, -r, -f -r ...), or the GNU long flag --recursive. -R is the
-//                      BSD/macOS synonym. A flag token starts with `-` after whitespace/quote.
+//                      BSD/macOS synonym. A flag token starts with `-` after whitespace/quote. This
+//                      same constant is shared with the chmod rule below.
 //   (c) DANGEROUS_PATH - a root/home path appears in ANY token (see below).
 //
 // (c) is the predicate the prior rounds kept under-specifying. A dangerous path is one that resolves
@@ -60,11 +61,12 @@ const ROOT_TOKEN =
 const PATH_TAIL = "(?:[\\s\"'();&]|$|[\\/.*?][^\\s\"';&]*)";
 // The full dangerous-path predicate: optional collapsed empty quotes + optional opening quote, then a
 // root token, then a legal tail. Tested against the WHOLE command - position-independent by design.
-const DANGEROUS_PATH = `(?:${Q}{2}){0,3}${Q}?${ROOT_TOKEN}${PATH_TAIL}`;
+const DANGEROUS_PATH = `(?:${Q}{2})?${Q}?${ROOT_TOKEN}${PATH_TAIL}`;
 // A recursive flag in any token: a short flag run carrying r/R, or the long --recursive. The flag
 // token is anchored to a flag position ((?<=\s|["']|^)-) so a path like /usr/bin -rf still trips (b)
-// via the -rf token, while a bare word containing "r" never does.
-const RM_RECURSIVE = `(?:(?<=[\\s"'])${Q}?-[a-zA-Z]*[rR][a-zA-Z]*\\b|--recursive\\b)`;
+// via the -rf token, while a bare word containing "r" never does. Shared by both the rm and chmod
+// rules - the recursive-flag shape is identical for the two.
+const RECURSIVE = `(?:(?<=[\\s"'])${Q}?-[a-zA-Z]*[rR][a-zA-Z]*\\b|--recursive\\b)`;
 // rm invoked as a command. \brm\b excludes confirm/warm (no word boundary before their "rm" run).
 const RM_CMD = "\\brm\\b";
 
@@ -81,8 +83,9 @@ const RM_CMD = "\\brm\\b";
 //
 // Block chmod when ALL hold, each tested INDEPENDENTLY over the whole command:
 //   (a) CHMOD_CMD       - the `chmod` token is invoked as a command.
-//   (b) CHMOD_RECURSIVE - a recursive flag in ANY token: a short flag run carrying r/R (-R, -fR,
-//                         -Rf, -v -R ...) or the GNU long flag --recursive. Same shape as RM_RECURSIVE.
+//   (b) RECURSIVE        - a recursive flag in ANY token: a short flag run carrying r/R (-R, -fR,
+//                         -Rf, -v -R ...) or the GNU long flag --recursive. Reuses the shared
+//                         RECURSIVE constant the rm rule defines (same flag shape for both).
 //   (c) CHMOD_777       - the world-writable 777 mode (with optional leading 0) in ANY token, in any
 //                         order relative to the flag.
 //   (d) DANGEROUS_PATH  - a root/home/system path appears in ANY token, REUSING the rm machinery
@@ -94,7 +97,6 @@ const RM_CMD = "\\brm\\b";
 //                         are NOT blocked while / /etc /usr /home /var /opt ... ARE. Identical cut to the
 //                         rm rule (same `(?=[^\n]*\s${DANGEROUS_PATH})`), no separate path list.
 const CHMOD_CMD = "\\bchmod\\b";
-const CHMOD_RECURSIVE = `(?:(?<=[\\s"'])${Q}?-[a-zA-Z]*[rR][a-zA-Z]*\\b|--recursive\\b)`;
 const CHMOD_777 = "0?777\\b";
 
 const DENY: { re: RegExp; why: string }[] = [
@@ -103,7 +105,7 @@ const DENY: { re: RegExp; why: string }[] = [
   // path-order, and glob shape no longer interact. Folds the old short-flag and --recursive rules
   // into one decomposition: rm --recursive --force / and rm --recursive / both satisfy (b)+(c).
   {
-    re: new RegExp(`${RM_CMD}(?=[^\\n]*${RM_RECURSIVE})(?=[^\\n]*\\s${DANGEROUS_PATH})`),
+    re: new RegExp(`${RM_CMD}(?=[^\\n]*${RECURSIVE})(?=[^\\n]*\\s${DANGEROUS_PATH})`),
     why: "rm -rf / --recursive on a root/home/system path",
   },
   { re: /\bsudo\b/, why: "sudo / privilege escalation" },
@@ -121,7 +123,7 @@ const DENY: { re: RegExp; why: string }[] = [
   // dangerous-path predicate is the SAME one rm uses (so /tmp /var/tmp /app /workspace /data are
   // carved out while / /etc /usr /home /var /opt stay blocked). Matches the rm decomposition exactly.
   {
-    re: new RegExp(`${CHMOD_CMD}(?=[^\\n]*${CHMOD_RECURSIVE})(?=[^\\n]*${CHMOD_777})(?=[^\\n]*\\s${DANGEROUS_PATH})`),
+    re: new RegExp(`${CHMOD_CMD}(?=[^\\n]*${RECURSIVE})(?=[^\\n]*${CHMOD_777})(?=[^\\n]*\\s${DANGEROUS_PATH})`),
     why: "recursive 777 on a root/home/system path",
   },
   // force-push: a `git push` line carrying a force flag (-f / --force / --force-with-lease) AND a

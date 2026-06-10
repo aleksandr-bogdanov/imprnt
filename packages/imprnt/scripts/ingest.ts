@@ -91,7 +91,7 @@ function looksLikePath(arg: string): boolean {
 function looksLikeTranscript(speakers: Set<string>, turnCount: number, contentLines: number, recurringSpeaker: boolean): boolean {
   if (speakers.size < 2) return false;
   if (recurringSpeaker) return true;
-  return speakers.size === 2 && turnCount === 2 && contentLines === turnCount;
+  return speakers.size === 2 && turnCount === 2 && contentLines === 2;
 }
 
 // --- frontmatter helpers (deterministic — STRUCTURE only, no LLM) ----------

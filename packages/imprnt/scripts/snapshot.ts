@@ -120,9 +120,10 @@ for (const { abs, rel } of files) {
     // hash8 is content-addressed, so a re-run of the same changed bytes lands on the same name. If
     // that name is also taken by DIFFERENT bytes (a hash8 collision), step a numeric suffix.
     let relD = `${stem}-${hash.slice(0, 8)}${ext}`;
-    let n = 1;
+    let n = 2;
     while (existsSync(join(destRoot, relD)) && Buffer.compare(readFileSync(join(destRoot, relD)), srcBytes) !== 0) {
-      relD = `${stem}-${hash.slice(0, 8)}-${++n}${ext}`;
+      relD = `${stem}-${hash.slice(0, 8)}-${n}${ext}`;
+      n++;
     }
     rawPath = join(destRoot, relD);
     key = join("raw", dest, relD);

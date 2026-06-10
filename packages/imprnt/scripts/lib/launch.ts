@@ -130,8 +130,7 @@ export function buildLaunch(opts: {
     // A token in VALUE position (the arg after a value-consuming flag like -p) is the user's text,
     // not a flag - a -p value that merely starts with "--append-system-prompt=" must not be glued
     // onto. The space-form below is already value-safe (it reads args[i+1] only when args[i] is the
-    // exact flag). imp is a thin launcher, not a reimplementation of claude's parser, so this
-    // guards the realistic free-text-value flags rather than enumerating every claude flag.
+    // exact flag).
     const prev = args[i - 1];
     // --add-dir consumes an arbitrary PATH as its value (and imp passes one too), so a user dir
     // named "--append-system-prompt=..." must read as that path, never as the flag. The other
