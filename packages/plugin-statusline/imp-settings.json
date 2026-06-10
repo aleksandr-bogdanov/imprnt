@@ -1,0 +1,6 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "node \"${PLUGIN_DIR}/statusline.js\""
+  }
+}

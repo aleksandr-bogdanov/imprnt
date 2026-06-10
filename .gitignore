@@ -25,6 +25,7 @@ packages/imprnt/LICENSE
 packages/plugin-*/check.js
 packages/plugin-*/whenful.js
 packages/plugin-*/guard.js
+packages/plugin-*/statusline.js
 
 # Runtime
 node_modules/
