@@ -34,7 +34,12 @@ function readLinks(): { links: Link[]; malformed: string[] } {
     const line = lines[i];
     if (!line.trim() || line.trimStart().startsWith("#")) continue;
     const [taskId, noteSlug, step] = line.split("\t");
-    if (taskId && noteSlug) links.push({ taskId: taskId.trim(), noteSlug: noteSlug.trim(), step: (step ?? "").trim() });
+    // Trim BEFORE validating: a whitespace-only column (a lone space) is blank data, not a real key.
+    // task_id keys into mirror/<id>.md and note_slug into a vault note, so a column that trims to "" is
+    // an unusable link and must be flagged, not waved through.
+    const id = (taskId ?? "").trim();
+    const slug = (noteSlug ?? "").trim();
+    if (id && slug) links.push({ taskId: id, noteSlug: slug, step: (step ?? "").trim() });
     else malformed.push(`links.tsv row ${i + 1} unparseable (expected task_id<TAB>note_slug[<TAB>step]): "${line}"`);
   }
   return { links, malformed };
@@ -71,7 +76,10 @@ if (!existsSync(LAST_SYNC)) {
     problems.push(`mirror/.last-sync is unparseable ("${stamp}") — re-run sync`);
   } else {
     const ageDays = (Date.now() - synced) / 86_400_000;
-    if (ageDays > STALE_DAYS) problems.push(`mirror is ${ageDays.toFixed(1)} days stale (>${STALE_DAYS}) — run \`bun plugins/whenful/whenful.ts sync\``);
+    // A future stamp gives a negative age. The old code read that as fresh and printed "-5.0 days ago".
+    // A sync that hasn't happened yet is corrupt data (clock skew or a hand-edit), so flag it.
+    if (ageDays < 0) problems.push(`mirror/.last-sync is in the future ("${stamp}", ${(-ageDays).toFixed(1)} days ahead) — corrupt stamp, re-run sync`);
+    else if (ageDays > STALE_DAYS) problems.push(`mirror is ${ageDays.toFixed(1)} days stale (>${STALE_DAYS}) — run \`bun plugins/whenful/whenful.ts sync\``);
     else console.log(`  ✓ mirror synced ${ageDays.toFixed(1)} days ago`);
   }
 }
