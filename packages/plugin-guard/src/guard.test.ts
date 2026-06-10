@@ -185,6 +185,16 @@ const rows: Row[] = [
   { label: "git push -u origin main (set upstream, no force)", cmd: "git push -u origin main", expectedExit: 0 },
   { label: "git --force-with-lease origin feature (non-main, ALLOW)", cmd: "git push --force-with-lease origin feature", expectedExit: 0 },
   { label: "git -C path status (non-push git -C, ALLOW)", cmd: "git -C /repo status", expectedExit: 0 },
+  // ---- AUDIT9 ALLOW [P2 FALSE POSITIVE]: main/master as a COMPONENT of a feature branch must NOT block (exit 0) ----
+  // The branch lookahead was `\b(?:main|master)\b`. Regex `\b` sits at every -, /, and _, so `\bmain\b`
+  // matched the `main` inside `main-menu`, `feature/main-nav`, etc. A deliberate force-push to a NON-main
+  // feature branch was wrongly blocked. Tightening the boundary to treat -, /, and word chars as still
+  // part of the branch name means main/master only matches as a WHOLE branch token, not a sub-component.
+  { label: "AUDIT9-ALLOW git push -f origin main-menu (main as prefix component)", cmd: "git push -f origin main-menu", expectedExit: 0 },
+  { label: "AUDIT9-ALLOW git push --force origin feature/main-nav (main mid-slug)", cmd: "git push --force origin feature/main-nav", expectedExit: 0 },
+  { label: "AUDIT9-ALLOW git push -f origin master-detail-view (master as prefix component)", cmd: "git push -f origin master-detail-view", expectedExit: 0 },
+  { label: "AUDIT9-ALLOW git push -f origin fix/master-template (master mid-slug)", cmd: "git push -f origin fix/master-template", expectedExit: 0 },
+  { label: "AUDIT9-ALLOW git push --force-with-lease origin redesign-main-page (main as suffix component)", cmd: "git push --force-with-lease origin redesign-main-page", expectedExit: 0 },
   // Quoted-path fix must not widen into these benign quote/slash shapes.
   { label: 'benign quoted prose mentioning rm -rf (no path)', cmd: 'git commit -m "fix rm -rf handling in docs"', expectedExit: 0 },
   { label: 'rm -rf "./build" (quoted relative path)', cmd: 'rm -rf "./build"', expectedExit: 0 },

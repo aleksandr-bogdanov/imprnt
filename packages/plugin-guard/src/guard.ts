@@ -130,7 +130,12 @@ const DENY: { re: RegExp; why: string }[] = [
   // `git --git-dir=... push`). We tolerate a bounded run of intervening non-space tokens so those
   // forms are still caught. The count is capped at 16 (no unbounded/nested quantifier) to avoid ReDoS:
   // the bound is a deliberate heuristic, a real force-push with 16+ leading global options is implausible.
-  { re: /\bgit\b(?:\s+\S+){0,16}?\s+push\b(?=[^\n]*(?:--force(?:-with-lease)?\b|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*\b))(?=[^\n]*\b(?:main|master)\b)/, why: "force-push to main/master" },
+  // The branch boundary is NOT a plain `\b`: `\b` sits at every -, /, and _, so `\bmain\b` matched the
+  // `main` inside a feature branch like `main-menu` or `feature/main-nav` and wrongly blocked a deliberate
+  // force-push to a non-main branch. The lookarounds below treat -, /, and word chars as still part of the
+  // branch name, so main/master match only as a WHOLE branch token (bare `main`, `origin main`, `HEAD:main`),
+  // never as a hyphen/slash-delimited component (main-menu, fix/master-template, redesign-main-page stay allowed).
+  { re: /\bgit\b(?:\s+\S+){0,16}?\s+push\b(?=[^\n]*(?:--force(?:-with-lease)?\b|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*\b))(?=[^\n]*(?<![\w/-])(?:main|master)(?![\w/-]))/, why: "force-push to main/master" },
   // bare `git push -f` / `git push --force` with no remote argument force-pushes the CURRENT branch,
   // which is frequently main/master. Block it too. (A remote like `origin` opts out of this rule.)
   // Same bounded tolerance (cap 16) for git global options between `git` and `push`.
