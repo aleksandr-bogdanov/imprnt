@@ -215,11 +215,13 @@ test("imp lair with no vault project anywhere exits 1 with the init hint", async
   expect(r.stderr).toContain("imprnt init");
 });
 
-// A dir only counts as a vault project when vault/ holds the generated index.md (the hardened
-// walk-up marker), so the fixtures scaffold both.
+// A dir only counts as a vault project when vault/ holds BOTH generated control files, index.md AND
+// _tags.md (the hardened walk-up marker - index.md alone is also a docs site named vault), so the
+// fixtures scaffold both, matching init output.
 function mkVault(root: string): void {
   mkdirSync(join(root, "vault"), { recursive: true });
   writeFileSync(join(root, "vault", "index.md"), "# index\n");
+  writeFileSync(join(root, "vault", "_tags.md"), "# tags\n");
 }
 
 // Register `dir` as the default vault in the sandbox's XDG config (join(root, "xdg")), the same
