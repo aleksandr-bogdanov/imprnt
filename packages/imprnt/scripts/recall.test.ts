@@ -626,3 +626,87 @@ test("an all-glue-words query keeps its originals (fallback still fires)", () =>
   expect(r.stdout).toContain("glue.md");
   expect(r.stdout).not.toContain("no matches");
 });
+
+// --- deep-audit finding (P3): the STOPWORDS set must be a COMPLETE function-word list --------------
+// The old set listed only a few prepositions (on, of, to, for, in) and was MISSING common glue its own
+// comment claimed it covered: with, from, by, at, as, the be/are/was forms, and the pronouns it/you/we/
+// they/this/that/these/those. On a small vault idf does NOT de-weight glue (df can tie a preposition
+// with a content noun, so idf is equal), so a query's lone surviving "with" drove ranking and returned
+// a wrong top hit. The fix replaces the ad-hoc list with a complete canonical function-word set.
+
+// The exact repro: a sentence query whose only NON-content word that used to survive the filter is a
+// preposition ("with"). A red-herring note carries "with" (zero topical relevance), the real answer
+// carries the content noun ("doctor"). Pre-fix "with" survived and floated the red herring to #1.
+// Post-fix "with" drops, so the red herring no longer scores and the content note alone ranks.
+test("a sentence query no longer ranks by a leftover preposition (with)", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // the red herring: it holds "with" several times but nothing the query is actually about.
+  note(v, "redherring.md", `---\ntags: []\n---\n# Cooking Notes\n\nServe with rice, with sauce, with greens, with bread.\n`);
+  // the real answer: it carries the discriminating content noun "doctor".
+  note(v, "answer.md", `---\ntags: []\n---\n# My Doctor\n\nThe doctor visit notes live here.\n`);
+
+  const r = recall("what should I check with my doctor", v);
+  expect(r.code).toBe(0);
+  const lines = r.stdout.split("\n").filter((l) => /^\s+\[\d/.test(l));
+  // the content note ranks first - "with" no longer carries the score.
+  expect(lines[0]).toContain("answer.md");
+  // the red herring (only "with") does not appear at all: every term it could match is now a stopword.
+  expect(r.stdout).not.toContain("redherring.md");
+});
+
+// the honest no-match: when a sentence's only matching tokens are glue, dropping the glue leaves no
+// content term to score, so recall returns no-match (the truthful answer) instead of a false hit ranked
+// by the lone preposition. Pre-fix the surviving "with" produced a wrong top hit here.
+test("a query whose only vault-present tokens are glue returns no-match, not a false hit", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // the note holds the glue word "with" but none of the content words in the query.
+  note(v, "redherring.md", `---\ntags: []\n---\n# Cooking Notes\n\nServe with rice and with greens.\n`);
+
+  const r = recall("what mistakes did I make with taxes", v);
+  expect(r.code).toBe(0);
+  // no content term (mistakes/make/taxes) appears in the note, and "with"/"did" are now glue, so the
+  // honest result is no-match rather than the red herring ranked by its lone "with".
+  expect(r.stdout).toContain("no matches");
+  expect(r.stdout).not.toContain("redherring.md");
+});
+
+// each newly-added glue word is actually dropped from the query: a note that ONLY contains the glue word
+// must not surface when that word rides in a sentence alongside a content term. Run one note per glue
+// word so a regression on any single addition is pinpointed.
+test("each newly-added glue word is dropped (a glue-only note does not surface)", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // the content target the query is really about.
+  note(v, "answer.md", `---\ntags: []\n---\n# Harbor Plan\n\nThe harbor plan lives here.\n`);
+  // words added to STOPWORDS in this round that were absent before (sample across the categories).
+  const added = ["with", "from", "by", "at", "as", "are", "was", "were", "be",
+    "it", "you", "your", "we", "they", "this", "that", "these", "those", "did", "has", "have"];
+  for (const w of added) {
+    note(v, `glue-${w}.md`, `---\ntags: []\n---\n# Glue ${w}\n\nThe word ${w} appears ${w} ${w} here.\n`);
+    const r = recall(`tell me ${w} the harbor`, v);
+    expect(r.code).toBe(0);
+    // the content note wins and the glue-only note never surfaces - proof the word is a stopword.
+    expect(r.stdout).toContain("answer.md");
+    expect(r.stdout).not.toContain(`glue-${w}.md`);
+  }
+});
+
+// guard: the round-8 content nouns must STAY out of STOPWORDS. Each is the discriminating term in a
+// sentence query and must rank its note. (The "decision" and "status" guards above cover two; this
+// sweeps the rest so no future tidy re-adds one.)
+test("round-8 content nouns are not stopworded (timeline/period/plan/info/details/current/latest/notes)", () => {
+  for (const noun of ["timeline", "period", "plan", "info", "details", "current", "latest", "notes"]) {
+    const v = newVault();
+    writeFileSync(join(v, "_tags.md"), TAGS_MD);
+    note(v, "answer.md", `---\ntags: []\n---\n# Project ${noun}\n\nThe ${noun} for the rollout is recorded here.\n`);
+    note(v, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant.\n`);
+
+    const r = recall(`what is the ${noun} of the rollout`, v);
+    expect(r.code).toBe(0);
+    // the content noun survives the filter and ranks its note.
+    expect(r.stdout).toContain("answer.md");
+    expect(r.stdout).not.toContain("no matches");
+  }
+});

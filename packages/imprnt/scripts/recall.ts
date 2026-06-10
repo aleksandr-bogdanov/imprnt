@@ -69,17 +69,50 @@ const MAX_SYNONYM_NGRAM = Math.max(
 // a query is a SENTENCE ("what do I believe about money"), not keywords. These words are sentence glue
 // that appear everywhere and discriminate nothing, so they only add noise to BM25. Kept lean and we
 // never strip a query to nothing — if every term is a stopword we keep the originals.
-// ONLY true sentence-glue belongs here: question words, articles, pronouns, prepositions, conjunctions,
-// auxiliaries/modals, and the question-framing mental verbs (think/know/believe). CONTENT NOUNS were
-// deliberately removed - the contract treats status/timeline/decision/plan/etc. as first-class (projects
-// carry a `status`, the contract says "pull decisions/actions"), so when one is the DISCRIMINATING term
-// in a query, dropping it leaves only the common term and BM25 length-norm sinks the right note. idf
-// already de-weights a genuinely common term, so keeping a content noun in the query costs almost nothing
-// while dropping it silently mis-ranks the answer. A content noun never goes in this set.
+//
+// This is a COMPLETE canonical English function-word set (the standard ~50 closed-class glue words),
+// not a reactive hand-tweak. Two failure modes are in tension and the resolution is asymmetric:
+//   - A MISSING glue word only slightly dilutes ranking. On a small vault idf does NOT de-weight glue
+//     (a corpus of N notes can have df("with") == df("doctor"), so idf is equal), and then a query's
+//     lone surviving preposition drives the whole score and returns a wrong top hit. So the set must be
+//     complete enough that a normal sentence leaves only content terms.
+//   - A wrongly-INCLUDED content word silently DROPS the answer: dropped from the query, it can no
+//     longer rank the one note that carries it. This is the worse failure.
+// So the rule is: ONLY pure function/glue words go here - articles, pronouns (subject/object/possessive),
+// prepositions, conjunctions, auxiliary/modal verbs, the be/have/do forms, and the common question words,
+// plus the question-framing mental verbs (think/know/believe). CONTENT NOUNS stay OUT - the contract
+// treats status/timeline/decision/plan/etc. as first-class (projects carry a `status`, the contract says
+// "pull decisions/actions"), so dropping one would sink the right note. If a word could plausibly be a
+// vault search term (a noun/verb/adjective with topical meaning), it is NOT a stopword. When in doubt,
+// leave it OUT.
 const STOPWORDS = new Set([
-  "what", "do", "i", "am", "on", "my", "about", "the", "a", "an", "should",
-  "me", "is", "of", "to", "for", "in", "and", "or", "think", "know", "believe",
-  "where", "how", "when", "which", "who",
+  // question words
+  "what", "where", "how", "when", "which", "who", "whom", "whose", "why",
+  // articles + determiners
+  "a", "an", "the", "this", "that", "these", "those",
+  // pronouns: subject / object / possessive
+  "i", "me", "my", "mine", "myself",
+  "we", "us", "our", "ours",
+  "you", "your", "yours",
+  "he", "him", "his",
+  "she", "her", "hers",
+  "it", "its",
+  "they", "them", "their", "theirs",
+  // conjunctions
+  "and", "or", "but", "nor", "so", "than", "if", "then",
+  // prepositions
+  "of", "to", "in", "on", "for", "with", "from", "by", "at", "as",
+  "into", "onto", "about", "over", "under", "between", "through",
+  // be / have / do forms (auxiliaries)
+  "be", "am", "is", "are", "was", "were", "been", "being",
+  "have", "has", "had",
+  "do", "does", "did", "done",
+  // modals
+  "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+  // common adverbial glue
+  "not", "no", "yes", "there", "here",
+  // question-framing mental verbs (the assistant's "what do I think/know/believe about ...")
+  "think", "know", "believe",
 ]);
 
 // Tokenize on Unicode letters and numbers so non-ASCII content (Cyrillic, German umlauts, ß) tokenizes
