@@ -131,6 +131,25 @@ const rows: Row[] = [
   { label: "AUDIT4-P0 rm -rf /root (Linux root home)", cmd: "rm -rf /root", expectedExit: 2 },
   { label: "AUDIT4-P0 rm -rf /root/.ssh", cmd: "rm -rf /root/.ssh", expectedExit: 2 },
 
+  // ---- AUDIT5 #1 [P2]: standard system dirs were absent from ROOT_TOKEN (false negative) ----------
+  // The macOS set (opt sbin private Applications Volumes) and the rest of the Linux FHS (proc run mnt
+  // srv) were not enumerated, so a catastrophic rm of any of them exited 0. /opt/homebrew is the brew
+  // reset path (`sudo rm -rf /opt/homebrew`), /private is the macOS backing store for /etc /var /tmp,
+  // /Volumes wipes mount points. Same word boundary as the other system dirs, so /opt-local /privateer
+  // /sbinx /VolumesX /Applications-old /runner stay safe (the ALLOW rows below check that).
+  { label: "AUDIT5-P2 rm -rf /opt (brew + third-party root)", cmd: "rm -rf /opt", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /opt/homebrew (brew reset path)", cmd: "rm -rf /opt/homebrew", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /sbin (sibling of /bin)", cmd: "rm -rf /sbin", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /private (macOS backing store for /etc /var /tmp)", cmd: "rm -rf /private", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /private/etc", cmd: "rm -rf /private/etc", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /Applications", cmd: "rm -rf /Applications", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /Volumes (mount points)", cmd: "rm -rf /Volumes", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /Volumes/Backup", cmd: "rm -rf /Volumes/Backup", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /proc (Linux procfs)", cmd: "rm -rf /proc", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /run (Linux runtime)", cmd: "rm -rf /run", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /mnt (Linux mounts)", cmd: "rm -rf /mnt", expectedExit: 2 },
+  { label: "AUDIT5-P2 rm -rf /srv (Linux service data)", cmd: "rm -rf /srv", expectedExit: 2 },
+
   // ---- ALLOW CASES (must NOT block; exit 0) -------------------------------------------------------
   { label: "rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },
   { label: "rm -rf node_modules", cmd: "rm -rf node_modules", expectedExit: 0 },
@@ -180,6 +199,20 @@ const rows: Row[] = [
   { label: "AUDIT4-ALLOW rm -rf /var/folders/x/y/T/build (resolved $TMPDIR)", cmd: "rm -rf /var/folders/x/y/T/build", expectedExit: 0 },
   { label: "AUDIT4-ALLOW rm -rf /var/tmp/scratch (legacy temp)", cmd: "rm -rf /var/tmp/scratch", expectedExit: 0 },
   { label: 'AUDIT4-ALLOW rm -rf "$TMPDIR/build" (quoted temp var)', cmd: 'rm -rf "$TMPDIR/build"', expectedExit: 0 },
+
+  // ---- AUDIT5 ALLOW: the new system-dir tokens must NOT widen into lookalikes / relative / tmp ------
+  // Same word boundary as the rest of ROOT_TOKEN, so a trailing non-boundary char (opt-local privateer
+  // sbinx VolumesX) never matches, and a relative prefix never reaches a root token.
+  { label: "AUDIT5-ALLOW rm -rf ./opt-local (relative, not /opt)", cmd: "rm -rf ./opt-local", expectedExit: 0 },
+  { label: "AUDIT5-ALLOW rm -rf ./privateer (relative, not /private)", cmd: "rm -rf ./privateer", expectedExit: 0 },
+  { label: "AUDIT5-ALLOW rm -rf /sbinx (not /sbin)", cmd: "rm -rf /sbinx", expectedExit: 0 },
+  { label: "AUDIT5-ALLOW rm -rf /VolumesX (not /Volumes)", cmd: "rm -rf /VolumesX", expectedExit: 0 },
+  { label: "AUDIT5-ALLOW rm -rf /Applications-old (not /Applications)", cmd: "rm -rf /Applications-old", expectedExit: 0 },
+  { label: "AUDIT5-ALLOW rm -rf /runner (not /run)", cmd: "rm -rf /runner", expectedExit: 0 },
+  { label: "AUDIT5-ALLOW rm -rf ./run (relative, not /run)", cmd: "rm -rf ./run", expectedExit: 0 },
+  { label: "AUDIT5-ALLOW rm -rf ./opt/cache (relative opt)", cmd: "rm -rf ./opt/cache", expectedExit: 0 },
+  { label: "AUDIT5-ALLOW rm -rf /tmp/opt (under /tmp, not a system dir)", cmd: "rm -rf /tmp/opt", expectedExit: 0 },
+  { label: "AUDIT5-ALLOW rm -rf src/run (relative subdir)", cmd: "rm -rf src/run", expectedExit: 0 },
 
   // ---- USAGE (no arg, exit 1) --------------------------------------------------------------------
   { label: "no-arg usage", cmd: null, expectedExit: 1 },

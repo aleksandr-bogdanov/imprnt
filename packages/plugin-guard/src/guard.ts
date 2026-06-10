@@ -47,7 +47,7 @@ const ROOT_TOKEN =
   // exempts ONLY those two continuations, so bare /var and every other /var subdir (/var/lib /var/log)
   // still match. The (?![A-Za-z0-9_]) word boundary stays so /various never trips.
   "\\/var(?:(?![A-Za-z0-9_])(?!\\/(?:folders|tmp)(?:[\\/\\s\"';&]|$)))" + // /var /var/lib /var/tmpfoo (NOT /var/folders /var/tmp themselves)
-  "|\\/(?:etc|usr|bin|lib|sys|dev|boot|home|root|System|Library|Users)(?![A-Za-z0-9_])" + // /etc /home /root ... (not /etcetera /rootfs /home-backup)
+  "|\\/(?:etc|usr|bin|lib|sys|dev|boot|home|root|System|Library|Users|opt|sbin|private|Applications|Volumes|proc|run|mnt|srv)(?![A-Za-z0-9_])" + // /etc /home /opt /sbin /private /Volumes /proc ... (not /etcetera /rootfs /opt-local /sbinx /privateer /VolumesX /runner)
   "|~[A-Za-z_][A-Za-z0-9_-]*" + // ~root ~alex - tilde + username
   "|\\$\\{HOME\\}" + // ${HOME}
   "|\\$HOME(?![A-Za-z0-9_])" + // $HOME (not $HOMEDIR)
