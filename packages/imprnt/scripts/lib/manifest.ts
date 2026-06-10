@@ -29,5 +29,15 @@ export function loadManifest(vault: string): Manifest {
 }
 
 export function saveManifest(vault: string, m: Manifest): void {
-  writeFileSync(manifestPath(vault), JSON.stringify(m, null, 2) + "\n");
+  // Atomic write: a plain writeFileSync truncates-then-writes, so a concurrent reader (the contract
+  // anticipates scheduled apply-all runs) can catch a half-written file and abort the run as "corrupt".
+  // Write to a temp file in the SAME directory, then renameSync it into place (atomic on POSIX, a same-
+  // filesystem rename), so a reader sees either the old full file or the new full file, never a partial
+  // one. The temp lives beside the target (a cross-device rename would not be atomic). loadManifest's
+  // corrupt-detection stays as the backstop. (The residual lost-update under two TRULY simultaneous
+  // writers is an accepted limit for a single-user commands-not-daemon tool, not solved by a lockfile.)
+  const p = manifestPath(vault);
+  const tmp = `${p}.tmp.${process.pid}.${Date.now()}`;
+  writeFileSync(tmp, JSON.stringify(m, null, 2) + "\n");
+  renameSync(tmp, p);
 }

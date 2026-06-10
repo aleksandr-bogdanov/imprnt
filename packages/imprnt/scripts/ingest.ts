@@ -67,23 +67,31 @@ function looksLikePath(arg: string): boolean {
 
 // Conservative transcript detector. The contract says ONLY a transcript gets the deterministic event
 // skeleton; any other prose is snapshotted and left for the LLM to classify. Real dialogue evidence is
-// >=2 distinct speakers AND that the `Speaker: utterance` shape DOMINATES the content - a substantial
-// fraction of the non-header content lines are speaker turns, OR a speaker recurs across turns.
+// a RECURRING speaker (a label that comes back across turns), OR the minimal two-speaker exchange where
+// each party spoke exactly once and that is the entire body.
 //
-// Two distinct labels alone is not enough: a document-header block (`Title:`/`Author:`/`Status:`, or
-// callouts like `Warning:`/`Remember:`/`TODO:`) clears a bare >=2 bar with a few `Word:` lines that
-// each appear once, then paragraphs of prose - exactly the migration-prose case that must route to the
-// unclassified-source handoff, not a fabricated event with [[people/title]] / [[people/author]].
+// Two distinct labels alone is not enough, and "Speaker: line dominates" alone is not either:
+//   - A document-header block (`Title:`/`Author:`/`Status:`, callouts like `Warning:`/`TODO:`) clears a
+//     bare >=2 bar with a few `Word:` lines that each appear once, then paragraphs of prose.
+//   - A dense GLOSSARY / term-list (every line `Term: definition`, each label appearing exactly once)
+//     even makes the `Word:` lines the WHOLE body, so a turns/content ratio would clear it too - yet it
+//     is no dialogue, just N single-appearance labels. That fabricated an event with [[people/apple]] /
+//     [[people/banana]] participants.
+// Both must route to the unclassified-source handoff instead.
 //
-//   - recurring speaker: any label appears in 2+ turns. A header label appears once; a dialogue
-//     participant comes back. This catches a back-and-forth even if it is short.
-//   - dominant shape: speaker turns are a clear majority of the content lines (turns / content > 0.5).
-//     A header is a handful of `Word:` lines over many prose lines, well under half.
+// The discriminator is recurrence: a real conversation longer than one exchange has a speaker who comes
+// back (the back-and-forth). A glossary / header never repeats a label.
+//   - recurring speaker: any label appears in 2+ turns -> a back-and-forth, accept (even if short).
+//   - no recurrence: accept ONLY the minimal two-speaker, two-turn exchange that IS the whole body
+//     (speakers==2, turns==2, and those two turns are all the content). A 3+-distinct-labels-each-once
+//     document is the glossary/header shape and is rejected. (A two-line glossary is an inherent
+//     ambiguity - two `Word: def` lines look identical to a two-line exchange - and is a far rarer,
+//     lower-stakes case than the dense glossary the contract cites; it falls on the accept side here.)
 // contentLines = non-empty lines that are not a parsed meta/email header (the denominator for "shape").
 function looksLikeTranscript(speakers: Set<string>, turnCount: number, contentLines: number, recurringSpeaker: boolean): boolean {
   if (speakers.size < 2) return false;
   if (recurringSpeaker) return true;
-  return contentLines > 0 && turnCount / contentLines > 0.5;
+  return speakers.size === 2 && turnCount === 2 && contentLines === turnCount;
 }
 
 // --- frontmatter helpers (deterministic — STRUCTURE only, no LLM) ----------
@@ -256,7 +264,12 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
 
   // Resolve participants/links the same way the transcript path does: an unresolved person -> needs-review.
   // We only auto-resolve PEOPLE (the resolver's domain); other wikilink targets are checked by `imprnt check`.
-  const participants = fmList(fm, "participants").map(linkSlug);
+  // participants may be a LIST (`["[[people/a]]", "[[people/b]]"]`) or a SCALAR (`"[[people/ghost]]"`).
+  // fmList only captures the bracketed-list form, so a scalar would yield [] and the missing person would
+  // never be flagged inline at apply (check catches it later, an inconsistency). Fall back to the scalar.
+  const participantsList = fmList(fm, "participants");
+  const participantsScalar = participantsList.length ? "" : fmScalar(fm, "participants");
+  const participants = (participantsScalar ? [participantsScalar] : participantsList).map(linkSlug);
   const owner = linkSlug(fmScalar(fm, "owner"));
   const peopleLinks = [...participants, ...(owner ? [owner] : [])]
     .filter((l) => l.startsWith("people/"))
