@@ -507,6 +507,48 @@ test("a note symlink is not double-indexed", () => {
   expect(lines[0]).toContain("real.md");
 });
 
+// --- round-4 finding (P1): a synonym whose CANONICAL is multi-word/kebab reaches the note ----------
+// Pre-fix the per-token group at recall.ts was built as [word, normalize(word)], where normalize
+// returns the canonical as ONE string ("big-query"). That single string is scored against d.tf, but
+// d.tf was built by tokenize() which splits on hyphens, so a note tagged big-query has tf keys big +
+// query, never the literal big-query. The canonical matched nothing and the synonym was dead. The fix
+// tokenizes the canonical into the group so each of its tokens is a scorable alternative, mirroring the
+// multi-word-KEY path (phraseSynonymTokens). A single-word KEY with a multi-word VALUE is the case the
+// phrase path never covers (it only fires for n>=2 KEY spans).
+test("a synonym with a multi-word canonical (bigquery -> big-query) finds a note tagged big-query", () => {
+  const v = newVault();
+  writeFileSync(
+    join(v, "_tags.md"),
+    `---\ntype: tags\n---\n\n# tags\n\n## Tags\nbig-query\n\n## Synonyms\nbigquery -> big-query\n`,
+  );
+  // the term lives ONLY in the tag, in its kebab form big-query (tf keys: big, query). The literal
+  // string "bigquery" / "big-query" never appears in the title or body.
+  note(v, "warehouse.md", `---\ntags: [big-query]\n---\n# Warehouse\n\nThe nightly load runs here.\n`);
+  note(v, "unrelated.md", `---\ntags: [harbor]\n---\n# House\n\nA place to live.\n`);
+
+  const r = recall("bigquery", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("warehouse.md");
+  expect(r.stdout).not.toContain("no matches");
+});
+
+// guard: a single-token-canonical synonym still resolves exactly as before (no regression). The
+// canonical tokenizes to one token, so the group is unchanged in effect.
+test("a single-token-canonical synonym (bigquery -> oncall) still resolves", () => {
+  const v = newVault();
+  writeFileSync(
+    join(v, "_tags.md"),
+    `---\ntype: tags\n---\n\n# tags\n\n## Tags\noncall\n\n## Synonyms\nbigquery -> oncall\n`,
+  );
+  note(v, "rota.md", `---\ntags: [oncall]\n---\n# Rota\n\nThe pager schedule.\n`);
+  note(v, "other.md", `---\ntags: [harbor]\n---\n# Other\n\nNothing relevant.\n`);
+
+  const r = recall("bigquery", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("rota.md");
+  expect(r.stdout).not.toContain("no matches");
+});
+
 // --- sanity: BM25 ranking - title beats body ------------------------------------------------------
 test("a term in the title outranks the same term only in the body", () => {
   const v = newVault();
