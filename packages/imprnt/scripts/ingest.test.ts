@@ -238,6 +238,33 @@ test("an email is not detected as a transcript and gets no fabricated event note
   expect(needsReview(vault)).not.toContain("people/to");
 });
 
+// --- round-3 finding 2: a dense glossary / term-list (every line `Term: definition`, each label
+// appearing exactly ONCE) is NOT a transcript. No speaker recurs and there is no back-and-forth, so
+// it must route to snapshot + unclassified handoff, not a fabricated event with [[people/apple]] /
+// [[people/banana]] / [[people/cherry]] participants. A real dialogue has a recurring speaker (or is
+// the minimal two-speaker, two-turn exchange); a glossary has many single-appearance labels. --------
+test("a glossary where each label appears once is not detected as a transcript", () => {
+  const { vault, raw } = setup();
+  const src = join(vault, "..", "glossary.txt");
+  writeFileSync(src, [
+    "Apple: a fruit that grows on trees",
+    "Banana: a long yellow fruit",
+    "Cherry: a small red stone fruit",
+  ].join("\n") + "\n");
+
+  const r = run(["ingest", src, "--vault", vault]);
+  expect(r.code).toBe(0);
+  // No fabricated event with bogus fruit participants.
+  expect(readdirSync(join(vault, "events")).length).toBe(0);
+  // Snapshot + unclassified handoff fires; the snapshot files under adhoc, not transcripts.
+  expect(needsReview(vault)).toContain("unclassified source");
+  expect(needsReview(vault)).not.toContain("people/apple");
+  expect(needsReview(vault)).not.toContain("people/banana");
+  expect(needsReview(vault)).not.toContain("people/cherry");
+  expect(existsSync(join(raw, "transcripts"))).toBe(false);
+  expect(existsSync(join(raw, "adhoc"))).toBe(true);
+});
+
 // --- bug 2: snapshot --dest with ../ is rejected, nothing escapes raw/ ----------------------------
 test("snapshot --dest with ../ is rejected and writes nothing outside raw/", () => {
   const { vault } = setup();
@@ -878,6 +905,22 @@ test("--apply resolves every participant in a wikilink list, not just the first"
   const review = needsReview(vault);
   expect(review).toContain("people/carol");
   expect(review).toContain("people/dave"); // pre-fix dave was silently skipped
+});
+
+// --- round-3 finding 3: a SCALAR participants value (`participants: "[[people/ghost]]"`, not a `[..]`
+// list) must still be resolved inline, the same way the transcript path flags an unknown speaker.
+// Pre-fix only the list form went through fmList, so a scalar participants yielded [] and the missing
+// person was never flagged inline at apply (check caught it later, an inconsistency). -----------------
+test("--apply resolves a SCALAR participants wikilink and flags an unresolved person inline", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "solo.md");
+  // A single participant given as a scalar string, not a [..] list.
+  writeFileSync(staged, '---\ntype: event\ndate: 2025-02-02\nparticipants: "[[people/ghost]]"\ntags: [test]\n---\n\n# Solo sync\n\nnotes\n');
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  // The unresolved person is flagged inline at apply, not left for check.
+  expect(needsReview(vault)).toContain("people/ghost");
 });
 
 // --- [P3] a directory where a file is expected, and a read-only raw/, both error cleanly -----------
