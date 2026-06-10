@@ -19,7 +19,7 @@
 // Query terms are expanded through _tags.md (synonym -> canonical) and treated as alternatives; the
 // best-scoring variant of each query term contributes. Lean conversational stopwords are dropped.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { loadTags, normalize, type TagVocab } from "./lib/tags.ts";
 
 const args = process.argv.slice(2);
@@ -76,7 +76,11 @@ const tokenize = (text: string): string[] =>
 //   Returns the tokenized canonicals discovered from multi-token/hyphenated synonym keys.
 const phraseSynonymTokens = (q: string): string[] => {
   const out: string[] = [];
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  // Punctuation hugging a word ("big-query,") must not hide its synonym key - strip the
+  // non-letter/number edges of each word, interior hyphens survive.
+  const words = q.toLowerCase().split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter(Boolean);
   // Try the whole phrase, then every contiguous n-gram down to single words, joined by both space and
   // hyphen (a key may be written either way). A hit maps to its canonical, which we then tokenize.
   for (let n = words.length; n >= 1; n--) {
@@ -136,9 +140,23 @@ try { files = walk(vault); } catch { console.error(`no vault at ${vault} — run
 
 // Parse the frontmatter `tags: [...]` into NORMALIZED canonical tags (write and search agree on one
 // concept = one tag), and `aliases: [...]` (the note's own alternate names — an identity surface).
+// Accepts both the inline form (`tags: [a, b]`) and the block form Obsidian's properties UI writes
+// (`tags:` then consecutive `- item` lines). Small deterministic parser, no YAML dep.
 function frontmatterList(fm: string, key: string): string[] {
-  const line = fm.match(new RegExp(`${key}:\\s*\\[(.*?)\\]`, "i"))?.[1] ?? "";
-  return line.split(",").map((s) => s.trim().replace(/^["']|["']$/g, "").toLowerCase()).filter(Boolean);
+  const clean = (s: string) => s.trim().replace(/^["']|["']$/g, "").toLowerCase();
+  const inline = fm.match(new RegExp(`^${key}:\\s*\\[(.*?)\\]`, "im"))?.[1];
+  if (inline !== undefined) return inline.split(",").map(clean).filter(Boolean);
+  const lines = fm.split(/\r?\n/);
+  const head = lines.findIndex((l) => new RegExp(`^${key}:\\s*$`, "i").test(l));
+  if (head < 0) return [];
+  const out: string[] = [];
+  for (let i = head + 1; i < lines.length; i++) {
+    const item = lines[i].match(/^\s+-\s*(.*)$/);
+    if (!item) break;
+    const v = clean(item[1]);
+    if (v) out.push(v);
+  }
+  return out;
 }
 
 // Field boosts. A term in the title/aliases is a stronger signal that the note IS about the query than
@@ -161,17 +179,21 @@ for (const path of files) {
   const fm = fmMatch?.[1] ?? "";
   const body = fmMatch ? raw.slice(fmMatch.index! + fmMatch[0].length) : raw;
 
-  const titleText = raw.match(/^#\s+(.+)$/m)?.[1] ?? "";
+  // Match the H1 against the BODY - a YAML comment line in frontmatter (`# managed by hand`) must
+  // not pose as the title.
+  const titleText = body.match(/^#\s+(.+)$/m)?.[1] ?? "";
   const aliases = frontmatterList(fm, "aliases").join(" ");
   const tags = frontmatterList(fm, "tags").map((t) => normalize(vocab, t));
 
-  // Weighted term frequency: each occurrence contributes its field's boost. Filename tokens join the
-  // title surface (the slug IS the note's identity). Body uses the raw note text minus frontmatter.
+  // Weighted term frequency: each occurrence contributes its field's boost. The filename STEM joins
+  // the title surface (the slug IS the note's identity) - and only the stem: folders are browse
+  // drawers, never the search axis, and the machine path above the vault is pure noise, so neither
+  // is indexed. Body uses the raw note text minus frontmatter.
   const tf = new Map<string, number>();
   const add = (tokens: string[], weight: number) => {
     for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + weight);
   };
-  add([...tokenize(titleText), ...tokenize(path)], TITLE_BOOST);
+  add([...tokenize(titleText), ...tokenize(basename(path, ".md"))], TITLE_BOOST);
   add(tokenize(aliases), TITLE_BOOST); // an alias is an identity match — same band as the title
   add(tags.flatMap(tokenize), TAG_BOOST);
   add(tokenize(body), BODY_BOOST);
@@ -209,10 +231,17 @@ for (const group of queryTerms) for (const v of group) if (!variantIdf.has(v)) v
 type Hit = { path: string; score: number };
 const hits: Hit[] = [];
 
+// Score groups with FEWER variants first, so a flexible synonym group's fallback (its literal term)
+// stays available. Otherwise a query holding both a synonym and its canonical lets the synonym group
+// greedily consume the shared canonical, the literal match is never counted, and a both-terms doc
+// ties with a one-term doc. Invariant: adding a synonym entry never makes ranking worse for a query
+// that contains both the synonym and its canonical. Display order (the header) stays the query order.
+const scoringGroups = [...queryTerms].sort((a, b) => a.length - b.length);
+
 for (const d of docs) {
   let score = 0;
   const scored = new Set<string>(); // a matched term contributes once, even if two query groups reach it
-  for (const group of queryTerms) {
+  for (const group of scoringGroups) {
     // Within a synonym group, take the best-scoring variant (the word or its canonical tag) that this
     // doc hasn't already been scored on. So "insurance disability" (disability->insurance) doesn't count
     // `insurance` twice on a note lacking "disability"; the literal term still separates notes that have

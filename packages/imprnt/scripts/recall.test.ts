@@ -184,6 +184,117 @@ test("a note at a nested control basename (work/index.md) is searchable; top-lev
   expect(lines.some((l) => /\]\s+index\.md$/.test(l))).toBe(false);
 });
 
+// --- audit fix 1 (P0): machine path components must not be indexed --------------------------------
+// Pre-fix the FULL walk path was tokenized at title weight, so a vault under .../insurance-stuff/
+// made every note match "insurance" and crushed idf corpus-wide.
+test("machine path components are not indexed - a path term does not match the whole vault", () => {
+  const root = newVault();
+  const v = join(root, "insurance-stuff", "vault");
+  mkdirSync(v, { recursive: true });
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  note(v, "disability.md", `---\ntags: [insurance]\n---\n# Disability Insurance\n\nThe policy covers income loss.\n`);
+  note(v, "recipe.md", `---\ntags: [harbor]\n---\n# Pancakes\n\nFlour, milk, eggs.\n`);
+  note(v, "garden.md", `---\ntags: [harbor]\n---\n# Garden\n\nTomatoes and beans.\n`);
+
+  const r = recall("insurance", v);
+  expect(r.code).toBe(0);
+  // only the insurance note matches - pre-fix every note matched via the "insurance" path component
+  expect(r.stdout).toContain("disability.md");
+  expect(r.stdout).not.toContain("recipe.md");
+  expect(r.stdout).not.toContain("garden.md");
+  const lines = r.stdout.split("\n").filter((l) => /^\s+\[\d/.test(l));
+  expect(lines[0]).toContain("disability.md");
+});
+
+test("intra-vault folder names are not a search surface, the filename stem is", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  mkdirSync(join(v, "health"));
+  note(v, join("health", "wombat-protocol.md"), `---\ntags: []\n---\n# Morning Routine\n\nStretch and walk.\n`);
+  note(v, "other.md", `---\ntags: []\n---\n# Health Tips\n\nSleep well.\n`);
+
+  // the slug matches even when the term appears nowhere in the content
+  const bySlug = recall("wombat", v);
+  expect(bySlug.stdout).toContain("wombat-protocol.md");
+
+  // the folder name alone does not match a note (folders are browse drawers, not the search axis)
+  const byFolder = recall("health", v);
+  expect(byFolder.stdout).not.toContain("wombat-protocol.md");
+  expect(byFolder.stdout).toContain("other.md");
+});
+
+// --- audit fix 2 (P1): a synonym entry never worsens ranking when the query holds both terms ------
+// Pre-fix the synonym group [disability, insurance] could greedily consume `insurance`, leaving the
+// literal-canonical group [insurance] with nothing - a both-terms doc tied with a one-term doc.
+test("query with both synonym and canonical: a both-terms doc outranks a one-term doc", () => {
+  const v = newVault();
+  writeFileSync(
+    join(v, "_tags.md"),
+    `---\ntype: tags\n---\n\n# tags\n\n## Tags\ninsurance\n\n## Synonyms\ndisability -> insurance\n`,
+  );
+  // both docs carry insurance in the TITLE so the synonym group prefers it over the rarer literal.
+  // Names chosen so a score tie alphabetically ranks aone first - zboth must win on score.
+  note(v, "zboth.md", `---\ntags: []\n---\n# Insurance Plan\n\nCovers disability income.\n`);
+  note(v, "aone.md", `---\ntags: []\n---\n# Insurance Plan\n\nCovers income loss.\n`);
+  // fillers raise df(disability) so idf no longer floats the literal above the canonical in-group
+  for (let i = 0; i < 3; i++) {
+    note(v, `filler${i}.md`, `---\ntags: []\n---\n# Filler ${i}\n\ndisability mention filler.\n`);
+  }
+
+  const r = recall("disability insurance", v);
+  expect(r.code).toBe(0);
+  const zi = r.stdout.indexOf("zboth.md");
+  const ai = r.stdout.indexOf("aone.md");
+  expect(zi).toBeGreaterThan(-1);
+  expect(ai).toBeGreaterThan(-1);
+  expect(zi).toBeLessThan(ai);
+});
+
+// --- audit fix 3 (P2): block-style YAML lists (Obsidian properties UI) -----------------------------
+test("block-style YAML tags are indexed", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "boat.md"), `---\ntype: note\ntags:\n  - harbor\n  - boats\n---\n# Mooring\n\nNothing else here.\n`);
+  note(v, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant.\n`);
+
+  const r = recall("harbor", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("boat.md");
+  expect(r.stdout).not.toContain("no matches");
+});
+
+// --- audit fix 4 (P2): a YAML comment in frontmatter is not the H1 ---------------------------------
+test("a YAML comment in frontmatter does not steal the H1 title boost", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "zha.md"), `---\ntags: []\n# managed by hand\n---\n# Harbor Trip\n\nGeneric prose, nothing special.\n`);
+  note(v, "abody.md", `---\ntags: []\n---\n# Generic Title\n\nWe talked about harbor once.\n`);
+
+  // the fm comment text is not indexed at all - frontmatter is metadata, not prose
+  const byComment = recall("managed", v);
+  expect(byComment.stdout).toContain("no matches");
+
+  // the real H1 keeps the title boost and outranks a body-only mention
+  const r = recall("harbor", v);
+  const zi = r.stdout.indexOf("zha.md");
+  const ai = r.stdout.indexOf("abody.md");
+  expect(zi).toBeGreaterThan(-1);
+  expect(ai).toBeGreaterThan(-1);
+  expect(zi).toBeLessThan(ai);
+});
+
+// --- audit fix 5 (P2): punctuation around a synonym key in the raw query ---------------------------
+test("trailing punctuation on a hyphenated synonym key (big-query,) still reaches the synonym", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  note(v, "warehouse.md", `---\ntags: [bigquery]\n---\n# Warehouse\n\nThe nightly load runs here.\n`);
+
+  const r = recall("big-query,", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("warehouse.md");
+  expect(r.stdout).not.toContain("no matches");
+});
+
 // --- sanity: BM25 ranking - title beats body ------------------------------------------------------
 test("a term in the title outranks the same term only in the body", () => {
   const v = newVault();
