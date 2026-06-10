@@ -74,8 +74,13 @@ imp                    # open your assistant and talk
 > ```sh
 > git clone https://github.com/aleksandr-bogdanov/imprnt
 > cd imprnt && bun install && bun run build
-> npm i -g ./packages/imprnt   # the same imprnt + imp commands, from your clone
+> (cd packages/imprnt && bun run shipdocs)   # stage the CLAUDE.md contract the install ships
+> npm i -g ./packages/imprnt                 # the same imprnt + imp commands, from your clone
 > ```
+>
+> The `shipdocs` step is what npm's publish runs for you; from source you run it once by hand so
+> `imprnt init` has the contract to drop. The global install symlinks to your clone, so keep the
+> clone in place.
 
 `imprnt init` scaffolds the vault, writes the `CLAUDE.md` contract that teaches your assistant
 how it works, and registers the folder so `imp` finds it from anywhere. Runs on

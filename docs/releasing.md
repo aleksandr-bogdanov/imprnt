@@ -65,8 +65,10 @@ A moving `last-release` git tag marks the baseline the next release diffs agains
 
 ## Rollback
 
-npm cannot truly unpublish. To undo a bad `latest`, point the tag back to the last good version and
-deprecate the bad one (needs your npm auth, interactive, with your passkey):
+npm only lets you fully unpublish within 72 hours of a publish, which is what happened to `imprnt` in
+June 2026. After that window a version is permanent. So for a normal release you cannot count on
+unpublish. To undo a bad `latest`, point the tag back to the last good version and deprecate the bad
+one (needs your npm auth, interactive, with your passkey):
 
 ```sh
 npm dist-tag add imprnt@<last-good> latest
