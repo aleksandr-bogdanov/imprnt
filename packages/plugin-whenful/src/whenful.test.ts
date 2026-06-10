@@ -112,6 +112,40 @@ test("check exits non-zero on an unparseable .last-sync stamp", () => {
   expect(r.stdout).toContain("unparseable");
 });
 
+test("check flags a FUTURE .last-sync stamp as corrupt (non-zero, no negative age)", () => {
+  const { pluginDir, vault } = makeRepo();
+  mkdirSync(join(vault, "projects"), { recursive: true });
+  writeFileSync(join(vault, "projects", "whenful.md"), "# Whenful\n");
+  writeLinks(pluginDir, ["task-1\tprojects/whenful\t"]);
+  // A sync stamped 5 days in the FUTURE yields a negative age. The old code read that as fresh and
+  // printed a nonsensical "-5.0 days ago". A future timestamp is corrupt data - must be flagged.
+  const fiveDaysAhead = new Date(Date.now() + 5 * 86_400_000);
+  writeFileSync(join(pluginDir, "mirror", ".last-sync"), fiveDaysAhead.toISOString() + "\n");
+
+  const r = run(pluginDir, "check.ts");
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stdout).toContain("future");
+  expect(r.stdout).not.toContain("-5.0 days ago");
+});
+
+test("check flags a whitespace-only task_id row as unparseable (trims before validating)", () => {
+  const { pluginDir, vault } = makeRepo();
+  mkdirSync(join(vault, "projects"), { recursive: true });
+  writeFileSync(join(vault, "projects", "whenful.md"), "# Whenful\n");
+  // A blank task_id column (a lone space) passed the truthiness check before trimming, then trimmed to
+  // "" - a link that cannot key into mirror/<id>.md. Trim first so the blank column is flagged.
+  writeLinks(pluginDir, [
+    "task-1\tprojects/whenful\t", // good row - still counts
+    " \tprojects/whenful\tstep",  // whitespace-only task_id - unparseable after trim
+  ]);
+  writeFileSync(join(pluginDir, "mirror", ".last-sync"), new Date().toISOString() + "\n");
+
+  const r = run(pluginDir, "check.ts");
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stdout).toContain("unparseable");
+  expect(r.stdout).toContain("1 link(s)"); // only the good row counts
+});
+
 test("check exits non-zero on an orphan link (note_slug has no vault note)", () => {
   const { pluginDir } = makeRepo();
   writeLinks(pluginDir, ["task-9\tprojects/does-not-exist\t"]);

@@ -72,6 +72,30 @@ const rows: Row[] = [
   { label: "AUDIT-P2 mkfs /dev/sda", cmd: "mkfs /dev/sda", expectedExit: 2 },
   { label: "AUDIT-P2 mkfs -t ext4 /dev/sda1", cmd: "mkfs -t ext4 /dev/sda1", expectedExit: 2 },
 
+  // ---- AUDIT2 #1 [P0]: a non-recursive flag BEFORE the -r/-rf token bypassed the rm rule ----------
+  // The old pattern anchored to the FIRST dash-token, so any flag lacking r placed first defeated it.
+  { label: "AUDIT2-P0 rm -f -r /", cmd: "rm -f -r /", expectedExit: 2 },
+  { label: "AUDIT2-P0 rm -f -r ~", cmd: "rm -f -r ~", expectedExit: 2 },
+  { label: "AUDIT2-P0 rm -f -r $HOME", cmd: "rm -f -r $HOME", expectedExit: 2 },
+  { label: "AUDIT2-P0 rm -f -R /etc (uppercase R after f)", cmd: "rm -f -R /etc", expectedExit: 2 },
+  { label: "AUDIT2-P0 rm -v -rf / (verbose first)", cmd: "rm -v -rf /", expectedExit: 2 },
+  { label: "AUDIT2-P0 rm -i -rf / (interactive first)", cmd: "rm -i -rf /", expectedExit: 2 },
+  { label: "AUDIT2-P0 rm --no-preserve-root -rf / (the real GNU root wipe)", cmd: "rm --no-preserve-root -rf /", expectedExit: 2 },
+
+  // ---- AUDIT2 #2 [P1]: the brace form ${HOME} bypassed (only $HOME was handled) -------------------
+  { label: "AUDIT2-P1 rm -rf ${HOME}", cmd: "rm -rf ${HOME}", expectedExit: 2 },
+  { label: "AUDIT2-P1 rm -rf ${HOME}/.cache", cmd: "rm -rf ${HOME}/.cache", expectedExit: 2 },
+  { label: 'AUDIT2-P1 rm -rf "${HOME}" (quoted brace)', cmd: 'rm -rf "${HOME}"', expectedExit: 2 },
+
+  // ---- AUDIT2 #3 [P2]: quoted FLAG token + empty-quote path collapse ("")/("") -> / ---------------
+  { label: 'AUDIT2-P2 rm "-rf" / (double-quoted flag)', cmd: 'rm "-rf" /', expectedExit: 2 },
+  { label: "AUDIT2-P2 rm '-rf' / (single-quoted flag)", cmd: "rm '-rf' /", expectedExit: 2 },
+  { label: 'AUDIT2-P2 rm -rf ""/"" (empty-quote path collapses to /)', cmd: 'rm -rf ""/""', expectedExit: 2 },
+
+  // ---- AUDIT2 #4 [P2]: macOS raw device node /dev/rdiskN omitted from the redirect rule -----------
+  { label: "AUDIT2-P2 cat img > /dev/rdisk0 (macOS raw node)", cmd: "cat img > /dev/rdisk0", expectedExit: 2 },
+  { label: "AUDIT2-P2 redirect to /dev/rdisk1", cmd: "echo x > /dev/rdisk1", expectedExit: 2 },
+
   // ---- ALLOW CASES (must NOT block; exit 0) -------------------------------------------------------
   { label: "rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },
   { label: "rm -rf node_modules", cmd: "rm -rf node_modules", expectedExit: 0 },
@@ -88,6 +112,16 @@ const rows: Row[] = [
   { label: 'rm -rf "$TMPDIR/build" (quoted non-home var)', cmd: 'rm -rf "$TMPDIR/build"', expectedExit: 0 },
   { label: "mkfs.ext4 disk.img (image file, not a device)", cmd: "mkfs.ext4 disk.img", expectedExit: 0 },
   { label: "dd to an image file (of= is not /dev)", cmd: "dd if=/dev/zero of=out.img", expectedExit: 0 },
+  // AUDIT2 false-positive guards: the multi-token / brace / rdisk widenings must NOT block these.
+  { label: 'AUDIT2-ALLOW commit msg mentioning rm -rf', cmd: 'git commit -m "fix rm -rf in docs"', expectedExit: 0 },
+  { label: "AUDIT2-ALLOW rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },
+  { label: "AUDIT2-ALLOW rm -f -r ./build (multi-token, relative)", cmd: "rm -f -r ./build", expectedExit: 0 },
+  { label: "AUDIT2-ALLOW rm -v -rf node_modules (verbose, relative)", cmd: "rm -v -rf node_modules", expectedExit: 0 },
+  { label: 'AUDIT2-ALLOW rm -rf "$TMPDIR/x" (non-home var)', cmd: 'rm -rf "$TMPDIR/x"', expectedExit: 0 },
+  { label: "AUDIT2-ALLOW rm -rf /tmp/scratch", cmd: "rm -rf /tmp/scratch", expectedExit: 0 },
+  { label: "AUDIT2-ALLOW rm -rf ./etc/config (relative etc)", cmd: "rm -rf ./etc/config", expectedExit: 0 },
+  { label: "AUDIT2-ALLOW dd if=/dev/disk0 of=backup.img (read from device)", cmd: "dd if=/dev/disk0 of=backup.img", expectedExit: 0 },
+  { label: "AUDIT2-ALLOW cat x > ./dev/null-ish (relative dev path)", cmd: "cat x > ./dev/null-ish", expectedExit: 0 },
 
   // ---- USAGE (no arg, exit 1) --------------------------------------------------------------------
   { label: "no-arg usage", cmd: null, expectedExit: 1 },
