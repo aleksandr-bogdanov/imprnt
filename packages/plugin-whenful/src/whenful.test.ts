@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, existsSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 // The whenful scripts resolve every path from import.meta.url (their own folder) and the repo root two
@@ -120,6 +120,36 @@ test("check exits non-zero on an orphan link (note_slug has no vault note)", () 
   const r = run(pluginDir, "check.ts");
   expect(r.exitCode).not.toBe(0);
   expect(r.stdout).toContain("orphan link");
+});
+
+test("check survives a broken symlink at vault top level during bare-slug resolution", () => {
+  const { pluginDir, vault } = makeRepo();
+  mkdirSync(join(vault, "projects"), { recursive: true });
+  writeFileSync(join(vault, "projects", "whenful.md"), "# Whenful\n");
+  // A dangling symlink sorts before "projects" in the readdir walk - it must be skipped, not crash.
+  symlinkSync(join(vault, "no-such-target"), join(vault, "dangling"));
+  writeLinks(pluginDir, ["task-1\twhenful\t"]); // bare slug forces the vault folder walk
+  writeFileSync(join(pluginDir, "mirror", ".last-sync"), new Date().toISOString() + "\n");
+
+  const r = run(pluginDir, "check.ts");
+  expect(r.exitCode).toBe(0);
+  expect(r.stdout).toContain("sound.");
+});
+
+test("check flags a malformed links.tsv row (space-delimited) and exits non-zero", () => {
+  const { pluginDir, vault } = makeRepo();
+  mkdirSync(join(vault, "projects"), { recursive: true });
+  writeFileSync(join(vault, "projects", "whenful.md"), "# Whenful\n");
+  writeLinks(pluginDir, [
+    "task-1\tprojects/whenful\t", // parseable row - behavior unchanged
+    "task-2 projects/whenful step", // space-delimited, no tabs - unparseable as TSV
+  ]);
+  writeFileSync(join(pluginDir, "mirror", ".last-sync"), new Date().toISOString() + "\n");
+
+  const r = run(pluginDir, "check.ts");
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stdout).toContain("unparseable");
+  expect(r.stdout).toContain("1 link(s)"); // the parseable row still counts
 });
 
 test("usage: unknown command exits 1", () => {

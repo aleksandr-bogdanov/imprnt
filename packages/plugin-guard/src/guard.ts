@@ -14,14 +14,20 @@
 // parsing and is out of scope.
 import { readFileSync } from "node:fs";
 
-const HOME_OR_SYSTEM = "(\\/|~|\\$HOME|\\/Users|\\/etc|\\/usr|\\/var|\\/bin|\\/System|\\/Library)(\\s|\\/|$)";
+// The path token may be quoted (rm -rf "/" - ShellCheck-idiomatic) and may be followed by a quote,
+// a closing paren, a command separator (; &) or end-of-line (bash -c 'rm -rf ~', rm -rf ~;).
+// Optional leading quote + a widened trailing boundary catch those shapes - still a regex, not a parser.
+const HOME_OR_SYSTEM = "[\"']?(\\/|~|\\$HOME|\\/Users|\\/etc|\\/usr|\\/var|\\/bin|\\/System|\\/Library)(\\s|\\/|[\"');&]|$)";
 const DENY: { re: RegExp; why: string }[] = [
   // rm with short bundled flags: -rf, -fr, -r -f, -r --force, etc. (an r-flag, an f somewhere).
-  { re: new RegExp(`\\brm\\s+-[a-z]*r[a-z]*f?\\b[^\\n]*\\s${HOME_OR_SYSTEM}`), why: "rm -rf on a home/system path" },
+  // Flag letters match both cases (-R is the BSD/macOS synonym for -r, GNU accepts it too).
+  { re: new RegExp(`\\brm\\s+-[a-zA-Z]*[rR][a-zA-Z]*[fF]?\\b[^\\n]*\\s${HOME_OR_SYSTEM}`), why: "rm -rf on a home/system path" },
   // rm with GNU long flags: --recursive and --force in any order, possibly interspersed with paths.
   { re: new RegExp(`\\brm\\b(?=[^\\n]*--recursive\\b)(?=[^\\n]*--force\\b)[^\\n]*\\s${HOME_OR_SYSTEM}`), why: "rm --recursive --force on a home/system path" },
   { re: /\bsudo\b/, why: "sudo / privilege escalation" },
-  { re: /\b(mkfs|dd)\b[^\n]*\bof=\/dev\//, why: "writing to a raw device" },
+  { re: /\bdd\b[^\n]*\bof=\/dev\//, why: "writing to a raw device" },
+  // mkfs takes the device positionally (mkfs.ext4 /dev/sda), never of= - match /dev/ as an argument.
+  { re: /\bmkfs(\.[a-z0-9]+)?\b[^\n]*\s["']?\/dev\//, why: "mkfs on a raw device" },
   { re: />\s*\/dev\/(sd|nvme|disk)/, why: "redirect to a raw disk" },
   { re: /:\s*\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/, why: "fork bomb" },
   { re: /\bchmod\s+-R\s+0?777\s+\//, why: "recursive 777 on a system path" },
