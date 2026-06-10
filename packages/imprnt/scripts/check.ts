@@ -21,7 +21,7 @@ import { readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "
 import { spawnSync } from "node:child_process";
 import { join, relative, dirname } from "node:path";
 import { projectRoot } from "./lib/roots.ts";
-import { generateIndex, collectNotes, frontmatter } from "./lib/moc.ts";
+import { generateIndex, collectNotes, frontmatter, stripQuotes } from "./lib/moc.ts";
 import { loadTags, normalize, appendTags } from "./lib/tags.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
@@ -119,8 +119,15 @@ for (const n of notes) {
   }
 
   // self-describing domain: a note in a domain folder must carry `domain: <that folder>` so folder and
-  // field can't drift. Entities/forms are self-described by `type` and carry no domain.
-  const domain = fm.match(/^domain:\s*(.+)$/m)?.[1]?.trim() ?? "";
+  // field can't drift. Entities/forms are self-described by `type` and carry no domain. Read from the
+  // frontmatter block (fm) only, and normalize the value the way the contract writes it: the same
+  // double-quoting it mandates for source: (`domain: "health"`) and an optional trailing YAML comment
+  // (`domain: health  # life-area`) are LEGAL and must compare equal to the folder, not flag a false
+  // mismatch. We strip a trailing inline comment first (only when the value is unquoted - a `#` inside
+  // quotes is data, not a comment), then unwrap the quotes via moc.ts's stripQuotes (same unwrap moc
+  // applies to summary/type, so check and the index agree on the field's value).
+  const domainRaw = (fm.match(/^domain:\s*(.+)$/m)?.[1] ?? "").trim();
+  const domain = stripQuotes(/^["']/.test(domainRaw) ? domainRaw : domainRaw.replace(/\s+#.*$/, "").trim());
   if (DOMAIN_FOLDERS.has(n.folder) && domain !== n.folder) {
     domainIssues.push(`  ${n.slug}  — in ${n.folder}/ but domain: ${domain || "(missing)"}`);
     review.push(`- [ ] domain mismatch [[${n.slug}]] — in ${n.folder}/ but domain: ${domain || "(missing)"}`);
@@ -194,15 +201,34 @@ function syncNeedsReview(lines: string[]): "written" | "cleared" | "none" {
   if (!exists && lines.length === 0) return "none"; // clean + absent: never create the file
   // Absent but dirty: create with the same header flagNeedsReview (lib/resolve.ts) writes.
   const prev = exists ? readFileSync(p, "utf8") : "---\ntype: needs-review\n---\n\n# Needs review\n\n";
+  // Pair the markers by POSITION: the END must come AFTER the BEGIN. A bare indexOf(END) over the whole
+  // file matches the wrong end - an END string quoted in prose ABOVE the section makes e < b, so the old
+  // code fell to the append branch and grew an UNBOUNDED run of duplicate sections every run. We search
+  // for END only PAST the begin marker, so a quote anywhere before the section can never mispair.
   const b = prev.indexOf(REVIEW_BEGIN);
-  const e = prev.indexOf(REVIEW_END);
+  const e = b !== -1 ? prev.indexOf(REVIEW_END, b + REVIEW_BEGIN.length) : -1;
   const section = `${REVIEW_BEGIN}\n${lines.join("\n")}\n${REVIEW_END}\n`;
   let next: string;
-  if (b !== -1 && e !== -1 && e > b) {
-    // Replace (or drop) the section in place. The newline the previous write left after END belongs
-    // to the section, so strip it from the tail - the new section (if any) brings its own.
-    const tail = prev.slice(e + REVIEW_END.length).replace(/^\n/, "");
-    next = prev.slice(0, b) + (lines.length ? section : "") + tail;
+  if (b !== -1) {
+    // `before` (everything above the begin marker) is always preserved verbatim - ingest/user lines and
+    // any prose live there in order. The fresh section (if any) replaces the old one in place.
+    const before = prev.slice(0, b);
+    let after: string;
+    if (e !== -1) {
+      // Well-formed begin..end. Drop the content strictly between (check's stale findings); keep the tail
+      // below END. The newline the previous write left after END belongs to the section, so strip it -
+      // the new section brings its own.
+      after = prev.slice(e + REVIEW_END.length).replace(/^\n/, "");
+    } else {
+      // Orphan begin: the user hand-deleted the END, and ingest's appendFileSync (it always appends at
+      // EOF) may have dropped a soft-fail line BELOW the orphaned begin - the only record ingest failed.
+      // We cannot tell that ingest line from a stale finding by shape, so we never eat it: everything
+      // below the orphaned begin LINE is preserved as outside content, and only the dead begin marker is
+      // removed. The fresh section is rewritten above it, so the next run sees a well-formed pair and is
+      // byte-idempotent. We never append a second begin, so the duplicate-section trap can't form.
+      after = prev.slice(b + REVIEW_BEGIN.length).replace(/^\n/, "");
+    }
+    next = before + (lines.length ? section : "") + after;
   } else {
     if (lines.length === 0) return "none";
     next = (prev.endsWith("\n") ? prev : prev + "\n") + section;
