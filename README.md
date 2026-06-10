@@ -78,7 +78,7 @@ imp                    # open your assistant and talk
 > npm i -g ./packages/imprnt                 # the same imprnt + imp commands, from your clone
 > ```
 >
-> The `shipdocs` step is what npm's publish runs for you; from source you run it once by hand so
+> The `shipdocs` step is what npm's publish runs for you. From source you run it once by hand so
 > `imprnt init` has the contract to drop. The global install symlinks to your clone, so keep the
 > clone in place.
 
