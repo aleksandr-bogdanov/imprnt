@@ -86,9 +86,13 @@ const RM_CMD = "\\brm\\b";
 //   (c) CHMOD_777       - the world-writable 777 mode (with optional leading 0) in ANY token, in any
 //                         order relative to the flag.
 //   (d) DANGEROUS_PATH  - a root/home/system path appears in ANY token, REUSING the rm machinery
-//                         (ROOT_TOKEN + PATH_TAIL), so /tmp /var/tmp /var/folders /app /workspace
-//                         /data (non-system absolute paths) are NOT blocked while / /etc /usr /home
-//                         /var /opt ... ARE. Identical cut to the rm rule, no separate path list.
+//                         (ROOT_TOKEN + PATH_TAIL) behind the SAME leading `\s` boundary the rm rule
+//                         carries, so the root token must START a fresh argument and never matches as a
+//                         SUBSTRING of a relative path (chmod -R 777 ./bin, vendor/bin, dist/lib stay
+//                         allowed - their /bin /lib are mid-path, not argument heads). With that boundary
+//                         /tmp /var/tmp /var/folders /app /workspace /data (non-system absolute paths)
+//                         are NOT blocked while / /etc /usr /home /var /opt ... ARE. Identical cut to the
+//                         rm rule (same `(?=[^\n]*\s${DANGEROUS_PATH})`), no separate path list.
 const CHMOD_CMD = "\\bchmod\\b";
 const CHMOD_RECURSIVE = `(?:(?<=[\\s"'])${Q}?-[a-zA-Z]*[rR][a-zA-Z]*\\b|--recursive\\b)`;
 const CHMOD_777 = "0?777\\b";
@@ -117,7 +121,7 @@ const DENY: { re: RegExp; why: string }[] = [
   // dangerous-path predicate is the SAME one rm uses (so /tmp /var/tmp /app /workspace /data are
   // carved out while / /etc /usr /home /var /opt stay blocked). Matches the rm decomposition exactly.
   {
-    re: new RegExp(`${CHMOD_CMD}(?=[^\\n]*${CHMOD_RECURSIVE})(?=[^\\n]*${CHMOD_777})(?=[^\\n]*${DANGEROUS_PATH})`),
+    re: new RegExp(`${CHMOD_CMD}(?=[^\\n]*${CHMOD_RECURSIVE})(?=[^\\n]*${CHMOD_777})(?=[^\\n]*\\s${DANGEROUS_PATH})`),
     why: "recursive 777 on a root/home/system path",
   },
   // force-push: a `git push` line carrying a force flag (-f / --force / --force-with-lease) AND a

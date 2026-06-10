@@ -261,6 +261,21 @@ const rows: Row[] = [
   { label: "AUDIT6-ALLOW chmod +x script.sh (no recursive, no 777)", cmd: "chmod +x script.sh", expectedExit: 0 },
   { label: "AUDIT6-ALLOW chmod -R 777 node_modules (relative target)", cmd: "chmod -R 777 node_modules", expectedExit: 0 },
 
+  // ---- AUDIT8 ALLOW [P2 FALSE POSITIVE]: a system-dir NAME inside a RELATIVE path must NOT block (exit 0) ----
+  // The chmod path lookahead reused DANGEROUS_PATH but dropped the leading whitespace boundary the rm
+  // rule carries, so a ROOT_TOKEN (/bin /etc /usr /lib /Library ...) matched as a SUBSTRING inside a
+  // relative path. chmod -R 777 ./bin contains "/bin", chmod -R 777 vendor/bin contains "/bin", and so on,
+  // so every benign recursive 777 on a relative subdir whose name shadows a system dir was wrongly blocked.
+  // The rm rule's `\s` before DANGEROUS_PATH forces the root token to START a fresh argument, so the rm
+  // equivalents (rm -rf ./bin, rm -rf vendor/bin) already returned 0 - an rm/chmod asymmetry. Mirroring the
+  // rm boundary into the chmod rule closes it. chmod -R 777 node_modules/.bin fixes exec bits after npm install.
+  { label: "AUDIT8-ALLOW chmod -R 777 ./bin (relative dir, contains /bin)", cmd: "chmod -R 777 ./bin", expectedExit: 0 },
+  { label: "AUDIT8-ALLOW chmod -R 777 vendor/bin (relative dir, contains /bin)", cmd: "chmod -R 777 vendor/bin", expectedExit: 0 },
+  { label: "AUDIT8-ALLOW chmod -R 777 dist/lib (relative dir, contains /lib)", cmd: "chmod -R 777 dist/lib", expectedExit: 0 },
+  { label: "AUDIT8-ALLOW chmod -R 777 out/usr/share (relative dir, contains /usr)", cmd: "chmod -R 777 out/usr/share", expectedExit: 0 },
+  { label: "AUDIT8-ALLOW chmod -R 777 rootfs/etc (relative dir, contains /etc)", cmd: "chmod -R 777 rootfs/etc", expectedExit: 0 },
+  { label: "AUDIT8-ALLOW chmod -R 777 node_modules/.bin (fix exec bits after npm install)", cmd: "chmod -R 777 node_modules/.bin", expectedExit: 0 },
+
   // ---- USAGE (no arg, exit 1) --------------------------------------------------------------------
   { label: "no-arg usage", cmd: null, expectedExit: 1 },
 ];
