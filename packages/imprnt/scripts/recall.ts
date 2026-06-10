@@ -21,6 +21,10 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { loadTags, normalize, type TagVocab } from "./lib/tags.ts";
+// The frontmatter list parser + BOM strip are CORE and shared with moc.ts (which check.ts/ingest.ts
+// build on), so the write side (check certifies a tag) and the read side (recall finds it) parse the
+// SAME note identically. Both files are core - the copy-don't-share rule is for plugins only.
+import { fmList, stripBom } from "./lib/moc.ts";
 
 const args = process.argv.slice(2);
 let vault = process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
@@ -67,26 +71,31 @@ const STOPWORDS = new Set([
 const tokenize = (text: string): string[] =>
   text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 
-// A synonym key in _tags.md can be multi-token or accented (`big-query`, `on-call`, `net worth`). The
-// alnum/Unicode tokenizer splits those into pieces, so a query like `big-query` would never reach the
-// `big-query -> bigquery` synonym via per-token normalize. To make those keys reachable from the query
-// side, scan the raw whitespace-split query for any synonym key (single token AND adjacent n-grams) and,
-// for each match, contribute the canonical's TOKENS as extra query terms. The per-token path below still
-// runs, so single-token synonyms keep working too.
+// A MULTI-token or hyphenated synonym key (`big-query`, `on-call`, `net worth`) is split into pieces
+// by the alnum/Unicode tokenizer, so `big-query` would never reach the `big-query -> bigquery` synonym
+// via per-token normalize. To make those keys reachable, scan the raw whitespace-split query for any
+// MULTI-word synonym key (adjacent n-grams, n >= 2) and contribute the canonical's TOKENS as extra
+// query terms. SINGLE-token keys are deliberately NOT handled here: the per-token group below already
+// carries `[word, normalize(word)]`, so the canonical is one alternative WITHIN the word's group. If
+// this added a single-token canonical as its own group too, a one-word synonym query ("money" ->
+// finances) would score the canonical in a separate additive group AND the word in its own group,
+// double-counting and tying a one-word query with the explicit two-word query.
 //   Returns the tokenized canonicals discovered from multi-token/hyphenated synonym keys.
 const phraseSynonymTokens = (q: string): string[] => {
   const out: string[] = [];
-  // Punctuation hugging a word ("big-query,") must not hide its synonym key - strip the
-  // non-letter/number edges of each word, interior hyphens survive.
-  const words = q.toLowerCase().split(/\s+/)
+  // Atomize the query the way the tokenizer would: split on whitespace AND hyphens (and strip any
+  // other punctuation off the edges), so "big-query" becomes the atoms [big, query] - the n-gram
+  // base. This is what lets a hyphenated key written as one whitespace-word still be reassembled and
+  // matched below (joined back by both hyphen and space).
+  const words = q.toLowerCase().split(/[\s-]+/)
     .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
     .filter(Boolean);
-  // Try the whole phrase, then every contiguous n-gram down to single words, joined by both space and
-  // hyphen (a key may be written either way). A hit maps to its canonical, which we then tokenize.
-  for (let n = words.length; n >= 1; n--) {
+  // Try the whole phrase, then every contiguous n-gram down to PAIRS (n >= 2), joined by both space
+  // and hyphen (a key may be written either way). A hit maps to its canonical, which we then tokenize.
+  for (let n = words.length; n >= 2; n--) {
     for (let i = 0; i + n <= words.length; i++) {
       const span = words.slice(i, i + n);
-      for (const key of [span.join(" "), span.join("-")]) {
+      for (const key of new Set([span.join(" "), span.join("-")])) {
         const canon = normalize(vocab, key);
         if (canon !== key) out.push(...tokenize(canon));
       }
@@ -138,27 +147,6 @@ function walk(dir: string): string[] {
 let files: string[] = [];
 try { files = walk(vault); } catch { console.error(`no vault at ${vault} — run \`imprnt init\` first`); process.exit(1); }
 
-// Parse the frontmatter `tags: [...]` into NORMALIZED canonical tags (write and search agree on one
-// concept = one tag), and `aliases: [...]` (the note's own alternate names — an identity surface).
-// Accepts both the inline form (`tags: [a, b]`) and the block form Obsidian's properties UI writes
-// (`tags:` then consecutive `- item` lines). Small deterministic parser, no YAML dep.
-function frontmatterList(fm: string, key: string): string[] {
-  const clean = (s: string) => s.trim().replace(/^["']|["']$/g, "").toLowerCase();
-  const inline = fm.match(new RegExp(`^${key}:\\s*\\[(.*?)\\]`, "im"))?.[1];
-  if (inline !== undefined) return inline.split(",").map(clean).filter(Boolean);
-  const lines = fm.split(/\r?\n/);
-  const head = lines.findIndex((l) => new RegExp(`^${key}:\\s*$`, "i").test(l));
-  if (head < 0) return [];
-  const out: string[] = [];
-  for (let i = head + 1; i < lines.length; i++) {
-    const item = lines[i].match(/^\s+-\s*(.*)$/);
-    if (!item) break;
-    const v = clean(item[1]);
-    if (v) out.push(v);
-  }
-  return out;
-}
-
 // Field boosts. A term in the title/aliases is a stronger signal that the note IS about the query than
 // the same term in tags, which is stronger than an incidental body mention. We fold these into the term
 // frequency so one weighted BM25 pass captures all three.
@@ -172,7 +160,9 @@ const docs: Doc[] = [];
 const df = new Map<string, number>(); // document frequency: how many notes contain each term
 
 for (const path of files) {
-  const raw = readFileSync(path, "utf8");
+  // Strip a leading UTF-8 BOM (shared with moc.ts) so a BOM-prefixed note's fence still matches -
+  // otherwise all frontmatter drops to body weight and leaks frontmatter values into the body.
+  const raw = stripBom(readFileSync(path, "utf8"));
   // Accept CRLF (`\r\n`) fences so Windows-authored notes parse frontmatter. Without `\r?` the closing
   // `---\r` line never matches and the whole frontmatter falls through to the body, losing tag boosts.
   const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -182,8 +172,10 @@ for (const path of files) {
   // Match the H1 against the BODY - a YAML comment line in frontmatter (`# managed by hand`) must
   // not pose as the title.
   const titleText = body.match(/^#\s+(.+)$/m)?.[1] ?? "";
-  const aliases = frontmatterList(fm, "aliases").join(" ");
-  const tags = frontmatterList(fm, "tags").map((t) => normalize(vocab, t));
+  // Shared fmList parses inline + block (flush-left OR indented) lists identically to check, so a tag
+  // check certifies is a tag recall scores. normalize() lowercases tags; tokenize() lowercases aliases.
+  const aliases = fmList(fm, "aliases").join(" ");
+  const tags = fmList(fm, "tags").map((t) => normalize(vocab, t));
 
   // Weighted term frequency: each occurrence contributes its field's boost. The filename STEM joins
   // the title surface (the slug IS the note's identity) - and only the stem: folders are browse

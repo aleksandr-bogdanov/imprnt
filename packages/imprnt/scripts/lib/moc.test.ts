@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { generateIndex, collectNotes } from "./moc.ts";
+import { generateIndex, collectNotes, fmList, frontmatter } from "./moc.ts";
 
 function tmpVault(): string {
   return mkdtempSync(join(tmpdir(), "imprnt-moc-"));
@@ -132,6 +132,43 @@ test("a bare `tags:` with no items is an empty list, not a crash", () => {
   const note = collectNotes(vault).find((n) => n.slug === "life/t")!;
   expect(note.tags).toEqual([]);
   expect(note.type).toBe("note");
+});
+
+// --- finding 1 (P1): flush-left block items (column 0) parse like indented ones --------------------
+// Pre-fix fmList's item regex was `/^\s*-\s+(.+?)\s*$/` (the leading \s* allowed but did not require
+// indent), so it ALREADY accepted flush-left items - the divergence was recall's parser, which required
+// indent. These tests pin the shared semantics so both readers stay in sync via the exported parser.
+test("fmList parses flush-left block items (column-0 `- item`)", () => {
+  const fm = "tags:\n- kubernetes\n- helm\ntype: note\n";
+  expect(fmList(fm, "tags")).toEqual(["kubernetes", "helm"]);
+});
+
+test("fmList parses mixed-indent block items and skips empty items", () => {
+  const fm = "tags:\n- alpha\n  - beta\n-\n  - gamma\ntype: note\n";
+  expect(fmList(fm, "tags")).toEqual(["alpha", "beta", "gamma"]);
+});
+
+test("fmList block stops at the next key (flush-left form)", () => {
+  const fm = "tags:\n- alpha\nsummary: not a tag\n";
+  expect(fmList(fm, "tags")).toEqual(["alpha"]);
+});
+
+// --- finding 3 (P3): a leading UTF-8 BOM does not defeat the frontmatter fence ---------------------
+test("frontmatter() strips a leading BOM so the fence still matches", () => {
+  const raw = "﻿---\ntype: note\ntags: [alpha]\n---\n\n# T\n\nbody\n";
+  const fm = frontmatter(raw);
+  expect(fm).toContain("type: note");
+  expect(fmList(fm, "tags")).toEqual(["alpha"]);
+});
+
+test("a BOM-prefixed note still collects its frontmatter (summary/tags/type)", () => {
+  const vault = tmpVault();
+  const fm = "﻿---\ntype: person\nsummary: BOM summary.\ntags: [bommed]\n---\n\n# Jane\n\nbody\n";
+  writeNote(vault, "people", "jane.md", fm);
+  const note = collectNotes(vault).find((n) => n.slug === "people/jane")!;
+  expect(note.summary).toBe("BOM summary.");
+  expect(note.tags).toEqual(["bommed"]);
+  expect(note.type).toBe("person");
 });
 
 // --- symmetric quote-strip (fmScalar) ---------------------------------------

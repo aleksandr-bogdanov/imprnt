@@ -37,6 +37,32 @@ test("normalize leaves a canonical unchanged", () => {
   expect(normalize(vocab, "bigquery")).toBe("bigquery");
 });
 
+// P2 #1: an underscore/space tag variant must kebab BEFORE the synonym lookup, so it still
+// resolves through the map. Otherwise recall misses the canonical and check re-appends the key.
+test("normalize kebabs the input before the synonym lookup (BUG: underscore/space variant)", () => {
+  const vocab = { approved: new Set<string>(), synonyms: new Map([["tax-filing", "taxes"]]) };
+  expect(normalize(vocab, "Tax_Filing")).toBe("taxes");
+  expect(normalize(vocab, "Tax Filing")).toBe("taxes");
+});
+
+// P2 #2: normalize must resolve a synonym CHAIN to its fixed point so a note tag and a query
+// keyword that enter the chain at different points meet at the same canonical.
+test("normalize follows a synonym chain to its fixed point", () => {
+  const vocab = { approved: new Set<string>(), synonyms: new Map([["money", "finances"], ["finances", "wealth"]]) };
+  expect(normalize(vocab, "money")).toBe("wealth");
+  expect(normalize(vocab, "finances")).toBe("wealth");
+  expect(normalize(vocab, "money")).toBe(normalize(vocab, "finances"));
+});
+
+// P2 #2 cycle guard: a 2-cycle must terminate (not loop forever) and be deterministic.
+test("normalize terminates deterministically on a synonym 2-cycle", () => {
+  const vocab = { approved: new Set<string>(), synonyms: new Map([["a", "b"], ["b", "a"]]) };
+  const first = normalize(vocab, "a");
+  expect(["a", "b"]).toContain(first);
+  expect(normalize(vocab, "a")).toBe(first); // deterministic across calls
+  expect(normalize(vocab, "b")).toBe(normalize(vocab, "b"));
+});
+
 // --- loadTags ---
 
 test("loadTags parses a single-line tag list and synonyms", () => {
@@ -100,6 +126,51 @@ test("appendTags does not mangle a prose line in the section (BUG A)", () => {
   expect(lines[1]).toBe("alpha, beta, gamma");
   // Prose line is byte-identical.
   expect(lines[2]).toBe(prose);
+  rmSync(v, { recursive: true });
+});
+
+// P2 #3: a prose line under ## Tags that happens to contain one kebab-valid comma segment must
+// NOT be treated as the tag list. A line is a tag line only if the MAJORITY of its comma segments
+// are valid tokens. Here "Keep this list lean" (invalid, interior spaces) + "one-concept" (valid)
+// = 1 of 2, not a majority, so the comment is skipped and the new tag lands on the real list below.
+test("appendTags skips a prose comment whose minority of segments are valid tokens (BUG: too-permissive isTagLine)", () => {
+  const comment = "Keep this list lean, one-concept";
+  const v = tmpVault(`## Tags\n${comment}\n\nalpha, beta\n## Synonyms\n`);
+  appendTags(v, ["gamma"]);
+  const lines = readFileSync(join(v, "_tags.md"), "utf8").split("\n");
+  // The comment line is byte-identical, untouched.
+  expect(lines[1]).toBe(comment);
+  // The new tag lands on the real tag-list line below the blank.
+  expect(lines.includes("alpha, beta, gamma")).toBe(true);
+  rmSync(v, { recursive: true });
+});
+
+// Round-1 salvage must survive the majority heuristic: "health, net worth, insurance" has 2 of 3
+// valid segments (net worth is invalid), a majority, so it stays a tag line and salvages both.
+test("loadTags still salvages a majority-valid tag line (round-1 regression guard)", () => {
+  const v = tmpVault("## Tags\nhealth, net worth, insurance\n\n## Synonyms\n");
+  const vocab = loadTags(v);
+  expect([...vocab.approved].sort()).toEqual(["health", "insurance"]);
+  rmSync(v, { recursive: true });
+});
+
+// A single valid token with no comma (the 1-of-1 majority) is a tag line: appendTags extends it.
+test("appendTags treats a single bare valid token as a tag line", () => {
+  const v = tmpVault("## Tags\nstandup\n\n## Synonyms\n");
+  appendTags(v, ["gamma"]);
+  const lines = readFileSync(join(v, "_tags.md"), "utf8").split("\n");
+  expect(lines[1]).toBe("standup, gamma");
+  rmSync(v, { recursive: true });
+});
+
+// A single prose phrase with no comma (0-of-1 valid, interior spaces) is NOT a tag line.
+test("appendTags does not treat a single comma-less prose phrase as a tag line", () => {
+  const phrase = "keep it lean";
+  const v = tmpVault(`## Tags\n${phrase}\n\nalpha\n## Synonyms\n`);
+  appendTags(v, ["gamma"]);
+  const lines = readFileSync(join(v, "_tags.md"), "utf8").split("\n");
+  expect(lines[1]).toBe(phrase); // prose phrase untouched
+  expect(lines.includes("alpha, gamma")).toBe(true); // tag lands on the real list
   rmSync(v, { recursive: true });
 });
 

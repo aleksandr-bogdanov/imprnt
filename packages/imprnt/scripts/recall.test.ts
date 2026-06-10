@@ -263,6 +263,117 @@ test("block-style YAML tags are indexed", () => {
   expect(r.stdout).not.toContain("no matches");
 });
 
+// --- finding 1 (P1): flush-left block-style tags (column-0 `- item`) get tag-level matching --------
+// Pre-fix recall's frontmatterList required leading indent (/^\s+-\s*/), so a note tagged with
+// flush-left `tags:\n- kubernetes` was reported tagged by check but NOT found by recall - the two
+// core readers disagreed. moc.ts (used by check via collectNotes) already accepted flush-left items.
+test("flush-left block tags get tag-level matching (recall agrees with check)", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // tag note has the term ONLY in flush-left block tags, body note ONLY in body.
+  writeFileSync(join(v, "tagged.md"), `---\ntype: note\ntags:\n- harbor\n- boats\n---\n# Some Title\n\nUnrelated prose about weather.\n`);
+  note(v, "bodyonly.md", `---\ntags: [bigquery]\n---\n# Title\n\nharbor appears once in body.\n`);
+
+  const r = recall("harbor", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("tagged.md");
+  expect(r.stdout).not.toContain("no matches");
+  // matched via the flush-left tag (2x boost) - it outranks the body-only mention.
+  const taggedIdx = r.stdout.indexOf("tagged.md");
+  const bodyIdx = r.stdout.indexOf("bodyonly.md");
+  expect(taggedIdx).toBeGreaterThan(-1);
+  if (bodyIdx > -1) expect(taggedIdx).toBeLessThan(bodyIdx);
+});
+
+test("mixed-indent block tags with an empty item are all matchable", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // flush-left, indented, an empty item (skipped), then indented again.
+  writeFileSync(join(v, "mixed.md"), `---\ntype: note\ntags:\n- harbor\n  - bigquery\n-\n  - insurance\n---\n# Mixed\n\nNothing here.\n`);
+
+  for (const term of ["harbor", "bigquery", "insurance"]) {
+    const r = recall(term, v);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("mixed.md");
+    expect(r.stdout).not.toContain("no matches");
+  }
+});
+
+// --- finding 2 (P2): a single-token synonym contributes the canonical as ONE alternative -----------
+// Pre-fix, for an n=1 synonym key span.join(" ") and span.join("-") were identical, so the canonical's
+// tokens were pushed TWICE as two separate additive scoring groups. A one-word query "money" then
+// scored a doc the same as the two-word "money finances", double-counting an incidental mention.
+test("single-token synonym does not double-count the canonical (money != money finances)", () => {
+  const v = newVault();
+  writeFileSync(
+    join(v, "_tags.md"),
+    `---\ntype: tags\n---\n\n# tags\n\n## Tags\nfinances\n\n## Synonyms\nmoney -> finances\n`,
+  );
+  // a doc with ONE incidental mention of each word. With money->finances, the synonym query "money"
+  // must not score this the same as the explicit two-word query "money finances".
+  note(v, "doc.md", `---\ntags: []\n---\n# Budget\n\nI have money saved and track finances loosely.\n`);
+  // filler so idf is well-defined and df(finances) > 0 from more than one note.
+  note(v, "filler.md", `---\ntags: []\n---\n# Filler\n\nfinances appear here too.\n`);
+
+  const scoreFor = (out: string): number => {
+    const line = out.split("\n").find((l) => l.includes("doc.md"));
+    return line ? parseFloat(line.match(/\[(\d+\.\d+)\]/)?.[1] ?? "0") : 0;
+  };
+  const one = recall("money", v);
+  const two = recall("money finances", v);
+  expect(one.code).toBe(0);
+  expect(two.code).toBe(0);
+  const sOne = scoreFor(one.stdout);
+  const sTwo = scoreFor(two.stdout);
+  expect(sOne).toBeGreaterThan(0); // "money" still finds the doc via the canonical
+  expect(sTwo).toBeGreaterThan(0);
+  // the two-word query counts BOTH money(->finances) and the literal finances; the one-word query
+  // counts the canonical ONCE. So the one-word score must be strictly less than the two-word score.
+  expect(sOne).toBeLessThan(sTwo);
+});
+
+test("round-1 invariant holds: a both-terms doc outranks a one-term doc with a single-token synonym", () => {
+  const v = newVault();
+  writeFileSync(
+    join(v, "_tags.md"),
+    `---\ntype: tags\n---\n\n# tags\n\n## Tags\nfinances\n\n## Synonyms\nmoney -> finances\n`,
+  );
+  note(v, "zboth.md", `---\ntags: []\n---\n# Budget Plan\n\nI track finances and save money each month.\n`);
+  note(v, "aone.md", `---\ntags: []\n---\n# Budget Plan\n\nI track finances each month.\n`);
+
+  const r = recall("money finances", v);
+  expect(r.code).toBe(0);
+  const zi = r.stdout.indexOf("zboth.md");
+  const ai = r.stdout.indexOf("aone.md");
+  expect(zi).toBeGreaterThan(-1);
+  expect(ai).toBeGreaterThan(-1);
+  expect(zi).toBeLessThan(ai);
+});
+
+// --- finding 3 (P3): a UTF-8 BOM before --- does not leak frontmatter into the body ----------------
+// Pre-fix a leading BOM defeated the /^---/ fence, so all frontmatter dropped to body weight and
+// frontmatter-only values leaked into the searchable body.
+test("a BOM-prefixed note keeps tags at tag weight; a frontmatter-only value does not match as body", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // BOM right before the fence. The term harbor is ONLY in the tag; "zzsummaryonly" is ONLY in a
+  // frontmatter scalar, never in the body.
+  writeFileSync(join(v, "bommed.md"), `﻿---\ntype: note\nsummary: zzsummaryonly text\ntags: [harbor]\n---\n# Title\n\nUnrelated prose about weather.\n`);
+  note(v, "bodyonly.md", `---\ntags: [bigquery]\n---\n# Title\n\nharbor appears once in body.\n`);
+
+  // harbor matches via the BOM note's tag (2x boost) and outranks a body-only mention.
+  const r = recall("harbor", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("bommed.md");
+  const taggedIdx = r.stdout.indexOf("bommed.md");
+  const bodyIdx = r.stdout.indexOf("bodyonly.md");
+  if (bodyIdx > -1) expect(taggedIdx).toBeLessThan(bodyIdx);
+
+  // a frontmatter-only value (the summary text) must NOT be searchable as body content.
+  const bySummary = recall("zzsummaryonly", v);
+  expect(bySummary.stdout).toContain("no matches");
+});
+
 // --- audit fix 4 (P2): a YAML comment in frontmatter is not the H1 ---------------------------------
 test("a YAML comment in frontmatter does not steal the H1 title boost", () => {
   const v = newVault();
