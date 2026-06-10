@@ -2,7 +2,7 @@
 
 These are the **shareable entry points**. You never run the CLI by hand; you talk to an agent,
 the agent runs a skill, the skill runs the CLI for the deterministic part and does the one LLM
-semantic pass itself. The skill is the steering wheel; the CLI is the engine.
+semantic pass itself. The skill is the steering wheel. The CLI is the engine.
 
 Three skills, all opt-in:
 - **Ingest/** — turn a transcript/note into a structured, resolved, tagged vault note.

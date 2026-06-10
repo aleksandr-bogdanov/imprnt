@@ -1,6 +1,6 @@
 ---
 name: imprnt-ingest
-description: Ingest any source (meeting transcript, pasted doc, prose dump, or a single fact) into the imprnt vault. The CLI snapshots the source verbatim into raw/ and, for transcripts, writes the deterministic event skeleton. You then do the ONE conscious LLM pass — classify the note's TYPE among the 8, write the summary, extract decisions/actions/questions with judgment, assign tags (coin a new one if none fits), set kind, resolve or create the entities the note touches, and clear them from needs-review. USE WHEN ingest, eat this, add to imprnt, process meeting, log this 1:1, file this note, save this, imprnt ingest.
+description: Ingest any source (meeting transcript, pasted doc, prose dump, or a single fact) into the imprnt vault. The CLI snapshots the source verbatim into raw/ and, for transcripts, writes the deterministic event skeleton. You then do the ONE conscious LLM pass: classify the note's TYPE among the 8, write the summary, extract decisions/actions/questions with judgment, assign tags (coin a new one if none fits), set kind, resolve or create the entities the note touches, and clear them from needs-review. USE WHEN ingest, eat this, add to imprnt, process meeting, log this 1:1, file this note, save this, imprnt ingest.
 ---
 
 # imprnt — Ingest
@@ -23,4 +23,4 @@ Read the vault contract (`<imprnt>/CLAUDE.md`) once, then execute `Workflows/Ing
 coin a new kebab-case tag and use it - `imprnt check` syncs it into `_tags.md`, no approval gate. Mark
 only the exceptions: `{inferred}` (your conclusion, not in the source) and `{ambiguous}` (uncertain).
 Unmarked = straight from the source. Never invent. Resolve entities by alias before creating a new note.
-If a source is already an enriched note, preserve its enrichment — don't re-derive from scratch.
+If a source is already an enriched note, preserve its enrichment. Do not re-derive from scratch.
