@@ -359,6 +359,41 @@ test("rm of a tab-completed _personal/ (trailing slash) removes the whole group 
   expect(readLocal(root)).not.toContain("@plugins/_personal");
 });
 
+// --- case-insensitive collision: one dir, one wired line (finding 2) ---
+// On a case-insensitive FS, plugins/anti-slop and plugins/Anti-Slop are the same physical dir, but
+// the wire-line match is case-sensitive. Adding a case-variant of an already-wired plugin used to
+// append a SECOND distinct @import line (and `plugin list` would hide the dup, and a later
+// `rm Foo --purge` would delete the shared dir while leaving the other case's line dangling).
+// addPlugin must reuse the existing on-disk dir name so there is exactly one line, matching the dir.
+
+test("add of a case-variant of an installed plugin does not wire a second line (finding 2)", () => {
+  const root = tmpRoot();
+  // Only the lowercase dir exists on disk.
+  mkPlugin(root, "anti-slop", { "agent.md": "x" });
+  const a = addPlugin(root, "anti-slop");
+  expect(a.added).toBe(true);
+  // Adding the SAME plugin under a different case must canonicalize to the existing dir, so it is
+  // already wired - no second line, and the entry matches the on-disk dir name.
+  const b = addPlugin(root, "Anti-Slop");
+  expect(b.added).toBe(false);
+  expect(b.error).toBeUndefined();
+  expect(b.entry).toBe("plugins/anti-slop/agent.md");
+  const lines = readLocal(root).split(/\r?\n/).filter((l) => l.trim().startsWith("@plugins/"));
+  expect(lines).toEqual(["@plugins/anti-slop/agent.md"]);
+});
+
+test("add of a case-variant <name>/<file.md> reuses the on-disk dir name for the wired line (finding 2)", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "_personal", { "voice.md": "x" });
+  addPlugin(root, "_personal/voice.md");
+  // A case-variant of the dir component must wire against the existing dir, not a second one.
+  const res = addPlugin(root, "_Personal/voice.md");
+  expect(res.added).toBe(false);
+  expect(res.entry).toBe("plugins/_personal/voice.md");
+  const lines = readLocal(root).split(/\r?\n/).filter((l) => l.trim().startsWith("@plugins/"));
+  expect(lines).toEqual(["@plugins/_personal/voice.md"]);
+});
+
 // --- importTargets / isEnabled ignore FENCED @import lines (finding 4) ---
 // Claude Code does NOT evaluate @imports inside a ``` code fence, but imp's inline/list logic used
 // to. A fenced @import would load in every outside session yet never in the lair (the launcher
@@ -405,6 +440,53 @@ test("isEnabled reports a fenced @import as NOT enabled (finding 4)", () => {
     ["```", "@plugins/character/scribe.md", "```"].join("\n"),
   );
   expect(isEnabled(root, "character")).toBe(false);
+});
+
+// --- a hand-commented <name>/<file.md> line: rm finds it, add does not duplicate (finding 3) ---
+// Hand-editing CLAUDE.local.md is documented. A user can append a trailing comment to a managed
+// line (`@plugins/_personal/voice.md  # my overlay`). addPlugin's exact-line match (l.trim() ===
+// line) and rmPlugin's exact-line match (l === importLine) both missed that variant for the
+// <name>/<file.md> form: add would DUPLICATE it, rm would NO-OP, while list/isEnabled (prefix
+// scan) correctly reported it on. Match on the import TARGET token, tolerating a trailing comment.
+
+test("rm of a <name>/<file.md> finds a hand-commented (trailing-#) line (finding 3)", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "_personal", { "voice.md": "x" });
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    "# header\n@plugins/_personal/voice.md  # my overlay\n",
+  );
+  const removed = rmPlugin(root, "_personal/voice.md");
+  expect(removed).toBe(1);
+  expect(readLocal(root)).not.toContain("@plugins/_personal/voice.md");
+});
+
+test("add of a <name>/<file.md> does not duplicate a hand-commented line (finding 3)", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "_personal", { "voice.md": "x" });
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    "# header\n@plugins/_personal/voice.md  # my overlay\n",
+  );
+  const res = addPlugin(root, "_personal/voice.md");
+  expect(res.added).toBe(false);
+  expect(res.error).toBeUndefined();
+  const lines = readLocal(root).split(/\r?\n/).filter((l) => l.includes("@plugins/_personal/voice.md"));
+  expect(lines.length).toBe(1);
+});
+
+// rm of a bare name already matched a commented-out (`# @plugins/...`) line via prefix? No - a
+// commented line is not live and stays. But a trailing-comment line under a bare-name group must
+// still be removed by the group rm, consistent with the file-form fix.
+test("rm of a bare name removes a hand-commented (trailing-#) group line (finding 3)", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "_personal", { "voice.md": "x", "taylor.md": "x" });
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    "# header\n@plugins/_personal/voice.md  # overlay\n@plugins/_personal/taylor.md\n",
+  );
+  expect(rmPlugin(root, "_personal")).toBe(2);
+  expect(readLocal(root)).not.toContain("@plugins/_personal");
 });
 
 // --- rm symmetry: a file spec removes exactly its line, a bare name removes the group ---

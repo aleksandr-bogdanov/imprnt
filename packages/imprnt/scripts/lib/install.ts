@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, cpSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { specError, resolvedBasename } from "./plugins.ts";
+import { specError, resolvedBasename, canonicalSpec } from "./plugins.ts";
 
 // Official plugin names, for `plugin list` discovery when nothing is installed yet. A hint string,
 // NOT a registry: each maps by convention to the npm package `imprnt-plugin-<name>`. Adding an
@@ -73,6 +73,10 @@ export function installPlugin(
   // root itself and the extracted tarball would overwrite same-named files there.
   const invalid = specError(projectRoot, name);
   if (invalid) return { copied: false, dest: join(projectRoot, "plugins"), error: invalid };
+  // Reuse an existing dir's case so a case-variant install never creates a SECOND physical dir on a
+  // case-insensitive FS (finding 2). dest then reports the canonical existing name, which the caller
+  // wires, keeping the @import line consistent with what is on disk. A bare name has no file part.
+  name = canonicalSpec(projectRoot, name);
   const dest = join(projectRoot, "plugins", name);
   if (existsSync(join(dest, "agent.md")) && !opts.force) return { copied: false, dest, skipped: true };
 
@@ -108,6 +112,12 @@ export function installPlugin(
     if (!existsSync(join(src, "agent.md"))) {
       return { copied: false, dest, error: `${name} has no agent.md — not an imprnt plugin?` };
     }
+    // A --force install is a REFRESH, so the dest must end up a clean copy of the new tarball, never
+    // an overlay of old + new. cpSync alone overwrites same-named files but leaves files the new
+    // version dropped (e.g. a check.js v1 shipped, v2 removed - it would still RUN in `check --all`).
+    // Clear the dest first on the force/overwrite path only. The non-force "already present" case is
+    // handled by the skip above and never reaches here, so this only fires on an intentional refresh.
+    if (opts.force) rmSync(dest, { recursive: true, force: true });
     // Mirror today's hand-authored plugin layout: agent.md + check.js + seed dirs, no package.json.
     // force:true is required: bun's cpSync skips overwrites when a filter is present unless it is set.
     cpSync(src, dest, { recursive: true, force: true, filter: (s) => basename(s) !== "package.json" });
