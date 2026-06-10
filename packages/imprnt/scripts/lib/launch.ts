@@ -74,8 +74,10 @@ function isDir(p: string): boolean {
 // The agent inside the child session runs engine commands (`imprnt recall`), and those default
 // to ./vault relative to cwd - which is only right at the project root itself. Point the child
 // env at the real vault so the advertised commands work from anywhere. An IMPRNT_VAULT the user
-// set themselves stays untouched (it already steered vaultProject resolution upstream).
-function childEnv(vaultProject: string): NodeJS.ProcessEnv {
+// set themselves stays untouched (it already steered vaultProject resolution upstream). Exported
+// so `imp lair` gets the SAME env as the exact-root launch - lair lands at the root cwd, where an
+// in-session cd would otherwise strand the engine's ./vault default just like a subdir launch.
+export function childEnv(vaultProject: string): NodeJS.ProcessEnv {
   return process.env.IMPRNT_VAULT || process.env.IMPRINT_VAULT
     ? process.env
     : { ...process.env, IMPRNT_VAULT: join(vaultProject, "vault") };
@@ -112,18 +114,34 @@ export function buildLaunch(opts: {
   // matching both the `--flag value` and the `--flag=value` spellings, last occurrence wins
   // (mirroring how claude resolves a repeated flag).
   const args = [...pass];
+  // Everything from the first `--` on is positional prompt text to claude, never a flag, so the
+  // merge scan stops there - a `-- --append-system-prompt=...` positional must not be merged into.
+  const firstTerm = args.indexOf("--");
+  const scanEnd = firstTerm >= 0 ? firstTerm - 1 : args.length - 1;
   let merged = false;
-  for (let i = args.length - 1; i >= 0 && !merged; i--) {
+  for (let i = scanEnd; i >= 0 && !merged; i--) {
+    // A token in VALUE position (the arg after a value-consuming flag like -p) is the user's text,
+    // not a flag - a -p value that merely starts with "--append-system-prompt=" must not be glued
+    // onto. The space-form below is already value-safe (it reads args[i+1] only when args[i] is the
+    // exact flag). imp is a thin launcher, not a reimplementation of claude's parser, so this
+    // guards the realistic free-text-value flags rather than enumerating every claude flag.
+    const prev = args[i - 1];
+    const inValuePosition = prev === "-p" || prev === "--print" || prev === "--append-system-prompt" || prev === "--system-prompt";
     if (args[i] === "--append-system-prompt" && args[i + 1] !== undefined) {
       args[i + 1] += "\n\n" + fragment;
       merged = true;
-    } else if (args[i]!.startsWith("--append-system-prompt=")) {
+    } else if (!inValuePosition && args[i]!.startsWith("--append-system-prompt=")) {
       args[i] += "\n\n" + fragment;
       merged = true;
     }
   }
-  if (!merged) args.push("--append-system-prompt", fragment);
-  args.push("--add-dir", opts.vaultProject);
+  // Inject before a `--` terminator if the user passed one: everything after `--` is positional
+  // prompt text to claude, so flags appended past it would be read as prompt and --add-dir lost.
+  // No terminator -> append at the end (the round-1 shape).
+  const term = args.indexOf("--");
+  const inject = merged ? ["--add-dir", opts.vaultProject] : ["--append-system-prompt", fragment, "--add-dir", opts.vaultProject];
+  if (term >= 0) args.splice(term, 0, ...inject);
+  else args.push(...inject);
 
   return { args, env: childEnv(opts.vaultProject) };
 }

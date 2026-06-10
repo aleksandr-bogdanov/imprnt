@@ -47,8 +47,10 @@ test("readRegistry on a fresh machine is empty, not an error", () => {
   expect(registeredRoot()).toBeUndefined();
 });
 
+// A live default must be a real vault project (liveDefault consults isVaultProject), so the dirs
+// these tests register are full vault projects, not bare scratch dirs.
 test("first registerVault becomes the default", () => {
-  const a = tmpDir();
+  const a = mkVaultProject();
   expect(registerVault(a)).toEqual({ status: "registered", current: a });
   expect(registeredRoot()).toBe(a);
   const onDisk = JSON.parse(readFileSync(configPath(), "utf8"));
@@ -56,8 +58,8 @@ test("first registerVault becomes the default", () => {
 });
 
 test("a second different path is KEPT (reporting the kept path) unless forced", () => {
-  const a = tmpDir();
-  const b = tmpDir();
+  const a = mkVaultProject();
+  const b = mkVaultProject();
   registerVault(a);
   expect(registerVault(b)).toEqual({ status: "kept", current: a });
   expect(registeredRoot()).toBe(a);
@@ -66,26 +68,39 @@ test("a second different path is KEPT (reporting the kept path) unless forced", 
 });
 
 test("re-registering the same path is a quiet no-op", () => {
-  const a = tmpDir();
+  const a = mkVaultProject();
   registerVault(a);
   expect(registerVault(a).status).toBe("already");
 });
 
 test("a registered path that no longer exists reads as unregistered, and the next init re-registers", () => {
-  const scratch = tmpDir();
+  const scratch = mkVaultProject();
   registerVault(scratch);
   rmSync(scratch, { recursive: true });
   expect(registeredRoot()).toBeUndefined();
-  const real = tmpDir();
+  const real = mkVaultProject();
   expect(registerVault(real).status).toBe("registered");
   expect(registeredRoot()).toBe(real);
+});
+
+test("a registered default that EXISTS but is no longer a vault project reads as unregistered (hollow default)", () => {
+  // The dir survives on disk (a deleted vault/, or the dir replaced by an unrelated repo), so a
+  // bare existsSync gate passes. But it carries no vault/index.md, so injecting a pointer at it
+  // would advertise a hollow path and `imp lair` would open claude there silently. liveDefault
+  // must consult isVaultProject on the read path, not just existsSync.
+  const hollow = mkVaultProject();
+  registerVault(hollow);
+  expect(registeredRoot()).toBe(hollow);
+  rmSync(join(hollow, "vault"), { recursive: true });
+  // The dir itself still exists; only the vault/ marker is gone.
+  expect(registeredRoot()).toBeUndefined();
 });
 
 test("corrupt config reads as empty and is overwritten by the next register", () => {
   mkdirSync(join(xdg, "imprnt"), { recursive: true });
   writeFileSync(configPath(), "{not json");
   expect(readRegistry()).toEqual({ vaults: {} });
-  const a = tmpDir();
+  const a = mkVaultProject();
   expect(registerVault(a).status).toBe("registered");
   expect(registeredRoot()).toBe(a);
 });
@@ -120,6 +135,14 @@ test("IMPRNT_ROOT beats everything", () => {
   expect(vaultProjectRoot("/anywhere")).toBe("/tmp/override");
 });
 
+test("a relative IMPRNT_ROOT is resolved against the launch cwd to an absolute path", () => {
+  // A relative root returned raw flows into the pointer prose and IMPRNT_VAULT, both of which
+  // break the moment the session cd's elsewhere. Resolve it once at launch so it stays absolute.
+  process.env.IMPRNT_ROOT = "relativedir";
+  const got = vaultProjectRoot("/launch/cwd");
+  expect(got).toBe("/launch/cwd/relativedir");
+});
+
 test("IMPRNT_VAULT resolves to its parent dir, beating walk-up and registry", () => {
   registerVault(tmpDir());
   process.env.IMPRNT_VAULT = "/work/team/vault";
@@ -135,7 +158,7 @@ test("standing inside a vault project beats the registered default", () => {
 });
 
 test("an unrelated vault/ dir (no index.md) does NOT hijack resolution from the registry", () => {
-  const registered = tmpDir();
+  const registered = mkVaultProject();
   registerVault(registered);
   const hashicorp = tmpDir();
   mkdirSync(join(hashicorp, "vault"));
@@ -145,13 +168,13 @@ test("an unrelated vault/ dir (no index.md) does NOT hijack resolution from the 
 test("a plain dir falls back to the registry; nothing anywhere is undefined", () => {
   const plain = tmpDir();
   expect(vaultProjectRoot(plain)).toBeUndefined();
-  const registered = tmpDir();
+  const registered = mkVaultProject();
   registerVault(registered);
   expect(vaultProjectRoot(plain)).toBe(registered);
 });
 
 test("a CLAUDE.local.md alone does NOT mark a vault project (coding repos carry those)", () => {
-  const registered = tmpDir();
+  const registered = mkVaultProject();
   registerVault(registered);
   const repo = tmpDir();
   writeFileSync(join(repo, "CLAUDE.local.md"), "# repo-local\n");

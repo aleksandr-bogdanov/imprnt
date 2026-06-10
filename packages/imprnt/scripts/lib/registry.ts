@@ -28,13 +28,16 @@ export function readRegistry(): Registry {
   }
 }
 
-// The default entry of an already-read registry. A registered path that no longer exists on disk
-// reads as "nothing registered": resolution falls through cleanly and the next `imprnt init`
-// re-registers, so a deleted scratch dir can never hold the default hostage.
+// The default entry of an already-read registry. A registered path that is no longer a live vault
+// project reads as "nothing registered": resolution falls through cleanly and the next `imprnt
+// init` re-registers, so neither a deleted scratch dir nor a HOLLOW default (the dir survives but
+// its vault/ is gone, or it was replaced by an unrelated repo) can hold the default hostage. The
+// existsSync gate alone passed a hollow dir, so the read path advertised a pointer at a vault that
+// no longer exists and `imp lair` opened claude there silently - consult isVaultProject instead.
 function liveDefault(reg: Registry): string | undefined {
   const name = reg.default ?? Object.keys(reg.vaults)[0];
   const path = name ? reg.vaults[name] : undefined;
-  return path && existsSync(path) ? path : undefined;
+  return path && isVaultProject(path) ? path : undefined;
 }
 
 export function registeredRoot(): string | undefined {
@@ -88,7 +91,10 @@ export function isVaultProject(dir: string): boolean {
 // Returns undefined on a fresh machine with no init yet.
 export function vaultProjectRoot(start: string = process.cwd()): string | undefined {
   const rootEnv = process.env.IMPRNT_ROOT ?? process.env.IMPRINT_ROOT;
-  if (rootEnv) return rootEnv;
+  // resolve() once against the launch cwd: an absolute IMPRNT_ROOT passes through unchanged, a
+  // relative one becomes absolute here so the pointer prose and IMPRNT_VAULT it flows into don't
+  // break after an in-session cd. The imp-lair-with-IMPRNT_ROOT hard-error behavior is unchanged.
+  if (rootEnv) return resolve(start, rootEnv);
   const vaultEnv = process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT;
   if (vaultEnv) return dirname(resolve(start, vaultEnv));
   let dir = start;
