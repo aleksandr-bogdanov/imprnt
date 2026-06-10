@@ -1,5 +1,5 @@
 import { test, expect, beforeAll } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, realpathSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, realpathSync, chmodSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -222,6 +222,29 @@ function mkVault(root: string): void {
   writeFileSync(join(root, "vault", "index.md"), "# index\n");
 }
 
+// Register `dir` as the default vault in the sandbox's XDG config (join(root, "xdg")), the same
+// path the run() helper points XDG_CONFIG_HOME at. Lets a test stage the registered-default READ
+// path without running init.
+function registerDefault(root: string, dir: string): void {
+  const cfg = join(root, "xdg", "imprnt", "config.json");
+  mkdirSync(dirname(cfg), { recursive: true });
+  writeFileSync(cfg, JSON.stringify({ default: "personal", vaults: { personal: dir } }) + "\n");
+}
+
+// A fake `claude` on PATH that dumps its argv (one ARG[i]= line each) and IMPRNT_VAULT, so a test
+// can assert the exact spawn the imp launcher built. Returns a PATH value to pass to runImp.
+function fakeClaudePath(root: string): string {
+  const bin = join(root, "fakebin");
+  mkdirSync(bin, { recursive: true });
+  const claude = join(bin, "claude");
+  writeFileSync(
+    claude,
+    "#!/bin/sh\nprintf 'IMPRNT_VAULT=%s\\n' \"$IMPRNT_VAULT\"\ni=0\nfor a in \"$@\"; do printf 'ARG[%d]=%s\\n' \"$i\" \"$a\"; i=$((i+1)); done\n",
+  );
+  chmodSync(claude, 0o755);
+  return `${bin}:${process.env.PATH ?? ""}`;
+}
+
 test("imp lair with a vault but no claude on PATH exits 1 with the install hint", async () => {
   const root = tmpRepo();
   mkVault(root);
@@ -237,6 +260,36 @@ test("imp with leading claude flags tries to launch even without a TTY (piped -p
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("`claude` not found");
   expect(r.stdout).not.toContain("the front door"); // not the help text
+});
+
+test("imp lair against a HOLLOW registered default errors not-found (no live default)", async () => {
+  // The registered default dir survives but its vault/ is gone (deleted, or the dir replaced by
+  // an unrelated repo). A bare existsSync gate would still resolve it and `imp lair` would open
+  // claude in the hollow dir silently. liveDefault consults isVaultProject, so the default reads
+  // as unregistered and lair gives the same init hint as a fresh machine.
+  const reg = tmpRepo();
+  mkVault(reg);
+  const here = tmpRepo();
+  registerDefault(here, reg);
+  rmSync(join(reg, "vault"), { recursive: true });
+  const r = await runImp(here, ["lair"], { PATH: fakeClaudePath(here) }, here);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("imprnt init");
+  // The fake claude never ran, so its dump is absent.
+  expect(r.stdout).not.toContain("IMPRNT_VAULT=");
+});
+
+test("imp lair's child env carries IMPRNT_VAULT so in-session cd keeps the engine working", async () => {
+  // imp lair routes through the same childEnv as the exact-root launch, so the agent's in-session
+  // `imprnt recall` resolves the real vault even after a cd inside the session.
+  const reg = tmpRepo();
+  mkVault(reg);
+  const here = tmpRepo();
+  registerDefault(here, reg);
+  const r = await runImp(here, ["lair"], { PATH: fakeClaudePath(here) }, here);
+  expect(r.code).toBe(0);
+  // The registry stores the path verbatim, so childEnv joins vault/ onto exactly that.
+  expect(r.stdout).toContain(`IMPRNT_VAULT=${join(reg, "vault")}`);
 });
 
 test("imprnt context prints the vault contract; without one it exits 1", async () => {

@@ -161,6 +161,58 @@ test("a user-passed --append-system-prompt=value (equals form) gets the fragment
   expect(flags[0]).toContain("imprnt recall");
 });
 
+test("a trailing `-- prompt` keeps imp's injected flags in flag position, before the terminator", () => {
+  // claude reads everything after `--` as positional prompt text. Appending the injected flags at
+  // the very end would bury them past the terminator: the fragment + project path become prompt
+  // text and --add-dir is dropped. Insert before the first `--` so they stay flags.
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const { args } = buildLaunch({
+    cwd: "/somewhere/else",
+    vaultProject: root,
+    pkgRoot,
+    passthrough: ["-c", "--", "my literal prompt"],
+  });
+  const term = args.indexOf("--");
+  const aspIdx = args.indexOf("--append-system-prompt");
+  const addDirIdx = args.indexOf("--add-dir");
+  // Both injected flags land before the terminator, the user's positional after it, untouched.
+  expect(aspIdx).toBeGreaterThanOrEqual(0);
+  expect(aspIdx).toBeLessThan(term);
+  expect(addDirIdx).toBeLessThan(term);
+  expect(args[addDirIdx + 1]).toBe(root);
+  expect(args[args.length - 1]).toBe("my literal prompt");
+});
+
+test("with no `--` terminator the injected flags still append at the end (round-1 shape)", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const { args } = buildLaunch({ cwd: "/somewhere/else", vaultProject: root, pkgRoot, passthrough: ["-c"] });
+  expect(args[0]).toBe("-c");
+  expect(args[args.length - 2]).toBe("--add-dir");
+  expect(args[args.length - 1]).toBe(root);
+});
+
+test("a -p VALUE that merely starts with --append-system-prompt= is NOT mistaken for the user's flag", () => {
+  // The equals-form scan must not match a value in value position. A prompt value that happens to
+  // start with the flag string would otherwise get the fragment glued onto the prompt text, and no
+  // real --append-system-prompt flag would be emitted. The fragment must arrive as its own flag.
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const { args } = buildLaunch({
+    cwd: "/somewhere/else",
+    vaultProject: root,
+    pkgRoot,
+    passthrough: ["-p", "--append-system-prompt=literal text the user typed"],
+  });
+  // The user's -p value is left verbatim, the fragment is its own separate flag.
+  const pIdx = args.indexOf("-p");
+  expect(args[pIdx + 1]).toBe("--append-system-prompt=literal text the user typed");
+  const aspIdx = args.indexOf("--append-system-prompt");
+  expect(aspIdx).toBeGreaterThanOrEqual(0);
+  expect(args[aspIdx + 1]).toContain("imprnt recall");
+});
+
 test("inside the vault project nothing is injected (native loading, no double cast)", () => {
   const root = tmpVaultProject();
   expect(buildLaunch({ cwd: root, vaultProject: root, pkgRoot, passthrough: ["--resume"] }).args).toEqual(["--resume"]);
