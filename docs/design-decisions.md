@@ -172,8 +172,8 @@ into the assistant's config. Both lost. Global injection pays tokens in every se
 unreachable from the coding repos where most of the day happens. The resolution is per-keystroke
 consent: typing `imp` instead of `claude` IS the wire-in. Stock `claude` stays stock, nothing is
 written into the assistant's global config, and each session carries the context because the
-user asked for it by name. Bare `imp` launches only when stdin is a TTY, so a script calling it
-bare gets help text, never a surprise interactive session.
+user asked for it by name. Bare `imp` launches only when both stdin and stdout are TTYs, so a
+script calling it bare (or piping its output) gets help text, never a surprise interactive session.
 
 There are no modes. Everything that looks like one falls out of the assistant's own directory
 mechanics: in the lair, the contract and the plugin wiring load natively from cwd (so imp skips

@@ -2,7 +2,7 @@
 
 These are the **shareable entry points**. You never run the CLI by hand; you talk to an agent,
 the agent runs a skill, the skill runs the CLI for the deterministic part and does the one LLM
-semantic pass itself. The skill is the steering wheel; `scripts/` is the engine.
+semantic pass itself. The skill is the steering wheel; the CLI is the engine.
 
 Three skills, all opt-in:
 - **Ingest/** — turn a transcript/note into a structured, resolved, tagged vault note.
@@ -19,5 +19,5 @@ cp -r skills/Ingest skills/Recall skills/Hot ~/.claude/skills/   # or your agent
 ```
 
 Each skill is a self-contained dir — `rm -rf` any you don't use. The skills assume the imprnt
-CLI is reachable (either `imprnt` on PATH, or `bun <imprnt-repo>/scripts/cli.ts`) and a vault
-path (default `./vault`, override with `--vault`).
+CLI is reachable (either `imprnt` on PATH, or `bun <imprnt-repo>/packages/imprnt/scripts/cli.ts`
+from a clone) and a vault path (default `./vault`, override with `--vault`).

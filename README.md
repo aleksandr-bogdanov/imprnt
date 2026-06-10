@@ -67,6 +67,16 @@ imprnt init            # scaffold your vault, drop CLAUDE.md (the contract your 
 imp                    # open your assistant and talk
 ```
 
+> **Temporarily off npm (June 2026).** The package is unpublished while the installer gets a final
+> polish, so `npm i -g imprnt` 404s right now. Until it returns, install from source (needs
+> [Bun](https://bun.sh) to build):
+>
+> ```sh
+> git clone https://github.com/aleksandr-bogdanov/imprnt
+> cd imprnt && bun install && bun run build
+> npm i -g ./packages/imprnt   # the same imprnt + imp commands, from your clone
+> ```
+
 `imprnt init` scaffolds the vault, writes the `CLAUDE.md` contract that teaches your assistant
 how it works, and registers the folder so `imp` finds it from anywhere. Runs on
 [Node](https://nodejs.org) 18 or newer, driving [Claude Code](https://claude.com/claude-code) as

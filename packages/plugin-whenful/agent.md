@@ -1,8 +1,9 @@
 # Plugin: Whenful (tasks)
 
 > This is the **agent fragment** — the plugin's entry point. The core code never reads it; you (the
-> assistant) do. Install = add `@plugins/whenful/agent.md` as an import to the project `CLAUDE.md`.
-> Remove = delete that import line and `rm -rf plugins/whenful`.
+> assistant) do. Install = `imprnt plugin add whenful`, which wires `@plugins/whenful/agent.md` into
+> `CLAUDE.local.md` (gitignored, per-machine), never the committed `CLAUDE.md`.
+> Remove = `imprnt plugin rm whenful` (add `--purge` to also delete `plugins/whenful/`).
 
 ## What this plugin is
 

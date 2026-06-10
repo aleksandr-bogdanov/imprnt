@@ -6,6 +6,9 @@ the way any user would. Follow it by hand, or paste it into a fresh Claude Code 
 The point is honesty: prove the published packages install and run on Node alone, with the personal
 cast (your private character + voice) restored from local files that never go to npm.
 
+As of June 2026 the package is unpublished from npm, so Part 3's `npm i -g imprnt` 404s until Part 1
+runs again.
+
 ## What ships
 
 - `imprnt` - the core CLI (package `packages/imprnt`). Runs on Node, no Bun needed by the user.

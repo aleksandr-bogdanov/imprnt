@@ -14,6 +14,9 @@ imprnt publishes to npm on two [dist-tags](https://docs.npmjs.com/cli/v10/comman
 There is no separate beta registry. It is the same package with two pointers. `npm i -g imprnt@edge`
 opts in, and plain `npm i -g imprnt` never sees edge builds.
 
+As of June 2026 the package is temporarily unpublished while the installer is polished, so both
+install commands 404 until the next release.
+
 ## Versions are independent per package
 
 The repo holds five packages (the `imprnt` core plus four `imprnt-plugin-*`). They version on their
