@@ -31,10 +31,24 @@ function tmpDir(prefix = "imprnt-reg-"): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
+// A REAL imprnt vault carries BOTH files init writes (index.md AND _tags.md). A bare docs folder
+// named `vault` ships index.md but essentially never _tags.md, so the marker needs both to tell a
+// real vault from a docs site that happens to live under vault/. Both shipped example vaults carry
+// both files too (examples/*/vault/_tags.md).
 function mkVaultProject(): string {
   const root = tmpDir("imprnt-proj-");
   mkdirSync(join(root, "vault"));
   writeFileSync(join(root, "vault", "index.md"), "# index\n");
+  writeFileSync(join(root, "vault", "_tags.md"), "# tags\n");
+  return root;
+}
+
+// A coding repo that coincidentally carries vault/index.md (an Obsidian/VuePress docs site whose
+// folder is literally named `vault`) but no _tags.md. This must NOT read as an imprnt vault.
+function mkDocsVault(): string {
+  const root = tmpDir("imprnt-docs-");
+  mkdirSync(join(root, "vault"));
+  writeFileSync(join(root, "vault", "index.md"), "# docs home\n");
   return root;
 }
 
@@ -132,7 +146,7 @@ test("non-string vault values are dropped instead of flowing into path code", ()
 
 // --- the vault-project marker ---
 
-test("isVaultProject requires a vault/ DIRECTORY with the generated index.md", () => {
+test("isVaultProject requires a vault/ DIRECTORY with BOTH index.md and _tags.md", () => {
   const real = mkVaultProject();
   expect(isVaultProject(real)).toBe(true);
 
@@ -143,6 +157,25 @@ test("isVaultProject requires a vault/ DIRECTORY with the generated index.md", (
   const bareDir = tmpDir();
   mkdirSync(join(bareDir, "vault"));
   expect(isVaultProject(bareDir)).toBe(false);
+
+  // index.md alone is a docs site named vault, not an imprnt vault. init always writes _tags.md
+  // alongside index.md, so requiring both rejects the docs case while still matching init output.
+  expect(isVaultProject(mkDocsVault())).toBe(false);
+});
+
+test("a docs folder named vault (index.md but no _tags.md) does NOT shadow a registered real vault", () => {
+  // P3: a coding repo with vault/index.md (an Obsidian/VuePress docs site) used to win the walk-up
+  // before the registry was consulted, so imp injected nothing and IMPRNT_VAULT pointed recall/check
+  // at the docs corpus while the real registered vault stayed unreachable. The two-file marker fixes
+  // it: the docs vault/ is not a vault project, so resolution falls through to the registered default.
+  const registered = mkVaultProject();
+  registerVault(registered);
+  const docsRepo = mkDocsVault();
+  const deep = join(docsRepo, "src", "pages");
+  mkdirSync(deep, { recursive: true });
+  expect(isVaultProject(docsRepo)).toBe(false);
+  expect(vaultProjectRoot(docsRepo)).toBe(registered);
+  expect(vaultProjectRoot(deep)).toBe(registered);
 });
 
 // --- vaultProjectRoot resolve order: IMPRNT_ROOT > IMPRNT_VAULT parent > walk-up > registry ---
