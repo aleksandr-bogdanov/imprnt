@@ -178,16 +178,39 @@ test("appendTags does not mangle a prose line in the section (BUG A)", () => {
 // P2 #3: a prose line under ## Tags that happens to contain one kebab-valid comma segment must
 // NOT be treated as the tag list. A line is a tag line only if the MAJORITY of its comma segments
 // are valid tokens. Here "Keep this list lean" (invalid, interior spaces) + "one-concept" (valid)
-// = 1 of 2, not a majority, so the comment is skipped and the new tag lands on the real list below.
+// = 1 of 2, not a majority. The comment sits BELOW the real list as the LAST candidate line, which
+// is the case that actually bites: appendTags writes to the last tag line in the section, so under
+// the too-permissive "one valid token" rule the comment would be the append target and get
+// corrupted. The majority rule rejects it, so the new tag lands on the real list above and the
+// comment stays byte-identical.
 test("appendTags skips a prose comment whose minority of segments are valid tokens (BUG: too-permissive isTagLine)", () => {
   const comment = "Keep this list lean, one-concept";
-  const v = tmpVault(`## Tags\n${comment}\n\nalpha, beta\n## Synonyms\n`);
+  const v = tmpVault(`## Tags\nalpha, beta\n${comment}\n\n## Synonyms\n`);
   appendTags(v, ["gamma"]);
   const lines = readFileSync(join(v, "_tags.md"), "utf8").split("\n");
-  // The comment line is byte-identical, untouched.
-  expect(lines[1]).toBe(comment);
-  // The new tag lands on the real tag-list line below the blank.
-  expect(lines.includes("alpha, beta, gamma")).toBe(true);
+  // The new tag lands on the real tag-list line, never on the prose comment below it.
+  expect(lines[1]).toBe("alpha, beta, gamma");
+  // The comment line is byte-identical, untouched - the new tag never appended to it.
+  expect(lines[2]).toBe(comment);
+  // The comment must not have swallowed the tag under any code path.
+  expect(lines.some((l) => l.startsWith(comment) && l !== comment)).toBe(false);
+  rmSync(v, { recursive: true });
+});
+
+// The harder placement: the prose comment is the ONLY candidate line in the section (no real tag
+// list at all). Under the too-permissive rule it is the append target and gets mangled. Under the
+// majority rule it is rejected, so appendTags inserts a FRESH tag line and leaves the comment alone.
+test("appendTags writes a fresh line when the only candidate under ## Tags is a prose comment", () => {
+  const comment = "Keep this list lean, one-concept";
+  const v = tmpVault(`## Tags\n${comment}\n\n## Synonyms\n`);
+  appendTags(v, ["gamma"]);
+  const out = readFileSync(join(v, "_tags.md"), "utf8");
+  const lines = out.split("\n");
+  // The comment is never the append target: it stays byte-identical, never "...one-concept, gamma".
+  expect(lines.includes(comment)).toBe(true);
+  expect(lines.some((l) => l.startsWith(comment) && l !== comment)).toBe(false);
+  // gamma landed on a real tag line of its own, readable back by loadTags.
+  expect(loadTags(v).approved.has("gamma")).toBe(true);
   rmSync(v, { recursive: true });
 });
 

@@ -181,7 +181,12 @@ test("a docs folder named vault (index.md but no _tags.md) does NOT shadow a reg
 // --- vaultProjectRoot resolve order: IMPRNT_ROOT > IMPRNT_VAULT parent > walk-up > registry ---
 
 test("IMPRNT_ROOT beats everything", () => {
-  registerVault(tmpDir());
+  // Register a REAL vault project so the registry leg is live: registeredRoot() returns it. The
+  // claim "beats everything" is only exercised when there is a registered default to beat - a bare
+  // scratch dir fails isVaultProject and would make this prove env beats nothing.
+  const registered = mkVaultProject();
+  registerVault(registered);
+  expect(registeredRoot()).toBe(registered);
   process.env.IMPRNT_ROOT = "/tmp/override";
   expect(vaultProjectRoot("/anywhere")).toBe("/tmp/override");
 });
@@ -195,13 +200,20 @@ test("a relative IMPRNT_ROOT is resolved against the launch cwd to an absolute p
 });
 
 test("IMPRNT_VAULT resolves to its parent dir, beating walk-up and registry", () => {
-  registerVault(tmpDir());
+  // A live registered default makes the registry leg real, so "beating ... registry" is exercised.
+  const registered = mkVaultProject();
+  registerVault(registered);
+  expect(registeredRoot()).toBe(registered);
   process.env.IMPRNT_VAULT = "/work/team/vault";
   expect(vaultProjectRoot("/anywhere")).toBe("/work/team");
 });
 
 test("standing inside a vault project beats the registered default", () => {
-  registerVault(tmpDir());
+  // Register a DIFFERENT real vault so the registry default is live. Standing inside `proj` must
+  // still win over it - with a bare scratch dir the registry leg was dead and this proved nothing.
+  const registered = mkVaultProject();
+  registerVault(registered);
+  expect(registeredRoot()).toBe(registered);
   const proj = mkVaultProject();
   const deep = join(proj, "a", "b");
   mkdirSync(deep, { recursive: true });
