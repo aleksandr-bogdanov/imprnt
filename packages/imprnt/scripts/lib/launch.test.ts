@@ -1,9 +1,9 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { castFragment, pointerFragment, isInside, buildLaunch, launchClaude } from "./launch.ts";
+import { castFragment, pointerFragment, harnessFlags, isInside, buildLaunch, launchClaude } from "./launch.ts";
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -366,4 +366,95 @@ test("launchClaude refuses a missing or plain-FILE cwd with the re-run-init mess
     expect(e).toContain("re-run");
     expect(e).not.toContain("failed to launch");
   }
+});
+
+// --- harnessFlags: --plugin-dir per native plugin + one merged --settings from fragments ---
+
+// A project with two enabled plugins: `hooky` is a native Claude Code plugin (manifest only),
+// `liner` carries only a settings fragment. Used by the harnessFlags rows below.
+function tmpHarnessProject(): string {
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "hooky", ".claude-plugin"), { recursive: true });
+  writeFileSync(join(root, "plugins", "hooky", ".claude-plugin", "plugin.json"), '{"name":"hooky"}');
+  writeFileSync(join(root, "plugins", "hooky", "agent.md"), "# hooky\n");
+  mkdirSync(join(root, "plugins", "liner"), { recursive: true });
+  writeFileSync(join(root, "plugins", "liner", "agent.md"), "# liner\n");
+  writeFileSync(
+    join(root, "plugins", "liner", "imp-settings.json"),
+    '{"statusLine":{"type":"command","command":"node \\"${PLUGIN_DIR}/line.js\\""}}',
+  );
+  writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/hooky/agent.md\n@plugins/liner/agent.md\n");
+  return root;
+}
+
+test("harnessFlags emits --plugin-dir for a manifest plugin and --settings for a fragment plugin", () => {
+  const root = tmpHarnessProject();
+  const flags = harnessFlags(root);
+  expect(flags.slice(0, 2)).toEqual(["--plugin-dir", join(root, "plugins", "hooky")]);
+  expect(flags[2]).toBe("--settings");
+  const settings = JSON.parse(flags[3]!);
+  // ${PLUGIN_DIR} resolves to the plugin's own absolute dir, post-parse (a path can't corrupt JSON).
+  expect(settings.statusLine.command).toBe(`node "${join(root, "plugins", "liner")}/line.js"`);
+});
+
+test("harnessFlags reads only ENABLED plugins and is empty when nothing harness-shaped is wired", () => {
+  const root = tmpHarnessProject();
+  // Disable hooky (comment), leave liner: no --plugin-dir, still the --settings.
+  writeFileSync(join(root, "CLAUDE.local.md"), "# @plugins/hooky/agent.md\n@plugins/liner/agent.md\n");
+  expect(harnessFlags(root)).not.toContain("--plugin-dir");
+  // A cast-only project (fragments, no manifest, no imp-settings.json) emits nothing at all.
+  writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/hooky/agent.md\n");
+  rmSync(join(root, "plugins", "hooky", ".claude-plugin"), { recursive: true });
+  expect(harnessFlags(root)).toEqual([]);
+});
+
+test("harnessFlags merges fragments in wire order (later plugin wins on a key conflict)", () => {
+  const root = tmpHarnessProject();
+  mkdirSync(join(root, "plugins", "verbs"), { recursive: true });
+  writeFileSync(join(root, "plugins", "verbs", "agent.md"), "# verbs\n");
+  writeFileSync(
+    join(root, "plugins", "verbs", "imp-settings.json"),
+    '{"statusLine":{"padding":1},"spinnerVerbs":{"mode":"append","verbs":["Imprnting"]}}',
+  );
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    "@plugins/liner/agent.md\n@plugins/verbs/agent.md\n",
+  );
+  const flags = harnessFlags(root);
+  const settings = JSON.parse(flags[flags.indexOf("--settings") + 1]!);
+  // Objects merge recursively: liner's command survives, verbs' padding lands beside it.
+  expect(settings.statusLine.command).toContain("line.js");
+  expect(settings.statusLine.padding).toBe(1);
+  expect(settings.spinnerVerbs.verbs).toEqual(["Imprnting"]);
+});
+
+test("harnessFlags tolerates a malformed fragment (warns, skips, keeps the rest)", () => {
+  const root = tmpHarnessProject();
+  writeFileSync(join(root, "plugins", "liner", "imp-settings.json"), "{not json");
+  const errors: string[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+  try {
+    // The manifest plugin still rides; the broken fragment contributes nothing.
+    expect(harnessFlags(root)).toEqual(["--plugin-dir", join(root, "plugins", "hooky")]);
+  } finally {
+    console.error = orig;
+  }
+  expect(errors.length).toBe(1);
+  expect(errors[0]).toContain("liner/imp-settings.json");
+});
+
+test("buildLaunch carries harness flags on EVERY launch, inside the project included, prepended outside", () => {
+  const root = tmpHarnessProject();
+  // Inside (the lair / a subdir): no cast injection, but the harness flags still ride.
+  const inside = buildLaunch({ cwd: root, vaultProject: root, pkgRoot, passthrough: ["-c"] });
+  expect(inside.args.slice(0, 2)).toEqual(["--plugin-dir", join(root, "plugins", "hooky")]);
+  expect(inside.args[inside.args.length - 1]).toBe("-c");
+  expect(inside.args).not.toContain("--append-system-prompt");
+  // Outside: harness flags come FIRST, so a user-passed --settings (later) wins last-occurrence
+  // resolution; the cast injection follows as before.
+  const outside = buildLaunch({ cwd: "/somewhere/else", vaultProject: root, pkgRoot, passthrough: ["--settings", "{}"] });
+  expect(outside.args.indexOf("--settings")).toBe(2); // ours, right after the --plugin-dir pair
+  expect(outside.args.lastIndexOf("--settings")).toBeGreaterThan(outside.args.indexOf("--settings"));
+  expect(outside.args).toContain("--append-system-prompt");
 });

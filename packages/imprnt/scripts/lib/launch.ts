@@ -10,7 +10,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { importTargets } from "./plugins.ts";
+import { enabledPluginDirs, entryExists, importTargets } from "./plugins.ts";
 
 // Resolve one @import target the way Claude Code does: absolute stays absolute, ~/ expands to
 // the home dir, everything else is project-relative.
@@ -53,6 +53,72 @@ export function pointerFragment(pkgRoot: string, vaultProject: string): string {
   return tpl.replaceAll("{{VAULT_PROJECT}}", () => vaultProject);
 }
 
+// Every string value in a parsed settings fragment, with ${PLUGIN_DIR} replaced by the plugin's
+// absolute dir. ${CLAUDE_PLUGIN_ROOT} is accepted as an alias: it is the native spelling a plugin
+// author already writes in hooks.json (where Claude Code expands it), and both name the same dir
+// here, so using either in either file works instead of failing silently as a literal string.
+// Substituting AFTER the parse (not in the raw text) keeps a path with JSON-special characters
+// (a backslash, a quote) from corrupting the document.
+function substitutePluginDir(value: unknown, dir: string): unknown {
+  if (typeof value === "string")
+    return value.replaceAll("${PLUGIN_DIR}", dir).replaceAll("${CLAUDE_PLUGIN_ROOT}", dir);
+  if (Array.isArray(value)) return value.map((v) => substitutePluginDir(v, dir));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, substitutePluginDir(v, dir)]),
+    );
+  }
+  return value;
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+// Merge fragment b over a: objects merge recursively, anything else (scalar, array) replaces.
+// Later-wired plugins win on a key conflict, matching how Claude Code resolves its own settings
+// scopes (the later, more specific scope overrides).
+function mergeSettings(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    const prev = out[k];
+    out[k] = isPlainObject(prev) && isPlainObject(v) ? mergeSettings(prev, v) : v;
+  }
+  return out;
+}
+
+// The harness-plugin flags for one launch: a `--plugin-dir` per enabled plugin that is a native
+// Claude Code plugin (carries .claude-plugin/plugin.json — hooks, skills, commands load from it),
+// plus ONE merged `--settings` JSON assembled from every enabled plugin's imp-settings.json (the
+// fragment for keys Claude only accepts via settings: a statusLine command, spinnerVerbs). Both are
+// discovered by filename convention off the SAME enable list the cast inliner reads (the @import
+// lines of CLAUDE.local.md), so "enabled" can never mean two different things. A fragment may write
+// ${PLUGIN_DIR} where it needs its own absolute path (a statusLine command must run from any cwd).
+// A malformed fragment warns and is skipped — same tolerance as a dangling @import, never a crash.
+export function harnessFlags(root: string): string[] {
+  const flags: string[] = [];
+  let settings: Record<string, unknown> = {};
+  for (const name of enabledPluginDirs(root)) {
+    const dir = join(root, "plugins", name);
+    if (entryExists(root, `plugins/${name}/.claude-plugin/plugin.json`)) flags.push("--plugin-dir", dir);
+    if (!entryExists(root, `plugins/${name}/imp-settings.json`)) continue;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(join(dir, "imp-settings.json"), "utf8"));
+      if (!isPlainObject(parsed)) throw new Error("not a JSON object");
+      settings = mergeSettings(settings, substitutePluginDir(parsed, dir) as Record<string, unknown>);
+    } catch (e) {
+      console.error(
+        `imp: skipping bad settings fragment plugins/${name}/imp-settings.json: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+  if (Object.keys(settings).length) flags.push("--settings", JSON.stringify(settings));
+  return flags;
+}
+
 // Realpath when the path exists, plain resolve when it doesn't - inside-detection must see
 // through symlinks (macOS /tmp -> /private/tmp, Dropbox/iCloud aliases), or a symlink-spelled
 // IMPRNT_ROOT defeats it and imp injects on top of claude's native CLAUDE.md load.
@@ -81,10 +147,9 @@ function isDir(p: string): boolean {
 // The agent inside the child session runs engine commands (`imprnt recall`), and those default
 // to ./vault relative to cwd - which is only right at the project root itself. Point the child
 // env at the real vault so the advertised commands work from anywhere. An IMPRNT_VAULT the user
-// set themselves stays untouched (it already steered vaultProject resolution upstream). Exported
-// so `imp lair` gets the SAME env as the exact-root launch - lair lands at the root cwd, where an
-// in-session cd would otherwise strand the engine's ./vault default just like a subdir launch.
-export function childEnv(vaultProject: string): NodeJS.ProcessEnv {
+// set themselves stays untouched (it already steered vaultProject resolution upstream). Every
+// launch shape gets this through buildLaunch - `imp lair` included, it IS the exact-root launch.
+function childEnv(vaultProject: string): NodeJS.ProcessEnv {
   return process.env.IMPRNT_VAULT || process.env.IMPRINT_VAULT
     ? process.env
     : { ...process.env, IMPRNT_VAULT: join(vaultProject, "vault") };
@@ -108,10 +173,16 @@ export function buildLaunch(opts: {
     console.error(`imp: vault project not found at ${opts.vaultProject} - launching plain claude (re-run \`imprnt init\` there, or fix IMPRNT_ROOT)`);
     return { args: pass, env: process.env };
   }
+  // Harness plugins (a guard hook, a statusline) load ONLY through these flags — Claude Code never
+  // auto-discovers plugins/<name>/ — so unlike the cast fragment they ride every imp launch, inside
+  // the project included. PREPENDED, so a user-passed --settings comes later and wins (claude keeps
+  // the last occurrence of a single-value flag); --plugin-dir is repeatable, position is moot.
+  const harness = harnessFlags(opts.vaultProject);
   // Inside the project (root or any subdir) the prompt loads natively, so injecting would double
   // the cast - but a subdir cwd still strands the engine's ./vault default, so the env (not a
   // prompt injection) is set either way. The exact root gets it too: one uniform rule.
-  if (isInside(opts.cwd, opts.vaultProject)) return { args: pass, env: childEnv(opts.vaultProject) };
+  if (isInside(opts.cwd, opts.vaultProject))
+    return { args: [...harness, ...pass], env: childEnv(opts.vaultProject) };
 
   const fragment = [castFragment(opts.vaultProject), pointerFragment(opts.pkgRoot, opts.vaultProject)]
     .filter(Boolean)
@@ -158,7 +229,7 @@ export function buildLaunch(opts: {
   if (term >= 0) args.splice(term, 0, ...inject);
   else args.push(...inject);
 
-  return { args, env: childEnv(opts.vaultProject) };
+  return { args: [...harness, ...args], env: childEnv(opts.vaultProject) };
 }
 
 // Spawn claude interactively and hand back its exit code. The two failure modes a novice

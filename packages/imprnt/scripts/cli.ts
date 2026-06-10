@@ -12,7 +12,7 @@ import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
 import { registerVault, vaultProjectRoot, registeredRoot, configPath, isVaultProject } from "./lib/registry.ts";
-import { buildLaunch, launchClaude, childEnv } from "./lib/launch.ts";
+import { buildLaunch, launchClaude } from "./lib/launch.ts";
 
 // packageRoot: the install location, source for templates/ + CLAUDE.md. Computed from THIS entry
 // file, which sits one level under the root in both dev (scripts/cli.ts) and the bundle (dist/cli.js).
@@ -114,13 +114,15 @@ switch (cmd) {
     break;
   }
   case "lair": {
-    // The assistant's home: the same launch with cwd swapped to the vault project. Context and
-    // plugin wiring load natively there (CLAUDE.md + CLAUDE.local.md in cwd), so nothing is
-    // injected, and personal history + permission grants accumulate in one resumable place. The
-    // env still gets IMPRNT_VAULT (childEnv) so an in-session cd keeps the engine on this vault -
-    // the exact-root buildLaunch path already does this, and lair lands at that same root.
+    // The assistant's home: the SAME launch assembly with cwd swapped to the vault project, so the
+    // lair is just imp standing at the root, never a special case. buildLaunch's inside branch does
+    // the right things there: no fragment injection (CLAUDE.md + CLAUDE.local.md load natively from
+    // cwd), harness plugins still ride as launch flags (claude never auto-discovers
+    // plugins/<name>/, lair included), and the env gets IMPRNT_VAULT so an in-session cd keeps the
+    // engine on this vault. Personal history + permission grants accumulate in one resumable place.
     const home = requireVaultHome();
-    process.exit(launchClaude(home, rest, childEnv(home)));
+    const lair = buildLaunch({ cwd: home, vaultProject: home, pkgRoot, passthrough: rest });
+    process.exit(launchClaude(home, lair.args, lair.env));
   }
   case "context": {
     // The demand-paged contract: prints the vault project's CLAUDE.md. The pointer injected into

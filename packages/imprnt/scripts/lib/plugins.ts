@@ -186,6 +186,20 @@ export function isEnabled(root: string, name: string): boolean {
   return liveImportLines(root).some((l) => l.startsWith(prefix));
 }
 
+// The enabled plugin dirs in first-wire order, deduped: the <name> of every live @import target
+// under plugins/<name>/ (so two wired files in one dir - a _personal cast - count once). This is
+// the list `imp`'s harness carriage consumes, kept HERE so the "an import under plugins/<name>/
+// means <name> is enabled" convention has one home with isEnabled/rmPlugin, never a second parser
+// in the launcher.
+export function enabledPluginDirs(root: string): string[] {
+  const out: string[] = [];
+  for (const target of importTargets(root)) {
+    const name = target.match(/^plugins\/([^/]+)\//)?.[1];
+    if (name && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 // Wire a plugin in. Creates CLAUDE.local.md with a header on first add. Idempotent: a line
 // already present is left alone. Refuses an uncontained spec (specError) and a dangling @import:
 // if the resolved entry file does not exist under plugins/, returns an error and writes nothing.
