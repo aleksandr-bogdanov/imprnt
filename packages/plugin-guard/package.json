@@ -1,12 +1,14 @@
 {
   "name": "imprnt-plugin-guard",
   "version": "0.1.0",
-  "description": "imprnt plugin: a deterministic blocklist for dangerous shell commands. Wire guard.js as a PreToolUse hook on Bash.",
+  "description": "imprnt plugin: a deterministic blocklist for dangerous shell commands, shipped as a native Claude Code plugin (PreToolUse hook on Bash).",
   "type": "module",
   "files": [
     "agent.md",
     "README.md",
-    "guard.js"
+    "guard.js",
+    ".claude-plugin/plugin.json",
+    "hooks/hooks.json"
   ],
   "scripts": {
     "build": "bun build src/guard.ts --target=node --outfile=guard.js --banner '#!/usr/bin/env node'",
