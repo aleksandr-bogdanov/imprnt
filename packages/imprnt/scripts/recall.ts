@@ -67,13 +67,19 @@ const MAX_SYNONYM_NGRAM = Math.max(
 
 // Conversational stopwords. The pitch is "you talk in plain language, the agent searches underneath" —
 // a query is a SENTENCE ("what do I believe about money"), not keywords. These words are sentence glue
-// that appear everywhere and discriminate nothing, so they only add noise to BM25. Kept lean (~30) and
-// we never strip a query to nothing — if every term is a stopword we keep the originals.
+// that appear everywhere and discriminate nothing, so they only add noise to BM25. Kept lean and we
+// never strip a query to nothing — if every term is a stopword we keep the originals.
+// ONLY true sentence-glue belongs here: question words, articles, pronouns, prepositions, conjunctions,
+// auxiliaries/modals, and the question-framing mental verbs (think/know/believe). CONTENT NOUNS were
+// deliberately removed - the contract treats status/timeline/decision/plan/etc. as first-class (projects
+// carry a `status`, the contract says "pull decisions/actions"), so when one is the DISCRIMINATING term
+// in a query, dropping it leaves only the common term and BM25 length-norm sinks the right note. idf
+// already de-weights a genuinely common term, so keeping a content noun in the query costs almost nothing
+// while dropping it silently mis-ranks the answer. A content noun never goes in this set.
 const STOPWORDS = new Set([
   "what", "do", "i", "am", "on", "my", "about", "the", "a", "an", "should",
   "me", "is", "of", "to", "for", "in", "and", "or", "think", "know", "believe",
-  "status", "timeline", "period", "decision", "plan", "info", "details",
-  "current", "latest", "where", "how", "when", "which", "who", "notes",
+  "where", "how", "when", "which", "who",
 ]);
 
 // Tokenize on Unicode letters and numbers so non-ASCII content (Cyrillic, German umlauts, ß) tokenizes
