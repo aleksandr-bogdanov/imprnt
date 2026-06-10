@@ -51,7 +51,7 @@ export function registeredRoot(): string | undefined {
 export function registerVault(
   path: string,
   opts: { name?: string; force?: boolean } = {},
-): { status: "registered" | "already" | "kept"; current: string } {
+): { status: "registered" | "already" | "kept" | "error"; current: string; error?: string } {
   const reg = readRegistry();
   const current = liveDefault(reg);
   if (current === path) return { status: "already", current: path };
@@ -60,8 +60,16 @@ export function registerVault(
   reg.vaults[name] = path;
   reg.default = name;
   const p = configPath();
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, JSON.stringify(reg, null, 2) + "\n");
+  // The registry is a convenience cache, never a thing that can block a command. An unwritable
+  // config dir (EACCES on a locked-down ~/.config) used to throw a raw stack AFTER init had fully
+  // scaffolded the vault, leaving it usable but un-init'd-looking. Catch it and return the failure
+  // as data so the caller prints one clean line and keeps the scaffold. Nothing was recorded.
+  try {
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, JSON.stringify(reg, null, 2) + "\n");
+  } catch (e) {
+    return { status: "error", current: path, error: e instanceof Error ? e.message : String(e) };
+  }
   return { status: "registered", current: path };
 }
 

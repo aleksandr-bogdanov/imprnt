@@ -329,6 +329,32 @@ test("init registers the project as the default vault; a second init keeps it un
   expect(JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8")).vaults.personal).toBe(realpathSync(b));
 });
 
+test("init with an unwritable config dir still scaffolds the vault, warns it could not register, exits 0", async () => {
+  // The scaffold is the irreversible work and it succeeds: vault/ + control files land, and the
+  // vault is fully usable via ./vault or IMPRNT_VAULT even unregistered. Only the convenience
+  // registry write fails (config dir owner-stripped). It must print ONE clean line (no EACCES
+  // stack) and NOT abort the successful scaffold, so the user is left with a working vault.
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  const xdg = join(root, "xdg");
+  mkdirSync(xdg, { recursive: true });
+  chmodSync(xdg, 0o555); // read+execute, no write: mkdir of <xdg>/imprnt fails with EACCES
+  const r = await runImp(root, ["init"], { XDG_CONFIG_HOME: xdg });
+  chmodSync(xdg, 0o755); // restore so the tmp tree cleans up
+  // Scaffold succeeded -> exit 0, and the vault really is on disk.
+  expect(r.code).toBe(0);
+  expect(existsSync(join(root, "vault", "index.md"))).toBe(true);
+  expect(existsSync(join(root, "vault", "people"))).toBe(true);
+  expect(r.stdout).toContain("initialized vault at ./vault");
+  // The registration failure is one clean warning line, not a raw stack. The fs error code may
+  // appear inside that single line (it's useful context); what must NOT appear is a stack trace.
+  expect(r.stderr).toContain("could not register");
+  expect(r.stderr).not.toMatch(/\n\s+at /);
+  expect(r.stderr.trim().split("\n").length).toBe(1); // exactly one line, no trace, no second error
+  // And nothing claims it registered.
+  expect(r.stdout).not.toContain("registered as imp's default vault project");
+});
+
 // --- spec containment end to end (the P0: a spec must never reach outside plugins/) ---
 
 test("plugin rm .. --purge is rejected and deletes nothing", async () => {

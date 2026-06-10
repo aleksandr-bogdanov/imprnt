@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { configPath, readRegistry, registeredRoot, registerVault, vaultProjectRoot, isVaultProject } from "./registry.ts";
@@ -93,6 +93,24 @@ test("a registered default that EXISTS but is no longer a vault project reads as
   expect(registeredRoot()).toBe(hollow);
   rmSync(join(hollow, "vault"), { recursive: true });
   // The dir itself still exists; only the vault/ marker is gone.
+  expect(registeredRoot()).toBeUndefined();
+});
+
+test("an unwritable config dir reports an error status instead of throwing", () => {
+  // init carefully wraps every vault mkdir in a clean try/catch, but the registry write used to be
+  // unguarded: an unwritable XDG_CONFIG_HOME let it throw a raw EACCES after the vault was fully
+  // scaffolded. registerVault now catches the fs failure and returns it as data, so the caller can
+  // print one clean line and keep the successful scaffold. The default is NOT recorded on failure.
+  const a = mkVaultProject();
+  chmodSync(xdg, 0o555); // strip write from the config base: mkdir of <xdg>/imprnt fails with EACCES
+  try {
+    const r = registerVault(a);
+    expect(r.status).toBe("error");
+    expect(r.error).toBeTruthy();
+  } finally {
+    chmodSync(xdg, 0o755);
+  }
+  // Nothing was registered: the read path still reports a fresh machine.
   expect(registeredRoot()).toBeUndefined();
 });
 
