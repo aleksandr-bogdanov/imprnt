@@ -262,10 +262,24 @@ standalone checker: `node plugins/guard/guard.js "<command>"` exits `2` blocked 
 
 ### statusline — the session's bottom line ✅ built (harness plugin)
 
-A customizable status line for imp sessions: model, directory, context usage, session cost. The
-line is whatever `statusline.js` prints from the session JSON Claude pipes it - edit the segments
-to make it yours (or copy into `_personal/` first). Its `imp-settings.json` carries the
-`statusLine` setting and rides imp's merged `--settings`. Nothing is written to your config.
+A customizable status line for imp sessions: model, directory, git branch, context used, session
+cost, rate-limit windows with the five-hour reset time, wall clock - colored by how worried you
+should be, refreshed every 30s. The line is whatever `statusline.js` prints from the session JSON
+Claude pipes it - edit the segments to make it yours (or copy into `_personal/` first). Its
+`imp-settings.json` carries the `statusLine` setting and rides imp's merged `--settings`. Nothing
+is written to your config.
+
+### telegram — the vault in your pocket ✅ built (channel bridge)
+
+Mobile access: a long-lived imp session in the lair with Claude Code's Telegram channel enabled
+(`sh plugins/telegram/link.sh`, a command you run when leaving the desk - never a daemon). You
+text your bot, the session runs `recall` against the vault on your machine and texts back. The
+plugin ships the phone-side behavior rules (recall-first, phone-sized replies, never paste a
+whole note) and wraps the official `telegram@claude-plugins-official` channel plugin (research
+preview - during it, only Anthropic-allowlisted channels can register). Bot token via
+`/telegram:configure` or `TELEGRAM_BOT_TOKEN` (rule 9). Honest caveats in its README: the machine
+must be awake, and bot chats are not end-to-end encrypted - the vault stays home, the
+conversation transits Telegram.
 
 ### whenful — task mirror ✅ shell built (live sync deferred)
 

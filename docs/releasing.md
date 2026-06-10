@@ -16,7 +16,7 @@ opts in, and plain `npm i -g imprnt` never sees edge builds.
 
 ## Versions are independent per package
 
-The repo holds six packages (the `imprnt` core plus five `imprnt-plugin-*`). They version on their
+The repo holds seven packages (the `imprnt` core plus six `imprnt-plugin-*`). They version on their
 own, so a package whose files did not change is never republished or bumped. The core can sit on
 `0.6.x` while a stable plugin stays at `0.1.0` for a year. What changed is decided by
 [Turborepo's](https://turborepo.com) `--affected`, diffed against a baseline.
@@ -74,7 +74,7 @@ npm deprecate imprnt@<bad> "broken release, use <last-good>"
 
 ## One-time setup (per package, on npmjs.com)
 
-Trusted publishing must be configured once for each of the six packages, under Settings then Trusted
+Trusted publishing must be configured once for each of the seven packages, under Settings then Trusted
 Publisher. A brand-new package (e.g. a new plugin) cannot be born through OIDC: its very first
 publish is a manual `npm publish` from your machine, then the Trusted Publisher settings below get
 configured on npmjs.com and every later release flows through the workflow:
