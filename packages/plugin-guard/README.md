@@ -23,6 +23,15 @@ Guard does its real job as a **PreToolUse hook on Bash**, configured in `setting
 runs the hook). Point the hook at `node plugins/guard/guard.js` and let its exit code gate the
 command. That wiring is a conscious one-time settings change you make yourself.
 
+## Remove
+
+```sh
+imprnt plugin rm guard
+```
+
+Or delete the import line by hand. Add `--purge` to also delete `plugins/guard/`. If you wired the
+PreToolUse hook into `settings.json`, remove that hook entry too.
+
 ## Limits
 
 It is a regex blocklist, not a shell parser. A command whose quoted argument merely mentions a

@@ -13,7 +13,7 @@ auto-injects.
 Run the already-built CLI command:
 
 ```sh
-imprnt hot [--vault DIR]    # or: bun <imprnt-repo>/scripts/cli.ts hot [--vault DIR]
+imprnt hot [--vault DIR]    # or: bun <imprnt-repo>/packages/imprnt/scripts/cli.ts hot [--vault DIR]
 ```
 
 Present the **needs-review items first** (these are the backlog the user has to clear), then the
