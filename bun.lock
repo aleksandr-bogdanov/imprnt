@@ -45,6 +45,10 @@
         "typescript": "^5.7.2",
       },
     },
+    "packages/plugin-telegram": {
+      "name": "imprnt-plugin-telegram",
+      "version": "0.1.0",
+    },
     "packages/plugin-whenful": {
       "name": "imprnt-plugin-whenful",
       "version": "0.1.0",
@@ -82,6 +86,8 @@
     "imprnt-plugin-guard": ["imprnt-plugin-guard@workspace:packages/plugin-guard"],
 
     "imprnt-plugin-statusline": ["imprnt-plugin-statusline@workspace:packages/plugin-statusline"],
+
+    "imprnt-plugin-telegram": ["imprnt-plugin-telegram@workspace:packages/plugin-telegram"],
 
     "imprnt-plugin-whenful": ["imprnt-plugin-whenful@workspace:packages/plugin-whenful"],
 

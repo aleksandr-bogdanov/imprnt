@@ -214,8 +214,11 @@ The shipped gallery:
 - **anti-slop** is the ruleset that keeps the assistant's writing from reading like AI.
 - **whenful** keeps a local mirror of your Whenful tasks, shown at read time.
 - **guard** blocks dangerous shell commands before they run, via a hook.
-- **statusline** draws the line at the bottom of your session (model, directory, context, cost),
-  and is made to be edited.
+- **statusline** draws the line at the bottom of your session (model, branch, context, cost, rate
+  limits, clock), and is made to be edited.
+- **telegram** puts the vault in your pocket: a session on your machine bridged to a Telegram
+  bot, so you can ask your notes things from your phone. You start the link, it never runs by
+  itself.
 
 A behavior plugin works by handing the assistant a fixed chunk of text wired into its config through
 `CLAUDE.local.md`, a gitignored per-machine file Claude Code loads each session. `imprnt plugin add`

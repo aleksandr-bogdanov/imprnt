@@ -113,7 +113,8 @@ asking ("add the anti-slop plugin"), each a separate `imprnt-plugin-*` package:
 | `imprnt-plugin-anti-slop` | Rules that keep its prose from reading like AI. |
 | `imprnt-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, shown inline at read. |
 | `imprnt-plugin-guard` | A hook that blocks dangerous shell commands before they run. |
-| `imprnt-plugin-statusline` | A customizable status line for your sessions: model, directory, context, cost. |
+| `imprnt-plugin-statusline` | A customizable status line: model, branch, context, cost, rate limits, clock. |
+| `imprnt-plugin-telegram` | Your vault from your phone: text a bot, the answer comes from your notes. |
 
 Adding one copies it into your project and wires it into `CLAUDE.local.md`, the per-machine file
 your assistant loads each session. A fresh setup loads zero plugins until you add them. The full
