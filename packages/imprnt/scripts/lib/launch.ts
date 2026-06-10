@@ -23,7 +23,10 @@ function importPath(root: string, target: string): string {
 // Inline every enabled @import from the vault project's CLAUDE.local.md — the same fragments
 // Claude Code would load natively inside the project. The line format is parsed in ONE place
 // (plugins.ts importTargets, the module that also writes those lines). Commented lines stay off.
-// A dangling import warns and is skipped (mirroring Claude Code's tolerance), never aborts.
+// A dangling import warns and is skipped (mirroring Claude Code's tolerance), never aborts. The same
+// holds for a target that EXISTS but cannot be read - a directory named *.md (EISDIR) or a chmod-000
+// file (EACCES). readFileSync throws on those, so guard it and skip with the same warn+continue shape
+// as the missing case, never letting a bad wire-in crash the launch.
 export function castFragment(root: string): string {
   const parts: string[] = [];
   for (const target of importTargets(root)) {
@@ -32,7 +35,11 @@ export function castFragment(root: string): string {
       console.error(`imp: skipping missing import @${target}`);
       continue;
     }
-    parts.push(readFileSync(p, "utf8").trim());
+    try {
+      parts.push(readFileSync(p, "utf8").trim());
+    } catch {
+      console.error(`imp: skipping unreadable import @${target}`);
+    }
   }
   return parts.join("\n\n");
 }

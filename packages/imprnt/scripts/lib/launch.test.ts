@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -49,6 +49,80 @@ test("castFragment tolerates a dangling import (skips it, keeps the rest)", () =
   writeFileSync(join(root, "plugins", "x", "agent.md"), "# X\n");
   writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/ghost/agent.md\n@plugins/x/agent.md\n");
   expect(castFragment(root)).toBe("# X");
+});
+
+test("castFragment tolerates an import target that is a directory (warns, skips, keeps the rest)", () => {
+  // existsSync is true for a directory, so the missing-import guard does not catch it - readFileSync
+  // would throw EISDIR. A wired @import pointing at a *.md directory must warn and skip, never crash.
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "_personal"), { recursive: true });
+  mkdirSync(join(root, "plugins", "_personal", "asdir.md"));
+  writeFileSync(join(root, "plugins", "_personal", "ok.md"), "# OK\n");
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    "@plugins/_personal/asdir.md\n@plugins/_personal/ok.md\n",
+  );
+  const errors: string[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+  try {
+    expect(castFragment(root)).toBe("# OK");
+  } finally {
+    console.error = orig;
+  }
+  expect(errors.length).toBe(1);
+  expect(errors[0]).toContain("asdir.md");
+});
+
+test("castFragment tolerates an unreadable import target (chmod 000 file: warns, skips, keeps the rest)", () => {
+  // existsSync is true, but readFileSync throws EACCES. A wired target that exists yet cannot be read
+  // must warn and skip exactly like the missing case, never abort the launch.
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "_personal"), { recursive: true });
+  const locked = join(root, "plugins", "_personal", "locked.md");
+  writeFileSync(locked, "# Locked\n");
+  chmodSync(locked, 0o000);
+  writeFileSync(join(root, "plugins", "_personal", "ok.md"), "# OK\n");
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    "@plugins/_personal/locked.md\n@plugins/_personal/ok.md\n",
+  );
+  const errors: string[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+  try {
+    expect(castFragment(root)).toBe("# OK");
+  } finally {
+    console.error = orig;
+    // Restore perms so the temp dir is cleanable.
+    chmodSync(locked, 0o600);
+  }
+  expect(errors.length).toBe(1);
+  expect(errors[0]).toContain("locked.md");
+});
+
+test("buildLaunch still launches when a wired import is unreadable (the readable cast is inlined)", () => {
+  // The whole point: an unreadable fragment degrades gracefully. buildLaunch must still emit the
+  // injected flags with the readable cast present, not throw.
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "_personal"), { recursive: true });
+  mkdirSync(join(root, "plugins", "_personal", "asdir.md"));
+  writeFileSync(join(root, "plugins", "_personal", "ok.md"), "# Readable cast\n");
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    "@plugins/_personal/asdir.md\n@plugins/_personal/ok.md\n",
+  );
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    const { args } = buildLaunch({ cwd: "/somewhere/else", vaultProject: root, pkgRoot });
+    const fragment = args[args.indexOf("--append-system-prompt") + 1]!;
+    expect(fragment).toContain("# Readable cast");
+    expect(fragment).toContain("imprnt recall");
+    expect(args[args.indexOf("--add-dir") + 1]).toBe(root);
+  } finally {
+    console.error = orig;
+  }
 });
 
 test("castFragment resolves absolute imports as Claude Code does (not project-relative)", () => {
