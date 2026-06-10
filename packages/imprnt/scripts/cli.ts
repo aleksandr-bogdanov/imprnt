@@ -11,7 +11,7 @@ import { listPluginDirs, isEnabled, addPlugin, rmPlugin, specError } from "./lib
 import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install.ts";
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
-import { registerVault, vaultProjectRoot, configPath, isVaultProject } from "./lib/registry.ts";
+import { registerVault, vaultProjectRoot, registeredRoot, configPath, isVaultProject } from "./lib/registry.ts";
 import { buildLaunch, launchClaude, childEnv } from "./lib/launch.ts";
 
 // packageRoot: the install location, source for templates/ + CLAUDE.md. Computed from THIS entry
@@ -24,6 +24,19 @@ const [cmd, ...rest] = process.argv.slice(2);
 // Set by the imp.ts entry. The two bins share this dispatcher; only the BARE behavior differs:
 // `imp` opens a Claude session where you stand, `imprnt` prints help (safe for scripts/agents).
 const asImp = (globalThis as Record<string, unknown>).__IMPRNT_IMP__ === true;
+
+// Project root for the plugin commands. projectRoot() stays cwd-only (init nest-check, check/apply
+// aggregators rely on that - see lib/roots.ts). Plugin management, though, should work from anywhere
+// like `imp`: a project you are standing IN wins (manage a second vault in place), otherwise fall
+// back to your registered default vault. IMPRNT_ROOT still overrides via projectRoot().
+function pluginRoot(): string {
+  const local = projectRoot();
+  if (process.env.IMPRNT_ROOT || process.env.IMPRINT_ROOT) return local; // explicit override wins
+  // A real project has the markers projectRoot walks up for; if local lacks them it fell back to a
+  // bare cwd, so prefer the registered vault. registeredRoot returns it only if it is a live vault.
+  if (existsSync(join(local, "vault")) || existsSync(join(local, "CLAUDE.local.md"))) return local;
+  return registeredRoot() ?? local;
+}
 
 function vaultArg(): string {
   const i = rest.indexOf("--vault");
@@ -127,7 +140,10 @@ switch (cmd) {
     // CLAUDE.local.md live there. `add <name>` fetches the package imprnt-plugin-<name> and copies
     // it into plugins/<name>/ before wiring; `add <name>/<file.md>` just wires a local file (the
     // _personal cast). No per-plugin logic in core.
-    const proj = projectRoot();
+    const proj = pluginRoot();
+    // A project you stand in wins; otherwise plugin ops target your registered vault, so they work
+    // from anywhere like `imp`. Say so when it is not cwd, so the target is never a surprise.
+    if (proj !== process.cwd()) console.error(`(targeting vault project: ${proj})`);
     const [sub, ...specs] = rest;
     if (sub === "list") {
       const dirs = listPluginDirs(proj);

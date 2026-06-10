@@ -159,6 +159,40 @@ test("plugin add _personal/<file.md> wires the documented personalization path (
   expect(list.stdout).not.toContain("_personal");
 });
 
+test("plugin commands target the registered vault when run outside any project", async () => {
+  // The pain this fixes: `imprnt plugin add` used to require cwd to BE the vault project. Now, run
+  // from a bare unrelated dir, it falls back to the registered default vault (like imp does).
+  const root = tmpRepo();
+  const vaultProj = join(root, "registered-vault");
+  mkVault(vaultProj);
+  registerDefault(root, vaultProj);
+  mkdirSync(join(vaultProj, "plugins", "_personal"), { recursive: true });
+  writeFileSync(join(vaultProj, "plugins", "_personal", "voice.md"), "x");
+  const elsewhere = join(root, "elsewhere");
+  mkdirSync(elsewhere, { recursive: true });
+  const r = await runCli(root, ["plugin", "add", "_personal/voice.md"], {}, elsewhere);
+  expect(r.code).toBe(0);
+  expect(r.stderr).toContain("targeting vault project");
+  // wired into the REGISTERED vault, not the bare cwd
+  expect(readFileSync(join(vaultProj, "CLAUDE.local.md"), "utf8")).toContain("@plugins/_personal/voice.md");
+  expect(existsSync(join(elsewhere, "CLAUDE.local.md"))).toBe(false);
+});
+
+test("a project you are standing in beats the registered default for plugin commands", async () => {
+  // cwd-precedence: managing a project you are inside must still win over the global default.
+  const root = tmpRepo();
+  const registered = join(root, "registered-vault");
+  mkVault(registered);
+  registerDefault(root, registered);
+  mkVault(root); // root is now itself a real vault project
+  mkdirSync(join(root, "plugins", "_personal"), { recursive: true });
+  writeFileSync(join(root, "plugins", "_personal", "x.md"), "x");
+  const r = await runCli(root, ["plugin", "add", "_personal/x.md"], {}, root);
+  expect(r.code).toBe(0);
+  expect(readLocal(root)).toContain("@plugins/_personal/x.md"); // wired into the cwd project
+  expect(existsSync(join(registered, "CLAUDE.local.md"))).toBe(false); // not the registered default
+});
+
 test("plugin add a a (duplicate spec in one call) is idempotent: a single line", async () => {
   const root = tmpRepo();
   const r = await runCli(root, ["plugin", "add", "anti-slop", "anti-slop"]);
