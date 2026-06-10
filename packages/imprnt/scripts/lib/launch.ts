@@ -6,7 +6,7 @@
 // CLAUDE.md and CLAUDE.local.md load natively — so nothing is injected there (injecting would
 // double-load the cast). The full vault contract is never injected anywhere: the pointer tells
 // the agent to run `imprnt context` before writing, the same frequency rule as the engine.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -41,18 +41,49 @@ export function castFragment(root: string): string {
 // Lives in templates/ so it ships with the package and stays editable without a code change.
 export function pointerFragment(pkgRoot: string, vaultProject: string): string {
   const tpl = readFileSync(join(pkgRoot, "templates", "pointer.md"), "utf8");
-  return tpl.replaceAll("{{VAULT_PROJECT}}", vaultProject);
+  // Function replacement: a string replacement runs $-pattern substitution, so a path with $$
+  // would render corrupted ($$ collapses to $) and the pointer would advertise a phantom path.
+  return tpl.replaceAll("{{VAULT_PROJECT}}", () => vaultProject);
+}
+
+// Realpath when the path exists, plain resolve when it doesn't - inside-detection must see
+// through symlinks (macOS /tmp -> /private/tmp, Dropbox/iCloud aliases), or a symlink-spelled
+// IMPRNT_ROOT defeats it and imp injects on top of claude's native CLAUDE.md load.
+function realResolve(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
 }
 
 export function isInside(child: string, parent: string): boolean {
-  const c = resolve(child);
-  const p = resolve(parent);
+  const c = realResolve(child);
+  const p = realResolve(parent);
   return c === p || c.startsWith(p + sep);
+}
+
+function isDir(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// The agent inside the child session runs engine commands (`imprnt recall`), and those default
+// to ./vault relative to cwd - which is only right at the project root itself. Point the child
+// env at the real vault so the advertised commands work from anywhere. An IMPRNT_VAULT the user
+// set themselves stays untouched (it already steered vaultProject resolution upstream).
+function childEnv(vaultProject: string): NodeJS.ProcessEnv {
+  return process.env.IMPRNT_VAULT || process.env.IMPRINT_VAULT
+    ? process.env
+    : { ...process.env, IMPRNT_VAULT: join(vaultProject, "vault") };
 }
 
 // Pure assembly of the spawn inputs (args + env), separated from the spawn so tests can assert
 // the exact composition. Inside the vault project (or with no vault registered) nothing is
-// injected and the env is untouched: claude runs as-is and context loads natively from cwd.
+// injected: claude runs as-is and context loads natively from cwd.
 export function buildLaunch(opts: {
   cwd: string;
   vaultProject?: string;
@@ -60,36 +91,50 @@ export function buildLaunch(opts: {
   passthrough?: string[];
 }): { args: string[]; env: NodeJS.ProcessEnv } {
   const pass = [...(opts.passthrough ?? [])];
-  if (!opts.vaultProject || isInside(opts.cwd, opts.vaultProject)) return { args: pass, env: process.env };
+  if (!opts.vaultProject) return { args: pass, env: process.env };
+  // A resolved project that is missing or a plain file (a stale IMPRNT_ROOT, a moved dir) must
+  // not get injected - the pointer would advertise a phantom vault and shadow reality. Warn and
+  // fall back to plain claude, same shape as nothing-registered. `imp lair` keeps its hard error.
+  if (!isDir(opts.vaultProject)) {
+    console.error(`imp: vault project not found at ${opts.vaultProject} - launching plain claude (re-run \`imprnt init\` there, or fix IMPRNT_ROOT)`);
+    return { args: pass, env: process.env };
+  }
+  // Inside the project (root or any subdir) the prompt loads natively, so injecting would double
+  // the cast - but a subdir cwd still strands the engine's ./vault default, so the env (not a
+  // prompt injection) is set either way. The exact root gets it too: one uniform rule.
+  if (isInside(opts.cwd, opts.vaultProject)) return { args: pass, env: childEnv(opts.vaultProject) };
 
   const fragment = [castFragment(opts.vaultProject), pointerFragment(opts.pkgRoot, opts.vaultProject)]
     .filter(Boolean)
     .join("\n\n");
   // A user-supplied --append-system-prompt would collide with ours (claude keeps one value per
-  // single-value flag), so merge the fragment into theirs instead of adding a second flag.
-  const i = pass.indexOf("--append-system-prompt");
-  const args =
-    i >= 0 && pass[i + 1] !== undefined
-      ? [...pass.slice(0, i + 1), pass[i + 1] + "\n\n" + fragment, ...pass.slice(i + 2), "--add-dir", opts.vaultProject]
-      : [...pass, "--append-system-prompt", fragment, "--add-dir", opts.vaultProject];
+  // single-value flag), so merge the fragment into theirs instead of adding a second flag -
+  // matching both the `--flag value` and the `--flag=value` spellings, last occurrence wins
+  // (mirroring how claude resolves a repeated flag).
+  const args = [...pass];
+  let merged = false;
+  for (let i = args.length - 1; i >= 0 && !merged; i--) {
+    if (args[i] === "--append-system-prompt" && args[i + 1] !== undefined) {
+      args[i + 1] += "\n\n" + fragment;
+      merged = true;
+    } else if (args[i]!.startsWith("--append-system-prompt=")) {
+      args[i] += "\n\n" + fragment;
+      merged = true;
+    }
+  }
+  if (!merged) args.push("--append-system-prompt", fragment);
+  args.push("--add-dir", opts.vaultProject);
 
-  // The agent inside this session runs engine commands (`imprnt recall`), and those default to
-  // ./vault relative to cwd — the coding repo, not the vault. Point the child session's env at
-  // the real vault so the pointer's advertised commands actually work. An IMPRNT_VAULT the user
-  // set themselves stays untouched (it already steered vaultProject resolution upstream).
-  const env =
-    process.env.IMPRNT_VAULT || process.env.IMPRINT_VAULT
-      ? process.env
-      : { ...process.env, IMPRNT_VAULT: join(opts.vaultProject, "vault") };
-  return { args, env };
+  return { args, env: childEnv(opts.vaultProject) };
 }
 
 // Spawn claude interactively and hand back its exit code. The two failure modes a novice
 // actually hits get a real message; everything else streams through inherited stdio.
 export function launchClaude(cwd: string, args: string[], env: NodeJS.ProcessEnv = process.env): number {
-  // A dead cwd also surfaces as ENOENT from spawnSync and would masquerade as "claude missing" —
-  // catch it first with the fix that actually applies.
-  if (!existsSync(cwd)) {
+  // A dead cwd surfaces as ENOENT from spawnSync (masquerading as "claude missing") and a
+  // plain-file cwd as ENOTDIR (blaming claude for a vault-path problem) - catch both first with
+  // the fix that actually applies.
+  if (!isDir(cwd)) {
     console.error(`imp: vault project not found at ${cwd} — re-run \`imprnt init\` in its new location (add --register to switch the default)`);
     return 1;
   }
