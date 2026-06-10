@@ -1,0 +1,25 @@
+{
+  "name": "imprnt-plugin-telegram",
+  "version": "0.1.0",
+  "description": "imprnt plugin: your vault from your phone - an imp lair session bridged to Telegram via Claude Code channels. Recall-first phone replies, one start command, no daemon.",
+  "type": "module",
+  "files": [
+    "agent.md",
+    "README.md",
+    "link.sh"
+  ],
+  "keywords": [
+    "imprnt",
+    "imprnt-plugin",
+    "telegram",
+    "channels",
+    "claude-code"
+  ],
+  "license": "MIT",
+  "author": "Aleksandr Bogdanov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aleksandr-bogdanov/imprnt.git",
+    "directory": "packages/plugin-telegram"
+  }
+}
