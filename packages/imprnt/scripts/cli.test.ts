@@ -532,3 +532,93 @@ test("init from a subdirectory of an existing vault project refuses and names th
   // Nothing was scaffolded into the subdirectory.
   expect(existsSync(join(sub, "vault"))).toBe(false);
 });
+
+// --- init <path>: scaffold a DIFFERENT location than cwd ---
+
+test("init <explicit-path> (non-interactive) scaffolds, registers, and contracts THAT path, not cwd", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  cpSync(join(realRoot, "CLAUDE.md"), join(root, "CLAUDE.md"), { recursive: true });
+  const xdg = join(root, "xdg");
+  // A fresh target OUTSIDE cwd (a sibling tmp path). It does not exist yet - init must create it.
+  const target = join(root, "elsewhere", "myvault");
+  const r = await runCli(root, ["init", target], { XDG_CONFIG_HOME: xdg });
+  expect(r.code).toBe(0);
+  // The vault lands at the target, not at cwd.
+  expect(existsSync(join(target, "vault", "index.md"))).toBe(true);
+  expect(existsSync(join(target, "vault", "people"))).toBe(true);
+  expect(existsSync(join(target, "raw"))).toBe(true);
+  expect(existsSync(join(target, "CLAUDE.md"))).toBe(true);
+  // cwd was left untouched - no stray vault/ scaffolded where the command ran.
+  expect(existsSync(join(root, "vault"))).toBe(false);
+  // The report states the actual location (absolute target/vault), not "./vault".
+  expect(r.stdout).toContain(`initialized vault at ${join(target, "vault")}`);
+  expect(r.stdout).not.toContain("initialized vault at ./vault");
+  // The registry records the TARGET, not cwd.
+  const config = JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8"));
+  expect(config.vaults.personal).toBe(target);
+});
+
+test("init <path> with --register before the path still reads the path as the positional", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  cpSync(join(realRoot, "CLAUDE.md"), join(root, "CLAUDE.md"), { recursive: true });
+  const xdg = join(root, "xdg");
+  const target = join(root, "twovault");
+  // --register sits BEFORE the path: the positional parse skips flags and still finds the path.
+  const r = await runCli(root, ["init", "--register", target], { XDG_CONFIG_HOME: xdg });
+  expect(r.code).toBe(0);
+  expect(existsSync(join(target, "vault", "index.md"))).toBe(true);
+  expect(JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8")).vaults.personal).toBe(target);
+});
+
+test("init ~/<sub> expands the tilde to HOME (throwaway home, never the real one)", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  cpSync(join(realRoot, "CLAUDE.md"), join(root, "CLAUDE.md"), { recursive: true });
+  const xdg = join(root, "xdg");
+  // Point HOME at a throwaway dir so the ~ expansion can never touch the developer's real home.
+  const fakeHome = join(root, "home");
+  mkdirSync(fakeHome, { recursive: true });
+  const r = await runCli(root, ["init", "~/imprnt"], { XDG_CONFIG_HOME: xdg, HOME: fakeHome });
+  expect(r.code).toBe(0);
+  // ~ resolved to the throwaway HOME, so the vault is under fakeHome/imprnt, not literal ~.
+  const expected = join(fakeHome, "imprnt");
+  expect(existsSync(join(expected, "vault", "index.md"))).toBe(true);
+  expect(existsSync(join(root, "~"))).toBe(false); // no literal "~" dir leaked into cwd
+  expect(r.stdout).toContain(`initialized vault at ${join(expected, "vault")}`);
+  expect(JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8")).vaults.personal).toBe(expected);
+});
+
+// Regression: non-interactive init with NO arg still uses cwd (the script/CI/test path). This is
+// what the spawn helper exercises (piped stdio -> no TTY), and what every existing init test above
+// relies on. Asserted here once explicitly so a future change to the prompt branch can't quietly
+// break the cwd fallback.
+test("init with NO arg and no TTY still scaffolds in cwd and registers cwd (regression)", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  cpSync(join(realRoot, "CLAUDE.md"), join(root, "CLAUDE.md"), { recursive: true });
+  const xdg = join(root, "xdg");
+  const r = await runCli(root, ["init"], { XDG_CONFIG_HOME: xdg });
+  expect(r.code).toBe(0);
+  expect(existsSync(join(root, "vault", "index.md"))).toBe(true);
+  expect(r.stdout).toContain("initialized vault at ./vault");
+  // cwd resolves symlinks (macOS /var -> /private/var), so compare against the realpath.
+  expect(JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8")).vaults.personal).toBe(realpathSync(root));
+});
+
+// The nest-refusal must also fire for an explicit TARGET inside an existing vault project, not just
+// for cwd. init <path-inside-a-vault> would scaffold a second vault in the real one's corpus.
+test("init <path> pointing INTO an existing vault project refuses and names the root", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  mkVault(root);
+  // Run from an unrelated dir but TARGET a deep subdir of the real vault project.
+  const target = join(root, "notes", "deep");
+  const r = await runCli(root, ["init", target]);
+  expect(r.code).toBe(1);
+  // An explicit path is resolved but NOT realpath'd (matching resolvePath), so the refusal names
+  // the enclosing root as the un-symlink-resolved `root`, not its realpath.
+  expect(r.stderr).toContain(`inside the vault project at ${root}`);
+  expect(existsSync(join(target, "vault"))).toBe(false);
+});

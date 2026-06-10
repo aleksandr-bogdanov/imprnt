@@ -2,8 +2,10 @@
 // No shebang: the shipped bin gets `#!/usr/bin/env node` injected at build time (--banner), and
 // dev runs this via `bun scripts/cli.ts`. A source shebang would survive bundling and collide.
 import { cpSync, mkdirSync, existsSync, readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline/promises";
 import { openNeedsReview } from "./lib/resolve.ts";
 import { listPluginDirs, isEnabled, addPlugin, rmPlugin, specError } from "./lib/plugins.ts";
 import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install.ts";
@@ -48,6 +50,24 @@ function requireVaultHome(): string {
     process.exit(1);
   }
   return home;
+}
+
+// Expand a leading `~` to the home dir, then resolve against `base` (cwd by default). A bare `~`
+// or `~/...` is the only tilde form handled - `~user` is left alone (it would resolve relative to
+// cwd, which is the safe surprise-free default). Pure given home/base, so it is unit-testable.
+function resolvePath(input: string, base: string = process.cwd(), home: string = homedir()): string {
+  let p = input;
+  if (p === "~") p = home;
+  else if (p.startsWith("~/")) p = join(home, p.slice(2));
+  return resolve(base, p);
+}
+
+// The first token of `rest` that is NOT a flag (does not start with `-`) is the init positional
+// path. Flags like --register (any position) and future flags are skipped, so `init --register foo`
+// and `init foo --register` both read `foo` as the path. Returns undefined when there is no
+// positional, which routes init to the prompt (interactive) or cwd fallback (non-TTY).
+function initPositional(args: string[]): string | undefined {
+  return args.find((a) => !a.startsWith("-"));
 }
 
 // Delegated scripts parse process.argv.slice(2) themselves. Strip the subcommand token
@@ -211,13 +231,45 @@ switch (cmd) {
     process.exit(1);
   }
   case "init": {
-    // Refuse to nest: init from a subdirectory of an existing vault project would scaffold a
-    // second vault INSIDE the real one and pollute its corpus with fresh control files. The
-    // walk-up (lib/roots.ts) finds the enclosing project root; only a genuinely initialized
-    // vault above blocks - a fresh dir (walk-up falls back to cwd) inits as before.
-    const enclosing = projectRoot();
-    if (enclosing !== process.cwd() && isVaultProject(enclosing)) {
-      console.error(`refusing to init: this directory is inside the vault project at ${enclosing} - run \`imprnt init\` there instead`);
+    // Resolve the TARGET dir to scaffold. Three sources, in priority order:
+    //   1. an explicit positional path (`imprnt init <path>`, ~ expanded, resolved against cwd),
+    //   2. an interactive prompt with an editable default (only when both stdin AND stdout are a
+    //      TTY, so a human is really there), Enter takes the default,
+    //   3. the cwd fallback when there is no TTY - this is the path every script/CI/test hits, and
+    //      it must behave exactly as init always did (scaffold ./vault here, register cwd).
+    let target: string;
+    const positional = initPositional(rest);
+    if (positional !== undefined) {
+      target = resolvePath(positional);
+    } else if (process.stdin.isTTY && process.stdout.isTTY) {
+      // Default: re-init cwd in place when it is already a vault project, otherwise ~/imprnt. The
+      // display string is what shows in the prompt brackets; ~/imprnt shows literally as ~/imprnt
+      // (resolved to <home>/imprnt only after the user accepts it).
+      const inPlace = isVaultProject(process.cwd());
+      const display = inPlace ? process.cwd() : "~/imprnt";
+      const fallback = inPlace ? process.cwd() : join(homedir(), "imprnt");
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = (await rl.question(`vault location [${display}]: `)).trim();
+      rl.close();
+      target = answer ? resolvePath(answer) : fallback;
+    } else {
+      // Non-interactive, no positional: every script/CI/test path. Use cwd exactly as before so
+      // those paths never block on stdin and keep their existing "./vault" output + cwd registration.
+      target = process.cwd();
+    }
+    // toCwd: when the target is the working dir, keep the historic relative "./vault" phrasing
+    // (existing tests + the muscle-memory output assert it). A different target prints absolute.
+    const toCwd = target === process.cwd();
+    const rel = (sub: string) => (toCwd ? `./${sub}` : join(target, sub));
+
+    // Refuse to nest: init INTO a subdirectory of an existing vault project would scaffold a
+    // second vault INSIDE the real one and pollute its corpus with fresh control files. Walk up
+    // from the TARGET (lib/roots.ts); only a genuinely initialized vault above blocks - a fresh
+    // dir (walk-up falls back to target) inits as before. The target need not exist yet:
+    // projectRoot walks ancestors via existsSync, which is fine for a path like ~/imprnt.
+    const enclosing = projectRoot(target);
+    if (enclosing !== target && isVaultProject(enclosing)) {
+      console.error(`refusing to init: ${toCwd ? "this directory" : target} is inside the vault project at ${enclosing} - run \`imprnt init\` there instead`);
       process.exit(1);
     }
     // v3 layout: entity folders (cross-cutting) + domain folders (life-areas) + form folders, all flat
@@ -229,17 +281,20 @@ switch (cmd) {
     // init is idempotent: it only ever creates what's missing and never touches a note. Track what
     // actually changed so the summary states the truth — a fresh scaffold vs. topping up an existing
     // vault — instead of unconditionally claiming to have scaffolded one.
-    const vaultPath = join(process.cwd(), "vault");
+    const vaultPath = join(target, "vault");
     const vaultExisted = existsSync(vaultPath);
     let createdDirs = 0;
-    for (const d of ["vault", ...vaultDirs.map((t) => `vault/${t}`), "raw"]) {
-      const abs = join(process.cwd(), d);
+    // The target dir itself goes first, so a fresh path like ~/imprnt exists before the vault/<dirs>
+    // mkdir loop runs (mkdirSync recursive would make it anyway, but listing it keeps the createdDirs
+    // count + the clean per-dir error honest for the new-location case).
+    for (const d of ["", "vault", ...vaultDirs.map((t) => `vault/${t}`), "raw"]) {
+      const abs = d ? join(target, d) : target;
       if (!existsSync(abs)) createdDirs++;
       try {
         mkdirSync(abs, { recursive: true });
       } catch (e) {
         // A plain FILE squatting on a dir name (EEXIST) or a permission problem: one clean line.
-        console.error(`cannot create ./${d}: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(`cannot create ${d ? rel(d) : target}: ${e instanceof Error ? e.message : String(e)}`);
         process.exit(1);
       }
     }
@@ -251,7 +306,7 @@ switch (cmd) {
     // Drop the vault contract into the project so an installed agent loads it. The dev clone
     // already has CLAUDE.md at root; this is what makes a fresh `npm i -g` install self-describing,
     // and what the @import lines in CLAUDE.local.md resolve against. Never overwrite a local copy.
-    const claudeMd = join(process.cwd(), "CLAUDE.md");
+    const claudeMd = join(target, "CLAUDE.md");
     if (!existsSync(claudeMd) && existsSync(join(pkgRoot, "CLAUDE.md"))) {
       cpSync(join(pkgRoot, "CLAUDE.md"), claudeMd);
       added.push("CLAUDE.md");
@@ -263,24 +318,24 @@ switch (cmd) {
     // A registration failure (unwritable config dir) must NOT abort the successful scaffold: the
     // vault is fully usable via ./vault or IMPRNT_VAULT even unregistered. Print one clean line on
     // stderr and fall through to the normal scaffold report (exit 0) - init's real job is done.
-    const reg = registerVault(process.cwd(), { force: rest.includes("--register") });
+    const reg = registerVault(target, { force: rest.includes("--register") });
     if (reg.status === "registered") console.log(`registered as imp's default vault project (${configPath()})`);
     else if (reg.status === "kept") console.log(`kept the existing default vault project (${reg.current}) — run \`imprnt init --register\` here to switch`);
     else if (reg.status === "error") console.error(`could not register as imp's default vault project (${configPath()}): ${reg.error} — the vault still works via ./vault or IMPRNT_VAULT`);
 
     if (!vaultExisted) {
       // Brand-new vault: show the layout so the user learns the shape, then point at the next step.
-      console.log("initialized vault at ./vault");
+      console.log(`initialized vault at ${rel("vault")}`);
       console.log(`  entities: ${entities.join(", ")}`);
       console.log(`  domains:  ${domains.join(", ")}`);
       console.log(`  forms:    ${forms.join(", ")}`);
-      console.log("  + raw/ for immutable by-source snapshots");
+      console.log(`  + ${rel("raw")} for immutable by-source snapshots`);
       console.log("next: type `imp` to talk, or ingest a source (`imprnt ingest <file>`), then `imprnt check`.");
     } else {
       // Existing vault: lead with the count so it's obvious the notes were found, not made, and
       // report only the idempotent top-up. Never imply anything was created or overwritten.
       const noteCount = collectNotes(vaultPath).length;
-      console.log(`found existing vault at ./vault — ${noteCount} note${noteCount === 1 ? "" : "s"}, left untouched`);
+      console.log(`found existing vault at ${rel("vault")} — ${noteCount} note${noteCount === 1 ? "" : "s"}, left untouched`);
       if (added.length) console.log(`  added missing control file${added.length === 1 ? "" : "s"}: ${added.join(", ")}`);
       else if (createdDirs) console.log(`  added ${createdDirs} missing folder${createdDirs === 1 ? "" : "s"}`);
       else console.log("  already initialized — nothing to add");
@@ -314,7 +369,7 @@ the front door (the \`imp\` bin):
   imp -c | --resume | <claude flags>       flags pass through to claude
 
 engine (same subcommands under \`imp\` or \`imprnt\`):
-  imprnt init [--register]                 scaffold ./vault (entities/domains/forms) and ./raw, register as imp's default vault
+  imprnt init [path] [--register]          scaffold vault (entities/domains/forms) + raw, register as imp's default; prompts for a location when run interactively with no path (default ~/imprnt)
   imprnt snapshot <src> --dest <relpath>   mirror a file/dir into raw/<relpath> (immutable, hashed) — the migration's deterministic half
   imprnt ingest <file|text> [--vault D]    snapshot a source -> raw/; a transcript file also gets an event skeleton (no LLM)
   imprnt recall "<query>" [--vault D]      synonym-aware BM25 ranking over the vault
