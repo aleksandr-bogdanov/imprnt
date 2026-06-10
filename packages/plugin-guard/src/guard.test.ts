@@ -340,3 +340,39 @@ for (const { label, cmd, expectedExit } of rows) {
     expect(exitOf(cmd)).toBe(expectedExit);
   });
 }
+
+// --- hook mode: `--hook` reads the PreToolUse JSON payload and judges tool_input.command only ---
+
+function hookExit(stdin: string): { code: number; stderr: string } {
+  const r = Bun.spawnSync(["bun", GUARD, "--hook"], { stdin: Buffer.from(stdin) });
+  return { code: r.exitCode, stderr: r.stderr.toString() };
+}
+
+test("hook mode blocks a dangerous tool_input.command (exit 2, reason on stderr)", () => {
+  const r = hookExit(JSON.stringify({ tool_name: "Bash", tool_input: { command: "rm -rf ~" } }));
+  expect(r.code).toBe(2);
+  expect(r.stderr).toContain("BLOCKED");
+});
+
+test("hook mode allows a benign tool_input.command (exit 0)", () => {
+  expect(hookExit(JSON.stringify({ tool_input: { command: "ls -la" } })).code).toBe(0);
+});
+
+test("hook mode judges ONLY the command string, never the payload around it", () => {
+  // A dangerous pattern in a sibling field (a file path, a description) must not block.
+  const payload = JSON.stringify({
+    tool_input: { command: "ls", description: "notes about rm -rf / recovery" },
+  });
+  expect(hookExit(payload).code).toBe(0);
+});
+
+test("hook mode on a payload with no command allows (exit 0): nothing to judge", () => {
+  expect(hookExit(JSON.stringify({ tool_input: {} })).code).toBe(0);
+  expect(hookExit(JSON.stringify({ tool_input: { command: 42 } })).code).toBe(0);
+});
+
+test("hook mode on unparseable stdin is a NON-blocking notice (exit 1, never 2)", () => {
+  const r = hookExit("not json at all");
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("unreadable hook payload");
+});

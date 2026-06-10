@@ -144,15 +144,40 @@ const DENY: { re: RegExp; why: string }[] = [
   { re: /\bgit\b(?:\s+\S+){0,16}?\s+push\s+(?:--force(?:-with-lease)?|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*)\s*$/, why: "bare force-push (current branch, often main/master)" },
 ];
 
-const argCmd = process.argv.slice(2).join(" ").trim();
+// Exit 2 + the reason on a blocklist hit, exit 0 + "ok" otherwise. Exit 2 is what a Claude Code
+// PreToolUse hook reads as BLOCK (stderr goes back to the model); 0 lets the command through.
+function verdict(cmd: string): never {
+  for (const d of DENY) {
+    if (d.re.test(cmd)) {
+      console.error(`BLOCKED (${d.why}):\n  ${cmd}`);
+      process.exit(2);
+    }
+  }
+  console.log("ok");
+  process.exit(0);
+}
+
+const argv = process.argv.slice(2);
+
+// `--hook`: run as a Claude Code PreToolUse hook. The harness pipes a JSON payload on stdin; the
+// command under judgment is tool_input.command. Testing ONLY that string (not the whole payload)
+// keeps JSON escaping and key names from distorting the regexes. A payload guard can't parse exits
+// 1: a NON-blocking notice (only 2 blocks), because bricking every Bash call over a harness format
+// change is worse than one un-guarded command. No command in the payload = nothing to judge = allow.
+if (argv[0] === "--hook") {
+  let command: unknown;
+  try {
+    command = (JSON.parse(readFileSync(0, "utf8")) as { tool_input?: { command?: unknown } })
+      ?.tool_input?.command;
+  } catch {
+    console.error("guard: unreadable hook payload (expected PreToolUse JSON on stdin)");
+    process.exit(1);
+  }
+  if (typeof command !== "string" || !command.trim()) process.exit(0);
+  verdict(command);
+}
+
+const argCmd = argv.join(" ").trim();
 const cmd = argCmd || readFileSync(0, "utf8").trim(); // piped stdin to EOF, sync — no Bun, no await
 if (!cmd) { console.error('usage: guard "<command>"'); process.exit(1); }
-
-for (const d of DENY) {
-  if (d.re.test(cmd)) {
-    console.error(`BLOCKED (${d.why}):\n  ${cmd}`);
-    process.exit(2);
-  }
-}
-console.log("ok");
-process.exit(0);
+verdict(cmd);
