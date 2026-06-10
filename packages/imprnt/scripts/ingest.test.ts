@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, symlinkSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, symlinkSync, chmodSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -901,4 +901,119 @@ test("a read-only raw/ gives a clean one-line error, not a stack", () => {
   } finally {
     chmodSync(raw, 0o755);
   }
+});
+
+// --- round-2 finding 1: a document-header block (Title:/Author:/Status:, or callouts like
+// Warning:/Remember:/TODO:) over plain prose clears the >=2-distinct-speaker bar but is NOT a
+// transcript - each "speaker" label appears once at the top, the body is paragraphs. It must route to
+// snapshot + unclassified handoff, not a fabricated event with [[people/title]] / [[people/author]]. -
+test("a Title:/Author:/Status: header over prose is not detected as a transcript", () => {
+  const { vault, raw } = setup();
+  const src = join(vault, "..", "doc.md");
+  writeFileSync(src, [
+    "Title: Quarterly strategy memo",
+    "Author: Jordan Lee",
+    "Status: Draft",
+    "",
+    "This document lays out the plan for the next quarter. It is plain prose, no dialogue.",
+    "We will revisit the budget after the review and adjust headcount accordingly.",
+    "There is more text here to make the prose the dominant body of the file.",
+  ].join("\n") + "\n");
+
+  const r = run(["ingest", src, "--vault", vault]);
+  expect(r.code).toBe(0);
+  // No fabricated event with bogus people from the header labels.
+  expect(readdirSync(join(vault, "events")).length).toBe(0);
+  // Snapshot + unclassified handoff fires; the snapshot files under adhoc, not transcripts.
+  expect(needsReview(vault)).toContain("unclassified source");
+  expect(needsReview(vault)).not.toContain("people/title");
+  expect(needsReview(vault)).not.toContain("people/author");
+  expect(existsSync(join(raw, "transcripts"))).toBe(false);
+  expect(existsSync(join(raw, "adhoc"))).toBe(true);
+});
+
+// --- round-2 finding 2: the unchanged-source fast-skip must verify the note AND snapshot still exist.
+// Deleting the filed event note and re-ingesting must re-file it, not no-op naming a note that is gone.
+test("re-ingesting after the event note was deleted re-files it instead of a silent no-op", () => {
+  const { vault } = setup();
+  const src = join(vault, "..", "t.txt");
+  writeFileSync(src, TRANSCRIPT_2SPK);
+  expect(run(["ingest", src, "--vault", vault]).code).toBe(0);
+
+  const notePath = join(vault, "events", "2025-03-04-q3-planning.md");
+  expect(existsSync(notePath)).toBe(true);
+  rmSync(notePath); // the note is gone, but the manifest still records its hash
+
+  const r = run(["ingest", src, "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(r.out).not.toContain("unchanged"); // must NOT take the trust-the-hash fast-skip
+  expect(existsSync(notePath)).toBe(true);  // the note is re-created
+});
+
+// --- round-2 finding 3: a UTF-8 BOM before the `---` fence must not defeat frontmatter detection. A
+// PowerShell Out-File / Notepad-authored staged note with a leading BOM + valid frontmatter applies. -
+test("--apply strips a leading UTF-8 BOM so a BOM+CRLF staged note is filed, not refused as no type", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "bom.md");
+  // A BOM (﻿) then CRLF frontmatter, the Notepad/PowerShell default.
+  const content = "﻿" + ["---", "type: person", "tags: [test]", "---", "", "# Bom Person", "", "bio"].join("\r\n") + "\r\n";
+  writeFileSync(staged, content);
+
+  const r = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(r.err).not.toContain("no `type:`");
+  expect(existsSync(join(vault, "people", "bom-person.md"))).toBe(true);
+});
+
+// --- round-2 finding 5: a bare URL inline fact must route to inline-text ingest, not be refused as a
+// missing file because the scheme `//` trips the path-separator check. -----------------------------
+test("a bare URL ingests as inline text, not refused as a missing path", () => {
+  const { vault } = setup();
+  const r = run(["ingest", "https://example.com/some/path", "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(r.err).not.toContain("no such file");
+  expect(r.out.toLowerCase()).toContain("snapshot");
+  expect(needsReview(vault)).toContain("unclassified source");
+});
+
+// --- round-2 finding 6: ingest's DOMAIN_FOLDERS must NOT include "projects" (a form folder, self-
+// describing by type:project, no domain:). A staged `type:note domain:projects` must be rejected, not
+// filed into projects/ where check's domain audit then exempts it (a silent contract leak). ----------
+test("--apply rejects type:note domain:projects instead of filing into the form folder", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "leak.md");
+  writeFileSync(staged, "---\ntype: note\ndomain: projects\ntags: [test]\n---\n\n# Leaky note\n\nbody\n");
+  const r = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("maps to no vault folder");
+  // It was NOT filed into projects/.
+  expect(existsSync(join(vault, "projects", "leaky-note.md"))).toBe(false);
+});
+
+// --- round-2 finding 6 (companion): a real type:project note still files into projects/ via
+// TYPE_FOLDER (not DOMAIN_FOLDERS). Removing "projects" from the domain set must not break this. -----
+test("--apply still files a real type:project note into projects/", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "proj.md");
+  writeFileSync(staged, "---\ntype: project\nstatus: active\ntags: [test]\n---\n\n# Ship the thing\n\nbody\n");
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  expect(existsSync(join(vault, "projects", "ship-the-thing.md"))).toBe(true);
+});
+
+// --- round-2 finding 6 (companion): --apply on a path that is a DIRECTORY gives a clean one-line
+// error, not a raw EISDIR stack (the round-1 EISDIR fix covered only the main ingest path). ----------
+test("--apply on a directory errors cleanly, not a raw EISDIR stack", () => {
+  const { vault } = setup();
+  const dir = join(vault, "..", "stageddir");
+  mkdirSync(dir);
+  const r = run(["ingest", "--apply", dir, "--vault", vault]);
+  expect(r.code).toBe(1);
+  expect(r.err.toLowerCase()).toContain("directory");
+  expect(r.err).not.toContain("EISDIR");
 });

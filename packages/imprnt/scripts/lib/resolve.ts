@@ -25,6 +25,13 @@ export function personResolved(vault: string, slug: string, displayName: string)
 export function flagNeedsReview(vault: string, line: string): void {
   const p = join(vault, "_needs-review.md");
   if (!existsSync(p)) writeFileSync(p, "---\ntype: needs-review\n---\n\n# Needs review\n\n");
+  // Dedup: a standing conflict re-flagged on every --apply-all run would otherwise append an
+  // identical line forever (unbounded growth under a scheduled apply). Skip if the exact line is
+  // already present. Compared trimmed of the trailing newline so the stored "\n"-terminated line
+  // matches whether the caller passed one or not.
+  const want = line.replace(/\n$/, "");
+  const present = readFileSync(p, "utf8").split(/\r?\n/).some((l) => l === want);
+  if (present) return;
   appendFileSync(p, line.endsWith("\n") ? line : line + "\n");
 }
 
