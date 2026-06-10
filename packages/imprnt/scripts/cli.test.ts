@@ -392,6 +392,53 @@ test("plugin add with a dangling --from is a usage error (never a silent registr
   expect(r.stderr).toContain("--from <dir>");
 });
 
+// --from feeds ONE local dir, so it names exactly one plugin. With two names the single dir would
+// otherwise be copied into BOTH plugins/ (the second gets the wrong content, reported as success),
+// and a typo'd extra token would install + wire the typo with real content (--from short-circuits
+// the registry fetch, so even a 404-worthy name "succeeds"). Reject before installing anything.
+test("plugin add with --from and more than one name errors, installs nothing, wires nothing", async () => {
+  const root = tmpRepo();
+  const src = mkPluginSrc(root, "demo");
+  const r = await runCli(root, ["plugin", "add", "anti-slop", "character", "--from", src]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("--from installs one local plugin");
+  // The names are echoed so a typo'd extra token is visible.
+  expect(r.stderr).toContain("anti-slop");
+  expect(r.stderr).toContain("character");
+  // Nothing was copied into the second name's dir, and nothing was wired for either.
+  expect(existsSync(join(root, "plugins", "character", "agent.md"))).toBe(false);
+  expect(readLocal(root)).not.toContain("@plugins/anti-slop/agent.md");
+  expect(readLocal(root)).not.toContain("@plugins/character");
+});
+
+// The typo case from the same bug: `add anti-slop anti-slpo --from <dir>` must be refused, not
+// silently install the typo with the real dir's content.
+test("plugin add with --from and a typo'd extra name is refused, not silently installed", async () => {
+  const root = tmpRepo();
+  const src = mkPluginSrc(root, "demo");
+  const r = await runCli(root, ["plugin", "add", "anti-slop", "anti-slpo", "--from", src]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("--from installs one local plugin");
+  expect(existsSync(join(root, "plugins", "anti-slpo"))).toBe(false);
+  expect(readLocal(root)).not.toContain("@plugins/anti-slpo");
+});
+
+// The registry path (no --from) fetches each plugin's own package by convention, so multiple names
+// stay valid there. This guards that the --from multi-name reject does not also block registry
+// multi-name. The names below pre-exist locally so installPlugin skips the (offline) fetch and the
+// test stays hermetic - what it asserts is that multi-name without --from is NOT a usage error.
+test("plugin add of multiple names WITHOUT --from is not refused (registry path stays multi-name)", async () => {
+  const root = tmpRepo();
+  // Both dirs ship an agent.md in tmpRepo()'s fixture except character (scribe.md). Add anti-slop
+  // (has agent.md) plus a wire-only file spec, both local, so no network is touched.
+  const r = await runCli(root, ["plugin", "add", "anti-slop", "character/scribe.md"]);
+  expect(r.code).toBe(0);
+  expect(r.stderr).not.toContain("--from installs one local plugin");
+  const local = readLocal(root);
+  expect(local).toContain("@plugins/anti-slop/agent.md");
+  expect(local).toContain("@plugins/character/scribe.md");
+});
+
 // --- rm/add symmetry for file specs ---
 
 test("plugin rm <name>/<file.md> unwires exactly what add wired, leaving siblings", async () => {

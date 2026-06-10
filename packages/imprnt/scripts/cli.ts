@@ -137,6 +137,16 @@ switch (cmd) {
         else names.push(specs[i]!);
       }
       if (!names.length) { console.error("usage: imprnt plugin add <name> [--from <dir>] [--force] | <name>/<file.md>"); process.exit(1); }
+      // --from feeds ONE local dir, so it can install exactly one plugin. Applying that single dir
+      // to every name would copy the wrong plugin's content into the others (reported as success),
+      // and a typo'd extra token would install + wire the typo with real content (--from
+      // short-circuits the registry fetch, so even a 404-worthy name "succeeds"). Reject up front,
+      // before any copy or wire. The registry path (no --from) fetches each name's own package, so
+      // multi-name there stays valid and is untouched by this guard.
+      if (from !== undefined && names.length > 1) {
+        console.error(`--from installs one local plugin - name exactly one (got: ${names.join(", ")})`);
+        process.exit(1);
+      }
       // An edge core pulls edge plugins (latest fallback); a stable core pulls latest. Read once.
       const channel = coreChannel(pkgRoot);
       // One report line per name, idempotent. A failed name doesn't stop the others; exit non-zero
