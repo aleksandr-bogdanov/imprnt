@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { generateIndex, collectNotes, fmList, frontmatter } from "./moc.ts";
@@ -197,4 +197,55 @@ test("a fully quote-wrapped summary still unwraps", () => {
   writeNote(vault, "life", "note.md", fm);
   const note = collectNotes(vault).find((n) => n.slug === "life/note")!;
   expect(note.summary).toBe("Wrapped value.");
+});
+
+// --- round-3 finding 3 (P2): a note symlink is collected once, not twice --------------------------
+// The walk used statSync (which resolves symlinks), so a symlink TO a note double-collected it - the
+// index.md then listed the same note twice. lstatSync detects the symlink so it is skipped.
+test("a note symlink is not double-collected (listed once in index.md)", () => {
+  const vault = tmpVault();
+  writeNote(vault, "people", "jane.md", "---\nsummary: A person.\ntags: [team]\n---\n\n# Jane\n\nbody\n");
+  // a VALID symlink to the real note - statSync would collect it as a second copy.
+  symlinkSync(join(vault, "people", "jane.md"), join(vault, "people", "jane-alias.md"));
+
+  const slugs = collectNotes(vault).map((n) => n.slug).sort();
+  expect(slugs).toEqual(["people/jane"]);
+
+  generateIndex(vault);
+  const index = readFileSync(join(vault, "index.md"), "utf8");
+  const listed = index.split("\n").filter((l) => l.startsWith("- [[people/jane]]"));
+  expect(listed.length).toBe(1);
+});
+
+// --- round-3 finding 4 (P2): a YAML block/folded scalar summary lands as its text, not the indicator -
+// fmScalar read summary with a single-line regex, so a block (summary: |) or folded (summary: >) scalar
+// captured the indicator char and dropped the real multi-line text - silent corruption in index.md.
+test("a block-scalar summary (summary: |) yields the joined text, not the | indicator", () => {
+  const vault = tmpVault();
+  const fm = "---\ntype: note\nsummary: |\n  First line of the summary.\n  Second line continues it.\ntags: [alpha]\n---\n\n# Note\n\nbody\n";
+  writeNote(vault, "life", "block.md", fm);
+  const note = collectNotes(vault).find((n) => n.slug === "life/block")!;
+  // the indicator char must not be the value, and both indented lines must be captured.
+  expect(note.summary).not.toBe("|");
+  expect(note.summary).toContain("First line of the summary.");
+  expect(note.summary).toContain("Second line continues it.");
+  // the next frontmatter key must not be swallowed into the block.
+  expect(note.tags).toEqual(["alpha"]);
+
+  generateIndex(vault);
+  const index = readFileSync(join(vault, "index.md"), "utf8");
+  const line = index.split("\n").find((l) => l.startsWith("- [[life/block]]"));
+  expect(line).toContain("First line of the summary.");
+  expect(line).not.toContain("] — |");
+});
+
+test("a folded-scalar summary (summary: >) yields the joined text, not the > indicator", () => {
+  const vault = tmpVault();
+  const fm = "---\ntype: note\nsummary: >\n  A folded summary that\n  spans two lines.\ntags: [beta]\n---\n\n# Note\n\nbody\n";
+  writeNote(vault, "life", "folded.md", fm);
+  const note = collectNotes(vault).find((n) => n.slug === "life/folded")!;
+  expect(note.summary).not.toBe(">");
+  expect(note.summary).toContain("A folded summary that");
+  expect(note.summary).toContain("spans two lines.");
+  expect(note.tags).toEqual(["beta"]);
 });
