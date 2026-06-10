@@ -213,13 +213,21 @@ The shipped gallery:
   own.
 - **anti-slop** is the ruleset that keeps the assistant's writing from reading like AI.
 - **whenful** keeps a local mirror of your Whenful tasks, shown at read time.
-- **guard** is a deterministic blocklist for dangerous shell commands.
+- **guard** blocks dangerous shell commands before they run, via a hook.
+- **statusline** draws the line at the bottom of your session (model, directory, context, cost),
+  and is made to be edited.
 
 A behavior plugin works by handing the assistant a fixed chunk of text wired into its config through
 `CLAUDE.local.md`, a gitignored per-machine file Claude Code loads each session. `imprnt plugin add`
 writes the one import line, and `rm` removes it. A fresh clone loads zero plugins. The point: the
 system imprnt replaces forced its features on you, imprnt lets you compose only the ones you want, with
 a real off-switch. Full rules are in `plugins/README.md`.
+
+Some plugins customize Claude itself rather than the vault: guard's command hook, the status
+line. Those carry their wiring inside their own folder (as a native Claude Code plugin, or a small
+settings fragment), and `imp` hands it to each session it launches. Nothing is ever written into
+your Claude configuration, so plain `claude` stays completely stock, and deleting the plugin folder
+removes every trace.
 
 ## Safety net: the originals are never touched
 
@@ -232,11 +240,12 @@ never stuck in an old format, and any claim in a note traces back to its snapsho
 You reach your assistant through one command, `imp`, installed alongside the engine. It works
 from any directory, in two forms:
 
-- `imp` opens a Claude session where you stand. Your enabled plugins (your assistant's voice and
-  standards) ride along, plus a small pointer that tells the assistant three things: your vault
-  exists, search it with `imprnt recall` when you reference your own world, and run
-  `imprnt context` before writing anything into it. The directory's own context loads as normal,
-  so a coding session stays a coding session that can also reach your memory.
+- `imp` opens a Claude session where you stand. Your enabled plugins ride along, the voice and
+  standards as injected text and the harness plugins (the guard hook, your status line) as
+  launch flags, plus a small pointer that tells the assistant three things: your vault exists, search
+  it with `imprnt recall` when you reference your own world, and run `imprnt context` before
+  writing anything into it. The directory's own context loads as normal, so a coding session
+  stays a coding session that can also reach your memory.
 - `imp lair` opens the session inside the vault project itself, your assistant's home. The
   contract and plugin wiring load natively from the folder, and your personal conversations
   accumulate in one place, so resuming yesterday's thread works.

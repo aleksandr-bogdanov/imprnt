@@ -127,6 +127,43 @@ project where Claude Code loads them natively. One list, managed in one place, h
    summary note into your real notes (you approve it). The bulk of its data stays in its own
    folder, unsearchable **on purpose.**
 
+9. **Secrets stay at the plugin's edge, as env vars.** A plugin that talks to an outside service
+   (a task server, a transcription API) reads its credential from an environment variable named
+   in its own README (`DEEPGRAM_API_KEY`), and fails loud with that name when it's missing. The
+   key never appears in the vault, in the plugin's folder, or in anything committed. No central
+   secret store, and the core never touches credentials - the edge belongs to the plugin, same
+   as its sync protocol (see the MCP boundary below).
+
+## Harness plugins: customizing Claude itself
+
+Some plugins have nothing to do with the vault - they customize the **harness** the agent runs in:
+a PreToolUse hook that blocks dangerous shell commands (guard), the status line at the bottom of
+the screen (statusline), the spinner words, a skill. Same folder, same on/off switch (the @import
+line), plus up to two extra files, both discovered by filename convention:
+
+- **`.claude-plugin/plugin.json`** makes the folder a **native Claude Code plugin**. Hooks
+  (`hooks/hooks.json`), skills (`skills/`), and the other native components sit next to it, in
+  Anthropic's documented format - imprnt defines no manifest of its own. `imp` passes the folder
+  to every session it launches via `--plugin-dir`, so the components load while the plugin is
+  enabled and vanish when it isn't.
+- **`imp-settings.json`** carries the settings keys Claude only accepts via config (a `statusLine`
+  command, `spinnerVerbs`). `imp` merges every enabled plugin's fragment (wire order, later wins
+  on a key conflict) and passes the result as ONE `--settings` to the session. A fragment writes
+  `${PLUGIN_DIR}` wherever it needs its own absolute path, so it works from any cwd (the
+  native spelling `${CLAUDE_PLUGIN_ROOT}` is accepted as an alias, so the variable you already
+  use in hooks.json works here too).
+
+What this preserves, on purpose: **stock `claude` stays stock** - the flags exist only on sessions
+you start by typing `imp`, nothing is ever written into your global Claude config or any
+settings.json - and **add/rm stays perfectly symmetrical** - the hook and the setting live inside
+the `rm`-able folder, so removal undoes everything with no settings entry to forget. Typing `imp`
+is the consent, every time. The honest cost: harness plugins exist only in imp-launched sessions.
+Plain `claude` stays plain even in the lair.
+
+Build only on the durable native surfaces - skills, hooks, the plugin manifest (the layout every
+major harness converged on). The experimental components (monitors, themes) change shape between
+releases. A plugin that needs one documents that risk in its own README.
+
 ## The two decisions (resolved 2026-06-06)
 
 **Code sharing: copy, share nothing.** The ~12 lines a plugin needs to read a note's header
@@ -138,8 +175,8 @@ import is a breaking change and a magnet for "can it also do X?" creep. Copy is 
 can undo. The contract guarantees the **format**, so a shared `@imprnt/frontmatter` reader
 can always be added later as an optional extra without touching this contract.
 
-**Core ↔ plugin contact: exactly two convention-based aggregators.** The core touches plugins
-in only two places, and both are dumb, uniform, and carry zero per-plugin logic — they
+**Core ↔ plugin contact: exactly three convention-based aggregators.** The core touches plugins
+in only three places, and all are dumb, uniform, and carry zero per-plugin logic - they
 discover plugins by **filename/dir convention**, never by importing a plugin and never by
 naming a specific one:
 
@@ -154,6 +191,11 @@ naming a specific one:
   snapshots the staged note for provenance, files it into the right `vault/` folder, resolves
   its links, and deletes the staged copy. `--apply-all` globs `plugins/*/proposed/*.md` and
   applies each — same uniform handling, no per-plugin branch.
+- **`imp`'s launch carriage** turns the enable list (the same @import lines everything else
+  reads) into launch flags for the session it spawns: one `--plugin-dir` per enabled folder
+  carrying `.claude-plugin/plugin.json`, plus one `--settings` merged from every enabled
+  `imp-settings.json` (see Harness plugins above). Read-only, convention-discovered, and it
+  qualifies under the same fence: aggregation, never write or orchestration.
 
 > **Not Kubernetes-style liveness/readiness.** Those exist to auto-restart live services and
 > route traffic — imprnt has no daemons and no orchestrator (rule 6), so "is it alive?" has
@@ -210,12 +252,20 @@ anything.
 
 ## Built plugins
 
-### guard — destructive-command guard ✅ built
+### guard — destructive-command guard ✅ built (harness plugin)
 
-A deterministic blocklist. `node plugins/guard/guard.js "<command>"` exits `2` on obviously
-dangerous commands (`rm -rf` on home/system paths, `sudo`, fork bombs, force-push to
-main…) and `0` otherwise. Wire it as a PreToolUse hook on Bash if you let the agent run
-shell. No LLM.
+A deterministic blocklist that blocks obviously dangerous commands (`rm -rf` on home/system
+paths, `sudo`, fork bombs, force-push to main...) before they run. No LLM. A native Claude Code
+plugin: its `hooks/hooks.json` wires `guard.js --hook` as a PreToolUse hook on Bash, and `imp`
+loads it via `--plugin-dir` while enabled - install auto-wires, remove fully undoes. Also a
+standalone checker: `node plugins/guard/guard.js "<command>"` exits `2` blocked / `0` ok.
+
+### statusline — the session's bottom line ✅ built (harness plugin)
+
+A customizable status line for imp sessions: model, directory, context usage, session cost. The
+line is whatever `statusline.js` prints from the session JSON Claude pipes it - edit the segments
+to make it yours (or copy into `_personal/` first). Its `imp-settings.json` carries the
+`statusLine` setting and rides imp's merged `--settings`. Nothing is written to your config.
 
 ### whenful — task mirror ✅ shell built (live sync deferred)
 

@@ -15,7 +15,8 @@ packages:
   lives in a tiny second entry file (`scripts/imp.ts`) rather than argv sniffing, because npm's
   Windows shims rewrite argv.
 - **`imprnt-plugin-anti-slop`, `imprnt-plugin-character`, `imprnt-plugin-guard`,
-  `imprnt-plugin-whenful`** (`packages/plugin-*/`) - the gallery, each its own package.
+  `imprnt-plugin-statusline`, `imprnt-plugin-whenful`** (`packages/plugin-*/`) - the gallery,
+  each its own package.
 
 The naming convention is `imprnt-plugin-<name>`, the same shape ESLint uses (`eslint-plugin-*`). It
 means anyone can publish a plugin later without joining an npm org. The core stays plugin-blind: it
@@ -84,7 +85,8 @@ plugin list` skips `_personal/`, so your private cast never shows up in the publ
 | `imprnt` | `dist/cli.js`, `dist/imp.js`, `templates/`, `CLAUDE.md`, `README.md`, `LICENSE` | both bundles via `bun build` |
 | `imprnt-plugin-anti-slop` | `agent.md`, `README.md` | no (markdown only) |
 | `imprnt-plugin-character` | `agent.md`, `README.md` | no (markdown only) |
-| `imprnt-plugin-guard` | `agent.md`, `guard.js`, `README.md` | `guard.js` via `prepack` |
+| `imprnt-plugin-guard` | `agent.md`, `guard.js`, `.claude-plugin/plugin.json`, `hooks/hooks.json`, `README.md` | `guard.js` via `prepack` |
+| `imprnt-plugin-statusline` | `agent.md`, `statusline.js`, `imp-settings.json`, `README.md` | `statusline.js` via `prepack` |
 | `imprnt-plugin-whenful` | `agent.md`, `check.js`, `whenful.js`, `links.tsv`, `proposed/`, `mirror/`, `README.md` | `check.js`+`whenful.js` via `prepack` |
 
 Core builds and ships its docs through `prepublishOnly` (it runs `shipdocs` to copy `CLAUDE.md` /
