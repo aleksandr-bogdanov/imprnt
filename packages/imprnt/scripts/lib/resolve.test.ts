@@ -62,3 +62,14 @@ test("openNeedsReview parses CRLF needs-review lines", () => {
   writeFileSync(p, "---\r\ntype: needs-review\r\n---\r\n\r\n# Needs review\r\n\r\n- [ ] crlf item\r\n");
   expect(openNeedsReview(vault)).toEqual(["- [ ] crlf item"]);
 });
+
+// --- round-2 finding 4: flagNeedsReview must dedup. A standing conflict re-flagged on every
+// --apply-all run would otherwise append an identical line forever (unbounded growth under a
+// scheduled apply). The same line flagged twice yields exactly one entry.
+test("flagNeedsReview does not append a duplicate of an identical existing line", () => {
+  const vault = tmpVault();
+  const line = "- [ ] proposed note conflicts with existing [[people/alex]]";
+  flagNeedsReview(vault, line);
+  flagNeedsReview(vault, line);
+  expect(openNeedsReview(vault)).toEqual([line]);
+});

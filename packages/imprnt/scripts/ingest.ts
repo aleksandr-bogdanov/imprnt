@@ -57,21 +57,33 @@ const PATH_EXTS = new Set([".txt", ".md", ".markdown", ".csv", ".json", ".log", 
 // A genuine mistyped path ("notes/2025.txt") is one whitespace-free token, so it is caught as missing.
 function looksLikePath(arg: string): boolean {
   if (/\s/.test(arg)) return false;
+  // A bare URL (`https://...`, `mailto:...`) is an inline FACT, not a path. Its scheme `//` would
+  // otherwise trip the separator check below and refuse it as a missing file. Route it to bytes.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(arg)) return false;
   if (arg.includes("/") || arg.includes("\\")) return true;
   if (PATH_EXTS.has(extname(arg).toLowerCase())) return true;
   return false;
 }
 
 // Conservative transcript detector. The contract says ONLY a transcript gets the deterministic event
-// skeleton; any other prose is snapshotted and left for the LLM to classify. We fire only on real
-// dialogue evidence: at least two DISTINCT speaker labels. A single stray "Word:" line never
-// qualifies, and a meta header (subject:/date:/topic:/...) ALONE never qualifies either - any prose
-// note with YAML frontmatter (date:, tags: - the dominant migration input) carries one, and firing on
-// it fabricated a bogus 0-participant event and skipped the unclassified-source handoff. Meta lines
-// still parse (subject -> title) and email headers (From:/To:/...) are still excluded from speaker
-// counting in the loop below, so an email never reads as a 2-speaker transcript.
-function looksLikeTranscript(speakers: Set<string>): boolean {
-  return speakers.size >= 2;
+// skeleton; any other prose is snapshotted and left for the LLM to classify. Real dialogue evidence is
+// >=2 distinct speakers AND that the `Speaker: utterance` shape DOMINATES the content - a substantial
+// fraction of the non-header content lines are speaker turns, OR a speaker recurs across turns.
+//
+// Two distinct labels alone is not enough: a document-header block (`Title:`/`Author:`/`Status:`, or
+// callouts like `Warning:`/`Remember:`/`TODO:`) clears a bare >=2 bar with a few `Word:` lines that
+// each appear once, then paragraphs of prose - exactly the migration-prose case that must route to the
+// unclassified-source handoff, not a fabricated event with [[people/title]] / [[people/author]].
+//
+//   - recurring speaker: any label appears in 2+ turns. A header label appears once; a dialogue
+//     participant comes back. This catches a back-and-forth even if it is short.
+//   - dominant shape: speaker turns are a clear majority of the content lines (turns / content > 0.5).
+//     A header is a handful of `Word:` lines over many prose lines, well under half.
+// contentLines = non-empty lines that are not a parsed meta/email header (the denominator for "shape").
+function looksLikeTranscript(speakers: Set<string>, turnCount: number, contentLines: number, recurringSpeaker: boolean): boolean {
+  if (speakers.size < 2) return false;
+  if (recurringSpeaker) return true;
+  return contentLines > 0 && turnCount / contentLines > 0.5;
 }
 
 // --- frontmatter helpers (deterministic — STRUCTURE only, no LLM) ----------
@@ -112,7 +124,11 @@ const TYPE_FOLDER: Record<string, string> = {
   person: "people", org: "orgs", holding: "holdings",
   project: "projects", event: "events", mistake: "mistakes",
 };
-const DOMAIN_FOLDERS = new Set(["identity", "health", "finances", "work", "life", "projects"]);
+// projects/ is a FORM folder, self-describing by `type: project` (it files via TYPE_FOLDER, not here),
+// so it carries NO `domain:` and is exempt from the domain-match check. It must NOT be a valid domain:
+// a `type: note, domain: projects` would otherwise file into the form folder where check's domain audit
+// then exempts it - a silent contract leak. Must agree with check.ts's DOMAIN_FOLDERS (the twin set).
+const DOMAIN_FOLDERS = new Set(["identity", "health", "finances", "work", "life"]);
 
 function targetFolder(type: string, domain: string): string | null {
   // Own-property lookup only: a type like `toString` must not resolve through the prototype chain
@@ -132,7 +148,13 @@ function targetFolder(type: string, domain: string): string | null {
 // Discovery is by convention (plugins/*/proposed/*.md), uniform, no per-plugin branch.
 function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflict" | "error" {
   if (!existsSync(staged)) { console.error(`no such staged note: ${staged}`); return "error"; }
-  const text = readFileSync(staged, "utf8");
+  // A clean refusal, not a raw EISDIR stack from readFileSync below: --apply takes ONE staged note.
+  if (statSync(staged).isDirectory()) { console.error(`  ✗ ${staged}: is a directory - --apply takes a single staged note file`); return "error"; }
+  // Strip a single leading UTF-8 BOM (﻿) before any parsing. A PowerShell Out-File / Notepad
+  // -authored note begins with one, which would otherwise sit before `---`, defeat frontmatter(), and
+  // make a valid note refuse with a misleading "no type:". The hash + filed bytes use the stripped
+  // text so the note never carries the BOM forward.
+  const text = readFileSync(staged, "utf8").replace(/^﻿/, "");
   const fm = frontmatter(text);
   const type = fmScalar(fm, "type");
   const domain = fmScalar(fm, "domain");
@@ -386,8 +408,14 @@ if (!text.trim()) { console.error("empty source — nothing to ingest"); process
 const hash = createHash("sha256").update(srcBytes).digest("hex").slice(0, 16);
 const manifestKey = isFile ? src : `bytes:sha256:${hash}`;
 const manifest = loadManifest(vault);
-if (manifest[manifestKey]?.hash === hash) {
-  console.log(`unchanged (hash ${hash}) — skipping ${src}. note: ${manifest[manifestKey].note}`);
+// The fast-skip trusts the manifest hash, but only if the artifacts it names are still on disk: the
+// derived note (when one was filed - an unclassified source records an empty note) AND the raw
+// snapshot. If either was deleted, skipping would name a vanished note and never re-create it (and an
+// unclassified source whose snapshot is gone has unrecoverable provenance). So fall through to
+// re-snapshot/re-file instead. Mirrors snapshot.ts's `&& existsSync(rawPath)` guard.
+const prior = manifest[manifestKey];
+if (prior?.hash === hash && (!prior.note || existsSync(prior.note)) && (!prior.raw || existsSync(prior.raw))) {
+  console.log(`unchanged (hash ${hash}) — skipping ${src}. note: ${prior.note}`);
   process.exit(0);
 }
 
@@ -413,8 +441,10 @@ const EMAIL_HEADER = /^([A-Za-z][A-Za-z-]*):\s/;
 // ("I think: ...", "Note: long prose ...") from being mistaken for a speaker turn.
 const SPEAKER = /^([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2}):\s+\S.*$/;
 const speakers = new Set<string>();
+const turnsBySpeaker = new Map<string, number>(); // per-speaker turn count -> "did a speaker recur"
 let subject = "";
 let turnCount = 0;
+let contentLines = 0; // non-empty lines that are NOT a parsed meta/email header (the "shape" denominator)
 for (const line of lines) {
   const meta = line.match(META);
   if (meta && META_KEYS.has(meta[1].trim().toLowerCase())) {
@@ -429,12 +459,18 @@ for (const line of lines) {
   // through to SPEAKER below and fabricate [[people/from]] / [[people/to]] participants.
   const eh = line.match(EMAIL_HEADER);
   if (eh && EMAIL_HEADER_KEYS.has(eh[1].toLowerCase())) continue;
+  // From here the line is body content (not a meta/email header). A blank line is structure, not
+  // content, so it is excluded from the denominator the shape test divides by.
+  if (line.trim()) contentLines++;
   const m = line.match(SPEAKER);
   if (!m) continue;
-  speakers.add(m[1].trim());
+  const who = m[1].trim();
+  speakers.add(who);
+  turnsBySpeaker.set(who, (turnsBySpeaker.get(who) ?? 0) + 1);
   turnCount++;
 }
-const isTranscript = isFile && looksLikeTranscript(speakers);
+const recurringSpeaker = [...turnsBySpeaker.values()].some((n) => n >= 2);
+const isTranscript = isFile && looksLikeTranscript(speakers, turnCount, contentLines, recurringSpeaker);
 
 // --- snapshot the source into raw/ (verbatim, immutable) -------------------
 // Universal first move for EVERY source (file OR inline bytes): write the bytes into raw/ so any
