@@ -62,6 +62,33 @@ export function resolvedBasename(root: string, spec: string): string {
   return basename(resolve(root, "plugins", spec));
 }
 
+// On a case-insensitive FS (macOS APFS default), plugins/Demo and plugins/demo are the SAME
+// physical dir, but every downstream literal-string match (the wired @import line, the
+// existsSync(agent.md) skip, a later rm/purge) is case-SENSITIVE. So adding `anti-slop` then
+// `Anti-Slop` would skip the second copy (same dir) yet wire a second distinct line, and a later
+// `rm Anti-Slop --purge` would delete the shared dir while orphaning the other case's line.
+//
+// Fix at the door: map a spec's dir component to an existing on-disk plugins/ entry whose lowercased
+// name matches, and use that canonical name for BOTH the copy target and the wired line. This is the
+// safe portable move - it never probes the FS for case-sensitivity, it just reuses what is already
+// there. When no entry matches (a fresh install), the name is returned unchanged. Only the FIRST
+// path segment (the plugin dir) is canonicalized; a `<name>/<file.md>` keeps its file part verbatim.
+export function canonicalSpec(root: string, spec: string): string {
+  const slash = spec.indexOf("/");
+  const dirName = slash === -1 ? spec : spec.slice(0, slash);
+  const rest = slash === -1 ? "" : spec.slice(slash); // includes the leading "/"
+  const base = join(root, "plugins");
+  let entries: string[];
+  try {
+    entries = readdirSync(base);
+  } catch {
+    return spec;
+  }
+  const target = dirName.toLowerCase();
+  const hit = entries.find((e) => e.toLowerCase() === target);
+  return hit ? hit + rest : spec;
+}
+
 function localPath(root: string): string {
   return join(root, "CLAUDE.local.md");
 }
@@ -79,6 +106,18 @@ export function entryExists(root: string, entry: string): boolean {
 
 function importLine(entry: string): string {
   return `@${entry}`;
+}
+
+// The @import target token of a single line, or "" if the (trimmed) line is not a live @import.
+// A managed line can carry a hand-added trailing comment (`@plugins/_personal/voice.md  # overlay`)
+// because CLAUDE.local.md is hand-editable. The target is the @...token up to the first whitespace
+// or `#`, so the exact-file matchers (add's dedup, rm's <name>/<file.md> removal) key on the SAME
+// token the prefix scanners (liveImportLines/isEnabled) already report on, not the whole raw line.
+function lineTarget(rawLine: string): string {
+  const line = rawLine.trim();
+  if (!line.startsWith("@")) return "";
+  const m = line.match(/^(@\S+)/);
+  return m ? m[1] : "";
 }
 
 // Every top-level dir under plugins/ except _-prefixed ones (private, non-gallery convention)
@@ -163,9 +202,14 @@ export function addPlugin(
   root: string,
   spec: string,
 ): { entry: string; added: boolean; error?: string } {
-  const entry = entryFor(spec);
   const invalid = specError(root, spec);
-  if (invalid) return { entry, added: false, error: invalid };
+  // Compute entry from the ORIGINAL spec for the error case (so a rejected spec is reported as the
+  // user typed it). specError runs first because canonicalSpec must not mask a `..`/`./` escape.
+  if (invalid) return { entry: entryFor(spec), added: false, error: invalid };
+  // Reuse an existing on-disk plugin dir's case so a case-variant never wires a SECOND line for the
+  // same physical dir (finding 2). Past the specError gate this only adjusts the dir's letter case.
+  spec = canonicalSpec(root, spec);
+  const entry = entryFor(spec);
   if (!entryExists(root, entry)) {
     return {
       entry,
@@ -177,7 +221,9 @@ export function addPlugin(
   const p = localPath(root);
   try {
     let content = existsSync(p) ? readFileSync(p, "utf8") : HEADER;
-    const already = content.split(/\r?\n/).some((l) => l.trim() === line);
+    // Match on the import TARGET token, not the whole line, so a hand-commented line
+    // (`@plugins/_personal/voice.md  # overlay`) is recognized as already wired and not duplicated.
+    const already = content.split(/\r?\n/).some((l) => lineTarget(l) === line);
     if (already) return { entry, added: false };
     const eol = lineEnding(content);
     if (!content.endsWith("\n")) content += eol;
@@ -202,12 +248,17 @@ export function rmPlugin(root: string, spec: string): number {
   // wired `@plugins/anti-slop/agent.md` - a silent no-op that reports success. Treat a lone
   // trailing slash as the bare-name (group) form.
   if (spec.endsWith("/")) spec = spec.slice(0, -1);
+  // The file-form match keys on the import TARGET token (via lineTarget), so a hand-commented line
+  // (`@plugins/_personal/voice.md  # overlay`) is found and removed, consistent with how the
+  // prefix scanners report it on. The bare-name (group) form already tolerates a trailing comment:
+  // it keys on the @plugins/<name>/ prefix at the START of the trimmed line, before any comment.
+  const target = spec.includes("/") ? importLine(entryFor(spec)) : "";
   const gone = spec.includes("/")
-    ? (l: string) => l === importLine(entryFor(spec))
-    : (l: string) => l.startsWith(`@plugins/${spec}/`);
+    ? (l: string) => lineTarget(l) === target
+    : (l: string) => l.trim().startsWith(`@plugins/${spec}/`);
   const content = readFileSync(p, "utf8");
   const lines = content.split(/\r?\n/);
-  const kept = lines.filter((l) => !gone(l.trim()));
+  const kept = lines.filter((l) => !gone(l));
   const removed = lines.length - kept.length;
   if (removed) writeFileSync(p, kept.join(lineEnding(content)));
   return removed;

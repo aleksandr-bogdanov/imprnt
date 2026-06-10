@@ -29,6 +29,18 @@ function tmpProject(): string {
   return root;
 }
 
+// A plugin source whose files[] ships ONLY agent.md (no check.js). Models v2 of a package that
+// dropped a file v1 used to ship - the --force-refresh case in finding 1.
+function mkAgentOnlySrc(name: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "imprnt-pluginsrc-v2-"));
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: `imprnt-plugin-${name}`, version: "0.0.2", files: ["agent.md"] }),
+  );
+  writeFileSync(join(dir, "agent.md"), `# ${name} agent v2\n`);
+  return dir;
+}
+
 test("installPlugin --from copies the shipped tree (agent.md, check.js, proposed/) and nothing else", () => {
   const src = mkPluginSrc("demo");
   const proj = tmpProject();
@@ -60,6 +72,26 @@ test("installPlugin is idempotent: a present agent.md skips re-copy unless force
   const forced = installPlugin(proj, "demo", { from: src, force: true });
   expect(forced.copied).toBe(true);
   expect(readFileSync(agent, "utf8")).toContain("demo agent");
+});
+
+// --- --force is a clean refresh: a file the new tarball dropped must not survive (finding 1) ---
+// v1 ships check.js. v2 (--force) ships without it. The contract calls --force a "refresh", and
+// `imprnt check --all` globs plugins/*/check.js, so a stale v1 check.js would still RUN (and fail)
+// after a v2 refresh. The force/overwrite path must clear the dest first so it is a clean copy of
+// the new tarball, never an overlay of old + new.
+test("installPlugin --force is a clean refresh: a file the new tarball dropped is gone (finding 1)", () => {
+  const v1 = mkPluginSrc("demo"); // ships agent.md + check.js + proposed/
+  const v2 = mkAgentOnlySrc("demo"); // ships agent.md only
+  const proj = tmpProject();
+  installPlugin(proj, "demo", { from: v1 });
+  const dest = join(proj, "plugins", "demo");
+  expect(existsSync(join(dest, "check.js"))).toBe(true);
+  // Force-refresh from v2: the stale check.js (and proposed/) must be cleared, the new agent.md present.
+  const forced = installPlugin(proj, "demo", { from: v2, force: true });
+  expect(forced.copied).toBe(true);
+  expect(existsSync(join(dest, "check.js"))).toBe(false);
+  expect(existsSync(join(dest, "proposed"))).toBe(false);
+  expect(readFileSync(join(dest, "agent.md"), "utf8")).toContain("demo agent v2");
 });
 
 test("installPlugin errors when --from path is missing", () => {
@@ -111,6 +143,30 @@ test("coreChannel reads edge from an -edge. version, latest otherwise", () => {
 
 test("coreChannel falls back to latest when package.json is missing or unreadable", () => {
   expect(coreChannel(join(tmpdir(), "imprnt-no-such-pkgroot-xyz"))).toBe("latest");
+});
+
+// --- case-insensitive collision: reuse the existing dir, never a second copy (finding 2) ---
+// On a case-insensitive FS (macOS APFS default), `plugins/Demo` and `plugins/demo` are the SAME
+// physical dir. installPlugin's existsSync(agent.md) skip is case-insensitive there, but the
+// wired-line match downstream is case-sensitive, so a case-variant add used to skip the copy yet
+// wire a SECOND distinct @import line. The fix: a case-variant install reuses the existing dir name
+// for the copy target, so there is never a second physical dir, and the reported dest is the
+// canonical existing name (which the caller then wires, keeping the line on-disk-consistent).
+test("installPlugin reuses an existing dir for a case-variant name, no second dir (finding 2)", () => {
+  const src = mkPluginSrc("demo");
+  const proj = tmpProject();
+  installPlugin(proj, "demo", { from: src });
+  expect(existsSync(join(proj, "plugins", "demo"))).toBe(true);
+  // Now install the SAME plugin under a different case. It must resolve to the existing "demo" dir.
+  const r = installPlugin(proj, "Demo", { from: src });
+  // dest reports the canonical existing dir name, so the caller wires @plugins/demo/..., not Demo.
+  expect(r.dest).toBe(join(proj, "plugins", "demo"));
+  // No second physical dir was created for the variant case.
+  const fs = require("node:fs");
+  const entries = fs
+    .readdirSync(join(proj, "plugins"))
+    .filter((e: string) => e.toLowerCase() === "demo");
+  expect(entries).toEqual(["demo"]);
 });
 
 // --- spec containment: rm/cp must never reach outside plugins/ ---
