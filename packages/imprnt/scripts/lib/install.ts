@@ -135,16 +135,15 @@ export function installPlugin(
 //      refuses it outright. This is the DATA-LOSS fix: `_personal/voice.md` is canonical and its
 //      LEAF basename (`voice.md`) does not start with `_`, so a leaf-only guard let rmSync delete
 //      that one gitignored, unrecoverable private file. A file-form spec is a clean refusal.
-//   3. _-prefix guard on the FIRST path segment (the plugin dir), not just the resolved leaf, so
-//      the private cast stays protected even if a future caller reaches this with a sub-path.
-//   4. statSync isDirectory - belt-and-suspenders: only ever rmSync a real directory, never a file.
+//   3. _-prefix guard - rejects a bare _name (the private cast).
+//   4. statSync isDirectory - only ever rmSync a real directory, never a file.
 //   5. a missing dir is a clean no-op (false).
 export function purgePlugin(projectRoot: string, name: string): boolean {
   if (specError(projectRoot, name)) return false;
   // A separator means the spec names a file inside a plugin, not a plugin to purge. Refuse it.
   if (name.includes("/")) return false;
-  // _-prefix guard on the first path segment (here the whole spec, since no separator remains).
-  if (name.split("/")[0].startsWith("_")) return false;
+  // Never delete the private cast (a _-prefixed dir).
+  if (name.startsWith("_")) return false;
   const dir = join(projectRoot, "plugins", name);
   if (!existsSync(dir)) return false;
   // Only purge a real directory. A spec that somehow resolves to a file is refused, not deleted.

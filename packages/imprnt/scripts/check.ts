@@ -187,9 +187,10 @@ if (hasTagsFile) {
   };
   // For a pair already known to be at edit-distance 1 (the `near` gate), true when the SINGLE edit is a
   // digit: a substitution where both differing chars are digits (gpt-4/gpt-5), or an insert/delete of a
-  // digit (no current case, kept for completeness). Numbered siblings (q1/q2, fy2025/fy2026, phase-1/
-  // phase-2) are intentional, not typos, so they are skipped. A LETTER edit (finance/finances adds 's',
-  // identty/identity swaps a letter) is NOT digit-only and still flags. `short`/`long` are by length.
+  // digit at the length-1 boundary (a numbered child like phase/phase1, fy202/fy2025). Numbered siblings
+  // (q1/q2, fy2025/fy2026, phase-1/phase-2) are intentional, not typos, so they are skipped. A LETTER
+  // edit (finance/finances adds 's', identty/identity swaps a letter) is NOT digit-only and still flags.
+  // `short`/`long` are by length.
   const DIGIT = /[0-9]/;
   const digitOnlyEdit = (short: string, long: string): boolean => {
     if (short.length === long.length) {

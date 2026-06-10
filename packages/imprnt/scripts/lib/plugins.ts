@@ -5,7 +5,7 @@
 // CLAUDE.local.md lives at the repo root next to the committed CLAUDE.md, because Claude Code
 // resolves `@import` lines from there. We append/remove exactly one line and keep it idempotent.
 import { existsSync, readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 const HEADER = `# Personal plugin toggles (this machine only)
 
@@ -54,12 +54,6 @@ export function specError(root: string, spec: string): string | undefined {
     return `invalid plugin spec "${spec}" - use the canonical form "${canonical}" (no ./ or ..)`;
   }
   return undefined;
-}
-
-// The basename the spec resolves to, used by guards that must key on the REAL target, not the
-// literal spec string. specError already forces canonical specs, so this is the resolved leaf.
-export function resolvedBasename(root: string, spec: string): string {
-  return basename(resolve(root, "plugins", spec));
 }
 
 // On a case-insensitive FS (macOS APFS default), plugins/Demo and plugins/demo are the SAME
