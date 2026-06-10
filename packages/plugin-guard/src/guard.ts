@@ -68,6 +68,31 @@ const RM_RECURSIVE = `(?:(?<=[\\s"'])${Q}?-[a-zA-Z]*[rR][a-zA-Z]*\\b|--recursive
 // rm invoked as a command. \brm\b excludes confirm/warm (no word boundary before their "rm" run).
 const RM_CMD = "\\brm\\b";
 
+// ---------------------------------------------------------------------------------------------------
+// chmod blocking, decomposed into the SAME order-independent predicates as rm.
+//
+// The old chmod rule was the one destructive predicate that never got decomposed: a single regex
+// /\bchmod\s+-R\s+0?777\s+\// demanding the literal token order -R then 777 then /. That has two
+// defects the rm rework already solved elsewhere. (1) It is a FALSE NEGATIVE for every realistic
+// reordering of the same catastrophic command (chmod -fR 777 / , chmod 777 -R / ,
+// chmod --recursive 777 / , chmod -v -R 777 /), all of which bypassed. (2) Its trailing \s+\/ is a
+// FALSE POSITIVE: it matched ANY absolute path, so chmod -R 777 /tmp and chmod -R 777 /app were
+// wrongly blocked, inconsistent with the rm rule's /tmp + /var/tmp carve-outs.
+//
+// Block chmod when ALL hold, each tested INDEPENDENTLY over the whole command:
+//   (a) CHMOD_CMD       - the `chmod` token is invoked as a command.
+//   (b) CHMOD_RECURSIVE - a recursive flag in ANY token: a short flag run carrying r/R (-R, -fR,
+//                         -Rf, -v -R ...) or the GNU long flag --recursive. Same shape as RM_RECURSIVE.
+//   (c) CHMOD_777       - the world-writable 777 mode (with optional leading 0) in ANY token, in any
+//                         order relative to the flag.
+//   (d) DANGEROUS_PATH  - a root/home/system path appears in ANY token, REUSING the rm machinery
+//                         (ROOT_TOKEN + PATH_TAIL), so /tmp /var/tmp /var/folders /app /workspace
+//                         /data (non-system absolute paths) are NOT blocked while / /etc /usr /home
+//                         /var /opt ... ARE. Identical cut to the rm rule, no separate path list.
+const CHMOD_CMD = "\\bchmod\\b";
+const CHMOD_RECURSIVE = `(?:(?<=[\\s"'])${Q}?-[a-zA-Z]*[rR][a-zA-Z]*\\b|--recursive\\b)`;
+const CHMOD_777 = "0?777\\b";
+
 const DENY: { re: RegExp; why: string }[] = [
   // rm: block when (a) rm is the command AND (b) a recursive flag appears anywhere AND (c) a
   // dangerous root/home path appears anywhere. Three independent lookaheads, so flag-order,
@@ -83,7 +108,15 @@ const DENY: { re: RegExp; why: string }[] = [
   { re: /\bmkfs(\.[a-z0-9]+)?\b[^\n]*\s["']?\/dev\//, why: "mkfs on a raw device" },
   { re: />\s*\/dev\/(sd|nvme|disk|rdisk)/, why: "redirect to a raw disk" },
   { re: /:\s*\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/, why: "fork bomb" },
-  { re: /\bchmod\s+-R\s+0?777\s+\//, why: "recursive 777 on a system path" },
+  // chmod: block when (a) chmod is the command AND (b) a recursive flag appears anywhere AND (c) the
+  // 777 mode appears anywhere AND (d) a dangerous root/home/system path appears anywhere. Four
+  // independent lookaheads, so flag-order, mode-order, and path-order no longer interact, and the
+  // dangerous-path predicate is the SAME one rm uses (so /tmp /var/tmp /app /workspace /data are
+  // carved out while / /etc /usr /home /var /opt stay blocked). Matches the rm decomposition exactly.
+  {
+    re: new RegExp(`${CHMOD_CMD}(?=[^\\n]*${CHMOD_RECURSIVE})(?=[^\\n]*${CHMOD_777})(?=[^\\n]*${DANGEROUS_PATH})`),
+    why: "recursive 777 on a root/home/system path",
+  },
   // force-push: a `git push` line carrying a force flag (-f / --force / --force-with-lease) AND a
   // main/master token, in EITHER order (order-independent via two lookaheads).
   // Git global options may sit between `git` and `push` (e.g. `git -C /repo push`, `git -c k=v push`,
