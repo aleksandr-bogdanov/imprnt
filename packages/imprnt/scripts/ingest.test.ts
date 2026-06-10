@@ -807,6 +807,77 @@ test("--apply-all reports a prototype-named type cleanly and still files the res
   expect(r.out).toContain("1 filed");
 });
 
+// --- [P2] a CORRUPT manifest must be FATAL TO THE WHOLE --apply-all batch, never a per-file error.
+// Pre-fix, applyStaged called loadManifest per note. On a corrupt manifest loadManifest renames the
+// file aside (.corrupt-N) and THROWS. The first staged note hit that throw, the per-file catch
+// swallowed it, and EVERY subsequent note then loadManifest'd again, found NO manifest (just renamed
+// away), got {}, filed normally, and saveManifest wrote a fresh manifest holding only the
+// post-corruption notes - dropping all prior provenance from the active .manifest.json (it survived
+// only in the .corrupt-N backup). The fix detects the corrupt/unloadable manifest UP FRONT, before
+// any note is filed, and aborts the batch cleanly with the loadManifest "backed up ... retry" message
+// and a non-zero exit, filing nothing. ------------------------------------------------------------
+test("--apply-all aborts cleanly on a corrupt manifest, filing nothing and preserving prior provenance", () => {
+  const { root, vault } = setup();
+  const proposed = join(root, "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  // Two valid staged notes that WOULD file fine against a sound manifest.
+  writeFileSync(join(proposed, "one.md"), "---\ntype: person\ntags: [test]\n---\n\n# Personone\n\nbio\n");
+  writeFileSync(join(proposed, "two.md"), "---\ntype: person\ntags: [test]\n---\n\n# Persontwo\n\nbio\n");
+
+  // Seed a manifest carrying REAL prior provenance, then corrupt it on disk.
+  const manifestFile = join(vault, ".manifest.json");
+  const priorRow = { "raw/transcripts/2025-01-01-old-source.txt": { hash: "deadbeef", note: join(vault, "events", "old.md"), ingested: "2025-01-01" } };
+  writeFileSync(manifestFile, JSON.stringify(priorRow, null, 2));
+  writeFileSync(manifestFile, "{ this is not valid json");
+
+  const r = run(["ingest", "--apply-all", "--vault", vault], { cwd: root });
+  // Fatal: non-zero exit, the loadManifest corrupt message, nothing filed.
+  expect(r.code).not.toBe(0);
+  expect((r.err + r.out).toLowerCase()).toContain("corrupt");
+  expect((r.err + r.out).toLowerCase()).toContain("retry");
+  expect(r.out).not.toContain("filed person"); // no note was filed
+  expect(existsSync(join(vault, "people", "personone.md"))).toBe(false);
+  expect(existsSync(join(vault, "people", "persontwo.md"))).toBe(false);
+  // Both staged notes are left in place (nothing consumed them).
+  expect(existsSync(join(proposed, "one.md"))).toBe(true);
+  expect(existsSync(join(proposed, "two.md"))).toBe(true);
+
+  // The corrupt bytes were preserved in a sidecar and the prior provenance is recoverable from it.
+  const sidecars = readdirSync(vault).filter((f) => f.startsWith(".manifest.json.corrupt-"));
+  expect(sidecars.length).toBe(1);
+
+  // The active .manifest.json was NOT replaced with a fresh post-corruption-only manifest. Either it
+  // does not exist (renamed aside, none written back) or, if recreated, it still carries the prior row.
+  // The failure being guarded against is a manifest that holds ONLY the just-filed notes and lost the
+  // old provenance - so we assert no fresh apply-only manifest exists.
+  if (existsSync(manifestFile)) {
+    const after = JSON.parse(readFileSync(manifestFile, "utf8"));
+    const keys = Object.keys(after);
+    // No apply:sha256 rows were written (nothing filed), and prior provenance is intact.
+    expect(keys.some((k) => k.startsWith("apply:sha256:"))).toBe(false);
+    expect(after["raw/transcripts/2025-01-01-old-source.txt"]).toBeDefined();
+  }
+});
+
+// --- [P2] a corrupt MANIFEST aborts the batch (above), but a malformed NOTE must still NOT abort it -
+// the per-file isolation for bad notes is preserved. This pins both halves of the fix at once: a sound
+// manifest + one bad note + one good note files the good note and reports the bad one per-file. -------
+test("--apply-all keeps per-file isolation for a bad NOTE when the manifest is sound", () => {
+  const { root, vault } = setup();
+  const proposed = join(root, "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  // bad.md sorts before good.md; a sound (absent) manifest means the corrupt-abort path is NOT taken.
+  writeFileSync(join(proposed, "bad.md"), "---\ntype: toString\n---\n\n# Bad Note\n\nbody\n");
+  writeFileSync(join(proposed, "good.md"), "---\ntype: person\ntags: [test]\n---\n\n# Goodperson\n\nbio\n");
+
+  const r = run(["ingest", "--apply-all", "--vault", vault], { cwd: root });
+  expect(r.code).toBe(1); // the bad note still makes the batch non-zero overall
+  expect(r.err).toContain("maps to no vault folder");
+  // The good note filed despite the bad one - per-file isolation intact.
+  expect(existsSync(join(vault, "people", "goodperson.md"))).toBe(true);
+  expect(r.out).toContain("1 filed");
+});
+
 // --- [P2] identical staged bytes applied under two different filenames: the raw path must be decided
 // BEFORE source: injection (so the second note links the snapshot that exists), and the two filings
 // must keep distinct manifest rows (pre-fix the shared apply:sha256:<hash> key lost the first). -----

@@ -308,6 +308,17 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
 
   if (a.includes("--apply-all")) {
     if (!existsSync(applyVault)) { console.error(`no vault at ${applyVault} — run \`imprnt init\` first`); process.exit(1); }
+    // A corrupt manifest is FATAL TO THE WHOLE BATCH, not a per-file error. The per-note try/catch
+    // below isolates a bad NOTE (it keeps filing the rest), but loadManifest on a corrupt manifest
+    // renames it aside (.corrupt-N) and throws - if that throw were swallowed per-file, the first note
+    // would error, every subsequent note would loadManifest again, find {} (the file is gone), file
+    // onto empty state, and saveManifest would write a fresh manifest holding ONLY the post-corruption
+    // notes, dropping all prior provenance from the active .manifest.json. So probe the manifest ONCE
+    // up front, before any note is filed: a sound (or absent) manifest loads cleanly and the loop runs
+    // as normal; a corrupt one aborts here with loadManifest's own "backed up ... retry" message and a
+    // non-zero exit, having filed nothing.
+    try { loadManifest(applyVault); }
+    catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
     // Glob the user's PROJECT plugins/, where `plugin add` copies installed plugins (not the package).
     const pluginsDir = join(projectRoot(), "plugins");
     const staged: string[] = [];
