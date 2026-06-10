@@ -18,7 +18,7 @@
 //     still scores — no false "no matches"). No AND gate, no bespoke tiers.
 // Query terms are expanded through _tags.md (synonym -> canonical) and treated as alternatives; the
 // best-scoring variant of each query term contributes. Lean conversational stopwords are dropped.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { loadTags, normalize, type TagVocab } from "./lib/tags.ts";
 // The frontmatter list parser + BOM strip are CORE and shared with moc.ts (which check.ts/ingest.ts
@@ -54,6 +54,17 @@ if (!query) {
 
 const vocab = loadTags(vault);
 
+// Longest synonym KEY in word count, computed once from the loaded map. phraseSynonymTokens only ever
+// matches a key, so scanning n-grams longer than this can never hit one - they are pure wasted work.
+// Capping the n-gram window here keeps a pasted-paragraph query (hundreds/thousands of words) from
+// allocating a slice + Set + normalize per span, which is O(words^2) spans and OOM-crashes the read
+// path. A floor of 1 keeps the loop well-formed when the vocab has no multi-word keys. The synonym map
+// shape is `synonyms: Map<alias, canonical>`; the keys are the aliases we match against.
+const MAX_SYNONYM_NGRAM = Math.max(
+  1,
+  ...[...vocab.synonyms.keys()].map((k) => k.trim().split(/[\s-]+/).filter(Boolean).length),
+);
+
 // Conversational stopwords. The pitch is "you talk in plain language, the agent searches underneath" —
 // a query is a SENTENCE ("what do I believe about money"), not keywords. These words are sentence glue
 // that appear everywhere and discriminate nothing, so they only add noise to BM25. Kept lean (~30) and
@@ -68,8 +79,14 @@ const STOPWORDS = new Set([
 // Tokenize on Unicode letters and numbers so non-ASCII content (Cyrillic, German umlauts, ß) tokenizes
 // to whole words instead of being stripped. The same tokenizer runs on both the query and the note
 // body/title/tags so the write and read sides agree on word boundaries. Lowercasing is locale-agnostic.
+// NFC-normalize before tokenizing so the same visible accented word agrees regardless of composition
+// form. macOS APFS and many IMEs emit decomposed (NFD: e + U+0301), editors and PDFs emit composed
+// (NFC: the single "é" codepoint). Without this the query and the indexed text would split into two
+// different terms, and an NFD-form word loses its accent to the `\p{N}/\p{L}` split (the bare combining
+// mark is dropped). NFC matches the write side: tags.ts kebab also NFC-composes, so a tag check
+// certifies is a tag recall finds.
 const tokenize = (text: string): string[] =>
-  text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  text.normalize("NFC").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 
 // A MULTI-token or hyphenated synonym key (`big-query`, `on-call`, `net worth`) is split into pieces
 // by the alnum/Unicode tokenizer, so `big-query` would never reach the `big-query -> bigquery` synonym
@@ -87,12 +104,16 @@ const phraseSynonymTokens = (q: string): string[] => {
   // other punctuation off the edges), so "big-query" becomes the atoms [big, query] - the n-gram
   // base. This is what lets a hyphenated key written as one whitespace-word still be reassembled and
   // matched below (joined back by both hyphen and space).
-  const words = q.toLowerCase().split(/[\s-]+/)
+  // NFC-normalize the same way tokenize does, so an NFD-form multi-word query reassembles to the key.
+  const words = q.normalize("NFC").toLowerCase().split(/[\s-]+/)
     .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
     .filter(Boolean);
-  // Try the whole phrase, then every contiguous n-gram down to PAIRS (n >= 2), joined by both space
-  // and hyphen (a key may be written either way). A hit maps to its canonical, which we then tokenize.
-  for (let n = words.length; n >= 2; n--) {
+  // Try contiguous n-grams from the longest synonym KEY width down to PAIRS (n >= 2), joined by both
+  // space and hyphen (a key may be written either way). A hit maps to its canonical, which we then
+  // tokenize. Capping at MAX_SYNONYM_NGRAM (not words.length) is what keeps a pasted-paragraph query
+  // bounded - a span longer than the longest key can never match one, so scanning it is wasted O(n^2)
+  // work that OOMs the read path.
+  for (let n = Math.min(words.length, MAX_SYNONYM_NGRAM); n >= 2; n--) {
     for (let i = 0; i + n <= words.length; i++) {
       const span = words.slice(i, i + n);
       for (const key of new Set([span.join(" "), span.join("-")])) {
@@ -134,10 +155,16 @@ function walk(dir: string): string[] {
     // A control basename counts only at the vault root - relative path with no directory separator.
     const rel = relative(vault, p);
     if (!rel.includes("/") && !rel.includes("\\") && CONTROL.has(rel)) continue;
-    // Be tolerant per entry. A broken symlink or otherwise unreadable entry makes statSync/readdir throw.
+    // Be tolerant per entry. A broken symlink or otherwise unreadable entry makes lstatSync/readdir throw.
     // Skip just that entry so one bad node never aborts the whole walk or hides a populated vault.
     try {
-      if (statSync(p).isDirectory()) out.push(...walk(p));
+      // lstatSync does NOT resolve a symlink, so we can detect and SKIP one. A file symlink to a note
+      // would otherwise index the note twice (inflating df, listing it twice); a directory symlink can
+      // form a cycle that recurses until the OS errors. Skip every symlink - a note's canonical path is
+      // walked directly. (ingest's snapshot walk defends the same way.)
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory()) out.push(...walk(p));
       else if (entry.endsWith(".md")) out.push(p);
     } catch { continue; }
   }

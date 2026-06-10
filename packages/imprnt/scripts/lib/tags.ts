@@ -25,9 +25,12 @@ function section(text: string, name: string): string {
 const TAG_TOKEN = /^[\p{L}\p{N}-]+$/u;
 
 // The valid tag tokens on a line. Per-token salvage: an invalid token is skipped, never fatal to
-// its neighbors. A pure prose line yields nothing (its comma segments contain spaces).
+// its neighbors. A pure prose line yields nothing (its comma segments contain spaces). NFC-compose
+// each token: an NFD-written accented tag (base letter + a combining mark, the form macOS APFS and
+// many IMEs emit) carries a \p{M} mark that TAG_TOKEN rejects, so without NFC it would be silently
+// dropped on load. NFC folds it to the same composed form appendTags writes, so write and read agree.
 function tagTokens(line: string): string[] {
-  return line.split(",").map((s) => s.trim()).filter((s) => TAG_TOKEN.test(s));
+  return line.split(",").map((s) => s.trim().normalize("NFC")).filter((s) => TAG_TOKEN.test(s));
 }
 
 // True if a line under `## Tags` is part of the tag list. A tag line is one where the MAJORITY of
@@ -44,10 +47,13 @@ function isTagLine(line: string): boolean {
   return valid * 2 > segs.length;
 }
 
-// Normalize a raw tag to its writable kebab form: lowercase, spaces and underscores to hyphens.
-// Returns "" when no valid token remains - appendTags never writes what loadTags cannot read back.
+// Normalize a raw tag to its writable kebab form: NFC-compose, lowercase, spaces and underscores to
+// hyphens. Returns "" when no valid token remains - appendTags never writes what loadTags cannot read
+// back. NFC first: an NFD accented tag (e + U+0301) leaves the \p{M} mark in `t`, failing TAG_TOKEN
+// and dropping the tag; composing it to the single "é" codepoint lets it pass and round-trip, and
+// matches the form loadTags/tagTokens read back and the recall tokenizer (NFC-normalized in parallel).
 function kebab(tag: string): string {
-  const t = tag.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const t = tag.trim().normalize("NFC").toLowerCase().replace(/[\s_]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
   return TAG_TOKEN.test(t) ? t : "";
 }
 

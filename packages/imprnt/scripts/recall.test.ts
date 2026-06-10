@@ -406,6 +406,107 @@ test("trailing punctuation on a hyphenated synonym key (big-query,) still reache
   expect(r.stdout).not.toContain("no matches");
 });
 
+// --- round-3 finding 1 (P1): Unicode NFC/NFD normalization ----------------------------------------
+// macOS APFS and many IMEs emit decomposed (NFD) text, editors and PDFs emit composed (NFC). The same
+// visible accented word in the two forms is two different terms unless the tokenizer normalizes. So a
+// note whose body holds "café" in one form must be found by a query typed in the other.
+test("an NFC-form body word is found by an NFD-form query (and vice versa)", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // "café" composed (NFC): e-with-acute is one code point.
+  const nfc = "café";
+  // "café" decomposed (NFD): plain e + combining acute accent.
+  const nfd = "café";
+  // body holds the NFC form, the query types the NFD form.
+  note(v, "menu.md", `---\ntags: []\n---\n# Menu\n\nThe ${nfc} serves espresso.\n`);
+  note(v, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant.\n`);
+
+  const byNfd = recall(nfd, v);
+  expect(byNfd.code).toBe(0);
+  expect(byNfd.stdout).toContain("menu.md");
+  expect(byNfd.stdout).not.toContain("no matches");
+
+  // and the reverse: an NFD-form body word found by an NFC-form query.
+  const v2 = newVault();
+  writeFileSync(join(v2, "_tags.md"), TAGS_MD);
+  note(v2, "menu.md", `---\ntags: []\n---\n# Menu\n\nThe ${nfd} serves espresso.\n`);
+  note(v2, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant.\n`);
+  const byNfc = recall(nfc, v2);
+  expect(byNfc.code).toBe(0);
+  expect(byNfc.stdout).toContain("menu.md");
+  expect(byNfc.stdout).not.toContain("no matches");
+});
+
+test("an NFD-form tag is matched by an NFC-form query (tokenizer agrees with the write side)", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  const nfd = "café"; // decomposed tag value
+  const nfc = "café"; // composed query
+  // the term lives ONLY in the tag, written in NFD form (what macOS/an IME may emit).
+  note(v, "tagged.md", `---\ntags: [${nfd}]\n---\n# Some Title\n\nUnrelated prose about weather.\n`);
+  note(v, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant.\n`);
+
+  const r = recall(nfc, v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("tagged.md");
+  expect(r.stdout).not.toContain("no matches");
+});
+
+// --- round-3 finding 2 (P1): n-gram window must be capped so a huge query cannot OOM ---------------
+// phraseSynonymTokens scanned every contiguous n-gram from full-query-length down to 2, allocating a
+// slice + Set + normalize per span - uncapped, that OOM/SIGABRTs on a pasted-paragraph query. The cap
+// keeps it bounded while a legitimate 2-word synonym key still expands.
+test("a 2000-word query returns promptly and does not crash", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  note(v, "real.md", `---\ntags: [harbor]\n---\n# Real\n\nHarbor content here.\n`);
+
+  // 2000 distinct words plus a real term so the query is not all stopwords.
+  const huge = Array.from({ length: 2000 }, (_, i) => `word${i}`).join(" ") + " harbor";
+  const t0 = Date.now();
+  const r = recall(huge, v);
+  const elapsed = Date.now() - t0;
+  expect(r.code).toBe(0); // did not SIGABRT / OOM
+  expect(r.stdout).toContain("real.md");
+  // generous bound - the point is it completes, not that it is instant under a cold bun spawn.
+  expect(elapsed).toBeLessThan(15000);
+});
+
+test("a legitimate two-word synonym key still expands after the n-gram cap", () => {
+  const v = newVault();
+  // Multi-word synonym keys are stored kebab/hyphenated (the shipped form: data-pipeline, on-call), so
+  // a query written as two whitespace words ("on call") still reassembles to the key and expands.
+  writeFileSync(
+    join(v, "_tags.md"),
+    `---\ntype: tags\n---\n\n# tags\n\n## Tags\noncall\n\n## Synonyms\non-call -> oncall\n`,
+  );
+  note(v, "rota.md", `---\ntags: [oncall]\n---\n# Rota\n\nThe pager schedule.\n`);
+  note(v, "other.md", `---\ntags: []\n---\n# Other\n\nNothing relevant.\n`);
+
+  const r = recall("on call", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("rota.md");
+  expect(r.stdout).not.toContain("no matches");
+});
+
+// --- round-3 finding 3 (P2): a note symlink is indexed once, not twice ------------------------------
+// The walk used statSync (which resolves symlinks), so a symlink TO a note double-indexed it (inflating
+// df and listing it twice). Skipping symlinked entries keeps each note counted once.
+test("a note symlink is not double-indexed", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  note(v, "real.md", `---\ntags: [harbor]\n---\n# Real\n\nHarbor content here.\n`);
+  // a VALID symlink pointing at the real note - statSync would index it as a second copy.
+  symlinkSync(join(v, "real.md"), join(v, "alias.md"));
+
+  const r = recall("harbor", v);
+  expect(r.code).toBe(0);
+  const lines = r.stdout.split("\n").filter((l) => /^\s+\[\d/.test(l));
+  // exactly one result line - the real note, not its symlink copy.
+  expect(lines.length).toBe(1);
+  expect(lines[0]).toContain("real.md");
+});
+
 // --- sanity: BM25 ranking - title beats body ------------------------------------------------------
 test("a term in the title outranks the same term only in the body", () => {
   const v = newVault();

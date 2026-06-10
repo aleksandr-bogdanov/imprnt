@@ -3,7 +3,7 @@
 // exactly the kind of thing the READ side does for free. Grouped by folder (the human browse axis),
 // entity → domain → form order. Falls back to the H1 title when `summary` is absent, so it never
 // breaks on a note that predates the field.
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 export type NoteMeta = {
@@ -50,8 +50,29 @@ export function stripQuotes(v: string): string {
   return m ? m[2] : v;
 }
 function fmScalar(fm: string, key: string): string {
-  // `.trim()` also drops a trailing `\r` left on a per-line value when the note uses CRLF endings.
-  return stripQuotes((fm.match(new RegExp(`^${key}:\\s*(.+)$`, "im"))?.[1] ?? "").trim());
+  const lines = fm.split(/\r?\n/);
+  const keyRe = new RegExp(`^${key}:\\s*(.*)$`, "i");
+  for (const [i, line] of lines.entries()) {
+    const m = line.match(keyRe);
+    if (!m) continue;
+    // `.trim()` also drops a trailing `\r` left on a per-line value when the note uses CRLF endings.
+    const rest = m[1].trim();
+    // A YAML block (`|`) or folded (`>`) scalar puts the value on the FOLLOWING more-indented lines, not
+    // inline. The single-line read captured only the indicator char, silently corrupting index.md (a junk
+    // "|"). Consume the indented continuation lines and join them so the real text lands. The contract
+    // wants summary on one line, so we collapse the block to a single space-joined line either way.
+    if (rest === "|" || rest === ">") {
+      const block: string[] = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const cont = lines[j].match(/^(\s+)(.*\S)\s*$/);
+        if (!cont) break; // a non-indented line (the next key, prose, a blank) ends the block
+        block.push(cont[2]);
+      }
+      return block.join(" ");
+    }
+    return stripQuotes(rest);
+  }
+  return "";
 }
 // THE canonical block-style YAML list parser for the whole core. Both plain-YAML list forms:
 // inline `key: [a, b]` and the block form (what Obsidian's properties UI writes) - a bare `key:`
@@ -97,15 +118,18 @@ function walk(vault: string, dir: string): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry.startsWith(".") || entry.startsWith("_")) continue; // dotfiles + _tags/_needs-review
     const p = join(dir, entry);
-    // statSync follows symlinks, so a dangling link throws. Skip the unreadable entry
-    // rather than crash the whole walk (recall and the plugins walk tolerate this too).
-    let isDir: boolean;
+    // lstatSync does NOT resolve a symlink (a dangling link still throws and is skipped, keeping the
+    // walk crash-free). Skipping every symlink stops a file symlink from double-collecting a note (it
+    // would be listed twice in index.md) and a directory symlink from forming a cycle that recurses
+    // until the OS errors. A note's canonical path is walked directly. Mirrors recall + ingest.
+    let st;
     try {
-      isDir = statSync(p).isDirectory();
+      st = lstatSync(p);
     } catch {
       continue;
     }
-    if (isDir) out.push(...walk(vault, p));
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) out.push(...walk(vault, p));
     else if (entry.endsWith(".md")) {
       // A control basename counts only at the vault root - relative path with no directory separator.
       const rel = relative(vault, p);

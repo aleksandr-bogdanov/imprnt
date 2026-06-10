@@ -278,3 +278,53 @@ test("appendTags creates ## Tags without breaking an existing ## Synonyms sectio
   expect(vocab.synonyms.get("bq")).toBe("bigquery");
   rmSync(v, { recursive: true });
 });
+
+// --- Unicode NFC normalization (P1) ---
+// An accented tag can arrive in NFD form (base letter + a combining mark, the form macOS APFS and
+// many IMEs emit). The combining mark is \p{M}, which TAG_TOKEN rejects, so without NFC kebab()
+// returns "" and the tag is silently dropped at sync. NFC composes "e + U+0301" into a single "é"
+// codepoint so the accented tag passes TAG_TOKEN and round-trips. The recall tokenizer is NFC-
+// normalized in parallel so write and read agree on one composition form for the same word.
+const NFC_CAFE = "caf\u00E9";   // "cafe" + composed acute (single codepoint U+00E9)
+const NFD_CAFE = "cafe\u0301"; // "cafe" + U+0301 combining acute (decomposed)
+
+test("appendTags writes an NFD-form accented tag as its NFC form", () => {
+  const v = tmpVault("## Tags\nalpha\n\n## Synonyms\n");
+  // Without NFC, kebab(NFD_CAFE) is "" and appendTags drops it entirely.
+  expect(appendTags(v, [NFD_CAFE])).toEqual([NFC_CAFE]);
+  expect(readFileSync(join(v, "_tags.md"), "utf8")).toBe(`## Tags\nalpha, ${NFC_CAFE}\n\n## Synonyms\n`);
+  rmSync(v, { recursive: true });
+});
+
+test("loadTags reads an NFD-written tag line and yields the NFC tag", () => {
+  // A hand-edited line storing the decomposed form must still load as the composed tag.
+  const v = tmpVault(`## Tags\nalpha, ${NFD_CAFE}\n\n## Synonyms\n`);
+  const vocab = loadTags(v);
+  expect(vocab.approved.has(NFC_CAFE)).toBe(true);
+  expect(vocab.approved.has("alpha")).toBe(true);
+  rmSync(v, { recursive: true });
+});
+
+test("appendTags + loadTags treat NFD and NFC of the same accented tag as one tag", () => {
+  const v = tmpVault("## Tags\nalpha\n\n## Synonyms\n");
+  expect(appendTags(v, [NFC_CAFE])).toEqual([NFC_CAFE]);
+  // Re-appending the decomposed form must not write a second, byte-different entry.
+  expect(appendTags(v, [NFD_CAFE])).toEqual([]);
+  expect(readFileSync(join(v, "_tags.md"), "utf8")).toBe(`## Tags\nalpha, ${NFC_CAFE}\n\n## Synonyms\n`);
+  rmSync(v, { recursive: true });
+});
+
+test("normalize maps an NFD-form term to an NFC synonym key", () => {
+  // The synonym map is keyed on the NFC tag; an NFD query term must still hit it.
+  const vocab = { approved: new Set<string>(), synonyms: new Map([[NFC_CAFE, "coffee"]]) };
+  expect(normalize(vocab, NFD_CAFE)).toBe("coffee");
+  rmSync(tmpVault(), { recursive: true });
+});
+
+test("normalize of an NFD term equals NFC and is itself NFC-composed", () => {
+  const vocab = { approved: new Set<string>(), synonyms: new Map<string, string>() };
+  const out = normalize(vocab, NFD_CAFE);
+  expect(out).toBe(NFC_CAFE);
+  expect(out.normalize("NFC")).toBe(out); // the returned tag is already composed
+  rmSync(tmpVault(), { recursive: true });
+});
