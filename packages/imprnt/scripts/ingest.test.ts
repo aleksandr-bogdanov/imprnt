@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, symlinkSync, chmodSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -623,4 +624,281 @@ test("re-ingesting an unchanged transcript is a no-op", () => {
   const r = run(["ingest", src, "--vault", vault]);
   expect(r.code).toBe(0);
   expect(r.out).toContain("unchanged");
+});
+
+// --- [P0] raw/ is immutable: re-snapshotting a CHANGED source must never overwrite the existing
+// snapshot. The new bytes get a content-address-disambiguated name; the old file keeps its bytes. ---
+test("re-snapshotting a changed source writes the new bytes under a disambiguated name", () => {
+  const { vault, raw } = setup();
+  const src = join(vault, "..", "x.csv");
+  writeFileSync(src, "a,b\n1,2\n");
+  expect(run(["snapshot", src, "--dest", "tax", "--vault", vault]).code).toBe(0);
+
+  writeFileSync(src, "a,b\n9,9\n"); // the source changed under the same name
+  const r = run(["snapshot", src, "--dest", "tax", "--vault", vault]);
+  expect(r.code).toBe(0);
+  // The original snapshot is untouched - vault notes' source: links still point at the old bytes.
+  expect(readFileSync(join(raw, "tax", "x.csv"), "utf8")).toBe("a,b\n1,2\n");
+  // The new bytes live under <stem>-<hash8><ext>, and the run said so.
+  const files = readdirSync(join(raw, "tax")).sort();
+  expect(files.length).toBe(2);
+  const disambig = files.find((f) => f !== "x.csv")!;
+  expect(disambig).toMatch(/^x-[0-9a-f]{8}\.csv$/);
+  expect(readFileSync(join(raw, "tax", disambig), "utf8")).toBe("a,b\n9,9\n");
+  expect(r.out).toContain(disambig);
+  // Both snapshots keep their own manifest rows.
+  const manifest = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
+  expect(manifest[join("raw", "tax", "x.csv")]).toBeDefined();
+  expect(manifest[join("raw", "tax", disambig)]).toBeDefined();
+});
+
+// --- [P0] basename collision: two different sources sharing a basename into one dest must keep BOTH
+// files. Pre-fix the second copy destroyed the first silently ("1 copied, 0 unchanged"). -----------
+test("two sources sharing a basename into one dest keep both files", () => {
+  const { vault, raw } = setup();
+  const a = join(vault, "..", "a");
+  const b = join(vault, "..", "b");
+  mkdirSync(a);
+  mkdirSync(b);
+  writeFileSync(join(a, "report.txt"), "first report");
+  writeFileSync(join(b, "report.txt"), "second report");
+
+  expect(run(["snapshot", join(a, "report.txt"), "--dest", "docs", "--vault", vault]).code).toBe(0);
+  const r = run(["snapshot", join(b, "report.txt"), "--dest", "docs", "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(readFileSync(join(raw, "docs", "report.txt"), "utf8")).toBe("first report");
+  const disambig = readdirSync(join(raw, "docs")).find((f) => f !== "report.txt")!;
+  expect(disambig).toBeDefined();
+  expect(readFileSync(join(raw, "docs", disambig), "utf8")).toBe("second report");
+});
+
+// --- [P0] identical bytes remain a skip (snapshot idempotency) ------------------------------------
+test("re-snapshotting identical bytes is a skip, not a copy", () => {
+  const { vault, raw } = setup();
+  const src = join(vault, "..", "x.csv");
+  writeFileSync(src, "a,b\n1,2\n");
+  expect(run(["snapshot", src, "--dest", "tax", "--vault", vault]).code).toBe(0);
+  const r = run(["snapshot", src, "--dest", "tax", "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(r.out).toContain("0 copied, 1 unchanged");
+  expect(readdirSync(join(raw, "tax")).length).toBe(1);
+});
+
+// --- [P0] migration care: a manifest row with a wrong (legacy) hash over bytes that ARE already on
+// disk is refreshed in place - no duplicate snapshot, counted unchanged. ---------------------------
+test("a stale manifest hash over identical disk bytes refreshes the row instead of duplicating", () => {
+  const { vault, raw } = setup();
+  const src = join(vault, "..", "x.csv");
+  writeFileSync(src, "a,b\n1,2\n");
+  expect(run(["snapshot", src, "--dest", "tax", "--vault", vault]).code).toBe(0);
+
+  // Simulate a legacy manifest whose hash was computed wrong (the old lossy-decode bug).
+  const mp = join(vault, ".manifest.json");
+  const m = JSON.parse(readFileSync(mp, "utf8"));
+  const key = Object.keys(m).find((k) => k.endsWith("x.csv"))!;
+  const realHash = m[key].hash;
+  m[key].hash = "0000000000000000";
+  writeFileSync(mp, JSON.stringify(m, null, 2));
+
+  const r = run(["snapshot", src, "--dest", "tax", "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(r.out).toContain("0 copied, 1 unchanged");
+  expect(readdirSync(join(raw, "tax")).length).toBe(1); // no duplicate written
+  const after = JSON.parse(readFileSync(mp, "utf8"));
+  expect(after[key].hash).toBe(realHash); // row refreshed to the true byte hash
+});
+
+// --- [P2] a dangling symlink anywhere in the tree must not abort the bulk snapshot ----------------
+test("a dangling symlink in the tree is skipped, not a crash", () => {
+  const { vault, raw } = setup();
+  const tree = join(vault, "..", "tree");
+  mkdirSync(join(tree, "sub"), { recursive: true });
+  writeFileSync(join(tree, "a.txt"), "a");
+  writeFileSync(join(tree, "sub", "b.txt"), "b");
+  symlinkSync(join(tree, "missing.txt"), join(tree, "dead.txt")); // points at nothing
+
+  const r = run(["snapshot", tree, "--dest", "mirror", "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(existsSync(join(raw, "mirror", "a.txt"))).toBe(true);
+  expect(existsSync(join(raw, "mirror", "sub", "b.txt"))).toBe(true);
+  expect(r.out.toLowerCase()).toContain("symlink");
+});
+
+// --- [P2] a directory-symlink cycle must not recurse forever (or to ENAMETOOLONG) ----------------
+test("a directory-symlink cycle is skipped, not followed", () => {
+  const { vault, raw } = setup();
+  const tree = join(vault, "..", "tree");
+  mkdirSync(tree, { recursive: true });
+  writeFileSync(join(tree, "a.txt"), "a");
+  symlinkSync(".", join(tree, "loop")); // tree/loop -> tree itself
+
+  const r = run(["snapshot", tree, "--dest", "mirror", "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(existsSync(join(raw, "mirror", "a.txt"))).toBe(true);
+  expect(existsSync(join(raw, "mirror", "loop"))).toBe(false);
+});
+
+// --- [P1] a prose markdown file with YAML frontmatter (date:, tags: - the dominant migration input)
+// is NOT a transcript: no fabricated 0-participant event, snapshot + unclassified handoff instead. --
+test("a prose markdown file with YAML frontmatter is not fabricated into an event", () => {
+  const { vault, raw } = setup();
+  const src = join(vault, "..", "note.md");
+  writeFileSync(src, "---\ndate: 2025-01-15\ntags: [tax]\n---\n\nA prose paragraph about deductions. No dialogue here at all.\n");
+
+  const r = run(["ingest", src, "--vault", vault]);
+  expect(r.code).toBe(0);
+  // No bogus `# 1:1 -` event with zero participants.
+  expect(readdirSync(join(vault, "events")).length).toBe(0);
+  // The unclassified-source handoff fires, and the snapshot files under adhoc, not transcripts.
+  expect(needsReview(vault)).toContain("unclassified source");
+  expect(existsSync(join(raw, "transcripts"))).toBe(false);
+  expect(existsSync(join(raw, "adhoc"))).toBe(true);
+});
+
+// --- [P2] a staged note with a prototype-named type (`toString`) must get the clean "maps to no
+// vault folder" error, not an ERR_INVALID_ARG_TYPE crash that aborts the whole --apply-all batch and
+// strands a raw snapshot outside the manifest. ------------------------------------------------------
+test("--apply-all reports a prototype-named type cleanly and still files the rest", () => {
+  const { root, vault, raw } = setup();
+  const proposed = join(root, "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  // bad.md sorts before good.md, so pre-fix the crash aborted the batch before good filed.
+  writeFileSync(join(proposed, "bad.md"), "---\ntype: toString\n---\n\n# Bad Note\n\nbody\n");
+  writeFileSync(join(proposed, "good.md"), "---\ntype: person\ntags: [test]\n---\n\n# Goodman\n\nbio\n");
+
+  const r = run(["ingest", "--apply-all", "--vault", vault], { cwd: root });
+  expect(r.code).toBe(1); // the bad note is still an error overall
+  expect(r.err).toContain("maps to no vault folder");
+  expect(r.err + r.out).not.toContain("ERR_INVALID_ARG_TYPE");
+  // The valid staged note was still filed, the bad one kept for inspection.
+  expect(existsSync(join(vault, "people", "goodman.md"))).toBe(true);
+  expect(existsSync(join(proposed, "bad.md"))).toBe(true);
+  // No stranded raw/proposed snapshot for the bad note - validation precedes any write.
+  const proposedRaw = join(raw, "proposed");
+  const snaps = existsSync(proposedRaw) ? readdirSync(proposedRaw) : [];
+  expect(snaps.length).toBe(1); // only goodman's snapshot
+  expect(r.out).toContain("1 filed");
+});
+
+// --- [P2] identical staged bytes applied under two different filenames: the raw path must be decided
+// BEFORE source: injection (so the second note links the snapshot that exists), and the two filings
+// must keep distinct manifest rows (pre-fix the shared apply:sha256:<hash> key lost the first). -----
+test("identical staged bytes under two filenames keep distinct manifest rows and resolving source: links", () => {
+  const { vault, raw } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  // No slug:, no H1 -> the slug comes from the staged basename, so identical bytes file twice.
+  const shared = "---\ntype: person\ntags: [test]\n---\n\nbio without a heading\n";
+  const s1 = join(proposed, "n1.md");
+  const s2 = join(proposed, "n2.md");
+  writeFileSync(s1, shared);
+  expect(run(["ingest", "--apply", s1, "--vault", vault]).code).toBe(0);
+  writeFileSync(s2, shared);
+  expect(run(["ingest", "--apply", s2, "--vault", vault]).code).toBe(0);
+
+  // Both notes filed, and each note's source: resolves to a snapshot that EXISTS on disk.
+  for (const slug of ["n1", "n2"]) {
+    const note = readFileSync(join(vault, "people", `${slug}.md`), "utf8");
+    const target = note.match(/^source: "\[\[(raw\/[^\]]+)\]\]"$/m)?.[1];
+    expect(target).toBeDefined();
+    expect(existsSync(join(raw, "..", `${target}.md`))).toBe(true);
+  }
+  // Two distinct apply rows - the first filing's provenance is not clobbered by the second.
+  const manifest = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
+  const applyRows = Object.entries(manifest).filter(([k]) => k.startsWith("apply:sha256:"));
+  expect(applyRows.length).toBe(2);
+  const notes = applyRows.map(([, e]) => (e as { note: string }).note).sort();
+  expect(notes[0]).toContain("n1.md");
+  expect(notes[1]).toContain("n2.md");
+});
+
+// --- [P2] --apply slug derivation falls through on the SLUGIFIED result, mirroring the bytes path:
+// a Cyrillic H1 must not short-circuit the chain into "" or a digits-only remnant. ------------------
+test("a Cyrillic H1 with a numeric remnant falls back to the staged basename for the slug", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "nalog.md");
+  writeFileSync(staged, "---\ntype: note\ndomain: finances\ntags: [test]\n---\n\n# Налоговая декларация 2024\n\nдетали\n");
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  // Filed under the ASCII basename, not the degenerate digits-only remnant of the Cyrillic title.
+  expect(existsSync(join(vault, "finances", "nalog.md"))).toBe(true);
+  expect(existsSync(join(vault, "finances", "2024.md"))).toBe(false);
+});
+
+test("a pure-Cyrillic H1 falls back to the staged basename instead of erroring", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "zametka.md");
+  writeFileSync(staged, "---\ntype: note\ndomain: finances\ntags: [test]\n---\n\n# Налоговая декларация\n\nдетали\n");
+  const r = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r.code).toBe(0);
+  expect(r.err).not.toContain("can't derive a slug");
+  expect(existsSync(join(vault, "finances", "zametka.md"))).toBe(true);
+});
+
+test("a genuinely all-numeric H1 keeps its faithful numeric slug", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "year.md");
+  writeFileSync(staged, "---\ntype: note\ndomain: finances\ntags: [test]\n---\n\n# 2024\n\nyear summary\n");
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  expect(existsSync(join(vault, "finances", "2024.md"))).toBe(true);
+});
+
+// --- [P2] binary provenance: the recorded hash must be the sha256 of the BYTES (a lossy utf8 decode
+// hashes to something matching neither the source nor the snapshot), and the copy byte-faithful. ----
+test("a binary source's manifest hash matches its bytes and the snapshot is byte-faithful", () => {
+  const { vault } = setup();
+  const src = join(vault, "..", "img.png");
+  // Invalid UTF-8 on purpose (0xff 0xfe and a bare 0x80) - a lossy decode mangles these bytes.
+  const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00, 0x80, 0x81]);
+  writeFileSync(src, bytes);
+
+  const r = run(["ingest", src, "--vault", vault]);
+  expect(r.code).toBe(0);
+  const manifest = JSON.parse(readFileSync(join(vault, ".manifest.json"), "utf8"));
+  const expected = createHash("sha256").update(bytes).digest("hex").slice(0, 16);
+  expect(manifest[src].hash).toBe(expected);
+  // The snapshot copy is byte-identical to the source.
+  expect(Buffer.compare(readFileSync(manifest[src].raw), bytes)).toBe(0);
+});
+
+// --- [P2] fmList must take the WHOLE wikilink list: a lazy match stops at the first ]] and silently
+// drops every participant after the first. ----------------------------------------------------------
+test("--apply resolves every participant in a wikilink list, not just the first", () => {
+  const { vault } = setup();
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, "sync.md");
+  writeFileSync(staged, '---\ntype: event\ndate: 2025-01-01\nparticipants: ["[[people/carol]]", "[[people/dave]]"]\ntags: [test]\n---\n\n# Sync with the team\n\nnotes\n');
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  const review = needsReview(vault);
+  expect(review).toContain("people/carol");
+  expect(review).toContain("people/dave"); // pre-fix dave was silently skipped
+});
+
+// --- [P3] a directory where a file is expected, and a read-only raw/, both error cleanly -----------
+test("ingesting a directory errors cleanly", () => {
+  const { vault } = setup();
+  const dir = join(vault, "..", "somedir");
+  mkdirSync(dir);
+  const r = run(["ingest", dir, "--vault", vault]);
+  expect(r.code).toBe(1);
+  expect(r.err.toLowerCase()).toContain("directory");
+  expect(r.err).not.toContain("EISDIR"); // no raw stack
+});
+
+test("a read-only raw/ gives a clean one-line error, not a stack", () => {
+  const { vault, raw } = setup();
+  chmodSync(raw, 0o555);
+  try {
+    const r = run(["ingest", "a small fact to file", "--vault", vault]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("cannot write snapshot");
+  } finally {
+    chmodSync(raw, 0o755);
+  }
 });

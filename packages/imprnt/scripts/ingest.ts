@@ -30,6 +30,22 @@ function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 }
 
+// Try each candidate IN ORDER, falling through whenever the SLUGIFIED result is unusable - the same
+// rule the bytes path applies at its snapshot slug below. An OR over the RAW strings short-circuits
+// on a truthy Cyrillic H1 that then slugifies to "" (losing a usable ASCII basename) or to a
+// digits-only remnant ("# Налоговая декларация 2024" -> "2024"). A digits-only slug from a candidate
+// that HAD letters is degenerate (the words were stripped) and falls through; a genuinely all-numeric
+// candidate ("# 2024") keeps its faithful numeric slug.
+function deriveSlug(candidates: string[]): string {
+  for (const c of candidates) {
+    const s = slugify(c);
+    if (!s) continue;
+    if (/^[\d-]+$/.test(s) && /\p{L}/u.test(c)) continue;
+    return s;
+  }
+  return "";
+}
+
 // Known source file extensions a user would pass as a path. A single-line inline fact never ends in
 // one of these, so this stays a safe discriminator alongside the separator check.
 const PATH_EXTS = new Set([".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pdf", ".rtf", ".html", ".htm", ".vtt", ".srt"]);
@@ -47,16 +63,15 @@ function looksLikePath(arg: string): boolean {
 }
 
 // Conservative transcript detector. The contract says ONLY a transcript gets the deterministic event
-// skeleton; any other prose is snapshotted and left for the LLM to classify. We fire only when the
-// shape is unambiguous: at least two DISTINCT speaker labels, or an explicit meta header
-// (subject:/date:/topic:/attendees:/participants:). A single stray "Word:" line never qualifies.
-// An email is excluded: it carries a `Subject:` (a meta header) but is NOT a meeting, so when email
-// headers (From:/To:/...) are present and there are fewer than two speakers, the meta-header trigger
-// is suppressed and the email falls to snapshot + needs-review for the LLM to classify.
-function looksLikeTranscript(speakers: Set<string>, hasMetaHeader: boolean, hasEmailHeader: boolean): boolean {
-  if (speakers.size >= 2) return true;
-  if (hasEmailHeader) return false;
-  return hasMetaHeader;
+// skeleton; any other prose is snapshotted and left for the LLM to classify. We fire only on real
+// dialogue evidence: at least two DISTINCT speaker labels. A single stray "Word:" line never
+// qualifies, and a meta header (subject:/date:/topic:/...) ALONE never qualifies either - any prose
+// note with YAML frontmatter (date:, tags: - the dominant migration input) carries one, and firing on
+// it fabricated a bogus 0-participant event and skipped the unclassified-source handoff. Meta lines
+// still parse (subject -> title) and email headers (From:/To:/...) are still excluded from speaker
+// counting in the loop below, so an email never reads as a 2-speaker transcript.
+function looksLikeTranscript(speakers: Set<string>): boolean {
+  return speakers.size >= 2;
 }
 
 // --- frontmatter helpers (deterministic — STRUCTURE only, no LLM) ----------
@@ -70,7 +85,10 @@ function fmScalar(fm: string, key: string): string {
   return (fm.match(new RegExp(`^${key}:\\s*(.+)$`, "im"))?.[1] ?? "").trim().replace(/^["']|["']$/g, "");
 }
 function fmList(fm: string, key: string): string[] {
-  const line = fm.match(new RegExp(`^${key}:\\s*\\[(.*?)\\]`, "im"))?.[1] ?? "";
+  // Greedy capture to the LAST `]` on the line (mirrors check.ts): wikilink entries each contain
+  // `]]`, so a lazy match would stop inside the first one and silently drop every later item
+  // (participants ["[[people/carol]]", "[[people/dave]]"] resolved only carol).
+  const line = fm.match(new RegExp(`^${key}:\\s*\\[(.*)\\]`, "im"))?.[1] ?? "";
   return line.split(",").map((s) => s.trim().replace(/^["'\[]+|["'\]]+$/g, "")).filter(Boolean);
 }
 // A wikilink target -> its bare slug ("[[people/alex]]" -> "people/alex", "alex" -> "alex").
@@ -97,7 +115,9 @@ const TYPE_FOLDER: Record<string, string> = {
 const DOMAIN_FOLDERS = new Set(["identity", "health", "finances", "work", "life", "projects"]);
 
 function targetFolder(type: string, domain: string): string | null {
-  if (TYPE_FOLDER[type]) return TYPE_FOLDER[type];
+  // Own-property lookup only: a type like `toString` must not resolve through the prototype chain
+  // into a function and crash filing downstream - an unknown type maps to no folder, cleanly.
+  if (Object.hasOwn(TYPE_FOLDER, type)) return TYPE_FOLDER[type];
   if (type === "principle" || type === "note") {
     return DOMAIN_FOLDERS.has(domain) ? domain : null; // a domain note MUST name a valid domain
   }
@@ -126,26 +146,51 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   }
 
   const title = text.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
-  const slug = slugify(fmScalar(fm, "slug") || title || basename(staged, ".md"));
-  if (!slug) { console.error(`  ✗ ${staged}: can't derive a slug (no H1 title, no slug:)`); return "error"; }
+  const slug = deriveSlug([fmScalar(fm, "slug"), title, basename(staged, ".md")]);
+  if (!slug) { console.error(`  ✗ ${staged}: can't derive a slug - slug:, the H1 title, and the filename all slugify to nothing`); return "error"; }
 
-  // The snapshot hash is over the ORIGINAL staged bytes (the verbatim provenance copy). The snapshot
-  // name is `${slug}-${hash}.md`, deterministic from these bytes, so the raw-relative path the filed
-  // note will point its `source:` at is known up front, before any filing or idempotency check.
+  // The snapshot hash is over the ORIGINAL staged bytes (the verbatim provenance copy).
   const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
-  const rawRel = `raw/proposed/${slug}-${hash}`;
   const noteRel = `${folder}/${slug}`;
   const notePath = join(vault, `${noteRel}.md`);
 
-  // The filed note must carry a `source:` wikilink back at the raw/proposed snapshot the apply records,
-  // or `imprnt check`'s coverage scan flags that manifest raw entry as an uncovered snapshot forever
+  // The filed note must carry a `source:` wikilink back at the snapshot the apply records, or
+  // `imprnt check`'s coverage scan flags that manifest raw entry as an uncovered snapshot forever
   // (no note points back at it). If the plugin already supplied its own `source:`, we keep the note's
   // content verbatim and DON'T duplicate it; in that case we make the manifest raw entry agree with the
   // note's existing source: instead of the fresh snapshot, so the entry and the note still point at the
   // same raw path and check reports it covered. If there is no source:, we inject one pointing at the
   // raw/proposed snapshot. Either way: exactly one raw entry, exactly one note source:, and they agree.
+  //
+  // The provenance target is decided BEFORE the injection: identical bytes may already have a
+  // snapshot under a DIFFERENT slug (the same staged content applied from another filename), and the
+  // injected link must point at the snapshot that actually exists, never at a fresh name the reuse
+  // branch then declines to write.
   const stagedSource = fmScalar(fm, "source");
-  const finalText = stagedSource ? text : injectSource(text, rawRel);
+  const manifest = loadManifest(vault);
+  const priorSnapshot = Object.values(manifest).find((e) => e.hash === hash && e.raw && existsSync(e.raw))?.raw;
+  const rawDir = join(vault, "..", "raw", "proposed");
+  // Only the no-source case writes (or reuses) a raw/proposed snapshot - that snapshot is the
+  // provenance we inject a source: at. When the staged note already carries its OWN source:, that
+  // source IS the provenance, so writing a raw/proposed file here would strand it on disk: nothing
+  // (no manifest entry, no note source:) would reference it. In the stagedSource case we record the
+  // note's own source as the manifest raw entry and write no snapshot at all.
+  let rawPath = "";         // the physical snapshot path, "" in the own-source branch
+  let rawEntry: string;     // the manifest raw entry, kept in agreement with the filed note's source:
+  let sourceTarget: string; // the wikilink target the injected source: points at (no .md suffix)
+  if (stagedSource) {
+    rawEntry = linkSlug(stagedSource);
+    sourceTarget = rawEntry;
+  } else if (priorSnapshot) {
+    rawPath = priorSnapshot;
+    rawEntry = rawPath;
+    sourceTarget = "raw/" + relative(join(vault, "..", "raw"), rawPath).split("\\").join("/").replace(/\.md$/, "");
+  } else {
+    rawPath = join(rawDir, `${slug}-${hash}.md`);
+    rawEntry = rawPath;
+    sourceTarget = `raw/proposed/${slug}-${hash}`;
+  }
+  const finalText = stagedSource ? text : injectSource(text, sourceTarget);
   // Idempotency keys on what we actually FILE (the note may now carry an injected source:), so a
   // re-apply of the same staged note still hashes to the same filed bytes and stays a clean no-op.
   const fileHash = createHash("sha256").update(finalText).digest("hex").slice(0, 16);
@@ -166,40 +211,26 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
     return "conflict";
   }
 
-  // Snapshot the staged note into raw/ for provenance, reusing the same content-addressed scheme as the
-  // bytes path: identical bytes never collide, distinct bytes never clobber, reuse an existing snapshot.
-  const manifest = loadManifest(vault);
-  // Namespace the apply key by kind so an applied note never shares a manifest slot with an
-  // inline-bytes ingest of byte-identical content (`bytes:sha256:...`); identical bytes from two
-  // different source kinds must keep distinct provenance rows.
-  const manifestKey = `apply:sha256:${hash}`;
-  const priorSnapshot = Object.values(manifest).find((e) => e.hash === hash && e.raw && existsSync(e.raw))?.raw;
-  const rawDir = join(vault, "..", "raw", "proposed");
-  // Only the no-source case writes a raw/proposed snapshot - that snapshot is the provenance we inject a
-  // source: at. When the staged note already carries its OWN source:, that source IS the provenance, so
-  // writing a raw/proposed file here would strand it on disk: nothing (no manifest entry, no note
-  // source:) would reference it. So in the stagedSource case we record the note's own source as the
-  // manifest raw entry and write no snapshot at all.
-  let rawPath = "";        // the physical snapshot path, only set in the no-source branch
-  let rawEntry: string;    // the manifest raw entry, kept in agreement with the filed note's source:
-  if (stagedSource) {
-    rawEntry = linkSlug(stagedSource);
-  } else if (priorSnapshot) {
-    rawPath = priorSnapshot;
-    rawEntry = rawPath;
-  } else {
+  // Snapshot the staged note into raw/ for provenance, reusing the same content-addressed scheme as
+  // the bytes path: identical bytes never collide, distinct bytes never clobber, reuse an existing
+  // snapshot. The key is namespaced by kind (never shares a slot with a `bytes:sha256:...` ingest of
+  // byte-identical content) AND by the filed note: identical bytes applied under two different
+  // filenames are two filings sharing one snapshot, and a bare `apply:sha256:<hash>` key would let
+  // the second filing silently overwrite the first one's provenance row.
+  const manifestKey = `apply:sha256:${hash}:${noteRel}`;
+  if (!stagedSource && !priorSnapshot) {
     mkdirSync(rawDir, { recursive: true });
-    rawPath = join(rawDir, `${slug}-${hash}.md`);
     // Snapshot the ORIGINAL staged bytes verbatim - the injected source: lives only in the filed note.
     if (!existsSync(rawPath)) writeFileSync(rawPath, text);
-    rawEntry = rawPath;
   }
-
-  // File the note (mechanical — type/domain already decided), record provenance in the manifest.
-  mkdirSync(join(vault, folder), { recursive: true });
-  writeFileSync(notePath, finalText);
+  // Record provenance BEFORE filing the note (atomic-ish ordering): if the note write fails, the
+  // manifest still tracks the snapshot, instead of stranding a raw file nothing references.
   manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawEntry };
   saveManifest(vault, manifest);
+
+  // File the note (mechanical — type/domain already decided).
+  mkdirSync(join(vault, folder), { recursive: true });
+  writeFileSync(notePath, finalText);
 
   // Resolve participants/links the same way the transcript path does: an unresolved person -> needs-review.
   // We only auto-resolve PEOPLE (the resolver's domain); other wikilink targets are checked by `imprnt check`.
@@ -256,7 +287,11 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
     console.log(`ingest --apply-all — ${staged.length} staged note(s) across plugins/*/proposed/`);
     let filed = 0, noop = 0, conflict = 0, error = 0;
     for (const s of staged) {
-      const r = applyStaged(s, applyVault);
+      // One bad staged note must not abort the batch: report it per-file, keep filing the rest,
+      // and let the summary line + non-zero exit carry the failure.
+      let r: ReturnType<typeof applyStaged>;
+      try { r = applyStaged(s, applyVault); }
+      catch (e) { console.error(`  ✗ ${s}: ${e instanceof Error ? e.message : String(e)}`); r = "error"; }
       if (r === "filed") filed++; else if (r === "noop") noop++; else if (r === "conflict") conflict++; else error++;
     }
     console.log(`\n${filed} filed, ${noop} no-op, ${conflict} conflict, ${error} error.`);
@@ -301,13 +336,19 @@ for (let i = 0; i < args.length; i++) {
 }
 
 let src: string;       // a human-readable origin label (path, or "<text>" / "<stdin>")
-let text: string;      // the source bytes
+let text: string;      // the source decoded for PARSING (speakers, date, subject)
+let srcBytes: Buffer;  // the source BYTES - hashing must be byte-faithful: a lossy utf8 decode of a
+                       // binary (PNG/PDF) hashes to something matching neither source nor snapshot,
+                       // so provenance could never be verified. For valid UTF-8 text the byte hash
+                       // is identical to the old string hash, so existing manifests stay stable.
 let isFile = false;
 if (useStdin) {
-  text = readFileSync(0, "utf8"); // read all of stdin (fd 0) to EOF, sync — no Bun, no await
+  srcBytes = readFileSync(0); // read all of stdin (fd 0) to EOF, sync — no Bun, no await
+  text = srcBytes.toString("utf8");
   src = "<stdin>";
 } else if (inlineText !== undefined) {
   text = inlineText;
+  srcBytes = Buffer.from(text, "utf8");
   src = "<text>";
 } else {
   const arg = positional[0];
@@ -315,7 +356,17 @@ if (useStdin) {
     console.error('usage: imprnt ingest <file|text> [--text "<bytes>"] [--stdin] [--slug S] [--vault DIR]');
     process.exit(1);
   }
-  if (existsSync(arg)) { text = readFileSync(arg, "utf8"); src = arg; isFile = true; }
+  if (existsSync(arg)) {
+    if (statSync(arg).isDirectory()) {
+      // A clean refusal, not a raw EISDIR stack: ingest takes ONE file, snapshot mirrors trees.
+      console.error(`${arg} is a directory - ingest takes a single file; mirror a tree with \`imprnt snapshot ${arg} --dest <name>\``);
+      process.exit(1);
+    }
+    srcBytes = readFileSync(arg);
+    text = srcBytes.toString("utf8");
+    src = arg;
+    isFile = true;
+  }
   else if (looksLikePath(arg)) {
     // The arg is shaped like a file path (has a separator or a known extension) but does not exist.
     // Treating it as inline text would silently snapshot the literal path string as content, hiding a
@@ -323,7 +374,7 @@ if (useStdin) {
     console.error(`no such file: ${arg}`);
     process.exit(1);
   }
-  else { text = arg; src = "<text>"; } // not a path -> the arg IS the source bytes (an inline fact)
+  else { text = arg; srcBytes = Buffer.from(text, "utf8"); src = "<text>"; } // not a path -> the arg IS the source bytes (an inline fact)
 }
 if (!text.trim()) { console.error("empty source — nothing to ingest"); process.exit(1); }
 
@@ -332,7 +383,7 @@ if (!text.trim()) { console.error("empty source — nothing to ingest"); process
 // hash itself — reingesting identical bytes stays a no-op either way. The bytes key is NAMESPACED
 // (`bytes:sha256:...`) so it can never collide with an `--apply` entry of identical bytes
 // (`apply:sha256:...`), which would otherwise clobber the other's provenance under a shared key.
-const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+const hash = createHash("sha256").update(srcBytes).digest("hex").slice(0, 16);
 const manifestKey = isFile ? src : `bytes:sha256:${hash}`;
 const manifest = loadManifest(vault);
 if (manifest[manifestKey]?.hash === hash) {
@@ -364,12 +415,11 @@ const SPEAKER = /^([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2}):\s+\S.*$/;
 const speakers = new Set<string>();
 let subject = "";
 let turnCount = 0;
-let hasMetaHeader = false;
-let hasEmailHeader = false;
 for (const line of lines) {
   const meta = line.match(META);
   if (meta && META_KEYS.has(meta[1].trim().toLowerCase())) {
-    hasMetaHeader = true;
+    // A meta line is parsed (subject -> title) and skipped so a header is never counted as a
+    // speaker, but its mere presence is NOT transcript evidence - see looksLikeTranscript above.
     const key = meta[1].trim().toLowerCase();
     if ((key === "subject" || key === "topic") && !subject) subject = meta[2].trim();
     continue;
@@ -378,13 +428,13 @@ for (const line of lines) {
   // a 2-speaker transcript. The `From`/`To` keys are not meta keys, so without this they would slip
   // through to SPEAKER below and fabricate [[people/from]] / [[people/to]] participants.
   const eh = line.match(EMAIL_HEADER);
-  if (eh && EMAIL_HEADER_KEYS.has(eh[1].toLowerCase())) { hasEmailHeader = true; continue; }
+  if (eh && EMAIL_HEADER_KEYS.has(eh[1].toLowerCase())) continue;
   const m = line.match(SPEAKER);
   if (!m) continue;
   speakers.add(m[1].trim());
   turnCount++;
 }
-const isTranscript = isFile && looksLikeTranscript(speakers, hasMetaHeader, hasEmailHeader);
+const isTranscript = isFile && looksLikeTranscript(speakers);
 
 // --- snapshot the source into raw/ (verbatim, immutable) -------------------
 // Universal first move for EVERY source (file OR inline bytes): write the bytes into raw/ so any
@@ -406,13 +456,19 @@ let rawPath: string;
 if (priorSnapshot) {
   rawPath = priorSnapshot;
 } else {
-  mkdirSync(rawDir, { recursive: true });
   const ext = isFile ? extname(src) || ".txt" : ".md";
   const rawName = isFile ? `${date}-${subjectSlug}-${hash}${ext}` : `${subjectSlug}-${hash}${ext}`;
   rawPath = join(rawDir, rawName);
-  if (!existsSync(rawPath)) {
-    if (isFile) copyFileSync(src, rawPath);
-    else writeFileSync(rawPath, text);
+  // A failed snapshot write (a read-only raw/, disk trouble) is a clean one-line abort, not a stack.
+  try {
+    mkdirSync(rawDir, { recursive: true });
+    if (!existsSync(rawPath)) {
+      if (isFile) copyFileSync(src, rawPath); // byte-faithful for every kind, including binaries
+      else writeFileSync(rawPath, text);
+    }
+  } catch (e) {
+    console.error(`cannot write snapshot ${rawPath}: ${e instanceof Error ? e.message : e}`);
+    process.exit(1);
   }
 }
 
