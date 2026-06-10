@@ -1,7 +1,15 @@
 # imprnt-plugin-statusline
 
-A customizable status line for your imp sessions: model, directory, context usage, and session
-cost at the bottom of the screen. Made to be edited - the shipped line is a starting point.
+A customizable status line for your imp sessions:
+
+```
+Opus · imprnt · main · ctx 42% · $1.23 · 5h 24% →18:00 · 7d 41% · 14:05
+```
+
+Model, directory, git branch, context used, session cost, both rate-limit windows (with the
+five-hour reset time), wall clock. Percentages go yellow past 60 and red past 85, and a 30-second
+refresh keeps the clock and the limits honest. Made to be edited - the shipped line is a starting
+point.
 
 ## Install
 

@@ -1,6 +1,7 @@
 {
   "statusLine": {
     "type": "command",
-    "command": "node \"${PLUGIN_DIR}/statusline.js\""
+    "command": "node \"${PLUGIN_DIR}/statusline.js\"",
+    "refreshInterval": 30
   }
 }
