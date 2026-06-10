@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -274,4 +274,79 @@ test("rm is idempotent: a second rm removes nothing", () => {
   addPlugin(root, "anti-slop");
   expect(rmPlugin(root, "anti-slop")).toBe(1);
   expect(rmPlugin(root, "anti-slop")).toBe(0);
+});
+
+// --- spec containment: nothing outside plugins/ is ever reachable from a spec ---
+
+test("addPlugin refuses a spec that escapes plugins/ and wires nothing", () => {
+  const root = tmpRoot();
+  // A real file OUTSIDE plugins/ that an uncontained wire-only spec would reach and wire.
+  writeFileSync(join(root, "secret.md"), "x");
+  const res = addPlugin(root, "../secret.md");
+  expect(res.added).toBe(false);
+  expect(res.error).toContain("invalid plugin spec");
+  expect(readLocal(root)).toBe("");
+});
+
+test("addPlugin refuses .. and an absolute spec", () => {
+  const root = tmpRoot();
+  expect(addPlugin(root, "..").error).toContain("invalid plugin spec");
+  expect(addPlugin(root, join(root, "plugins")).error).toContain("invalid plugin spec");
+  expect(existsSync(join(root, "CLAUDE.local.md"))).toBe(false);
+});
+
+// --- rm symmetry: a file spec removes exactly its line, a bare name removes the group ---
+
+test("rm of a <name>/<file.md> spec removes exactly that line and leaves siblings", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "_personal", { "voice.md": "x", "taylor.md": "x" });
+  addPlugin(root, "_personal/voice.md");
+  addPlugin(root, "_personal/taylor.md");
+  expect(rmPlugin(root, "_personal/voice.md")).toBe(1);
+  const local = readLocal(root);
+  expect(local).not.toContain("@plugins/_personal/voice.md");
+  expect(local).toContain("@plugins/_personal/taylor.md");
+});
+
+test("rm of a bare name keeps group semantics: every line under plugins/<name>/ goes", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "_personal", { "voice.md": "x", "taylor.md": "x" });
+  addPlugin(root, "_personal/voice.md");
+  addPlugin(root, "_personal/taylor.md");
+  expect(rmPlugin(root, "_personal")).toBe(2);
+  expect(readLocal(root)).not.toContain("@plugins/_personal");
+});
+
+// --- CRLF round-trip: the managed line is the only thing that changes ---
+
+test("rm on a CRLF file preserves CRLF endings everywhere else", () => {
+  const root = tmpRoot();
+  writeFileSync(
+    join(root, "CLAUDE.local.md"),
+    "# header\r\n\r\n@plugins/anti-slop/agent.md\r\n@plugins/character/scribe.md\r\n",
+  );
+  expect(rmPlugin(root, "anti-slop")).toBe(1);
+  expect(readLocal(root)).toBe("# header\r\n\r\n@plugins/character/scribe.md\r\n");
+});
+
+test("add appends with the file's own CRLF ending", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "anti-slop", { "agent.md": "x" });
+  writeFileSync(join(root, "CLAUDE.local.md"), "# header\r\n");
+  addPlugin(root, "anti-slop");
+  expect(readLocal(root)).toBe("# header\r\n@plugins/anti-slop/agent.md\r\n");
+});
+
+// --- fs errors surface as clean error strings, never throws ---
+
+test("addPlugin onto a read-only CLAUDE.local.md returns a clean error instead of throwing", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "anti-slop", { "agent.md": "x" });
+  const p = join(root, "CLAUDE.local.md");
+  writeFileSync(p, "# header\n");
+  chmodSync(p, 0o444);
+  const res = addPlugin(root, "anti-slop");
+  chmodSync(p, 0o644);
+  expect(res.added).toBe(false);
+  expect(res.error).toMatch(/EACCES|permission denied/);
 });

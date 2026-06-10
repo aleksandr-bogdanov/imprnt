@@ -13,6 +13,7 @@ import { existsSync, mkdtempSync, cpSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { specError } from "./plugins.ts";
 
 // Official plugin names, for `plugin list` discovery when nothing is installed yet. A hint string,
 // NOT a registry: each maps by convention to the npm package `imprnt-plugin-<name>`. Adding an
@@ -36,11 +37,22 @@ export function coreChannel(pkgRoot: string): Channel {
 }
 
 // One `npm pack` into tmp; returns the tarball filename or a human error. The spec is a registry name
-// (optionally dist-tagged, e.g. imprnt-plugin-guard@edge) or a local dir.
+// (optionally dist-tagged, e.g. imprnt-plugin-guard@edge) or a local dir. No --silent: it swallows
+// npm's stderr too, collapsing every failure (404 vs missing package.json vs network down) into a
+// bare exit code. The tarball name is still stdout's last line; the notice chatter goes to stderr.
 function npmPack(spec: string, tmp: string): { tgz?: string; error?: string } {
-  const pack = spawnSync("npm", ["pack", spec, "--pack-destination", tmp, "--silent"], { encoding: "utf8" });
+  const pack = spawnSync("npm", ["pack", spec, "--pack-destination", tmp], { encoding: "utf8" });
   if (pack.status !== 0) {
-    const why = (pack.stderr || "").trim() || (pack.error ? String(pack.error.message) : `exit ${pack.status}`);
+    // Keep npm's own error lines (the real reason), drop the notice/log-location noise.
+    const errLines = (pack.stderr || "")
+      .split(/\r?\n/)
+      .filter((l) => /^npm (error|ERR!)/.test(l) && !l.includes("complete log"))
+      .map((l) => l.replace(/^npm (error|ERR!) ?/, ""))
+      .filter(Boolean);
+    const why =
+      errLines.join("\n") ||
+      (pack.stderr || "").trim() ||
+      (pack.error ? String(pack.error.message) : `exit ${pack.status}`);
     return { error: `npm pack failed for ${spec}: ${why}` };
   }
   const tgz = pack.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
@@ -57,6 +69,10 @@ export function installPlugin(
   name: string,
   opts: { from?: string; force?: boolean; channel?: Channel } = {},
 ): InstallResult {
+  // Contain the name before it becomes a copy destination: `..` would make dest the project
+  // root itself and the extracted tarball would overwrite same-named files there.
+  const invalid = specError(projectRoot, name);
+  if (invalid) return { copied: false, dest: join(projectRoot, "plugins"), error: invalid };
   const dest = join(projectRoot, "plugins", name);
   if (existsSync(join(dest, "agent.md")) && !opts.force) return { copied: false, dest, skipped: true };
 
@@ -102,9 +118,12 @@ export function installPlugin(
 }
 
 // Delete an installed plugin's dir (the `rm -rf plugins/<name>` the contract describes, as a flag).
-// Guarded: never touches a _-prefixed dir (the private cast) and a missing dir is a clean no-op.
+// Guarded three ways: never touches a _-prefixed dir (the private cast), refuses any name that
+// resolves outside plugins/ (`..` used to collapse to the project root and delete EVERYTHING),
+// and a missing dir is a clean no-op.
 export function purgePlugin(projectRoot: string, name: string): boolean {
   if (name.startsWith("_")) return false;
+  if (specError(projectRoot, name)) return false;
   const dir = join(projectRoot, "plugins", name);
   if (!existsSync(dir)) return false;
   rmSync(dir, { recursive: true, force: true });

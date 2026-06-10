@@ -5,11 +5,11 @@ import { cpSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openNeedsReview } from "./lib/resolve.ts";
-import { listPluginDirs, isEnabled, addPlugin, rmPlugin } from "./lib/plugins.ts";
+import { listPluginDirs, isEnabled, addPlugin, rmPlugin, specError } from "./lib/plugins.ts";
 import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install.ts";
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
-import { registerVault, vaultProjectRoot, configPath } from "./lib/registry.ts";
+import { registerVault, vaultProjectRoot, configPath, isVaultProject } from "./lib/registry.ts";
 import { buildLaunch, launchClaude } from "./lib/launch.ts";
 
 // packageRoot: the install location, source for templates/ + CLAUDE.md. Computed from THIS entry
@@ -33,7 +33,9 @@ function vaultArg(): string {
     }
     return val;
   }
-  return process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
+  // || not ??: a set-but-empty IMPRNT_VAULT reads as unset, matching how roots.ts/registry.ts
+  // read the same vars (truthiness) - "" must fall through to ./vault, never become the path.
+  return process.env.IMPRNT_VAULT || process.env.IMPRINT_VAULT || "./vault";
 }
 
 // lair + context cannot proceed without the vault home, and they must give the SAME hint from
@@ -120,31 +122,49 @@ switch (cmd) {
       let force = false;
       const names: string[] = [];
       for (let i = 0; i < specs.length; i++) {
-        if (specs[i] === "--from") from = specs[++i];
-        else if (specs[i] === "--force") force = true;
+        if (specs[i] === "--from") {
+          from = specs[++i];
+          // A dangling --from must never read as "no --from": that would silently swap the
+          // user's local dev tree for the published npm artifact.
+          if (from === undefined) {
+            console.error("usage: --from <dir> (missing directory after --from)");
+            process.exit(1);
+          }
+        } else if (specs[i] === "--force") force = true;
         else names.push(specs[i]!);
       }
       if (!names.length) { console.error("usage: imprnt plugin add <name> [--from <dir>] [--force] | <name>/<file.md>"); process.exit(1); }
       // An edge core pulls edge plugins (latest fallback); a stable core pulls latest. Read once.
       const channel = coreChannel(pkgRoot);
-      // One report line per name, idempotent. A failed name doesn't stop the others; exit non-zero if any failed.
+      // One report line per name, idempotent. A failed name doesn't stop the others; exit non-zero
+      // if any failed. The catch keeps that contract even for an fs throw (read-only dir, etc).
       let failed = false;
       for (const name of names) {
-        // `<name>/<file.md>` is a local wire-only (a hand-placed file like _personal/voice.md): no fetch.
-        if (name.includes("/")) {
+        try {
+          // `<name>/<file.md>` is a local wire-only (a hand-placed file like _personal/voice.md): no fetch.
+          if (name.includes("/")) {
+            const { entry, added, error } = addPlugin(proj, name);
+            if (error) { console.error(`${name}: ${error}`); failed = true; continue; }
+            console.log(added ? `wired @${entry}` : `already wired @${entry}`);
+            continue;
+          }
+          // Bare name: fetch+copy the package into plugins/<name>/, then wire its agent.md.
+          const r = installPlugin(proj, name, { from, force, channel });
+          if (r.error) { console.error(`${name}: ${r.error}`); failed = true; continue; }
+          if (r.copied) console.log(`installed ${name} → plugins/${name}/`);
+          else if (r.skipped) console.log(`plugins/${name}/ already present (use --force to refresh)`);
           const { entry, added, error } = addPlugin(proj, name);
-          if (error) { console.error(`${name}: ${error}`); failed = true; continue; }
+          if (error) {
+            // The copy already landed, so a wire failure leaves half-state: say so explicitly.
+            console.error(`${name}: ${error}${r.copied ? ` (plugins/${name}/ is installed but not wired)` : ""}`);
+            failed = true;
+            continue;
+          }
           console.log(added ? `wired @${entry}` : `already wired @${entry}`);
-          continue;
+        } catch (e) {
+          console.error(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+          failed = true;
         }
-        // Bare name: fetch+copy the package into plugins/<name>/, then wire its agent.md.
-        const r = installPlugin(proj, name, { from, force, channel });
-        if (r.error) { console.error(`${name}: ${r.error}`); failed = true; continue; }
-        if (r.copied) console.log(`installed ${name} → plugins/${name}/`);
-        else if (r.skipped) console.log(`plugins/${name}/ already present (use --force to refresh)`);
-        const { entry, added, error } = addPlugin(proj, name);
-        if (error) { console.error(`${name}: ${error}`); failed = true; continue; }
-        console.log(added ? `wired @${entry}` : `already wired @${entry}`);
       }
       if (failed) process.exit(1);
       break;
@@ -154,18 +174,39 @@ switch (cmd) {
       const names: string[] = [];
       for (const s of specs) { if (s === "--purge") purge = true; else names.push(s); }
       if (!names.length) { console.error("usage: imprnt plugin rm <name> [--purge] [<name> ...]"); process.exit(1); }
+      // Same loop contract as add: one report line per name, a failed name doesn't stop the
+      // others, exit non-zero if any failed. The spec is contained BEFORE anything is touched -
+      // `rm .. --purge` used to resolve to the project root and delete the whole project.
+      let failed = false;
       for (const name of names) {
-        const removed = rmPlugin(proj, name);
-        let msg = removed ? `unwired ${name} (${removed} line${removed === 1 ? "" : "s"})` : `${name} was not wired`;
-        if (purge) msg += purgePlugin(proj, name) ? `, purged plugins/${name}/` : `, nothing to purge`;
-        console.log(msg);
+        try {
+          const invalid = specError(proj, name);
+          if (invalid) { console.error(`${name}: ${invalid}`); failed = true; continue; }
+          const removed = rmPlugin(proj, name);
+          let msg = removed ? `unwired ${name} (${removed} line${removed === 1 ? "" : "s"})` : `${name} was not wired`;
+          if (purge) msg += purgePlugin(proj, name) ? `, purged plugins/${name}/` : `, nothing to purge`;
+          console.log(msg);
+        } catch (e) {
+          console.error(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+          failed = true;
+        }
       }
+      if (failed) process.exit(1);
       break;
     }
     console.error("usage: imprnt plugin list | add <name> [--from <dir>] [--force] | rm <name> [--purge]");
     process.exit(1);
   }
   case "init": {
+    // Refuse to nest: init from a subdirectory of an existing vault project would scaffold a
+    // second vault INSIDE the real one and pollute its corpus with fresh control files. The
+    // walk-up (lib/roots.ts) finds the enclosing project root; only a genuinely initialized
+    // vault above blocks - a fresh dir (walk-up falls back to cwd) inits as before.
+    const enclosing = projectRoot();
+    if (enclosing !== process.cwd() && isVaultProject(enclosing)) {
+      console.error(`refusing to init: this directory is inside the vault project at ${enclosing} - run \`imprnt init\` there instead`);
+      process.exit(1);
+    }
     // v3 layout: entity folders (cross-cutting) + domain folders (life-areas) + form folders, all flat
     // under vault/. raw/ holds immutable by-source snapshots. Topic is a tag, never a folder.
     const entities = ["people", "orgs", "holdings"];
@@ -181,7 +222,13 @@ switch (cmd) {
     for (const d of ["vault", ...vaultDirs.map((t) => `vault/${t}`), "raw"]) {
       const abs = join(process.cwd(), d);
       if (!existsSync(abs)) createdDirs++;
-      mkdirSync(abs, { recursive: true });
+      try {
+        mkdirSync(abs, { recursive: true });
+      } catch (e) {
+        // A plain FILE squatting on a dir name (EEXIST) or a permission problem: one clean line.
+        console.error(`cannot create ./${d}: ${e instanceof Error ? e.message : String(e)}`);
+        process.exit(1);
+      }
     }
     const added: string[] = [];
     for (const f of ["index.md", "hot.md", "log.md", "_tags.md"]) {
