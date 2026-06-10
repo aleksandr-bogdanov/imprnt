@@ -54,6 +54,37 @@ function disconnectedList(out: string): string[] {
   return slugs;
 }
 
+// The pairs printed under the "candidate duplicate tags" header, each "  a ~ b", returned sorted so a
+// caller can assert the EXACT flagged set regardless of print order. Used to prove the length-gate
+// optimization is behavior-preserving (same pairs flagged before and after).
+function dupPairList(out: string): string[] {
+  const lines = out.split("\n");
+  const start = lines.findIndex((l) => l.includes("candidate duplicate tags"));
+  if (start === -1) return [];
+  const pairs: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^  (\S.*\S)\s*$/);
+    if (!m) break; // blank line or next section ends the list
+    pairs.push(m[1].trim());
+  }
+  return pairs.sort();
+}
+
+// The slugs printed under the "untagged notes" header. Same two-space-indented one-per-line shape as
+// the disconnected list, so we reuse the same collection logic for exact-equality membership.
+function untaggedList(out: string): string[] {
+  const lines = out.split("\n");
+  const start = lines.findIndex((l) => l.includes("untagged notes"));
+  if (start === -1) return [];
+  const slugs: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^  (\S.*)$/);
+    if (!m) break; // blank line or next section ends the list
+    slugs.push(m[1].trim());
+  }
+  return slugs;
+}
+
 // --- bug 1: exit code reflects health -------------------------------------
 
 test("clean vault exits 0", () => {
@@ -80,6 +111,28 @@ test("vault with an untagged note exits non-zero", () => {
   const { code, out } = runCheck(dir);
   expect(out).toContain("untagged notes");
   expect(code).not.toBe(0);
+});
+
+// A note tagged only with values that normalize to NOTHING (tags: ["-"], tags: ["  "]) is
+// search-invisible exactly like an empty tags: kebab drops them so nothing syncs to _tags.md and the
+// topic axis is blank. The raw fmList length is 1, so a `n.tags.length === 0` gate misses it. The
+// untagged check must count a note as tagged only when a tag survives normalization to a real token.
+test("a note tagged only with a normalize-to-empty value is flagged untagged", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [\"-\"]", "# Anna");
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("untagged notes");
+  expect(untaggedList(out)).toContain("people/anna");
+  expect(code).not.toBe(0);
+});
+
+// The control: a note with a genuine tag is NOT flagged untagged, even alongside a junk one. This
+// guards against an over-broad fix that would flag every note.
+test("a note with at least one real tag is not flagged untagged", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [\"-\", family]", "# Anna");
+  const { out } = runCheck(dir);
+  expect(untaggedList(out)).not.toContain("people/anna");
 });
 
 test("vault with duplicate tags exits non-zero", () => {
@@ -550,6 +603,69 @@ test("a dup pair already joined by a synonym entry is not re-flagged", () => {
   expect(out).not.toContain("candidate duplicate tags");
   expect(out).toContain("clean.");
   expect(code).toBe(0);
+});
+
+// --- dup-tag audit: the length-gate optimization is behavior-preserving --------
+// The audit flags two relations - shared-prefix (short.length >= 4, long startsWith short, gap <= 3)
+// and edit-distance-1 (abs length diff <= 1, lev <= 1). The O(n^2) pair loop normalized + ran a full
+// Levenshtein DP on EVERY pair before any cheap filter; the fix gates on length FIRST so the expensive
+// work only touches viable pairs. This fixture pins the EXACT set of flagged pairs so the optimization
+// can be proven to change which pairs are flagged: nothing. The set must stay identical.
+test("the dup-tag audit flags exactly the near-duplicate pairs and no others", () => {
+  const dir = makeVault();
+  // A known mix: four genuine near-dups + several controls that must NOT flag.
+  //   finance ~ finances  (prefix gap 1, also edit-distance 1)
+  //   shoe    ~ shoes      (prefix gap 1, also edit-distance 1)
+  //   identity~ identty    (edit-distance 1; NOT a prefix pair)
+  //   plan    ~ planner    (prefix gap exactly 3 - the inclusive threshold)
+  // controls that stay clean:
+  //   note/notebook (prefix gap 4, over threshold), art/artwork (short < 4 chars),
+  //   plus unrelated tags far apart in length and spelling.
+  const tags = [
+    "finance", "finances", "shoe", "shoes", "identity", "identty",
+    "plan", "planner", "note", "notebook", "art", "artwork",
+    "health", "work", "family", "travel", "music", "cooking", "python", "garden",
+  ];
+  writeFileSync(
+    join(dir, "_tags.md"),
+    `---\ntype: tags\n---\n\n# tags\n\n## Tags\n${tags.join(", ")}\n\n## Synonyms\n`
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const { out } = runCheck(dir);
+  expect(dupPairList(out)).toEqual([
+    "finance ~ finances",
+    "identity ~ identty",
+    "plan ~ planner",
+    "shoe ~ shoes",
+  ]);
+});
+
+// A 1000-tag vault must complete fast: the length-gate keeps the audit out of the O(n^2) normalize +
+// Levenshtein trap that measured 3.5s at 1000 tags pre-fix. This is a cheap sanity bound, not a tight
+// benchmark - it only catches a regression back to the quadratic-with-DP-per-pair behavior.
+test("a 1000-tag vault audit completes quickly", () => {
+  const dir = makeVault();
+  // 1000 well-separated tags, none a near-duplicate of another. Each is tagNNNN plus a check letter
+  // keyed to the digit sum: changing any single digit also changes the check letter (a single-digit
+  // delta can't be a multiple of 26), so two tags differing in one digit differ in TWO positions -
+  // Hamming >= 2, edit-distance >= 2, never `near`. All are the same length, so prefixDup (which needs
+  // one to be a strict prefix of the other) never fires either. The audit flags zero pairs.
+  const tags = Array.from({ length: 1000 }, (_, i) => {
+    const d = String(i).padStart(4, "0");
+    const sum = [...d].reduce((s, c) => s + Number(c), 0);
+    return `tag${d}${String.fromCharCode(97 + (sum % 26))}`;
+  });
+  writeFileSync(
+    join(dir, "_tags.md"),
+    `---\ntype: tags\n---\n\n# tags\n\n## Tags\n${tags.join(", ")}\n\n## Synonyms\n`
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [tag0000a]", "# Anna");
+  const t0 = Date.now();
+  const { out } = runCheck(dir);
+  const elapsed = Date.now() - t0;
+  expect(out).not.toContain("candidate duplicate tags");
+  // generous bound: the subprocess + bun startup dominate; the audit itself is sub-millisecond gated.
+  expect(elapsed).toBeLessThan(8000);
 });
 
 // --- case-exact link resolution ---------------------------------------------

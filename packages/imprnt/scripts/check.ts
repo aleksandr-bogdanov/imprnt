@@ -90,6 +90,18 @@ const untagged: string[] = [];
 const review: string[] = [];
 const referencedRaw = new Set<string>();
 
+// Load the tag vocabulary once for the per-note untagged check below. loadTags returns an empty vocab
+// when _tags.md is absent (the dedup/sync block later re-checks existence before it touches the file).
+const tagVocab = loadTags(vault);
+// A note is TAGGED only if at least one tag survives to a real searchable token, the same bar the tag
+// sync uses: normalize() canonicalizes through the synonym map, and a usable token must carry a letter
+// or digit. A tag of only hyphens/spaces/punctuation (`tags: ["-"]`, `tags: ["  "]`) kebabs to nothing,
+// so it never syncs to _tags.md and recall can't find it - counting it as "tagged" let a search-invisible
+// note pass the untagged check. Matching the kebab oracle exactly (verified against appendTags), without
+// reimplementing kebab: normalize yields the canonical token, then we require a \p{L}/\p{N} in it.
+const hasRealTag = (tags: string[]): boolean =>
+  tags.some((t) => /[\p{L}\p{N}]/u.test(normalize(tagVocab, t)));
+
 for (const n of notes) {
   const raw = readFileSync(n.path, "utf8");
   // Field reads (domain:/source:/sources:) are constrained to the FRONTMATTER block - a body line
@@ -110,10 +122,12 @@ for (const n of notes) {
     review.push(`- [ ] disconnected note [[${n.slug}]] — links no entity`);
   }
 
-  // untagged: every note carries ≥1 tag (the topic/search axis). An empty `tags: []` is the exact
+  // untagged: every note carries ≥1 REAL tag (the topic/search axis). An empty `tags: []` is the exact
   // symptom that motivated the auto-growing vocabulary — coining is now free, so there's no excuse for
-  // a blank. Flag it (non-blocking) so it can never silently ship findable-by-body-only again.
-  if (n.tags.length === 0) {
+  // a blank. A note tagged only with values that normalize to nothing (`tags: ["-"]`) is the same blank
+  // in disguise: search-invisible, nothing syncs to _tags.md. Flag both (non-blocking) so neither can
+  // silently ship findable-by-body-only again.
+  if (!hasRealTag(n.tags)) {
     untagged.push(`  ${n.slug}`);
     review.push(`- [ ] untagged note [[${n.slug}]] — empty tags, findable by body/title only`);
   }
@@ -165,16 +179,38 @@ if (hasTagsFile) {
     return d[a.length][b.length];
   };
   const tagArr = [...new Set([...vocab.approved, ...addedTags])].sort();
-  for (let i = 0; i < tagArr.length; i++) for (let j = i + 1; j < tagArr.length; j++) {
-    const a = tagArr[i], b = tagArr[j];
-    // A pair the user already merged exactly as the message instructs (a synonym entry in either
-    // direction, or both mapping to the same canonical) is resolved - re-flagging it forever would
-    // make the audit a permanent exit-1. Still flag-only for the rest: never auto-merge.
-    if (normalize(vocab, a) === normalize(vocab, b)) continue;
-    const short = a.length <= b.length ? a : b, long = a.length <= b.length ? b : a;
-    const prefixDup = short.length >= 4 && long.startsWith(short) && long.length - short.length <= 3;
-    const near = Math.abs(a.length - b.length) <= 1 && lev(a, b) <= 1;
-    if (prefixDup || near) dupPairs.push(`  ${a} ~ ${b}`);
+  // The audit flags two relations and BOTH need the two tags' lengths to be close:
+  //   prefixDup: one is a >=4-char prefix of the other, gap <= 3  -> abs(lenA - lenB) <= 3
+  //   near:      edit-distance 1, abs(lenA - lenB) <= 1            -> abs(lenA - lenB) <= 1
+  // So a pair with abs(lenA - lenB) > 3 can NEVER be flagged. The old loop still ran normalize() + a
+  // fresh-allocating Levenshtein DP on EVERY pair before learning that (O(n^2) with an expensive body;
+  // measured ~3.5s at 1000 tags, ~52s at 5000). We bucket tags by length and, for each tag, only test
+  // the tags in length buckets within 3, so the costly checks touch only viable pairs. The flagged SET
+  // and its (i < j over sorted tagArr) order are identical to the old loop - only dead pairs are skipped.
+  const byLen = new Map<number, number[]>();
+  for (let i = 0; i < tagArr.length; i++) (byLen.get(tagArr[i].length) ?? byLen.set(tagArr[i].length, []).get(tagArr[i].length)!).push(i);
+  for (let i = 0; i < tagArr.length; i++) {
+    const a = tagArr[i];
+    // Candidate partners j > i drawn only from length buckets [len(a) - 3 .. len(a) + 3], merged back
+    // into ascending j order so the emitted pairs match the old i < j iteration exactly.
+    const cand: number[] = [];
+    for (let L = a.length - 3; L <= a.length + 3; L++) {
+      const bucket = byLen.get(L);
+      if (!bucket) continue;
+      for (const j of bucket) if (j > i) cand.push(j);
+    }
+    cand.sort((x, y) => x - y);
+    for (const j of cand) {
+      const b = tagArr[j];
+      // A pair the user already merged exactly as the message instructs (a synonym entry in either
+      // direction, or both mapping to the same canonical) is resolved - re-flagging it forever would
+      // make the audit a permanent exit-1. Still flag-only for the rest: never auto-merge.
+      if (normalize(vocab, a) === normalize(vocab, b)) continue;
+      const short = a.length <= b.length ? a : b, long = a.length <= b.length ? b : a;
+      const prefixDup = short.length >= 4 && long.startsWith(short) && long.length - short.length <= 3;
+      const near = Math.abs(a.length - b.length) <= 1 && lev(a, b) <= 1;
+      if (prefixDup || near) dupPairs.push(`  ${a} ~ ${b}`);
+    }
   }
 }
 
