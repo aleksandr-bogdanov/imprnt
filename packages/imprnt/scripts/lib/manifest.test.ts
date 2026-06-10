@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,41 +50,62 @@ test("a valid manifest round-trips", () => {
 // old full file or the new full file, never a truncated one. -----------------------------------------
 //
 // This test spawns REAL concurrent OS processes: writers hammer saveManifest on the same path while
-// readers loop reading + JSON.parse-ing it. Under the non-atomic truncate-then-write a reader catches
-// a partial file and exits 2 (a corrupt read). After the atomic rename, every read is either the old
-// or the new complete file, so no reader ever sees corruption. The manifest is sized large enough that
-// the write spans multiple syscalls (a real partial-read window).
+// readers loop reading the file and checking it is COMPLETE. Under the non-atomic truncate-then-write
+// the file passes through O_TRUNC (a 0-byte window) and grows across multiple write syscalls, so a
+// reader catches a 0-byte / short / non-parseable file and exits 2. After the atomic rename, every
+// read is either the old or the new full file (both complete), so no reader ever exits 2.
+//
+// Reliability over the old version: (a) the reader treats a SHORT or EMPTY read as a torn-file hit,
+// not just a JSON parse error - O_TRUNC's 0-byte window is the easiest moment to catch and the old
+// `if (!txt) continue` was silently skipping exactly it; (b) the writer alternates between two FULL
+// manifests of different length, so every write truncates a longer file to a shorter one (a guaranteed
+// short-read window) regardless of syscall granularity; (c) more writers/readers + a larger manifest
+// widen the window so a plain writeFileSync is caught on essentially every run.
 test("saveManifest is atomic under concurrent writers: a reader never catches a partial file", async () => {
   const vault = vaultDir();
   const here = dirname(fileURLToPath(import.meta.url));
   const driver = join(vault, "race-driver.ts");
-  // The driver does both roles: --write spins saveManifest in a loop; --read loops readFileSync +
-  // JSON.parse and exits 2 the instant it catches a non-parseable (partial) file.
+  // The driver does both roles. --write alternates two full manifests of different size. --read loops
+  // readFileSync and exits 2 the instant it catches an empty, short, or non-parseable (torn) file.
   writeFileSync(driver, `
 import { saveManifest, manifestPath } from ${JSON.stringify(join(here, "manifest.ts"))};
 import { readFileSync } from "node:fs";
 const vault = process.argv[3];
-const big = {};
-for (let i = 0; i < 8000; i++) big["src/file-" + i + ".txt"] = { hash: "h" + i, note: "vault/events/n" + i + ".md", ingested: "2026-06-10" };
+function mk(n) {
+  const m = {};
+  for (let i = 0; i < n; i++) m["src/file-" + i + ".txt"] = { hash: "h" + i, note: "vault/events/n" + i + ".md", ingested: "2026-06-10" };
+  return m;
+}
+const big = mk(20000);          // ~2.4 MB serialized: the write spans many syscalls
+const small = mk(12000);        // a shorter FULL manifest: truncating big -> small always leaves a short-read window
+const lenBig = JSON.stringify(big, null, 2).length + 1;     // +1 for the trailing newline saveManifest adds
+const lenSmall = JSON.stringify(small, null, 2).length + 1;
+const minLen = Math.min(lenBig, lenSmall);
 const deadline = Date.now() + 1500;
-if (process.argv[2] === "--write") {
-  while (Date.now() < deadline) saveManifest(vault, big);
+if (process.argv[2] === "--seed") {
+  saveManifest(vault, small); // the smallest FULL manifest the racers will ever write, so a complete read is never < minLen
+} else if (process.argv[2] === "--write") {
+  let flip = false;
+  while (Date.now() < deadline) { saveManifest(vault, (flip = !flip) ? big : small); }
 } else {
   const p = manifestPath(vault);
   while (Date.now() < deadline) {
     let txt;
     try { txt = readFileSync(p, "utf8"); } catch { continue; } // ENOENT mid-rename is fine, retry
-    if (!txt) continue;
+    // A complete file is always one of the two FULL manifests, so its length is >= the shorter full
+    // length. An empty or short read is a torn file the atomic rename can never expose.
+    if (txt.length < minLen) process.exit(2);
     try { JSON.parse(txt); } catch { process.exit(2); }
   }
   process.exit(0);
 }
 `);
-  // Seed a valid manifest so readers always have something to read.
-  saveManifest(vault, { seed: { hash: "h", note: "n", ingested: "i" } });
+  // Seed a FULL manifest (the smaller of the two the racers write) so a legitimate read is never
+  // shorter than minLen - only a torn write can produce a sub-minLen file.
+  await Bun.spawn(["bun", driver, "--seed", vault]).exited;
 
-  const writers = Array.from({ length: 3 }, () => Bun.spawn(["bun", driver, "--write", vault]));
-  const readers = Array.from({ length: 3 }, () => Bun.spawn(["bun", driver, "--read", vault]));
+  const writers = Array.from({ length: 4 }, () => Bun.spawn(["bun", driver, "--write", vault]));
+  const readers = Array.from({ length: 4 }, () => Bun.spawn(["bun", driver, "--read", vault]));
   await Promise.all([...writers, ...readers].map((p) => p.exited));
 
   for (const reader of readers) expect(reader.exitCode).not.toBe(2); // no reader caught a partial file
@@ -103,16 +124,23 @@ test("saveManifest writes via a temp file in the same dir, leaving no stray temp
   expect(leftover).toEqual([]);
 });
 
-// A truly interrupted write (the temp file written, the rename never happening) must leave the OLD
-// full manifest intact - the half-written bytes only ever live in the temp file, never at the real
-// path. We simulate the interruption by writing a partial temp file by hand, then confirming a
-// successful saveManifest still produces a complete file and the temp does not leak into loadManifest.
-test("an interrupted write leaves the old full manifest, never a truncated real file", () => {
+// The atomic write replaces the manifest by renaming a fresh temp file INTO its directory, never by
+// truncating the target in place. That difference is observable deterministically: when the target
+// itself is read-only but its directory is writable, the rename-over succeeds (rename needs dir
+// write, not file write) while a plain writeFileSync to the read-only path fails with EACCES. A test
+// that survives a non-atomic writeFileSync would be vacuous, so this asserts the property only the
+// temp+rename satisfies: a read-only manifest is still replaced, in full, with the new content.
+test("saveManifest replaces a read-only manifest by rename, not by truncating it in place", () => {
   const vault = vaultDir();
   const original = { "a": { hash: "ha", note: "na", ingested: "ia" } };
   saveManifest(vault, original);
-  // A leftover/partial temp from a crashed prior write must NOT be picked up as the manifest.
-  writeFileSync(manifestPath(vault) + ".tmp", "{ truncated half write");
-  // The real manifest still loads cleanly - the temp is invisible to the reader.
-  expect(loadManifest(vault)).toEqual(original);
+  // Make the existing manifest read-only; the vault dir stays writable so a rename-over can land.
+  chmodSync(manifestPath(vault), 0o444);
+  const updated = { "b": { hash: "hb", note: "nb", ingested: "ib" } };
+  // A plain in-place writeFileSync would throw EACCES here. The temp+rename write succeeds.
+  saveManifest(vault, updated);
+  expect(loadManifest(vault)).toEqual(updated); // the new content fully replaced the old, no truncation
+  // And it cleaned up after itself - no stray temp survived the rename.
+  const leftover = readdirSync(vault).filter((f) => f !== ".manifest.json");
+  expect(leftover).toEqual([]);
 });
