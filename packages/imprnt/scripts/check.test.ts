@@ -488,6 +488,58 @@ test("sources: list of [[raw/...]] wikilinks marks every entry covered (not just
   expect(code).toBe(0);
 });
 
+// BLOCK-form sources: a bare `sources:` followed by `- item` lines is what Obsidian's properties UI
+// writes. The old hand-rolled INLINE-only regex (`^sources:\s*\[(.*)\]`) never matched the block form,
+// so a note citing two snapshots in block form was reported uncovered (exit 1) and wrote stale
+// unclassified-snapshot lines. Parsing via moc's canonical fmList credits BOTH inline and block. This
+// test FAILS against the inline-only regex (both entries report uncovered) and passes after the fix.
+test("block-form sources: of [[raw/...]] wikilinks marks every entry covered", () => {
+  const dir = makeVault();
+  note(
+    dir,
+    "work/report.md",
+    "domain: work\ntags: [work]\nsources:\n  - \"[[raw/a]]\"\n  - \"[[raw/b]]\"",
+    "# Report\n\nSee [[people/anna]]."
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  writeManifest(dir, {
+    "raw/a.md": { hash: "h1", note: "work/report.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/a.md" },
+    "raw/b.md": { hash: "h2", note: "work/report.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/b.md" },
+  });
+  const { code, out } = runCheck(dir);
+  expect(uncoveredList(out)).not.toContain("raw/a");
+  expect(uncoveredList(out)).not.toContain("raw/b");
+  expect(out).toContain("every raw snapshot has a derived note");
+  expect(out).not.toContain("uncovered snapshots");
+  expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+// The block-form coverage must be real, not a free pass: a snapshot genuinely with NO derived note is
+// still flagged uncovered even when a block-form sources: list credits its siblings. Guards against a
+// fix that accidentally swallowed every raw entry as covered.
+test("block-form sources: still leaves a genuinely unreferenced snapshot flagged uncovered", () => {
+  const dir = makeVault();
+  note(
+    dir,
+    "work/report.md",
+    "domain: work\ntags: [work]\nsources:\n  - \"[[raw/a]]\"\n  - \"[[raw/b]]\"",
+    "# Report\n\nSee [[people/anna]]."
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  writeManifest(dir, {
+    "raw/a.md": { hash: "h1", note: "work/report.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/a.md" },
+    "raw/b.md": { hash: "h2", note: "work/report.md", ingested: "2026-01-01T00:00:00Z", raw: "raw/b.md" },
+    "raw/c.md": { hash: "h3", note: "", ingested: "2026-01-01T00:00:00Z", raw: "raw/c.md" },
+  });
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("uncovered snapshots");
+  expect(uncoveredList(out)).not.toContain("raw/a"); // credited by block-form sources:
+  expect(uncoveredList(out)).not.toContain("raw/b"); // credited by block-form sources:
+  expect(uncoveredList(out)).toContain("raw/c"); // genuinely unreferenced -> still flagged
+  expect(code).not.toBe(0);
+});
+
 // --- --all plugin aggregation against an injected stub plugin --------------
 // --all globs projectRoot()/plugins/. To inject stubs deterministically we copy a minimal but
 // functional repo (scripts + templates + manifests, node_modules symlinked) into a temp dir, drop

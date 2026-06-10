@@ -21,7 +21,7 @@ import { readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "
 import { spawnSync } from "node:child_process";
 import { join, relative, dirname } from "node:path";
 import { projectRoot } from "./lib/roots.ts";
-import { generateIndex, collectNotes, frontmatter, stripQuotes, stripCode } from "./lib/moc.ts";
+import { generateIndex, collectNotes, frontmatter, stripQuotes, stripCode, fmList } from "./lib/moc.ts";
 import { loadTags, normalize, appendTags } from "./lib/tags.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
@@ -156,10 +156,11 @@ for (const n of notes) {
   // coverage: every raw path a note points back to (source: "[[raw/...]]" wikilink, or sources:[])
   const src = fm.match(/^source:\s*["']?(.+?)["']?\s*$/im)?.[1]?.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
   if (src) referencedRaw.add(src.replace(/^\.\//, ""));
-  // Greedy capture to the LAST bracket so wikilink entries (sources: ["[[raw/a]]", "[[raw/b]]"])
-  // are not truncated at the first inner "]". Inline list form only (one line, no newline in the value).
-  const srcs = fm.match(/^sources:\s*\[(.*)\]/im)?.[1] ?? "";
-  for (const s of srcs.split(",").map((x) => x.trim().replace(/^["'\[]+|["'\]]+$/g, "")).filter(Boolean)) referencedRaw.add(s.replace(/^\.\//, ""));
+  // Parse the plural sources: list with moc's canonical fmList so BOTH list forms credit coverage:
+  // inline `sources: [a, b]` AND the block form (a bare `sources:` then `- item` lines, what Obsidian's
+  // properties UI writes). The old hand-rolled inline-only regex silently skipped the block form. fmList
+  // returns each item verbatim, so unwrap the [[...]] wikilink the same way the singular source: above does.
+  for (const s of fmList(fm, "sources")) referencedRaw.add(s.replace(/^\[\[/, "").replace(/\]\]$/, "").replace(/^\.\//, ""));
 }
 
 // --- tag vocabulary sync + dedup audit ------------------------------------
