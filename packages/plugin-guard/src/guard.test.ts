@@ -150,6 +150,23 @@ const rows: Row[] = [
   { label: "AUDIT5-P2 rm -rf /mnt (Linux mounts)", cmd: "rm -rf /mnt", expectedExit: 2 },
   { label: "AUDIT5-P2 rm -rf /srv (Linux service data)", cmd: "rm -rf /srv", expectedExit: 2 },
 
+  // ---- AUDIT10 [COVERAGE GAP]: one canonical block-row per ROOT_TOKEN system dir that lacked its own ----
+  // These dirs are all in the ROOT_TOKEN alternation (etc|usr|bin|lib|sys|dev|boot|...|System|Library|Users|...)
+  // and ARE intentionally blocked, but several had no dedicated `rm -rf /<dir>` row. The dirs covered above
+  // by a prior round were only reached as a SUBSTRING of a longer path (e.g. /usr/bin pins /usr via its head,
+  // not /bin), so dropping bin/lib/sys/dev/boot/usr/System/Library/Users from ROOT_TOKEN would NOT have failed
+  // any test. Bare / cannot rescue them: the PATH_TAIL after a bare `/` rejects a following word char, so
+  // `rm -rf /usr` is dangerous ONLY while `usr` stays a named token. One bare block-row per dir pins it.
+  { label: "AUDIT10-GAP rm -rf /usr (system binaries)", cmd: "rm -rf /usr", expectedExit: 2 },
+  { label: "AUDIT10-GAP rm -rf /bin (core binaries)", cmd: "rm -rf /bin", expectedExit: 2 },
+  { label: "AUDIT10-GAP rm -rf /lib (shared libraries)", cmd: "rm -rf /lib", expectedExit: 2 },
+  { label: "AUDIT10-GAP rm -rf /sys (Linux sysfs)", cmd: "rm -rf /sys", expectedExit: 2 },
+  { label: "AUDIT10-GAP rm -rf /dev (device nodes)", cmd: "rm -rf /dev", expectedExit: 2 },
+  { label: "AUDIT10-GAP rm -rf /boot (kernel + bootloader)", cmd: "rm -rf /boot", expectedExit: 2 },
+  { label: "AUDIT10-GAP rm -rf /System (macOS system root)", cmd: "rm -rf /System", expectedExit: 2 },
+  { label: "AUDIT10-GAP rm -rf /Library (macOS shared library root)", cmd: "rm -rf /Library", expectedExit: 2 },
+  { label: "AUDIT10-GAP rm -rf /Users (every macOS user home)", cmd: "rm -rf /Users", expectedExit: 2 },
+
   // ---- AUDIT6 #1 [P1 FALSE NEGATIVE]: chmod recursive 777 in any flag/mode order (must now block, exit 2) ----
   // The old chmod rule demanded the literal token order -R then 777 then /, so every realistic
   // reordering of the SAME catastrophic command bypassed (exited 0). Decomposed like rm into
@@ -285,6 +302,23 @@ const rows: Row[] = [
   { label: "AUDIT8-ALLOW chmod -R 777 out/usr/share (relative dir, contains /usr)", cmd: "chmod -R 777 out/usr/share", expectedExit: 0 },
   { label: "AUDIT8-ALLOW chmod -R 777 rootfs/etc (relative dir, contains /etc)", cmd: "chmod -R 777 rootfs/etc", expectedExit: 0 },
   { label: "AUDIT8-ALLOW chmod -R 777 node_modules/.bin (fix exec bits after npm install)", cmd: "chmod -R 777 node_modules/.bin", expectedExit: 0 },
+
+  // ---- AUDIT10 ALLOW: the newly-pinned system dirs must NOT widen into relative paths / non-boundary lookalikes (exit 0) ----
+  // Same word boundary the rest of ROOT_TOKEN carries: a relative prefix never reaches a root token, and a
+  // trailing word char (/binary /systemd /developer /libexec...) breaks the (?![A-Za-z0-9_]) boundary so the
+  // bare system-dir token does not match. Pins that adding bin/lib/sys/dev/boot/System/Library/Users did not
+  // over-block their lookalikes.
+  { label: "AUDIT10-ALLOW rm -rf ./bin (relative, not /bin)", cmd: "rm -rf ./bin", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf ./lib (relative, not /lib)", cmd: "rm -rf ./lib", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf src/sys (relative subdir, not /sys)", cmd: "rm -rf src/sys", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf /binary (not /bin)", cmd: "rm -rf /binary", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf /systemd (not /sys)", cmd: "rm -rf /systemd", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf /developer (not /dev)", cmd: "rm -rf /developer", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf /bootstrap (not /boot)", cmd: "rm -rf /bootstrap", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf /libexec-local (not /lib)", cmd: "rm -rf /libexec-local", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf /SystemX (not /System)", cmd: "rm -rf /SystemX", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf /LibraryThing (not /Library)", cmd: "rm -rf /LibraryThing", expectedExit: 0 },
+  { label: "AUDIT10-ALLOW rm -rf /Users-old (not /Users)", cmd: "rm -rf /Users-old", expectedExit: 0 },
 
   // ---- USAGE (no arg, exit 1) --------------------------------------------------------------------
   { label: "no-arg usage", cmd: null, expectedExit: 1 },
