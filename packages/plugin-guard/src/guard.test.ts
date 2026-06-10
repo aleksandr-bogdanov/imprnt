@@ -49,6 +49,29 @@ const rows: Row[] = [
   // ---- P3 many leading global options within the raised 16-token cap (must now block, exit 2) ---
   { label: "P3 git 5x -c push --force main", cmd: "git -c a=1 -c b=2 -c c=3 -c d=4 -c e=5 push --force main", expectedExit: 2 },
 
+  // ---- AUDIT P0: quoted paths + shell-wrapped / delimiter-trailed rm (must now block, exit 2) ----
+  { label: 'AUDIT-P0 rm -rf "/" (double-quoted root)', cmd: 'rm -rf "/"', expectedExit: 2 },
+  { label: "AUDIT-P0 rm -rf '/' (single-quoted root)", cmd: "rm -rf '/'", expectedExit: 2 },
+  { label: 'AUDIT-P0 rm -rf "$HOME" (quoted var)', cmd: 'rm -rf "$HOME"', expectedExit: 2 },
+  { label: 'AUDIT-P0 rm -rf "/etc" (quoted system path)', cmd: 'rm -rf "/etc"', expectedExit: 2 },
+  { label: 'AUDIT-P0 rm -rf "~/Documents" (quoted home subpath)', cmd: 'rm -rf "~/Documents"', expectedExit: 2 },
+  { label: 'AUDIT-P0 rm --recursive --force "/" (quoted, long flags)', cmd: 'rm --recursive --force "/"', expectedExit: 2 },
+  { label: "AUDIT-P0 subshell (cd /tmp && rm -rf ~)", cmd: "(cd /tmp && rm -rf ~)", expectedExit: 2 },
+  { label: "AUDIT-P0 bash -c 'rm -rf ~'", cmd: "bash -c 'rm -rf ~'", expectedExit: 2 },
+  { label: "AUDIT-P0 rm -rf ~; (trailing semicolon)", cmd: "rm -rf ~;", expectedExit: 2 },
+  { label: "AUDIT-P0 rm -rf ~& (trailing ampersand)", cmd: "rm -rf ~&", expectedExit: 2 },
+
+  // ---- AUDIT P1: uppercase -R recursive flag (BSD/macOS synonym, must now block, exit 2) ---------
+  { label: "AUDIT-P1 rm -Rf ~", cmd: "rm -Rf ~", expectedExit: 2 },
+  { label: "AUDIT-P1 rm -fR ~", cmd: "rm -fR ~", expectedExit: 2 },
+  { label: "AUDIT-P1 rm -R -f ~", cmd: "rm -R -f ~", expectedExit: 2 },
+  { label: "AUDIT-P1 rm -Rf /", cmd: "rm -Rf /", expectedExit: 2 },
+
+  // ---- AUDIT P2: mkfs takes the device positionally, never of= (must now block, exit 2) ----------
+  { label: "AUDIT-P2 mkfs.ext4 /dev/sda", cmd: "mkfs.ext4 /dev/sda", expectedExit: 2 },
+  { label: "AUDIT-P2 mkfs /dev/sda", cmd: "mkfs /dev/sda", expectedExit: 2 },
+  { label: "AUDIT-P2 mkfs -t ext4 /dev/sda1", cmd: "mkfs -t ext4 /dev/sda1", expectedExit: 2 },
+
   // ---- ALLOW CASES (must NOT block; exit 0) -------------------------------------------------------
   { label: "rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },
   { label: "rm -rf node_modules", cmd: "rm -rf node_modules", expectedExit: 0 },
@@ -59,6 +82,12 @@ const rows: Row[] = [
   { label: "git push -u origin main (set upstream, no force)", cmd: "git push -u origin main", expectedExit: 0 },
   { label: "git --force-with-lease origin feature (non-main, ALLOW)", cmd: "git push --force-with-lease origin feature", expectedExit: 0 },
   { label: "git -C path status (non-push git -C, ALLOW)", cmd: "git -C /repo status", expectedExit: 0 },
+  // Quoted-path fix must not widen into these benign quote/slash shapes.
+  { label: 'benign quoted prose mentioning rm -rf (no path)', cmd: 'git commit -m "fix rm -rf handling in docs"', expectedExit: 0 },
+  { label: 'rm -rf "./build" (quoted relative path)', cmd: 'rm -rf "./build"', expectedExit: 0 },
+  { label: 'rm -rf "$TMPDIR/build" (quoted non-home var)', cmd: 'rm -rf "$TMPDIR/build"', expectedExit: 0 },
+  { label: "mkfs.ext4 disk.img (image file, not a device)", cmd: "mkfs.ext4 disk.img", expectedExit: 0 },
+  { label: "dd to an image file (of= is not /dev)", cmd: "dd if=/dev/zero of=out.img", expectedExit: 0 },
 
   // ---- USAGE (no arg, exit 1) --------------------------------------------------------------------
   { label: "no-arg usage", cmd: null, expectedExit: 1 },

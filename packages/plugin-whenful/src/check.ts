@@ -22,16 +22,22 @@ const LAST_SYNC = join(here, "mirror", ".last-sync");
 const STALE_DAYS = 7; // a mirror older than this is flagged (soft fail) — render-at-read wants fresh data
 
 // --- read links.tsv (COPIED parser per the contract — plugins don't import core code) --------------
+// A checker whose one job is "is the data sound" must not silently drop rows it cannot parse, so
+// unparseable rows (no tab between task_id and note_slug) come back alongside the good ones.
 type Link = { taskId: string; noteSlug: string; step: string };
-function readLinks(): Link[] {
-  if (!existsSync(LINKS)) return [];
-  const out: Link[] = [];
-  for (const line of readFileSync(LINKS, "utf8").split(/\r?\n/)) {
+function readLinks(): { links: Link[]; malformed: string[] } {
+  if (!existsSync(LINKS)) return { links: [], malformed: [] };
+  const links: Link[] = [];
+  const malformed: string[] = [];
+  const lines = readFileSync(LINKS, "utf8").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!line.trim() || line.trimStart().startsWith("#")) continue;
     const [taskId, noteSlug, step] = line.split("\t");
-    if (taskId && noteSlug) out.push({ taskId: taskId.trim(), noteSlug: noteSlug.trim(), step: (step ?? "").trim() });
+    if (taskId && noteSlug) links.push({ taskId: taskId.trim(), noteSlug: noteSlug.trim(), step: (step ?? "").trim() });
+    else malformed.push(`links.tsv row ${i + 1} unparseable (expected task_id<TAB>note_slug[<TAB>step]): "${line}"`);
   }
-  return out;
+  return { links, malformed };
 }
 
 // A note_slug (folder/slug) resolves if vault/<slug>.md exists. We never search raw/ — only the vault.
@@ -42,13 +48,15 @@ function noteExists(noteSlug: string): boolean {
   if (!existsSync(vault)) return false;
   for (const folder of readdirSync(vault)) {
     const fp = join(vault, folder);
-    if (statSync(fp).isDirectory() && existsSync(join(fp, `${clean}.md`))) return true;
+    let isDir = false;
+    try { isDir = statSync(fp).isDirectory(); } catch { continue; } // broken symlink etc. - skip, never crash
+    if (isDir && existsSync(join(fp, `${clean}.md`))) return true;
   }
   return false;
 }
 
-const links = readLinks();
-const problems: string[] = [];
+const { links, malformed } = readLinks();
+const problems: string[] = [...malformed];
 
 console.log(`whenful check — ${links.length} link(s) in links.tsv`);
 
