@@ -564,3 +564,65 @@ test("a term in the title outranks the same term only in the body", () => {
   expect(bodyIdx).toBeGreaterThan(-1);
   expect(titleIdx).toBeLessThan(bodyIdx);
 });
+
+// --- deep-audit finding (P2): content nouns must not be stopworded away ----------------------------
+// The stopword set over-reached into CONTENT NOUNS (status, timeline, period, decision, plan, info,
+// details, current, latest, notes). The vault contract treats these as first-class - projects carry a
+// `status`, the contract says "pull decisions/actions". When such a word is the DISCRIMINATING term in
+// a query, dropping it leaves only the common term, and BM25 length-norm then sinks the real answer.
+// Pre-fix: 5 generic "cache" notes + 1 longer "cache decision" note, query "cache decision" expands to
+// just [cache] (decision dropped), so the decision note - the longest - ranks LAST. idf already
+// de-weights a common term, so keeping "decision" in the query costs almost nothing and lifts the right
+// note. The matching note must rank #1 (the term carries the signal).
+test("a content-noun query term (decision) is not stopworded; the matching note ranks first", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // 5 short generic notes carrying the COMMON term only.
+  for (let i = 0; i < 5; i++) {
+    note(v, `cache${i}.md`, `---\ntags: []\n---\n# Cache ${i}\n\ncache here.\n`);
+  }
+  // the answer: it has the discriminating word "decision" AND is the LONGEST note, so length-norm
+  // would bury it if "decision" were dropped and only the common "cache" survived.
+  note(
+    v,
+    "decision.md",
+    `---\ntags: []\n---\n# Cache Strategy\n\nThe cache strategy goes into depth about caching across layers and tiers and edge conditions and invalidation and eviction and warmup and metrics. The decision about which approach to take is recorded here with rationale and tradeoffs at length.\n`,
+  );
+
+  const r = recall("cache decision", v);
+  expect(r.code).toBe(0);
+  // "decision" must survive as a query term and lift the only note that carries it to the top.
+  const lines = r.stdout.split("\n").filter((l) => /^\s+\[\d/.test(l));
+  expect(lines[0]).toContain("decision.md");
+});
+
+// guard: with "decision" pruned from STOPWORDS, a sensible sentence query whose discriminating word is
+// a FORMER stopword content noun ("status") still works - the content word does the ranking.
+test("a sentence query keyed on a former-stopword content noun (status) ranks the matching note", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  note(v, "rollout.md", `---\ntags: []\n---\n# Rollout Status\n\nThe rollout status is green and shipping.\n`);
+  note(v, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant.\n`);
+
+  const r = recall("what is the status of the rollout", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("rollout.md");
+  expect(r.stdout).not.toContain("no matches");
+});
+
+// guard: the all-glue-words fallback still triggers. A query of ONLY true sentence-glue (no content
+// term survives the stopword filter) must keep the originals rather than empty out, so recall still runs
+// instead of dying with "empty query". The glue terms then match notes that contain them.
+test("an all-glue-words query keeps its originals (fallback still fires)", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // a note whose body holds the glue words so the fallback has something to match.
+  note(v, "glue.md", `---\ntags: []\n---\n# What\n\nwhat do i know about the of.\n`);
+
+  const r = recall("what do i know about", v);
+  expect(r.code).toBe(0);
+  // it did not exit 1 with "empty query after tokenizing", and it found the note via the kept glue terms.
+  expect(r.stderr).not.toContain("empty query");
+  expect(r.stdout).toContain("glue.md");
+  expect(r.stdout).not.toContain("no matches");
+});
