@@ -186,7 +186,12 @@ export function collectNotes(vault: string): NoteMeta[] {
     // H1 fallback over the CODE-STRIPPED text: a `#` comment inside a fenced code block before the real
     // heading must not be taken as the title. stripCode preserves line/column layout, so the `^#` anchor
     // still lands on the genuine first H1.
-    const title = stripCode(raw).match(/^#\s+(.+)$/m)?.[1]?.trim() ?? slug;
+    // The `[ \t]+` (not `\s+`) keeps the gap between `#` and its text ON THE SAME LINE, and `(\S.*)`
+    // requires the heading text to start with a non-space. An H1 whose visible text is entirely an
+    // inline-code span (`# \`code\``) blanks to `# ` under stripCode, matches nothing here, and falls
+    // through to the slug - without the same-line anchor, `\s+` crossed the newline and grabbed the
+    // first non-blank BODY line as the title.
+    const title = stripCode(raw).match(/^#[ \t]+(\S.*)$/m)?.[1]?.trim() ?? slug;
     const summary = fmScalar(fm, "summary") || title;
     notes.push({ path, folder, slug, title, summary, type: fmScalar(fm, "type"), tags: fmList(fm, "tags") });
   }

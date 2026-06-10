@@ -294,3 +294,51 @@ test("an H1 fallback ignores a `#` comment inside a code fence before the real h
   const line = indexLineFor(vault, "work/howto");
   expect(line).toBe("- [[work/howto]] — Real Heading  `howto`");
 });
+
+// --- round-5 regression (P3): an all-inline-code H1 must not steal the first body line as title ------
+// stripCode blanks an inline span to spaces, so `# \`git rebase -i\`` becomes `# ` (hash + trailing
+// space, no text). A `\s+` that crosses the newline then lets `(.+)$` grab the first non-blank BODY
+// line as the title. Anchoring whitespace to the same line (`#[ \t]+(\S.*)`) makes the empty heading
+// match nothing, so the title correctly falls through to the slug.
+test("an all-inline-code H1 (no summary) falls through to the slug, not the body's first line", () => {
+  const vault = tmpVault();
+  const body = "# `git rebase -i`\n\nSquash commits before pushing. See [[people/sam]].\n";
+  writeNote(vault, "work", "rebase.md", `---\ntype: note\nkind: howto\ntags: [git]\n---\n\n${body}`);
+  const note = collectNotes(vault).find((n) => n.slug === "work/rebase")!;
+  // pre-fix: note.summary === "Squash commits before pushing. See [[people/sam]]." (the body line)
+  expect(note.summary).toBe("work/rebase");
+  const line = indexLineFor(vault, "work/rebase");
+  expect(line).toBe("- [[work/rebase]] — work/rebase  `git`");
+});
+
+// A bare/whitespace-only heading line is the same misfire class - the heading text is empty after the
+// `#`, so it must yield no title and fall back to the slug, never the body.
+test("a whitespace-only H1 (no summary) falls through to the slug, not the body's first line", () => {
+  const vault = tmpVault();
+  const body = "#   \n\nFirst body line that must not become the title.\n";
+  writeNote(vault, "life", "blank-h1.md", `---\ntype: note\n---\n\n${body}`);
+  const note = collectNotes(vault).find((n) => n.slug === "life/blank-h1")!;
+  expect(note.summary).toBe("life/blank-h1");
+});
+
+// A normal H1 still extracts its text (the fix must not regress the common path).
+test("a normal H1 (no summary) still extracts its visible text", () => {
+  const vault = tmpVault();
+  const body = "# Real Title\n\nbody\n";
+  writeNote(vault, "life", "plain.md", `---\ntype: note\n---\n\n${body}`);
+  const note = collectNotes(vault).find((n) => n.slug === "life/plain")!;
+  expect(note.summary).toBe("Real Title");
+});
+
+// An H1 with INTERNAL inline code keeps its visible words (the code span blanks to spaces, the prose
+// around it survives and starts the captured text), and never reaches down to the body line.
+test("an H1 with internal inline code keeps its visible words (no summary)", () => {
+  const vault = tmpVault();
+  const body = "# the `foo` command\n\nUnrelated body line.\n";
+  writeNote(vault, "work", "partial.md", `---\ntype: note\n---\n\n${body}`);
+  const note = collectNotes(vault).find((n) => n.slug === "work/partial")!;
+  // the visible words "the" and "command" survive; the body line is never taken.
+  expect(note.summary).toContain("the");
+  expect(note.summary).toContain("command");
+  expect(note.summary).not.toContain("Unrelated");
+});
