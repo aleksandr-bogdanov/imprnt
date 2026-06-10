@@ -73,16 +73,24 @@ export function registerVault(
   return { status: "registered", current: path };
 }
 
-// What marks a dir as a vault PROJECT for the walk-up: a vault/ DIRECTORY holding the generated
-// index.md. The name `vault` alone is far too common (a HashiCorp config dir, an ansible-vault
-// file) and existsSync would match plain files too — either would hijack resolution and make imp
-// silently skip injection. init always scaffolds vault/index.md, so requiring it matches exactly
-// the projects init produced. CLAUDE.local.md is deliberately NOT a marker: any Claude Code repo
-// can carry one (lib/roots.ts projectRoot differs here on purpose — see its comment).
+// What marks a dir as a vault PROJECT for the walk-up: a vault/ DIRECTORY holding BOTH generated
+// control files, index.md AND _tags.md. The name `vault` alone is far too common (a HashiCorp
+// config dir, an ansible-vault file) and existsSync would match plain files too. index.md alone is
+// also too common: a docs site (Obsidian/VuePress) whose folder is literally named `vault` ships an
+// index.md, and matching it would let that coding repo shadow the registered vault on the walk-up
+// (imp would inject nothing and point IMPRNT_VAULT at the docs corpus). init always scaffolds BOTH
+// index.md and _tags.md (and both shipped example vaults carry both), while a docs vault/ essentially
+// never carries _tags.md, so requiring both rejects the docs case yet still matches every init
+// output. CLAUDE.local.md is deliberately NOT a marker: any Claude Code repo can carry one
+// (lib/roots.ts projectRoot differs here on purpose — see its comment).
 export function isVaultProject(dir: string): boolean {
   const vault = join(dir, "vault");
   try {
-    return statSync(vault).isDirectory() && existsSync(join(vault, "index.md"));
+    return (
+      statSync(vault).isDirectory() &&
+      existsSync(join(vault, "index.md")) &&
+      existsSync(join(vault, "_tags.md"))
+    );
   } catch {
     return false;
   }
