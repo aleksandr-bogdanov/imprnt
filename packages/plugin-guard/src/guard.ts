@@ -103,10 +103,13 @@ const DENY: { re: RegExp; why: string }[] = [
     why: "rm -rf / --recursive on a root/home/system path",
   },
   { re: /\bsudo\b/, why: "sudo / privilege escalation" },
-  { re: /\bdd\b[^\n]*\bof=\/dev\//, why: "writing to a raw device" },
+  // of= may carry a quoted device operand (of='/dev/sda'), a common shell reflex ShellCheck nudges
+  // toward, so an optional quote before /dev/ matches the `["']?` tolerance the mkfs rule already has.
+  { re: /\bdd\b[^\n]*\bof=["']?\/dev\//, why: "writing to a raw device" },
   // mkfs takes the device positionally (mkfs.ext4 /dev/sda), never of= - match /dev/ as an argument.
   { re: /\bmkfs(\.[a-z0-9]+)?\b[^\n]*\s["']?\/dev\//, why: "mkfs on a raw device" },
-  { re: />\s*\/dev\/(sd|nvme|disk|rdisk)/, why: "redirect to a raw disk" },
+  // the redirect target may be quoted too (> '/dev/sda'), same `["']?` tolerance before the device.
+  { re: />\s*["']?\/dev\/(sd|nvme|disk|rdisk)/, why: "redirect to a raw disk" },
   { re: /:\s*\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/, why: "fork bomb" },
   // chmod: block when (a) chmod is the command AND (b) a recursive flag appears anywhere AND (c) the
   // 777 mode appears anywhere AND (d) a dangerous root/home/system path appears anywhere. Four

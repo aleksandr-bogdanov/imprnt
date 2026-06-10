@@ -164,6 +164,17 @@ const rows: Row[] = [
   { label: "AUDIT6-P1 chmod 777 -R /etc (mode first, system dir)", cmd: "chmod 777 -R /etc", expectedExit: 2 },
   { label: "AUDIT6-P1 chmod -R 0777 /usr (leading-zero mode, system dir)", cmd: "chmod -R 0777 /usr", expectedExit: 2 },
 
+  // ---- AUDIT7 #1 [P2 FALSE NEGATIVE]: a QUOTED device path after of= / > bypassed dd + redirect (must now block, exit 2) ----
+  // The dd rule and the disk-redirect rule required /dev/ as a bare literal immediately after of= (or
+  // after >), so a quoted device operand broke the adjacency and the rule missed. The sibling mkfs rule
+  // already carried `["']?` quote tolerance; dd and the redirect rule were the two destructive predicates
+  // never given it. Quoting a path operand is a common shell reflex (ShellCheck nudges toward it), so
+  // these are realistic agent emissions. Same `["']?` insert the mkfs rule uses.
+  { label: "AUDIT7-P2 dd of='/dev/sda' (single-quoted device)", cmd: "dd if=/dev/zero of='/dev/sda'", expectedExit: 2 },
+  { label: 'AUDIT7-P2 dd of="/dev/disk0" (double-quoted device)', cmd: 'dd if=/dev/zero of="/dev/disk0"', expectedExit: 2 },
+  { label: "AUDIT7-P2 echo wipe > '/dev/sda' (single-quoted redirect target)", cmd: "echo wipe > '/dev/sda'", expectedExit: 2 },
+  { label: 'AUDIT7-P2 cat x.img > "/dev/rdisk2" (double-quoted raw node redirect)', cmd: 'cat x.img > "/dev/rdisk2"', expectedExit: 2 },
+
   // ---- ALLOW CASES (must NOT block; exit 0) -------------------------------------------------------
   { label: "rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },
   { label: "rm -rf node_modules", cmd: "rm -rf node_modules", expectedExit: 0 },
@@ -190,6 +201,13 @@ const rows: Row[] = [
   { label: "AUDIT2-ALLOW rm -rf ./etc/config (relative etc)", cmd: "rm -rf ./etc/config", expectedExit: 0 },
   { label: "AUDIT2-ALLOW dd if=/dev/disk0 of=backup.img (read from device)", cmd: "dd if=/dev/disk0 of=backup.img", expectedExit: 0 },
   { label: "AUDIT2-ALLOW cat x > ./dev/null-ish (relative dev path)", cmd: "cat x > ./dev/null-ish", expectedExit: 0 },
+
+  // ---- AUDIT7 ALLOW: the quote-tolerance insert must NOT widen into a quoted FILE target ----------
+  // of= / > pointed at a quoted regular file (not /dev/) must stay allowed - the quote sits before a
+  // file path, never a device, so the /dev/ anchor still gates the block.
+  { label: "AUDIT7-ALLOW dd of='backup.img' (quoted file, not a device)", cmd: "dd if=/dev/zero of='backup.img'", expectedExit: 0 },
+  { label: 'AUDIT7-ALLOW dd of="./out.img" (quoted relative file)', cmd: 'dd if=/dev/zero of="./out.img"', expectedExit: 0 },
+  { label: "AUDIT7-ALLOW echo x > './out.txt' (quoted file redirect)", cmd: "echo x > './out.txt'", expectedExit: 0 },
 
   // ---- AUDIT3 ALLOW: the order-independent rm rework must NOT widen into relative globs / tmp / safe names ---
   // Relative globs (./* src/*) and /tmp are safe targets. The dangerous-path predicate requires the
