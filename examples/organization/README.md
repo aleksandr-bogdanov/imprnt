@@ -42,10 +42,11 @@ second, the affected customer third:
 
 ```
 recall "duplicate charge billing"
-  [3.19] mistakes/2026-05-double-charge-incident.md
-  [2.63] projects/billing-v2.md
-  [1.40] orgs/bramble-plumbing.md
-  [0.92] events/2026-05-18-eng-planning.md
+  [3.11] mistakes/2026-05-double-charge-incident.md
+  [2.49] projects/billing-v2.md
+  [1.43] orgs/bramble-plumbing.md
+  [0.91] events/2026-05-18-eng-planning.md
+  ... (a faint tail of people and the org below 0.1)
 ```
 
 Fix one fact (say Tom changes role) and every note that links him updates at once, because notes link

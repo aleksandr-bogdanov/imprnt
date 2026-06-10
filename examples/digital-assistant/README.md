@@ -38,11 +38,11 @@ Under the hood, the recall the assistant ran ranks the vault locally and returns
 
 ```
 recall "sleep"
-  [1.46] health/sleep-stack.md
-  [1.26] holdings/magnesium-glycinate.md
-  [1.14] identity/mission.md
-  [1.01] people/sam-rivera.md
-  [0.86] events/2026-05-12-annual-checkup-and-weekly-dump.md
+  [1.45] health/sleep-stack.md
+  [1.31] holdings/magnesium-glycinate.md
+  [1.13] identity/mission.md
+  [1.02] people/sam-rivera.md
+  [0.82] events/2026-05-12-annual-checkup-and-weekly-dump.md
 ```
 
 The vault passes its own integrity check: every note is tagged, every domain and form note links an
