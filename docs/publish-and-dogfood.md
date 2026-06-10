@@ -6,14 +6,11 @@ the way any user would. Follow it by hand, or paste it into a fresh Claude Code 
 The point is honesty: prove the published packages install and run on Node alone, with the personal
 cast (your private character + voice) restored from local files that never go to npm.
 
-As of June 2026 the package is unpublished from npm, so Part 3's `npm i -g imprnt` 404s until Part 1
-runs again.
-
 ## What ships
 
 - `imprnt` - the core CLI (package `packages/imprnt`). Runs on Node, no Bun needed by the user.
 - `imprnt-plugin-anti-slop`, `imprnt-plugin-character`, `imprnt-plugin-guard`,
-  `imprnt-plugin-whenful` - the gallery (each under `packages/plugin-*`).
+  `imprnt-plugin-statusline`, `imprnt-plugin-whenful` - the gallery (each under `packages/plugin-*`).
 
 Bun is a dev/build tool only. The user side is Node + npm + tar (npm and tar ship with Node and the OS).
 
@@ -27,15 +24,15 @@ bun run build                   # core + plugins build clean
 
 # names must be free on the registry - check first
 npm view imprnt version 2>/dev/null || echo "imprnt is free"
-for n in anti-slop character guard whenful; do
+for n in anti-slop character guard statusline whenful; do
   npm view "imprnt-plugin-$n" version 2>/dev/null || echo "imprnt-plugin-$n is free"
 done
 
 # publish core (its prepublishOnly runs shipdocs + typecheck + test + build)
 ( cd packages/imprnt && npm publish --access public )
 
-# publish each plugin (their prepack builds check.js / guard.js / whenful.js first)
-for p in plugin-anti-slop plugin-character plugin-guard plugin-whenful; do
+# publish each plugin (their prepack builds check.js / guard.js / statusline.js / whenful.js first)
+for p in plugin-anti-slop plugin-character plugin-guard plugin-statusline plugin-whenful; do
   ( cd "packages/$p" && npm publish --access public )
 done
 ```
@@ -69,8 +66,8 @@ imprnt init          # drops CLAUDE.md + missing control files, registers this d
 Reinstall the gallery from npm:
 
 ```sh
-imprnt plugin add anti-slop character whenful guard
-imprnt plugin list   # all four [on], copied into ./plugins/
+imprnt plugin add anti-slop character whenful guard statusline
+imprnt plugin list   # all five [on], copied into ./plugins/
 ```
 
 Restore the PERSONAL cast (your private character + voice) - private, never published, copied from

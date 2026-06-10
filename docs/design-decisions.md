@@ -204,6 +204,38 @@ vaults that v1 only ever fills with one entry: the shape exists so a second vaul
 in a work repo) is a config entry later, never an architecture change. Multi-vault switching
 itself is not built until a real need names it.
 
+## Harness plugins ride imp's launch flags, never global config (decided 2026-06-10)
+
+A third plugin class customizes the harness itself rather than the vault: guard's PreToolUse
+hook, the status line, spinner words, a skill. Two conventional files inside the same plugin
+folder carry it. `.claude-plugin/plugin.json` makes the folder a native Claude Code plugin
+(hooks and skills in Anthropic's documented format, imprnt defines no manifest of its own), and
+`imp-settings.json` holds the settings keys Claude only accepts via config, with `${PLUGIN_DIR}`
+standing in for the plugin's absolute path. At launch, imp turns the enable list into flags: one
+`--plugin-dir` per native plugin, one `--settings` merged from the fragments in wire order.
+
+Two alternatives lost. Writing into settings.json on install made `plugin rm` asymmetrical: the
+files left but the wiring stayed, which was guard's documented wart. Installing native plugins
+user-scope (`~/.claude/plugins/`) leaked imprnt into stock `claude`. The flags model keeps both
+promises at once: per-keystroke consent (typing imp IS the opt-in, nothing global is ever
+written) and add/rm symmetry (the hook and the setting live inside the rm-able folder). The
+honest cost: harness plugins exist only in imp-launched sessions, and plain `claude` stays plain
+even in the lair.
+
+The bet on the native plugin format is deliberate. Claude Code's plugin directory layout
+(`skills/`, `hooks/hooks.json`, the manifest) is the surface its competitors cloned and the
+SKILL.md spec was published as an open standard, while bespoke settings keys have churned. Build
+harness plugins on skills, hooks, and the manifest. The experimental components (monitors,
+themes) are churn a plugin owns the risk for.
+
+## A plugin's secrets are env vars at its own edge
+
+A plugin that calls an external service (a transcription API, a task server) reads its
+credential from an environment variable named in its README and fails loud with that name when
+the variable is missing. Keys never appear in the vault, the plugin folder, or anything
+committed, and the core never touches credentials. There is no central secret store, because
+that is registry creep and the remote edge already belongs to the plugin.
+
 ## Out of scope, on purpose
 
 No task management. No auto-injected context. No background loop. No self-grading or evals. No

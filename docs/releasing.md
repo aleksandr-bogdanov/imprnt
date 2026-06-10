@@ -14,12 +14,9 @@ imprnt publishes to npm on two [dist-tags](https://docs.npmjs.com/cli/v10/comman
 There is no separate beta registry. It is the same package with two pointers. `npm i -g imprnt@edge`
 opts in, and plain `npm i -g imprnt` never sees edge builds.
 
-As of June 2026 the package is temporarily unpublished while the installer is polished, so both
-install commands 404 until the next release.
-
 ## Versions are independent per package
 
-The repo holds five packages (the `imprnt` core plus four `imprnt-plugin-*`). They version on their
+The repo holds six packages (the `imprnt` core plus five `imprnt-plugin-*`). They version on their
 own, so a package whose files did not change is never republished or bumped. The core can sit on
 `0.6.x` while a stable plugin stays at `0.1.0` for a year. What changed is decided by
 [Turborepo's](https://turborepo.com) `--affected`, diffed against a baseline.
@@ -77,8 +74,10 @@ npm deprecate imprnt@<bad> "broken release, use <last-good>"
 
 ## One-time setup (per package, on npmjs.com)
 
-Trusted publishing must be configured once for each of the five packages, under Settings then Trusted
-Publisher:
+Trusted publishing must be configured once for each of the six packages, under Settings then Trusted
+Publisher. A brand-new package (e.g. a new plugin) cannot be born through OIDC: its very first
+publish is a manual `npm publish` from your machine, then the Trusted Publisher settings below get
+configured on npmjs.com and every later release flows through the workflow:
 
 - Repository: `aleksandr-bogdanov/imprnt`
 - Workflow: `publish.yml`. This is the entry point. npm validates the caller workflow, not the reusable

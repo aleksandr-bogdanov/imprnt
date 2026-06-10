@@ -67,21 +67,6 @@ imprnt init            # scaffold your vault, drop CLAUDE.md (the contract your 
 imp                    # open your assistant and talk
 ```
 
-> **Temporarily off npm (June 2026).** The package is unpublished while the installer gets a final
-> polish, so `npm i -g imprnt` 404s right now. Until it returns, install from source (needs
-> [Bun](https://bun.sh) to build):
->
-> ```sh
-> git clone https://github.com/aleksandr-bogdanov/imprnt
-> cd imprnt && bun install && bun run build
-> (cd packages/imprnt && bun run shipdocs)   # stage the CLAUDE.md contract the install ships
-> npm i -g ./packages/imprnt                 # the same imprnt + imp commands, from your clone
-> ```
->
-> The `shipdocs` step is what npm's publish runs for you. From source you run it once by hand so
-> `imprnt init` has the contract to drop. The global install symlinks to your clone, so keep the
-> clone in place.
-
 `imprnt init` scaffolds the vault, writes the `CLAUDE.md` contract that teaches your assistant
 how it works, and registers the folder so `imp` finds it from anywhere. Runs on
 [Node](https://nodejs.org) 18 or newer, driving [Claude Code](https://claude.com/claude-code) as
@@ -127,7 +112,8 @@ asking ("add the anti-slop plugin"), each a separate `imprnt-plugin-*` package:
 | `imprnt-plugin-character` | A voice and standards to write in. "Scribe" is the default you copy and personalize. |
 | `imprnt-plugin-anti-slop` | Rules that keep its prose from reading like AI. |
 | `imprnt-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, shown inline at read. |
-| `imprnt-plugin-guard` | A deterministic blocklist for dangerous shell commands. |
+| `imprnt-plugin-guard` | A hook that blocks dangerous shell commands before they run. |
+| `imprnt-plugin-statusline` | A customizable status line for your sessions: model, directory, context, cost. |
 
 Adding one copies it into your project and wires it into `CLAUDE.local.md`, the per-machine file
 your assistant loads each session. A fresh setup loads zero plugins until you add them. The full
