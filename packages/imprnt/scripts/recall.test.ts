@@ -549,6 +549,50 @@ test("a single-token-canonical synonym (bigquery -> oncall) still resolves", () 
   expect(r.stdout).not.toContain("no matches");
 });
 
+// --- deep-audit finding (P1): the H1 extraction must agree with moc/check (strip code, same-line) --
+// Pre-fix recall pulled the H1 with a RAW `^#\s+(.+)$` over the frontmatter-stripped body: it did NOT
+// strip fenced code, so a `# shell-comment` inside a fence BEFORE the real `# Real Title` was taken as
+// the title and its words landed at TITLE_BOOST. moc.ts (the index/title side, what check certifies)
+// strips code first, so the two core readers disagreed on the H1 - a tag/title check certifies a title
+// recall would not actually rank. The fix aligns recall on stripCode + the same-line anchor.
+test("a fenced # comment before the real H1 does not steal the title boost (recall agrees with check)", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // The note opens with a fenced shell block whose first line is a `# shellcomment` comment, THEN the
+  // real H1. The comment word and the title word each appear ONLY in their respective surface (the
+  // comment word is nowhere in the body prose, the title word is nowhere in the body prose), so the
+  // band each lands in is unambiguous.
+  writeFileSync(
+    join(v, "fenced.md"),
+    "---\ntags: []\n---\n```bash\n# zzshellcomment deploy steps\n```\n# zztruetitle Deploy Howto\n\nGeneric prose about servers.\n",
+  );
+  // a decoy that mentions the title word ONLY in its body, so title-boost ranking is observable.
+  note(v, "decoy.md", `---\ntags: []\n---\n# Decoy\n\nWe once mentioned zztruetitle in passing.\n`);
+
+  // the real H1 word ranks the fenced note at title boost, above the body-only decoy.
+  const byTitle = recall("zztruetitle", v);
+  expect(byTitle.code).toBe(0);
+  expect(byTitle.stdout).toContain("fenced.md");
+  const fIdx = byTitle.stdout.indexOf("fenced.md");
+  const dIdx = byTitle.stdout.indexOf("decoy.md");
+  expect(fIdx).toBeGreaterThan(-1);
+  if (dIdx > -1) expect(fIdx).toBeLessThan(dIdx);
+
+  // the fenced `# shellcomment` is code, not the H1: its word is NOT on the title surface. (The body
+  // is code-blanked into the index? No - recall DOES index the raw body, so the comment word may still
+  // appear at body weight. The invariant under test is that it is not the TITLE.) To prove it is not at
+  // title boost, give a sibling note that carries the SAME word in its real H1: that note must outrank
+  // the fenced note for the shellcomment word.
+  note(v, "hastitle.md", `---\ntags: []\n---\n# zzshellcomment\n\nNothing else here.\n`);
+  const byComment = recall("zzshellcomment", v);
+  expect(byComment.code).toBe(0);
+  const hIdx = byComment.stdout.indexOf("hastitle.md");
+  const fcIdx = byComment.stdout.indexOf("fenced.md");
+  expect(hIdx).toBeGreaterThan(-1);
+  // the note with the word in its TRUE H1 outranks the fenced note (where it is body-only code).
+  if (fcIdx > -1) expect(hIdx).toBeLessThan(fcIdx);
+});
+
 // --- sanity: BM25 ranking - title beats body ------------------------------------------------------
 test("a term in the title outranks the same term only in the body", () => {
   const v = newVault();

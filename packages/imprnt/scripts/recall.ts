@@ -24,7 +24,7 @@ import { loadTags, normalize, type TagVocab } from "./lib/tags.ts";
 // The frontmatter list parser + BOM strip are CORE and shared with moc.ts (which check.ts/ingest.ts
 // build on), so the write side (check certifies a tag) and the read side (recall finds it) parse the
 // SAME note identically. Both files are core - the copy-don't-share rule is for plugins only.
-import { fmList, stripBom } from "./lib/moc.ts";
+import { fmList, stripBom, stripCode } from "./lib/moc.ts";
 
 const args = process.argv.slice(2);
 let vault = process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
@@ -58,8 +58,9 @@ const vocab = loadTags(vault);
 // matches a key, so scanning n-grams longer than this can never hit one - they are pure wasted work.
 // Capping the n-gram window here keeps a pasted-paragraph query (hundreds/thousands of words) from
 // allocating a slice + Set + normalize per span, which is O(words^2) spans and OOM-crashes the read
-// path. A floor of 1 keeps the loop well-formed when the vocab has no multi-word keys. The synonym map
-// shape is `synonyms: Map<alias, canonical>`; the keys are the aliases we match against.
+// path. The Math.max(1, ...) floor guards the empty-vocab case: spreading an empty width list into
+// Math.max() returns -Infinity, so the floor pins it to 1. The synonym map shape is
+// `synonyms: Map<alias, canonical>`, and the keys are the aliases we match against.
 const MAX_SYNONYM_NGRAM = Math.max(
   1,
   ...[...vocab.synonyms.keys()].map((k) => k.trim().split(/[\s-]+/).filter(Boolean).length),
@@ -254,8 +255,12 @@ for (const path of files) {
   const body = fmMatch ? raw.slice(fmMatch.index! + fmMatch[0].length) : raw;
 
   // Match the H1 against the BODY - a YAML comment line in frontmatter (`# managed by hand`) must
-  // not pose as the title.
-  const titleText = body.match(/^#\s+(.+)$/m)?.[1] ?? "";
+  // not pose as the title. Strip code and anchor the heading on the SAME line, IDENTICAL to moc.ts (the
+  // index/title side check certifies): a `#` shell comment inside a fenced code block before the real
+  // H1 is not the title, and `[ \t]+` (not `\s+`) keeps `\s+` from crossing a newline and grabbing the
+  // first body line. The two core readers must agree on the H1 - a tag/title check certifies a title
+  // recall finds. stripCode is shared from moc.ts, never reimplemented.
+  const titleText = stripCode(body).match(/^#[ \t]+(\S.*)$/m)?.[1] ?? "";
   // Shared fmList parses inline + block (flush-left OR indented) lists identically to check, so a tag
   // check certifies is a tag recall scores. normalize() lowercases tags; tokenize() lowercases aliases.
   const aliases = fmList(fm, "aliases").join(" ");
