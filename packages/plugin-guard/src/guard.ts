@@ -42,7 +42,12 @@ const Q = `["']`; // a single quote char (either kind)
 // home forms. Each is matched at the START of a path token; what trails is handled by PATH_TAIL.
 const ROOT_TOKEN =
   "(?:" +
-  "\\/(?:etc|usr|var|bin|lib|sys|dev|boot|System|Library|Users)(?![A-Za-z0-9_])" + // /etc /usr ... (not /etcetera)
+  // /var is split out so its temp subtrees can be carved out: $TMPDIR resolves under /var/folders/...
+  // on macOS and /var/tmp is the legacy temp dir, both hit constantly by agents. The negative lookahead
+  // exempts ONLY those two continuations, so bare /var and every other /var subdir (/var/lib /var/log)
+  // still match. The (?![A-Za-z0-9_]) word boundary stays so /various never trips.
+  "\\/var(?:(?![A-Za-z0-9_])(?!\\/(?:folders|tmp)(?:[\\/\\s\"';&]|$)))" + // /var /var/lib /var/tmpfoo (NOT /var/folders /var/tmp themselves)
+  "|\\/(?:etc|usr|bin|lib|sys|dev|boot|home|root|System|Library|Users)(?![A-Za-z0-9_])" + // /etc /home /root ... (not /etcetera /rootfs /home-backup)
   "|~[A-Za-z_][A-Za-z0-9_-]*" + // ~root ~alex - tilde + username
   "|\\$\\{HOME\\}" + // ${HOME}
   "|\\$HOME(?![A-Za-z0-9_])" + // $HOME (not $HOMEDIR)

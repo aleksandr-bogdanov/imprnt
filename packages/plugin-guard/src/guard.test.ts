@@ -32,6 +32,11 @@ const rows: Row[] = [
   { label: "rm -fr ~", cmd: "rm -fr ~", expectedExit: 2 },
   { label: "rm -r -f ~", cmd: "rm -r -f ~", expectedExit: 2 },
   { label: "rm -rf --no-preserve-root /", cmd: "rm -rf --no-preserve-root /", expectedExit: 2 },
+  // /var stays blocked except the temp carve-out (see AUDIT4 ALLOW rows). The bare dir and its
+  // non-temp subtrees must still trip even after the negative-lookahead carve-out lands.
+  { label: "rm -rf /var (bare, still blocked)", cmd: "rm -rf /var", expectedExit: 2 },
+  { label: "rm -rf /var/lib (non-temp subtree, still blocked)", cmd: "rm -rf /var/lib", expectedExit: 2 },
+  { label: "rm -rf /var/log (non-temp subtree, still blocked)", cmd: "rm -rf /var/log", expectedExit: 2 },
   { label: "sudo", cmd: "sudo rm -rf /tmp/x", expectedExit: 2 },
   { label: "env-prefixed sudo", cmd: "SUDO_ASKPASS=x sudo apt update", expectedExit: 2 },
   { label: "force-push --force origin main", cmd: "git push --force origin main", expectedExit: 2 },
@@ -117,6 +122,15 @@ const rows: Row[] = [
   { label: "AUDIT3-P1 rm -rf ~alex (tilde-user home)", cmd: "rm -rf ~alex", expectedExit: 2 },
   { label: "AUDIT3-P1 rm ~root -rf (tilde-user, path before flags)", cmd: "rm ~root -rf", expectedExit: 2 },
 
+  // ---- AUDIT4 #1 [P0]: Linux /home and /root were absent from ROOT_TOKEN (false negative) ---------
+  // rm -rf /home wipes every Linux user's home, rm -rf /root wipes Linux root's home. The macOS
+  // mirror /Users was present but the Linux pair was not, so both exited 0. Same word boundary as the
+  // other system dirs, so /rootfs /home-backup /rootkit stay safe (the ALLOW rows below check that).
+  { label: "AUDIT4-P0 rm -rf /home (every Linux home)", cmd: "rm -rf /home", expectedExit: 2 },
+  { label: "AUDIT4-P0 rm -rf /home/user", cmd: "rm -rf /home/user", expectedExit: 2 },
+  { label: "AUDIT4-P0 rm -rf /root (Linux root home)", cmd: "rm -rf /root", expectedExit: 2 },
+  { label: "AUDIT4-P0 rm -rf /root/.ssh", cmd: "rm -rf /root/.ssh", expectedExit: 2 },
+
   // ---- ALLOW CASES (must NOT block; exit 0) -------------------------------------------------------
   { label: "rm -rf ./build", cmd: "rm -rf ./build", expectedExit: 0 },
   { label: "rm -rf node_modules", cmd: "rm -rf node_modules", expectedExit: 0 },
@@ -154,6 +168,18 @@ const rows: Row[] = [
   { label: "AUDIT3-ALLOW mkfs.ext4 ./image.img (image file, relative)", cmd: "mkfs.ext4 ./image.img", expectedExit: 0 },
   { label: "AUDIT3-ALLOW confirm -r option (rm not a command token)", cmd: "confirm -r option", expectedExit: 0 },
   { label: "AUDIT3-ALLOW warm -rf cache (rm not a command token)", cmd: "warm -rf cache", expectedExit: 0 },
+
+  // ---- AUDIT4 ALLOW: the /home /root add + the /var temp carve-out must NOT widen/narrow wrongly ---
+  // Word boundary keeps lookalikes safe, and the relative form never reaches a root token.
+  { label: "AUDIT4-ALLOW rm -rf /rootfs (rootfs is not /root)", cmd: "rm -rf /rootfs", expectedExit: 0 },
+  { label: "AUDIT4-ALLOW rm -rf /home-backup (not /home)", cmd: "rm -rf /home-backup", expectedExit: 0 },
+  { label: "AUDIT4-ALLOW rm -rf /rootkit (not /root)", cmd: "rm -rf /rootkit", expectedExit: 0 },
+  { label: "AUDIT4-ALLOW rm -rf ./home/cache (relative home)", cmd: "rm -rf ./home/cache", expectedExit: 0 },
+  // macOS $TMPDIR resolves under /var/folders/... and /var/tmp is the legacy temp - agents hit these
+  // constantly. Carve them out of the /var block while every other /var subdir stays blocked.
+  { label: "AUDIT4-ALLOW rm -rf /var/folders/x/y/T/build (resolved $TMPDIR)", cmd: "rm -rf /var/folders/x/y/T/build", expectedExit: 0 },
+  { label: "AUDIT4-ALLOW rm -rf /var/tmp/scratch (legacy temp)", cmd: "rm -rf /var/tmp/scratch", expectedExit: 0 },
+  { label: 'AUDIT4-ALLOW rm -rf "$TMPDIR/build" (quoted temp var)', cmd: 'rm -rf "$TMPDIR/build"', expectedExit: 0 },
 
   // ---- USAGE (no arg, exit 1) --------------------------------------------------------------------
   { label: "no-arg usage", cmd: null, expectedExit: 1 },
