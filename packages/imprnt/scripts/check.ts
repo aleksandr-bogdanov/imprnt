@@ -9,15 +9,19 @@
 //   4. uncovered snapshots   — a raw/ source no vault note points back to (the migration to-do ledger)
 //   + regenerate index.md from every note's `summary` (deterministic map-of-content)
 //
-// check PRINTS its findings (the agent reads them); it does not block and never mutates notes.
-// It writes two non-note control files: index.md (regenerated) and _tags.md (auto-grown — any new
-// tag a note carries is synced into the vocabulary, no human gate; near-duplicate tags are flagged
-// for a conscious synonym merge, never auto-merged).
-import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+// check PRINTS its findings (the agent reads them) and mirrors them into vault/_needs-review.md
+// inside a marker-fenced section it fully regenerates each run - stale findings drop off when fixed,
+// the section disappears when clean, and lines ingest wrote outside the markers are never touched.
+// `imprnt hot` surfaces that file, closing the contract's soft-fail loop. check does not block and
+// never mutates notes. It writes only non-note control files: index.md (regenerated), _tags.md
+// (auto-grown — any new tag a note carries is synced into the vocabulary, no human gate;
+// near-duplicate tags are flagged for a conscious synonym merge, never auto-merged), and its own
+// _needs-review.md section.
+import { readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, relative, dirname } from "node:path";
 import { projectRoot } from "./lib/roots.ts";
-import { generateIndex, collectNotes } from "./lib/moc.ts";
+import { generateIndex, collectNotes, frontmatter } from "./lib/moc.ts";
 import { loadTags, normalize, appendTags } from "./lib/tags.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
@@ -51,10 +55,14 @@ for (const n of notes) {
   (byBasename.get(base) ?? byBasename.set(base, []).get(base)!).push(n.slug);
 }
 
+// Resolution is against the collected EXACT-CASE slug set only, no existsSync fallback. existsSync
+// is case-insensitive on APFS, so a case-wrong [[People/Anna]] would pass here yet fail the
+// entity-link check (contradictory diagnostics), and Linux would disagree with macOS. raw/ links are
+// filtered out before this runs, so the "[[raw/...]] is never an orphan" contract is untouched.
 function resolves(target: string): boolean {
   const t = target.trim().replace(/^\.\//, "").replace(/\.md$/, "");
   if (!t) return false;
-  if (t.includes("/")) return allSlugs.has(t) || existsSync(join(vault, `${t}.md`));
+  if (t.includes("/")) return allSlugs.has(t);
   return byBasename.has(t); // bare slug — resolvable if any folder holds it
 }
 
@@ -78,37 +86,52 @@ const orphans: string[] = [];
 const disconnected: string[] = [];
 const domainIssues: string[] = [];
 const untagged: string[] = [];
+// `- [ ]` lines mirrored into _needs-review.md's check-owned section (same style ingest writes).
+const review: string[] = [];
 const referencedRaw = new Set<string>();
 
 for (const n of notes) {
   const raw = readFileSync(n.path, "utf8");
+  // Field reads (domain:/source:/sources:) are constrained to the FRONTMATTER block - a body line
+  // quoting the schema (`domain: health` in prose) must never satisfy a check or claim coverage.
+  const fm = frontmatter(raw);
   // `raw/...` links are intentional provenance into the evidence locker (the `source:` field), which
   // sits OUTSIDE the searchable vault — never count them as orphans, nor as graph links.
   const links = [...raw.matchAll(LINK)].map((m) => m[1].trim()).filter((l) => !l.startsWith("raw/"));
-  for (const l of links) if (!resolves(l)) orphans.push(`  ${n.slug}  →  [[${l}]]`);
+  for (const l of links) if (!resolves(l)) {
+    orphans.push(`  ${n.slug}  →  [[${l}]]`);
+    review.push(`- [ ] orphan link [[${l}]] — from [[${n.slug}]], target note missing`);
+  }
   // A domain/form note is disconnected unless at least ONE of its wikilinks resolves to an entity
   // note (people/orgs/holdings). A link to another domain/form note, or to raw/..., does not count.
   // Entity folders are exempt — an entity need not link an entity.
-  if (!ENTITY_FOLDERS.has(n.folder) && !links.some(linksEntity)) disconnected.push(`  ${n.slug}`);
+  if (!ENTITY_FOLDERS.has(n.folder) && !links.some(linksEntity)) {
+    disconnected.push(`  ${n.slug}`);
+    review.push(`- [ ] disconnected note [[${n.slug}]] — links no entity`);
+  }
 
   // untagged: every note carries ≥1 tag (the topic/search axis). An empty `tags: []` is the exact
   // symptom that motivated the auto-growing vocabulary — coining is now free, so there's no excuse for
   // a blank. Flag it (non-blocking) so it can never silently ship findable-by-body-only again.
-  if (n.tags.length === 0) untagged.push(`  ${n.slug}`);
+  if (n.tags.length === 0) {
+    untagged.push(`  ${n.slug}`);
+    review.push(`- [ ] untagged note [[${n.slug}]] — empty tags, findable by body/title only`);
+  }
 
   // self-describing domain: a note in a domain folder must carry `domain: <that folder>` so folder and
   // field can't drift. Entities/forms are self-described by `type` and carry no domain.
-  const domain = raw.match(/^domain:\s*(.+)$/m)?.[1]?.trim() ?? "";
+  const domain = fm.match(/^domain:\s*(.+)$/m)?.[1]?.trim() ?? "";
   if (DOMAIN_FOLDERS.has(n.folder) && domain !== n.folder) {
     domainIssues.push(`  ${n.slug}  — in ${n.folder}/ but domain: ${domain || "(missing)"}`);
+    review.push(`- [ ] domain mismatch [[${n.slug}]] — in ${n.folder}/ but domain: ${domain || "(missing)"}`);
   }
 
   // coverage: every raw path a note points back to (source: "[[raw/...]]" wikilink, or sources:[])
-  const src = raw.match(/^source:\s*["']?(.+?)["']?\s*$/im)?.[1]?.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
+  const src = fm.match(/^source:\s*["']?(.+?)["']?\s*$/im)?.[1]?.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
   if (src) referencedRaw.add(src.replace(/^\.\//, ""));
   // Greedy capture to the LAST bracket so wikilink entries (sources: ["[[raw/a]]", "[[raw/b]]"])
   // are not truncated at the first inner "]". Inline list form only (one line, no newline in the value).
-  const srcs = raw.match(/^sources:\s*\[(.*)\]/im)?.[1] ?? "";
+  const srcs = fm.match(/^sources:\s*\[(.*)\]/im)?.[1] ?? "";
   for (const s of srcs.split(",").map((x) => x.trim().replace(/^["'\[]+|["'\]]+$/g, "")).filter(Boolean)) referencedRaw.add(s.replace(/^\.\//, ""));
 }
 
@@ -137,6 +160,10 @@ if (hasTagsFile) {
   const tagArr = [...new Set([...vocab.approved, ...addedTags])].sort();
   for (let i = 0; i < tagArr.length; i++) for (let j = i + 1; j < tagArr.length; j++) {
     const a = tagArr[i], b = tagArr[j];
+    // A pair the user already merged exactly as the message instructs (a synonym entry in either
+    // direction, or both mapping to the same canonical) is resolved - re-flagging it forever would
+    // make the audit a permanent exit-1. Still flag-only for the rest: never auto-merge.
+    if (normalize(vocab, a) === normalize(vocab, b)) continue;
     const short = a.length <= b.length ? a : b, long = a.length <= b.length ? b : a;
     const prefixDup = short.length >= 4 && long.startsWith(short) && long.length - short.length <= 3;
     const near = Math.abs(a.length - b.length) <= 1 && lev(a, b) <= 1;
@@ -150,6 +177,39 @@ const rawEntries = Object.values(manifest).map((e) => e.raw).filter(Boolean) as 
 const norm = (p: string) => p.replace(/^\.\//, "").replace(/^.*\/raw\//, "raw/").replace(/\.md$/, "");
 const refNorm = new Set([...referencedRaw].map(norm));
 const uncovered = [...new Set(rawEntries.map(norm))].filter((r) => !refNorm.has(r)).sort();
+for (const r of uncovered) review.push(`- [ ] unclassified snapshot \`${r}\` — no vault note points back`);
+
+// --- needs-review routing ---------------------------------------------------
+// The contract's soft-fail net (CLAUDE.md, "The ingest pass" step 4): check's findings land in the
+// same vault/_needs-review.md ingest appends to, so `imprnt hot` surfaces them. check OWNS the one
+// marker-fenced section below and fully REGENERATES it each run: stale findings disappear when fixed,
+// the whole section is removed when clean, and anything outside the markers (ingest's lines) is never
+// touched. Byte-idempotent: two consecutive runs leave the file identical.
+const REVIEW_BEGIN = "<!-- imprnt-check:begin (regenerated by `imprnt check` - do not edit between the markers) -->";
+const REVIEW_END = "<!-- imprnt-check:end -->";
+
+function syncNeedsReview(lines: string[]): "written" | "cleared" | "none" {
+  const p = join(vault, "_needs-review.md");
+  const exists = existsSync(p);
+  if (!exists && lines.length === 0) return "none"; // clean + absent: never create the file
+  // Absent but dirty: create with the same header flagNeedsReview (lib/resolve.ts) writes.
+  const prev = exists ? readFileSync(p, "utf8") : "---\ntype: needs-review\n---\n\n# Needs review\n\n";
+  const b = prev.indexOf(REVIEW_BEGIN);
+  const e = prev.indexOf(REVIEW_END);
+  const section = `${REVIEW_BEGIN}\n${lines.join("\n")}\n${REVIEW_END}\n`;
+  let next: string;
+  if (b !== -1 && e !== -1 && e > b) {
+    // Replace (or drop) the section in place. The newline the previous write left after END belongs
+    // to the section, so strip it from the tail - the new section (if any) brings its own.
+    const tail = prev.slice(e + REVIEW_END.length).replace(/^\n/, "");
+    next = prev.slice(0, b) + (lines.length ? section : "") + tail;
+  } else {
+    if (lines.length === 0) return "none";
+    next = (prev.endsWith("\n") ? prev : prev + "\n") + section;
+  }
+  if (next !== prev || !exists) writeFileSync(p, next);
+  return lines.length ? "written" : "cleared";
+}
 
 // --- report ---------------------------------------------------------------
 const cap = (xs: string[], n = 25) => xs.slice(0, n).concat(xs.length > n ? [`  … +${xs.length - n} more`] : []);
@@ -182,6 +242,10 @@ if (rawEntries.length) {
 const { count, folders } = generateIndex(vault);
 console.log(`↻ regenerated index.md — ${count} notes across ${folders} folders`);
 
+const synced = syncNeedsReview(review);
+if (synced === "written") console.log(`↻ ${review.length} finding(s) → _needs-review.md (run \`imprnt hot\` to see them)`);
+else if (synced === "cleared") console.log("↻ cleared resolved findings from _needs-review.md");
+
 const issues = orphans.length + disconnected.length + domainIssues.length + untagged.length + uncovered.length + dupPairs.length;
 console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
 // check still PRINTS everything and never blocks or mutates a note — only the exit CODE reflects health,
@@ -202,8 +266,12 @@ if (all) {
   const checks: string[] = [];
   if (existsSync(pluginsDir)) {
     for (const entry of readdirSync(pluginsDir)) {
+      // Tolerate per-entry: a broken symlink (or any unstat-able entry) must not kill the whole
+      // aggregation - skip the dead entry and run the remaining plugin checks.
+      let isDir = false;
+      try { isDir = statSync(join(pluginsDir, entry)).isDirectory(); } catch { continue; }
       const p = join(pluginsDir, entry, "check.js");
-      if (statSync(join(pluginsDir, entry)).isDirectory() && existsSync(p)) checks.push(p);
+      if (isDir && existsSync(p)) checks.push(p);
     }
   }
   checks.sort();

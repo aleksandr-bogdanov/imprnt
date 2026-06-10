@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { openNeedsReview } from "./lib/resolve.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CHECK = join(here, "check.ts");
@@ -510,4 +511,169 @@ test("--all with only a passing plugin and a clean core exits 0", () => {
   } finally {
     rmSync(copy, { recursive: true, force: true });
   }
+});
+
+// "dead" sorts before "ok", so the broken entry is hit FIRST - pre-fix statSync threw ENOENT there
+// and killed the whole aggregation before any plugin check ran.
+test("--all tolerates a broken symlink under plugins/ and still runs the remaining checks", () => {
+  const copy = makeRepoCopy();
+  try {
+    stubPlugin(copy, "ok", "PLUGIN_OK_OUTPUT", 0);
+    symlinkSync(join(copy, "plugins", "no-such-target"), join(copy, "plugins", "dead"));
+    const vault = makeCleanVault();
+    const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault], {
+      env: { ...process.env, IMPRNT_ROOT: copy },
+    });
+    const out = proc.stdout.toString() + proc.stderr.toString();
+    expect(out).toContain("PLUGIN_OK_OUTPUT");
+    expect(out).toContain("plugins/ok/check.js → exit 0");
+    expect(out).toContain("all plugin checks passed.");
+    expect(proc.exitCode).toBe(0);
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
+});
+
+// --- dup-tag audit vs. synonym map ------------------------------------------
+// A near-duplicate pair the user already merged exactly as the message instructs (a synonym entry in
+// _tags.md) must stop being flagged - pre-fix it re-flagged forever, exit 1 permanently. The audit
+// stays flag-only: an UNmerged pair is still flagged (covered by "vault with duplicate tags" above).
+
+test("a dup pair already joined by a synonym entry is not re-flagged", () => {
+  const dir = makeVault();
+  writeFileSync(
+    join(dir, "_tags.md"),
+    "---\ntype: tags\n---\n\n# tags\n\n## Tags\nfinance, finances\n\n## Synonyms\nfinance -> finances\n"
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [finances]", "# Anna");
+  const { code, out } = runCheck(dir);
+  expect(out).not.toContain("candidate duplicate tags");
+  expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+// --- case-exact link resolution ---------------------------------------------
+// Pre-fix the orphan check fell through to existsSync, which is case-insensitive on APFS: a
+// case-wrong [[People/Anna]] passed the orphan check yet failed the entity-link check - two
+// contradictory diagnostics from one link, and Linux disagreed with macOS. Both checks must resolve
+// against the same exact-case slug set.
+
+test("a case-wrong link is an orphan on every platform, agreeing with the entity-link check", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  note(dir, "health/checkup.md", "domain: health\ntags: [health]", "# Checkup\n\nSaw [[People/Anna]].");
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("orphan links");
+  expect(out).toContain("[[People/Anna]]");
+  // the entity-link check already failed this link - the orphan check must agree
+  expect(disconnectedList(out)).toContain("health/checkup");
+  expect(code).not.toBe(0);
+});
+
+// --- domain:/source: read from frontmatter only ------------------------------
+// Pre-fix both fields were matched against the WHOLE file body, so a body line quoting the schema
+// (`domain: health`) satisfied the domain check or marked a snapshot covered.
+
+test("a body line quoting `domain:` does not satisfy the domain check", () => {
+  const dir = makeVault();
+  // frontmatter carries NO domain: - the body line must not mask the missing field.
+  note(dir, "health/a.md", "type: note\ntags: [health]", "# A\n\nThe schema says a domain note carries\ndomain: health\nin frontmatter. See [[people/anna]].");
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("domain mismatches");
+  expect(domainMismatchSlugs(out)).toContain("health/a");
+  expect(out).toContain("domain: (missing)");
+  expect(code).not.toBe(0);
+});
+
+test("a body line quoting `source:` does not mark a snapshot covered", () => {
+  const dir = makeVault();
+  note(dir, "health/a.md", "domain: health\ntags: [health]", '# A\n\nNotes carry provenance like\nsource: "[[raw/scan/result]]"\nbut this one has none. See [[people/anna]].');
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  writeManifest(dir, {
+    "raw/scan/result.md": { hash: "abc", note: "", ingested: "2026-01-01T00:00:00Z", raw: "raw/scan/result.md" },
+  });
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("uncovered snapshots");
+  expect(uncoveredList(out)).toContain("raw/scan/result");
+  expect(code).not.toBe(0);
+});
+
+// --- needs-review routing (the contract's soft-fail net) ----------------------
+// CLAUDE.md "The ingest pass" step 4: check flags its findings into needs-review, surfaced atop
+// hot.md. check OWNS a marker-fenced section of vault/_needs-review.md which it fully regenerates
+// each run: stale findings disappear when fixed, the section is removed when clean, and lines ingest
+// wrote outside the markers are never touched. Two consecutive runs leave the file byte-identical.
+
+const CHECK_BEGIN = "<!-- imprnt-check:begin";
+const CHECK_END = "<!-- imprnt-check:end -->";
+
+test("check routes findings into _needs-review.md, idempotently, and clears them when fixed", () => {
+  const dir = makeVault();
+  // a pre-existing ingest line OUTSIDE the check section must survive every rewrite
+  const ingestLine = "- [ ] unresolved person `people/bob` — from [[events/x]] (2026-01-01)";
+  writeFileSync(join(dir, "_needs-review.md"), `---\ntype: needs-review\n---\n\n# Needs review\n\n${ingestLine}\n`);
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  note(dir, "health/checkup.md", "domain: health\ntags: [health]", "# Checkup\n\nLinks [[people/anna]] and [[people/ghost]].");
+
+  runCheck(dir);
+  const first = readFileSync(join(dir, "_needs-review.md"), "utf8");
+  expect(first).toContain(CHECK_BEGIN);
+  expect(first).toContain(CHECK_END);
+  expect(first).toContain("- [ ] orphan link [[people/ghost]]");
+  expect(first).toContain(ingestLine);
+  // every finding line uses the `- [ ]` style `imprnt hot` surfaces via openNeedsReview
+  expect(openNeedsReview(dir).some((l) => l.includes("orphan link [[people/ghost]]"))).toBe(true);
+
+  // idempotent: a second run leaves the file byte-identical
+  runCheck(dir);
+  expect(readFileSync(join(dir, "_needs-review.md"), "utf8")).toBe(first);
+
+  // fix the orphan -> the stale finding disappears and the whole section is removed
+  note(dir, "health/checkup.md", "domain: health\ntags: [health]", "# Checkup\n\nSaw [[people/anna]].");
+  runCheck(dir);
+  const cleared = readFileSync(join(dir, "_needs-review.md"), "utf8");
+  expect(cleared).not.toContain(CHECK_BEGIN);
+  expect(cleared).not.toContain("people/ghost");
+  expect(cleared).toContain(ingestLine);
+  // clearing is idempotent too: a clean re-run leaves the file byte-identical
+  runCheck(dir);
+  expect(readFileSync(join(dir, "_needs-review.md"), "utf8")).toBe(cleared);
+});
+
+test("check creates _needs-review.md when findings exist and the file is absent", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: []", "# Anna"); // untagged
+  runCheck(dir);
+  const txt = readFileSync(join(dir, "_needs-review.md"), "utf8");
+  expect(txt).toContain(CHECK_BEGIN);
+  expect(txt).toContain("- [ ] untagged note [[people/anna]]");
+  expect(openNeedsReview(dir).some((l) => l.includes("untagged note [[people/anna]]"))).toBe(true);
+});
+
+test("a clean vault with no _needs-review.md does not create one", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  note(dir, "health/checkup.md", "domain: health\ntags: [health]", "# Checkup\n\nSaw [[people/anna]].");
+  const { code } = runCheck(dir);
+  expect(code).toBe(0);
+  expect(existsSync(join(dir, "_needs-review.md"))).toBe(false);
+});
+
+test("every finding category lands in the check section with its own line style", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  // orphan + disconnected + untagged in one note, domain mismatch in another, plus an uncovered snapshot
+  note(dir, "health/a.md", "domain: health\ntags: []", "# A\n\nSee [[people/ghost]].");
+  note(dir, "health/b.md", "domain: work\ntags: [health]", "# B\n\nSee [[people/anna]].");
+  writeManifest(dir, {
+    "raw/scan/result.md": { hash: "abc", note: "", ingested: "2026-01-01T00:00:00Z", raw: "raw/scan/result.md" },
+  });
+  runCheck(dir);
+  const txt = readFileSync(join(dir, "_needs-review.md"), "utf8");
+  expect(txt).toContain("- [ ] orphan link [[people/ghost]] — from [[health/a]], target note missing");
+  expect(txt).toContain("- [ ] disconnected note [[health/a]] — links no entity");
+  expect(txt).toContain("- [ ] untagged note [[health/a]] — empty tags, findable by body/title only");
+  expect(txt).toContain("- [ ] domain mismatch [[health/b]] — in health/ but domain: work");
+  expect(txt).toContain("- [ ] unclassified snapshot `raw/scan/result` — no vault note points back");
 });
