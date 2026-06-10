@@ -30,12 +30,18 @@ function tagTokens(line: string): string[] {
   return line.split(",").map((s) => s.trim()).filter((s) => TAG_TOKEN.test(s));
 }
 
-// True if a line under `## Tags` is part of the tag list (it carries at least one valid tag token).
-// Prose lines (spaces inside every token, or non-tag punctuation) are not tag lines.
+// True if a line under `## Tags` is part of the tag list. A tag line is one where the MAJORITY of
+// its comma-separated segments are valid tag tokens. "at least one valid token" was too permissive:
+// a prose comment ("Keep this list lean, one-concept") has one kebab-valid segment and got mistaken
+// for the list. Majority keeps round-1 salvage alive ("health, net worth, insurance" = 2 of 3 valid,
+// still a tag line) while rejecting prose where most segments carry interior spaces.
 function isTagLine(line: string): boolean {
   const t = line.trim();
   if (t === "" || t.startsWith("##") || t.startsWith("<!--")) return false;
-  return tagTokens(t).length > 0;
+  const segs = t.split(",").map((s) => s.trim()).filter((s) => s !== "");
+  if (segs.length === 0) return false;
+  const valid = segs.filter((s) => TAG_TOKEN.test(s)).length;
+  return valid * 2 > segs.length;
 }
 
 // Normalize a raw tag to its writable kebab form: lowercase, spaces and underscores to hyphens.
@@ -69,8 +75,19 @@ export function loadTags(vault: string): TagVocab {
 }
 
 // Map a term to its canonical tag if known; otherwise return it unchanged.
+// Kebab the input first so underscore/space variants ("Tax_Filing") still hit the synonym map,
+// then follow the chain to its fixed point so notes and queries that enter a chain at different
+// points (money->finances->wealth) meet at the same canonical. The `seen` guard makes a cycle
+// (a->b->a) terminate deterministically at the first term already visited.
 export function normalize(vocab: TagVocab, term: string): string {
-  return vocab.synonyms.get(term.toLowerCase()) ?? term.toLowerCase();
+  let cur = kebab(term) || term.toLowerCase();
+  const seen = new Set<string>([cur]);
+  for (;;) {
+    const next = vocab.synonyms.get(cur);
+    if (next === undefined || seen.has(next)) return cur;
+    seen.add(next);
+    cur = next;
+  }
 }
 
 // Auto-grow the vocabulary: append new canonical tags to _tags.md's `## Tags` list, preserving all
@@ -101,14 +118,14 @@ export function appendTags(vault: string, newTags: string[]): string[] {
     writeFileSync(p, base === "" ? sec : `${base}\n\n${sec}`);
     return tags;
   }
-  // The tag list is the contiguous run of tag lines right under the header (skipping a leading
-  // blank). Append to the LAST line of that run. A prose line ends the run and is never touched.
+  // Append to the LAST tag line in the `## Tags` section (header to the next `##` or EOF). Scanning
+  // the whole section, not just the contiguous run right under the header, is what lets a leading
+  // prose comment ("Keep this list lean") sit above the real list without stealing the append - the
+  // new tag still lands on the actual list below it. A prose line is never a target and never touched.
   let last = -1;
   for (let i = h + 1; i < lines.length; i++) {
-    const t = lines[i].trim();
-    if (t === "") { if (last >= 0) break; else continue; }
-    if (!isTagLine(lines[i])) break;
-    last = i;
+    if (lines[i].trim().startsWith("##")) break;
+    if (isTagLine(lines[i])) last = i;
   }
   if (last < 0) lines.splice(h + 1, 0, tags.join(", "));
   else lines[last] = `${lines[last].replace(/\s+$/, "")}, ${tags.join(", ")}`;

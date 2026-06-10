@@ -28,16 +28,24 @@ const FOLDER_ORDER = [
   "events", "mistakes",
 ];
 
+// Strip a single leading UTF-8 BOM (U+FEFF). An editor that writes a BOM puts it before the `---`
+// fence, which then never matches `^---`, dropping ALL frontmatter to body weight and leaking
+// frontmatter values into the searchable body. Both core readers (this file + recall.ts) call this
+// before frontmatter detection so a BOM-prefixed note parses identically to a clean one.
+export function stripBom(raw: string): string {
+  return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+}
+
 // Exported so check.ts can constrain its own field reads (domain:/source:) to the frontmatter block
 // instead of the whole body - a body line quoting the schema must never satisfy a check.
 export function frontmatter(raw: string): string {
   // Accept CRLF (`\r\n`) fences so Windows-authored notes parse frontmatter. Without `\r?` the closing
   // `---\r` line never matches and summary/tags fall through, dropping them from index.md. Mirrors recall.ts.
-  return raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+  return stripBom(raw).match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
 }
 // Unwrap quotes only when they wrap the WHOLE value symmetrically. Stripping each end independently
 // corrupts a value that merely ends (or starts) in a quoted phrase: `..."the boss"` -> `..."the boss`.
-function stripQuotes(v: string): string {
+export function stripQuotes(v: string): string {
   const m = v.match(/^(["'])([\s\S]*)\1$/);
   return m ? m[2] : v;
 }
@@ -45,10 +53,20 @@ function fmScalar(fm: string, key: string): string {
   // `.trim()` also drops a trailing `\r` left on a per-line value when the note uses CRLF endings.
   return stripQuotes((fm.match(new RegExp(`^${key}:\\s*(.+)$`, "im"))?.[1] ?? "").trim());
 }
-// Both plain-YAML list forms: inline `key: [a, b]` and the block form (what Obsidian's properties UI
-// writes) - a bare `key:` followed by consecutive `- item` lines. Small deterministic parser, no YAML
-// dep. Keep these semantics in sync with recall.ts so the two readers agree on the same note.
-function fmList(fm: string, key: string): string[] {
+// THE canonical block-style YAML list parser for the whole core. Both plain-YAML list forms:
+// inline `key: [a, b]` and the block form (what Obsidian's properties UI writes) - a bare `key:`
+// followed by consecutive `- item` lines. recall.ts imports this so the two core readers parse the
+// same note identically (a tag check certifies must be a tag recall can find, and vice versa).
+// Semantics, all exercised by tests in moc.test.ts + recall.test.ts:
+//   - inline `key: [a, b]` (quoted items unwrapped, blanks dropped),
+//   - block items at ANY indent including flush-left at column 0 (`- x`) AND indented (`  - x`),
+//   - an EMPTY block item (a bare `-`) is skipped but does NOT end the block,
+//   - a non-list line (the next `key:`, or prose) ends the block,
+//   - quoted items unwrapped via stripQuotes, CRLF tolerated (split on \r?\n),
+//   - a leading UTF-8 BOM is handled upstream by frontmatter()/stripBom before this ever runs.
+// Exported (callers: recall.ts) and used internally by collectNotes. Do not narrow these semantics
+// without updating recall - the two readers MUST agree.
+export function fmList(fm: string, key: string): string[] {
   const lines = fm.split(/\r?\n/);
   const keyRe = new RegExp(`^${key}:\\s*(.*)$`, "i");
   for (const [i, line] of lines.entries()) {
@@ -62,10 +80,12 @@ function fmList(fm: string, key: string): string[] {
     if (rest !== "") return []; // a plain scalar is not a list
     const items: string[] = [];
     for (let j = i + 1; j < lines.length; j++) {
-      const item = lines[j].match(/^\s*-\s+(.+?)\s*$/);
-      if (!item) break; // the next key (or anything non-item) ends the block
-      const v = stripQuotes(item[1]);
-      if (v) items.push(v);
+      // A block item is `-` at any indent. Capture the rest of the line (may be empty for a bare `-`).
+      // A line that is not a list item (the next key, prose, a blank) ends the block.
+      const item = lines[j].match(/^\s*-(?:\s+(.*\S))?\s*$/);
+      if (!item) break;
+      const v = stripQuotes((item[1] ?? "").trim());
+      if (v) items.push(v); // skip an empty item, but keep reading the block
     }
     return items;
   }
@@ -77,7 +97,15 @@ function walk(vault: string, dir: string): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry.startsWith(".") || entry.startsWith("_")) continue; // dotfiles + _tags/_needs-review
     const p = join(dir, entry);
-    if (statSync(p).isDirectory()) out.push(...walk(vault, p));
+    // statSync follows symlinks, so a dangling link throws. Skip the unreadable entry
+    // rather than crash the whole walk (recall and the plugins walk tolerate this too).
+    let isDir: boolean;
+    try {
+      isDir = statSync(p).isDirectory();
+    } catch {
+      continue;
+    }
+    if (isDir) out.push(...walk(vault, p));
     else if (entry.endsWith(".md")) {
       // A control basename counts only at the vault root - relative path with no directory separator.
       const rel = relative(vault, p);
