@@ -93,3 +93,71 @@ test("a note with no summary falls back to the H1 title", () => {
   const line = indexLineFor(vault, "life/thing");
   expect(line).toBe("- [[life/thing]] — My Heading");
 });
+
+// --- block-style YAML lists (what Obsidian's properties UI writes) ----------
+// Pre-fix fmList only matched the inline `tags: [a, b]` form, so a block list was invisible: the note
+// got flagged untagged and its tags vanished from index.md and never synced to _tags.md.
+
+test("block-style YAML tags parse identically to the inline form (LF and CRLF)", () => {
+  const lfVault = tmpVault();
+  const crlfVault = tmpVault();
+  const fm = "---\ntype: person\nsummary: A short summary.\ntags:\n  - alpha\n  - beta\n---\n\n# Jane Doe\n\nbody\n";
+  writeNote(lfVault, "people", "jane.md", fm);
+  writeNote(crlfVault, "people", "jane.md", fm.replace(/\n/g, "\r\n"));
+
+  const lf = collectNotes(lfVault).find((n) => n.slug === "people/jane")!;
+  expect(lf.tags).toEqual(["alpha", "beta"]);
+  const crlf = collectNotes(crlfVault).find((n) => n.slug === "people/jane")!;
+  expect(crlf.tags).toEqual(["alpha", "beta"]);
+
+  const line = indexLineFor(lfVault, "people/jane");
+  expect(line).toBe("- [[people/jane]] — A short summary.  `alpha` `beta`");
+});
+
+test("block list stops at the next key and unwraps quoted items", () => {
+  const vault = tmpVault();
+  const fm = "---\ntags:\n  - \"alpha\"\n  - beta\ntype: note\nsummary: S.\n---\n\n# T\n\nbody\n";
+  writeNote(vault, "life", "t.md", fm);
+  const note = collectNotes(vault).find((n) => n.slug === "life/t")!;
+  expect(note.tags).toEqual(["alpha", "beta"]);
+  // the type: line right after the block must not be swallowed into the list
+  expect(note.type).toBe("note");
+  expect(note.summary).toBe("S.");
+});
+
+test("a bare `tags:` with no items is an empty list, not a crash", () => {
+  const vault = tmpVault();
+  const fm = "---\ntags:\ntype: note\nsummary: S.\n---\n\n# T\n\nbody\n";
+  writeNote(vault, "life", "t.md", fm);
+  const note = collectNotes(vault).find((n) => n.slug === "life/t")!;
+  expect(note.tags).toEqual([]);
+  expect(note.type).toBe("note");
+});
+
+// --- symmetric quote-strip (fmScalar) ---------------------------------------
+// Pre-fix the strip was `/^["']|["']$/g`: a leading quote OR a trailing quote got dropped
+// independently, so a summary ENDING in a quoted phrase lost exactly one of its quotes.
+
+test("a summary ending in a quoted phrase keeps both quotes", () => {
+  const vault = tmpVault();
+  const fm = '---\nsummary: Heard it from "the boss"\n---\n\n# Note\n\nbody\n';
+  writeNote(vault, "life", "note.md", fm);
+  const note = collectNotes(vault).find((n) => n.slug === "life/note")!;
+  expect(note.summary).toBe('Heard it from "the boss"');
+});
+
+test("a summary starting with a quoted phrase keeps both quotes", () => {
+  const vault = tmpVault();
+  const fm = "---\nsummary: 'The boss' said so\n---\n\n# Note\n\nbody\n";
+  writeNote(vault, "life", "note.md", fm);
+  const note = collectNotes(vault).find((n) => n.slug === "life/note")!;
+  expect(note.summary).toBe("'The boss' said so");
+});
+
+test("a fully quote-wrapped summary still unwraps", () => {
+  const vault = tmpVault();
+  const fm = '---\nsummary: "Wrapped value."\n---\n\n# Note\n\nbody\n';
+  writeNote(vault, "life", "note.md", fm);
+  const note = collectNotes(vault).find((n) => n.slug === "life/note")!;
+  expect(note.summary).toBe("Wrapped value.");
+});
