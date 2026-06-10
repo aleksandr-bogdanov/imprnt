@@ -131,7 +131,14 @@ const phraseSynonymTokens = (q: string): string[] => {
 const rawTerms = tokenize(query);
 const contentTerms = rawTerms.filter((w) => !STOPWORDS.has(w));
 const baseTerms = contentTerms.length ? contentTerms : rawTerms;
-const queryTerms = baseTerms.map((w) => [...new Set([w, normalize(vocab, w)])]);
+// Tokenize the canonical into the group, not keep it whole. normalize() returns the canonical as ONE
+// string, but a MULTI-word canonical ("big-query", "net worth") is stored on a note as the kebab tag,
+// whose tf keys are the SPLIT tokens (big, query) - the tokenizer splits on hyphens AND spaces. Scoring
+// the whole "big-query" string would match nothing. Each canonical token becomes its own scorable
+// alternative within the word's group, mirroring the multi-word-KEY path (phraseSynonymTokens). A
+// single-token canonical tokenizes to one token, so the group is unchanged. The Set dedups the literal
+// against a same-spelling canonical token.
+const queryTerms = baseTerms.map((w) => [...new Set([w, ...tokenize(normalize(vocab, w))])]);
 // Add a group per token discovered from a multi-token/hyphenated synonym key. Each canonical token is
 // its own group so it scores additively alongside the literal query terms.
 for (const t of phraseSynonymTokens(query)) {
