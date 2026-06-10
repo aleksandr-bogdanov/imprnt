@@ -8,6 +8,11 @@ import { fileURLToPath } from "node:url";
 // the real binary without ever touching the real CLAUDE.local.md, we copy the scripts/ tree plus a
 // fake plugins/ into a throwaway root and run the copied cli.ts. Each test wires that copy.
 const realRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+// The shipped contract (packages/imprnt/CLAUDE.md) is a gitignored shipdocs artifact, present on a
+// dev machine only after a publish-prep run and NEVER on a fresh CI checkout. Tests that fake a
+// package root copy the committed SOURCE of that artifact instead - the repo-root CLAUDE.md that
+// shipdocs itself copies in.
+const contractSrc = join(realRoot, "..", "..", "CLAUDE.md");
 
 function tmpRepo(): string {
   const root = mkdtempSync(join(tmpdir(), "imprnt-cli-"));
@@ -572,7 +577,7 @@ test("init from a subdirectory of an existing vault project refuses and names th
 test("init <explicit-path> (non-interactive) scaffolds, registers, and contracts THAT path, not cwd", async () => {
   const root = tmpRepo();
   cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
-  cpSync(join(realRoot, "CLAUDE.md"), join(root, "CLAUDE.md"), { recursive: true });
+  cpSync(contractSrc, join(root, "CLAUDE.md"), { recursive: true });
   const xdg = join(root, "xdg");
   // A fresh target OUTSIDE cwd (a sibling tmp path). It does not exist yet - init must create it.
   const target = join(root, "elsewhere", "myvault");
@@ -596,7 +601,7 @@ test("init <explicit-path> (non-interactive) scaffolds, registers, and contracts
 test("init <path> with --register before the path still reads the path as the positional", async () => {
   const root = tmpRepo();
   cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
-  cpSync(join(realRoot, "CLAUDE.md"), join(root, "CLAUDE.md"), { recursive: true });
+  cpSync(contractSrc, join(root, "CLAUDE.md"), { recursive: true });
   const xdg = join(root, "xdg");
   const target = join(root, "twovault");
   // --register sits BEFORE the path: the positional parse skips flags and still finds the path.
@@ -609,7 +614,7 @@ test("init <path> with --register before the path still reads the path as the po
 test("init ~/<sub> expands the tilde to HOME (throwaway home, never the real one)", async () => {
   const root = tmpRepo();
   cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
-  cpSync(join(realRoot, "CLAUDE.md"), join(root, "CLAUDE.md"), { recursive: true });
+  cpSync(contractSrc, join(root, "CLAUDE.md"), { recursive: true });
   const xdg = join(root, "xdg");
   // Point HOME at a throwaway dir so the ~ expansion can never touch the developer's real home.
   const fakeHome = join(root, "home");
@@ -631,7 +636,7 @@ test("init ~/<sub> expands the tilde to HOME (throwaway home, never the real one
 test("init with NO arg and no TTY still scaffolds in cwd and registers cwd (regression)", async () => {
   const root = tmpRepo();
   cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
-  cpSync(join(realRoot, "CLAUDE.md"), join(root, "CLAUDE.md"), { recursive: true });
+  cpSync(contractSrc, join(root, "CLAUDE.md"), { recursive: true });
   const xdg = join(root, "xdg");
   const r = await runCli(root, ["init"], { XDG_CONFIG_HOME: xdg });
   expect(r.code).toBe(0);
