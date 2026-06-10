@@ -988,3 +988,114 @@ test("a chained synonym merge (shoe->shoes->footwear) does not re-flag shoe~shoe
   expect(out).toContain("clean.");
   expect(code).toBe(0);
 });
+
+// --- code fences / inline code are not scanned for wikilinks (P2 + sibling) ----------------------
+// check's orphan scan and the entity-link/disconnected check both read the raw note body for [[...]].
+// A developer's shell/howto note carries Bash test syntax `if [[ -f "$config" ]]` in a code fence (or
+// `` `[[ -d dir ]]` `` inline), which the regex mistook for a wikilink to a missing note: a permanent
+// _needs-review line + exit 1, breaking CI / && chains. The body must be code-stripped before the scan.
+
+// The lines printed under the "orphan links" header. Each flagged orphan prints as "  <slug>  →  [[t]]"
+// so we collect the indented lines up to the blank terminator for exact membership checks.
+function orphanList(out: string): string[] {
+  const lines = out.split("\n");
+  const start = lines.findIndex((l) => l.includes("orphan links"));
+  if (start === -1) return [];
+  const items: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^  (\S.*\S)\s*$/);
+    if (!m) break; // blank line or next section ends the list
+    items.push(m[1].trim());
+  }
+  return items;
+}
+
+test("Bash test syntax in a fenced code block is not flagged as an orphan link", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  // a real howto note: links a genuine entity OUTSIDE code, carries [[...]]-looking Bash inside a fence.
+  note(
+    dir,
+    "work/howto.md",
+    "domain: work\ntags: [howto]",
+    "# Howto\n\nSee [[people/anna]].\n\n```bash\nif [[ -f \"$config\" ]]; then\n  echo found\nfi\n```\n"
+  );
+  const { code, out } = runCheck(dir);
+  // pre-fix: [[ -f "$config" ]] was an orphan -> non-zero exit + a needs-review line. Now: clean.
+  expect(out).not.toContain("⚠ orphan links"); // the warning header, not the "✓ no orphan links" affirmative
+  expect(out).toContain("✓ no orphan links");
+  expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+test("inline-code [[...]] test syntax is not flagged as an orphan link", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  note(
+    dir,
+    "work/howto.md",
+    "domain: work\ntags: [howto]",
+    "# Howto\n\nSee [[people/anna]]. Run `[[ -d dir ]]` to test a directory.\n"
+  );
+  const { code, out } = runCheck(dir);
+  expect(out).not.toContain("⚠ orphan links"); // the warning header, not the "✓ no orphan links" affirmative
+  expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+// A howto that documents the wikilink syntax itself, inside a code fence, must not be scanned: a
+// fenced `[[people/...]]` example is documentation, not a graph edge.
+test("a documented [[people/...]] wikilink inside a code fence is not an orphan", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  note(
+    dir,
+    "work/syntax.md",
+    "domain: work\ntags: [howto]",
+    "# Syntax\n\nLink a person with [[people/anna]].\n\n```md\n[[people/ghost]]\n```\n"
+  );
+  const { code, out } = runCheck(dir);
+  // the fenced [[people/ghost]] (a missing note) must NOT be an orphan; the real [[people/anna]] resolves.
+  expect(out).not.toContain("⚠ orphan links"); // the warning header, not the "✓ no orphan links" affirmative
+  expect(orphanList(out)).not.toContain("work/syntax  →  [[people/ghost]]");
+  expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+// The control: a real orphan link OUTSIDE any code block still flags, even when the same note carries
+// fenced Bash test syntax. The fix must mask code WITHOUT swallowing genuine links elsewhere.
+test("a real orphan link outside code still flags even with fenced [[...]] Bash syntax present", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  note(
+    dir,
+    "work/howto.md",
+    "domain: work\ntags: [howto]",
+    "# Howto\n\nSee [[people/anna]] and [[people/ghost]].\n\n```bash\nif [[ -f \"$config\" ]]; then echo hi; fi\n```\n"
+  );
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("orphan links");
+  expect(orphanList(out)).toContain("work/howto  →  [[people/ghost]]");
+  // the fenced Bash syntax must NOT show up as an orphan
+  expect(out).not.toContain("[[ -f");
+  expect(code).not.toBe(0);
+});
+
+// The disconnected/entity-link check must stay consistent with the orphan scan: a link that appears
+// ONLY inside a code fence is not a real graph edge, so a note whose sole "entity link" is fenced is
+// still a disconnected island.
+test("a note whose only entity link is inside a code fence is still disconnected", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  // the genuine prose has no entity link; the only [[people/anna]] sits inside a fence (not an edge).
+  note(
+    dir,
+    "work/howto.md",
+    "domain: work\ntags: [howto]",
+    "# Howto\n\nNo real links here.\n\n```md\n[[people/anna]]\n```\n"
+  );
+  const { code, out } = runCheck(dir);
+  expect(out).toContain("disconnected notes");
+  expect(disconnectedList(out)).toContain("work/howto");
+  expect(code).not.toBe(0);
+});
