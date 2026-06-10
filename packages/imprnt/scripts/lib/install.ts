@@ -9,11 +9,11 @@
 // a tarball of EXACTLY the package's files[] (built check.js, agent.md, seed dirs — never src/ or
 // tests). We extract it and copy, minus the npm manifest. `--from <dir>` is how you install a plugin
 // before it is published, and how the monorepo wires its own plugins.
-import { existsSync, mkdtempSync, cpSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, cpSync, rmSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { specError, resolvedBasename, canonicalSpec } from "./plugins.ts";
+import { specError, canonicalSpec } from "./plugins.ts";
 
 // Official plugin names, for `plugin list` discovery when nothing is installed yet. A hint string,
 // NOT a registry: each maps by convention to the npm package `imprnt-plugin-<name>`. Adding an
@@ -127,17 +127,28 @@ export function installPlugin(
   }
 }
 
-// Delete an installed plugin's dir (the `rm -rf plugins/<name>` the contract describes, as a flag).
-// Guarded three ways: refuses any name that is non-canonical or resolves outside plugins/
-// (specError - `..` used to collapse to the project root and delete EVERYTHING, and `./_personal`
-// resolved into the private cast while dodging the literal `_` check below), never touches a
-// _-prefixed dir (the private cast - checked on the RESOLVED basename, not the literal string, so a
-// spec that resolves to a _-prefixed dir can never slip past), and a missing dir is a clean no-op.
+// Delete an installed plugin's DIR (the `rm -rf plugins/<name>` the contract describes, as a flag).
+// --purge is a DIRECTORY operation: it removes a whole plugin, never a single file inside one.
+// Guarded so a file-form spec can never route around the private-cast protection:
+//   1. specError - rejects a non-canonical or escaping spec (`..`, `./_personal`) up front.
+//   2. NO path separator - a `<name>/<file.md>` spec names a file, not a plugin dir, so purge
+//      refuses it outright. This is the DATA-LOSS fix: `_personal/voice.md` is canonical and its
+//      LEAF basename (`voice.md`) does not start with `_`, so a leaf-only guard let rmSync delete
+//      that one gitignored, unrecoverable private file. A file-form spec is a clean refusal.
+//   3. _-prefix guard on the FIRST path segment (the plugin dir), not just the resolved leaf, so
+//      the private cast stays protected even if a future caller reaches this with a sub-path.
+//   4. statSync isDirectory - belt-and-suspenders: only ever rmSync a real directory, never a file.
+//   5. a missing dir is a clean no-op (false).
 export function purgePlugin(projectRoot: string, name: string): boolean {
   if (specError(projectRoot, name)) return false;
-  if (resolvedBasename(projectRoot, name).startsWith("_")) return false;
+  // A separator means the spec names a file inside a plugin, not a plugin to purge. Refuse it.
+  if (name.includes("/")) return false;
+  // _-prefix guard on the first path segment (here the whole spec, since no separator remains).
+  if (name.split("/")[0].startsWith("_")) return false;
   const dir = join(projectRoot, "plugins", name);
   if (!existsSync(dir)) return false;
+  // Only purge a real directory. A spec that somehow resolves to a file is refused, not deleted.
+  if (!statSync(dir).isDirectory()) return false;
   rmSync(dir, { recursive: true, force: true });
   return true;
 }

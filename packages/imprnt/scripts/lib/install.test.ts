@@ -223,6 +223,44 @@ test("purgePlugin refuses a trailing-slash _personal/ spec (finding 1)", () => {
   expect(existsSync(join(proj, "plugins", "_personal", "voice.md"))).toBe(true);
 });
 
+// --- --purge is a directory operation: a file-form spec is a clean refusal (finding: DATA LOSS) ---
+// `_personal/voice.md` is canonical (specError passes) and its LEAF basename is `voice.md` (no `_`),
+// so the old single-leaf guard let it through and rmSync deleted that one FILE - the gitignored,
+// never-published, unrecoverable private voice fragment. --purge deletes a whole plugin DIRECTORY,
+// never a file inside one. So a spec with a path separator (a file-form spec) must be refused, and
+// the `_`-prefix protection must key on the FIRST path segment (the plugin dir), not the leaf.
+
+test("purgePlugin refuses '_personal/voice.md' and the private file survives (DATA LOSS)", () => {
+  const proj = tmpProject();
+  mkdirSync(join(proj, "plugins", "_personal"), { recursive: true });
+  writeFileSync(join(proj, "plugins", "_personal", "voice.md"), "PRIVATE");
+  writeFileSync(join(proj, "plugins", "_personal", "taylor.md"), "PRIVATE");
+  expect(purgePlugin(proj, "_personal/voice.md")).toBe(false);
+  // The targeted file AND its sibling both survive - purge touched nothing.
+  expect(existsSync(join(proj, "plugins", "_personal", "voice.md"))).toBe(true);
+  expect(existsSync(join(proj, "plugins", "_personal", "taylor.md"))).toBe(true);
+});
+
+test("purgePlugin refuses a non-_ plugin's file-form spec (purge is dir-only)", () => {
+  const src = mkPluginSrc("character");
+  const proj = tmpProject();
+  installPlugin(proj, "character", { from: src });
+  writeFileSync(join(proj, "plugins", "character", "extra.md"), "x");
+  // A file inside a gallery plugin's dir is not a plugin to purge; refuse cleanly, file survives.
+  expect(purgePlugin(proj, "character/extra.md")).toBe(false);
+  expect(existsSync(join(proj, "plugins", "character", "extra.md"))).toBe(true);
+  expect(existsSync(join(proj, "plugins", "character"))).toBe(true);
+});
+
+test("purgePlugin still deletes a real gallery dir (the happy path is unbroken)", () => {
+  const src = mkPluginSrc("whenful");
+  const proj = tmpProject();
+  installPlugin(proj, "whenful", { from: src });
+  expect(existsSync(join(proj, "plugins", "whenful"))).toBe(true);
+  expect(purgePlugin(proj, "whenful")).toBe(true);
+  expect(existsSync(join(proj, "plugins", "whenful"))).toBe(false);
+});
+
 // --- npm pack failures carry npm's real reason ---
 
 test("npm pack failure surfaces npm's actual error, not a bare exit code", () => {
