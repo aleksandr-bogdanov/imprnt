@@ -1,5 +1,5 @@
 import { test, expect, beforeAll } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, realpathSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -27,12 +27,14 @@ type Run = { code: number; stdout: string; stderr: string };
 
 // One spawn helper for both bins. EVERY child is sandboxed: XDG_CONFIG_HOME points into the tmp
 // root (init writes the registry there, never into the developer's real ~/.config/imprnt) and
-// the IMPRNT_* env overrides are blanked (empty string reads as unset) so the developer's shell
-// can't steer resolution. Piped stdio also means the child sees NO TTY, which is itself under
-// test for bare imp.
-async function run(entry: string, root: string, args: string[], env: Record<string, string> = {}): Promise<Run> {
+// the IMPRNT_* env overrides are blanked so the developer's shell can't steer resolution. A
+// blanked (set-but-empty) var must read as UNSET in every consumer - roots.ts and registry.ts
+// read truthiness, and cli.ts vaultArg uses || for the same reason (it once used ?? and treated
+// "" as a real vault path, which this comment wrongly documented as "reads as unset"). Piped
+// stdio also means the child sees NO TTY, which is itself under test for bare imp.
+async function run(entry: string, root: string, args: string[], env: Record<string, string> = {}, cwd: string = root): Promise<Run> {
   const proc = Bun.spawn([process.execPath, join(root, "scripts", entry), ...args], {
-    cwd: root,
+    cwd,
     env: {
       ...process.env,
       XDG_CONFIG_HOME: join(root, "xdg"),
@@ -53,8 +55,8 @@ async function run(entry: string, root: string, args: string[], env: Record<stri
   return { code, stdout, stderr };
 }
 
-const runCli = (root: string, args: string[], env: Record<string, string> = {}) => run("cli.ts", root, args, env);
-const runImp = (root: string, args: string[], env: Record<string, string> = {}) => run("imp.ts", root, args, env);
+const runCli = (root: string, args: string[], env: Record<string, string> = {}, cwd?: string) => run("cli.ts", root, args, env, cwd);
+const runImp = (root: string, args: string[], env: Record<string, string> = {}, cwd?: string) => run("imp.ts", root, args, env, cwd);
 
 function readLocal(root: string): string {
   const p = join(root, "CLAUDE.local.md");
@@ -272,4 +274,133 @@ test("init registers the project as the default vault; a second init keeps it un
   const forced = await runImp(b, ["init", "--register"], { XDG_CONFIG_HOME: xdg });
   expect(forced.stdout).toContain("registered as imp's default vault project");
   expect(JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8")).vaults.personal).toBe(realpathSync(b));
+});
+
+// --- spec containment end to end (the P0: a spec must never reach outside plugins/) ---
+
+test("plugin rm .. --purge is rejected and deletes nothing", async () => {
+  const root = tmpRepo();
+  const r = await runCli(root, ["plugin", "rm", "..", "--purge"]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("invalid plugin spec");
+  // The sandbox project survives intact.
+  expect(existsSync(join(root, "scripts", "cli.ts"))).toBe(true);
+  expect(existsSync(join(root, "plugins", "anti-slop", "agent.md"))).toBe(true);
+});
+
+test("plugin rm foo/.. --purge is rejected and plugins/ survives", async () => {
+  const root = tmpRepo();
+  const r = await runCli(root, ["plugin", "rm", "foo/..", "--purge"]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("invalid plugin spec");
+  expect(existsSync(join(root, "plugins", "anti-slop", "agent.md"))).toBe(true);
+});
+
+test("plugin add of an escaping wire-only spec is rejected, nothing wired", async () => {
+  const root = tmpRepo();
+  writeFileSync(join(root, "secret.md"), "x");
+  const r = await runCli(root, ["plugin", "add", "../secret.md"]);
+  expect(r.code).toBe(1);
+  expect(readLocal(root)).not.toContain("secret.md");
+});
+
+// --- dangling --from ---
+
+test("plugin add with a dangling --from is a usage error (never a silent registry fetch)", async () => {
+  const root = tmpRepo();
+  const r = await runCli(root, ["plugin", "add", "demo", "--from"]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("--from <dir>");
+});
+
+// --- rm/add symmetry for file specs ---
+
+test("plugin rm <name>/<file.md> unwires exactly what add wired, leaving siblings", async () => {
+  const root = tmpRepo();
+  mkdirSync(join(root, "plugins", "_personal"), { recursive: true });
+  writeFileSync(join(root, "plugins", "_personal", "voice.md"), "x");
+  writeFileSync(join(root, "plugins", "_personal", "taylor.md"), "x");
+  await runCli(root, ["plugin", "add", "_personal/voice.md", "_personal/taylor.md"]);
+  const r = await runCli(root, ["plugin", "rm", "_personal/voice.md"]);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("unwired _personal/voice.md");
+  const local = readLocal(root);
+  expect(local).not.toContain("@plugins/_personal/voice.md");
+  expect(local).toContain("@plugins/_personal/taylor.md");
+});
+
+// --- fs-error states: clean one-line errors, per-name loop continuation ---
+
+test("add with a read-only CLAUDE.local.md reports each name cleanly and keeps going", async () => {
+  const root = tmpRepo();
+  const p = join(root, "CLAUDE.local.md");
+  writeFileSync(p, "# header\n");
+  chmodSync(p, 0o444);
+  const r = await runCli(root, ["plugin", "add", "anti-slop", "character/scribe.md"]);
+  chmodSync(p, 0o644);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("anti-slop:");
+  // The loop reached the second name instead of aborting on the first failure.
+  expect(r.stderr).toContain("character/scribe.md:");
+  expect(r.stderr).not.toMatch(/\n\s+at /); // a message, not a stack trace
+});
+
+test("wire failure after a copy reports the half-state (installed but not wired)", async () => {
+  const root = tmpRepo();
+  const src = mkPluginSrc(root, "demo");
+  const p = join(root, "CLAUDE.local.md");
+  writeFileSync(p, "# header\n");
+  chmodSync(p, 0o444);
+  const r = await runCli(root, ["plugin", "add", "demo", "--from", src]);
+  chmodSync(p, 0o644);
+  expect(r.code).toBe(1);
+  expect(existsSync(join(root, "plugins", "demo", "agent.md"))).toBe(true);
+  expect(r.stderr).toContain("not wired");
+});
+
+test("a directory named CLAUDE.local.md gives clean errors (list works, add reports)", async () => {
+  const root = tmpRepo();
+  mkdirSync(join(root, "CLAUDE.local.md"));
+  const list = await runCli(root, ["plugin", "list"]);
+  expect(list.code).toBe(0);
+  expect(list.stdout).toContain("plugins:");
+  const add = await runCli(root, ["plugin", "add", "anti-slop"]);
+  expect(add.code).toBe(1);
+  expect(add.stderr).toContain("anti-slop:");
+  expect(add.stderr).not.toMatch(/\n\s+at /);
+});
+
+test("init where a plain FILE named vault exists errors cleanly (no EEXIST stack)", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  writeFileSync(join(root, "vault"), "not a directory");
+  const r = await runCli(root, ["init"]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("vault");
+  expect(r.stderr).not.toMatch(/\n\s+at /);
+});
+
+// --- set-but-empty IMPRNT_VAULT must read as unset, like every other consumer of the var ---
+
+test("hot with IMPRNT_VAULT set but empty falls back to ./vault", async () => {
+  const root = tmpRepo();
+  const r = await runCli(root, ["hot"], { IMPRNT_VAULT: "" });
+  expect(r.code).toBe(1);
+  // vaultArg must fall through to ./vault, never treat "" as a real path.
+  expect(r.stderr).toContain(join("vault", "hot.md"));
+});
+
+// --- init refuses to nest inside an existing vault project ---
+
+test("init from a subdirectory of an existing vault project refuses and names the root", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  mkVault(root);
+  const sub = join(root, "notes", "deep");
+  mkdirSync(sub, { recursive: true });
+  const r = await runCli(root, ["init"], {}, sub);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain(realpathSync(root));
+  // Nothing was scaffolded into the subdirectory.
+  expect(existsSync(join(sub, "vault"))).toBe(false);
 });

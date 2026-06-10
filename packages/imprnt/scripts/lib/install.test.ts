@@ -113,6 +113,39 @@ test("coreChannel falls back to latest when package.json is missing or unreadabl
   expect(coreChannel(join(tmpdir(), "imprnt-no-such-pkgroot-xyz"))).toBe("latest");
 });
 
+// --- spec containment: rm/cp must never reach outside plugins/ ---
+
+test("purgePlugin refuses .. and foo/.. (an escape would delete the project / all of plugins/)", () => {
+  const proj = tmpProject();
+  // Sentinels an escape would take out: the project root itself, and plugins/ wholesale.
+  writeFileSync(join(proj, "CLAUDE.md"), "contract");
+  mkdirSync(join(proj, "plugins", "_personal"), { recursive: true });
+  writeFileSync(join(proj, "plugins", "_personal", "voice.md"), "x");
+  expect(purgePlugin(proj, "..")).toBe(false);
+  expect(existsSync(join(proj, "CLAUDE.md"))).toBe(true);
+  expect(purgePlugin(proj, "foo/..")).toBe(false);
+  expect(existsSync(join(proj, "plugins", "_personal", "voice.md"))).toBe(true);
+});
+
+test("installPlugin refuses a name that escapes plugins/ (no copy into the project root)", () => {
+  const src = mkPluginSrc("demo");
+  const proj = tmpProject();
+  const r = installPlugin(proj, "..", { from: src });
+  expect(r.copied).toBe(false);
+  expect(r.error).toContain("invalid plugin spec");
+  expect(existsSync(join(proj, "agent.md"))).toBe(false);
+});
+
+// --- npm pack failures carry npm's real reason ---
+
+test("npm pack failure surfaces npm's actual error, not a bare exit code", () => {
+  const proj = tmpProject();
+  const dir = mkdtempSync(join(tmpdir(), "imprnt-nopkg-")); // exists, but holds no package.json
+  const r = installPlugin(proj, "demo", { from: dir });
+  expect(r.copied).toBe(false);
+  expect(r.error).toMatch(/package\.json/);
+});
+
 test("channel:'edge' is ignored for a --from install (local dir wins, still copies)", () => {
   const src = mkPluginSrc("demo");
   const proj = tmpProject();
