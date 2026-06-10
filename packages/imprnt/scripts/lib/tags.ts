@@ -69,11 +69,21 @@ export function loadTags(vault: string): TagVocab {
   for (const line of section(text, "Tags").split(/\r?\n/)) {
     for (const t of tagTokens(line)) approved.add(t.toLowerCase());
   }
+  // Kebab BOTH sides of each `keys... -> canonical` mapping as it loads, the same normalization
+  // normalize() applies to its query input. The contract writes multi-word keys with a space
+  // (`net worth -> finances`), but normalize kebabs its input before the lookup, so a verbatim
+  // space/underscore/mixed-case key would never be hit and the synonym would be dead. Kebabbing the key
+  // on load makes "net worth" stored as "net-worth", which normalize("net worth") now matches. The
+  // canonical is kebabbed too so a multi-word canonical (`nw -> net worth`) lands on the same token a
+  // note's own kebab tag carries ("net-worth"). The canonical capture is greedy (it may hold spaces),
+  // so a multi-word value is captured whole, not truncated at the first word.
   for (const line of section(text, "Synonyms").split(/\r?\n/)) {
-    const m = line.match(/^(.*?)\s*->\s*(\S+)\s*$/);
+    const m = line.match(/^(.*?)\s*->\s*(.+?)\s*$/);
     if (!m) continue;
-    const canon = m[2].trim().toLowerCase();
-    for (const syn of m[1].split(",").map((s) => s.trim().toLowerCase())) {
+    const canon = kebab(m[2]);
+    if (!canon) continue;
+    for (const raw of m[1].split(",")) {
+      const syn = kebab(raw);
       if (syn) synonyms.set(syn, canon);
     }
   }

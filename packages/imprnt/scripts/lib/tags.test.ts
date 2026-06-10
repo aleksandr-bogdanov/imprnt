@@ -74,6 +74,52 @@ test("loadTags parses a single-line tag list and synonyms", () => {
   rmSync(v, { recursive: true });
 });
 
+// P2: a multi-word synonym KEY written with a space (the contract's own `net worth -> finances`
+// example, and the recall.ts phrase-synonym path) must resolve through normalize. loadTags stored the
+// key verbatim ("net worth"), but normalize kebabs its input ("net-worth") before the lookup, so the
+// space key was never hit and the synonym was dead. The fix kebabs BOTH sides of the mapping on load.
+test("normalize resolves a space-keyed synonym (BUG: space key stored un-kebabed)", () => {
+  const v = tmpVault("## Tags\nfinances\n\n## Synonyms\nnet worth -> finances\n");
+  const vocab = loadTags(v);
+  expect(normalize(vocab, "net worth")).toBe("finances");
+  // The hyphen-written form of the same query must resolve to the same canonical.
+  expect(normalize(vocab, "net-worth")).toBe("finances");
+  expect(vocab.synonyms.get("net-worth")).toBe("finances");
+  rmSync(v, { recursive: true });
+});
+
+// An underscore-keyed and a mixed-case-keyed synonym must resolve too: the key is kebabbed on load
+// the same way normalize kebabs the query, so all spelling variants meet at one map entry.
+test("normalize resolves underscore-keyed and mixed-case-keyed synonyms", () => {
+  const v = tmpVault("## Tags\ntaxes\n\n## Synonyms\nTax_Filing -> taxes\n");
+  const vocab = loadTags(v);
+  expect(vocab.synonyms.get("tax-filing")).toBe("taxes");
+  expect(normalize(vocab, "Tax_Filing")).toBe("taxes");
+  expect(normalize(vocab, "tax filing")).toBe("taxes");
+  expect(normalize(vocab, "tax-filing")).toBe("taxes");
+  rmSync(v, { recursive: true });
+});
+
+// A multi-word CANONICAL value is kebabbed on load too, so the chain lands on the same token a note's
+// own kebab tag would carry: nw -> "net worth" stores canonical "net-worth", and normalize follows it.
+test("loadTags kebabs a multi-word canonical value", () => {
+  const v = tmpVault("## Tags\nnet-worth\n\n## Synonyms\nnw -> net worth\n");
+  const vocab = loadTags(v);
+  expect(vocab.synonyms.get("nw")).toBe("net-worth");
+  expect(normalize(vocab, "nw")).toBe("net-worth");
+  rmSync(v, { recursive: true });
+});
+
+// Existing hyphen-keyed shipped synonyms (kebab("on-call") === "on-call") are unchanged by the fix.
+test("loadTags leaves an already-kebabbed synonym key unchanged", () => {
+  const v = tmpVault("## Tags\noncall\n\n## Synonyms\non-call, pager -> oncall\n");
+  const vocab = loadTags(v);
+  expect(vocab.synonyms.get("on-call")).toBe("oncall");
+  expect(vocab.synonyms.get("pager")).toBe("oncall");
+  expect(normalize(vocab, "on-call")).toBe("oncall");
+  rmSync(v, { recursive: true });
+});
+
 test("loadTags ignores a prose line in the ## Tags section (BUG B)", () => {
   const v = tmpVault("## Tags\nalpha, beta\nthis is an explanatory sentence\n\n## Synonyms\n");
   const vocab = loadTags(v);
