@@ -640,6 +640,48 @@ test("the dup-tag audit flags exactly the near-duplicate pairs and no others", (
   ]);
 });
 
+// --- dup-tag audit: numbered/short siblings are not flagged (false-positive cut) -----
+// The near (edit-distance-1) rule used to fire on any two tags one char apart, regardless of what the
+// char was or how short the tags were. That flooded on legitimately-distinct siblings: quarters
+// (q1/q2), versions (v1/v2/gpt-4/gpt-5), fiscal years (fy2025/fy2026), phases (phase-1/phase-2), and
+// short coincidences (q1/v1, ios/is). None are typos, yet each made `imprnt check` exit 1 forever with
+// no correct suppression (a synonym would collapse them in recall, which is semantically wrong). Two
+// refinements cut these while keeping real typos: near requires the shorter tag be >= 4 chars (short
+// tags collide by coincidence, not by typo), and a pair whose only differing position(s) are digits is
+// a numbered sibling, never a typo. A pair differing by a LETTER (the added/changed char) still flags.
+test("the dup-tag audit does not flag numbered or short siblings, only real typos", () => {
+  const dir = makeVault();
+  // Real typos / genuine near-dups (MUST flag):
+  //   finance ~ finances  (added char 's' - a letter)
+  //   shoe    ~ shoes      (added char 's' - a letter)
+  //   identty ~ identity   (changed char is a letter; edit-distance 1)
+  //   plan    ~ planner    (prefix gap 3 - the shared-prefix rule, untouched)
+  // Numbered/short siblings (must NOT flag):
+  //   q1 ~ q2, v1 ~ v2     (short, length 2)
+  //   q1 ~ v1              (short coincidence at edit-distance 1)
+  //   ios ~ is            (shorter tag length 2)
+  //   gpt-4 ~ gpt-5        (only differing char is a digit)
+  //   fy2025 ~ fy2026      (only differing char is a digit)
+  //   phase-1 ~ phase-2    (only differing char is a digit)
+  const tags = [
+    "finance", "finances", "shoe", "shoes", "identity", "identty", "plan", "planner",
+    "q1", "q2", "q3", "q4", "v1", "v2", "ios", "is",
+    "gpt-4", "gpt-5", "fy2025", "fy2026", "phase-1", "phase-2",
+  ];
+  writeFileSync(
+    join(dir, "_tags.md"),
+    `---\ntype: tags\n---\n\n# tags\n\n## Tags\n${tags.join(", ")}\n\n## Synonyms\n`
+  );
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const { out } = runCheck(dir);
+  expect(dupPairList(out)).toEqual([
+    "finance ~ finances",
+    "identity ~ identty",
+    "plan ~ planner",
+    "shoe ~ shoes",
+  ]);
+});
+
 // A 1000-tag vault must complete fast: the length-gate keeps the audit out of the O(n^2) normalize +
 // Levenshtein trap that measured 3.5s at 1000 tags pre-fix. This is a cheap sanity bound, not a tight
 // benchmark - it only catches a regression back to the quadratic-with-DP-per-pair behavior.

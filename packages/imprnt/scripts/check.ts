@@ -178,6 +178,24 @@ if (hasTagsFile) {
       d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
     return d[a.length][b.length];
   };
+  // For a pair already known to be at edit-distance 1 (the `near` gate), true when the SINGLE edit is a
+  // digit: a substitution where both differing chars are digits (gpt-4/gpt-5), or an insert/delete of a
+  // digit (no current case, kept for completeness). Numbered siblings (q1/q2, fy2025/fy2026, phase-1/
+  // phase-2) are intentional, not typos, so they are skipped. A LETTER edit (finance/finances adds 's',
+  // identty/identity swaps a letter) is NOT digit-only and still flags. `short`/`long` are by length.
+  const DIGIT = /[0-9]/;
+  const digitOnlyEdit = (short: string, long: string): boolean => {
+    if (short.length === long.length) {
+      // Substitution: exactly one position differs (guaranteed by lev === 1 at equal length).
+      const k = [...short].findIndex((c, i) => c !== long[i]);
+      return k >= 0 && DIGIT.test(short[k]) && DIGIT.test(long[k]);
+    }
+    // Insert/delete: the extra char in `long` sits at the first divergence (or at the tail). It is the
+    // single edit, so the pair is digit-only iff that inserted/deleted char is a digit.
+    let k = 0;
+    while (k < short.length && short[k] === long[k]) k++;
+    return DIGIT.test(long[k]);
+  };
   const tagArr = [...new Set([...vocab.approved, ...addedTags])].sort();
   // The audit flags two relations and BOTH need the two tags' lengths to be close:
   //   prefixDup: one is a >=4-char prefix of the other, gap <= 3  -> abs(lenA - lenB) <= 3
@@ -208,7 +226,11 @@ if (hasTagsFile) {
       if (normalize(vocab, a) === normalize(vocab, b)) continue;
       const short = a.length <= b.length ? a : b, long = a.length <= b.length ? b : a;
       const prefixDup = short.length >= 4 && long.startsWith(short) && long.length - short.length <= 3;
-      const near = Math.abs(a.length - b.length) <= 1 && lev(a, b) <= 1;
+      // near requires the shorter tag be >= 4 chars: short tags (q1, v1, ios, is) collide at
+      // edit-distance 1 by coincidence, almost never as typos of each other. And a pair whose single
+      // edit is a digit (gpt-4/gpt-5, fy2025/fy2026, phase-1/phase-2) is a numbered sibling, not a
+      // typo, so it is skipped too. shoe/shoes (4/5) and finance/finances (7/8) still flag.
+      const near = short.length >= 4 && Math.abs(a.length - b.length) <= 1 && lev(a, b) <= 1 && !digitOnlyEdit(short, long);
       if (prefixDup || near) dupPairs.push(`  ${a} ~ ${b}`);
     }
   }
