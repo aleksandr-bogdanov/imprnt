@@ -10,9 +10,9 @@
 // WHAT to include stays explicit at the call site and this tool stays a pure copy:
 //   imprnt snapshot ~/.claude/PAI/USER/TELOS --dest pai/USER/TELOS
 //   imprnt snapshot ./tax2025.csv          --dest tax-2025
-import { readdirSync, readFileSync, copyFileSync, mkdirSync, existsSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, copyFileSync, mkdirSync, existsSync, statSync, lstatSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, relative, basename, resolve, sep } from "node:path";
+import { join, relative, basename, extname, resolve, sep } from "node:path";
 import { loadManifest, saveManifest } from "./lib/manifest.ts";
 
 // Guard a user-supplied dest relpath so it can never escape raw/. A `../`-laden dest would otherwise
@@ -60,31 +60,81 @@ const manifest = loadManifest(vault);
 const SKIP = new Set([".git", ".DS_Store", "node_modules", ".manifest.json"]);
 
 // Collect (absoluteSrc, relativeUnderSrc) pairs. A file maps to its basename under dest.
-function collect(p: string, base: string): { abs: string; rel: string }[] {
-  const st = statSync(p);
-  if (st.isFile()) return [{ abs: p, rel: basename(p) }];
+// Symlink discipline (lstat first, never blind-stat): a healthy FILE symlink is followed and copied
+// as the bytes it points at (a dotfiles mirror wants the content). A DANGLING link is skipped and
+// counted - statSync on it would abort the whole bulk snapshot with ENOENT before anything copies.
+// A DIRECTORY symlink is skipped and counted: following one can recurse forever on a cycle, and
+// skipping is the simple safe choice over tracking visited real paths.
+function collect(p: string, base: string): { files: { abs: string; rel: string }[]; skippedLinks: number } {
+  let skippedLinks = 0;
+  const st = statSync(p); // the top-level src: following a user-passed symlink is intentional
+  if (st.isFile()) return { files: [{ abs: p, rel: basename(p) }], skippedLinks };
   const out: { abs: string; rel: string }[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
       if (SKIP.has(entry)) continue;
       const f = join(dir, entry);
-      if (statSync(f).isDirectory()) walk(f);
-      else out.push({ abs: f, rel: relative(base, f) });
+      const ls = lstatSync(f);
+      if (ls.isSymbolicLink()) {
+        let target;
+        try { target = statSync(f); } catch { skippedLinks++; continue; } // dangling
+        if (target.isFile()) out.push({ abs: f, rel: relative(base, f) });
+        else skippedLinks++; // a directory (or other) symlink - never followed
+        continue;
+      }
+      if (ls.isDirectory()) walk(f);
+      else if (ls.isFile()) out.push({ abs: f, rel: relative(base, f) });
+      // anything else (fifo/socket/device) is not snapshot material
     }
   };
   walk(p);
-  return out;
+  return { files: out, skippedLinks };
 }
 
-const files = collect(src, src);
-let copied = 0, unchanged = 0;
+const { files, skippedLinks } = collect(src, src);
+let copied = 0, unchanged = 0, disambiguated = 0;
 
 for (const { abs, rel } of files) {
-  const rawPath = join(destRoot, rel);
-  const hash = createHash("sha256").update(readFileSync(abs)).digest("hex").slice(0, 16);
-  const key = join("raw", dest, rel); // stable manifest key, vault-relative
+  const srcBytes = readFileSync(abs);
+  const hash = createHash("sha256").update(srcBytes).digest("hex").slice(0, 16);
+  let rawPath = join(destRoot, rel);
+  let key = join("raw", dest, rel); // stable manifest key, vault-relative
 
   if (manifest[key]?.hash === hash && existsSync(rawPath)) { unchanged++; continue; }
+
+  // raw/ is immutable: NEVER overwrite an existing snapshot. Compare the actual disk bytes:
+  //   - identical -> a skip, and the manifest row is refreshed in place. This also absorbs legacy
+  //     rows whose hash was computed wrong - the disk bytes, not the stale row, are the truth.
+  //   - different (a changed source re-snapshot, a basename collision from another source, or two
+  //     files mapping to the same rel WITHIN this run - the first was just copied, the second lands
+  //     here) -> file the new bytes under a content-address-disambiguated name (<stem>-<hash8><ext>,
+  //     ingest's scheme) under its OWN manifest key. The existing file and its row stay untouched.
+  if (existsSync(rawPath)) {
+    if (Buffer.compare(readFileSync(rawPath), srcBytes) === 0) {
+      manifest[key] = { hash, note: manifest[key]?.note ?? "", ingested: new Date().toISOString(), raw: key, src: abs };
+      unchanged++;
+      continue;
+    }
+    const ext = extname(rel);
+    const stem = rel.slice(0, rel.length - ext.length);
+    // hash8 is content-addressed, so a re-run of the same changed bytes lands on the same name. If
+    // that name is also taken by DIFFERENT bytes (a hash8 collision), step a numeric suffix.
+    let relD = `${stem}-${hash.slice(0, 8)}${ext}`;
+    let n = 1;
+    while (existsSync(join(destRoot, relD)) && Buffer.compare(readFileSync(join(destRoot, relD)), srcBytes) !== 0) {
+      relD = `${stem}-${hash.slice(0, 8)}-${++n}${ext}`;
+    }
+    rawPath = join(destRoot, relD);
+    key = join("raw", dest, relD);
+    if (existsSync(rawPath)) {
+      // identical bytes already snapshotted under the disambiguated name on an earlier run - a skip
+      manifest[key] = { hash, note: manifest[key]?.note ?? "", ingested: new Date().toISOString(), raw: key, src: abs };
+      unchanged++;
+      continue;
+    }
+    console.log(`  ! raw/${join(dest, rel)} already holds different bytes - immutable, writing raw/${join(dest, relD)} instead`);
+    disambiguated++;
+  }
 
   mkdirSync(join(rawPath, ".."), { recursive: true });
   copyFileSync(abs, rawPath);
@@ -95,4 +145,6 @@ for (const { abs, rel } of files) {
 saveManifest(vault, manifest);
 console.log(`snapshot ${src} → raw/${dest}/`);
 console.log(`  ${copied} copied, ${unchanged} unchanged (immutable). ${files.length} file(s) total.`);
+if (disambiguated) console.log(`  ${disambiguated} filed under a disambiguated name - an existing raw/ snapshot is never overwritten.`);
+if (skippedLinks) console.log(`  ${skippedLinks} symlink(s) skipped (dangling or directory links).`);
 if (copied) console.log(`  next: the LLM reads raw/${dest}/ and fans sources out into vault notes (source: raw/${dest}/...).`);
