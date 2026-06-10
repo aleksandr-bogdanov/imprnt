@@ -213,6 +213,27 @@ test("a -p VALUE that merely starts with --append-system-prompt= is NOT mistaken
   expect(args[aspIdx + 1]).toContain("imprnt recall");
 });
 
+test("an --add-dir VALUE that starts with --append-system-prompt= is NOT mistaken for the user's flag", () => {
+  // --add-dir consumes its next token as an arbitrary path. A user pointing it at a dir whose name
+  // happens to start with --append-system-prompt= must not have the fragment glued onto that path -
+  // that would corrupt --add-dir's value AND set merged=true, so imp emits no real
+  // --append-system-prompt flag and the cast/pointer never reach claude.
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const { args } = buildLaunch({
+    cwd: "/somewhere/else",
+    vaultProject: root,
+    pkgRoot,
+    passthrough: ["--add-dir", "--append-system-prompt=mydir"],
+  });
+  // The user's --add-dir value is left verbatim, the fragment is its own separate flag.
+  const userAddDir = args.indexOf("--add-dir");
+  expect(args[userAddDir + 1]).toBe("--append-system-prompt=mydir");
+  const aspIdx = args.indexOf("--append-system-prompt");
+  expect(aspIdx).toBeGreaterThanOrEqual(0);
+  expect(args[aspIdx + 1]).toContain("imprnt recall");
+});
+
 test("inside the vault project nothing is injected (native loading, no double cast)", () => {
   const root = tmpVaultProject();
   expect(buildLaunch({ cwd: root, vaultProject: root, pkgRoot, passthrough: ["--resume"] }).args).toEqual(["--resume"]);

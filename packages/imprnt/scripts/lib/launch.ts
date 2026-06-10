@@ -126,7 +126,16 @@ export function buildLaunch(opts: {
     // exact flag). imp is a thin launcher, not a reimplementation of claude's parser, so this
     // guards the realistic free-text-value flags rather than enumerating every claude flag.
     const prev = args[i - 1];
-    const inValuePosition = prev === "-p" || prev === "--print" || prev === "--append-system-prompt" || prev === "--system-prompt";
+    // --add-dir consumes an arbitrary PATH as its value (and imp passes one too), so a user dir
+    // named "--append-system-prompt=..." must read as that path, never as the flag. The other
+    // entries are claude's free-text value flags. Keep this to the realistic value-consuming flags,
+    // not a full mirror of claude's parser - imp is a thin launcher.
+    const inValuePosition =
+      prev === "-p" ||
+      prev === "--print" ||
+      prev === "--append-system-prompt" ||
+      prev === "--system-prompt" ||
+      prev === "--add-dir";
     if (args[i] === "--append-system-prompt" && args[i + 1] !== undefined) {
       args[i + 1] += "\n\n" + fragment;
       merged = true;

@@ -250,9 +250,13 @@ switch (cmd) {
     // Register this project so `imp` and `imprnt context` find the vault from any directory.
     // First init becomes the default; an existing different default is kept and reported, never
     // silently replaced — `imprnt init --register` here switches it on purpose.
+    // A registration failure (unwritable config dir) must NOT abort the successful scaffold: the
+    // vault is fully usable via ./vault or IMPRNT_VAULT even unregistered. Print one clean line on
+    // stderr and fall through to the normal scaffold report (exit 0) - init's real job is done.
     const reg = registerVault(process.cwd(), { force: rest.includes("--register") });
     if (reg.status === "registered") console.log(`registered as imp's default vault project (${configPath()})`);
     else if (reg.status === "kept") console.log(`kept the existing default vault project (${reg.current}) — run \`imprnt init --register\` here to switch`);
+    else if (reg.status === "error") console.error(`could not register as imp's default vault project (${configPath()}): ${reg.error} — the vault still works via ./vault or IMPRNT_VAULT`);
 
     if (!vaultExisted) {
       // Brand-new vault: show the layout so the user learns the shape, then point at the next step.
