@@ -3,14 +3,15 @@
 A customizable status line for your imp sessions:
 
 ```
-Fable 5 · taxes-deep-dive · imprint-vault · main ↑2 ⊡1 · $0.42 · 1h12m · +156/-23
-ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · 5h 24% →18:00 · 7d 41% →Thu · vault 247 3! · ☀️ 22° · 14:05
+model Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1 · cost $0.42 · elapsed 1h12m · lines +156/-23
+ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · limits 5h 24% →18:00 · 7d 41% →Thu · vault 247 notes · 3 review · ☀️ 22° · 14:05
 ```
 
-Two rows. The work on top: model, session name, directory, git branch with ahead/behind and stash
-count, session cost and duration, lines added/removed. The meters below: a banded context gauge,
-both rate-limit windows with absolute reset times (clock today, weekday otherwise), the vault at a
-glance (notes, plus a red needs-review count), cached weather, wall clock. Percentages and the bar
+Two rows, every segment labeled. The work on top: model, session name, directory, git branch with
+ahead (↑) / behind (↓) commit counts and stashes (⊡), session cost and elapsed time, lines
+added/removed. The meters below: a banded context gauge, both rate-limit windows with absolute
+reset times (clock today, weekday otherwise), the vault at a glance (notes, plus a red
+needs-review count), cached weather, wall clock. Percentages and the bar
 go yellow past 60 and red past 85, a 30-second refresh keeps the clock, weather, and limits
 honest, and on a narrow terminal each row drops segments in a fixed order (housekeeping first,
 load-bearing last) instead of wrapping. Made to be edited - the shipped panel is a starting

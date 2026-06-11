@@ -6,8 +6,8 @@
 //
 // Two rows, on a wide terminal:
 //
-//   Fable 5 · taxes-deep-dive · imprint-vault · main ↑2 ⊡1 · $0.42 · 1h12m · +156/-23
-//   ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · 5h 24% →18:00 · 7d 41% →Thu · vault 247 3! · ☀️ 22° · 14:05
+//   model Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1 · cost $0.42 · elapsed 1h12m · lines +156/-23
+//   ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · limits 5h 24% →18:00 · 7d 41% →Thu · vault 247 notes · 3 review · ☀️ 22° · 14:05
 //
 // Row one is the work: model · session name (when you /rename) · directory · git branch with
 // ahead/behind and stash count (index-only — never `git status`, which is the one slow git call)
@@ -125,7 +125,7 @@ function git(args: string[], dir: string): string {
 function gitSegment(dir: string): string {
   const branch = git(["branch", "--show-current"], dir);
   if (!branch) return "";
-  let out = `${MAGENTA}${branch}${RESET}`;
+  let out = `${DIM}git${RESET} ${MAGENTA}${branch}${RESET}`;
   const counts = git(["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], dir);
   if (counts) {
     const [behind, ahead] = counts.split(/\s+/).map(Number);
@@ -137,7 +137,7 @@ function gitSegment(dir: string): string {
   return out;
 }
 
-// vault 247 3! — the vault at a glance: how many notes, and a red count when `imprnt check` flagged
+// vault 247 notes · 3 review — the vault at a glance: how many notes, and a red count when `imprnt check` flagged
 // anything into needs-review. Reads the vault imp already pointed the session at (IMPRNT_VAULT).
 function vaultSegment(): string {
   const vault = process.env.IMPRNT_VAULT || process.env.IMPRINT_VAULT;
@@ -151,8 +151,8 @@ function vaultSegment(): string {
           .split("\n")
           .filter((l) => l.startsWith("- ")).length
       : 0;
-    const flag = review ? ` ${RED}${BOLD}${review}!${RESET}` : "";
-    return `${DIM}vault${RESET} ${notes}${flag}`;
+    const flag = review ? ` ${DIM}·${RESET} ${RED}${BOLD}${review} review${RESET}` : "";
+    return `${DIM}vault${RESET} ${notes} ${DIM}notes${RESET}${flag}`;
   } catch {
     return "";
   }
@@ -199,10 +199,10 @@ function weatherSegment(): string {
 // Build every segment the payload supports, keyed so the width fitter can drop by name.
 const seg = new Map<string, string>();
 
-if (info.model?.display_name) seg.set("model", `${BOLD}${CYAN}${info.model.display_name}${RESET}`);
-if (info.session_name) seg.set("session", `${BOLD}${info.session_name}${RESET}`);
+if (info.model?.display_name) seg.set("model", `${DIM}model${RESET} ${BOLD}${CYAN}${info.model.display_name}${RESET}`);
+if (info.session_name) seg.set("session", `${DIM}session${RESET} ${BOLD}${info.session_name}${RESET}`);
 if (info.workspace?.current_dir) {
-  seg.set("dir", basename(info.workspace.current_dir));
+  seg.set("dir", `${DIM}dir${RESET} ${basename(info.workspace.current_dir)}`);
   const g = gitSegment(info.workspace.current_dir);
   if (g) seg.set("branch", g);
 }
@@ -212,18 +212,18 @@ if (typeof info.context_window?.used_percentage === "number") {
   seg.set("ctx", `${DIM}ctx${RESET} ${bar(used)} ${pct(used)}${over}`);
 }
 if (typeof info.cost?.total_cost_usd === "number") {
-  seg.set("cost", `$${info.cost.total_cost_usd.toFixed(2)}`);
+  seg.set("cost", `${DIM}cost${RESET} $${info.cost.total_cost_usd.toFixed(2)}`);
 }
 if (typeof info.cost?.total_duration_ms === "number" && info.cost.total_duration_ms >= 1000) {
-  seg.set("time", `${DIM}${duration(info.cost.total_duration_ms)}${RESET}`);
+  seg.set("time", `${DIM}elapsed${RESET} ${duration(info.cost.total_duration_ms)}`);
 }
 if (info.cost?.total_lines_added || info.cost?.total_lines_removed) {
-  seg.set("lines", `${GREEN}+${info.cost.total_lines_added ?? 0}${RESET}${DIM}/${RESET}${RED}-${info.cost.total_lines_removed ?? 0}${RESET}`);
+  seg.set("lines", `${DIM}lines${RESET} ${GREEN}+${info.cost.total_lines_added ?? 0}${RESET}${DIM}/${RESET}${RED}-${info.cost.total_lines_removed ?? 0}${RESET}`);
 }
 const fiveHour = info.rate_limits?.five_hour;
 if (typeof fiveHour?.used_percentage === "number") {
   const r = fiveHour.resets_at ? ` ${reset(fiveHour.resets_at)}` : "";
-  seg.set("5h", `5h ${pct(fiveHour.used_percentage)}${r}`);
+  seg.set("5h", `${DIM}limits${RESET} 5h ${pct(fiveHour.used_percentage)}${r}`);
 }
 const sevenDay = info.rate_limits?.seven_day;
 if (typeof sevenDay?.used_percentage === "number") {
