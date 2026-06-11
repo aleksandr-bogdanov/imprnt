@@ -88,12 +88,14 @@ test("the vault segment shows note count and a needs-review flag from IMPRNT_VAU
   expect(r.out).toContain("◈2 2!"); // 2 notes (_-files excluded), 2 review items
 });
 
-test("a narrow terminal drops housekeeping segments first, never wraps", () => {
+test("a narrow terminal drops housekeeping segments first, per row, never wraps", () => {
   const payload = { ...FULL, workspace: { current_dir: mkdtempSync(join(tmpdir(), "imprnt-sl-")) } };
   const r = lineFor(JSON.stringify(payload), { COLUMNS: "40" });
-  expect(r.out.length).toBeLessThanOrEqual(40);
-  expect(r.out).toContain("Opus"); // model survives
-  expect(r.out).toContain("%"); // context survives
+  const rows = r.out.split("\n");
+  expect(rows.length).toBe(2);
+  for (const row of rows) expect(row.length).toBeLessThanOrEqual(40);
+  expect(rows[0]).toContain("Opus"); // model survives its row
+  expect(rows[1]).toContain("%"); // context survives its row
   expect(r.out).not.toContain("+156"); // lines dropped early
 });
 

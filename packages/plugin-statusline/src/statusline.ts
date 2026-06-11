@@ -4,17 +4,19 @@
 // limits honest), pipes the session JSON on stdin, and shows whatever it prints. The wiring rides
 // imp's --settings; there is nothing to configure in your own settings files.
 //
-// The full line, on a wide terminal:
+// Two rows, on a wide terminal:
 //
-//   Fable 5 · taxes-deep-dive · imprint-vault · main ↑2 ⊡1 · ▰▰▰▰▱▱▱▱ 48% · $0.42 · 1h12m · +156/-23 · 5h 24% →18:00 · 7d 41% →Thu · ◈247 3! · ☀️ 22° · 14:05
+//   Fable 5 · taxes-deep-dive · imprint-vault · main ↑2 ⊡1 · $0.42 · 1h12m · +156/-23
+//   ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · 5h 24% →18:00 · 7d 41% →Thu · ◈247 3! · ☀️ 22° · 14:05
 //
-// model · session name (when you /rename) · directory · git branch with ahead/behind and stash
-// count (index-only — never `git status`, which is the one slow git call) · banded context bar
-// (cells colored by zone: the bar is a gauge, not just a fill) · session cost · duration · lines
-// added/removed · rate-limit windows with absolute reset times (clock today, weekday otherwise) ·
-// the vault (note count, plus a red needs-review count when imprnt check flagged something) ·
-// weather (cached, never blocks — fetched in a detached background curl) · wall clock. On a
-// narrow terminal, segments drop in a fixed order instead of wrapping — see DROP_ORDER.
+// Row one is the work: model · session name (when you /rename) · directory · git branch with
+// ahead/behind and stash count (index-only — never `git status`, which is the one slow git call)
+// · session cost · duration · lines added/removed. Row two is the meters: banded context bar
+// (cells colored by zone: the bar is a gauge, not just a fill) · rate-limit windows with absolute
+// reset times (clock today, weekday otherwise) · the vault (note count, plus a red needs-review
+// count when imprnt check flagged something) · weather (cached, never blocks — fetched in a
+// detached background curl) · wall clock. On a narrow terminal, each row drops its segments in a
+// fixed order instead of wrapping — see the ROWS table.
 //
 // It is a starting point you personalize — edit the segments below (or copy the plugin into
 // plugins/_personal/ first to keep the shipped one pristine). The full field list the JSON
@@ -234,19 +236,26 @@ const weather = weatherSegment();
 if (weather) seg.set("weather", weather);
 seg.set("clock", `${DIM}${hhmm(new Date())}${RESET}`);
 
-// Fit to the terminal: COLUMNS is set by Claude Code (v2.1.153+). When the assembled line is too
-// wide, drop segments in this order — housekeeping first, the load-bearing ones last.
-const DROP_ORDER = ["weather", "clock", "lines", "time", "vault", "session", "7d", "dir", "branch", "5h", "cost", "ctx", "model"];
+// Two rows, each with its own drop order for narrow terminals (COLUMNS is set by Claude Code,
+// v2.1.153+): when a row runs too wide, its segments drop housekeeping-first, load-bearing last.
+// An empty row simply doesn't print, so a sparse payload degrades to one line on its own.
+const ROWS: { keys: string[]; drop: string[] }[] = [
+  { keys: ["model", "session", "dir", "branch", "cost", "time", "lines"],
+    drop: ["lines", "time", "session", "dir", "cost", "branch", "model"] },
+  { keys: ["ctx", "5h", "7d", "vault", "weather", "clock"],
+    drop: ["weather", "clock", "vault", "7d", "5h", "ctx"] },
+];
 const SEP = `${DIM} · ${RESET}`;
 // eslint-disable-next-line no-control-regex
 const visible = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "").length;
-const line = () => [...seg.values()].join(SEP);
 
-if (cols > 0) {
-  for (const name of DROP_ORDER) {
-    if (visible(line()) <= cols) break;
-    seg.delete(name);
+for (const row of ROWS) {
+  const present = () => row.keys.filter((k) => seg.has(k)).map((k) => seg.get(k)!);
+  if (cols > 0) {
+    for (const name of row.drop) {
+      if (visible(present().join(SEP)) <= cols) break;
+      seg.delete(name);
+    }
   }
+  if (present().length) console.log(present().join(SEP));
 }
-
-if (seg.size) console.log(line());
