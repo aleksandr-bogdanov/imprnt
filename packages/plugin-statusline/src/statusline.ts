@@ -1,36 +1,39 @@
-// imprnt statusline — the bottom line of your Claude session, yours to shape.
+// imprnt statusline — the bottom panel of your Claude session, yours to shape.
 // Shipped as built statusline.js. Claude Code runs it on every refresh (plus every 30s via the
 // refreshInterval in this plugin's imp-settings.json, which keeps the clock, weather, and rate
 // limits honest), pipes the session JSON on stdin, and shows whatever it prints. The wiring rides
 // imp's --settings; there is nothing to configure in your own settings files.
 //
-// Four rows, on a wide terminal:
+// Four rows, on a wide terminal — identity, spend, engine, world:
 //
-//   model Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1
-//   cost $0.42 · elapsed 1h12m · lines +156/-23 · effort high · thinking on
-//   ctx ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 48%
-//   limits 5h 24% →18:00 · 7d 41% →Thu · vault 247 notes · 3 review · ☀️ 22° · 14:05
+//   model  Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1
+//   cost   $0.42 · elapsed 1h12m · lines +156/-23
+//   ctx    ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱  42% · effort high
+//   limits 5h  24% →18:00 · 7d  41% →Thu · vault 247 notes, 3 review · ☀ 22° · 14:05
 //
-// Row one is identity: model · session name (when you /rename) · directory · git branch with
-// ahead/behind and stash count (index-only — never `git status`, which is the one slow git call).
-// Row two is the spend: session cost · elapsed time · lines added/removed · effort level ·
-// extended thinking. Row three is the context gauge alone, stretched to the terminal width
-// (cells colored by zone: the bar is a meter with bands, not just a fill). Row four is the
-// world: rate-limit windows with absolute reset times (clock today, weekday otherwise) · the
-// vault (note count, plus a red needs-review count when imprnt check flagged something) ·
-// weather (cached, never blocks — fetched in a detached background curl) · wall clock. An empty
-// row doesn't print, and on a narrow terminal each row drops its segments in a fixed order
-// instead of wrapping — see the ROWS table.
+// The design rules, learned from the tools that do this well (p10k-lean, catppuccin/tmux):
+//   - The leading label of each row pads to one gutter width, so the panel reads as a table.
+//   - Labels are muted slate, values are bright ink. One accent per row (your session name).
+//   - Color means something or it isn't there: green/amber/red is one alarm ramp shared by every
+//     percentage and the gauge; on a calm session the panel is nearly monochrome.
+//   - The gauge is a meter face: empty cells are faintly tinted by their zone, so the amber and
+//     red bands are visible even when you're at 10%.
+//   - Numbers pad to fixed width so the panel never jitters between refreshes.
+//   - `thinking` renders only when OFF — a flag that is always "on" is not information.
 //
-// It is a starting point you personalize — edit the segments below (or copy the plugin into
-// plugins/_personal/ first to keep the shipped one pristine). The full field list the JSON
-// carries is documented at https://code.claude.com/docs/en/statusline — PR state, vim mode,
-// output style, worktree, and more are in there to pick from. Multi-line output (one console.log
-// per row) also works if you want a second row.
+// Truecolor by default, plain 16-color when COLORTERM doesn't advertise it, bare text under
+// NO_COLOR. On a narrow terminal each row drops segments in a fixed order instead of wrapping
+// (see ROWS at the bottom); a trailing row whose only survivor is the clock doesn't print.
+//
+// It is a starting point you personalize — edit the segments and the PALETTE below (or copy the
+// plugin into plugins/_personal/ first to keep the shipped one pristine). The full field list the
+// JSON carries is documented at https://code.claude.com/docs/en/statusline — PR state, vim mode,
+// output style, worktree, and more are in there to pick from.
 //
 // Defensive on purpose: every field is optional, a missing one just drops its segment, git and
-// vault reads swallow their errors, weather renders only from cache, and unparseable stdin prints
-// nothing. A status line must never crash or stall a session.
+// vault reads swallow their errors, weather renders only from cache (a detached curl refreshes it
+// for the NEXT render), and unparseable stdin prints nothing. A status line must never crash or
+// stall a session.
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -61,38 +64,65 @@ try {
   process.exit(0);
 }
 
-const DIM = "\x1b[2m";
-const BOLD = "\x1b[1m";
-const CYAN = "\x1b[36m";
-const MAGENTA = "\x1b[35m";
-const GREEN = "\x1b[32m";
-const YELLOW = "\x1b[33m";
-const RED = "\x1b[31m";
-const RESET = "\x1b[0m";
+// ----------------------------------------------------------------------------------------------
+// Ink. Roles, not decorations: lbl is the chrome, val is what you read, ok/warn/bad is the one
+// alarm ramp everything thresholded shares. Truecolor (Tokyo Night family) when the terminal
+// advertises it, the nearest base colors otherwise, nothing under NO_COLOR.
+const plain = !!process.env.NO_COLOR;
+const truecolor = !plain && /truecolor|24bit/i.test(process.env.COLORTERM ?? "");
+const fg = (hex: string, fallback: string): string => {
+  if (plain) return "";
+  if (!truecolor) return fallback;
+  const [r, g, b] = [hex.slice(1, 3), hex.slice(3, 5), hex.slice(5, 7)].map((h) => parseInt(h, 16));
+  return `\x1b[38;2;${r};${g};${b}m`;
+};
+const RESET = plain ? "" : "\x1b[0m";
+const BOLD = plain ? "" : "\x1b[1m";
+const P = {
+  lbl: fg("#565f89", "\x1b[2m"), //    labels, reset times, stash — the chrome
+  sep: fg("#3b4261", "\x1b[2m"), //    the · between segments, quieter than the chrome
+  val: fg("#c0caf5", ""), //           values — the ink you actually read
+  model: fg("#7dcfff", "\x1b[36m"), // the model name: quiet cyan, no bold
+  session: BOLD, //                    the one accent: the name YOU gave this session
+  branch: fg("#bb9af7", "\x1b[35m"),
+  ok: fg("#9ece6a", "\x1b[32m"),
+  warn: fg("#e0af68", "\x1b[33m"),
+  bad: fg("#f7768e", "\x1b[31m"),
+  // the gauge face: empty cells faintly tinted by their zone, so the bands always show
+  okDim: fg("#2e3b2e", "\x1b[2m"),
+  warnDim: fg("#453b28", "\x1b[2m"),
+  badDim: fg("#462e33", "\x1b[2m"),
+};
 
 const cols = Number(process.env.COLUMNS) || 0;
 
 function worry(used: number): string {
-  return used >= 85 ? RED : used >= 60 ? YELLOW : GREEN;
+  return used >= 85 ? P.bad : used >= 60 ? P.warn : P.ok;
 }
 
-// A used-percentage, colored by how worried you should be.
+// A used-percentage on the alarm ramp, padded to a fixed width so the row never jitters when
+// 9% becomes 10%.
 function pct(used: number): string {
-  return `${worry(used)}${Math.round(used)}%${RESET}`;
+  return `${worry(used)}${String(Math.round(used)).padStart(3)}%${RESET}`;
 }
 
-// ▰▰▰▰▱▱▱▱ — a gauge, not just a fill: each FILLED cell carries the color of the zone it sits in
-// (green to 60%, yellow to 85%, red past), so a long bar reads like a meter with bands. Empty
-// cells stay dim. The gauge has its row to itself, so it stretches to the terminal: everything
-// around it ("ctx " + " 100%" + a possible " !200k") needs ~20 columns, the cells get the rest,
-// capped so an ultrawide doesn't render a runway.
+// ▰▰▰▰▱▱▱▱ — a meter face, not just a fill. Filled cells take the color of the zone they sit in
+// (green to 60%, amber to 85%, red past), and EMPTY cells carry a faint tint of the same zone,
+// so the danger bands are visible at any fill level. One SGR per zone change, not per cell.
 function bar(used: number): string {
-  const cells = cols > 0 ? Math.max(8, Math.min(48, cols - 20)) : 16;
+  const cells = cols >= 100 ? 24 : 12;
   const filled = Math.min(cells, Math.round((used / 100) * cells));
   let out = "";
+  let last = "";
   for (let i = 0; i < cells; i++) {
     const zone = (i + 1) / cells;
-    out += i < filled ? `${zone > 0.85 ? RED : zone > 0.6 ? YELLOW : GREEN}▰` : `${DIM}▱`;
+    const color =
+      i < filled
+        ? zone > 0.85 ? P.bad : zone > 0.6 ? P.warn : P.ok
+        : zone > 0.85 ? P.badDim : zone > 0.6 ? P.warnDim : P.okDim;
+    if (color !== last) out += color;
+    last = color;
+    out += i < filled ? "▰" : "▱";
   }
   return out + RESET;
 }
@@ -106,7 +136,7 @@ function hhmm(d: Date): string {
 function reset(epochSeconds: number): string {
   const d = new Date(epochSeconds * 1000);
   const today = new Date().toDateString() === d.toDateString();
-  return `${DIM}→${today ? hhmm(d) : d.toLocaleDateString("en-US", { weekday: "short" })}${RESET}`;
+  return `${P.lbl}→${today ? hhmm(d) : d.toLocaleDateString("en-US", { weekday: "short" })}${RESET}`;
 }
 
 // 45000ms -> "45s", 4_320_000 -> "1h12m". Sessions don't run for days; hours is enough.
@@ -129,24 +159,25 @@ function git(args: string[], dir: string): string {
 }
 
 // branch ↑ahead ↓behind ⊡stashes — all index-only reads (a few ms each). Deliberately NO
-// `git status`: on a big repo that scans every tracked file and lags the whole bar.
+// `git status`: on a big repo that scans every tracked file and lags the whole panel.
 function gitSegment(dir: string): string {
   const branch = git(["branch", "--show-current"], dir);
   if (!branch) return "";
-  let out = `${DIM}git${RESET} ${MAGENTA}${branch}${RESET}`;
+  let out = `${P.lbl}git${RESET} ${P.branch}${branch}${RESET}`;
   const counts = git(["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], dir);
   if (counts) {
     const [behind, ahead] = counts.split(/\s+/).map(Number);
-    if (ahead) out += ` ${GREEN}↑${ahead}${RESET}`;
-    if (behind) out += ` ${RED}↓${behind}${RESET}`;
+    if (ahead) out += ` ${P.warn}↑${ahead}${RESET}`;
+    if (behind) out += ` ${P.bad}↓${behind}${RESET}`;
   }
   const stashes = git(["rev-list", "--walk-reflogs", "--count", "refs/stash"], dir);
-  if (stashes && stashes !== "0") out += ` ${DIM}⊡${stashes}${RESET}`;
+  if (stashes && stashes !== "0") out += ` ${P.lbl}⊡${stashes}${RESET}`;
   return out;
 }
 
-// vault 247 notes · 3 review — the vault at a glance: how many notes, and a red count when `imprnt check` flagged
-// anything into needs-review. Reads the vault imp already pointed the session at (IMPRNT_VAULT).
+// vault 247 notes, 3 review — the vault at a glance: how many notes, and a red count when
+// `imprnt check` flagged anything. The review count binds to the vault with a comma — it is a
+// property of the vault, not its own segment. Reads the vault imp pointed the session at.
 function vaultSegment(): string {
   const vault = process.env.IMPRNT_VAULT || process.env.IMPRINT_VAULT;
   if (!vault || !existsSync(vault)) return "";
@@ -159,16 +190,17 @@ function vaultSegment(): string {
           .split("\n")
           .filter((l) => l.startsWith("- ")).length
       : 0;
-    const flag = review ? ` ${DIM}·${RESET} ${RED}${BOLD}${review} review${RESET}` : "";
-    return `${DIM}vault${RESET} ${notes} ${DIM}notes${RESET}${flag}`;
+    const flag = review ? `${P.lbl},${RESET} ${P.bad}${BOLD}${review} review${RESET}` : "";
+    return `${P.lbl}vault${RESET} ${P.val}${notes}${RESET} ${P.lbl}notes${RESET}${flag}`;
   } catch {
     return "";
   }
 }
 
-// ☀️ 22° — rendered ONLY from a cache file; when the cache is stale a detached curl refreshes it
-// for the NEXT render. The bar never waits on the network. Delete this segment if you'd rather
-// the script touch no network at all.
+// ☀ 22° — text-presentation weather glyphs (no emoji variation selector: single-width,
+// monochrome, they match the panel's register). Rendered ONLY from a cache file; when the cache
+// is stale a detached curl refreshes it for the NEXT render. The panel never waits on the
+// network. Delete this segment if you'd rather the script touch no network at all.
 function weatherSegment(): string {
   if (process.env.IMPRNT_STATUSLINE_NO_NET) return "";
   const dir = join(tmpdir(), "imprnt-statusline");
@@ -182,9 +214,9 @@ function weatherSegment(): string {
     if (cur && typeof cur.temperature === "number") {
       const code = cur.weathercode ?? 0;
       const icon =
-        code === 0 ? "☀️" : code <= 2 ? "🌤" : code === 3 ? "☁️" : code <= 48 ? "🌫" :
-        code <= 67 ? "🌧" : code <= 77 ? "🌨" : code <= 82 ? "🌧" : code <= 86 ? "🌨" : "⛈";
-      line = `${icon} ${Math.round(cur.temperature)}°`;
+        code <= 1 ? "☀" : code <= 3 ? "☁" : code <= 48 ? "≡" :
+        code <= 77 ? "☂" : code <= 86 ? "❄" : "☂";
+      line = `${P.val}${icon} ${Math.round(cur.temperature)}°${RESET}`;
     }
   } catch {
     // no cache yet — fall through to the refresh
@@ -206,36 +238,36 @@ function weatherSegment(): string {
 
 // Build every segment the payload supports, keyed so the width fitter can drop by name.
 const seg = new Map<string, string>();
+const label = (name: string, value: string) => `${P.lbl}${name}${RESET} ${value}`;
 
-if (info.model?.display_name) seg.set("model", `${DIM}model${RESET} ${BOLD}${CYAN}${info.model.display_name}${RESET}`);
-if (info.session_name) seg.set("session", `${DIM}session${RESET} ${BOLD}${info.session_name}${RESET}`);
+if (info.model?.display_name) seg.set("model", label("model", `${P.model}${info.model.display_name}${RESET}`));
+if (info.session_name) seg.set("session", label("session", `${P.session}${info.session_name}${RESET}`));
 if (info.workspace?.current_dir) {
-  seg.set("dir", `${DIM}dir${RESET} ${basename(info.workspace.current_dir)}`);
+  seg.set("dir", label("dir", `${P.val}${basename(info.workspace.current_dir)}${RESET}`));
   const g = gitSegment(info.workspace.current_dir);
   if (g) seg.set("branch", g);
 }
 if (typeof info.context_window?.used_percentage === "number") {
   const used = info.context_window.used_percentage;
-  const over = info.exceeds_200k_tokens ? ` ${RED}${BOLD}!200k${RESET}` : "";
-  seg.set("ctx", `${DIM}ctx${RESET} ${bar(used)} ${pct(used)}${over}`);
+  const over = info.exceeds_200k_tokens ? ` ${P.bad}${BOLD}!200k${RESET}` : "";
+  seg.set("ctx", label("ctx", `${bar(used)} ${pct(used)}${over}`));
 }
-if (info.effort?.level) seg.set("effort", `${DIM}effort${RESET} ${info.effort.level}`);
-if (typeof info.thinking?.enabled === "boolean") {
-  seg.set("thinking", `${DIM}thinking${RESET} ${info.thinking.enabled ? "on" : "off"}`);
-}
+if (info.effort?.level) seg.set("effort", label("effort", `${P.val}${info.effort.level}${RESET}`));
+// A flag that is always "on" is not information: render thinking only when it is OFF.
+if (info.thinking?.enabled === false) seg.set("thinking", label("thinking", `${P.warn}off${RESET}`));
 if (typeof info.cost?.total_cost_usd === "number") {
-  seg.set("cost", `${DIM}cost${RESET} $${info.cost.total_cost_usd.toFixed(2)}`);
+  seg.set("cost", label("cost", `${P.val}$${info.cost.total_cost_usd.toFixed(2)}${RESET}`));
 }
 if (typeof info.cost?.total_duration_ms === "number" && info.cost.total_duration_ms >= 1000) {
-  seg.set("time", `${DIM}elapsed${RESET} ${duration(info.cost.total_duration_ms)}`);
+  seg.set("time", label("elapsed", `${P.val}${duration(info.cost.total_duration_ms)}${RESET}`));
 }
 if (info.cost?.total_lines_added || info.cost?.total_lines_removed) {
-  seg.set("lines", `${DIM}lines${RESET} ${GREEN}+${info.cost.total_lines_added ?? 0}${RESET}${DIM}/${RESET}${RED}-${info.cost.total_lines_removed ?? 0}${RESET}`);
+  seg.set("lines", label("lines", `${P.ok}+${info.cost.total_lines_added ?? 0}${RESET}${P.lbl}/${RESET}${P.bad}-${info.cost.total_lines_removed ?? 0}${RESET}`));
 }
 const fiveHour = info.rate_limits?.five_hour;
 if (typeof fiveHour?.used_percentage === "number") {
   const r = fiveHour.resets_at ? ` ${reset(fiveHour.resets_at)}` : "";
-  seg.set("5h", `${DIM}limits${RESET} 5h ${pct(fiveHour.used_percentage)}${r}`);
+  seg.set("5h", label("limits", `5h ${pct(fiveHour.used_percentage)}${r}`));
 }
 const sevenDay = info.rate_limits?.seven_day;
 if (typeof sevenDay?.used_percentage === "number") {
@@ -246,31 +278,45 @@ const vault = vaultSegment();
 if (vault) seg.set("vault", vault);
 const weather = weatherSegment();
 if (weather) seg.set("weather", weather);
-seg.set("clock", `${DIM}${hhmm(new Date())}${RESET}`);
+seg.set("clock", `${P.lbl}${hhmm(new Date())}${RESET}`);
 
-// Two rows, each with its own drop order for narrow terminals (COLUMNS is set by Claude Code,
-// v2.1.153+): when a row runs too wide, its segments drop housekeeping-first, load-bearing last.
-// An empty row simply doesn't print, so a sparse payload degrades to one line on its own.
+// Four rows — identity, spend, engine, world — each with its own drop order for narrow terminals
+// (COLUMNS is set by Claude Code, v2.1.153+): when a row runs too wide, its segments drop
+// housekeeping-first, load-bearing last. The leading label of each row pads to one gutter width
+// so the rows align into a table. An empty row doesn't print, and neither does the world row when
+// its only survivor is the clock — a bare time is not a status.
 const ROWS: { keys: string[]; drop: string[] }[] = [
   { keys: ["model", "session", "dir", "branch"],
     drop: ["session", "dir", "branch", "model"] },
-  { keys: ["cost", "time", "lines", "effort", "thinking"],
-    drop: ["thinking", "effort", "lines", "time", "cost"] },
-  { keys: ["ctx"], drop: [] }, // the gauge already sizes itself to the terminal
+  { keys: ["cost", "time", "lines"],
+    drop: ["lines", "time", "cost"] },
+  { keys: ["ctx", "effort", "thinking"],
+    drop: ["thinking", "effort", "ctx"] },
   { keys: ["5h", "7d", "vault", "weather", "clock"],
     drop: ["weather", "clock", "vault", "7d", "5h"] },
 ];
-const SEP = `${DIM} · ${RESET}`;
+const GUTTER = 6; // the widest leading label ("limits"); keeps the left edge a straight line
+const SEP = `${P.sep} · ${RESET}`;
 // eslint-disable-next-line no-control-regex
 const visible = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "").length;
 
 for (const row of ROWS) {
   const present = () => row.keys.filter((k) => seg.has(k)).map((k) => seg.get(k)!);
+  const render = (parts: string[]) => {
+    // Pad the row's leading label out to the gutter: the text before the first space in the
+    // first segment, measured visibly, padded with plain spaces.
+    const labelLen = visible(parts[0]!.split(" ")[0] ?? "");
+    return [parts[0]!.replace(" ", " ".repeat(Math.max(1, GUTTER - labelLen + 1))), ...parts.slice(1)].join(SEP);
+  };
   if (cols > 0) {
     for (const name of row.drop) {
-      if (visible(present().join(SEP)) <= cols) break;
+      const parts = present();
+      if (!parts.length || visible(render(parts)) <= cols) break;
       seg.delete(name);
     }
   }
-  if (present().length) console.log(present().join(SEP));
+  const parts = present();
+  if (!parts.length) continue;
+  if (parts.length === 1 && row.keys.includes("clock") && seg.has("clock") && parts[0] === seg.get("clock")) continue;
+  console.log(render(parts));
 }

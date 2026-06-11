@@ -3,18 +3,19 @@
 A customizable status line for your imp sessions:
 
 ```
-model Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1
-cost $0.42 · elapsed 1h12m · lines +156/-23 · effort high · thinking on
-ctx ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 48%
-limits 5h 24% →18:00 · 7d 41% →Thu · vault 247 notes · 3 review · ☀️ 22° · 14:05
+model  Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1
+cost   $0.42 · elapsed 1h12m · lines +156/-23
+ctx    ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱  48% · effort high
+limits 5h  24% →18:00 · 7d  41% →Thu · vault 247 notes, 3 review · ☀ 22° · 14:05
 ```
 
-Four rows, every segment labeled. Identity first: model, session name, directory, git branch with
-ahead (↑) / behind (↓) commit counts and stashes (⊡). Then the spend: session cost, elapsed time,
-lines added/removed, effort level, extended thinking. Then the context gauge alone, stretched to
-the terminal width. Then the world: both rate-limit windows with absolute reset times (clock
-today, weekday otherwise), the vault at a glance (notes, plus a red needs-review count), cached
-weather, wall clock. Percentages and the bar
+Four rows that align into a table (the leading labels share one gutter): identity, spend, engine,
+world. Labels are muted slate, values are bright ink, and color is a single alarm ramp - every
+percentage and the gauge go amber past 60 and red past 85, so a calm session is nearly monochrome
+and any color is news. The gauge is a meter face: its amber and red bands stay faintly visible
+even when empty. Numbers pad to fixed width so nothing jitters between refreshes, `thinking`
+renders only when off, and reset times are a clock today or a weekday otherwise. Truecolor (Tokyo
+Night ink) when the terminal advertises it, base ANSI otherwise, bare text under NO_COLOR. Percentages and the bar
 go yellow past 60 and red past 85, a 30-second refresh keeps the clock, weather, and limits
 honest, and on a narrow terminal each row drops segments in a fixed order (housekeeping first,
 load-bearing last) instead of wrapping. Made to be edited - the shipped panel is a starting
