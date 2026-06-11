@@ -4,19 +4,23 @@
 // limits honest), pipes the session JSON on stdin, and shows whatever it prints. The wiring rides
 // imp's --settings; there is nothing to configure in your own settings files.
 //
-// Two rows, on a wide terminal:
+// Four rows, on a wide terminal:
 //
-//   model Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1 · cost $0.42 · elapsed 1h12m · lines +156/-23
-//   ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · limits 5h 24% →18:00 · 7d 41% →Thu · vault 247 notes · 3 review · ☀️ 22° · 14:05
+//   model Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1
+//   cost $0.42 · elapsed 1h12m · lines +156/-23 · effort high · thinking on
+//   ctx ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 48%
+//   limits 5h 24% →18:00 · 7d 41% →Thu · vault 247 notes · 3 review · ☀️ 22° · 14:05
 //
-// Row one is the work: model · session name (when you /rename) · directory · git branch with
-// ahead/behind and stash count (index-only — never `git status`, which is the one slow git call)
-// · session cost · duration · lines added/removed. Row two is the meters: banded context bar
-// (cells colored by zone: the bar is a gauge, not just a fill) · rate-limit windows with absolute
-// reset times (clock today, weekday otherwise) · the vault (note count, plus a red needs-review
-// count when imprnt check flagged something) · weather (cached, never blocks — fetched in a
-// detached background curl) · wall clock. On a narrow terminal, each row drops its segments in a
-// fixed order instead of wrapping — see the ROWS table.
+// Row one is identity: model · session name (when you /rename) · directory · git branch with
+// ahead/behind and stash count (index-only — never `git status`, which is the one slow git call).
+// Row two is the spend: session cost · elapsed time · lines added/removed · effort level ·
+// extended thinking. Row three is the context gauge alone, stretched to the terminal width
+// (cells colored by zone: the bar is a meter with bands, not just a fill). Row four is the
+// world: rate-limit windows with absolute reset times (clock today, weekday otherwise) · the
+// vault (note count, plus a red needs-review count when imprnt check flagged something) ·
+// weather (cached, never blocks — fetched in a detached background curl) · wall clock. An empty
+// row doesn't print, and on a narrow terminal each row drops its segments in a fixed order
+// instead of wrapping — see the ROWS table.
 //
 // It is a starting point you personalize — edit the segments below (or copy the plugin into
 // plugins/_personal/ first to keep the shipped one pristine). The full field list the JSON
@@ -39,6 +43,8 @@ type SessionInfo = {
   workspace?: { current_dir?: string };
   context_window?: { used_percentage?: number };
   exceeds_200k_tokens?: boolean;
+  effort?: { level?: string };
+  thinking?: { enabled?: boolean };
   cost?: {
     total_cost_usd?: number;
     total_duration_ms?: number;
@@ -77,9 +83,11 @@ function pct(used: number): string {
 
 // ▰▰▰▰▱▱▱▱ — a gauge, not just a fill: each FILLED cell carries the color of the zone it sits in
 // (green to 60%, yellow to 85%, red past), so a long bar reads like a meter with bands. Empty
-// cells stay dim. Wide terminals get a longer bar.
+// cells stay dim. The gauge has its row to itself, so it stretches to the terminal: everything
+// around it ("ctx " + " 100%" + a possible " !200k") needs ~20 columns, the cells get the rest,
+// capped so an ultrawide doesn't render a runway.
 function bar(used: number): string {
-  const cells = cols >= 120 ? 16 : 8;
+  const cells = cols > 0 ? Math.max(8, Math.min(48, cols - 20)) : 16;
   const filled = Math.min(cells, Math.round((used / 100) * cells));
   let out = "";
   for (let i = 0; i < cells; i++) {
@@ -211,6 +219,10 @@ if (typeof info.context_window?.used_percentage === "number") {
   const over = info.exceeds_200k_tokens ? ` ${RED}${BOLD}!200k${RESET}` : "";
   seg.set("ctx", `${DIM}ctx${RESET} ${bar(used)} ${pct(used)}${over}`);
 }
+if (info.effort?.level) seg.set("effort", `${DIM}effort${RESET} ${info.effort.level}`);
+if (typeof info.thinking?.enabled === "boolean") {
+  seg.set("thinking", `${DIM}thinking${RESET} ${info.thinking.enabled ? "on" : "off"}`);
+}
 if (typeof info.cost?.total_cost_usd === "number") {
   seg.set("cost", `${DIM}cost${RESET} $${info.cost.total_cost_usd.toFixed(2)}`);
 }
@@ -240,10 +252,13 @@ seg.set("clock", `${DIM}${hhmm(new Date())}${RESET}`);
 // v2.1.153+): when a row runs too wide, its segments drop housekeeping-first, load-bearing last.
 // An empty row simply doesn't print, so a sparse payload degrades to one line on its own.
 const ROWS: { keys: string[]; drop: string[] }[] = [
-  { keys: ["model", "session", "dir", "branch", "cost", "time", "lines"],
-    drop: ["lines", "time", "session", "dir", "cost", "branch", "model"] },
-  { keys: ["ctx", "5h", "7d", "vault", "weather", "clock"],
-    drop: ["weather", "clock", "vault", "7d", "5h", "ctx"] },
+  { keys: ["model", "session", "dir", "branch"],
+    drop: ["session", "dir", "branch", "model"] },
+  { keys: ["cost", "time", "lines", "effort", "thinking"],
+    drop: ["thinking", "effort", "lines", "time", "cost"] },
+  { keys: ["ctx"], drop: [] }, // the gauge already sizes itself to the terminal
+  { keys: ["5h", "7d", "vault", "weather", "clock"],
+    drop: ["weather", "clock", "vault", "7d", "5h"] },
 ];
 const SEP = `${DIM} · ${RESET}`;
 // eslint-disable-next-line no-control-regex

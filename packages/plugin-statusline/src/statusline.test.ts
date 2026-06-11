@@ -10,6 +10,8 @@ const STATUSLINE = join(here, "statusline.ts");
 const FULL = {
   model: { display_name: "Opus" },
   session_name: "taxes-deep-dive",
+  effort: { level: "high" },
+  thinking: { enabled: true },
   workspace: { current_dir: "" }, // filled per test
   context_window: { used_percentage: 41.7 },
   cost: { total_cost_usd: 1.234, total_duration_ms: 4_320_000, total_lines_added: 156, total_lines_removed: 23 },
@@ -45,7 +47,12 @@ test("renders the full panel from a full payload", () => {
   expect(r.out).toContain("Opus");
   expect(r.out).toContain("taxes-deep-dive"); // the /rename session name
   expect(r.out).toContain("imprnt-sl-"); // dir basename, no branch segment outside a repo
-  expect(r.out).toContain("ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 42%"); // labeled, 41.7% -> 7 of 16 cells
+  const rows = r.out.split("\n");
+  expect(rows.length).toBe(4);
+  // The gauge stretches to COLUMNS-20 capped at 48 cells: 41.7% of 48 -> 20 filled.
+  expect(rows[2]).toMatch(/^ctx ▰{20}▱{28} 42%$/);
+  expect(r.out).toContain("effort high");
+  expect(r.out).toContain("thinking on");
   expect(r.out).toContain("cost $1.23");
   expect(r.out).toContain("elapsed 1h12m");
   expect(r.out).toContain("lines +156/-23");
@@ -92,10 +99,10 @@ test("a narrow terminal drops housekeeping segments first, per row, never wraps"
   const payload = { ...FULL, workspace: { current_dir: mkdtempSync(join(tmpdir(), "imprnt-sl-")) } };
   const r = lineFor(JSON.stringify(payload), { COLUMNS: "40" });
   const rows = r.out.split("\n");
-  expect(rows.length).toBe(2);
+  expect(rows.length).toBe(4);
   for (const row of rows) expect(row.length).toBeLessThanOrEqual(40);
   expect(rows[0]).toContain("Opus"); // model survives its row
-  expect(rows[1]).toContain("%"); // context survives its row
+  expect(r.out).toContain("%"); // the gauge survives, shrunk to fit
   expect(r.out).not.toContain("+156"); // lines dropped early
 });
 
