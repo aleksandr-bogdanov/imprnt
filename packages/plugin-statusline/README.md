@@ -3,13 +3,14 @@
 A customizable status line for your imp sessions:
 
 ```
-Opus · imprnt · main · ctx 42% · $1.23 · 5h 24% →18:00 · 7d 41% · 14:05
+Fable 5 · imprint-vault · main · ▰▰▰▰▱▱▱▱ 48% · $0.42 · 1h12m · +156/-23 · 5h 24% →18:00 · 7d 41% · 14:05
 ```
 
-Model, directory, git branch, context used, session cost, both rate-limit windows (with the
-five-hour reset time), wall clock. Percentages go yellow past 60 and red past 85, and a 30-second
-refresh keeps the clock and the limits honest. Made to be edited - the shipped line is a starting
-point.
+Model, directory, git branch, a context bar, session cost and duration, lines added/removed, both
+rate-limit windows (with the five-hour reset time), wall clock. Percentages and the bar go yellow
+past 60 and red past 85, a 30-second refresh keeps the clock and the limits honest, and on a
+narrow terminal segments drop in a fixed order (housekeeping first, model and context last)
+instead of wrapping. Made to be edited - the shipped line is a starting point.
 
 ## Install
 
