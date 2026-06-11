@@ -46,10 +46,10 @@ test("renders the full panel from a full payload", () => {
   expect(r.out).toContain("taxes-deep-dive"); // the /rename session name
   expect(r.out).toContain("imprnt-sl-"); // dir basename, no branch segment outside a repo
   expect(r.out).toContain("ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 42%"); // labeled, 41.7% -> 7 of 16 cells
-  expect(r.out).toContain("$1.23");
-  expect(r.out).toContain("1h12m");
-  expect(r.out).toContain("+156/-23");
-  expect(r.out).toMatch(/5h 24% →(\d{2}:\d{2}|\w{3})/); // reset: clock today, weekday otherwise
+  expect(r.out).toContain("cost $1.23");
+  expect(r.out).toContain("elapsed 1h12m");
+  expect(r.out).toContain("lines +156/-23");
+  expect(r.out).toMatch(/limits 5h 24% →(\d{2}:\d{2}|\w{3})/); // reset: clock today, weekday otherwise
   expect(r.out).toMatch(/7d 41% →(\d{2}:\d{2}|\w{3})/); // the 7-day window gets a reset too
   expect(r.out).toMatch(/\d{2}:\d{2}$/); // the wall clock closes the line
 });
@@ -85,7 +85,7 @@ test("the vault segment shows note count and a needs-review flag from IMPRNT_VAU
   writeFileSync(join(vault, "_tags.md"), "control file, not a note\n");
   writeFileSync(join(vault, "_needs-review.md"), "# review\n- orphan link in x\n- untagged y\n");
   const r = lineFor(JSON.stringify({}), { IMPRNT_VAULT: vault });
-  expect(r.out).toContain("vault 2 2!"); // 2 notes (_-files excluded), 2 review items
+  expect(r.out).toContain("vault 2 notes · 2 review"); // _-files excluded from the count
 });
 
 test("a narrow terminal drops housekeeping segments first, per row, never wraps", () => {
