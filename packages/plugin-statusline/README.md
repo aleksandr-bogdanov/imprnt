@@ -4,7 +4,7 @@ A customizable status line for your imp sessions:
 
 ```
 Fable 5 · taxes-deep-dive · imprint-vault · main ↑2 ⊡1 · $0.42 · 1h12m · +156/-23
-▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · 5h 24% →18:00 · 7d 41% →Thu · ◈247 3! · ☀️ 22° · 14:05
+ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · 5h 24% →18:00 · 7d 41% →Thu · vault 247 3! · ☀️ 22° · 14:05
 ```
 
 Two rows. The work on top: model, session name, directory, git branch with ahead/behind and stash

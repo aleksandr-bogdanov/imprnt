@@ -7,7 +7,7 @@
 // Two rows, on a wide terminal:
 //
 //   Fable 5 · taxes-deep-dive · imprint-vault · main ↑2 ⊡1 · $0.42 · 1h12m · +156/-23
-//   ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · 5h 24% →18:00 · 7d 41% →Thu · ◈247 3! · ☀️ 22° · 14:05
+//   ctx ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 48% · 5h 24% →18:00 · 7d 41% →Thu · vault 247 3! · ☀️ 22° · 14:05
 //
 // Row one is the work: model · session name (when you /rename) · directory · git branch with
 // ahead/behind and stash count (index-only — never `git status`, which is the one slow git call)
@@ -137,7 +137,7 @@ function gitSegment(dir: string): string {
   return out;
 }
 
-// ◈247 3! — the vault at a glance: how many notes, and a red count when `imprnt check` flagged
+// vault 247 3! — the vault at a glance: how many notes, and a red count when `imprnt check` flagged
 // anything into needs-review. Reads the vault imp already pointed the session at (IMPRNT_VAULT).
 function vaultSegment(): string {
   const vault = process.env.IMPRNT_VAULT || process.env.IMPRINT_VAULT;
@@ -152,7 +152,7 @@ function vaultSegment(): string {
           .filter((l) => l.startsWith("- ")).length
       : 0;
     const flag = review ? ` ${RED}${BOLD}${review}!${RESET}` : "";
-    return `${DIM}◈${RESET}${notes}${flag}`;
+    return `${DIM}vault${RESET} ${notes}${flag}`;
   } catch {
     return "";
   }
@@ -209,7 +209,7 @@ if (info.workspace?.current_dir) {
 if (typeof info.context_window?.used_percentage === "number") {
   const used = info.context_window.used_percentage;
   const over = info.exceeds_200k_tokens ? ` ${RED}${BOLD}!200k${RESET}` : "";
-  seg.set("ctx", `${bar(used)} ${pct(used)}${over}`);
+  seg.set("ctx", `${DIM}ctx${RESET} ${bar(used)} ${pct(used)}${over}`);
 }
 if (typeof info.cost?.total_cost_usd === "number") {
   seg.set("cost", `$${info.cost.total_cost_usd.toFixed(2)}`);
