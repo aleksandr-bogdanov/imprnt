@@ -51,7 +51,23 @@ function decryptValue(encHex, derived) {
     return stripped;
   return null;
 }
-function liveAuth() {
+async function sessionHostToken() {
+  const port = Number(process.env.SESSION_HOST_PORT ?? 8787);
+  const ctrl = new AbortController;
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/session/token?site=kleinanzeigen.de`, { signal: ctrl.signal });
+    if (!res.ok)
+      return null;
+    const j = await res.json();
+    return j.token ?? null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+async function liveAuth() {
   if (process.env.KLEINANZEIGEN_TOKEN)
     return { token: process.env.KLEINANZEIGEN_TOKEN.trim(), source: "KLEINANZEIGEN_TOKEN" };
   const jar = process.env.KLEINANZEIGEN_COOKIES;
@@ -63,6 +79,9 @@ function liveAuth() {
     if (raw.trim().split(".").length === 3)
       return { token: raw.trim(), source: "KLEINANZEIGEN_COOKIES (raw jwt)" };
   }
+  const hosted = await sessionHostToken();
+  if (hosted)
+    return { token: hosted, source: "session-host" };
   for (const b of BROWSERS) {
     const dbPath = join(homedir(), "Library", "Application Support", b.cookieDir, "Cookies");
     if (!existsSync(dbPath))
@@ -104,8 +123,8 @@ function liveAuth() {
 var PROBE_HINT = `no endpoints.json — the live transport isn't wired yet.
 ` + `  Generate it from a message-box HAR:  node kleinanzeigen.js probe --har <file.har>
 ` + "  Or run offline against fixtures:      KLEINANZEIGEN_FIXTURES=./fixtures node kleinanzeigen.js sync";
-var AUTH_HINT = `no live session — couldn't read your kleinanzeigen access_token.
-` + `  Log into kleinanzeigen.de in Arc (or Chrome/Brave/Edge) and approve the Keychain prompt, or set
+var AUTH_HINT = `no live session — couldn't get a kleinanzeigen access_token.
+` + "  Best: run the session host (`session-host serve`) and enroll once (`session-host login ...`).\n" + `  Or log into kleinanzeigen.de in Arc and approve the Keychain prompt, or set
 ` + "  KLEINANZEIGEN_TOKEN=<jwt> / KLEINANZEIGEN_COOKIES=<file>. Offline: KLEINANZEIGEN_FIXTURES=./fixtures.";
 function loadEndpoints(here) {
   const p = join2(here, "endpoints.json");
@@ -139,7 +158,7 @@ async function fetchConversations(here) {
   const ep = loadEndpoints(here);
   if (!ep)
     throw new Error(PROBE_HINT);
-  const auth = liveAuth();
+  const auth = await liveAuth();
   if (!auth)
     throw new Error(AUTH_HINT);
   const headers = { ...ep.headers, authorization: `Bearer ${auth.token}` };
@@ -176,7 +195,7 @@ async function postReply(here, conv, text) {
 ` + `  Capture one reply with devtools open (Network → the POST when you send), add its path as replyPath,
 ` + "  or use KLEINANZEIGEN_DRY_RUN=1 to record intent. Read stays fully wired; send waits on this one capture.");
   }
-  const auth = liveAuth();
+  const auth = await liveAuth();
   if (!auth)
     throw new Error(AUTH_HINT);
   const url = ep.base + fill(ep.replyPath, { userId: ep.userId, convId: conv });

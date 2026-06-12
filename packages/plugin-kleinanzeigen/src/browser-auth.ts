@@ -55,9 +55,31 @@ function decryptValue(encHex: string, derived: Buffer): string | null {
 
 export type LiveAuth = { token: string; source: string };
 
-// Read the kleinanzeigen access_token (Bearer JWT) from the local browser session, or from an override
-// env var. Returns null when nothing is available (the caller fails loud with guidance).
-export function liveAuth(): LiveAuth | null {
+// Ask the session-host capability (if it's running) for a fresh token. This is the RELIABLE source:
+// the host keeps a warm logged-in session so the site refreshes its own short-lived token. Returns
+// null when the host is down or the site isn't enrolled — the caller degrades to the direct browser
+// read (the contract's graceful-degradation rule: a missing capability provider never hard-fails a
+// consumer). No hard import on the session-host module; we just hit its localhost broker.
+async function sessionHostToken(): Promise<string | null> {
+  const port = Number(process.env.SESSION_HOST_PORT ?? 8787);
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/session/token?site=kleinanzeigen.de`, { signal: ctrl.signal });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { token?: string };
+    return j.token ?? null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Resolve the kleinanzeigen access_token (Bearer JWT). Order: explicit override, then the warm session
+// host (reliable), then a direct read from the local browser session (Arc), then null (caller fails
+// loud with guidance). Async because the session-host check crosses localhost.
+export async function liveAuth(): Promise<LiveAuth | null> {
   // 1. explicit token override (headless / non-Arc / CI)
   if (process.env.KLEINANZEIGEN_TOKEN) return { token: process.env.KLEINANZEIGEN_TOKEN.trim(), source: "KLEINANZEIGEN_TOKEN" };
 
@@ -70,7 +92,11 @@ export function liveAuth(): LiveAuth | null {
     if (raw.trim().split(".").length === 3) return { token: raw.trim(), source: "KLEINANZEIGEN_COOKIES (raw jwt)" };
   }
 
-  // 3. the local browser session
+  // 3. the warm session host (the reliable path — survives the ~1h token death, no rotation race)
+  const hosted = await sessionHostToken();
+  if (hosted) return { token: hosted, source: "session-host" };
+
+  // 4. a direct read from the local browser session (fallback when the host isn't running)
   for (const b of BROWSERS) {
     const dbPath = join(homedir(), "Library", "Application Support", b.cookieDir, "Cookies");
     if (!existsSync(dbPath)) continue;
