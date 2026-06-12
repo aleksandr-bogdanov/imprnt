@@ -11,7 +11,7 @@
 // Contract: writes ONLY this plugin's own folder, never a vault note. Render-at-read off the mirror.
 // The send button is human — nothing here sends without an explicit `send` invocation.
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchConversations, postReply } from "./client.ts";
@@ -23,16 +23,15 @@ import {
 } from "./mirror.ts";
 import { composeDigest, deliver } from "./notify.ts";
 import { guardSend } from "./send.ts";
-import { writeFileSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MIRROR = join(here, "mirror");
 const LISTINGS = join(here, "listings");
 
-function cmdSync(): number {
+async function cmdSync(): Promise<number> {
   let raws;
   try {
-    raws = fetchConversations(here);
+    raws = await fetchConversations(here);
   } catch (e) {
     console.error(`sync: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
@@ -103,7 +102,7 @@ function cmdNotify(): number {
   return res.ok ? 0 : 1;
 }
 
-function cmdSend(args: string[]): number {
+async function cmdSend(args: string[]): Promise<number> {
   const force = args.includes("--force");
   const positional = args.filter((a) => a !== "--force");
   const conv = positional[0];
@@ -125,7 +124,7 @@ function cmdSend(args: string[]): number {
   }
   let result;
   try {
-    result = postReply(here, conv, text);
+    result = await postReply(here, conv, text);
   } catch (e) {
     console.error(`send: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
@@ -138,38 +137,58 @@ function cmdSend(args: string[]): number {
   return 0;
 }
 
-function cmdProbe(): number {
-  // v1 stub: discovery needs a logged-in session and is the post-probe follow-up. We DON'T make a live
-  // call here — we tell Alex exactly what to capture so the live client can be wired deterministically.
-  console.log("probe (v1 stub — no live call made):");
-  if (!process.env.KLEINANZEIGEN_COOKIES) {
-    console.log("  set KLEINANZEIGEN_COOKIES to your cookie-jar path first.");
+function cmdProbe(args: string[]): number {
+  // Ingest a message-box HAR (devtools → Save all as HAR) and write endpoints.json: the conversation
+  // endpoint shapes and the numeric userId are in the captured URLs. Auth is NOT taken from the HAR
+  // (browsers redact it); the live client reads the access_token from the browser session at sync time.
+  const harFlag = args.indexOf("--har");
+  if (harFlag === -1 || !args[harFlag + 1]) {
+    console.log("usage: node kleinanzeigen.js probe --har <messagebox.har>");
+    console.log("  Capture: log into kleinanzeigen.de, open Messages, devtools → Network → Save all as HAR.");
+    return 1;
   }
-  console.log([
-    "  To wire the live transport, capture these while logged into the web message box:",
-    "   1. open the message box in a browser, devtools → Network → XHR/Fetch",
-    "   2. note the conversation-LIST request (URL, method, headers) and the conversation-DETAIL request",
-    "   3. note the SEND-reply request (URL, method, body shape)",
-    "   4. write them into endpoints.json: { transport, conversations_url, reply_url, note }",
-    "  Until endpoints.json exists, run offline: KLEINANZEIGEN_FIXTURES=./fixtures node kleinanzeigen.js sync",
-  ].join("\n"));
+  const harPath = args[harFlag + 1];
+  if (!existsSync(harPath)) { console.error(`probe: no such HAR file: ${harPath}`); return 1; }
+  let har: { log?: { entries?: Array<{ request: { url: string } }> } };
+  try { har = JSON.parse(readFileSync(harPath, "utf8")); } catch (e) { console.error(`probe: unreadable HAR: ${e instanceof Error ? e.message : e}`); return 1; }
+  const urls = (har.log?.entries ?? []).map((e) => e.request.url);
+  const m = urls.map((u) => u.match(/(https:\/\/[^/]+\/messagebox\/api)\/users\/(\d+)\/conversations/)).find(Boolean);
+  if (!m) { console.error("probe: no messagebox conversation requests found in the HAR — capture the Messages page."); return 1; }
+  const [, base, userId] = m;
+  const ep = {
+    transport: "messagebox-web",
+    base,
+    userId,
+    listPath: "/users/{userId}/conversations?page={page}&size={size}",
+    detailPath: "/users/{userId}/conversations/{convId}?contentWarnings=true",
+    replyPath: null as string | null,
+    headers: { accept: "application/json", "x-ecg-user-agent": "messagebox-1", origin: "https://www.kleinanzeigen.de", referer: "https://www.kleinanzeigen.de/" },
+    note: "Auth is Bearer <access_token>, read from the browser session at sync time. replyPath null until a send is captured.",
+  };
+  writeFileSync(join(here, "endpoints.json"), JSON.stringify(ep, null, 2) + "\n");
+  console.log(`probe: wrote endpoints.json (base ${base}, userId ${userId}).`);
+  console.log("  Live sync now works: node kleinanzeigen.js sync (reads your browser session for the token).");
   return 0;
 }
 
 const cmd = process.argv[2];
 const rest = process.argv.slice(3);
 
-switch (cmd) {
-  case "sync": process.exit(cmdSync());
-  case "rate": process.exit(cmdRate());
-  case "notify": process.exit(cmdNotify());
-  case "send": process.exit(cmdSend(rest));
-  case "probe": process.exit(cmdProbe());
-  case "check": {
-    const proc = spawnSync(process.execPath, [join(here, "check.js")], { stdio: "inherit" });
-    process.exit(proc.status ?? 1);
+async function main(): Promise<number> {
+  switch (cmd) {
+    case "sync": return await cmdSync();
+    case "rate": return cmdRate();
+    case "notify": return cmdNotify();
+    case "send": return await cmdSend(rest);
+    case "probe": return cmdProbe(rest);
+    case "check": {
+      const proc = spawnSync(process.execPath, [join(here, "check.js")], { stdio: "inherit" });
+      return proc.status ?? 1;
+    }
+    default:
+      console.error("usage: node kleinanzeigen.js <sync|rate|notify|send|probe|check>");
+      return 1;
   }
-  default:
-    console.error("usage: node kleinanzeigen.js <sync|rate|notify|send|probe|check>");
-    process.exit(1);
 }
+
+main().then((code) => process.exit(code));

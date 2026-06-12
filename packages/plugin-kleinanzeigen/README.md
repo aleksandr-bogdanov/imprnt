@@ -40,12 +40,29 @@ interest get ready-to-send drafts. You spent zero tokens to get here.
 | `node kleinanzeigen.js probe` | (run once, logged in) discover live endpoints → `endpoints.json`. |
 | `node check.js` | Integrity: mirror staleness, missing fact sheets. Found by `imprnt check --all`. |
 
+## Authentication (live, automatic)
+
+The message-box gateway authenticates with `Authorization: Bearer <access_token>`, a JWT the web app
+holds. Rather than make you export cookies on a short-lived token, `sync` reads it straight from your
+logged-in browser on this Mac — Arc by default, then Chrome / Brave / Edge. It copies the cookie DB
+(including the `-wal` file so a just-refreshed token isn't missed), decrypts with the key from your
+macOS Keychain (you approve a Keychain prompt the first time), and pulls the `access_token`. Local,
+on-demand, your own session — nothing leaves the machine. Stay logged into kleinanzeigen.de in the
+browser and `sync` just works.
+
+Overrides, for non-Arc / headless / CI:
+- `KLEINANZEIGEN_TOKEN=<jwt>` — use this Bearer token directly (skip the browser read).
+- `KLEINANZEIGEN_COOKIES=<file>` — a file holding `access_token=<jwt>` (or a raw JWT).
+
+Caveat: a `launchd`/cron run has no GUI to approve the Keychain prompt. Grant "Always Allow" once
+(or use `KLEINANZEIGEN_TOKEN`) for scheduled syncs. The token is short-lived, so scheduled use leans
+on the browser staying logged in and the Keychain grant persisting.
+
 ## Environment variables
 
-- `KLEINANZEIGEN_COOKIES` — path to your session cookie jar. Needed by `probe` and live `sync`. Fails
-  loud and names itself when a wire call needs it and it's missing. Never stored in the repo or vault.
 - `KLEINANZEIGEN_FIXTURES` — a directory of conversation JSON. When set, `sync` reads from there instead
-  of the network, so the whole pipeline runs offline. The shipped `fixtures/` is a real captured inbox.
+  of the network, so the whole pipeline runs offline. The shipped `fixtures/` is a sanitized inbox.
+- `KLEINANZEIGEN_TOKEN` / `KLEINANZEIGEN_COOKIES` — the auth overrides above.
 - `WATCHER_NOTIFY_CMD` — the channel for `notify`. The digest is piped to this command's stdin. Examples:
   `curl -s -d @- "https://api.telegram.org/bot$TOKEN/sendMessage?chat_id=$CHAT&text="` (Telegram bot),
   `ntfy publish mytopic`, or `terminal-notifier`. Unset → the digest prints to stdout.
@@ -67,17 +84,21 @@ pickup_area: Berlin
 
 ## Wiring the live transport (the `probe` step)
 
-Kleinanzeigen has no public API, so the real endpoints can only be captured from a logged-in session.
-Until you do that, the plugin runs fully offline against fixtures. To wire it live:
+Kleinanzeigen has no public API, so the endpoint shapes come from a logged-in capture, once:
 
 ```sh
-export KLEINANZEIGEN_COOKIES=~/.config/kleinanzeigen/cookies.json
-node kleinanzeigen.js probe        # prints what to capture from the web message box
+# 1. Log into kleinanzeigen.de, open Messages, devtools → Network → "Save all as HAR with content".
+# 2. Point probe at it — it extracts the gateway base + your userId and writes endpoints.json:
+node kleinanzeigen.js probe --har ~/Downloads/www.kleinanzeigen.de.har
+# 3. Done. Live sync reads the auth token from your browser session (see Authentication):
+node kleinanzeigen.js sync
 ```
 
-Open the message box in a browser with devtools → Network, note the conversation-list,
-conversation-detail, and send-reply requests, and write them into `endpoints.json`. Until that file
-exists, `sync` and `send` fail loud and point you here — they never silently pretend to work.
+`endpoints.json` is gitignored (it holds your numeric userId). The **read path is fully wired**
+(list + per-conversation detail for full bodies). **Send** needs one more capture: `replyPath` in
+`endpoints.json` is null until you capture the POST that fires when you send a message (devtools →
+Network), because guessing a POST shape risks mis-sending. Until then `send` refuses live and you can
+use `KLEINANZEIGEN_DRY_RUN=1` to rehearse. Sync/send fail loud with guidance, never a silent no-op.
 
 ## Scheduling (you opt in; nothing is a daemon)
 
@@ -96,8 +117,8 @@ scheduled — it's yours.
   <key>StartInterval</key><integer>900</integer>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>KLEINANZEIGEN_COOKIES</key><string>/Users/you/.config/kleinanzeigen/cookies.json</string>
     <key>WATCHER_NOTIFY_CMD</key><string>curl -s -d @- "https://api.telegram.org/bot.../sendMessage?..."</string>
+    <!-- For headless runs where the Keychain can't prompt, set KLEINANZEIGEN_TOKEN to a current JWT. -->
   </dict>
 </dict>
 ```

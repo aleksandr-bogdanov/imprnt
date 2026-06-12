@@ -1,15 +1,17 @@
 // imprnt · kleinanzeigen plugin — the network edge. The ONLY module that may touch the wire.
 //
-// Kleinanzeigen has no public API. The real endpoints can only be discovered from a logged-in session,
-// so they live in `endpoints.json`, written by the `probe` subcommand (which Alex runs once with his
-// cookies). Until that file exists, every wire call fails LOUD, naming the probe step — never silently.
+// Wired against the real Kleinanzeigen message-box API (gateway.kleinanzeigen.de/messagebox), captured
+// from a logged-in session. The endpoints live in `endpoints.json` (run `probe --har` to generate it).
+// Auth is the user's .kleinanzeigen.de session cookies, read from the file named by KLEINANZEIGEN_COOKIES
+// — never hardcoded, never committed. Until cookies + endpoints exist, every wire call fails LOUD.
 //
-// Two test/offline doors, so the whole pipeline is exercisable with ZERO network:
+// Two offline doors so the whole pipeline is exercisable with ZERO network:
 //   KLEINANZEIGEN_FIXTURES=<dir>  read conversations from *.json there instead of the wire
 //   KLEINANZEIGEN_DRY_RUN=1       `send` records intent without posting
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Msg } from "./mirror.ts";
+import { liveAuth } from "./browser-auth.ts";
 
 export type RawConv = {
   conv: string;
@@ -20,16 +22,25 @@ export type RawConv = {
 };
 
 export type Endpoints = {
-  transport: string; // "messagebox-json" | "api-basic" | ...
-  conversations_url?: string;
-  reply_url?: string;
+  transport: string;
+  base: string;
+  userId: string;
+  listPath: string;
+  detailPath: string;
+  replyPath: string | null;
+  headers: Record<string, string>;
   note?: string;
 };
 
 const PROBE_HINT =
   "no endpoints.json — the live transport isn't wired yet.\n" +
-  "  Run the probe once while logged in:  KLEINANZEIGEN_COOKIES=<jar> node kleinanzeigen.js probe\n" +
+  "  Generate it from a message-box HAR:  node kleinanzeigen.js probe --har <file.har>\n" +
   "  Or run offline against fixtures:      KLEINANZEIGEN_FIXTURES=./fixtures node kleinanzeigen.js sync";
+
+const AUTH_HINT =
+  "no live session — couldn't read your kleinanzeigen access_token.\n" +
+  "  Log into kleinanzeigen.de in Arc (or Chrome/Brave/Edge) and approve the Keychain prompt, or set\n" +
+  "  KLEINANZEIGEN_TOKEN=<jwt> / KLEINANZEIGEN_COOKIES=<file>. Offline: KLEINANZEIGEN_FIXTURES=./fixtures.";
 
 export function loadEndpoints(here: string): Endpoints | null {
   const p = join(here, "endpoints.json");
@@ -45,36 +56,83 @@ function readFixtures(dir: string): RawConv[] {
     .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as RawConv);
 }
 
-// Fetch every conversation. Fixtures win when the env var is set (the offline/test path). Otherwise we
-// require endpoints.json; even with it, the live HTTP client is a v1 TODO and says so plainly rather
-// than pretending to sync. No silent empty result — a watcher that lies about "0 new" is worse than one
-// that fails.
-export function fetchConversations(here: string): RawConv[] {
+function fill(tmpl: string, vars: Record<string, string | number>): string {
+  return tmpl.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ""));
+}
+
+// Map the message-box JSON into our RawConv shape. boundness INBOUND = from the buyer, OUTBOUND = us.
+function toMsgs(messages: Array<{ textShort?: string; boundness?: string; receivedDate?: string }>): Msg[] {
+  return messages.map((m) => ({
+    from: m.boundness === "OUTBOUND" ? "seller" : "buyer",
+    at: m.receivedDate ?? "",
+    body: (m.textShort ?? "").trim(),
+  }));
+}
+
+// Fetch every conversation where the user is the SELLER, with FULL message bodies. Fixtures win when
+// the env var is set (offline). Live path: Bearer-auth with the access_token from the local browser
+// session, GET the conversation list, KEEP only role=Seller (the message box also holds threads where
+// the user is the buyer on someone else's ad — not what a selling-watcher triages), then GET each
+// conversation's detail for the full thread. The list view trims long messages, so the detail fetch is
+// what makes classification honest (a "kann ich abholen" tail that the list cut would misread).
+export async function fetchConversations(here: string): Promise<RawConv[]> {
   const fixtures = process.env.KLEINANZEIGEN_FIXTURES;
   if (fixtures) return readFixtures(fixtures);
 
-  const endpoints = loadEndpoints(here);
-  if (!endpoints) throw new Error(PROBE_HINT);
+  const ep = loadEndpoints(here);
+  if (!ep) throw new Error(PROBE_HINT);
+  const auth = liveAuth();
+  if (!auth) throw new Error(AUTH_HINT);
 
-  throw new Error(
-    `endpoints.json present (transport: ${endpoints.transport}) but the live HTTP client is not implemented in v1.\n` +
-    "  v1 ships the deterministic pipeline; wiring the real fetch is the post-probe follow-up.\n" +
-    "  Run offline meanwhile: KLEINANZEIGEN_FIXTURES=./fixtures node kleinanzeigen.js sync",
-  );
+  const headers = { ...ep.headers, authorization: `Bearer ${auth.token}` };
+  const listUrl = ep.base + fill(ep.listPath, { userId: ep.userId, page: 0, size: 100 });
+  const listRes = await fetch(listUrl, { headers });
+  if (!listRes.ok) throw new Error(`list fetch ${listRes.status} ${listRes.statusText} — session expired? reload kleinanzeigen.de in your browser`);
+  const list = (await listRes.json()) as { conversations: Array<{ id: string; adId: string; buyerName: string; role?: string }> };
+  const selling = list.conversations.filter((c) => (c.role ?? "Seller") === "Seller");
+
+  const out: RawConv[] = [];
+  for (const c of selling) {
+    const detUrl = ep.base + fill(ep.detailPath, { userId: ep.userId, convId: c.id });
+    let messages: Msg[];
+    try {
+      const detRes = await fetch(detUrl, { headers });
+      const det = (await detRes.json()) as { messages?: Array<{ textShort?: string; boundness?: string; receivedDate?: string }> };
+      messages = toMsgs(det.messages ?? []);
+    } catch {
+      messages = []; // a single failed detail must not sink the whole sync
+    }
+    out.push({ conv: c.id, listing: c.adId, counterpart: c.buyerName, synthetic: false, messages });
+  }
+  return out;
 }
 
 export type SendResult = { delivered: boolean; dryRun: boolean; note: string };
 
-// Post one reply to one conversation. Dry-run / fixtures mode records intent without a wire call. The
-// live path is the same v1 TODO as fetch — loud, never a silent no-op that looks like success.
-export function postReply(here: string, conv: string, _text: string): SendResult {
+// Post one reply. Dry-run / fixtures mode records intent without a wire call. The live reply endpoint
+// (replyPath) is captured separately — until it's set, live send refuses loudly rather than guessing
+// a POST shape that could mis-send.
+export async function postReply(here: string, conv: string, text: string): Promise<SendResult> {
   if (process.env.KLEINANZEIGEN_DRY_RUN || process.env.KLEINANZEIGEN_FIXTURES) {
     return { delivered: false, dryRun: true, note: `dry-run: reply to ${conv} recorded, not sent` };
   }
-  const endpoints = loadEndpoints(here);
-  if (!endpoints) throw new Error(PROBE_HINT);
-  throw new Error(
-    `endpoints.json present (transport: ${endpoints.transport}) but live send is not implemented in v1.\n` +
-    "  Use KLEINANZEIGEN_DRY_RUN=1 to record intent, or wire the reply transport after probe.",
-  );
+  const ep = loadEndpoints(here);
+  if (!ep) throw new Error(PROBE_HINT);
+  if (!ep.replyPath) {
+    throw new Error(
+      "replyPath is not set in endpoints.json — the send-a-message request hasn't been captured yet.\n" +
+      "  Capture one reply with devtools open (Network → the POST when you send), add its path as replyPath,\n" +
+      "  or use KLEINANZEIGEN_DRY_RUN=1 to record intent. Read stays fully wired; send waits on this one capture.",
+    );
+  }
+  const auth = liveAuth();
+  if (!auth) throw new Error(AUTH_HINT);
+  const url = ep.base + fill(ep.replyPath, { userId: ep.userId, convId: conv });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...ep.headers, authorization: `Bearer ${auth.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ message: text }),
+  });
+  if (!res.ok) throw new Error(`reply POST ${res.status} ${res.statusText}`);
+  return { delivered: true, dryRun: false, note: `reply sent to ${conv}` };
 }

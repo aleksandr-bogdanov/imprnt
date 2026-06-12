@@ -2,56 +2,197 @@
 
 // src/kleinanzeigen.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { existsSync as existsSync4 } from "node:fs";
-import { join as join4, dirname } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join5, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/client.ts
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2, readdirSync } from "node:fs";
+import { join as join2 } from "node:path";
+
+// src/browser-auth.ts
+import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
+var printable = (s) => /^[\x20-\x7E]*$/.test(s);
+var BROWSERS = [
+  { name: "Arc", keychain: "Arc Safe Storage", cookieDir: "Arc/User Data/Default" },
+  { name: "Chrome", keychain: "Chrome Safe Storage", cookieDir: "Google/Chrome/Default" },
+  { name: "Brave", keychain: "Brave Safe Storage", cookieDir: "BraveSoftware/Brave-Browser/Default" },
+  { name: "Edge", keychain: "Microsoft Edge Safe Storage", cookieDir: "Microsoft Edge/Default" }
+];
+function keychainKey(service) {
+  try {
+    return execFileSync("security", ["find-generic-password", "-ws", service], { encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+function decryptValue(encHex, derived) {
+  const buf = Buffer.from(encHex, "hex");
+  if (buf.length < 4)
+    return null;
+  const ver = buf.subarray(0, 3).toString();
+  if (ver !== "v10" && ver !== "v11")
+    return null;
+  const d = crypto.createDecipheriv("aes-128-cbc", derived, Buffer.alloc(16, " "));
+  d.setAutoPadding(false);
+  let out = Buffer.concat([d.update(buf.subarray(3)), d.final()]);
+  const pad = out[out.length - 1];
+  if (pad > 0 && pad <= 16)
+    out = out.subarray(0, out.length - pad);
+  const full = out.toString("latin1");
+  const stripped = out.subarray(32).toString("latin1");
+  if (printable(full))
+    return full;
+  if (printable(stripped))
+    return stripped;
+  return null;
+}
+function liveAuth() {
+  if (process.env.KLEINANZEIGEN_TOKEN)
+    return { token: process.env.KLEINANZEIGEN_TOKEN.trim(), source: "KLEINANZEIGEN_TOKEN" };
+  const jar = process.env.KLEINANZEIGEN_COOKIES;
+  if (jar && existsSync(jar)) {
+    const raw = readFileSync(jar, "utf8");
+    const m = raw.match(/access_token=([^;\s]+)/);
+    if (m)
+      return { token: m[1], source: "KLEINANZEIGEN_COOKIES" };
+    if (raw.trim().split(".").length === 3)
+      return { token: raw.trim(), source: "KLEINANZEIGEN_COOKIES (raw jwt)" };
+  }
+  for (const b of BROWSERS) {
+    const dbPath = join(homedir(), "Library", "Application Support", b.cookieDir, "Cookies");
+    if (!existsSync(dbPath))
+      continue;
+    const key = keychainKey(b.keychain);
+    if (!key)
+      continue;
+    const derived = crypto.pbkdf2Sync(key, "saltysalt", 1003, 16, "sha1");
+    const tmp = mkdtempSync(join(tmpdir(), "ka-auth-"));
+    for (const f of ["Cookies", "Cookies-wal", "Cookies-shm"]) {
+      const s = join(homedir(), "Library", "Application Support", b.cookieDir, f);
+      if (existsSync(s))
+        try {
+          copyFileSync(s, join(tmp, f));
+        } catch {}
+    }
+    let rows;
+    try {
+      rows = execFileSync("sqlite3", [
+        join(tmp, "Cookies"),
+        "SELECT name, hex(encrypted_value) FROM cookies WHERE host_key LIKE '%kleinanzeigen%' AND name='access_token';"
+      ], { encoding: "utf8" });
+    } catch {
+      continue;
+    }
+    for (const line of rows.trim().split(/\r?\n/)) {
+      const [name, hex] = line.split("|");
+      if (name !== "access_token" || !hex)
+        continue;
+      const val = decryptValue(hex, derived);
+      if (val && val.split(".").length === 3)
+        return { token: val, source: `${b.name} session` };
+    }
+  }
+  return null;
+}
+
+// src/client.ts
 var PROBE_HINT = `no endpoints.json — the live transport isn't wired yet.
-` + `  Run the probe once while logged in:  KLEINANZEIGEN_COOKIES=<jar> node kleinanzeigen.js probe
+` + `  Generate it from a message-box HAR:  node kleinanzeigen.js probe --har <file.har>
 ` + "  Or run offline against fixtures:      KLEINANZEIGEN_FIXTURES=./fixtures node kleinanzeigen.js sync";
+var AUTH_HINT = `no live session — couldn't read your kleinanzeigen access_token.
+` + `  Log into kleinanzeigen.de in Arc (or Chrome/Brave/Edge) and approve the Keychain prompt, or set
+` + "  KLEINANZEIGEN_TOKEN=<jwt> / KLEINANZEIGEN_COOKIES=<file>. Offline: KLEINANZEIGEN_FIXTURES=./fixtures.";
 function loadEndpoints(here) {
-  const p = join(here, "endpoints.json");
-  if (!existsSync(p))
+  const p = join2(here, "endpoints.json");
+  if (!existsSync2(p))
     return null;
   try {
-    return JSON.parse(readFileSync(p, "utf8"));
+    return JSON.parse(readFileSync2(p, "utf8"));
   } catch {
     return null;
   }
 }
 function readFixtures(dir) {
-  if (!existsSync(dir))
+  if (!existsSync2(dir))
     throw new Error(`KLEINANZEIGEN_FIXTURES points at a missing dir: ${dir}`);
-  return readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
+  return readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => JSON.parse(readFileSync2(join2(dir, f), "utf8")));
 }
-function fetchConversations(here) {
+function fill(tmpl, vars) {
+  return tmpl.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ""));
+}
+function toMsgs(messages) {
+  return messages.map((m) => ({
+    from: m.boundness === "OUTBOUND" ? "seller" : "buyer",
+    at: m.receivedDate ?? "",
+    body: (m.textShort ?? "").trim()
+  }));
+}
+async function fetchConversations(here) {
   const fixtures = process.env.KLEINANZEIGEN_FIXTURES;
   if (fixtures)
     return readFixtures(fixtures);
-  const endpoints = loadEndpoints(here);
-  if (!endpoints)
+  const ep = loadEndpoints(here);
+  if (!ep)
     throw new Error(PROBE_HINT);
-  throw new Error(`endpoints.json present (transport: ${endpoints.transport}) but the live HTTP client is not implemented in v1.
-` + `  v1 ships the deterministic pipeline; wiring the real fetch is the post-probe follow-up.
-` + "  Run offline meanwhile: KLEINANZEIGEN_FIXTURES=./fixtures node kleinanzeigen.js sync");
+  const auth = liveAuth();
+  if (!auth)
+    throw new Error(AUTH_HINT);
+  const headers = { ...ep.headers, authorization: `Bearer ${auth.token}` };
+  const listUrl = ep.base + fill(ep.listPath, { userId: ep.userId, page: 0, size: 100 });
+  const listRes = await fetch(listUrl, { headers });
+  if (!listRes.ok)
+    throw new Error(`list fetch ${listRes.status} ${listRes.statusText} — session expired? reload kleinanzeigen.de in your browser`);
+  const list = await listRes.json();
+  const selling = list.conversations.filter((c) => (c.role ?? "Seller") === "Seller");
+  const out = [];
+  for (const c of selling) {
+    const detUrl = ep.base + fill(ep.detailPath, { userId: ep.userId, convId: c.id });
+    let messages;
+    try {
+      const detRes = await fetch(detUrl, { headers });
+      const det = await detRes.json();
+      messages = toMsgs(det.messages ?? []);
+    } catch {
+      messages = [];
+    }
+    out.push({ conv: c.id, listing: c.adId, counterpart: c.buyerName, synthetic: false, messages });
+  }
+  return out;
 }
-function postReply(here, conv, _text) {
+async function postReply(here, conv, text) {
   if (process.env.KLEINANZEIGEN_DRY_RUN || process.env.KLEINANZEIGEN_FIXTURES) {
     return { delivered: false, dryRun: true, note: `dry-run: reply to ${conv} recorded, not sent` };
   }
-  const endpoints = loadEndpoints(here);
-  if (!endpoints)
+  const ep = loadEndpoints(here);
+  if (!ep)
     throw new Error(PROBE_HINT);
-  throw new Error(`endpoints.json present (transport: ${endpoints.transport}) but live send is not implemented in v1.
-` + "  Use KLEINANZEIGEN_DRY_RUN=1 to record intent, or wire the reply transport after probe.");
+  if (!ep.replyPath) {
+    throw new Error(`replyPath is not set in endpoints.json — the send-a-message request hasn't been captured yet.
+` + `  Capture one reply with devtools open (Network → the POST when you send), add its path as replyPath,
+` + "  or use KLEINANZEIGEN_DRY_RUN=1 to record intent. Read stays fully wired; send waits on this one capture.");
+  }
+  const auth = liveAuth();
+  if (!auth)
+    throw new Error(AUTH_HINT);
+  const url = ep.base + fill(ep.replyPath, { userId: ep.userId, convId: conv });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...ep.headers, authorization: `Bearer ${auth.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ message: text })
+  });
+  if (!res.ok)
+    throw new Error(`reply POST ${res.status} ${res.statusText}`);
+  return { delivered: true, dryRun: false, note: `reply sent to ${conv}` };
 }
 
 // src/facts.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
-import { join as join2 } from "node:path";
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+import { join as join3 } from "node:path";
 function emptyFacts(listing) {
   return {
     listing,
@@ -116,10 +257,10 @@ function parseFacts(text, listingFallback = "") {
   return f;
 }
 function loadFacts(listingId, listingsDir) {
-  const p = join2(listingsDir, `${listingId}.yaml`);
-  if (!existsSync2(p))
+  const p = join3(listingsDir, `${listingId}.yaml`);
+  if (!existsSync3(p))
     return null;
-  return parseFacts(readFileSync2(p, "utf8"), listingId);
+  return parseFacts(readFileSync3(p, "utf8"), listingId);
 }
 
 // src/rate.ts
@@ -259,8 +400,8 @@ function belowFloor(amount, facts) {
 }
 
 // src/mirror.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3, readdirSync as readdirSync2, writeFileSync, mkdirSync } from "node:fs";
-import { join as join3 } from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync4, readdirSync as readdirSync2, writeFileSync, mkdirSync } from "node:fs";
+import { join as join4 } from "node:path";
 function ser(value) {
   if (Array.isArray(value))
     return `[${value.map((v) => String(v)).join(", ")}]`;
@@ -415,17 +556,17 @@ function parseConversation(text) {
 }
 function writeConversation(mirrorDir, c) {
   mkdirSync(mirrorDir, { recursive: true });
-  const p = join3(mirrorDir, `${c.conv}.md`);
+  const p = join4(mirrorDir, `${c.conv}.md`);
   writeFileSync(p, serializeConversation(c));
   return p;
 }
 function readConversation(path) {
-  return parseConversation(readFileSync3(path, "utf8"));
+  return parseConversation(readFileSync4(path, "utf8"));
 }
 function listConversations(mirrorDir) {
-  if (!existsSync3(mirrorDir))
+  if (!existsSync4(mirrorDir))
     return [];
-  return readdirSync2(mirrorDir).filter((f) => f.endsWith(".md")).sort().map((f) => readConversation(join3(mirrorDir, f)));
+  return readdirSync2(mirrorDir).filter((f) => f.endsWith(".md")).sort().map((f) => readConversation(join4(mirrorDir, f)));
 }
 function latestBuyerMessage(c) {
   for (let k = c.messages.length - 1;k >= 0; k--) {
@@ -493,23 +634,22 @@ function guardSend(c, force) {
 }
 
 // src/kleinanzeigen.ts
-import { writeFileSync as writeFileSync2 } from "node:fs";
 var here = dirname(fileURLToPath(import.meta.url));
-var MIRROR = join4(here, "mirror");
-var LISTINGS = join4(here, "listings");
-function cmdSync() {
+var MIRROR = join5(here, "mirror");
+var LISTINGS = join5(here, "listings");
+async function cmdSync() {
   let raws;
   try {
-    raws = fetchConversations(here);
+    raws = await fetchConversations(here);
   } catch (e) {
     console.error(`sync: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
   let written = 0;
   for (const r of raws) {
-    const existingPath = join4(MIRROR, `${r.conv}.md`);
+    const existingPath = join5(MIRROR, `${r.conv}.md`);
     let state = "open";
-    if (existsSync4(existingPath)) {
+    if (existsSync5(existingPath)) {
       const prev = readConversation(existingPath);
       if (prev.state === "answered" || prev.state === "closed")
         state = prev.state;
@@ -526,7 +666,7 @@ function cmdSync() {
     });
     written++;
   }
-  writeFileSync2(join4(MIRROR, ".last-sync"), new Date().toISOString() + `
+  writeFileSync2(join5(MIRROR, ".last-sync"), new Date().toISOString() + `
 `);
   const src = process.env.KLEINANZEIGEN_FIXTURES ? "fixtures" : "live";
   console.log(`sync (${src}): ${written} conversation(s) mirrored, .last-sync stamped.`);
@@ -570,7 +710,7 @@ function cmdNotify() {
     console.log(`notify: ${res.detail}`);
   return res.ok ? 0 : 1;
 }
-function cmdSend(args) {
+async function cmdSend(args) {
   const force = args.includes("--force");
   const positional = args.filter((a) => a !== "--force");
   const conv = positional[0];
@@ -579,8 +719,8 @@ function cmdSend(args) {
     console.error('usage: send <conv-id> "<reply text>" [--force]');
     return 1;
   }
-  const p = join4(MIRROR, `${conv}.md`);
-  if (!existsSync4(p)) {
+  const p = join5(MIRROR, `${conv}.md`);
+  if (!existsSync5(p)) {
     console.error(`send: no such conversation in mirror: ${conv}`);
     return 1;
   }
@@ -592,7 +732,7 @@ function cmdSend(args) {
   }
   let result;
   try {
-    result = postReply(here, conv, text);
+    result = await postReply(here, conv, text);
   } catch (e) {
     console.error(`send: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
@@ -603,40 +743,69 @@ function cmdSend(args) {
   console.log(`send: ${result.note}. Conversation ${conv} marked answered.`);
   return 0;
 }
-function cmdProbe() {
-  console.log("probe (v1 stub — no live call made):");
-  if (!process.env.KLEINANZEIGEN_COOKIES) {
-    console.log("  set KLEINANZEIGEN_COOKIES to your cookie-jar path first.");
+function cmdProbe(args) {
+  const harFlag = args.indexOf("--har");
+  if (harFlag === -1 || !args[harFlag + 1]) {
+    console.log("usage: node kleinanzeigen.js probe --har <messagebox.har>");
+    console.log("  Capture: log into kleinanzeigen.de, open Messages, devtools → Network → Save all as HAR.");
+    return 1;
   }
-  console.log([
-    "  To wire the live transport, capture these while logged into the web message box:",
-    "   1. open the message box in a browser, devtools → Network → XHR/Fetch",
-    "   2. note the conversation-LIST request (URL, method, headers) and the conversation-DETAIL request",
-    "   3. note the SEND-reply request (URL, method, body shape)",
-    "   4. write them into endpoints.json: { transport, conversations_url, reply_url, note }",
-    "  Until endpoints.json exists, run offline: KLEINANZEIGEN_FIXTURES=./fixtures node kleinanzeigen.js sync"
-  ].join(`
-`));
+  const harPath = args[harFlag + 1];
+  if (!existsSync5(harPath)) {
+    console.error(`probe: no such HAR file: ${harPath}`);
+    return 1;
+  }
+  let har;
+  try {
+    har = JSON.parse(readFileSync5(harPath, "utf8"));
+  } catch (e) {
+    console.error(`probe: unreadable HAR: ${e instanceof Error ? e.message : e}`);
+    return 1;
+  }
+  const urls = (har.log?.entries ?? []).map((e) => e.request.url);
+  const m = urls.map((u) => u.match(/(https:\/\/[^/]+\/messagebox\/api)\/users\/(\d+)\/conversations/)).find(Boolean);
+  if (!m) {
+    console.error("probe: no messagebox conversation requests found in the HAR — capture the Messages page.");
+    return 1;
+  }
+  const [, base, userId] = m;
+  const ep = {
+    transport: "messagebox-web",
+    base,
+    userId,
+    listPath: "/users/{userId}/conversations?page={page}&size={size}",
+    detailPath: "/users/{userId}/conversations/{convId}?contentWarnings=true",
+    replyPath: null,
+    headers: { accept: "application/json", "x-ecg-user-agent": "messagebox-1", origin: "https://www.kleinanzeigen.de", referer: "https://www.kleinanzeigen.de/" },
+    note: "Auth is Bearer <access_token>, read from the browser session at sync time. replyPath null until a send is captured."
+  };
+  writeFileSync2(join5(here, "endpoints.json"), JSON.stringify(ep, null, 2) + `
+`);
+  console.log(`probe: wrote endpoints.json (base ${base}, userId ${userId}).`);
+  console.log("  Live sync now works: node kleinanzeigen.js sync (reads your browser session for the token).");
   return 0;
 }
 var cmd = process.argv[2];
 var rest = process.argv.slice(3);
-switch (cmd) {
-  case "sync":
-    process.exit(cmdSync());
-  case "rate":
-    process.exit(cmdRate());
-  case "notify":
-    process.exit(cmdNotify());
-  case "send":
-    process.exit(cmdSend(rest));
-  case "probe":
-    process.exit(cmdProbe());
-  case "check": {
-    const proc = spawnSync2(process.execPath, [join4(here, "check.js")], { stdio: "inherit" });
-    process.exit(proc.status ?? 1);
+async function main() {
+  switch (cmd) {
+    case "sync":
+      return await cmdSync();
+    case "rate":
+      return cmdRate();
+    case "notify":
+      return cmdNotify();
+    case "send":
+      return await cmdSend(rest);
+    case "probe":
+      return cmdProbe(rest);
+    case "check": {
+      const proc = spawnSync2(process.execPath, [join5(here, "check.js")], { stdio: "inherit" });
+      return proc.status ?? 1;
+    }
+    default:
+      console.error("usage: node kleinanzeigen.js <sync|rate|notify|send|probe|check>");
+      return 1;
   }
-  default:
-    console.error("usage: node kleinanzeigen.js <sync|rate|notify|send|probe|check>");
-    process.exit(1);
 }
+main().then((code) => process.exit(code));

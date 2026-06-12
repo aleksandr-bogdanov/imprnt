@@ -18,10 +18,10 @@ const LISTINGS = join(pkgRoot, "listings");
 
 let rated: Conversation[];
 
-beforeAll(() => {
+beforeAll(async () => {
   process.env.KLEINANZEIGEN_FIXTURES = FIXTURES;
   const mirror = mkdtempSync(join(tmpdir(), "ka-mirror-"));
-  const raws = fetchConversations(pkgRoot); // fixtures env wins
+  const raws = await fetchConversations(pkgRoot); // fixtures env wins
   for (const r of raws) {
     const facts = loadFacts(r.listing, LISTINGS);
     const buyer = [...r.messages].reverse().find((m) => m.from === "buyer")!;

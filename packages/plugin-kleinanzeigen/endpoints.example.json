@@ -1,0 +1,15 @@
+{
+  "transport": "messagebox-web",
+  "base": "https://gateway.kleinanzeigen.de/messagebox/api",
+  "userId": "YOUR_USER_ID",
+  "listPath": "/users/{userId}/conversations?page={page}&size={size}",
+  "detailPath": "/users/{userId}/conversations/{convId}?contentWarnings=true",
+  "replyPath": null,
+  "headers": {
+    "accept": "application/json",
+    "x-ecg-user-agent": "messagebox-1",
+    "origin": "https://www.kleinanzeigen.de",
+    "referer": "https://www.kleinanzeigen.de/"
+  },
+  "note": "Auth is the .kleinanzeigen.de session cookies (KLEINANZEIGEN_COOKIES). userId is the numeric id in the message-box URLs. replyPath is null until a send-a-message request is captured — sending stays disabled until then. Copy this to endpoints.json and fill userId, or run `probe --har <file>` to generate it."
+}
