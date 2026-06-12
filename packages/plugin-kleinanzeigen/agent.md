@@ -29,9 +29,9 @@ code reads the hostile inbox, the model only ever drafts the `odd` residue, the 
 ## Commands (you run these; nothing runs on its own)
 
 - `node plugins/kleinanzeigen/kleinanzeigen.js sync` — the **only command that crosses the wire**.
-  Refreshes the mirror from the message box. Offline with `KLEINANZEIGEN_FIXTURES=<dir>`. The user
-  schedules it (launchd/cron); never a daemon. *(v1: live transport is gated behind `endpoints.json`,
-  which only `probe` writes. Until then, runs against fixtures.)*
+  Refreshes the mirror from the message box (LIVE-wired: Bearer auth read from the user's logged-in
+  browser session, list + per-conversation detail for full bodies, keeping only role=Seller threads).
+  Offline with `KLEINANZEIGEN_FIXTURES=<dir>`. The user schedules it (launchd/cron); never a daemon.
 - `node plugins/kleinanzeigen/kleinanzeigen.js rate` — classify each mirrored conversation. Pure
   regex, zero LLM. Writes the rating back into the mirror frontmatter.
 - `node plugins/kleinanzeigen/kleinanzeigen.js notify` — compose the digest and ship it via
@@ -62,5 +62,7 @@ When the user asks about their listings or a buyer:
   scam guard refuses fraud-rated conversations even when asked, unless `--force`.
 - **Never write a vault note.** Drafts and state live in this folder. To put something durable in the
   vault (a sale summary), propose it into `proposed/` for `imprnt ingest --apply`.
-- **Secrets at the edge:** `KLEINANZEIGEN_COOKIES` (cookie-jar path) and any channel token in
-  `$WATCHER_NOTIFY_CMD` come from the environment, never the vault or the repo.
+- **Secrets at the edge:** the auth token is read live from the user's browser session (or
+  `KLEINANZEIGEN_TOKEN`/`KLEINANZEIGEN_COOKIES` overrides); any channel token in `$WATCHER_NOTIFY_CMD`
+  comes from the environment. `endpoints.json` (holds the numeric userId) and the mirror (real
+  messages) are gitignored — never committed, never in the vault.

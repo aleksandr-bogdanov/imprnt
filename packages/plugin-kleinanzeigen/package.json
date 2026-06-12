@@ -8,6 +8,7 @@
     "README.md",
     "check.js",
     "kleinanzeigen.js",
+    "endpoints.example.json",
     "listings",
     "fixtures",
     "proposed",
