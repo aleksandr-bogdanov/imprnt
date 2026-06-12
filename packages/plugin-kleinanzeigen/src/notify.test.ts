@@ -11,21 +11,22 @@ function c(over: Partial<Conversation>): Conversation {
 
 test("digest groups by listing, leads with scams, shows drafts and needs-you lines", () => {
   const convs: Conversation[] = [
-    c({ conv: "david-thiess", counterpart: "David Thiess", rating: "scam", tells: ["paypal", "name-mismatch"] }),
-    c({ conv: "frank", counterpart: "Frank", rating: "offer", offer_amount: 70, below_floor: true }),
-    c({ conv: "erik", counterpart: "Erik", rating: "faq", needs_fact: ["artikelnummer"], draft: null }),
-    c({ conv: "patrick", counterpart: "Patrick", rating: "pickup", draft: "Hi, Abholung ist möglich in Berlin. ..." }),
+    c({ conv: "2932z:1:scam", counterpart: "David Thiess", rating: "scam", tells: ["paypal", "name-mismatch"] }),
+    c({ conv: "2932z:2:offer", counterpart: "Frank", rating: "offer", offer_amount: 70, below_floor: true }),
+    c({ conv: "2932z:3:faq", counterpart: "Erik", rating: "faq", needs_fact: ["artikelnummer"], draft: null }),
+    c({ conv: "2932z:4:pick", counterpart: "Patrick", rating: "pickup", draft: "Hi, Abholung ist möglich in Berlin. ..." }),
   ];
   const d = composeDigest(convs);
 
   expect(d).toContain("3432924231: 4 new");
-  // scam first, with named tells and no draft
+  // each line LEADS with the verifiable conv id (the argument `send` takes); the name is a hint in ()
   const lines = d.split("\n");
-  expect(lines[1]).toContain("David Thiess");
+  expect(lines[1]).toContain("2932z:1:scam");
+  expect(lines[1]).toContain("(David Thiess)");
   expect(lines[1]).toContain("scam: paypal, name-mismatch");
-  expect(d).toContain("Frank [offer 70€ (below floor)]");
-  expect(d).toContain("Erik [faq] — needs you: confirm artikelnummer");
-  expect(d).toContain('Patrick [pickup] draft: "Hi, Abholung');
+  expect(d).toContain("2932z:2:offer (Frank) [offer 70€ (below floor)]");
+  expect(d).toContain("2932z:3:faq (Erik) [faq] — needs you: confirm artikelnummer");
+  expect(d).toContain('2932z:4:pick (Patrick) [pickup] draft: "Hi, Abholung');
 });
 
 test("answered/closed conversations drop out of the digest", () => {
