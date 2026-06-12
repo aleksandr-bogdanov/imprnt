@@ -23,6 +23,41 @@ The practical test — the litmus for the whole contract:
 
 If adding a plugin forces you to touch the core, the plugin is wrong — not the core.
 
+## The shape, drawn
+
+```
+                ┌─────────────────────────────────────────────────────────────┐
+                │ YOU                                                         │
+                │  · wire @plugins/<name>/agent.md into CLAUDE.local.md       │
+                │  · schedule commands (launchd/cron) or run them by hand     │
+                │  · approve everything that leaves the machine               │
+                └────────┬───────────────────────────────┬────────────────────┘
+                         │ runs / schedules              │ talks
+                         ▼                               ▼
+    REMOTE       ┌───────────────────┐         ┌───────────────────────┐
+    SERVICE ◄───►│  plugin commands  │         │  AGENT (Claude)       │
+    (the only    │  sync / check /   │         │  knows the plugin     │
+     wire, and   │  <verb>.js        │         │  via agent.md ONLY    │
+     only sync   └────────┬──────────┘         └──────────┬────────────┘
+     touches it)          │ writes own folder only        │ reads at answer time,
+                          ▼                               │ never the wire
+                ┌─────────────────────────────────────────▼───┐
+                │  plugins/<name>/      (the rm -rf-able unit) │
+                │    mirror/     local cache, rendered at read │
+                │    proposed/   staged notes, nothing applied │
+                └────────┬─────────────────────────────────────┘
+                         │ imprnt ingest --apply   (you approve)
+                         ▼
+                ┌──────────────┐    imprnt check --all globs plugins/*/check.js,
+                │    vault/    │◄── reads EXIT CODES only - core never imports,
+                └──────────────┘    never names, never parses a plugin
+```
+
+The property the picture enforces: the agent and the wire never touch. Code talks to the outside
+world, the agent reads the local mirror, and the two meet only at your approval. Behavior and
+harness plugins are degenerate cases of the same shape — no remote service, no mirror, just the
+`agent.md` fragment (or hook/settings files) inside the same rm-able folder.
+
 ## Using plugins
 
 Each plugin is its own npm package, `imprnt-plugin-<name>`. Installing one fetches the package and
@@ -288,6 +323,21 @@ The first plugin to exercise the whole contract end-to-end: an `agent.md` fragme
 folder, and its own built `check.js` the `check --all` aggregator finds. The `sync` command is a
 documented **stub** today — it states the Whenful API contract it will call and makes **no**
 live network request — wiring the real API is the next session.
+
+### kleinanzeigen — marketplace inbox watcher ✅ built (the first watcher-class plugin)
+
+A watcher for the Kleinanzeigen message box, and the first instance of the **watcher class** (mail
+triage is next): code reads a hostile external inbox, the model only drafts the residue, the send
+button stays human. `sync` mirrors conversations (the one wire edge, offline against `fixtures/`),
+`rate` classifies each with pure regex + arithmetic — zero LLM — into scam / offer / faq / pickup /
+interest / odd, drafting FAQ replies from per-listing `listings/<id>.yaml` fact sheets (an empty field
+becomes a `needs_fact`, never a guess). `notify` ships a phone-sized digest via `$WATCHER_NOTIFY_CMD`
+(dumb plumbing, no channel coupling). `send` posts ONE reply per explicit approval and refuses a
+scam-rated conversation without `--force`. The scam blocklist names its tells (paypal, name-mismatch,
+instant-full-price, payment-link, external-contact, abroad-story, courier-story) so an attacker-written
+message is classified, never obeyed. Live endpoints are gated behind `endpoints.json` (written by
+`probe`, run once logged in); until then it runs fully on fixtures. Its `check.js` flags mirror
+staleness and missing fact sheets via `imprnt check --all`.
 
 ### character — your digital people ✅ shipped default (Scribe)
 

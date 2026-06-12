@@ -59,6 +59,20 @@ assistant cheap, honest, and yours:
 - **Yours, in the strongest sense.** Plain text on your disk. It opens in any editor, graphs in
   [Obsidian](https://obsidian.md), and cannot 404, bloat, or hold your context hostage.
 
+## The robot does the work. You stay the boss.
+
+The current crop of AI tools wants the wheel. Resident agents (OpenClaw and friends) read your
+inbox and act on your behalf. Auto-schedulers rearrange your calendar while you sleep. imprnt
+takes the other side, the same side its sibling [Whenful](https://whenful.com) takes against
+auto-planners like Motion. The rule, in full:
+
+> The model never takes an action you didn't approve.
+
+In practice: plain code does every read, so it's cheap, auditable, and immune to prompt injection
+hiding in your data. The model writes and drafts where judgment pays. And anything that touches
+the world - filing a note, sending a reply - ends with you pressing the button. A watcher built
+on imprnt can triage a hostile inbox all day for free. The send button stays human.
+
 ## Start in two minutes
 
 ```sh
@@ -112,6 +126,7 @@ asking ("add the anti-slop plugin"), each a separate `imprnt-plugin-*` package:
 | `imprnt-plugin-character` | A voice and standards to write in. "Scribe" is the default you copy and personalize. |
 | `imprnt-plugin-anti-slop` | Rules that keep its prose from reading like AI. |
 | `imprnt-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, shown inline at read. |
+| `imprnt-plugin-kleinanzeigen` | A watcher for your Kleinanzeigen inbox: regex triage of buyer messages, drafts, a phone digest. You press send. |
 | `imprnt-plugin-guard` | A hook that blocks dangerous shell commands before they run. |
 | `imprnt-plugin-statusline` | A customizable status line: model, branch, context, cost, rate limits, clock. |
 | `imprnt-plugin-telegram` | Your vault from your phone: text a bot, the answer comes from your notes. |
