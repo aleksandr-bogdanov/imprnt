@@ -1,0 +1,40 @@
+{
+  "name": "imprnt-plugin-kleinanzeigen",
+  "version": "0.1.0",
+  "description": "imprnt plugin: a watcher for your Kleinanzeigen message box. Deterministic regex triage of buyer messages, template drafts, a phone digest; you press send. Never sends on its own.",
+  "type": "module",
+  "files": [
+    "agent.md",
+    "README.md",
+    "check.js",
+    "kleinanzeigen.js",
+    "listings",
+    "fixtures",
+    "proposed",
+    "mirror"
+  ],
+  "scripts": {
+    "build": "bun build src/check.ts --target=node --outfile=check.js --banner '#!/usr/bin/env node' && bun build src/kleinanzeigen.ts --target=node --outfile=kleinanzeigen.js --banner '#!/usr/bin/env node'",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "prepack": "bun run build"
+  },
+  "keywords": [
+    "imprnt",
+    "imprnt-plugin",
+    "kleinanzeigen",
+    "watcher",
+    "triage"
+  ],
+  "license": "MIT",
+  "author": "Aleksandr Bogdanov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aleksandr-bogdanov/imprnt.git",
+    "directory": "packages/plugin-kleinanzeigen"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^5.7.2"
+  }
+}

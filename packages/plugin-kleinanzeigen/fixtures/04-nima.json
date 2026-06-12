@@ -1,0 +1,9 @@
+{
+  "conv": "nima",
+  "listing": "3432924231",
+  "counterpart": "Nima",
+  "synthetic": true,
+  "messages": [
+    { "from": "buyer", "at": "2026-06-12T09:51:00Z", "body": "Hallo, wie lautet die Artikelnummer des Geräts? Ist das Koaxialkabel dabei?" }
+  ]
+}
