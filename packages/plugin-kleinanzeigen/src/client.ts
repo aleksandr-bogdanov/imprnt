@@ -133,6 +133,12 @@ export async function postReply(here: string, conv: string, text: string): Promi
     headers: { ...ep.headers, authorization: `Bearer ${auth.token}`, "content-type": "application/json" },
     body: JSON.stringify({ message: text }),
   });
-  if (!res.ok) throw new Error(`reply POST ${res.status} ${res.statusText}`);
+  if (res.status === 401) throw new Error("reply POST 401 — session expired; reload kleinanzeigen.de in your browser, then retry");
+  if (!res.ok) {
+    // Surface the server's validation message — if the { message } body shape is wrong, the 4xx body
+    // names the field it wants, which is how the first live send confirms (and corrects) the schema.
+    const body = await res.text().catch(() => "");
+    throw new Error(`reply POST ${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 300)}` : ""}`);
+  }
   return { delivered: true, dryRun: false, note: `reply sent to ${conv}` };
 }

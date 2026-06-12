@@ -4,12 +4,12 @@
   "userId": "YOUR_USER_ID",
   "listPath": "/users/{userId}/conversations?page={page}&size={size}",
   "detailPath": "/users/{userId}/conversations/{convId}?contentWarnings=true",
-  "replyPath": null,
+  "replyPath": "/users/{userId}/conversations/{convId}",
   "headers": {
     "accept": "application/json",
     "x-ecg-user-agent": "messagebox-1",
     "origin": "https://www.kleinanzeigen.de",
     "referer": "https://www.kleinanzeigen.de/"
   },
-  "note": "Auth is the .kleinanzeigen.de session cookies (KLEINANZEIGEN_COOKIES). userId is the numeric id in the message-box URLs. replyPath is null until a send-a-message request is captured — sending stays disabled until then. Copy this to endpoints.json and fill userId, or run `probe --har <file>` to generate it."
+  "note": "Auth is Bearer <access_token>, read from the browser session at sync time. userId is the numeric id in the message-box URLs. replyPath POSTs to the conversation endpoint (OPTIONS confirms POST); the body shape { message } is unverified until the first live send. Run `probe --har <file>` to generate this."
 }

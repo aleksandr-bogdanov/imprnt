@@ -185,8 +185,12 @@ async function postReply(here, conv, text) {
     headers: { ...ep.headers, authorization: `Bearer ${auth.token}`, "content-type": "application/json" },
     body: JSON.stringify({ message: text })
   });
-  if (!res.ok)
-    throw new Error(`reply POST ${res.status} ${res.statusText}`);
+  if (res.status === 401)
+    throw new Error("reply POST 401 — session expired; reload kleinanzeigen.de in your browser, then retry");
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`reply POST ${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 300)}` : ""}`);
+  }
   return { delivered: true, dryRun: false, note: `reply sent to ${conv}` };
 }
 
@@ -725,6 +729,12 @@ async function cmdSend(args) {
     return 1;
   }
   const c = readConversation(p);
+  const buyer = latestBuyerMessage(c);
+  if (buyer) {
+    const r = classify(buyer.body, c.counterpart, loadFacts(c.listing, LISTINGS));
+    c.rating = r.rating;
+    c.tells = r.tells;
+  }
   const decision = guardSend(c, force);
   if (!decision.allowed) {
     console.error(`send: ${decision.reason}`);
@@ -775,9 +785,9 @@ function cmdProbe(args) {
     userId,
     listPath: "/users/{userId}/conversations?page={page}&size={size}",
     detailPath: "/users/{userId}/conversations/{convId}?contentWarnings=true",
-    replyPath: null,
+    replyPath: "/users/{userId}/conversations/{convId}",
     headers: { accept: "application/json", "x-ecg-user-agent": "messagebox-1", origin: "https://www.kleinanzeigen.de", referer: "https://www.kleinanzeigen.de/" },
-    note: "Auth is Bearer <access_token>, read from the browser session at sync time. replyPath null until a send is captured."
+    note: "Auth is Bearer <access_token>, read from the browser session at sync time. replyPath POSTs to the conversation endpoint; body shape unverified until the first live send."
   };
   writeFileSync2(join5(here, "endpoints.json"), JSON.stringify(ep, null, 2) + `
 `);
