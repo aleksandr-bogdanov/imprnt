@@ -38,8 +38,9 @@ const PROBE_HINT =
   "  Or run offline against fixtures:      KLEINANZEIGEN_FIXTURES=./fixtures node kleinanzeigen.js sync";
 
 const AUTH_HINT =
-  "no live session — couldn't read your kleinanzeigen access_token.\n" +
-  "  Log into kleinanzeigen.de in Arc (or Chrome/Brave/Edge) and approve the Keychain prompt, or set\n" +
+  "no live session — couldn't get a kleinanzeigen access_token.\n" +
+  "  Best: run the session host (`session-host serve`) and enroll once (`session-host login ...`).\n" +
+  "  Or log into kleinanzeigen.de in Arc and approve the Keychain prompt, or set\n" +
   "  KLEINANZEIGEN_TOKEN=<jwt> / KLEINANZEIGEN_COOKIES=<file>. Offline: KLEINANZEIGEN_FIXTURES=./fixtures.";
 
 export function loadEndpoints(here: string): Endpoints | null {
@@ -81,7 +82,7 @@ export async function fetchConversations(here: string): Promise<RawConv[]> {
 
   const ep = loadEndpoints(here);
   if (!ep) throw new Error(PROBE_HINT);
-  const auth = liveAuth();
+  const auth = await liveAuth();
   if (!auth) throw new Error(AUTH_HINT);
 
   const headers = { ...ep.headers, authorization: `Bearer ${auth.token}` };
@@ -125,7 +126,7 @@ export async function postReply(here: string, conv: string, text: string): Promi
       "  or use KLEINANZEIGEN_DRY_RUN=1 to record intent. Read stays fully wired; send waits on this one capture.",
     );
   }
-  const auth = liveAuth();
+  const auth = await liveAuth();
   if (!auth) throw new Error(AUTH_HINT);
   const url = ep.base + fill(ep.replyPath, { userId: ep.userId, convId: conv });
   const res = await fetch(url, {

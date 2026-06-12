@@ -339,6 +339,21 @@ message is classified, never obeyed. Live endpoints are gated behind `endpoints.
 `probe`, run once logged in); until then it runs fully on fixtures. Its `check.js` flags mirror
 staleness and missing fact sheets via `imprnt check --all`.
 
+### session-host — the authed-session capability ✅ built (the first capability module)
+
+A warm, user-started browser that holds the user's logged-in sessions (separate from their daily
+browser) and provides the **authed-session** capability: consumers ask its localhost broker
+(`/session/token?site=`) for a fresh login token, read from a live session the site keeps refreshing
+itself. It's how the kleinanzeigen watcher gets reliable auth without per-site token reverse-
+engineering, and how mail/channels will. `serve` runs the warm Playwright (system Chrome, no download)
+context + broker; `login <url>` is the one-time manual sign-in; `status` shows enrollment. The first
+module that PROVIDES a capability others CONSUME — proving the contract evolution (drop "share nothing";
+modules declare provides/consumes; removing a provider degrades a consumer gracefully, never breaks it:
+the watcher with no host falls back to a direct browser read). Litmus against PAI (Plans/06): you start
+it, you can kill it, localhost-only, deterministic-driven, auto-injects nothing, every token handout
+audited. `playwright-core` is its one dependency, fenced behind the broker. `profile/` + `audit.log`
+gitignored.
+
 ### character — your digital people ✅ shipped default (Scribe)
 
 The DA's character, as a wired-in fragment — the thing that makes the assistant *itself* and not raw
