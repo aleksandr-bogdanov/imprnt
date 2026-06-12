@@ -117,6 +117,14 @@ async function cmdSend(args: string[]): Promise<number> {
     return 1;
   }
   const c = readConversation(p);
+  // Classify right here before guarding — never trust a possibly-absent mirror rating (a send issued
+  // before `rate` ran would otherwise bypass the scam guard). The guard must see a fresh verdict.
+  const buyer = latestBuyerMessage(c);
+  if (buyer) {
+    const r = classify(buyer.body, c.counterpart, loadFacts(c.listing, LISTINGS));
+    c.rating = r.rating;
+    c.tells = r.tells;
+  }
   const decision = guardSend(c, force);
   if (!decision.allowed) {
     console.error(`send: ${decision.reason}`);
@@ -161,9 +169,12 @@ function cmdProbe(args: string[]): number {
     userId,
     listPath: "/users/{userId}/conversations?page={page}&size={size}",
     detailPath: "/users/{userId}/conversations/{convId}?contentWarnings=true",
-    replyPath: null as string | null,
+    // OPTIONS preflight confirms POST is allowed on the conversation endpoint, so reply posts there.
+    // The request BODY shape ({ message }) is a best guess until one live send confirms it — a wrong
+    // guess returns a clean 4xx (no message sent), and send is human-invoked, so it's safe to ship.
+    replyPath: "/users/{userId}/conversations/{convId}",
     headers: { accept: "application/json", "x-ecg-user-agent": "messagebox-1", origin: "https://www.kleinanzeigen.de", referer: "https://www.kleinanzeigen.de/" },
-    note: "Auth is Bearer <access_token>, read from the browser session at sync time. replyPath null until a send is captured.",
+    note: "Auth is Bearer <access_token>, read from the browser session at sync time. replyPath POSTs to the conversation endpoint; body shape unverified until the first live send.",
   };
   writeFileSync(join(here, "endpoints.json"), JSON.stringify(ep, null, 2) + "\n");
   console.log(`probe: wrote endpoints.json (base ${base}, userId ${userId}).`);
