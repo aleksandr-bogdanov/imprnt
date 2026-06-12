@@ -593,20 +593,21 @@ function composeDigest(convs) {
     byListing.set(c.listing, (byListing.get(c.listing) ?? 0) + 1);
   const header = [...byListing.entries()].map(([l, n]) => `${l}: ${n} new`).join(" · ");
   const lines = sorted.map((c) => {
-    const who = c.counterpart || c.conv;
+    const who = c.counterpart ? ` (${c.counterpart})` : "";
+    const id = c.conv;
     const tag = c.rating ?? "odd";
     if (tag === "scam")
-      return `⚠ ${who} [scam: ${(c.tells ?? []).join(", ")}] — no draft, do not reply`;
+      return `⚠ ${id}${who} [scam: ${(c.tells ?? []).join(", ")}] — no draft, do not reply`;
     if (tag === "offer") {
       const amt = c.offer_amount != null ? `${c.offer_amount}€` : "?";
       const floor = c.below_floor ? " (below floor)" : "";
-      return `${who} [offer ${amt}${floor}] — your call`;
+      return `${id}${who} [offer ${amt}${floor}] — your call`;
     }
     if ((c.needs_fact ?? []).length)
-      return `${who} [${tag}] — needs you: confirm ${(c.needs_fact ?? []).join(", ")}`;
+      return `${id}${who} [${tag}] — needs you: confirm ${(c.needs_fact ?? []).join(", ")}`;
     if (c.draft)
-      return `${who} [${tag}] draft: "${c.draft}"`;
-    return `${who} [${tag}] — no draft`;
+      return `${id}${who} [${tag}] draft: "${c.draft}"`;
+    return `${id}${who} [${tag}] — no draft`;
   });
   return [`Kleinanzeigen — ${header}`, ...lines].join(`
 `);
