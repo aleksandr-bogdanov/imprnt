@@ -10,6 +10,7 @@ import { createInterface } from "node:readline/promises";
 import { openNeedsReview } from "./lib/resolve.ts";
 import { listPluginDirs, isEnabled, addPlugin, rmPlugin, specError } from "./lib/plugins.ts";
 import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install.ts";
+import { addGlobalModule, rmGlobalModule, listGlobalModules, installedGlobalDirs } from "./lib/global.ts";
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
 import { registerVault, vaultProjectRoot, registeredRoot, configPath, isVaultProject } from "./lib/registry.ts";
@@ -249,6 +250,62 @@ switch (cmd) {
     console.error("usage: imprnt plugin list | add <name> [--from <dir>] [--force] | rm <name> [--purge]");
     process.exit(1);
   }
+  case "global": {
+    // Global-scope behavior modules: wire a universal fragment (anti-slop, a house style) into Claude
+    // Code's user-level CLAUDE.md so it loads in EVERY session in every directory, not just imp
+    // sessions or the vault project. Targets `$CLAUDE_CONFIG_DIR || ~/.claude` (where Claude Code reads
+    // its global CLAUDE.md), owning only a fenced managed block inside it. This replaces the old hack of
+    // hand-editing ~/.claude/CLAUDE.md to @import an absolute path into a dev checkout.
+    const globalDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+    const [sub, ...gargs] = rest;
+    if (sub === "list") {
+      const wired = listGlobalModules(globalDir);
+      const onDisk = installedGlobalDirs(globalDir);
+      console.log(`global modules (in ${globalDir}/CLAUDE.md):`);
+      if (!wired.length && !onDisk.length) console.log("  (none) - add one with `imprnt global add <name> --from <dir>`");
+      for (const n of wired) console.log(`  [on]  ${n}${onDisk.includes(n) ? "" : "  ⚠ wired but no copy on disk - re-add it"}`);
+      for (const n of onDisk) if (!wired.includes(n)) console.log(`  [off] ${n}  (copied but not wired - run: imprnt global add ${n})`);
+      console.log("\nthese load in EVERY claude session. enable: imprnt global add <name>   disable: imprnt global rm <name> [--purge]");
+      break;
+    }
+    if (sub === "add") {
+      // Pull --from out; the remaining token is the module name. A bare name promotes an already-
+      // installed PROJECT plugin (plugins/<name>/) to global scope; --from points at any source dir.
+      let from: string | undefined;
+      const names: string[] = [];
+      for (let i = 0; i < gargs.length; i++) {
+        if (gargs[i] === "--from") {
+          from = gargs[++i];
+          if (from === undefined) { console.error("usage: --from <dir> (missing directory after --from)"); process.exit(1); }
+        } else names.push(gargs[i]!);
+      }
+      if (names.length !== 1) { console.error("usage: imprnt global add <name> [--from <dir>]"); process.exit(1); }
+      const name = names[0]!;
+      // Resolve the source: explicit --from, else the project plugin dir of the same name (promote it).
+      const proj = pluginRoot();
+      const srcDir = from ? resolve(from) : join(proj, "plugins", name);
+      if (!existsSync(srcDir)) {
+        console.error(`global add ${name}: no source - ${from ? `--from path not found: ${srcDir}` : `no plugins/${name}/ to promote; pass --from <dir>`}`);
+        process.exit(1);
+      }
+      const r = addGlobalModule(globalDir, name, srcDir);
+      if (!r.ok) { console.error(`global add ${name}: ${r.error}`); process.exit(1); }
+      console.log(r.changed ? `wired ${name} globally → loads in every claude session (copied to ${globalDir}/imprnt/${name}/)` : `${name} already wired globally (refreshed the copy)`);
+      break;
+    }
+    if (sub === "rm") {
+      let purge = false;
+      const names: string[] = [];
+      for (const a of gargs) { if (a === "--purge") purge = true; else names.push(a); }
+      if (names.length !== 1) { console.error("usage: imprnt global rm <name> [--purge]"); process.exit(1); }
+      const r = rmGlobalModule(globalDir, names[0]!, { purge });
+      if (!r.ok) { console.error(`global rm ${names[0]}: ${r.error}`); process.exit(1); }
+      console.log(r.changed ? `unwired ${names[0]} globally${purge ? ` and purged ${globalDir}/imprnt/${names[0]}/` : ""}` : `${names[0]} was not wired globally`);
+      break;
+    }
+    console.error("usage: imprnt global list | add <name> [--from <dir>] | rm <name> [--purge]");
+    process.exit(1);
+  }
   case "init": {
     // Resolve the TARGET dir to scaffold. Three sources, in priority order:
     //   1. an explicit positional path (`imprnt init <path>`, ~ expanded, resolved against cwd),
@@ -413,6 +470,9 @@ engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt plugin list                       show installed plugins (on/off) + official ones available to add
   imprnt plugin add <name> [--from D]      fetch imprnt-plugin-<name>, copy into plugins/, wire it (idempotent; --force refreshes)
   imprnt plugin rm <name> [--purge]        unwire a plugin; --purge also deletes plugins/<name>/
+  imprnt global add <name> [--from D]      wire a behavior module (e.g. anti-slop) into EVERY claude session via ~/.claude/CLAUDE.md (managed block); bare name promotes a project plugin
+  imprnt global rm <name> [--purge]        unwire a global module; --purge deletes the global copy
+  imprnt global list                       show globally-wired modules
   imprnt <module> <command> [...]          run an installed module's command (e.g. \`imprnt session-host login\`, \`imprnt kleinanzeigen sync\`) — no \`node\` paths
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)

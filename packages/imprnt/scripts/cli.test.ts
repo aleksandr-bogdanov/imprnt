@@ -43,6 +43,9 @@ async function run(entry: string, root: string, args: string[], env: Record<stri
     env: {
       ...process.env,
       XDG_CONFIG_HOME: join(root, "xdg"),
+      // Sandbox the global-config dir into the tmp repo so `imprnt global` (and anything else that
+      // reads it) can NEVER touch the developer's real ~/.claude. Every test inherits this.
+      CLAUDE_CONFIG_DIR: join(root, "claude-config"),
       IMPRNT_ROOT: "",
       IMPRINT_ROOT: "",
       IMPRNT_VAULT: "",
@@ -660,4 +663,55 @@ test("init <path> pointing INTO an existing vault project refuses and names the 
   // the enclosing root as the un-symlink-resolved `root`, not its realpath.
   expect(r.stderr).toContain(`inside the vault project at ${root}`);
   expect(existsSync(join(target, "vault"))).toBe(false);
+});
+
+// --- imprnt global: wire a behavior module into Claude Code's user-level config ---
+// CLAUDE_CONFIG_DIR is sandboxed to <root>/claude-config by the run() helper, so these never touch
+// the developer's real ~/.claude.
+
+test("global add --from wires a managed block, copies the module, and list shows it [on]", async () => {
+  const root = tmpRepo(); // ships plugins/anti-slop/agent.md
+  const add = await runCli(root, ["global", "add", "anti-slop", "--from", join(root, "plugins", "anti-slop")]);
+  expect(add.code).toBe(0);
+  expect(add.stdout).toContain("wired anti-slop globally");
+
+  const globalMd = join(root, "claude-config", "CLAUDE.md");
+  expect(existsSync(globalMd)).toBe(true);
+  const md = readFileSync(globalMd, "utf8");
+  expect(md).toContain("imprnt:global BEGIN");
+  expect(md).toContain("@imprnt/anti-slop/agent.md");
+  expect(existsSync(join(root, "claude-config", "imprnt", "anti-slop", "agent.md"))).toBe(true);
+
+  const list = await runCli(root, ["global", "list"]);
+  expect(list.stdout).toContain("[on]  anti-slop");
+});
+
+test("global add (bare name) promotes an installed project plugin to global scope", async () => {
+  const root = tmpRepo();
+  const add = await runCli(root, ["global", "add", "anti-slop"]); // no --from: promote plugins/anti-slop/
+  expect(add.code).toBe(0);
+  expect(existsSync(join(root, "claude-config", "imprnt", "anti-slop", "agent.md"))).toBe(true);
+});
+
+test("global rm --purge removes the block and the copy; the user's own CLAUDE.md content survives", async () => {
+  const root = tmpRepo();
+  // Seed a user-authored global CLAUDE.md, then wire a module into it.
+  mkdirSync(join(root, "claude-config"), { recursive: true });
+  writeFileSync(join(root, "claude-config", "CLAUDE.md"), "# my global rules\n\nalways be terse.\n");
+  await runCli(root, ["global", "add", "anti-slop", "--from", join(root, "plugins", "anti-slop")]);
+
+  const rm = await runCli(root, ["global", "rm", "anti-slop", "--purge"]);
+  expect(rm.code).toBe(0);
+  const md = readFileSync(join(root, "claude-config", "CLAUDE.md"), "utf8");
+  expect(md).not.toContain("imprnt:global");
+  expect(md).toContain("always be terse."); // the user's content is untouched
+  expect(existsSync(join(root, "claude-config", "imprnt", "anti-slop"))).toBe(false); // purged
+});
+
+test("global add with a bad name exits 1 and writes nothing", async () => {
+  const root = tmpRepo();
+  const r = await runCli(root, ["global", "add", "../evil", "--from", join(root, "plugins", "anti-slop")]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("invalid module name");
+  expect(existsSync(join(root, "claude-config", "CLAUDE.md"))).toBe(false);
 });
