@@ -1,5 +1,5 @@
 import { test, expect, beforeAll } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, realpathSync, chmodSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, realpathSync, chmodSync, rmSync, symlinkSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -660,4 +660,93 @@ test("init <path> pointing INTO an existing vault project refuses and names the 
   // the enclosing root as the un-symlink-resolved `root`, not its realpath.
   expect(r.stderr).toContain(`inside the vault project at ${root}`);
   expect(existsSync(join(target, "vault"))).toBe(false);
+});
+
+// --- init refuses a control-file SLOT occupied by a non-regular node (no silent broken vault) ---
+
+// A directory squatting on a control-file name (e.g. `vault/index.md` is a dir) used to pass the
+// existsSync skip: cpSync was skipped, the file was omitted from the summary, and init exited 0 over a
+// vault that check/recall/index-generation would then choke on. It must be a hard, named error.
+test("init where a control file name is occupied by a DIRECTORY errors cleanly, never reports success", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  mkdirSync(join(root, "vault", "index.md"), { recursive: true }); // a DIRECTORY named index.md
+  const r = await runCli(root, ["init"]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("index.md");
+  expect(r.stderr).toContain("directory");
+  // It must NOT have claimed to scaffold/top-up, and index.md must still be the directory we made.
+  expect(r.stdout).not.toContain("added missing control file");
+  expect(r.stdout).not.toContain("initialized vault");
+  expect(statSync(join(root, "vault", "index.md")).isDirectory()).toBe(true);
+});
+
+// A DANGLING symlink on a control-file name: cpSync would write the template THROUGH the link, creating
+// a file at an arbitrary target path. init must refuse instead of silently creating that file.
+test("init refuses a DANGLING symlink on a control-file name (never writes through it)", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  mkdirSync(join(root, "vault"), { recursive: true });
+  const escapee = join(root, "escaped-journal.md"); // the link target, deliberately absent
+  symlinkSync(escapee, join(root, "vault", "log.md")); // vault/log.md -> (nonexistent) escaped-journal.md
+  const r = await runCli(root, ["init"]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("log.md");
+  expect(r.stderr).toContain("symlink");
+  // The write-through never happened: the link target was not created.
+  expect(existsSync(escapee)).toBe(false);
+});
+
+// A resolving symlink (points at a real file) is a user's own copy — init leaves it untouched and
+// scaffolds the rest, staying idempotent rather than refusing.
+test("init leaves a RESOLVING symlinked control file untouched and scaffolds the rest", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  mkdirSync(join(root, "vault"), { recursive: true });
+  const real = join(root, "my-tags.md");
+  writeFileSync(real, "# my own tags\n");
+  symlinkSync(real, join(root, "vault", "_tags.md")); // resolves to a real file
+  const r = await runCli(root, ["init"]);
+  expect(r.code).toBe(0);
+  // The user's file behind the link is untouched, and the other control files were created.
+  expect(readFileSync(real, "utf8")).toContain("my own tags");
+  expect(existsSync(join(root, "vault", "index.md"))).toBe(true);
+});
+
+// A symlink that RESOLVES but points at a DIRECTORY is as broken as a bare directory in the slot — and
+// it resolves, so an existsSync-only guard would wave it through as "keep" and exit 0 over a vault that
+// `check` then crashes on (EISDIR writing index.md). It must be refused like any other blocked slot.
+test("init refuses a symlink-to-DIRECTORY on a control-file name (not silently kept)", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  mkdirSync(join(root, "vault"), { recursive: true });
+  mkdirSync(join(root, "some-dir"), { recursive: true });
+  symlinkSync(join(root, "some-dir"), join(root, "vault", "index.md")); // resolves, but to a directory
+  const r = await runCli(root, ["init"]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("index.md");
+  expect(r.stdout).not.toContain("initialized vault");
+});
+
+// A target reached THROUGH a symlink whose real location is inside an existing vault must still be
+// refused — a lexical-only walk-up would miss it and scaffold a second vault in the real one's tree.
+test("init <path> through a symlink into an existing vault is refused (physical walk-up)", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  // A real vault project at root/realvault, with a real subdir notes/ inside it.
+  const realvault = join(root, "realvault");
+  mkdirSync(join(realvault, "vault"), { recursive: true });
+  writeFileSync(join(realvault, "vault", "index.md"), "# index\n");
+  writeFileSync(join(realvault, "vault", "_tags.md"), "# tags\n");
+  mkdirSync(join(realvault, "notes"), { recursive: true });
+  // A symlink OUTSIDE the vault that points into it. Lexically root/linkroot/deep has no vault ancestor;
+  // physically it is realvault/notes/deep, inside the vault.
+  symlinkSync(join(realvault, "notes"), join(root, "linkroot"));
+  const target = join(root, "linkroot", "deep");
+  const r = await runCli(root, ["init", target]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("refusing to init");
+  expect(r.stderr).toContain(realpathSync(realvault));
+  // Nothing scaffolded into the real vault through the link.
+  expect(existsSync(join(realvault, "notes", "deep", "vault"))).toBe(false);
 });
