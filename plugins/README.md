@@ -254,6 +254,49 @@ offer it — the protocol is the plugin's private business at its own edge, neve
 core or the vault sees. Results land in the plugin's local cache; everything downstream of
 that reads the cache, never the wire.
 
+## Capability modules: provides / consumes (the one relaxation of "share nothing")
+
+"Share nothing" was the original rule: no plugin reads another plugin's folder, imports its code,
+or depends on it. One real need bends it — a **capability** one module *provides* and another
+*consumes*. The first instance is the **session-host**: a warm browser holding your logged-in
+sessions, brokering a fresh auth token over a localhost socket so the kleinanzeigen watcher (and
+later, mail) can reach a site without each one reverse-engineering that site's login.
+
+The relaxation is bounded so it can't become the old core-bloat:
+
+1. **A capability is a declared edge, not an import.** The consumer copies a tiny client
+   (`sessionToken(site) -> string | null`) that speaks to a localhost broker. It never imports the
+   provider's code and never reads its folder. This keeps the reversibility argument intact:
+   removing the provider can't break the consumer's build.
+
+2. **Removing a provider degrades a consumer gracefully — never breaks it.** This is the invariant
+   that carries the weight the old "no cross-plugin reads" rule used to. A consumer treats a missing
+   provider as *fall back*, never a hard failure: `null` from the broker means "host down, do it the
+   slow way" (the watcher reads the token from a direct browser session instead). A capability you
+   can remove without breaking its consumers is the proof that it's a real module boundary and not a
+   hidden dependency.
+
+3. **It's a third contact surface, fenced like the others.** The two surfaces a plugin already
+   touches are the **vault** (single-writer; plugins propose, never write) and the **agent context**
+   (you wire the fragment). A capability adds a third: a **localhost broker between modules**. It
+   obeys the same fences as the sync edge — deterministic only (no LLM drives it), answer-on-request
+   (it never acts on its own, never auto-injects), auditable (it logs a token *fingerprint*, never
+   the token), and never resident (you start it, you can kill it).
+
+4. **The litmus still holds, extended to providers.** You can add or remove a capability *provider*
+   with zero core edits, because discovery is the broker plus a copied client — never a core-managed
+   capability registry. A registry in core would be the exact magnet that re-bloats it, so there
+   isn't one (it stays on the out-of-scope list below).
+
+**The auth finding behind the design.** A cold, fully-automated login trips bot protection (Akamai
+and similar fingerprint the automation). The fix is not better evasion — it's to stop pretending: a
+clean, non-automation-flagged browser you log into **by hand once**, then a read-only attach to that
+warm, already-authenticated session. Never copy a profile (that both looks like theft to the
+fingerprinter and is its own credential-handling risk). The human does the one irreducible step (the
+password); the machine only reads the token the site is already refreshing. That's why the
+session-host is user-started, localhost-bound, and never resident — "explicit beats automatic"
+applied to credentials. Any future credential-holding module follows the same shape.
+
 ## The three plugins this contract unblocks
 
 - **Whenful (tasks).** Keeps a live mirror of your tasks in `whenful/` (its own folder, never
@@ -276,11 +319,13 @@ that reads the cache, never the wire.
 
 ## Explicitly out of scope for v1 (the C5 stop condition)
 
-Not built until a real, named need forces it: a central registry/manifest the core reads · a
-core "plugin API" beyond the stable note format · search indexing plugin folders · a storage
-abstraction (markdown stays concrete, not behind an interface) · any auto-injection into the
-assistant · any forced daemon · plugin↔plugin dependencies or cross-folder reads · a plugin
-SDK/scaffold generator · core↔plugin version negotiation. "It belongs" is not a reason to add
+Not built until a real, named need forces it: a central registry/manifest the core reads (including
+a capability registry — capabilities are discovered by their localhost broker + a copied client, not
+by core) · a core "plugin API" beyond the stable note format · search indexing plugin folders · a
+storage abstraction (markdown stays concrete, not behind an interface) · any auto-injection into the
+assistant · any forced daemon · plugin↔plugin *imports* or cross-folder reads (a declared,
+gracefully-degrading capability edge is the one sanctioned exception — see "Capability modules") · a
+plugin SDK/scaffold generator · core↔plugin version negotiation. "It belongs" is not a reason to add
 anything.
 
 ---
@@ -316,13 +361,16 @@ preview - during it, only Anthropic-allowlisted channels can register). Bot toke
 must be awake, and bot chats are not end-to-end encrypted - the vault stays home, the
 conversation transits Telegram.
 
-### whenful — task mirror ✅ shell built (live sync deferred)
+### whenful — task mirror ✅ built (live sync wired)
 
 The first plugin to exercise the whole contract end-to-end: an `agent.md` fragment, a
 `links.tsv` join table, a local `mirror/` cache rendered at read, a `proposed/` staging
-folder, and its own built `check.js` the `check --all` aggregator finds. The `sync` command is a
-documented **stub** today — it states the Whenful API contract it will call and makes **no**
-live network request — wiring the real API is the next session.
+folder, and its own built `check.js` the `check --all` aggregator finds. `sync` is now live —
+for each linked task it GETs `{WHENFUL_API|https://whenful.com}/api/v1/tasks/{id}` with a Bearer
+device token from `$WHENFUL_TOKEN` (env-only, never on disk or in an error message) and rewrites
+that task's `mirror/<id>.md` from the real `TaskResponse`. `WHENFUL_FIXTURES=<dir>` runs the whole
+pipeline offline with zero network. A run where every fetch failed does not stamp `.last-sync`, so
+`check` keeps surfacing a dead token.
 
 ### kleinanzeigen — marketplace inbox watcher ✅ built (the first watcher-class plugin)
 
