@@ -4,9 +4,10 @@ Surfaces the live status of your Whenful tasks on the imprnt notes they belong t
 task management into the vault. Tasks stay in Whenful; the vault stays knowledge. The bridge is a join
 table (`links.tsv`) plus a local mirror (`mirror/`) of task state, refreshed only when you run `sync`.
 
-> **Status:** shell only. `sync` is a documented **stub** — it makes no live Whenful call yet. Wiring
-> the real API is the next session. Everything else (the join table, the mirror, render-at-read, the
-> integrity check, the `check --all` and `ingest --apply` contact points) works today.
+> **Status:** live. `sync` calls the real Whenful API — `GET /api/v1/tasks/{id}` with a Bearer device
+> token from `$WHENFUL_TOKEN` — and rewrites each linked task's `mirror/<id>.md`. Set `WHENFUL_FIXTURES`
+> to run the whole pipeline offline with zero network. The join table, render-at-read, integrity check,
+> and the `check --all` / `ingest --apply` contact points all work today.
 
 ## Layout
 
@@ -31,7 +32,8 @@ table (`links.tsv`) plus a local mirror (`mirror/`) of task state, refreshed onl
    yourself. Never wire it into the committed `CLAUDE.md`, that keeps personal wiring out of the shipped
    contract.
 2. Add task->note rows to `plugins/whenful/links.tsv`.
-3. Refresh the mirror: `node plugins/whenful/whenful.js sync` *(stub today)*.
+3. Refresh the mirror: `WHENFUL_TOKEN=<your-device-token> imprnt whenful sync` (or `WHENFUL_FIXTURES=<dir>`
+   offline). `WHENFUL_API` overrides the default `https://whenful.com` base.
 
 That's the whole on-switch. Schedule `sync` yourself (cron/launchd) if you want it periodic. There is
 no daemon.

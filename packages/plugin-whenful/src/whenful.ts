@@ -1,6 +1,6 @@
 // imprnt · whenful plugin — task mirror. Shipped as built whenful.js (node banner).
 //
-//   node plugins/whenful/whenful.js sync     refresh mirror/<id>.md from Whenful   (STUB — no live call yet)
+//   node plugins/whenful/whenful.js sync     refresh mirror/<id>.md from Whenful (live, Bearer auth)
 //   node plugins/whenful/whenful.js check    integrity (delegates to ./check.js)
 //
 // Contract reminders (see plugins/README.md): this plugin depends on exactly two things — the vault's
@@ -11,6 +11,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fetchTask, renderMirror, AUTH_HINT } from "./client.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MIRROR_DIR = join(here, "mirror");
@@ -40,67 +41,62 @@ if (cmd === "check") {
 }
 
 if (cmd === "sync") {
-  // ─────────────────────────────────────────────────────────────────────────────────────────────────
-  // STUB — makes NO live network call. It documents the Whenful API contract `sync` WILL call, and
-  // refreshes the local mirror so the render-at-read path and `check` are exercisable end-to-end today.
+  // The ONLY command that crosses the wire. For each task referenced by the join table it GETs the
+  // task's current state from Whenful (Bearer auth, WHENFUL_TOKEN) and (over)writes mirror/<id>.md. The
+  // mirror is a pure cache: always safe to delete and rebuild from a full sync. sync never writes a
+  // vault note (that's `imprnt ingest --apply` on a proposed/ file) and never runs on its own.
   //
-  // TODO(next session): wire the real Whenful API. The contract this stub stands in for:
-  //
-  //   AUTH:    Bearer token from the user's Whenful session (env `WHENFUL_TOKEN`, never hardcoded).
-  //            Whenful is a React SPA + FastAPI backend at whenful.com; the API is the same one the SPA
-  //            calls. Read the token from the environment at sync time; do not persist it in the repo.
-  //
-  //   FETCH:   incremental, `updated_at`-based — the client/server model in the Whenful repo. We track
-  //            the last successful sync timestamp locally (mirror/.last-sync) and ask the server only
-  //            for tasks changed since then:
-  //                GET /api/tasks?updated_since=<ISO8601>     -> [{ id, title, status, due, updated_at, ... }]
-  //            so a routine sync transfers only deltas, not the whole task list. Batched, one call.
-  //
-  //   WRITE:   for each returned task, (over)write mirror/<id>.md with its current state (frontmatter +
-  //            a human-readable body), and stamp mirror/.last-sync with the server's response time. The
-  //            mirror is a pure cache: it is always safe to delete and rebuild from a full sync.
-  //
-  //   SCOPE:   sync ONLY refreshes the mirror and the join-table-referenced tasks. It never writes a
-  //            vault note (that's `imprnt ingest --apply` on a proposed/ file) and never runs on its
-  //            own (the user schedules it). See docs: https://whenful.com  /  the Whenful repo's API.
-  // ─────────────────────────────────────────────────────────────────────────────────────────────────
+  //   AUTH:  Authorization: Bearer <WHENFUL_TOKEN>   (the user's Whenful device token, env-only)
+  //   FETCH: GET {WHENFUL_API|https://whenful.com}/api/v1/tasks/{id}  -> TaskResponse, per linked task
+  //   WRITE: mirror/<id>.md (frontmatter the agent renders from + a short body) + stamp mirror/.last-sync
+  //   OFFLINE: WHENFUL_FIXTURES=<dir> reads <id>.json instead of the wire (tests/demo, zero network)
+  await runSync();
+}
+
+async function runSync(): Promise<never> {
   mkdirSync(MIRROR_DIR, { recursive: true });
   const links = readLinks();
 
-  if (links.length === 0) {
-    console.log("whenful sync (STUB): no links in links.tsv yet — nothing to mirror.");
+  // Distinct task ids — a task may be linked from more than one note; we fetch+mirror it once.
+  const ids = [...new Set(links.map((l) => l.taskId))];
+
+  if (ids.length === 0) {
+    console.log("whenful sync: no links in links.tsv yet — nothing to mirror.");
     console.log("  add task↔note rows to plugins/whenful/links.tsv, then sync.");
-    console.log("  NOTE: this is a stub — no live Whenful call is made. Live wiring is the next session.");
     process.exit(0);
   }
 
-  // Refresh a mirror file per linked task. With no live API, we write a clearly-marked PLACEHOLDER so the
-  // staleness check and the render-at-read path are exercisable; the real `sync` replaces this with the
-  // task's actual fetched state. We never invent a status that looks real.
-  const now = new Date().toISOString();
-  let written = 0;
-  for (const { taskId } of links) {
-    const p = join(MIRROR_DIR, `${taskId}.md`);
-    if (existsSync(p)) continue; // don't clobber a real mirror file a future live sync may have written
-    writeFileSync(p, [
-      "---",
-      `task_id: ${taskId}`,
-      "status: unknown            # STUB placeholder — real status arrives when sync is wired",
-      `mirrored: ${now}`,
-      "stub: true",
-      "---",
-      "",
-      `# Task ${taskId} (placeholder)`,
-      "",
-      "> Placeholder mirror file written by the `sync` STUB. No live Whenful data yet.",
-      "> Run a real sync (next session) to populate title/status/due from the server.",
-      "",
-    ].join("\n"));
-    written++;
+  // Preflight the credential up front. Missing auth (no token AND no fixtures) is a whole-run failure,
+  // not a per-task one — fail loud and early so the user fixes the token instead of seeing N identical
+  // 401s. A per-task error (a deleted task, a bad id) is isolated below and never sinks the rest.
+  if (!process.env.WHENFUL_FIXTURES && !process.env.WHENFUL_TOKEN) {
+    console.error(`whenful sync: ${AUTH_HINT}`);
+    process.exit(1);
   }
-  writeFileSync(join(MIRROR_DIR, ".last-sync"), now + "\n");
-  console.log(`whenful sync (STUB): ${written} placeholder mirror file(s) written, last-sync stamped ${now}.`);
-  console.log("  NOTE: this is a stub — no live Whenful call is made. Live wiring is the next session.");
+
+  const now = new Date().toISOString();
+  const failed: string[] = [];
+  let written = 0;
+  for (const id of ids) {
+    try {
+      const task = await fetchTask(id);
+      writeFileSync(join(MIRROR_DIR, `${id}.md`), renderMirror(task, now));
+      written++;
+    } catch (e) {
+      failed.push(`task ${id}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  // Only stamp .last-sync when at least one task came through — a run where every fetch failed (e.g. a
+  // revoked token) must NOT look fresh to `check`. The staleness gate then keeps surfacing the problem.
+  if (written > 0) writeFileSync(join(MIRROR_DIR, ".last-sync"), now + "\n");
+
+  console.log(`whenful sync: ${written}/${ids.length} task(s) mirrored at ${now}.`);
+  if (failed.length) {
+    console.error(`⚠ ${failed.length} task(s) failed:`);
+    for (const f of failed) console.error(`  - ${f}`);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
