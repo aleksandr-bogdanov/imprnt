@@ -25,10 +25,12 @@ Whenful; the vault stays knowledge. The bridge is a join table plus a local mirr
 
 ## Commands (you run these; nothing runs on its own)
 
-- `node plugins/whenful/whenful.js sync` — the **only command that crosses the wire**. It refreshes the
-  `mirror/<id>.md` files from Whenful. The user schedules it (cron/launchd) or runs it by hand. It is
-  never a daemon. *(Today this is a documented stub — it makes no live call yet. Live wiring is the
-  next session.)*
+- `imprnt whenful sync` — the **only command that crosses the wire**. For each task in `links.tsv` it
+  GETs `{WHENFUL_API|https://whenful.com}/api/v1/tasks/{id}` with `Authorization: Bearer $WHENFUL_TOKEN`
+  (the user's Whenful device token, read from the environment, never stored in the repo) and rewrites
+  that task's `mirror/<id>.md`. The user schedules it (cron/launchd) or runs it by hand. It is never a
+  daemon. Offline (tests/demo, zero network): `WHENFUL_FIXTURES=<dir>` reads `<id>.json` per task. A
+  run where every fetch failed does **not** stamp `.last-sync`, so `check` keeps flagging a dead token.
 - `node plugins/whenful/check.js` — the plugin's own integrity check (mirror staleness + orphan links).
   The core finds it via `imprnt check --all`.
 
