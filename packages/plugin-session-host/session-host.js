@@ -72,7 +72,8 @@ async function serve(here) {
   const profileDir = join(here, "profile");
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: true,
-    channel: "chrome"
+    channel: "chrome",
+    chromiumSandbox: true
   });
   audit(here, "serve.start", { port: PORT });
   const pages = new Map;
@@ -165,7 +166,7 @@ async function cmdLogin(arg) {
   console.log("  (stop `serve` first if it's running — they share one profile)");
   let context;
   try {
-    context = await chromium.launchPersistentContext(profileDir, { headless: false, channel: "chrome" });
+    context = await chromium.launchPersistentContext(profileDir, { headless: false, channel: "chrome", chromiumSandbox: true });
   } catch (e) {
     console.error(`login: could not open the browser — ${e instanceof Error ? e.message : e}`);
     console.error("  is `serve` still running? it locks the profile. Stop it and retry.");
