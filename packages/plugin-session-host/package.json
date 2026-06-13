@@ -7,7 +7,8 @@
     "agent.md",
     "README.md",
     "session-host.js",
-    "client.js"
+    "client.js",
+    "package.json"
   ],
   "scripts": {
     "build": "bun build src/cli.ts --target=node --external playwright-core --outfile=session-host.js --banner '#!/usr/bin/env node' && bun build src/client.ts --target=node --outfile=client.js --banner '#!/usr/bin/env node'",

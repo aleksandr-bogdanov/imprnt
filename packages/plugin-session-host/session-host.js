@@ -50,7 +50,6 @@ import { createServer } from "node:http";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { chromium } from "playwright-core";
 var PORT = Number(process.env.SESSION_HOST_PORT ?? 8787);
 function audit(dir, event, detail) {
   const line = JSON.stringify({ ts: new Date().toISOString(), event, ...detail });
@@ -63,6 +62,13 @@ function fingerprint(token) {
   return createHash("sha256").update(token).digest("hex").slice(0, 12);
 }
 async function serve(here) {
+  let chromium;
+  try {
+    ({ chromium } = await import("playwright-core"));
+  } catch {
+    console.error("session-host: playwright-core is not installed here. Run `npm i playwright-core` in this module's folder (uses your system Chrome, no browser download).");
+    process.exit(1);
+  }
   const profileDir = join(here, "profile");
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: true,
@@ -153,13 +159,13 @@ var PORT2 = Number(process.env.SESSION_HOST_PORT ?? 8787);
 async function cmdLogin(arg) {
   const cfg = resolveSite(arg);
   const loginUrl = cfg?.loginUrl ?? (arg.startsWith("http") ? arg : `https://${arg}`);
-  const { chromium: chromium2 } = await import("playwright-core");
+  const { chromium } = await import("playwright-core");
   const profileDir = join2(here, "profile");
   console.log(`login: opening the dedicated browser at ${loginUrl}`);
   console.log("  (stop `serve` first if it's running — they share one profile)");
   let context;
   try {
-    context = await chromium2.launchPersistentContext(profileDir, { headless: false, channel: "chrome" });
+    context = await chromium.launchPersistentContext(profileDir, { headless: false, channel: "chrome" });
   } catch (e) {
     console.error(`login: could not open the browser — ${e instanceof Error ? e.message : e}`);
     console.error("  is `serve` still running? it locks the profile. Stop it and retry.");

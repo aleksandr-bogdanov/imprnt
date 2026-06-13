@@ -2,6 +2,7 @@
 // No shebang: the shipped bin gets `#!/usr/bin/env node` injected at build time (--banner), and
 // dev runs this via `bun scripts/cli.ts`. A source shebang would survive bundling and collide.
 import { cpSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -370,6 +371,20 @@ switch (cmd) {
     // into a claude prompt.
     const isHelp = cmd === "help" || cmd === "--help" || cmd === "-h";
     const bare = cmd === undefined;
+
+    // Generic MODULE command: `imprnt <module> <args>` runs plugins/<module>/<module>.js by
+    // convention — so a module's commands are clean (`imprnt session-host login`, `imprnt
+    // kleinanzeigen sync`) instead of `node plugins/.../x.js`. Zero per-module knowledge: discovered
+    // by filename, the same convention `check --all` uses to glob check.js. A built-in subcommand
+    // always wins (this is the default arm, reached only when cmd matched no case above).
+    if (cmd && !isHelp && !bare && !cmd.startsWith("-")) {
+      const modScript = join(pluginRoot(), "plugins", cmd, `${cmd}.js`);
+      if (existsSync(modScript)) {
+        const proc = spawnSync(process.execPath, [modScript, ...rest], { stdio: "inherit" });
+        process.exit(proc.status ?? 1);
+      }
+    }
+
     const wantsLaunch = asImp && !isHelp && (bare || cmd.startsWith("-"));
     if (wantsLaunch && (!bare || (process.stdin.isTTY && process.stdout.isTTY))) {
       const home = vaultProjectRoot();
@@ -398,6 +413,7 @@ engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt plugin list                       show installed plugins (on/off) + official ones available to add
   imprnt plugin add <name> [--from D]      fetch imprnt-plugin-<name>, copy into plugins/, wire it (idempotent; --force refreshes)
   imprnt plugin rm <name> [--purge]        unwire a plugin; --purge also deletes plugins/<name>/
+  imprnt <module> <command> [...]          run an installed module's command (e.g. \`imprnt session-host login\`, \`imprnt kleinanzeigen sync\`) — no \`node\` paths
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
 the vault is plain markdown. an agent greps it directly — no MCP, no DB.`);
