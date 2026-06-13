@@ -1,0 +1,419 @@
+/* imprnt landing page. Single file, no dependencies, no external fonts.
+   System-font stack, restrained palette, responsive, accessible.
+   A human is meant to restyle this, so the variables are grouped up top. */
+
+:root {
+  --ink: #1c1d22;
+  --ink-soft: #44464f;
+  --paper: #ffffff;
+  --paper-soft: #f5f4f0;
+  --line: #e1ded6;
+  --accent: #3a5a40;
+  --accent-strong: #2c4631;
+  --code-bg: #1c1d22;
+  --code-ink: #e8e6e0;
+  --max-width: 64rem;
+  --radius: 8px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 18px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  width: 100%;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+a {
+  color: var(--accent);
+}
+
+a:hover {
+  color: var(--accent-strong);
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+}
+
+/* prose code (inline) sits on a tinted chip */
+p code,
+li code,
+.section-lead code {
+  background: var(--paper-soft);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+}
+
+/* Header / nav */
+
+.site-header {
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: saturate(120%) blur(6px);
+  z-index: 10;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 0.9rem;
+  padding-bottom: 0.9rem;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.nav-links {
+  display: flex;
+  gap: 1.25rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex-wrap: wrap;
+}
+
+.nav-links a {
+  text-decoration: none;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+}
+
+.nav-links a:hover {
+  color: var(--accent);
+}
+
+/* Hero */
+
+.hero {
+  padding-top: 4.5rem;
+  padding-bottom: 3.5rem;
+  max-width: 52rem;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin: 0 0 1rem;
+}
+
+.hero h1 {
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  margin: 0 0 1rem;
+  letter-spacing: -0.01em;
+}
+
+.subhead {
+  font-size: 1.2rem;
+  color: var(--ink-soft);
+  margin: 0 0 2rem;
+  max-width: 40rem;
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.cta-code {
+  background: var(--code-bg);
+  color: var(--code-ink);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.button {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0.75rem 1.4rem;
+  border-radius: var(--radius);
+}
+
+.button:hover {
+  background: var(--accent-strong);
+  color: #fff;
+}
+
+.hero-principle {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+  border-left: 3px solid var(--accent);
+  padding-left: 1rem;
+  margin: 0;
+}
+
+/* Bands and sections */
+
+.band {
+  background: var(--paper-soft);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding-top: 3.5rem;
+  padding-bottom: 3.5rem;
+}
+
+.section {
+  padding-top: 3.5rem;
+  padding-bottom: 3.5rem;
+}
+
+h2 {
+  font-size: clamp(1.6rem, 3.5vw, 2.1rem);
+  margin: 0 0 1rem;
+}
+
+.section-lead {
+  font-size: 1.1rem;
+  color: var(--ink-soft);
+  max-width: 42rem;
+  margin: 0 0 2rem;
+}
+
+.band p {
+  max-width: 42rem;
+}
+
+/* Cards (how it works) */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 2.5rem;
+}
+
+.card {
+  background: var(--paper-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+}
+
+.card h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1.15rem;
+}
+
+.card p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.98rem;
+}
+
+/* Feature grid (why different) */
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.5rem 2rem;
+}
+
+.feature h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.feature p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.98rem;
+}
+
+/* Terminal snippets */
+
+.terminal {
+  margin: 0;
+  background: var(--code-bg);
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid #000;
+}
+
+.terminal figcaption {
+  color: #b9b6ad;
+  font-size: 0.85rem;
+  padding: 0.7rem 1.1rem;
+  border-bottom: 1px solid #34353c;
+}
+
+.terminal pre {
+  margin: 0;
+  padding: 1.1rem;
+  overflow-x: auto;
+}
+
+.terminal code {
+  color: var(--code-ink);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+/* Quickstart steps */
+
+.steps {
+  list-style: none;
+  counter-reset: step;
+  padding: 0;
+  margin: 0 0 2rem;
+  display: grid;
+  gap: 1.25rem;
+}
+
+.steps > li {
+  counter-increment: step;
+  position: relative;
+  background: var(--paper-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.4rem 1.5rem 1.4rem 4rem;
+}
+
+.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 1.25rem;
+  top: 1.4rem;
+  width: 1.7rem;
+  height: 1.7rem;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.steps h3 {
+  margin: 0 0 0.3rem;
+  font-size: 1.1rem;
+}
+
+.steps p {
+  margin: 0 0 0.8rem;
+  color: var(--ink-soft);
+  font-size: 0.98rem;
+}
+
+.steps pre {
+  margin: 0;
+  background: var(--code-bg);
+  color: var(--code-ink);
+  padding: 0.85rem 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.steps pre code {
+  color: var(--code-ink);
+  font-size: 0.88rem;
+  white-space: pre;
+}
+
+.docs-link {
+  font-size: 1rem;
+  margin: 0;
+}
+
+/* Footer */
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  background: var(--paper-soft);
+  padding-top: 2rem;
+  padding-bottom: 2rem;
+}
+
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.footer-inner p {
+  margin: 0;
+}
+
+/* Focus visibility for keyboard users */
+
+a:focus-visible,
+.button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (max-width: 40rem) {
+  body {
+    font-size: 17px;
+  }
+
+  .nav-links {
+    gap: 0.85rem;
+  }
+
+  .hero {
+    padding-top: 3rem;
+  }
+
+  .cta-code {
+    white-space: normal;
+  }
+}

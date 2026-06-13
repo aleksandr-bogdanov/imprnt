@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>imprnt - a knowledge vault you own and run locally</title>
+  <meta name="description" content="imprnt is a deterministic-first, plain-markdown knowledge vault you own and run locally. The LLM builds the tools, the tools do the work.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="container nav" aria-label="Primary">
+      <a class="brand" href="#top">imprnt</a>
+      <ul class="nav-links">
+        <li><a href="#how">How it works</a></li>
+        <li><a href="#different">Why it's different</a></li>
+        <li><a href="#quickstart">Quickstart</a></li>
+        <li><a href="https://github.com/aleksandr-bogdanov/imprnt">GitHub</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero container">
+      <p class="eyebrow">Open source - MIT - zero dependencies</p>
+      <h1>A knowledge vault you own and run locally.</h1>
+      <p class="subhead">
+        imprnt keeps what you know in plain markdown files on your disk. You talk to your
+        assistant, it files what matters, and weeks later it answers from your real history.
+      </p>
+      <div class="cta">
+        <code class="cta-code">npm i -g imprnt &amp;&amp; imprnt init</code>
+        <a class="button" href="#quickstart">Get started</a>
+      </div>
+      <p class="hero-principle">The LLM builds the tools. The tools do the work.</p>
+    </section>
+
+    <section class="band">
+      <div class="container">
+        <h2>The problem</h2>
+        <p>
+          Your assistant starts every chat blank. You re-explain your projects, your people,
+          and your decisions every time, and whatever it learns dies with the session. The
+          fixes on offer hide your knowledge in a vector database or a memory feature you can
+          neither read nor switch off.
+        </p>
+        <p>
+          imprnt keeps the part that lasts in files you can open in any editor. Reads run on
+          cheap local code, so your assistant can lean on your whole history every session, and
+          no company can take it away.
+        </p>
+      </div>
+    </section>
+
+    <section id="how" class="container section">
+      <h2>How it works</h2>
+      <p class="section-lead">
+        imprnt rations the model by where it runs. Understanding a messy source is worth the
+        model, and it happens once. Searching happens thousands of times, so it stays plain
+        local code. Frequency draws the line.
+      </p>
+
+      <div class="cards">
+        <article class="card">
+          <h3>Write once, with judgment</h3>
+          <p>
+            When you save a transcript or a doc, the model reads it, picks the note type, writes
+            a one-line summary, pulls out decisions, assigns tags, and wires links to people and
+            projects. This is the conscious work, and it runs one time per source.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Read with grep and BM25</h3>
+          <p>
+            <code>recall</code> ranks your notes with BM25, a 1990s term-frequency formula that
+            is pure local arithmetic. No model in the loop, no embeddings, no server. The model
+            shapes your question into keywords at the front and reads the top hits at the back.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Plugins you rm -rf</h3>
+          <p>
+            The core is your vault plus three commands. Every other behavior is a plugin you add
+            by asking and remove with one line plus <code>rm -rf</code>. The core never knows a
+            plugin exists, so it stays small.
+          </p>
+        </article>
+      </div>
+
+      <figure class="terminal">
+        <figcaption>Filing a source, then asking about it weeks later</figcaption>
+        <pre><code>You:    Here is my 1:1 with Boris from this morning. [paste the transcript]
+Claude: Filed it. Created people/boris-carter, updated projects/access-platform
+        with the new cutover date, and logged the meeting under events/.
+
+(weeks later)
+
+You:    What did we decide about the access-platform cutover?
+Claude: From your notes: the cutover moved to July 15, gated on the two-week
+        parallel-run numbers. Boris owns it. The earlier June date is superseded.</code></pre>
+      </figure>
+    </section>
+
+    <section id="different" class="band">
+      <div class="container">
+        <h2>Why it's different</h2>
+        <p class="section-lead">
+          imprnt does nothing until you run a command. You own the files, and the off switch is
+          real.
+        </p>
+        <div class="feature-grid">
+          <article class="feature">
+            <h3>Own your files</h3>
+            <p>
+              Plain text on your disk, owner-only and local. It opens in any editor, graphs in
+              Obsidian, and traces every note back to its source. The vault is the version of
+              record.
+            </p>
+          </article>
+          <article class="feature">
+            <h3>No daemon, no cloud</h3>
+            <p>
+              No always-on hooks, no auto-injected context, no background loop, no cloud sync,
+              no dashboard to feed. The model never takes an action you did not approve.
+            </p>
+          </article>
+          <article class="feature">
+            <h3>Opt in, then compose</h3>
+            <p>
+              A fresh setup loads zero plugins. You add the ones you want, one at a time, and
+              delete the line to turn one off. It composes, and you compose it.
+            </p>
+          </article>
+          <article class="feature">
+            <h3>Cheap, honest reads</h3>
+            <p>
+              A lookup costs about 100 tokens of local ranked search. The same query through a
+              vector database or an MCP server costs far more and goes stale on every edit.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="quickstart" class="container section">
+      <h2>Quickstart</h2>
+      <p class="section-lead">
+        Install the engine your assistant drives, scaffold a vault, and talk. Runs on Node 18
+        or newer.
+      </p>
+
+      <ol class="steps">
+        <li>
+          <h3>Install and init</h3>
+          <p>Scaffold the vault and drop the <code>CLAUDE.md</code> contract your assistant reads.</p>
+          <pre><code>npm i -g imprnt
+imprnt init</code></pre>
+        </li>
+        <li>
+          <h3>Open the front door</h3>
+          <p>Type <code>imp</code> instead of <code>claude</code> in any directory. Stock <code>claude</code> stays stock.</p>
+          <pre><code>imp</code></pre>
+        </li>
+        <li>
+          <h3>Ingest a source</h3>
+          <p>Hand your assistant a transcript, a doc, or a single fact. It files structured, linked notes.</p>
+          <pre><code>You: Save this transcript and file what matters.
+     [paste or drop the source]</code></pre>
+        </li>
+        <li>
+          <h3>Recall what you know</h3>
+          <p>Ask in plain language. <code>recall</code> ranks your notes and answers from the top hits.</p>
+          <pre><code>You: What did we decide about the access-platform cutover?</code></pre>
+        </li>
+        <li>
+          <h3>Add a plugin when you need one</h3>
+          <p>Each plugin is its own package. Add it by name, remove it with the same command.</p>
+          <pre><code>imprnt plugin add anti-slop
+imprnt plugin rm anti-slop</code></pre>
+        </li>
+      </ol>
+
+      <p class="docs-link">
+        Full walkthrough in the
+        <a href="https://github.com/aleksandr-bogdanov/imprnt/blob/main/docs/getting-started.md">getting-started guide</a>.
+      </p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <p>imprnt is MIT licensed, (c) 2026 Aleksandr Bogdanov.</p>
+      <p>
+        <a href="https://github.com/aleksandr-bogdanov/imprnt">github.com/aleksandr-bogdanov/imprnt</a>
+      </p>
+    </div>
+  </footer>
+</body>
+</html>
