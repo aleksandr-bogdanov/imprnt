@@ -1,8 +1,8 @@
 // imprnt — dispatcher. Subcommands are thin; the real work is in sibling scripts.
 // No shebang: the shipped bin gets `#!/usr/bin/env node` injected at build time (--banner), and
 // dev runs this via `bun scripts/cli.ts`. A source shebang would survive bundling and collide.
-import { cpSync, mkdirSync, existsSync, readFileSync } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { cpSync, mkdirSync, existsSync, readFileSync, lstatSync, statSync, realpathSync } from "node:fs";
+import { join, dirname, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
@@ -81,6 +81,58 @@ function resolvePath(input: string, base: string = process.cwd(), home: string =
 // positional, which routes init to the prompt (interactive) or cwd fallback (non-TTY).
 function initPositional(args: string[]): string | undefined {
   return args.find((a) => !a.startsWith("-"));
+}
+
+// Resolve target to its PHYSICAL path even when its leaf doesn't exist yet: realpath the nearest
+// existing ancestor, then re-attach the not-yet-created tail. The nest-refusal walk-up is lexical, so
+// without this a target reached THROUGH a symlink whose real location is inside an existing vault would
+// hide the enclosing vault and let init scaffold a second vault inside the real one. Falls back to the
+// input on any error (a path with no existing ancestor, an unreadable link) - refusal then degrades to
+// the old lexical behavior, never throws.
+function physicalTarget(target: string): string {
+  let existing = target;
+  const tail: string[] = [];
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) return target; // walked to the root with nothing existing — bail to lexical
+    tail.unshift(basename(existing));
+    existing = parent;
+  }
+  try {
+    return tail.length ? join(realpathSync(existing), ...tail) : realpathSync(existing);
+  } catch {
+    return target;
+  }
+}
+
+// Classify a control-file slot (index.md, _tags.md, CLAUDE.md, ...) BEFORE writing a template into it.
+//   create  — nothing there, safe to drop the template
+//   keep    — a real regular file (or a symlink that RESOLVES to one) already holds the slot; leave it
+//             untouched, init is idempotent and never overwrites a user's file
+//   blocked — a directory, a DANGLING symlink (cpSync would write THROUGH it, creating a file at the
+//             link target), or any other non-regular node squats on the name. Refuse with one clean
+//             line instead of silently skipping (which would report success over a broken vault).
+type Slot = "create" | "keep" | "blocked-directory" | "blocked-symlink" | "blocked-non-regular-file";
+function controlSlot(dst: string): Slot {
+  let st;
+  try {
+    st = lstatSync(dst);
+  } catch {
+    return "create"; // nothing at the path
+  }
+  if (st.isDirectory()) return "blocked-directory";
+  if (st.isSymbolicLink()) {
+    // Follow the link and keep ONLY when it resolves to a regular file (the user's own copy). A link to
+    // a DIRECTORY resolves too (existsSync would be true) but is just as broken as a bare directory in
+    // the slot - and a dangling link must never be written through. Both refuse.
+    try {
+      return statSync(dst).isFile() ? "keep" : "blocked-symlink";
+    } catch {
+      return "blocked-symlink"; // dangling / unresolvable
+    }
+  }
+  if (st.isFile()) return "keep";
+  return "blocked-non-regular-file";
 }
 
 // Delegated scripts parse process.argv.slice(2) themselves. Strip the subcommand token
@@ -285,8 +337,20 @@ switch (cmd) {
     // from the TARGET (lib/roots.ts); only a genuinely initialized vault above blocks - a fresh
     // dir (walk-up falls back to target) inits as before. The target need not exist yet:
     // projectRoot walks ancestors via existsSync, which is fine for a path like ~/imprnt.
-    const enclosing = projectRoot(target);
-    if (enclosing !== target && isVaultProject(enclosing)) {
+    // Refuse to nest a second vault inside an existing one. Check the LEXICAL walk-up first (the common
+    // real-nesting case, and what the existing message/path expectations assert), then fall back to the
+    // PHYSICAL walk-up (symlinks resolved) to catch a target reached THROUGH a link whose real location
+    // is inside a vault - a lexical-only check would miss that and scaffold inside the real project.
+    const lexicalEnclosing = projectRoot(target);
+    const physical = physicalTarget(target);
+    const physicalEnclosing = projectRoot(physical);
+    const enclosing =
+      lexicalEnclosing !== target && isVaultProject(lexicalEnclosing)
+        ? lexicalEnclosing
+        : physicalEnclosing !== physical && isVaultProject(physicalEnclosing)
+          ? physicalEnclosing
+          : null;
+    if (enclosing) {
       console.error(`refusing to init: ${toCwd ? "this directory" : target} is inside the vault project at ${enclosing} - run \`imprnt init\` there instead`);
       process.exit(1);
     }
@@ -316,16 +380,28 @@ switch (cmd) {
         process.exit(1);
       }
     }
+    // A non-regular node squatting on a control-file name (a directory named index.md, a dangling
+    // symlink) must be a hard, named error — not a silent skip that reports success over a vault that
+    // `check`/`recall`/index-generation will then choke on. A real file is left untouched (idempotent).
+    const blockedMsg = (f: string, slot: Slot): string => {
+      const what =
+        slot === "blocked-directory" ? "a directory" : slot === "blocked-symlink" ? "a dangling symlink" : "a non-regular file";
+      return `cannot create ${rel(f)}: ${what} already occupies that name — remove or rename it, then re-run \`imprnt init\``;
+    };
     const added: string[] = [];
     for (const f of ["index.md", "hot.md", "log.md", "_tags.md"]) {
       const dst = join(vaultPath, f);
-      if (!existsSync(dst)) { cpSync(join(pkgRoot, "templates", f), dst); added.push(`vault/${f}`); }
+      const slot = controlSlot(dst);
+      if (slot.startsWith("blocked")) { console.error(blockedMsg(`vault/${f}`, slot)); process.exit(1); }
+      if (slot === "create") { cpSync(join(pkgRoot, "templates", f), dst); added.push(`vault/${f}`); }
     }
     // Drop the vault contract into the project so an installed agent loads it. The dev clone
     // already has CLAUDE.md at root; this is what makes a fresh `npm i -g` install self-describing,
     // and what the @import lines in CLAUDE.local.md resolve against. Never overwrite a local copy.
     const claudeMd = join(target, "CLAUDE.md");
-    if (!existsSync(claudeMd) && existsSync(join(pkgRoot, "CLAUDE.md"))) {
+    const cmSlot = controlSlot(claudeMd);
+    if (cmSlot.startsWith("blocked")) { console.error(blockedMsg("CLAUDE.md", cmSlot)); process.exit(1); }
+    if (cmSlot === "create" && existsSync(join(pkgRoot, "CLAUDE.md"))) {
       cpSync(join(pkgRoot, "CLAUDE.md"), claudeMd);
       added.push("CLAUDE.md");
     }
