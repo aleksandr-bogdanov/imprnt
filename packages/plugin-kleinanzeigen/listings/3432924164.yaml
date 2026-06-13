@@ -1,0 +1,21 @@
+# Fact sheet — FRITZ!Box 7590 (DSL), listing 3432924164
+# Fuel for FAQ drafts. An empty field is an honest "not confirmed yet" — the rater turns an
+# empty-but-asked field into needs_fact rather than guessing. Fill these in as facts are confirmed.
+listing: 3432924164
+model: FRITZ!Box 7590
+variant: DSL, ohne AX (kein WiFi 6)
+artikelnummer:                      # leave empty until confirmed from the label
+includes:
+  - Netzteil
+  - DSL-Kabel
+  - LAN-Kabel
+  - Anleitung
+  - Originalverpackung
+condition: neu, unbenutzt, originalverpackt
+age: neu, nie in Betrieb
+software: FRITZ!OS (Werkszustand)
+cable: DSL- und LAN-Kabel sind dabei
+price: 100
+floor: 85
+pickup_area: Berlin
+shipping: Versand möglich gegen Aufpreis
