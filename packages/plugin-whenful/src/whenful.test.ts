@@ -23,17 +23,28 @@ function makeRepo(): { root: string; pluginDir: string; vault: string } {
   mkdirSync(vault, { recursive: true });
   copyFileSync(join(srcDir, "whenful.ts"), join(pluginDir, "whenful.ts"));
   copyFileSync(join(srcDir, "check.ts"), join(pluginDir, "check.ts"));
+  copyFileSync(join(srcDir, "client.ts"), join(pluginDir, "client.ts")); // whenful.ts imports it
   return { root, pluginDir, vault };
+}
+
+// Write a fixtures dir with one <id>.json per task, shaped like Whenful's TaskResponse. WHENFUL_FIXTURES
+// points sync at these so the live code path runs with ZERO network.
+function writeFixtures(dir: string, tasks: Array<Record<string, unknown>>) {
+  mkdirSync(dir, { recursive: true });
+  for (const t of tasks) writeFileSync(join(dir, `${t.id}.json`), JSON.stringify(t));
 }
 
 function writeLinks(pluginDir: string, lines: string[]) {
   writeFileSync(join(pluginDir, "links.tsv"), lines.join("\n") + "\n");
 }
 
-// Run a whenful script with NO network access available to the process. We can't fully sandbox the
-// network from a test, but the sync path is a documented stub: it must complete fast and offline.
-function run(pluginDir: string, file: string, ...args: string[]) {
-  const proc = Bun.spawnSync(["bun", join(pluginDir, file), ...args]);
+// Run a whenful script. `env` overlays the child's environment — the sync tests use WHENFUL_FIXTURES
+// to drive the live code path with ZERO network, and deliberately clear WHENFUL_TOKEN so the
+// missing-auth path is exercised honestly rather than picking up a token from the dev's shell.
+function run(pluginDir: string, file: string, args: string[] = [], env: Record<string, string> = {}) {
+  const proc = Bun.spawnSync(["bun", join(pluginDir, file), ...args], {
+    env: { ...process.env, WHENFUL_TOKEN: "", WHENFUL_FIXTURES: "", ...env },
+  });
   return {
     exitCode: proc.exitCode,
     stdout: proc.stdout.toString(),
@@ -41,34 +52,135 @@ function run(pluginDir: string, file: string, ...args: string[]) {
   };
 }
 
-test("sync makes NO network call and writes a mirror/<id>.md offline", () => {
-  const { pluginDir } = makeRepo();
-  writeLinks(pluginDir, [
-    "# header comment",
-    "task-123\tprojects/whenful\tstep one",
+test("sync reads the real fields from a fixture and renders them into mirror/<id>.md (zero network)", () => {
+  const { root, pluginDir } = makeRepo();
+  const fixtures = join(root, "fixtures");
+  writeFixtures(fixtures, [
+    {
+      id: 4242,
+      title: "Lock in BU insurance: the colon test",
+      description: "follow up with the broker",
+      domain_name: "finances",
+      duration_minutes: 30,
+      impact: 1,
+      clarity: "normal",
+      scheduled_date: "2026-06-20",
+      scheduled_time: "09:00:00",
+      is_recurring: false,
+      status: "active",
+      completed_at: null,
+      today_instance_completed: null,
+    },
   ]);
+  writeLinks(pluginDir, ["# header comment", "4242\tprojects/whenful\tstep one"]);
 
-  const before = Date.now();
-  const r = run(pluginDir, "whenful.ts", "sync");
-  const elapsed = Date.now() - before;
-
+  const r = run(pluginDir, "whenful.ts", ["sync"], { WHENFUL_FIXTURES: fixtures });
   expect(r.exitCode).toBe(0);
-  // Stub completes essentially instantly. A real network call would not (and the code has none).
-  expect(elapsed).toBeLessThan(5000);
-  expect(r.stdout).toContain("no live Whenful call is made");
+  expect(r.stdout).toContain("1/1 task(s) mirrored");
 
-  // The mirror file for the linked task is written from the stub, no wire involved.
-  const mirrorFile = join(pluginDir, "mirror", "task-123.md");
+  const mirrorFile = join(pluginDir, "mirror", "4242.md");
   expect(existsSync(mirrorFile)).toBe(true);
-  expect(readFileSync(mirrorFile, "utf8")).toContain("task_id: task-123");
+  const body = readFileSync(mirrorFile, "utf8");
+  expect(body).toContain("task_id: 4242");
+  expect(body).toContain('status: "active"');
+  expect(body).toContain('impact: "high"'); // 1 -> high
+  expect(body).toContain("domain: \"finances\"");
+  expect(body).toContain("due: \"2026-06-20 09:00:00\"");
+  // A title with a colon must round-trip as a quoted YAML scalar, not break the frontmatter.
+  expect(body).toContain('title: "Lock in BU insurance: the colon test"');
   // last-sync is stamped so the staleness check is exercisable.
   expect(existsSync(join(pluginDir, "mirror", ".last-sync"))).toBe(true);
 });
 
-test("sync with no links exits 0 and writes nothing (offline)", () => {
+test("sync neutralizes a newline in a title — no injected frontmatter keys (parses to one block)", () => {
+  const { root, pluginDir } = makeRepo();
+  const fixtures = join(root, "fixtures");
+  // Whenful keeps interior newlines in a title (its validator strips only control chars). A two-line
+  // title must NOT split the quoted scalar across physical lines and inject sibling keys at column 0.
+  writeFixtures(fixtures, [
+    { id: 5, title: "evil\ninjected_key: pwned\nstatus: HIJACKED", description: "ok\nsecond line",
+      domain_name: null, duration_minutes: null, impact: 2, clarity: null, scheduled_date: null,
+      scheduled_time: null, is_recurring: false, status: "active", completed_at: null,
+      today_instance_completed: null },
+  ]);
+  writeLinks(pluginDir, ["5\tprojects/a\t"]);
+
+  const r = run(pluginDir, "whenful.ts", ["sync"], { WHENFUL_FIXTURES: fixtures });
+  expect(r.exitCode).toBe(0);
+
+  const body = readFileSync(join(pluginDir, "mirror", "5.md"), "utf8");
+  // The frontmatter block is exactly one fenced region; split on the closing fence and inspect keys.
+  const fm = body.split("\n---")[0].replace(/^---\n/, "");
+  // No injected key landed at column 0 inside the frontmatter.
+  expect(fm).not.toMatch(/^injected_key:/m);
+  // status stayed the real server value, not the injected "HIJACKED".
+  expect(fm).toMatch(/^status: "active"$/m);
+  // title is a single physical line (the newline got collapsed to a space).
+  expect(fm).toMatch(/^title: "evil injected_key: pwned status: HIJACKED"$/m);
+});
+
+test("sync dedups: one task linked from two notes is fetched and mirrored once", () => {
+  const { root, pluginDir, vault } = makeRepo();
+  mkdirSync(join(vault, "projects"), { recursive: true });
+  const fixtures = join(root, "fixtures");
+  writeFixtures(fixtures, [
+    { id: 7, title: "shared task", description: null, domain_name: null, duration_minutes: null,
+      impact: 2, clarity: null, scheduled_date: null, scheduled_time: null, is_recurring: false,
+      status: "active", completed_at: null, today_instance_completed: null },
+  ]);
+  writeLinks(pluginDir, ["7\tprojects/a\tstep one", "7\tprojects/b\tstep two"]);
+
+  const r = run(pluginDir, "whenful.ts", ["sync"], { WHENFUL_FIXTURES: fixtures });
+  expect(r.exitCode).toBe(0);
+  expect(r.stdout).toContain("1/1 task(s) mirrored"); // deduped to a single fetch
+  // An unscheduled task with no domain renders explicit nulls, not a broken frontmatter.
+  const body = readFileSync(join(pluginDir, "mirror", "7.md"), "utf8");
+  expect(body).toContain("due: null");
+  expect(body).toContain("domain: null");
+});
+
+test("sync FAILS LOUD (non-zero) when neither WHENFUL_TOKEN nor WHENFUL_FIXTURES is set", () => {
+  const { pluginDir } = makeRepo();
+  writeLinks(pluginDir, ["4242\tprojects/whenful\t"]);
+  // No token, no fixtures — the missing-credential preflight must exit non-zero before any wire call.
+  const r = run(pluginDir, "whenful.ts", ["sync"]);
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stderr).toContain("WHENFUL_TOKEN");
+  // It must NOT stamp a fresh .last-sync on a failed run — that would hide the problem from `check`.
+  expect(existsSync(join(pluginDir, "mirror", ".last-sync"))).toBe(false);
+});
+
+test("sync isolates a per-task failure (a missing fixture) without sinking the rest, exits non-zero", () => {
+  const { root, pluginDir } = makeRepo();
+  const fixtures = join(root, "fixtures");
+  writeFixtures(fixtures, [
+    { id: 1, title: "present", description: null, domain_name: null, duration_minutes: null,
+      impact: 3, clarity: null, scheduled_date: null, scheduled_time: null, is_recurring: false,
+      status: "active", completed_at: null, today_instance_completed: null },
+  ]);
+  writeLinks(pluginDir, ["1\tprojects/a\t", "999\tprojects/b\t"]); // 999.json absent
+
+  const r = run(pluginDir, "whenful.ts", ["sync"], { WHENFUL_FIXTURES: fixtures });
+  expect(r.exitCode).not.toBe(0); // one task failed
+  expect(r.stdout).toContain("1/2 task(s) mirrored"); // the good one still landed
+  expect(r.stderr).toContain("999");
+  expect(existsSync(join(pluginDir, "mirror", "1.md"))).toBe(true);
+});
+
+test("sync rejects a non-numeric task id as a per-task failure (never builds a bad URL)", () => {
+  const { root, pluginDir } = makeRepo();
+  const fixtures = join(root, "fixtures");
+  writeFixtures(fixtures, []);
+  writeLinks(pluginDir, ["not-a-number\tprojects/a\t"]);
+  const r = run(pluginDir, "whenful.ts", ["sync"], { WHENFUL_FIXTURES: fixtures });
+  expect(r.exitCode).not.toBe(0);
+  expect(r.stderr).toContain("numeric");
+});
+
+test("sync with no links exits 0 and writes nothing", () => {
   const { pluginDir } = makeRepo();
   writeLinks(pluginDir, ["# only comments, no rows"]);
-  const r = run(pluginDir, "whenful.ts", "sync");
+  const r = run(pluginDir, "whenful.ts", ["sync"]);
   expect(r.exitCode).toBe(0);
   expect(r.stdout).toContain("nothing to mirror");
 });
@@ -188,7 +300,7 @@ test("check flags a malformed links.tsv row (space-delimited) and exits non-zero
 
 test("usage: unknown command exits 1", () => {
   const { pluginDir } = makeRepo();
-  const r = run(pluginDir, "whenful.ts", "bogus");
+  const r = run(pluginDir, "whenful.ts", ["bogus"]);
   expect(r.exitCode).toBe(1);
   expect(r.stderr).toContain("usage");
 });
