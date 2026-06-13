@@ -39,6 +39,7 @@ export async function serve(here: string): Promise<void> {
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: true,
     channel: "chrome", // use the installed system Chrome — no bundled-browser download
+    chromiumSandbox: true, // keep Chrome's sandbox ON — this browser holds credentials, security matters
   });
   audit(here, "serve.start", { port: PORT });
 
