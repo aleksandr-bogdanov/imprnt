@@ -12,7 +12,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { chromium, type BrowserContext, type Page } from "playwright-core";
+import type { Page } from "playwright-core";
 import { resolveSite } from "./sites.ts";
 
 const PORT = Number(process.env.SESSION_HOST_PORT ?? 8787);
@@ -30,6 +30,11 @@ function fingerprint(token: string): string {
 }
 
 export async function serve(here: string): Promise<void> {
+  // Lazy import so non-browser commands (status) and the CLI itself load without playwright-core
+  // present; only serve/login actually need it. Fail with a clear install hint, not a stack trace.
+  let chromium;
+  try { ({ chromium } = await import("playwright-core")); }
+  catch { console.error("session-host: playwright-core is not installed here. Run `npm i playwright-core` in this module's folder (uses your system Chrome, no browser download)."); process.exit(1); }
   const profileDir = join(here, "profile");
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: true,
