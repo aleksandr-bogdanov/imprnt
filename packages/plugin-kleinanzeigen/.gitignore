@@ -1,0 +1,7 @@
+# Local, private, never committed: real account data and session material.
+endpoints.json
+mirror/*
+!mirror/.gitkeep
+*.har
+cookies*
+*.cookies

@@ -1,0 +1,9 @@
+{
+  "conv": "kitty",
+  "listing": "3432924164",
+  "counterpart": "Kitty",
+  "synthetic": true,
+  "messages": [
+    { "from": "buyer", "at": "2026-06-12T12:30:00Z", "body": "Hallo Alex, ich habe Interesse an der Fritzbox. Wohne in Wilmersdorf und könnte vorbeikommen." }
+  ]
+}
