@@ -1,0 +1,105 @@
+---
+import Logo from "./Logo.astro";
+import { nav, site } from "../lib/content";
+---
+
+<header
+  data-header
+  class="fixed inset-x-0 top-0 z-40 transition-[background-color,border-color,backdrop-filter] duration-300 [&.is-scrolled]:border-line [&.is-scrolled]:bg-bg/70 [&.is-scrolled]:backdrop-blur-xl border-b border-transparent"
+>
+  <nav class="shell flex h-16 items-center justify-between gap-4" aria-label="Primary">
+    <a href="#top" class="flex items-center gap-2.5 font-display text-lg font-semibold tracking-tight">
+      <Logo size={28} />
+      <span>imprnt</span>
+    </a>
+
+    <ul class="hidden items-center gap-7 md:flex">
+      {
+        nav.map((item) => (
+          <li>
+            <a
+              href={item.href}
+              class="text-sm text-ink-soft transition-colors hover:text-ink"
+            >
+              {item.label}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+
+    <div class="hidden items-center gap-3 md:flex">
+      <a
+        href={site.repo}
+        target="_blank"
+        rel="noreferrer"
+        class="text-sm text-ink-soft transition-colors hover:text-ink"
+        aria-label="imprnt on GitHub"
+      >
+        GitHub
+      </a>
+      <a href="/getting-started/" class="btn btn-primary !px-4 !py-2 text-sm">Get started</a>
+    </div>
+
+    <button
+      type="button"
+      data-menu-toggle
+      aria-label="Open menu"
+      aria-expanded="false"
+      class="grid h-10 w-10 place-items-center rounded-lg border border-line text-ink md:hidden"
+    >
+      <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none">
+        <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+      </svg>
+    </button>
+  </nav>
+
+  <!-- mobile panel -->
+  <div
+    data-menu-panel
+    class="grid grid-rows-[0fr] overflow-hidden border-line bg-bg/95 backdrop-blur-xl transition-[grid-template-rows] duration-300 ease-out data-[open]:grid-rows-[1fr] data-[open]:border-t md:hidden"
+  >
+    <div class="min-h-0">
+      <ul class="shell flex flex-col gap-1 py-4">
+        {
+          nav.map((item) => (
+            <li>
+              <a
+                href={item.href}
+                data-menu-link
+                class="block rounded-lg px-3 py-3 text-ink-soft transition-colors hover:bg-surface hover:text-ink"
+              >
+                {item.label}
+              </a>
+            </li>
+          ))
+        }
+        <li class="mt-2 flex gap-3 px-3">
+          <a href={site.repo} target="_blank" rel="noreferrer" class="btn btn-ghost flex-1">GitHub</a>
+          <a href="/getting-started/" data-menu-link class="btn btn-primary flex-1">Get started</a>
+        </li>
+      </ul>
+    </div>
+  </div>
+</header>
+
+<script is:inline>
+  (() => {
+    const toggle = document.querySelector("[data-menu-toggle]");
+    const panel = document.querySelector("[data-menu-panel]");
+    if (!toggle || !panel) return;
+    const close = () => {
+      panel.removeAttribute("data-open");
+      toggle.setAttribute("aria-expanded", "false");
+    };
+    toggle.addEventListener("click", () => {
+      const open = panel.hasAttribute("data-open");
+      if (open) close();
+      else {
+        panel.setAttribute("data-open", "");
+        toggle.setAttribute("aria-expanded", "true");
+      }
+    });
+    panel.querySelectorAll("[data-menu-link]").forEach((a) => a.addEventListener("click", close));
+  })();
+</script>

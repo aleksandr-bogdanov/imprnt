@@ -1,0 +1,146 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { site, hero, problem, demo, different, closing } from "../lib/content";
+
+import HeroGraph from "../islands/HeroGraph.tsx";
+import Terminal from "../islands/Terminal.tsx";
+import CopyButton from "../islands/CopyButton.tsx";
+import MagneticButton from "../islands/MagneticButton.tsx";
+
+const icons: Record<string, string> = {
+  files: `<path d="M14 3v5h5"/><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M9 13h6M9 17h5"/>`,
+  shield: `<path d="M12 3 5 6v5c0 4.5 3 7.6 7 9 4-1.4 7-4.5 7-9V6z"/><path d="m9 12 2 2 4-4"/>`,
+  blocks: `<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><path d="M16.5 14v6M13.5 17h6"/>`,
+  bolt: `<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>`,
+};
+---
+
+<Layout>
+  {/* ─────────────────────────────  HERO  ───────────────────────────── */}
+  <section class="relative overflow-hidden bg-dotgrid pb-24 pt-24 sm:pt-28">
+    <div class="pointer-events-none absolute inset-0 -z-10">
+      <div data-drift class="absolute -left-40 top-0 h-[28rem] w-[28rem] rounded-full bg-green/20 blur-[130px]"></div>
+      <div data-drift class="absolute -right-20 top-40 h-[30rem] w-[30rem] rounded-full bg-teal/15 blur-[150px]"></div>
+      <div class="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-line to-transparent"></div>
+    </div>
+
+    <div class="shell grid items-center gap-x-12 gap-y-16 lg:grid-cols-[1fr_1.05fr]">
+      <div>
+        <p class="eyebrow" data-reveal>{hero.eyebrow}</p>
+        <h1 class="mt-6 text-hero font-semibold" data-reveal data-reveal-delay="60">
+          {hero.headlineLead}{" "}<span class="text-gradient">{hero.headlineAccent}</span>.
+        </h1>
+        <p class="mt-6 max-w-xl text-lg text-ink-soft sm:text-xl" data-reveal data-reveal-delay="120">
+          {hero.subhead}
+        </p>
+
+        <div class="mt-8 flex flex-wrap items-center gap-3" data-reveal data-reveal-delay="180">
+          <div class="flex items-center gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3 font-mono text-sm">
+            <span class="select-none text-green">$</span>
+            <span class="text-ink">{site.install}</span>
+            <CopyButton client:visible value={site.install} label="install command" />
+          </div>
+        </div>
+
+        <div class="mt-6 flex flex-wrap items-center gap-3" data-reveal data-reveal-delay="240">
+          <MagneticButton client:visible href={hero.ctaPrimary.href} label={hero.ctaPrimary.label} variant="primary" arrow />
+          <MagneticButton client:visible href={hero.ctaSecondary.href} label={hero.ctaSecondary.label} variant="ghost" external />
+        </div>
+
+        <p class="mt-10 border-l-2 border-green/50 pl-4 font-mono text-sm text-ink-soft" data-reveal data-reveal-delay="300">
+          {site.principle}
+        </p>
+      </div>
+
+      <div class="lg:pb-10" data-reveal data-reveal-delay="160">
+        <HeroGraph client:load />
+      </div>
+    </div>
+  </section>
+
+  {/* ─────────────────────────────  PROBLEM  ───────────────────────────── */}
+  <section class="relative border-t border-line py-20 sm:py-28">
+    <div class="shell-narrow">
+      <p class="eyebrow" data-reveal>{problem.eyebrow}</p>
+      <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{problem.heading}</h2>
+      <div class="mt-7 space-y-5 text-lg text-ink-soft sm:text-xl">
+        <p data-reveal data-reveal-delay="120">{problem.body[0]}</p>
+        <p data-reveal data-reveal-delay="180">{problem.body[1]}</p>
+      </div>
+    </div>
+  </section>
+
+  {/* ─────────────────────────────  DEMO  ───────────────────────────── */}
+  <section class="relative border-t border-line bg-bg-soft py-20 sm:py-28">
+    <div class="shell grid items-center gap-12 lg:grid-cols-[0.85fr_1.15fr]">
+      <div>
+        <p class="eyebrow" data-reveal>{demo.eyebrow}</p>
+        <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{demo.heading}</h2>
+        <p class="mt-6 max-w-md text-lg text-ink-soft" data-reveal data-reveal-delay="120">{demo.lead}</p>
+      </div>
+      <div data-reveal data-reveal-delay="120">
+        <Terminal client:visible lines={demo.terminal} />
+      </div>
+    </div>
+  </section>
+
+  {/* ─────────────────────────────  DIFFERENT  ───────────────────────────── */}
+  <section id="different" class="relative border-t border-line py-20 sm:py-28">
+    <div class="shell">
+      <div class="max-w-2xl">
+        <p class="eyebrow" data-reveal>{different.eyebrow}</p>
+        <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{different.heading}</h2>
+        <p class="mt-6 text-lg text-ink-soft" data-reveal data-reveal-delay="120">{different.lead}</p>
+      </div>
+
+      <div class="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {
+          different.features.map((f, i) => (
+            <a
+              href={f.href}
+              class="surface group flex flex-col p-6 transition-all duration-300 hover:-translate-y-1 hover:border-green/40"
+              data-reveal
+              data-reveal-delay={(i % 4) * 70}
+            >
+              <span class="grid h-11 w-11 place-items-center rounded-xl border border-line bg-surface text-green transition-colors group-hover:border-green/50">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
+                  <Fragment set:html={icons[f.icon]} />
+                </svg>
+              </span>
+              <h3 class="mt-5 font-display text-lg font-semibold">{f.title}</h3>
+              <p class="mt-2.5 flex-1 text-[0.95rem] text-ink-soft">{f.body}</p>
+              <span class="mt-4 inline-flex items-center gap-1 font-mono text-xs text-green opacity-0 transition-opacity group-hover:opacity-100">
+                learn more
+                <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+            </a>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  {/* ─────────────────────────────  CLOSING  ───────────────────────────── */}
+  <section class="relative overflow-hidden border-t border-line py-24 sm:py-32">
+    <div class="pointer-events-none absolute inset-0 -z-10">
+      <div data-drift class="absolute left-1/2 top-1/2 h-[26rem] w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-green/15 blur-[140px]"></div>
+    </div>
+    <div class="shell-narrow relative text-center">
+      <h2 class="text-display font-semibold" data-reveal>{closing.heading}</h2>
+      <p class="mx-auto mt-4 max-w-md text-lg text-ink-soft" data-reveal data-reveal-delay="80">{closing.sub}</p>
+
+      <div class="mt-9 flex justify-center" data-reveal data-reveal-delay="140">
+        <div class="flex items-center gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3 font-mono text-sm">
+          <span class="select-none text-green">$</span>
+          <span class="text-ink">{closing.install}</span>
+          <CopyButton client:visible value={closing.install} label="install command" />
+        </div>
+      </div>
+
+      <div class="mt-7 flex flex-wrap justify-center gap-3" data-reveal data-reveal-delay="200">
+        <MagneticButton client:visible href={closing.ctaPrimary.href} label={closing.ctaPrimary.label} variant="primary" arrow />
+        <MagneticButton client:visible href={closing.ctaSecondary.href} label={closing.ctaSecondary.label} variant="ghost" external />
+      </div>
+    </div>
+  </section>
+</Layout>
