@@ -34,6 +34,14 @@ export default defineConfig({
             { label: "How it works", slug: "how-it-works" },
             { label: "The model", slug: "the-model" },
             { label: "Plugins", slug: "plugins" },
+            { label: "Architecture", slug: "architecture" },
+          ],
+        },
+        {
+          label: "Going deeper",
+          items: [
+            { label: "Design decisions", slug: "design-decisions" },
+            { label: "Contributing", slug: "contributing" },
           ],
         },
       ],
