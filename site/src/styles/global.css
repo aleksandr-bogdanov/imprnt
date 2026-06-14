@@ -260,6 +260,15 @@
     color: transparent;
   }
 
+  /* a fully-saturated accent for a single emphasized word, so it reads as
+     deliberate emphasis rather than a half-colored glitch */
+  .text-accent {
+    background: linear-gradient(92deg, var(--color-green-bright), var(--color-teal));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
   .glow-green {
     box-shadow: 0 0 80px -20px color-mix(in oklab, var(--color-green) 60%, transparent);
   }
