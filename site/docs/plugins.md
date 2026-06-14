@@ -52,6 +52,17 @@ A handful of rules keep plugins composable and the core blind.
 - **Everything is a command you run.** Nothing runs in the background by being installed. Want hourly sync? You schedule it.
 - **Slug-namespaced labels.** Any label a plugin adds to a note is prefixed with its name (`whenful.synced`), and it reads only its own. The core ignores labels it does not recognize.
 
+## Project scope or global
+
+By default a plugin loads for the project you install it in, and `imp` carries it into the sessions it launches. A universal behavior (a house style, an anti-slop ruleset) can instead load in every session, even a plain `claude` in an unrelated repo:
+
+```sh
+imprnt global add anti-slop   # wire it at user scope
+imprnt global rm anti-slop
+```
+
+`global add` copies the plugin to a machine-local path and adds one import line inside a managed block in your user-level `CLAUDE.md`, so every session reads it. The core stays blind either way: it wires by convention, never by naming a plugin, so the litmus holds at global scope too.
+
 ## Three classes of plugin
 
 - **Data plugins** keep a local mirror of an outside service and refresh it with a `sync` command you run. They propose summary notes into the vault, never write directly. Whenful and the kleinanzeigen watcher are examples.

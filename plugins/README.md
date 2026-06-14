@@ -7,8 +7,9 @@ here runs unless you wire it in.
 
 This file is the **plugin contract** — the standing rules every plugin follows. The
 contract exists for one reason: to stop the core from slowly growing to know about every
-plugin. That growth is what killed the system imprnt replaces (the core became a "robot
-suit" that billed rent). The contract is what keeps imprnt composable instead.
+plugin. That growth is what bloats this kind of system over time, the core ends up carrying
+every feature as always-on overhead you pay for in tokens and misfires. PAI, the system imprnt
+grew out of, hit exactly this. The contract is what keeps imprnt composable instead.
 
 ---
 
@@ -397,7 +398,7 @@ engineering, and how mail/channels will. `serve` runs the warm Playwright (syste
 context + broker; `login <url>` is the one-time manual sign-in; `status` shows enrollment. The first
 module that PROVIDES a capability others CONSUME — proving the contract evolution (drop "share nothing";
 modules declare provides/consumes; removing a provider degrades a consumer gracefully, never breaks it:
-the watcher with no host falls back to a direct browser read). Litmus against PAI (Plans/06): you start
+the watcher with no host falls back to a direct browser read). The litmus, against the pitfalls PAI showed: you start
 it, you can kill it, localhost-only, deterministic-driven, auto-injects nothing, every token handout
 audited. `playwright-core` is its one dependency, fenced behind the broker. `profile/` + `audit.log`
 gitignored.

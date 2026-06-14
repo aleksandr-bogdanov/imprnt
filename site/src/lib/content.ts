@@ -119,7 +119,8 @@ export const footer = {
       links: [
         { label: "GitHub", href: "https://github.com/aleksandr-bogdanov/imprnt", external: true },
         { label: "The vault contract", href: "https://github.com/aleksandr-bogdanov/imprnt/blob/main/CLAUDE.md", external: true },
-        { label: "Architecture", href: "https://github.com/aleksandr-bogdanov/imprnt/blob/main/dev/architecture.md", external: true },
+        { label: "Architecture", href: "/architecture/" },
+        { label: "Design decisions", href: "/design-decisions/" },
       ],
     },
   ],
