@@ -134,13 +134,17 @@
     width: 100%;
     max-width: 76rem;
     margin-inline: auto;
-    padding-inline: 1.5rem;
+    /* gutter scales with the viewport so content never hugs the edges when the
+       window sits near the max-width (e.g. a laptop with a browser sidebar) */
+    padding-inline: clamp(1.5rem, 5vw, 4.5rem);
   }
   .shell-narrow {
     width: 100%;
     max-width: 52rem;
     margin-inline: auto;
-    padding-inline: 1.5rem;
+    /* gutter scales with the viewport so content never hugs the edges when the
+       window sits near the max-width (e.g. a laptop with a browser sidebar) */
+    padding-inline: clamp(1.5rem, 5vw, 4.5rem);
   }
 
   .eyebrow {
