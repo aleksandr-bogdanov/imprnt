@@ -8,6 +8,10 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+# Only deploy when the site changes. Patterns are gitignore-style and matched
+# against the push's changed paths (repo-root-relative), so a push that only
+# touches packages/ does not rebuild the site.
+watchPatterns = ["site/**"]
 
 [deploy]
 # Caddy serves the static build and answers "/" with 200.

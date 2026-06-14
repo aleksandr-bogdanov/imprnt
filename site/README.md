@@ -43,7 +43,8 @@ Caddy stage serves `dist/`. See `Dockerfile`, `Caddyfile`, and `railway.toml`.
 Deploys are driven from GitHub. The Railway service is connected to this repo with its **Root
 Directory set to `site`**, so Railway reads `site/railway.toml`, builds the Dockerfile, and
 deploys on every push to `master`. `railway.toml` is the source of truth for the build and deploy
-settings.
+settings, including `watchPatterns = ["site/**"]`, which scopes deploys to pushes that actually
+touch the site (a push elsewhere in the monorepo does not rebuild it).
 
 To deploy by hand (or before the GitHub connection is wired):
 
