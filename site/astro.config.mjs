@@ -15,8 +15,9 @@ export default defineConfig({
   site: SITE,
   integrations: [
     react(),
-    // Docs live in src/content/docs/. The custom landing (src/pages/index.astro)
-    // owns "/", Starlight serves the doc pages at their own slugs.
+    // Docs are the single source of truth in site/docs/ (see src/content.config.ts).
+    // The custom landing (src/pages/index.astro) owns "/", Starlight serves the
+    // doc pages at their own slugs.
     starlight({
       title: "imprnt",
       description: "A knowledge vault you own and run locally.",

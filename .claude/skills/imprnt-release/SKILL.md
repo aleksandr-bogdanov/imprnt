@@ -7,7 +7,7 @@ description: Cut a stable imprnt release to npm `latest`. Detects affected packa
 
 Promote a **stable** release to npm `latest`. (Edge auto-publishes on every push to master, so you
 never touch that here.) For how the whole pipeline works (channels, versioning, OIDC, the gate), read
-[`docs/releasing.md`](../../../docs/releasing.md). This skill only drives the stable cut, so that
+[`dev/releasing.md`](../../../dev/releasing.md). This skill only drives the stable cut, so that
 architecture lives in one place and can't go stale here.
 
 ## THE ONE RULE: no prose by default
@@ -77,7 +77,7 @@ publish it. If the user gave no path, print it to the conversation instead of wr
 
 To undo a bad `latest`, point the tag back to the last good version and deprecate the bad one (needs
 the user's npm auth, run in their Terminal with the passkey). Details in
-[`docs/releasing.md`](../../../docs/releasing.md#rollback):
+[`dev/releasing.md`](../../../dev/releasing.md#rollback):
 ```sh
 npm dist-tag add imprnt@<last-good> latest
 npm deprecate imprnt@<bad> "broken release, use <last-good>"

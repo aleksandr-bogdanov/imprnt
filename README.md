@@ -162,17 +162,20 @@ assistant that files and recalls for you:
 
 ## Docs
 
-- [`docs/architecture.md`](docs/architecture.md), how the whole thing works, in plain English. Start here.
-- [`docs/design-decisions.md`](docs/design-decisions.md), the durable calls and why they were made.
-- [`docs/releasing.md`](docs/releasing.md), how a change becomes a published package.
+The readable docs are the website, [imprnt.dev](https://imprnt.dev), built straight from markdown in
+[`site/docs/`](site/docs/) (the single source): getting started, how it works, the model, and plugins.
+Edit a file there and the site updates on the next deploy.
+
 - [`CLAUDE.md`](CLAUDE.md), the contract your assistant reads inside the vault: note formats, conventions.
+- [`plugins/README.md`](plugins/README.md), the plugin contract.
+- [`dev/`](dev/), maintainer and design reference: architecture + diagram, the design decisions, and the release and shipping runbooks.
 
 ## Hacking on imprnt
 
 The engine is built with [Bun](https://bun.sh) and [Turborepo](https://turborepo.com) (dev tools
 only, never needed by people who use it through their assistant). Clone, `bun install`,
 `bun run build`, `bun run test`. The architecture and the contributor map are in
-[`docs/architecture.md`](docs/architecture.md).
+[`dev/architecture.md`](dev/architecture.md).
 
 ## License
 

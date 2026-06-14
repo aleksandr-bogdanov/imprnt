@@ -1,6 +1,6 @@
 /**
  * Landing copy, as data. One place to read, one place to anti-slop scan.
- * The landing sells. The depth lives in the docs (src/content/docs/).
+ * The landing sells. The depth lives in the docs (site/docs/, rendered by Starlight).
  * Product voice: clean, confident, plain.
  */
 
@@ -119,7 +119,7 @@ export const footer = {
       links: [
         { label: "GitHub", href: "https://github.com/aleksandr-bogdanov/imprnt", external: true },
         { label: "The vault contract", href: "https://github.com/aleksandr-bogdanov/imprnt/blob/main/CLAUDE.md", external: true },
-        { label: "Architecture", href: "https://github.com/aleksandr-bogdanov/imprnt/blob/main/docs/architecture.md", external: true },
+        { label: "Architecture", href: "https://github.com/aleksandr-bogdanov/imprnt/blob/main/dev/architecture.md", external: true },
       ],
     },
   ],
