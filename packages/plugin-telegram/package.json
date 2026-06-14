@@ -6,8 +6,12 @@
   "files": [
     "agent.md",
     "README.md",
-    "link.sh"
+    "link.sh",
+    "fix-cpu-leak.mjs"
   ],
+  "scripts": {
+    "fix-cpu-leak": "node fix-cpu-leak.mjs --reap"
+  },
   "keywords": [
     "imprnt",
     "imprnt-plugin",

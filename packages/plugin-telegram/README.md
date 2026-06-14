@@ -55,6 +55,35 @@ Then text the bot from your phone: "what do I know about the access-platform cut
   Anthropic-allowlisted channel plugins can register, which is why this plugin wraps the
   official one instead of shipping its own.
 
+## Known issue: the official channel leaks 100%-CPU pollers
+
+The official `telegram@claude-plugins-official` channel (v0.0.6) has a bug that this
+plugin inherits, since only Anthropic-allowlisted channels can register and we wrap
+that one. When two pollers share a bot token (a second session, or a previous server
+that did not exit), one gets a 409 Conflict, its retry backoff collapses to 0ms, and
+the `bun server.ts` process pins a CPU core. Wedged like that it cannot service
+SIGTERM, so it survives its session as an orphan and a new one stacks up per session.
+Symptom: loud fans and several `bun server.ts` processes at ~100% CPU. Upstream:
+[issue #2229](https://github.com/anthropics/claude-plugins-official/issues/2229)
+(open, no fixed release).
+
+`fix-cpu-leak.mjs` re-applies the community fix (authoritative SIGTERM -> 3s ->
+SIGKILL eviction, plus poll counters that reset only on a real inbound update so the
+backoff cannot collapse). It is idempotent and version-agnostic, so run it after the
+first install and after any channel-plugin update (a plugin update rewrites the cache
+file and drops the patch):
+
+```sh
+node plugins/telegram/fix-cpu-leak.mjs          # patch every installed version in place
+node plugins/telegram/fix-cpu-leak.mjs --reap   # also SIGKILL any orphaned pollers (ppid 1)
+node plugins/telegram/fix-cpu-leak.mjs --check  # report only, change nothing
+```
+
+It only ever edits the official plugin's `server.ts` under
+`~/.claude/plugins/cache/claude-plugins-official/telegram/<version>/`, and refuses to
+write a half-patched file if upstream changed the code (which may mean the fix shipped).
+Reap orphans by hand between sessions with `pkill -9 -f "telegram/.*/server.ts"`.
+
 ## Remove
 
 ```sh
