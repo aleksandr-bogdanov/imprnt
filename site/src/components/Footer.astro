@@ -1,0 +1,48 @@
+---
+import Logo from "./Logo.astro";
+import { footer, site } from "../lib/content";
+---
+
+<footer class="relative border-t border-line bg-bg-soft">
+  <div class="shell grid gap-10 py-16 md:grid-cols-[1.4fr_1fr_1fr]">
+    <div>
+      <a href="#top" class="flex items-center gap-2.5 font-display text-lg font-semibold">
+        <Logo size={28} />
+        <span>imprnt</span>
+      </a>
+      <p class="mt-4 max-w-xs text-sm text-ink-soft">{footer.blurb}</p>
+      <p class="mt-6 font-mono text-xs text-ink-faint">{site.principle}</p>
+    </div>
+
+    {
+      footer.columns.map((col) => (
+        <div>
+          <h2 class="font-mono text-xs uppercase tracking-widest text-ink-faint">{col.title}</h2>
+          <ul class="mt-4 space-y-2.5">
+            {col.links.map((link) => (
+              <li>
+                <a
+                  href={link.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="text-sm text-ink-soft transition-colors hover:text-green"
+                >
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))
+    }
+  </div>
+
+  <div class="hairline">
+    <div class="shell flex flex-col items-center justify-between gap-3 py-6 text-sm text-ink-faint sm:flex-row">
+      <p>{footer.copyright}</p>
+      <a href={site.repo} target="_blank" rel="noreferrer" class="font-mono text-xs transition-colors hover:text-ink">
+        github.com/aleksandr-bogdanov/imprnt
+      </a>
+    </div>
+  </div>
+</footer>
