@@ -38,13 +38,15 @@ negate-then-affirm. Scan before shipping.
 ## Deploy (Railway, config as code)
 
 The site ships as a small container: a build stage compiles the static output with bun, and a
-Caddy stage serves `dist/`. See `Dockerfile`, `Caddyfile`, and `railway.toml`.
+Caddy stage serves `dist/`. See `Dockerfile` and `Caddyfile` here, and `railway.toml` at the
+repository root.
 
 Deploys are driven from GitHub. The Railway service is connected to this repo with its **Root
-Directory set to `site`**, so Railway reads `site/railway.toml`, builds the Dockerfile, and
-deploys on every push to `master`. `railway.toml` is the source of truth for the build and deploy
-settings, including `watchPatterns = ["site/**"]`, which scopes deploys to pushes that actually
-touch the site (a push elsewhere in the monorepo does not rebuild it).
+Directory set to `site`**, which makes the build context `site/` and auto-detects the Dockerfile.
+The config file lives at the **repository root** (`railway.toml`), because Railway reads its config
+from the repo root by default and does not look inside the Root Directory. It deploys on every push
+to `master`, and `build.watchPatterns = ["site/**", "railway.toml"]` scopes deploys to pushes that
+actually touch the site, so a push elsewhere in the monorepo does not rebuild it.
 
 To deploy by hand (or before the GitHub connection is wired):
 

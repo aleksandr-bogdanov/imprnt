@@ -1,0 +1,17 @@
+# Railway config as code, read from the repository ROOT.
+#
+# Railway reads its config file from the repo root by default and does NOT look
+# inside the service Root Directory, so this file lives here (no "Config Path"
+# dashboard setting needed). The service Root Directory is set to `site`, which
+# makes the build context site/ and auto-detects site/Dockerfile (Caddy serves
+# the static output).
+
+[build]
+# Only rebuild when the site or this config changes. Watch patterns are
+# gitignore-style and operate from the repo root even when a Root Directory is
+# set, so a push that only touches packages/ is skipped.
+watchPatterns = ["site/**", "railway.toml"]
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
