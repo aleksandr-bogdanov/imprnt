@@ -13,8 +13,9 @@ aesthetic, scroll motion, deployed to Railway.
 - **Motion**: Lenis smooth scroll synced to GSAP ScrollTrigger, plus Framer Motion inside the
   islands. All of it is gated behind `prefers-reduced-motion` (`src/scripts/motion.ts`).
 - **Docs**: [Starlight](https://starlight.astro.build) (Astro's docs framework), themed dark to
-  match the landing (`src/styles/starlight.css`). Doc pages are markdown in `src/content/docs/`.
-  Add a file, add it to the sidebar in `astro.config.mjs`, and it becomes a page.
+  match the landing (`src/styles/starlight.css`). Doc pages are markdown in `site/docs/` (the
+  single source of truth, read straight from there). Add a file, add it to the sidebar in
+  `astro.config.mjs`, and it becomes a page.
 
 The landing (`src/pages/index.astro`) sells and stays short. The docs describe in depth.
 
