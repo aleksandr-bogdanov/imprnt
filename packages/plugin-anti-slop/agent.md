@@ -48,16 +48,6 @@ delve, leverage (verb), harness (verb), navigate (metaphor), unleash, unlock, ro
 - **Forced symmetry.** Pros/cons or upsides/downsides with the same item count when reality is lopsided. Match the count to the truth.
 - **Qualifier hedge.** "while it's true that X, it's also worth considering Y." Pick one and commit.
 
-## [E] Audience: write to the reader, not the author
-
-Customer-facing prose (a product doc, a landing page, an external README, anything a user reads) speaks to that user. It tells them what the thing does and what it means for their choice. It never turns around to address the document's author or maintainer about the writing itself.
-
-- Cut meta-commentary that defends or grades the prose: "the reframe is honest", "not a dodge", "stated plainly", "the honest read", "to be fair", "this section is here because", "labeled as such". The reader never asked whether you are being fair. State the fact and let it stand.
-- Cut author-facing status talk: "X should be able to do Y but cannot yet", "this is on the roadmap", "more on that below" used as a defense. If a limit matters to the reader, say what it means for their decision, not as a confession to the maintainer.
-- Frame everything as the reader's use and choice ("if you want X, this fits", "pick Y instead when Z"), never the project's internal to-do list or your own authorial doubts.
-
-This often travels with [D]. "honest, not a dodge" is a negate-then-affirm and an author aside at once. Catch both.
-
 ## Quick self-check before sending (documents / output-facing / vault notes)
 
 1. Scan for `—` and `–`. Replace with `-` or a sentence break.
@@ -65,4 +55,3 @@ This often travels with [D]. "honest, not a dodge" is a negate-then-affirm and a
 3. Scan for any [B] word. Rephrase.
 4. Scan for any [C] phrase. Rephrase.
 5. Check the [D] rhetorical patterns. Rewrite if any is present.
-6. Audience check: every line speaks to the reader about the product, not to the author about the writing. Cut self-grading ("honest", "to be fair") and roadmap confessions ([E]).
