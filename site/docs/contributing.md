@@ -3,6 +3,8 @@ title: Contributing
 description: How imprnt is built, structured, and released, for anyone hacking on it.
 ---
 
+> **In one line.** For people working on imprnt itself, not using the vault. One repo, several published packages, ships Node, built with Bun.
+
 imprnt is open source ([MIT](https://github.com/aleksandr-bogdanov/imprnt/blob/main/LICENSE)). This page is for people working on the engine and the plugins, not for using the vault day to day.
 
 ## The monorepo
@@ -21,7 +23,7 @@ bun run check      # typecheck + test + build
 
 ## Ship Node, build with Bun
 
-What a user installs runs on **Node**, the runtime everyone already has, so `npm i -g imprnt` works with no "first install Bun" wall. Bun is a dev and build tool only: develop and test in Bun, then `bun build --target=node` compiles the TypeScript into a self-contained file Node runs. The package ships `dist/`, never `src/`. A code plugin builds the same way, emitting a Node-runnable `check.js` so the read path needs no Bun either.
+What a user installs runs on **Node**, the runtime everyone already has, so `npm i -g imprnt` works with no "first install Bun" wall. Bun is a dev and build tool only: develop and test in Bun, then `bun build --target=node` compiles the TypeScript into a self-contained file Node runs. The package ships `dist/`, never `src/`. A code plugin builds the same way, so the read path needs no Bun either.
 
 ## Generic ships, personal stays private
 

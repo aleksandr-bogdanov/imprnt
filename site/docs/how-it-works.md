@@ -1,51 +1,54 @@
 ---
 title: How it works
-description: imprnt rations the model by where it runs. Write once with judgment, read with cheap local code.
+description: Spend the AI once, when you file. Read with cheap local code, every time after.
 ---
 
-imprnt rations the model by where it runs, not by how much it runs. The line is drawn by how often a step happens.
+> **In one line.** The AI is expensive, so imprnt only uses it once per thing you save. Finding stuff later is plain math on your own machine, free and instant.
 
-- The **write path** runs once per source. Reading a messy source into structured knowledge is irreducibly semantic, so the model earns its keep here.
-- The **read path** runs thousands of times. Ranking notes for a query is local arithmetic, so it stays plain code with no model in the loop.
+A model costs money every time it thinks. So imprnt asks one question about every step: how often does this run?
 
-This is the whole discipline. Spend the model on the rare, hard, conscious work. Keep it out of the path you run all day.
+- **Filing runs once** per source. Turning a messy transcript into clean notes takes real understanding, so the model does it.
+- **Reading runs all day.** Ranking notes for a search is simple arithmetic, so plain code does it, with no model anywhere near.
 
-## The write path
+That is the whole trick. Pay the model for the rare hard job. Keep it out of the job you do a hundred times a day.
 
-When you hand over a transcript or a document, the model does the conscious work, one time:
+## When you file: the model works
 
-- Reads the prose and finds its structure.
-- Picks the note type and the folder it belongs in.
+Hand over a transcript or a document, and the model does the thinking, one time:
+
+- Reads the prose and finds the structure in it.
+- Picks what each note is and which folder it lives in.
 - Writes a one-line summary.
-- Pulls out the decisions and actions with judgment.
-- Assigns tags and sets the note's kind.
-- Wires links to the people, orgs, and projects it mentions.
+- Pulls out the decisions and the action items.
+- Tags it, and links the people, orgs, and projects it names.
 
-"Not sure, hand it to the model" is a first-class move here. That is conscious use. The thing to avoid is dumping everything at the model on every read and expecting magic.
+"Not sure where this goes? Hand it to the model" is fine here. This is the place for it. The thing to avoid is throwing everything at the model on every search and hoping for magic.
 
-## The read path
+## When you read: plain code works
 
-`recall` ranks your notes with BM25, a term-frequency formula from the 1990s that is pure local arithmetic. Term frequency times inverse document frequency, with field boosts so a term in the title or aliases outweighs the same term in the body.
+`recall` ranks your notes with BM25, a formula from the 1990s that is pure arithmetic. It counts how often your search words appear, and weighs a rare word heavier than a common one. A word in the title counts more than the same word in the body.
 
-No model in the loop, no embeddings, no vectors, no server. The model only shapes your question into keywords at the front and reads the top hits at the back. It is never the ranker.
+No model. No embeddings. No vectors. No server. The model only turns your question into search words at the start, and reads the few best notes at the end. It is never the thing doing the ranking.
 
-BM25 is the core ranker, not an opt-in. Its inverse-document-frequency already floats a rare matched term above a common one, so it returns a tight, well-separated set rather than the whole vault.
+Because a rare matched word floats to the top on its own, you get a short, sharp list of hits, not a dump of the whole vault.
 
-## The line, step by step
+## The whole thing on one line
+
+Who does each step, and why:
 
 | Step | Who | Why |
 |------|-----|-----|
-| Snapshot the source, hash it, update the manifest | code | mechanical, exact, and free |
-| Read unstructured prose to find its structure | model | there is nothing to parse, it takes reading |
-| Pick the type, write the summary, pull decisions | model | irreducibly semantic, the conscious work |
+| Copy the source, hash it, log it | code | mechanical, exact, free |
+| Read messy prose to find its shape | model | nothing to parse, it takes reading |
+| Pick the type, write the summary, pull decisions | model | needs real understanding, the conscious work |
 | Assign tags, set the kind, wire the links | model | judgment about meaning, paid once |
-| File the note into its folder | code | once the type is decided, writing is mechanical |
-| Rebuild the index from every summary | code | a deterministic read over frontmatter |
-| Rank notes for a query (BM25) | code | fast, free, transparent, over thousands of notes |
-| Turn a question into keywords, read the top hits | model | it is the interface, with the query and results in hand |
+| File the note in its folder | code | once the type is decided, writing is mechanical |
+| Rebuild the index from every summary | code | a plain read over the note headers |
+| Rank notes for a search | code | fast, free, clear, over thousands of notes |
+| Turn a question into search words, read the top hits | model | it is the interface, with the question in hand |
 
-## The cost model
+## Why no search server
 
-There is no token-free tool call. Anything the model reads costs tokens, whatever the transport. The two real levers are payload size and caching. Do the heavy scan in code and hand the model a tight result, and keep a local cache so you avoid the re-fetch.
+Every tool call the model makes costs tokens, whatever the wires look like. The two levers are how big the payload is and whether you cached it. So imprnt does the heavy scan in code, hands the model a tight result, and caches locally to skip the re-fetch.
 
-This is why a query layer over the vault is out. A per-query round-trip to a running server, with no cache, pays the cost on every read. A plugin's `sync` edge is fine, because it is a batched call that caches locally and everything downstream reads the cache.
+A live server answering search queries breaks both levers: a round-trip on every read, with nothing cached. That is why there is no query layer over the vault. A plugin's `sync` is different and fine, because it is one batched call that caches locally, and everything after it reads the cache.

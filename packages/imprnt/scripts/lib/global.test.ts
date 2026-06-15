@@ -57,9 +57,9 @@ test("add is idempotent - the same module twice does not duplicate the import li
 
 test("two modules sort inside one block", () => {
   const { globalDir, src } = sandbox();
-  addGlobalModule(globalDir, "guard", src("guard"));
+  addGlobalModule(globalDir, "demo", src("demo"));
   addGlobalModule(globalDir, "anti-slop", src("anti-slop"));
-  expect(listGlobalModules(globalDir)).toEqual(["anti-slop", "guard"]); // sorted, not insertion order
+  expect(listGlobalModules(globalDir)).toEqual(["anti-slop", "demo"]); // sorted, not insertion order
   // exactly one managed block
   expect(claudeMd(globalDir).split("imprnt:global BEGIN").length - 1).toBe(1);
 });
@@ -85,13 +85,13 @@ test("the user's own CLAUDE.md content outside the fence is preserved byte-for-b
 
 test("rm removes one module's line but leaves the block and the other module", () => {
   const { globalDir, src } = sandbox();
-  addGlobalModule(globalDir, "guard", src("guard"));
+  addGlobalModule(globalDir, "demo", src("demo"));
   addGlobalModule(globalDir, "anti-slop", src("anti-slop"));
-  const r = rmGlobalModule(globalDir, "guard");
+  const r = rmGlobalModule(globalDir, "demo");
   expect(r.changed).toBe(true);
   expect(listGlobalModules(globalDir)).toEqual(["anti-slop"]);
   expect(claudeMd(globalDir)).toContain("imprnt:global BEGIN"); // block survives
-  expect(claudeMd(globalDir)).not.toContain("@imprnt/guard/agent.md");
+  expect(claudeMd(globalDir)).not.toContain("@imprnt/demo/agent.md");
 });
 
 test("rm of the last module removes the whole block (no orphan markers)", () => {

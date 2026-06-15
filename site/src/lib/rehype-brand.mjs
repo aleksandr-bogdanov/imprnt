@@ -16,7 +16,6 @@ const TOOLS = [
   "Supermemory",
   "mempalace",
   "Graphiti",
-  "iai-pme",
   "cognee",
   "MemGPT",
   "Letta",
