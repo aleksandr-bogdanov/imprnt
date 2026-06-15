@@ -353,12 +353,12 @@ test("round-1 invariant holds: a both-terms doc outranks a one-term doc with a s
 // --- finding 3 (P3): a UTF-8 BOM before --- does not leak frontmatter into the body ----------------
 // Pre-fix a leading BOM defeated the /^---/ fence, so all frontmatter dropped to body weight and
 // frontmatter-only values leaked into the searchable body.
-test("a BOM-prefixed note keeps tags at tag weight; a frontmatter-only value does not match as body", () => {
+test("a BOM-prefixed note keeps tags at tag weight; summary is indexed, other frontmatter scalars are not", () => {
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
-  // BOM right before the fence. The term harbor is ONLY in the tag; "zzsummaryonly" is ONLY in a
-  // frontmatter scalar, never in the body.
-  writeFileSync(join(v, "bommed.md"), `﻿---\ntype: note\nsummary: zzsummaryonly text\ntags: [harbor]\n---\n# Title\n\nUnrelated prose about weather.\n`);
+  // BOM right before the fence. "harbor" is ONLY in the tag; "zzsummaryonly" is ONLY in the summary
+  // scalar; "zzsourceonly" is ONLY in the source scalar. None appear in the body.
+  writeFileSync(join(v, "bommed.md"), `﻿---\ntype: note\nsummary: zzsummaryonly text\nsource: "[[raw/zzsourceonly]]"\ntags: [harbor]\n---\n# Title\n\nUnrelated prose about weather.\n`);
   note(v, "bodyonly.md", `---\ntags: [bigquery]\n---\n# Title\n\nharbor appears once in body.\n`);
 
   // harbor matches via the BOM note's tag (2x boost) and outranks a body-only mention.
@@ -369,9 +369,10 @@ test("a BOM-prefixed note keeps tags at tag weight; a frontmatter-only value doe
   const bodyIdx = r.stdout.indexOf("bodyonly.md");
   if (bodyIdx > -1) expect(taggedIdx).toBeLessThan(bodyIdx);
 
-  // a frontmatter-only value (the summary text) must NOT be searchable as body content.
-  const bySummary = recall("zzsummaryonly", v);
-  expect(bySummary.stdout).toContain("no matches");
+  // the summary IS an indexed field now - a term only in the summary is matchable.
+  expect(recall("zzsummaryonly", v).stdout).toContain("bommed.md");
+  // but other frontmatter scalars (source, and metadata generally) stay out of the search corpus.
+  expect(recall("zzsourceonly", v).stdout).toContain("no matches");
 });
 
 // --- audit fix 4 (P2): a YAML comment in frontmatter is not the H1 ---------------------------------
@@ -854,4 +855,27 @@ test("a curly-apostrophe word (Elena’s) tokenizes the same as the straight for
   const bare = recall("zzelenas", v);
   expect(bare.code).toBe(0);
   expect(bare.stdout).toContain("curly.md");
+});
+
+// --- the summary field is indexed (the role-word fix) -----------------------------------------------
+// A note's defining role word often lives ONLY in its curated `summary` (an entity note: "Dr. Costa,
+// Sam's primary care doctor"), while the body never restates it. Before summary was indexed, a query
+// for that word ("doctor") missed the entity note entirely and surfaced a HUB note that merely links
+// it ("Primary doctor is [[people/dr-costa]]"). recall now indexes `summary` at body weight, so the
+// word is matchable on the note that IS about it. Parsed with fmScalar, the same reader check uses to
+// build index.md - the field the write side displays is the field recall searches. (On the real
+// example vault this flips "who is my doctor" from the hub note to the doctor's own note; in a unit
+// vault the rank also turns on note length, so the robust invariant to guard here is findability.)
+test("a term that appears only in the summary is matchable (the summary is indexed)", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // The entity note carries "zzphysician" ONLY in its summary (not the title, tags, or body).
+  note(v, "entity.md", `---\ntags: []\nsummary: "Dr Vale, the family zzphysician."\n---\n# Dr Vale\n\nWorks downtown, weekdays only.\n`);
+  note(v, "other.md", `---\ntags: [bigquery]\n---\n# Other\n\nNothing relevant here.\n`);
+
+  const r = recall("zzphysician", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("entity.md");    // found via the summary alone
+  expect(r.stdout).not.toContain("no matches");
+  expect(r.stdout).not.toContain("other.md"); // a note without the term still does not match
 });
