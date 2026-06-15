@@ -61,7 +61,7 @@ Run from the imprnt repo root. Find it, don't assume a path.
 ## `status`
 
 ```sh
-for p in imprnt imprnt-plugin-anti-slop imprnt-plugin-character imprnt-plugin-guard imprnt-plugin-whenful; do
+for p in imprnt imprnt-plugin-anti-slop imprnt-plugin-character imprnt-plugin-timemachine imprnt-plugin-whenful; do
   echo "$p  latest=$(npm view "$p" version 2>/dev/null)  edge=$(npm view "$p"@edge version 2>/dev/null)"
 done
 ```

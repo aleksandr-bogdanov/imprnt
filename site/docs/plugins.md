@@ -36,7 +36,7 @@ A fresh clone with no `CLAUDE.local.md` loads zero plugins. Opt-in for real. You
 | `anti-slop` | Rules that keep your assistant's prose from reading like AI. |
 | `character` | A voice and standards to write in. Scribe is the default you copy and make yours. |
 | `whenful` | A live mirror of your [Whenful](https://whenful.com) tasks, shown inline when you read a note. |
-| `guard` | A hook that blocks dangerous shell commands before they run. |
+| `timemachine` | Snapshots your work before each change so you can recover what the agent breaks. |
 | `statusline` | A status line: model, branch, context, cost, rate-limit windows, clock. |
 | `telegram` | Your vault from your phone. Text a bot, the answer comes from your notes. |
 | `kleinanzeigen` | A marketplace inbox watcher. Code sorts hostile messages, the model drafts the residue, you press send. |

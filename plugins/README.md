@@ -173,7 +173,7 @@ project where Claude Code loads them natively. One list, managed in one place, h
 ## Harness plugins: customizing Claude itself
 
 Some plugins have nothing to do with the vault - they customize the **harness** the agent runs in:
-a PreToolUse hook that blocks dangerous shell commands (guard), the status line at the bottom of
+a PreToolUse hook that snapshots your work before each change (timemachine), the status line at the bottom of
 the screen (statusline), the spinner words, a skill. Same folder, same on/off switch (the @import
 line), plus up to two extra files, both discovered by filename convention:
 
@@ -333,13 +333,16 @@ anything.
 
 ## Built plugins
 
-### guard — destructive-command guard ✅ built (harness plugin)
+### timemachine — local snapshot safety net ✅ built (harness plugin)
 
-A deterministic blocklist that blocks obviously dangerous commands (`rm -rf` on home/system
-paths, `sudo`, fork bombs, force-push to main...) before they run. No LLM. A native Claude Code
-plugin: its `hooks/hooks.json` wires `guard.js --hook` as a PreToolUse hook on Bash, and `imp`
-loads it via `--plugin-dir` while enabled - install auto-wires, remove fully undoes. Also a
-standalone checker: `node plugins/guard/guard.js "<command>"` exits `2` blocked / `0` ok.
+An opt-in safety net for skip-permissions sessions. A native Claude Code plugin: its
+`hooks/hooks.json` wires `timemachine.js --hook` as a PreToolUse hook on the mutating tools (Edit,
+Write, Bash...), and before each one it snapshots the git working tree to a side ref under
+`refs/timemachine/`. So anything the agent deletes or overwrites that git could not otherwise
+recover - an untracked file, an uncommitted change - can be restored. It never blocks, respects
+`.gitignore` so secrets are never captured, and never leaves the machine. Recover with
+`node plugins/timemachine/timemachine.js list|restore|show|wipe`. (Replaced the old `guard`
+blocklist, which a creative agent could route around without trying.)
 
 ### statusline — the session's bottom line ✅ built (harness plugin)
 
