@@ -1,20 +1,22 @@
 ---
 title: Getting started
-description: Install imprnt, scaffold a vault, and start talking to it.
+description: Install imprnt, make a vault, and start talking to it.
 ---
 
-imprnt is a knowledge vault you own and run locally. You talk to your assistant in plain language, it files what matters into markdown notes on your disk, and later it answers from your real history.
+> **In one line.** imprnt is a folder of plain notes on your computer. You talk to your AI, it writes the notes, and later it answers from them. Nothing it learns gets lost when the chat closes.
 
-You never run the CLI by hand in normal use. Your assistant runs it for you when you ask. The commands below are here so you understand what is happening and can drive it directly when you want to.
+You talk to your assistant in plain language. It files what matters into markdown notes on your disk. Later it answers from your real history.
 
-## Requirements
+You never type these commands in normal use. Your assistant runs them for you. They are here so you can see what is happening, and drive it yourself when you want.
+
+## What you need
 
 - [Node](https://nodejs.org) 18 or newer.
-- [Claude Code](https://claude.com/claude-code) as the assistant imprnt drives.
+- [Claude Code](https://claude.com/claude-code), the assistant imprnt drives.
 
-## Install and init
+## Install it
 
-Install the engine, then scaffold a vault.
+Two commands. The first installs the engine. The second makes your vault.
 
 ```sh
 npm i -g imprnt
@@ -23,74 +25,78 @@ imprnt init
 
 `imprnt init` does three things:
 
-1. Scaffolds the vault folder (`./vault` by default) with its control files.
-2. Writes the `CLAUDE.md` contract that teaches your assistant how the vault works.
-3. Registers the folder so the `imp` front door finds it from anywhere.
+1. Makes the vault folder (`./vault` by default).
+2. Writes a `CLAUDE.md` file that teaches your assistant how the vault works.
+3. Registers the folder so the `imp` command can find it from anywhere.
 
-Want the vault somewhere else? Set the path in your shell profile and both the engine and `imp` follow it.
+Want the vault somewhere else? Point one variable at it and everything follows.
 
 ```sh
 export IMPRNT_VAULT=~/notes/vault
 ```
 
-## The imp front door
+## Open it with `imp`
 
-`imp` is how you open your assistant with imprnt wired in. Type it instead of `claude` in any directory.
+`imp` opens your assistant with imprnt wired in. Type it instead of `claude`, in any folder.
 
 ```sh
 imp
 ```
 
-- `imp` opens Claude where you stand, with your enabled plugins along for the ride and your vault within reach. A coding session can answer "who owns the downstream consumers?" from your own notes. Stock `claude` stays stock, so nothing is injected into sessions you did not ask it into.
-- `imp lair` opens Claude inside the vault project, your assistant's home. The full contract loads there, and your personal conversations accumulate in one resumable place.
+- `imp` opens Claude where you stand, with your plugins and your vault in reach. A coding session can answer "who owns this service?" from your own notes. Plain `claude` stays plain, so nothing is added to a session you did not ask for.
+- `imp lair` opens Claude inside the vault itself, its home. The full contract loads there, and your personal chats pile up in one place you can resume.
 
-The first thing to ask: "file a person note for me." You appear in nearly every transcript, so a self-note lets the assistant link you to everything from then on.
+> **First thing to ask it.** "File a person note for me." You show up in almost every transcript, so a note about you lets the assistant link you to everything else from then on.
 
-## Ingest a source
+## The three things it does
 
-A source is anything: a meeting transcript, a pasted document, a prose dump, or a single fact. You hand it over and ask the assistant to file it.
+You talk. Behind your words, the engine runs one of three commands.
+
+### File something: `ingest`
+
+A source is anything: a meeting transcript, a pasted doc, a prose dump, a single fact. Hand it over.
 
 ```
 You: Save this transcript and file what matters.
      [paste or drop the source]
 ```
 
-Behind that, the engine runs `ingest`:
+What happens:
 
-1. Snapshots the source untouched into `raw/<source>/`, so the original is always traceable.
-2. The model reads it, picks the note type, writes a one-line summary, pulls out decisions and actions, assigns tags, and wires links to people, orgs, and projects.
-3. The note is filed into the right folder, and one line is appended to `log.md`.
+1. The original is copied untouched into `raw/`, so it is always traceable.
+2. The model reads it, decides where each note goes, writes a one-line summary, pulls out decisions and actions, tags it, and links the people and projects it mentions.
+3. The notes are filed, and one line lands in `log.md`.
 
-A dense source that covers many things splits into several linked notes from one snapshot. Tables, numbers, IDs, dates, and exact wording are kept verbatim. The summary is added on top, never instead of the data.
+A dense source splits into several linked notes from one copy. Tables, numbers, dates, and exact wording are kept in full. The summary is added on top, never instead of the data.
 
-## Recall what you know
+### Find something: `recall`
 
-Ask in plain language. The engine runs `recall`, which ranks your notes with BM25 (a local term-frequency formula, no model, no embeddings) and hands the top hits back to the assistant to read and answer.
+Ask in plain words.
 
 ```
 You: What did we decide about the access-platform cutover?
 ```
 
-`recall` searches your real notes (`vault/`) only. The `raw/` archive is never searched, so nothing leaks from a snapshot into your answers.
+The engine ranks your notes with BM25, a plain local formula with no model and no embeddings, and hands the best ones to the assistant to read and answer. It searches your real notes only. The `raw/` archive is never searched, so nothing leaks from a snapshot into an answer.
 
-## Tidy up and review
+### Tidy up: `check`
 
-After an ingest or a hand-edit, run a tidy pass.
+After filing or hand-editing, ask for a tidy pass.
 
 ```
 You: Tidy up. What needs my attention?
 ```
 
-The engine runs `check`, which rebuilds the index from each note's summary, syncs new tags into the vocabulary, and surfaces anything that links nothing or has a broken link. It writes only the control files and never touches a note.
+It rebuilds the index, learns any new tags, and flags notes that link nothing or have a broken link. It only ever touches the control files, never your notes.
 
-## Install a plugin
+## Add a plugin
 
-The core is your vault plus `ingest`, `recall`, and `check`. Every other behavior is an opt-in plugin. A fresh setup loads zero plugins.
+The core is your vault plus those three commands. Everything else is an opt-in plugin, and a fresh setup has none.
 
 ```sh
-imprnt plugin list            # installed plugins (on/off) and official ones available to add
-imprnt plugin add anti-slop   # fetch the package, copy it in, wire it into CLAUDE.local.md
-imprnt plugin rm anti-slop    # unwire it (add --purge to delete the copied folder too)
+imprnt plugin list            # what is installed, and what you can add
+imprnt plugin add anti-slop   # fetch it, copy it in, switch it on
+imprnt plugin rm anti-slop    # switch it off (--purge deletes the folder too)
 ```
 
-You can also ask your assistant: "add the anti-slop plugin." See [Plugins](/plugins/) for the full gallery and the contract behind it.
+Or just ask: "add the anti-slop plugin." The full gallery is in [Plugins](/plugins/).

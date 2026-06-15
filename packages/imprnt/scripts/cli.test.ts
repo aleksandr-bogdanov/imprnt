@@ -18,13 +18,13 @@ function tmpRepo(): string {
   const root = mkdtempSync(join(tmpdir(), "imprnt-cli-"));
   // The CLI only imports from scripts/ for the paths we test (plugin + vaultArg). Copy scripts/.
   cpSync(join(realRoot, "scripts"), join(root, "scripts"), { recursive: true });
-  // Fake plugins gallery: a real entry, plus a guard-style dir with no agent.md.
+  // Fake plugins gallery: a real entry, plus a malformed dir with no agent.md.
   mkdirSync(join(root, "plugins", "anti-slop"), { recursive: true });
   writeFileSync(join(root, "plugins", "anti-slop", "agent.md"), "x");
   mkdirSync(join(root, "plugins", "character"), { recursive: true });
   writeFileSync(join(root, "plugins", "character", "scribe.md"), "x");
-  mkdirSync(join(root, "plugins", "guard"), { recursive: true });
-  writeFileSync(join(root, "plugins", "guard", "guard.ts"), "x");
+  mkdirSync(join(root, "plugins", "demo"), { recursive: true });
+  writeFileSync(join(root, "plugins", "demo", "demo.ts"), "x");
   return root;
 }
 

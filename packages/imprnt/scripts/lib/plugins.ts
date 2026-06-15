@@ -28,8 +28,8 @@ export function entryFor(spec: string): string {
 //
 //  1. The resolved target must sit strictly inside <root>/plugins/ - plugins/ itself does not count.
 //  2. The spec must be in canonical form (no `./` and no embedded `..`). A spec like `./_personal`
-//     or `guard/../_personal` can resolve INSIDE plugins/ yet route around every literal-string
-//     guard downstream: the wired @import line (`@plugins/guard/../_personal/voice.md`) becomes
+//     or `demo/../_personal` can resolve INSIDE plugins/ yet route around every literal-string
+//     guard downstream: the wired @import line (`@plugins/demo/../_personal/voice.md`) becomes
 //     un-removable by a natural rm, and the purge `_`-prefix protection keys on the literal string,
 //     so a non-canonical spec slips past it and deletes the private cast. Comparing the spec to its
 //     own relative-from-plugins canonical form rejects both `./` and embedded `..` in one check.

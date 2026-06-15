@@ -195,7 +195,7 @@ test("installPlugin refuses a name that escapes plugins/ (no copy into the proje
 // --- the _personal cast survives a non-canonical purge spec (finding 1) ---
 // The private cast (plugins/_personal/) is gitignored, never published, UNRECOVERABLE. The purge
 // guard used to be a literal name.startsWith("_") check, so a spec that RESOLVES to a _-prefixed
-// dir but does not literally start with "_" (./_personal, guard/../_personal) slipped past it and
+// dir but does not literally start with "_" (./_personal, demo/../_personal) slipped past it and
 // deleted the cast. specError must reject the non-canonical spec before purge runs.
 
 test("purgePlugin refuses './_personal' and the private cast survives (finding 1)", () => {
@@ -206,12 +206,12 @@ test("purgePlugin refuses './_personal' and the private cast survives (finding 1
   expect(existsSync(join(proj, "plugins", "_personal", "voice.md"))).toBe(true);
 });
 
-test("purgePlugin refuses 'guard/../_personal' and the private cast survives (finding 1)", () => {
+test("purgePlugin refuses 'demo/../_personal' and the private cast survives (finding 1)", () => {
   const proj = tmpProject();
   mkdirSync(join(proj, "plugins", "_personal"), { recursive: true });
   writeFileSync(join(proj, "plugins", "_personal", "voice.md"), "PRIVATE");
   // Resolves to plugins/_personal but does not literally start with "_".
-  expect(purgePlugin(proj, "guard/../_personal")).toBe(false);
+  expect(purgePlugin(proj, "demo/../_personal")).toBe(false);
   expect(existsSync(join(proj, "plugins", "_personal", "voice.md"))).toBe(true);
 });
 

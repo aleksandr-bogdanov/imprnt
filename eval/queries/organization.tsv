@@ -1,0 +1,16 @@
+who is the ceo of meridian	people/priya-nair.md
+who is the engineering lead	people/tom-decker.md
+who owns billing-v2	people/tom-decker.md
+who leads customer support	people/marcus-hale.md
+who owns the invoice redesign	people/lena-brandt.md
+what does meridian do	orgs/meridian.md
+which customer was hit by the double charge	orgs/bramble-plumbing.md
+what is our q2 engineering priority	projects/billing-v2.md
+how are we fixing billing reliability	projects/billing-v2.md
+why did we set up an on-call rotation	work/oncall-policy.md
+when does marcus join the on-call rotation	people/marcus-hale.md,work/oncall-policy.md
+what caused the double charge bug	mistakes/2026-05-double-charge-incident.md
+what went wrong with billing in april	mistakes/2026-05-double-charge-incident.md
+what happened at engineering planning	events/2026-05-18-eng-planning.md
+who is priya nair	people/priya-nair.md
+which customers lost trust over the billing incident	mistakes/2026-05-double-charge-incident.md

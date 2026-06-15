@@ -12,7 +12,8 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "check": "turbo run typecheck test build"
+    "check": "turbo run typecheck test build",
+    "eval": "bun eval/run.ts"
   },
   "license": "MIT",
   "author": "Aleksandr Bogdanov",
