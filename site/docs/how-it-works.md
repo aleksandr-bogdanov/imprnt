@@ -32,6 +32,8 @@ No model. No embeddings. No vectors. No server. The model only turns your questi
 
 Because a rare matched word floats to the top on its own, you get a short, sharp list of hits, not a dump of the whole vault.
 
+> **Does plain search actually hold up?** We put a number on it. Across the two example vaults, 39 everyday questions, imprnt ranks the right note first about 9 times in 10, and lands it in the top five (the handful the assistant reads) about 97% of the time. It is a small test and the number will move, but you can run it yourself with `bun run eval`. The harness lives in [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/main/eval).
+
 ## The whole thing on one line
 
 Who does each step, and why:
