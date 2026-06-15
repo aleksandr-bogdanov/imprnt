@@ -40,4 +40,4 @@ Your raw sources are kept forever, one folder per source under `raw/`. So if you
 
 ## Core plus plugins
 
-The only thing always present is the core: the vault plus `ingest`, `recall`, and `check`. Everything else is an optional plugin you install or delete with one command, under one rule that keeps the core from bloating: the core never knows a plugin exists. The reasoning is in [Design decisions](/design-decisions/); the full contract is in [Plugins](/plugins/).
+The only thing always present is the core: the vault plus `ingest`, `recall`, and `check`. Everything else is an optional plugin you install or delete with one command, under one rule that keeps the core from bloating: the core never knows a plugin exists. The reasoning is in [Design decisions](/design-decisions/). The full contract is in [Plugins](/plugins/).

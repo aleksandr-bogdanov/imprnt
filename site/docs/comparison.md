@@ -1,9 +1,9 @@
 ---
 title: How it compares
-description: imprnt against the AI-memory field. The one axis that splits it, an honest table per tool, and where imprnt is the wrong choice.
+description: imprnt against the AI-memory field. The one axis that splits it, a table per tool, and where another tool is the better pick.
 ---
 
-There is a crowded field of "memory for AI" tools now, and most of them are genuinely well built. Before reaching for one it is worth knowing what each actually bets on, because the marketing all reads the same ("never forget", "your AI second brain", "local-first") while the architectures point in opposite directions. This page is the homework: what the field does, where imprnt sits, and the cases where one of these other tools is the better pick.
+The field of "memory for AI" tools is crowded, and most of them are well built. The marketing all reads the same ("never forget", "your AI second brain", "local-first"), so the labels will not tell you which one to use. What separates them is the architecture underneath, and that points in opposite directions from one tool to the next. Below is what each one actually bets on, where imprnt sits, and the cases where another tool is the better pick for you.
 
 ## The one axis that splits the field
 
@@ -16,7 +16,7 @@ That split decides everything downstream: whether you can audit what was stored,
 
 ## imprnt's bets against the field
 
-imprnt makes four load-bearing calls. Each one is the minority position. The table is the field consensus on each, stated plainly.
+imprnt makes four load-bearing calls, and each one is the minority position. The table sets each against what the rest of the field does.
 
 | imprnt's bet | What the field mostly does | Who comes closest |
 |---|---|---|
@@ -25,7 +25,7 @@ imprnt makes four load-bearing calls. Each one is the minority position. The tab
 | **No server over the vault.** The agent greps the Markdown files directly. | An MCP server or a vector DB sits between the agent and the data. | Nobody. Even the Markdown-native tools interpose a derived index and a protocol. |
 | **Ration the model by where it runs.** Spend it on the write path, keep it off the read path. | Optimize read-side retrieval scores, often with a model on every query. | Not a framing anyone else uses. The benchmark leaders push in the opposite direction. |
 
-The honest read: imprnt's specific white space is "plain Markdown the agent reads directly, BM25 and grep, no vector DB, no server." No tool in the field occupies it. That is a real gap, and it is also a real bet that could be wrong if BM25 over curated notes turns out to lose badly to vectors over raw logs on the queries you actually ask. More on that below.
+imprnt's white space is "plain Markdown the agent reads directly, BM25 and grep, no vector DB, no server," and no tool in the field occupies it. That is a real gap and a real bet at once. It pays off when BM25 over a well-tagged vault answers the questions you actually ask, and it loses when your queries need vector recall over raw, untagged text. The benchmark question below is where that tradeoff gets concrete.
 
 ## The field, tool by tool
 
@@ -53,19 +53,21 @@ Of everything in the field, Basic Memory is the one that shares imprnt's floor. 
 
 The split is downstream of storage. Basic Memory puts a derived database, an MCP server, and (in its recommended mode) vector embeddings between the agent and the Markdown. imprnt removes that whole layer and has the agent grep the files with BM25, the model touching only the two ends of a query. Basic Memory's answer to good retrieval is "add a server and embeddings." imprnt's answer is "keep it grep and arithmetic, so you never pay a model or a vector index on a read, and recall never goes stale on an edit." Same respect for the file, opposite call on the machinery around it.
 
-## The benchmark question
+## What the benchmark numbers mean for you
 
-Two tools in the table, mempalace and iai-pme, lead with strong LongMemEval recall numbers (both claim R@5 around 0.96). imprnt has no such number, and that is the fair thing to say up front.
+Two tools in the table, mempalace and iai-pme, lead with strong LongMemEval recall numbers (both claim R@5 around 0.96). imprnt has no comparable number, so here is how to weigh that.
 
-The reframe is honest, not a dodge. Those benchmarks measure recall over auto-logged conversation dumps: a model captured thousands of raw turns, and the test asks whether the right turn can be found again. imprnt is solving a different problem, which is retrieval from a small set of consciously curated, typed, linked notes. The corpus is smaller and cleaner by design, because the judgment happened at write time instead of being deferred to a vector search at read time. BM25 over a few hundred good notes is not the same task as vector recall over fifty thousand raw messages, so the score would not transfer either way.
+Those benchmarks score recall over auto-logged conversation dumps. A model captures thousands of raw turns, and the test asks whether the right turn can be found again. That measures a real task. If your use is "remember everything from every chat and surface it later," it is the number to trust, and one of those tools is your pick.
 
-What is true is that imprnt should be able to state its own number on its own task, and it cannot yet. Building that eval (BM25 over a real curated vault, measured on the queries a person actually asks) is on the roadmap. Until it exists, the claim here is a design argument, not a measured win, and it is labeled as such.
+imprnt is built for a different task: retrieval from a small set of notes you curated, typed, and linked on the way in. The corpus is smaller and cleaner because the judgment happened at write time rather than in a vector search at read time. A LongMemEval score does not carry over in either direction, so a high number there tells you little about how imprnt does on your vault, and imprnt's absence from that leaderboard tells you little about how it does on the queries you actually ask.
+
+What you get today is a design argument backed by how the system works, with no published score on imprnt's own task. If a measured number is something you need before you commit, that is a fair reason to wait, or to pick a tool that already publishes one.
 
 ## When imprnt is the wrong tool
 
-A comparison page that only lists strengths is an ad. Here are the cases where you should pick something else.
+Here are the cases where another tool is the better pick.
 
-- **You want zero-effort ambient memory.** If the goal is that your assistant silently remembers every chat with no filing step from you, imprnt's conscious capture is friction, not a feature. iai-pme and mempalace are built exactly for that, capturing every turn and injecting recall at session start.
+- **You want zero-effort ambient memory.** If you want your assistant to silently remember every chat with no filing step from you, imprnt's conscious capture just gets in your way. iai-pme and mempalace are built exactly for that, capturing every turn and injecting recall at session start.
 - **You are building a product, not a personal vault.** A multi-user app that needs a memory API, a hosted service, and per-user isolation wants mem0, Zep, or Supermemory. imprnt is single-owner, local, and has no API surface.
 - **You want the agent to manage its own state at scale.** Letta is the purest version of an agent that pages and self-edits its own memory across long autonomous runs. imprnt has no agent runtime owning the store. You own it.
 - **You need semantic recall across messy unlabeled text.** If your corpus is large, unstructured, and you will not tag it on the way in, embeddings will out-recall BM25. imprnt's bet pays off only because the write path does the labeling. Skip that work and the bet weakens.

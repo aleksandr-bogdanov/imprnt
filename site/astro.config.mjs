@@ -4,6 +4,7 @@ import react from "@astrojs/react";
 import sitemap from "@astrojs/sitemap";
 import starlight from "@astrojs/starlight";
 import tailwindcss from "@tailwindcss/vite";
+import rehypeBrand from "./src/lib/rehype-brand.mjs";
 
 // The public URL. Feeds the sitemap and the canonical/OG tags. Point imprnt.dev
 // at the Railway service, then this is the canonical home.
@@ -50,6 +51,10 @@ export default defineConfig({
     }),
     sitemap(),
   ],
+  // The brand pass runs on every Markdown doc: gradient "imprnt", tool-name chips.
+  markdown: {
+    rehypePlugins: [rehypeBrand],
+  },
   vite: {
     plugins: [tailwindcss()],
   },
