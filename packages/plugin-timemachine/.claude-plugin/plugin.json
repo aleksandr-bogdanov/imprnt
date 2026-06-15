@@ -1,0 +1,4 @@
+{
+  "name": "timemachine",
+  "description": "Local snapshot safety net: before any mutating tool, snapshot the git working tree (respecting .gitignore) to a side ref so nothing is unrecoverable. Never blocks, never leaves the machine."
+}

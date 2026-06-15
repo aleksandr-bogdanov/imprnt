@@ -18,7 +18,7 @@ import { specError, canonicalSpec } from "./plugins.ts";
 // Official plugin names, for `plugin list` discovery when nothing is installed yet. A hint string,
 // NOT a registry: each maps by convention to the npm package `imprnt-plugin-<name>`. Adding an
 // official plugin is a one-line edit here; core fetches nothing to produce this list.
-export const OFFICIAL = ["anti-slop", "character", "whenful", "guard", "statusline", "telegram"];
+export const OFFICIAL = ["anti-slop", "character", "whenful", "timemachine", "statusline", "telegram"];
 
 export type Channel = "edge" | "latest";
 
@@ -37,7 +37,7 @@ export function coreChannel(pkgRoot: string): Channel {
 }
 
 // One `npm pack` into tmp; returns the tarball filename or a human error. The spec is a registry name
-// (optionally dist-tagged, e.g. imprnt-plugin-guard@edge) or a local dir. No --silent: it swallows
+// (optionally dist-tagged, e.g. imprnt-plugin-anti-slop@edge) or a local dir. No --silent: it swallows
 // npm's stderr too, collapsing every failure (404 vs missing package.json vs network down) into a
 // bare exit code. The tarball name is still stdout's last line; the notice chatter goes to stderr.
 function npmPack(spec: string, tmp: string): { tgz?: string; error?: string } {
