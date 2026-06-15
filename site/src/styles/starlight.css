@@ -60,6 +60,25 @@ starlight-theme-select {
   color: #a9ecc4;
 }
 
+/* the brand word, gradient like the landing's accent so every mention of the
+   product reads as the product. injected by rehype-brand at build time. */
+.sl-markdown-content .brand-imprnt {
+  font-weight: 600;
+  background: linear-gradient(92deg, #80e7a8, #36c7bf);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* competitor tool names: a neutral chip, so they read as "other products"
+   and stay visually distinct from imprnt's own green command code. */
+.sl-markdown-content :not(pre) > code.tool-name {
+  background: color-mix(in oklab, #c0c2bc 7%, #131619);
+  border: 1px solid #2a2f30;
+  color: #c0c2bc;
+  font-weight: 500;
+}
+
 /* a touch more air in the content column */
 .sl-markdown-content {
   --sl-content-width: 48rem;

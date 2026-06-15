@@ -44,7 +44,7 @@ BM25 is the core ranker, not an opt-in. Its inverse-document-frequency already f
 | Rank notes for a query (BM25) | code | fast, free, transparent, over thousands of notes |
 | Turn a question into keywords, read the top hits | model | it is the interface, with the query and results in hand |
 
-## The honest cost model
+## The cost model
 
 There is no token-free tool call. Anything the model reads costs tokens, whatever the transport. The two real levers are payload size and caching. Do the heavy scan in code and hand the model a tight result, and keep a local cache so you avoid the re-fetch.
 
