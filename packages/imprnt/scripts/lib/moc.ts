@@ -84,7 +84,10 @@ export function stripQuotes(v: string): string {
   const m = v.match(/^(["'])([\s\S]*)\1$/);
   return m ? m[2] : v;
 }
-function fmScalar(fm: string, key: string): string {
+// THE canonical single-line frontmatter scalar reader (inline, quoted, and `|`/`>` block forms).
+// Exported so recall.ts indexes the SAME `summary` value that check builds index.md from - the read
+// side searches a note's summary, the write side displays it, both parse it identically.
+export function fmScalar(fm: string, key: string): string {
   const lines = fm.split(/\r?\n/);
   const keyRe = new RegExp(`^${key}:\\s*(.*)$`, "i");
   for (const [i, line] of lines.entries()) {

@@ -29,21 +29,25 @@ Two example vaults, 10 notes each, 39 queries total (as of 2026-06-15):
 
 | Corpus | Queries | R@1 | R@5 | MRR |
 |--------|---------|-----|-----|-----|
-| digital-assistant | 23 | 91.3% | 91.3% | 0.913 |
-| organization | 16 | 81.3% | 100% | 0.887 |
-| **overall** | **39** | **87.2%** | **94.9%** | **0.903** |
+| digital-assistant | 23 | 91.3% | 95.7% | 0.935 |
+| organization | 16 | 87.5% | 100% | 0.922 |
+| **overall** | **39** | **89.7%** | **97.4%** | **0.929** |
 
-The corpus is small and the queries are hand-written, so read this as an early signal, not a leaderboard claim. It says BM25 over a tagged vault tops the right note on the first try most of the time, and gets it into the cheap top-5 set the model reads almost always.
+The corpus is small and the queries are hand-written, so read this as an early signal, not a leaderboard claim. It says BM25 over a tagged vault tops the right note on the first try about nine times in ten, and gets it into the cheap top-5 set the model reads almost always.
+
+The first run scored R@1 87.2% / R@5 94.9%. The lift came from one change this eval pointed at, below.
 
 ## The labeling rule, and why the number is conservative
 
 Gold is the canonical note that is the subject of the query. For "who is my doctor" that is the doctor's own note, not the owner note that happens to link to it. So a query counts as a miss even when a hub note in the results already states the answer. In real use the assistant reads the top hits and would still answer correctly from the hub note, so the true "did the user get their answer" rate sits above the R@1 here.
 
-## What the misses teach
+## What the eval fixed, and what is left
 
-The misses are the useful part. From `--show`:
+The first run missed "who is my doctor" (it returned the owner note `sam-rivera`, whose body says "Primary doctor is Dr. Elena Costa", over `dr-elena-costa`). The doctor's own note carried "doctor" only in its `summary`, and `recall` did not index the `summary` field. An outbound wikilink mention outranked the entity itself.
 
-- **"who is my doctor"** returns the owner note `sam-rivera` (its body says "Primary doctor is Dr. Elena Costa"), not `dr-elena-costa`. The doctor's own note carries "doctor" only in its `summary`, and the `summary` field is not indexed. An outbound wikilink mention outranks the entity itself.
-- **"what do I do for work"** returns `identity/mission` (its body has "choose the work") over `sam-rivera`, whose body describes the job without the word "work".
+The fix held to every principle: `recall` now indexes the `summary` at body weight, parsed with the same reader (`fmScalar`) `check` uses to build `index.md`. No model on the read path, no new field a person fills, just searching a curated line the note already carries. It flipped the doctor query to the right note and lifted the overall numbers (R@1 87.2 to 89.7, R@5 94.9 to 97.4). Weighting the summary at body level, not tag level, is deliberate: a sentence carries glue words, so a rare body term ("ferritin") should still outrank a generic summary word ("result").
 
-Both point at the same lever: a note's own role words (doctor, job title) need to live in an indexed field (body or tags), not only in the `summary`. Two candidate fixes worth testing against this harness before committing: index the `summary` line, or have ingest put an entity's role word in its tags. The eval is here to tell which one actually moves the number, instead of guessing.
+What is left is a real ceiling, not a bug:
+
+- **"what do I do for work"** returns `identity/mission` (its body has "choose the work") over `sam-rivera`, whose note describes the job as "product designer, freelance" and never uses the word "work". BM25 cannot bridge that without a synonym, and a `work -> job` synonym is vault-specific. This is the honest edge of keyword retrieval: when the note shares no surface word with the question, lexical search will not find it. Adding it to `_tags.md` synonyms is the local lever if a given vault needs it.
+- **"what was my ferritin result"** now lands `health/sleep-stack` at the top (its summary ends "the result") with the ferritin note at rank 2. Still in the top-5 the model reads, and a defensible match on the word "result". The cost of indexing the summary is a few generic-word matches like this. Net the change is clearly positive, which is the call the eval exists to let you make on evidence instead of taste.

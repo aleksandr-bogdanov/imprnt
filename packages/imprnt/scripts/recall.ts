@@ -9,8 +9,11 @@
 //
 // Scoring (standard BM25 with field boosts):
 //   - Each note is tokenized into terms (lowercased, split on non Unicode-letter/number characters).
-//   - A term's occurrences in the TITLE/aliases count 3x, in TAGS 2x, in BODY 1x — folded into the
-//     term frequency, so "harbor" in a title outweighs "harbor" buried in prose. One BM25 pass.
+//   - A term's occurrences in the TITLE/aliases count 3x, in TAGS and the SUMMARY 2x, in BODY 1x —
+//     folded into the term frequency, so "harbor" in a title outweighs "harbor" buried in prose. One
+//     BM25 pass. The `summary` is the LLM's curated one-line "what this note is about" (written once on
+//     the write path), so its terms are aboutness, the same band as tags - and it is the only field
+//     that carries a note's defining role word ("doctor", "founder") when the body never restates it.
 //   - idf(t) = ln(1 + (N - df + 0.5) / (df + 0.5));  k1 = 1.5, b = 0.75.
 //   - score = Σ_query-terms idf(t) * (tf*(k1+1)) / (tf + k1*(1 - b + b*dl/avgdl)).
 //   - idf subsumes the old df-weighting (a rare matched term scores; a common one barely moves the
@@ -24,7 +27,7 @@ import { loadTags, normalize, type TagVocab } from "./lib/tags.ts";
 // The frontmatter list parser + BOM strip are CORE and shared with moc.ts (which check.ts/ingest.ts
 // build on), so the write side (check certifies a tag) and the read side (recall finds it) parse the
 // SAME note identically. Both files are core - the copy-don't-share rule is for plugins only.
-import { fmList, stripBom, stripCode } from "./lib/moc.ts";
+import { fmList, fmScalar, stripBom, stripCode } from "./lib/moc.ts";
 
 const args = process.argv.slice(2);
 let vault = process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
@@ -237,6 +240,7 @@ try { files = walk(vault); } catch { console.error(`no vault at ${vault} — run
 // frequency so one weighted BM25 pass captures all three.
 const TITLE_BOOST = 3;
 const TAG_BOOST = 2;
+const SUMMARY_BOOST = 1; // curated note text, weighted like body — a rare body term still outranks a generic summary word
 const BODY_BOOST = 1;
 
 // --- pass 1: read + tokenize every note once; build weighted term frequencies + doc lengths ----------
@@ -265,6 +269,9 @@ for (const path of files) {
   // check certifies is a tag recall scores. normalize() lowercases tags; tokenize() lowercases aliases.
   const aliases = fmList(fm, "aliases").join(" ");
   const tags = fmList(fm, "tags").map((t) => normalize(vocab, t));
+  // The curated one-line summary - parsed with the SAME reader (fmScalar) that check uses to build
+  // index.md, so the field the write side displays is the field the read side searches.
+  const summary = fmScalar(fm, "summary");
 
   // Weighted term frequency: each occurrence contributes its field's boost. The filename STEM joins
   // the title surface (the slug IS the note's identity) - and only the stem: folders are browse
@@ -277,6 +284,7 @@ for (const path of files) {
   add([...tokenize(titleText), ...tokenize(basename(path, ".md"))], TITLE_BOOST);
   add(tokenize(aliases), TITLE_BOOST); // an alias is an identity match — same band as the title
   add(tags.flatMap(tokenize), TAG_BOOST);
+  add(tokenize(summary), SUMMARY_BOOST);
   add(tokenize(body), BODY_BOOST);
 
   // Doc length = sum of weighted term counts; BM25 length-normalizes against the corpus average so a
