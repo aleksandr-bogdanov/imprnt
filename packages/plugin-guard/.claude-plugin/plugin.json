@@ -1,4 +1,0 @@
-{
-  "name": "guard",
-  "description": "Deterministic blocklist for dangerous shell commands, wired as a PreToolUse hook on Bash. No LLM."
-}

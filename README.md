@@ -128,7 +128,7 @@ asking ("add the anti-slop plugin"), each a separate `imprnt-plugin-*` package:
 | `imprnt-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, shown inline at read. |
 | `imprnt-plugin-kleinanzeigen` | A watcher for your Kleinanzeigen inbox: regex triage of buyer messages, drafts, a phone digest. You press send. |
 | `imprnt-plugin-session-host` | A warm browser holding your logged-in sessions, providing the authed-session capability. You enroll each site once. |
-| `imprnt-plugin-guard` | A hook that blocks dangerous shell commands before they run. |
+| `imprnt-plugin-timemachine` | Snapshots your work before each change so you can recover what the agent breaks. |
 | `imprnt-plugin-statusline` | A customizable status line: model, branch, context, cost, rate limits, clock. |
 | `imprnt-plugin-telegram` | Your vault from your phone: text a bot, the answer comes from your notes. |
 
