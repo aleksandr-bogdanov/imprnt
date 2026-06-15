@@ -33,8 +33,10 @@ export default defineConfig({
           items: [
             { label: "How it works", slug: "how-it-works" },
             { label: "The model", slug: "the-model" },
+            { label: "Memory and the vault", slug: "memory-and-the-vault" },
             { label: "Plugins", slug: "plugins" },
             { label: "Architecture", slug: "architecture" },
+            { label: "How it compares", slug: "comparison" },
           ],
         },
         {
