@@ -122,12 +122,6 @@ export default function PluginGraph() {
 
   return (
     <div className="pg-wrap" onPointerLeave={() => { if (!dragId.current) setFocus("core"); }}>
-      <style>{`
-        @keyframes pgFloat { 0%,100%{transform:translate(-50%,-50%)} 50%{transform:translate(-50%,calc(-50% - 4px))} }
-        .pg-node.floaty { animation: pgFloat 6s ease-in-out infinite; }
-        @media (prefers-reduced-motion: reduce){ .pg-node.floaty { animation: none; } }
-      `}</style>
-
       <div ref={ref} className="relative h-[26rem] w-full touch-none select-none sm:h-[30rem]">
         {/* glow behind the core */}
         <div
@@ -163,7 +157,7 @@ export default function PluginGraph() {
               onPointerCancel={() => { dragId.current = null; }}
               onPointerEnter={() => { if (!dragId.current) setFocus(n.id); }}
               onFocus={() => setFocus(n.id)}
-              className={`pg-node group absolute flex cursor-grab items-center gap-1.5 rounded-full border active:cursor-grabbing ${n.hub ? "px-4 py-2.5" : "px-2.5 py-1.5"} ${dragId.current === n.id ? "" : "floaty"}`}
+              className={`pg-node group absolute flex cursor-grab items-center gap-1.5 rounded-full border active:cursor-grabbing ${n.hub ? "px-4 py-2.5" : "px-2.5 py-1.5"}`}
               style={{
                 left: `${p.x}%`, top: `${p.y}%`, transform: "translate(-50%, -50%)",
                 background: isFocus || n.hub ? c : C.nodeBg,
@@ -173,7 +167,6 @@ export default function PluginGraph() {
                 opacity: on ? 1 : 0.45,
                 boxShadow: n.hub ? `0 0 30px -4px ${c}` : isFocus ? `0 0 22px -6px ${c}` : "none",
                 zIndex: isFocus ? 3 : n.hub ? 2 : 1,
-                animationDelay: `${(n.x % 5) * 0.45}s`,
                 transition: "opacity .3s, color .3s, background .3s, border-color .3s, box-shadow .3s",
               }}
             >
