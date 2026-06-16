@@ -1,9 +1,10 @@
-/* Theme Starlight to match the landing: dark surface, forest-green accent,
-   the same font stack. The landing is always dark, so the docs are too. We push
-   the dark palette onto every theme selector and hide the light/dark toggle. */
+/* Theme Starlight to match the landing: same font stack, forest-green accent.
+   Dark is the default, so the docs open dark like the brand. The light palette
+   uses Alex's house warm-paper set. Starlight's own theme toggle (now visible)
+   writes the same localStorage key the landing's toggle reads, so the two stay
+   in sync across the custom landing and the docs. */
 
 :root,
-:root[data-theme="light"],
 :root[data-theme="dark"] {
   color-scheme: dark;
 
@@ -33,9 +34,32 @@
   --sl-color-text-accent: #6fe39f;
 }
 
-/* dark-only, so the theme switcher has nothing to do */
-starlight-theme-select {
-  display: none !important;
+/* light: warm paper, deepened green so text holds contrast. Starlight reads
+   --sl-color-white as its highest-contrast ink and --sl-color-black as the page
+   bg, so in light they invert to near-black ink on paper. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --sl-color-accent-low: #d7f0e2;
+  --sl-color-accent: #178a4e;
+  --sl-color-accent-high: #0c5c33;
+
+  --sl-color-white: #1b1d1a;
+  --sl-color-gray-1: #2a2c27;
+  --sl-color-gray-2: #45483f;
+  --sl-color-gray-3: #585b51;
+  --sl-color-gray-4: #76796d;
+  --sl-color-gray-5: #c3beaf;
+  --sl-color-gray-6: #e7e2d4;
+  --sl-color-gray-7: #efece1;
+  --sl-color-black: #f6f4ec;
+
+  --sl-color-bg: #f6f4ec;
+  --sl-color-bg-nav: rgba(246, 244, 236, 0.7);
+  --sl-color-bg-sidebar: #efece1;
+  --sl-color-bg-inline-code: #efe9da;
+  --sl-color-hairline-shade: #ddd7c7;
+  --sl-color-text-accent: #0f7a43;
 }
 
 /* the heading font, matching the landing's display face */
@@ -77,6 +101,21 @@ starlight-theme-select {
   border: 1px solid #2a2f30;
   color: #c0c2bc;
   font-weight: 500;
+}
+
+/* light-mode variants of the code chips + brand word, deepened for paper */
+:root[data-theme="light"] .sl-markdown-content :not(pre) > code {
+  background: color-mix(in oklab, #178a4e 10%, #fbf9f2);
+  border-color: #ddd7c7;
+  color: #0c5c33;
+}
+:root[data-theme="light"] .sl-markdown-content .brand-imprnt {
+  background: linear-gradient(92deg, #0e9e6a, #0d8f88);
+}
+:root[data-theme="light"] .sl-markdown-content :not(pre) > code.tool-name {
+  background: color-mix(in oklab, #585b51 8%, #fbf9f2);
+  border-color: #ddd7c7;
+  color: #585b51;
 }
 
 /* a touch more air in the content column */

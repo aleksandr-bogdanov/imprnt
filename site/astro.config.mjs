@@ -35,9 +35,22 @@ export default defineConfig({
             { label: "How it works", slug: "how-it-works" },
             { label: "The model", slug: "the-model" },
             { label: "Memory and the vault", slug: "memory-and-the-vault" },
-            { label: "Plugins", slug: "plugins" },
             { label: "Architecture", slug: "architecture" },
             { label: "How it compares", slug: "comparison" },
+          ],
+        },
+        {
+          label: "Plugins",
+          items: [
+            { label: "Overview", slug: "plugins" },
+            { label: "Anti-slop", slug: "plugins/anti-slop" },
+            { label: "Character", slug: "plugins/character" },
+            { label: "Whenful", slug: "plugins/whenful" },
+            { label: "Timemachine", slug: "plugins/timemachine" },
+            { label: "Statusline", slug: "plugins/statusline" },
+            { label: "Telegram", slug: "plugins/telegram" },
+            { label: "Kleinanzeigen watcher", slug: "plugins/kleinanzeigen" },
+            { label: "Session host", slug: "plugins/session-host" },
           ],
         },
         {

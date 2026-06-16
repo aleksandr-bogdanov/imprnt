@@ -78,7 +78,48 @@ const NEIGHBORS: Record<string, Set<string>> = Object.fromEntries(
   NODES.map((n) => [n.id, new Set(connectionsOf(n.id).map((c) => c.other.id))]),
 );
 
+// graph chrome that has to adapt to the theme (the type colours below read on
+// both). Driven off the data-theme attribute the toggle sets, observed live so
+// the graph reflows the instant the theme flips.
+const PALETTE = {
+  dark: {
+    edgeOn: "rgba(128,231,168,0.55)",
+    edgeOff: "rgba(160,167,160,0.13)",
+    nodeBg: "rgba(16,19,23,0.94)",
+    nodeBorder: "rgba(39,44,51,0.9)",
+    nodeOnText: "#eceae4",
+    nodeOffText: "#71756f",
+    focusText: "#08130d",
+    popupBg: "rgba(12,14,18,0.97)",
+    popupShadow: "0 24px 60px -20px rgba(0,0,0,0.72)",
+  },
+  light: {
+    edgeOn: "rgba(23,138,78,0.5)",
+    edgeOff: "rgba(120,123,109,0.22)",
+    nodeBg: "rgba(251,249,242,0.95)",
+    nodeBorder: "rgba(221,215,199,0.95)",
+    nodeOnText: "#1b1d1a",
+    nodeOffText: "#8b8d81",
+    focusText: "#08130d",
+    popupBg: "rgba(251,249,242,0.98)",
+    popupShadow: "0 24px 60px -20px rgba(60,50,30,0.30)",
+  },
+};
+
+function useGraphPalette() {
+  const [light, setLight] = useState(false);
+  useEffect(() => {
+    const read = () => setLight(document.documentElement.dataset.theme === "light");
+    read();
+    const obs = new MutationObserver(read);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => obs.disconnect();
+  }, []);
+  return light ? PALETTE.light : PALETTE.dark;
+}
+
 export default function HeroGraph() {
+  const C = useGraphPalette();
   const ref = useRef<HTMLDivElement>(null);
   const dragId = useRef<string | null>(null);
   const [pos, setPos] = useState<Record<string, { x: number; y: number }>>(
@@ -133,7 +174,7 @@ export default function HeroGraph() {
             const on = !!focus && (e.a === focus || e.b === focus);
             return (
               <line key={i} x1={`${pa.x}%`} y1={`${pa.y}%`} x2={`${pb.x}%`} y2={`${pb.y}%`}
-                stroke={on ? "rgba(128,231,168,0.55)" : "rgba(160,167,160,0.13)"}
+                stroke={on ? C.edgeOn : C.edgeOff}
                 strokeWidth={on ? 1.5 : 1} style={{ transition: "stroke .3s, stroke-width .3s" }} />
             );
           })}
@@ -156,9 +197,9 @@ export default function HeroGraph() {
               className={`group absolute flex cursor-grab items-center gap-1.5 rounded-full border px-2.5 py-1.5 active:cursor-grabbing ${dragId.current === n.id ? "" : "node-float"}`}
               style={{
                 left: `${p.x}%`, top: `${p.y}%`, transform: "translate(-50%, -50%)",
-                background: isFocus ? t.color : "rgba(16,19,23,0.94)",
-                borderColor: on ? t.color : "rgba(39,44,51,0.9)",
-                color: isFocus ? "#08130d" : on ? "#eceae4" : "#71756f",
+                background: isFocus ? t.color : C.nodeBg,
+                borderColor: on ? t.color : C.nodeBorder,
+                color: isFocus ? C.focusText : on ? C.nodeOnText : C.nodeOffText,
                 opacity: on ? 1 : 0.4,
                 boxShadow: isFocus ? `0 0 26px -4px ${t.color}` : "none",
                 zIndex: isFocus ? 3 : on ? 2 : 1,
@@ -166,7 +207,7 @@ export default function HeroGraph() {
                 animationDelay: `${(n.x % 5) * 0.4}s`,
               }}
             >
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: isFocus ? "#08130d" : t.color }} />
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: isFocus ? C.focusText : t.color }} />
               <span className={`whitespace-nowrap font-mono ${n.hub ? "text-[12px] font-semibold" : "text-[11px]"}`}>{n.label}</span>
             </button>
           );
@@ -179,8 +220,8 @@ export default function HeroGraph() {
             initial={REDUCED ? false : { opacity: 0, scale: 0.97 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="absolute z-20 rounded-xl border border-line p-3.5 shadow-2xl shadow-black/70"
-            style={{ ...popupStyle(), background: "rgba(12,14,18,0.97)", backdropFilter: "blur(8px)" }}
+            className="absolute z-20 rounded-xl border border-line p-3.5"
+            style={{ ...popupStyle(), background: C.popupBg, boxShadow: C.popupShadow, backdropFilter: "blur(8px)" }}
           >
             <div className="mb-2 flex items-center gap-2 border-b border-line pb-2">
               <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TYPE[f.type].color }} />

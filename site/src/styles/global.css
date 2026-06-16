@@ -52,6 +52,44 @@
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* ── light theme ────────────────────────────────────────────────────────────
+   Alex's house warm-paper palette (shared with prosodi). Dark is the @theme
+   default above, so the brand's out-of-box look stays dark. The data-theme
+   attribute is set before paint by the inline script in Layout.astro and kept
+   in sync with the Starlight docs toggle (same localStorage key). Flipping the
+   tokens here re-resolves every bg-/text-/border- utility at runtime.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg: #f6f4ec;
+  --color-bg-soft: #efece1;
+  --color-surface: #fbf9f2;
+  --color-surface-2: #f1ede1;
+  --color-line: #ddd7c7;
+  --color-line-soft: #e7e2d4;
+
+  --color-ink: #1b1d1a;
+  --color-ink-soft: #585b51;
+  --color-ink-faint: #8b8d81;
+
+  /* green ramp deepened so the accent stays legible on warm paper */
+  --color-green: #178a4e;
+  --color-green-bright: #0e9e6a;
+  --color-green-ink: #f3fffd;
+  --color-teal: #0d8f88;
+}
+
+/* theme-toggle icon: show the sun in dark (tap for light), the moon in light.
+   Driven off data-theme so it is right on first paint. No-JS defaults to dark. */
+[data-theme="light"] .theme-sun {
+  display: none;
+}
+:root:not([data-theme="light"]) .theme-moon {
+  display: none;
+}
+
 /* ── base ─────────────────────────────────────────────────────────────────── */
 
 @layer base {
