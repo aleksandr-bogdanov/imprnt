@@ -1,0 +1,89 @@
+---
+title: How it compares
+description: imprnt against the AI-memory field. The one split that matters, a card per bet, a table per tool, and where another tool is the better pick.
+---
+
+import SplitPanels from "../src/components/docs/SplitPanels.astro";
+import Bets from "../src/components/docs/Bets.astro";
+
+Most AI-memory tools build a store for the **machine** to read: a vector index you cannot open. imprnt builds plain notes for **you** to read, that the AI also searches. This page shows where that helps and where it does not.
+
+The field is crowded and mostly well built. The marketing all reads the same ("never forget", "your AI second brain", "local-first"), so the labels will not tell you which to use. What separates these tools is the **architecture** underneath, and it points in opposite directions from one to the next.
+
+## The one question that splits the field
+
+Almost every tool here sorts on a single question: **is the memory built for the machine to read, or for you to read?**
+
+<SplitPanels />
+
+## imprnt's four bets
+
+Each is the minority position in the field.
+
+<Bets />
+
+imprnt's white space is **plain Markdown the AI reads directly, BM25 and grep, no vector DB, no server.** It pays off when BM25 over a well-tagged vault answers the questions you actually ask. It loses when your queries need vector recall over raw, untagged text. The benchmark section below makes that tradeoff concrete.
+
+## The field, tool by tool
+
+Facts are pulled from each project's own README and docs (checked 2026-06-16). Benchmark numbers are **self-reported** by the vendor under its own harness, so read them as "the project claims X", never a settled leaderboard. The numbers are contested even among the vendors: Zep published a rebuttal of mem0's headline LoCoMo claim, mem0 fired back disputing Zep's, the clearest public sign these scores are not neutral.
+
+| Tool | Where memory lives | Retrieval | Capture | AI reads via |
+|---|---|---|---|---|
+| **imprnt** | Plain Markdown files you own | BM25 + grep, no model in loop | Conscious, on demand | Greps the files directly, no server |
+| **Karpathy's LLM Wiki** *(pattern, with impls like obsidian-wiki, llmwiki)* | Plain Markdown: immutable `raw/` plus an LLM-compiled `wiki/` | Index-first: the LLM reads `index.md`, then full pages. No embeddings | Conscious: drop a source, tell the LLM to compile it | Agent reads files directly, no server (optional `qmd` search) |
+| **Basic Memory** | Markdown files plus a derived SQLite index | Hybrid: SQLite full-text plus vectors (default), full-text fallback | Conscious `write_note` | MCP server |
+| **Reor** *(archived 2026)* | Markdown files plus LanceDB vectors | Embeddings, vector similarity | Auto-embed on every write | Built-in desktop app, no MCP |
+| **Khoj** | Its own Postgres plus pgvector DB | Embeddings plus neural re-rank | Sync and index your docs | App, and an MCP client (not a server) |
+| **Obsidian / Logseq AI plugins** | Your notes plus a sidecar vector store | Embeddings | Auto-embed in the background | Inside the GUI app |
+| **mem0** | Vector store (24 backends) | Hybrid: semantic plus BM25 plus entity matching, fused | Auto-extract from turns | API or OpenMemory MCP |
+| **Letta / MemGPT** | Postgres plus pgvector memory blocks | Embeddings over archival memory | Agent self-edits its own memory | Letta server / API |
+| **Zep / Graphiti** | Temporal knowledge graph (Neo4j default) | Hybrid: embeddings plus BM25 plus graph | Auto-extract into the graph | SaaS (Zep) or MCP (Graphiti) |
+| **cognee** | Graph plus vectors plus relational | Hybrid, with a model on the read path | Auto-extract from many formats | Library or MCP |
+| **mempalace** | Vector DB (ChromaDB default) | Embeddings plus boosting plus optional LLM re-rank | Manual and auto hooks | MCP server (33 tools) |
+| **Supermemory** | Cloud store, with a real self-host mode | Embeddings | Auto-capture | API, MCP, or local binary |
+| **iai** | Encrypted SQLite ("Hippo", AES-256), 3 tiers | Local embeddings (`bge-small`) plus graph links plus recency, ranked, no LLM in the hot path | Automatic, via Claude Code / Codex hooks | MCP server |
+
+Posture on cloud varies too. mem0, Zep, and Supermemory are cloud-first with a local mode. Letta, Khoj, cognee, mempalace, and iai self-host. Karpathy's LLM Wiki and imprnt have no hosted mode and no account, because the files are already on your disk.
+
+## The closest kin: Karpathy's LLM Wiki
+
+In design, [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) is imprnt's nearest relative. Same three layers: immutable raw sources, an **LLM-compiled** Markdown wiki, and a `CLAUDE.md` schema. Same `index.md` catalog and append-only `log.md`. No embeddings, the LLM reading the index then full pages. The LLM as a **compiler** that reads a source once and writes durable pages. The agent reading files directly, no server. imprnt sits in that lineage.
+
+Where imprnt goes further:
+
+- A deterministic **BM25 ranker** over title, tags, and body, so recall does not lean on the LLM re-reading the whole index, and it holds up past a few hundred notes.
+- A typed **entity contract** (people, orgs, holdings, with aliases and canonical resolution), so the same person never splits into two pages.
+- A shipped **CLI** plus a plugin system, rather than a pattern you assemble by hand.
+
+Karpathy's gist validates the bet. imprnt is the same bet with more structure on top, and a ranker in place of index-reading.
+
+## The closest shipped tool: Basic Memory
+
+Among finished products, Basic Memory shares imprnt's floor. It treats Markdown as the source of truth, keeps a derived SQLite index in sync, and captures on a deliberate write. If you want imprnt's "own your files" stance with a conventional MCP-server delivery, it is a real and good choice.
+
+The split is downstream of **storage**. Basic Memory defaults to hybrid vector search and puts a derived database and an MCP server between the AI and the Markdown. imprnt removes that layer and has the AI grep the files with BM25, the model touching only the two ends of a query. Same respect for the file, opposite call on the machinery around it.
+
+## What the benchmark numbers mean for you
+
+Two tools here lead LongMemEval recall: **mempalace** (R@5 around 0.96) and **iai** (R@5 0.962, effectively tied). It is tempting to set those next to a number from imprnt. Do not, and here is why.
+
+That benchmark scores recall over **auto-logged conversation dumps.** A model captures thousands of raw turns, and the test asks whether the right turn can be found again. It measures a real task. If your use is "remember everything from every chat and surface it later," it is the number to trust, and a tool like mempalace or iai is your pick.
+
+imprnt is built for a different task: retrieval from a small set of notes you curated, typed, and linked on the way in. The corpus is smaller and cleaner because the judgment happened at **write time**, not in a vector search at read time. A LongMemEval score does not carry over in either direction.
+
+imprnt measures itself on its own task. A small in-repo eval runs plain-language questions against the curated example vaults and checks where the answer note ranks. Over 39 questions across two vaults it tops the right note on the first hit about **90%** of the time, and lands it in the top five about **97%** of the time. The corpus is small and the questions are hand-written, so read this as an early **indication** that BM25 over a tagged vault answers the questions asked, not a leaderboard entry. The harness and queries live in [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/main/eval) so you can run it yourself.
+
+That 97% is not mempalace's 0.96 plus a point. Different task, different corpus, a tenth the questions. If a big-corpus leaderboard score is what you need before committing, pick a tool that publishes one.
+
+## When imprnt is the wrong tool
+
+The cases where another tool is the better pick:
+
+- **You want zero-effort ambient memory.** If you want your assistant to silently remember every chat with no filing step, imprnt's conscious capture gets in your way. mem0, Zep, mempalace, and iai are built for that, capturing turns automatically.
+- **You want encrypted automatic memory behind Claude Code.** iai installs hooks, captures every turn, and keeps an encrypted local store. imprnt keeps plain files with no encryption layer, because privacy comes from the directory being yours and owner-only.
+- **You are building a product, not a personal vault.** A multi-user app that needs a memory API, a hosted service, and per-user isolation wants mem0, Zep, or Supermemory. imprnt is single-owner, local, no API surface.
+- **You want the agent to manage its own state at scale.** Letta is the purest version of an agent that pages and self-edits its own memory across long runs.
+- **You need semantic recall across messy unlabeled text.** If your corpus is large, unstructured, and you will not tag it on the way in, embeddings will out-recall BM25. imprnt's bet pays off because the write path does the **labeling.** Skip that work and the bet weakens.
+
+imprnt is for one person who wants their knowledge to be plain files they own, read, and keep after any tool is gone. If that is what you want, the rest of the field is solving a different problem well. If it is not, one of these is a better fit.
