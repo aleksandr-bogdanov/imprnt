@@ -1,7 +1,7 @@
 ---
 /**
  * The only two places the core touches a plugin, both found by filename, never
- * by import. Each row: a core command, the plugin file it reads, what it does.
+ * by import. Borderless filled rows: command, the file it reads, what it does.
  */
 const BRIDGES = [
   {
@@ -40,7 +40,7 @@ const BRIDGES = [
 <style>
   .bridges {
     display: grid;
-    gap: 0.7rem;
+    gap: 0.6rem;
     margin: 1.4rem 0;
   }
   .bridge {
@@ -48,10 +48,9 @@ const BRIDGES = [
     align-items: center;
     flex-wrap: wrap;
     gap: 0.5rem 1rem;
-    padding: 0.85rem 1rem;
-    border: 1px solid var(--sl-color-hairline-shade);
+    padding: 0.85rem 1.05rem;
     border-radius: 12px;
-    background: color-mix(in oklab, var(--sl-color-gray-6) 50%, var(--sl-color-bg));
+    background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg));
   }
   .lane {
     display: flex;
@@ -64,7 +63,6 @@ const BRIDGES = [
     font-size: 0.82rem;
     color: var(--sl-color-text-accent);
     background: none;
-    border: none;
     padding: 0;
     font-weight: 600;
   }
@@ -84,7 +82,6 @@ const BRIDGES = [
     font-size: 0.82rem;
     color: var(--sl-color-gray-1);
     background: none;
-    border: none;
     padding: 0;
   }
   .bridge .note {
