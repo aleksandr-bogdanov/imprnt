@@ -3,7 +3,7 @@ title: Plugins
 description: A tiny core, plus add-ons you switch on by name and remove with one command.
 ---
 
-import ArchMap from "../src/components/docs/ArchMap.astro";
+import PluginGraph from "../src/islands/PluginGraph.tsx";
 import KindCards from "../src/components/docs/KindCards.astro";
 import Bridges from "../src/components/docs/Bridges.astro";
 
@@ -11,11 +11,15 @@ The **core** is your notes plus `ingest`, `recall`, and `check`. Every other beh
 
 ## The one rule
 
-You can add or remove **any** plugin without editing one line of core code. If a plugin forces a core edit, the plugin is wrong. That is what stops imprnt from growing to know about every add-on, the rot that bloats this kind of system over time. A plugin leans on two things only: your `vault/` notes (and their header format) and its own folder.
+You can add or remove **any** plugin without editing one line of core code. If a plugin forces a core edit, the plugin is wrong.
+
+That is what stops imprnt from growing to know about every add-on, the rot that bloats this kind of system over time. A plugin leans on two things only: your `vault/` notes (and their header format) and its own folder.
 
 ## Add and remove
 
-Each plugin is its own package, `imprnt-plugin-<name>`. **Adding** one copies its files into `plugins/<name>/` and wires one import line into `CLAUDE.local.md`, your per-machine on-off file.
+Each plugin is its own package, `imprnt-plugin-<name>`.
+
+**Adding** one copies its files into `plugins/<name>/` and wires one import line into `CLAUDE.local.md`, your per-machine on-off file.
 
 ```sh
 imprnt plugin list            # what is installed, and what you can add
@@ -27,7 +31,7 @@ A fresh clone with no `CLAUDE.local.md` loads zero plugins. Hand-edit that file 
 
 ## Architecture
 
-<ArchMap />
+<PluginGraph client:visible />
 
 Every plugin is one of **three kinds**, split by how it reaches the assistant:
 
