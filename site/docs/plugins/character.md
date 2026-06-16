@@ -3,19 +3,15 @@ title: Character
 description: A voice and standards your assistant works in, so it acts like itself, not generic Claude.
 ---
 
-> **In one line.** A character file gives your assistant a personality, a voice, and a set of standards, so it works like a specific person instead of generic Claude.
+A **character** file gives your assistant a personality, a voice, and a set of standards, so it works like a specific person instead of generic Claude. It sets how the assistant talks, what it values, the things it never does. The most load-bearing plugin, because it is how an assistant's identity survives moving between systems and sessions.
 
-## What it's for
-
-Without a character, the assistant is plain Claude. A character file is what makes it itself: how it talks, what it values, the things it never does. It is the most load-bearing plugin, because it is how an assistant's identity survives moving between systems and sessions.
-
-The package ships one default character, Scribe: a direct, opinionated peer that pushes back when it disagrees, owns mistakes lightly, and writes plain prose with no filler. The vault holds your real people in `people/`. This folder holds your digital ones.
+The package ships one default character, **Scribe**: a direct, opinionated peer that pushes back when it disagrees, owns mistakes lightly, and writes plain prose with no filler. The vault holds your real people in `people/`. This folder holds your digital ones.
 
 ## How it works
 
-This is a behavior plugin. It hands the assistant a character file you wire into its prompt. There is no code, no command, no data. The vault never force-feeds the assistant.
+A **behavior** plugin. It hands the assistant a character file you wire into its prompt. No code, no command, no data. The vault never force-feeds the assistant.
 
-A character generalizes to one or many. Today there is one shipped (Scribe), and each is its own file in the folder. There is no referee: if you wire in two characters that contradict each other, you reconcile them. That is the cost of choosing who is on.
+A character generalizes to one or many. One ships today (Scribe), and each is its own file in the folder. There is no referee: wire in two characters that contradict each other and you reconcile them. That is the cost of choosing who is on.
 
 ## Install
 

@@ -3,15 +3,11 @@ title: Timemachine
 description: Snapshots your working tree before each change, so you can recover what the agent breaks.
 ---
 
-> **In one line.** Before the agent runs any tool that changes files, it snapshots your working tree to a hidden git ref, so you can bring back anything it deletes or overwrites.
-
-## What it's for
-
-When you run a session with `--dangerously-skip-permissions`, there is no prompt between the agent and your files. If it deletes an untracked file or overwrites uncommitted work, plain git cannot bring it back. Timemachine takes a snapshot first, so you can.
+Before the agent runs any tool that changes files, it **snapshots** your working tree to a hidden git ref, so you can bring back anything it deletes or overwrites. Run a session with `--dangerously-skip-permissions` and there is no prompt between the agent and your files. If it deletes an untracked file or overwrites uncommitted work, plain git cannot bring it back. Timemachine takes a snapshot first, so you can.
 
 ## How it works
 
-This is a harness plugin. It registers a PreToolUse hook that fires before any mutating tool (Edit, Write, Bash, and the rest). The hook snapshots your tree to a commit under `refs/timemachine/`, on no branch, then lets the tool run. It never blocks. It is a safety net, not a gate.
+A **harness** plugin. It registers a **PreToolUse** hook that fires before any mutating tool (Edit, Write, Bash, and the rest). The hook snapshots your tree to a commit under `refs/timemachine/`, on no branch, then lets the tool run. It never blocks. A safety net, not a gate.
 
 It captures exactly what `git add -A` would stage: tracked changes plus untracked-but-not-ignored files. It never captures anything `.gitignore` hides (your `.env`, keys, build output), and it skips obvious secret shapes (`.env`, `*.pem`, `*.key`, `*.p12`, `*credentials*`) even if you forgot to ignore them. Snapshots stay in your repo's `.git`, local only, never pushed. It keeps the most recent 200 and prunes the rest.
 
@@ -25,7 +21,7 @@ node plugins/timemachine/timemachine.js status               # count, location, 
 node plugins/timemachine/timemachine.js wipe                 # delete every snapshot in this repo
 ```
 
-If the agent clobbered something, run `list`, find a recent snapshot, and `restore` the path. Commit once the file is back.
+If the agent clobbered something, run `list`, find a recent snapshot, and `restore` the path. **Commit** once the file is back.
 
 ## Install
 
@@ -37,4 +33,4 @@ This copies the plugin into `plugins/timemachine/` and wires it as a native Clau
 
 ## Limits
 
-It protects files inside a git repo only, so it pairs with keeping your work in git. It is damage recovery, not security and not an off-machine backup. It snapshots the pre-tool state, so the agent still does the thing. You just get to undo it.
+It protects files inside a git repo only, so it pairs with keeping your work in git. It is **damage recovery**, not security and not an off-machine backup. It snapshots the pre-tool state, so the agent still does the thing. You just get to undo it.
