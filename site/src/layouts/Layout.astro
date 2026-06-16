@@ -27,7 +27,7 @@ const ogImage = Astro.site ? new URL("/og.png", Astro.site).href : "/og.png";
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
     <meta name="theme-color" content="#0a0b0d" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="generator" content={Astro.generator} />
 
     <meta property="og:type" content="website" />
@@ -40,6 +40,24 @@ const ogImage = Astro.site ? new URL("/og.png", Astro.site).href : "/og.png";
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImage} />
+
+    <!-- resolve the theme before paint (no flash). Shares Starlight's
+         localStorage key so the docs toggle and the landing toggle stay in sync.
+         No stored choice falls back to dark, the brand's default look. -->
+    <script is:inline>
+      (() => {
+        const stored = localStorage.getItem("starlight-theme");
+        const theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : stored === "auto"
+              ? window.matchMedia("(prefers-color-scheme: light)").matches
+                ? "light"
+                : "dark"
+              : "dark";
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
 
     <!-- arm scroll-reveal before paint, only when motion is allowed (no flash) -->
     <script is:inline>

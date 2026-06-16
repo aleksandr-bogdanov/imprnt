@@ -29,6 +29,20 @@ import { nav, site } from "../lib/content";
     </ul>
 
     <div class="hidden items-center gap-3 md:flex">
+      <button
+        type="button"
+        data-theme-toggle
+        aria-label="Toggle light and dark theme"
+        class="grid h-9 w-9 place-items-center rounded-lg border border-line text-ink-soft transition-colors hover:border-green/55 hover:text-ink"
+      >
+        <svg class="theme-sun h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+        </svg>
+        <svg class="theme-moon h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>
+        </svg>
+      </button>
       <a
         href={site.repo}
         target="_blank"
@@ -75,6 +89,20 @@ import { nav, site } from "../lib/content";
           ))
         }
         <li class="mt-2 flex gap-3 px-3">
+          <button
+            type="button"
+            data-theme-toggle
+            aria-label="Toggle light and dark theme"
+            class="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line text-ink-soft"
+          >
+            <svg class="theme-sun h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+            </svg>
+            <svg class="theme-moon h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>
+            </svg>
+          </button>
           <a href={site.repo} target="_blank" rel="noreferrer" class="btn btn-ghost flex-1">GitHub</a>
           <a href="/getting-started/" data-menu-link class="btn btn-primary flex-1">Get started</a>
         </li>
@@ -101,5 +129,29 @@ import { nav, site } from "../lib/content";
       }
     });
     panel.querySelectorAll("[data-menu-link]").forEach((a) => a.addEventListener("click", close));
+  })();
+
+  // theme toggle: flip data-theme, persist under Starlight's key so the docs
+  // toggle and this one stay in sync. The icon shown is driven by CSS off the
+  // resolved data-theme, so it is correct on first paint with no flash.
+  (() => {
+    const root = document.documentElement;
+    const setLabel = () => {
+      const dark = root.dataset.theme !== "light";
+      document.querySelectorAll("[data-theme-toggle]").forEach((b) =>
+        b.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme"),
+      );
+    };
+    setLabel();
+    document.querySelectorAll("[data-theme-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const next = root.dataset.theme === "light" ? "dark" : "light";
+        root.dataset.theme = next;
+        try {
+          localStorage.setItem("starlight-theme", next);
+        } catch {}
+        setLabel();
+      });
+    });
   })();
 </script>

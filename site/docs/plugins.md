@@ -33,16 +33,16 @@ A fresh clone with no `CLAUDE.local.md` loads zero plugins. Opt-in for real. You
 
 ## The gallery
 
-| Plugin | What it adds |
-|--------|--------------|
-| `anti-slop` | Rules that keep your assistant's prose from reading like AI. |
-| `character` | A voice and standards to write in. Scribe is the default you copy and make yours. |
-| `whenful` | A live mirror of your [Whenful](https://whenful.com) tasks, shown inline when you read a note. |
-| `timemachine` | Snapshots your work before each change, so you can recover what the agent breaks. |
-| `statusline` | A status line: model, branch, context, cost, rate-limit windows, clock. |
-| `telegram` | Your vault from your phone. Text a bot, the answer comes from your notes. |
-| `kleinanzeigen` | A marketplace inbox watcher. Code sorts hostile messages, the model drafts the rest, you press send. |
-| `session-host` | A warm browser that holds your logged-in sessions and hands out a fresh token over localhost. |
+One page each. Click through for what it does, how it works, and the commands.
+
+- [Anti-slop](/plugins/anti-slop/) - rules that keep your assistant's prose from reading like AI.
+- [Character](/plugins/character/) - a voice and standards your assistant works in. Scribe is the default you copy and make yours.
+- [Whenful](/plugins/whenful/) - a local mirror of your [Whenful](https://whenful.com) tasks, shown inline when you read a note.
+- [Timemachine](/plugins/timemachine/) - snapshots your work before each change, so you can recover what the agent breaks.
+- [Statusline](/plugins/statusline/) - a status line: model, branch, context, cost, rate-limit windows, clock.
+- [Telegram](/plugins/telegram/) - your vault from your phone. Text a bot, the answer comes from your notes.
+- [Kleinanzeigen watcher](/plugins/kleinanzeigen/) - a marketplace inbox watcher. Code sorts hostile messages, the model drafts the rest, you press send.
+- [Session host](/plugins/session-host/) - a warm browser that holds your logged-in sessions and hands out a fresh token over localhost.
 
 ## Three kinds of plugin
 
