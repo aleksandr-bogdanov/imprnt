@@ -1,0 +1,126 @@
+---
+/**
+ * The one question that splits the AI-memory field, as two contrasting panels:
+ * memory built for the machine to read, vs knowledge you own and read. Scoped
+ * CSS only (no Tailwind: docs pages do not load it), theme-aware via --sl tokens.
+ */
+const MACHINE = ["mem0", "Letta", "Zep", "Supermemory", "cognee", "mempalace", "iai"];
+const YOURS = ["imprnt", "Karpathy's LLM Wiki", "Basic Memory"];
+---
+
+<div class="split">
+  <div class="panel machine">
+    <span class="tag">memory for the machine</span>
+    <p class="lead">A vector index, a knowledge graph, or an encrypted blob. Capture is automatic, scraped from your chat turns. You almost never open the raw store, and would learn little if you did.</p>
+    <div class="chips">{MACHINE.map((t) => <span class="chip">{t}</span>)}</div>
+    <p class="foot">most of the funded field</p>
+  </div>
+
+  <div class="vs" aria-hidden="true">vs</div>
+
+  <div class="panel yours">
+    <span class="tag">knowledge you own</span>
+    <p class="lead">Plain Markdown you read, edit, grep, and graph in Obsidian with none of the tooling running. The AI reads it too, but the file is the thing and you are the first reader.</p>
+    <div class="chips">{YOURS.map((t) => <span class="chip">{t}</span>)}</div>
+    <p class="foot">the smaller corner, where imprnt lives</p>
+  </div>
+</div>
+
+<p class="split-note">
+  That split decides everything downstream: whether you can <strong>audit</strong> what was stored, whether the memory survives the tool being uninstalled, and whether a wrong fact is a line you fix or an opaque vector you cannot find.
+</p>
+
+<style>
+  .split {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: stretch;
+    gap: 0.9rem;
+    margin: 1.5rem 0 1rem;
+  }
+  @media (max-width: 720px) {
+    .split {
+      grid-template-columns: 1fr;
+    }
+    .split .vs {
+      justify-self: center;
+    }
+  }
+
+  .panel {
+    border-radius: 16px;
+    padding: 1.1rem 1.2rem 1rem;
+  }
+  .panel.machine {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .panel.yours {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.55rem;
+  }
+  .machine .tag {
+    color: var(--sl-color-gray-2);
+  }
+  .yours .tag {
+    color: var(--sl-color-text-accent);
+  }
+
+  .lead {
+    margin: 0 0 0.85rem;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    padding: 0.22rem 0.6rem;
+    border-radius: 999px;
+  }
+  .machine .chip {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    color: var(--sl-color-gray-1);
+  }
+  .yours .chip {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+    font-weight: 600;
+  }
+
+  .foot {
+    margin: 0.85rem 0 0;
+    font-size: 0.76rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  .vs {
+    align-self: center;
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  .split-note {
+    font-size: 0.92rem;
+    line-height: 1.55;
+    color: var(--sl-color-gray-2);
+  }
+  .split-note strong {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+</style>
