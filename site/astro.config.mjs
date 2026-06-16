@@ -1,5 +1,6 @@
 // @ts-check
 import { defineConfig } from "astro/config";
+import mdx from "@astrojs/mdx";
 import react from "@astrojs/react";
 import sitemap from "@astrojs/sitemap";
 import starlight from "@astrojs/starlight";
@@ -62,6 +63,9 @@ export default defineConfig({
         },
       ],
     }),
+    // mdx() must come after starlight() so Starlight's expressive-code (code
+    // blocks) registers before mdx processes .mdx pages.
+    mdx(),
     sitemap(),
   ],
   // The brand pass runs on every Markdown doc: gradient "imprnt", tool-name chips.
