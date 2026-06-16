@@ -1,0 +1,83 @@
+---
+/**
+ * The only two places the core touches a plugin, both found by filename, never
+ * by import. Rendered as two lanes: a core command on the left, the plugin file
+ * it reads on the right.
+ */
+const BRIDGES = [
+  {
+    cmd: "imprnt check --all",
+    reads: "plugins/*/check.js",
+    note: "runs each, reads the exit code only",
+  },
+  {
+    cmd: "imprnt ingest --apply",
+    reads: "plugins/*/proposed/",
+    note: "files the notes a plugin staged for you",
+  },
+];
+---
+
+<div class="bridges">
+  {
+    BRIDGES.map((b) => (
+      <div class="bridge">
+        <code class="cmd">{b.cmd}</code>
+        <span class="arrow" aria-hidden="true">→</span>
+        <code class="reads">{b.reads}</code>
+        <span class="note">{b.note}</span>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .bridges {
+    display: grid;
+    gap: 0.7rem;
+    margin: 1.4rem 0;
+  }
+  .bridge {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid var(--sl-color-hairline-shade);
+    border-left: 3px solid var(--sl-color-text-accent);
+    border-radius: 10px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 4%, var(--sl-color-bg));
+  }
+  .bridge .cmd {
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    color: var(--sl-color-text-accent);
+    background: none;
+    border: none;
+    padding: 0;
+    font-weight: 600;
+  }
+  .bridge .arrow {
+    color: var(--sl-color-gray-3);
+    font-weight: 700;
+  }
+  .bridge .reads {
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    color: var(--sl-color-gray-1);
+    background: none;
+    border: none;
+    padding: 0;
+  }
+  .bridge .note {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+  }
+  @media (max-width: 640px) {
+    .bridge .note {
+      margin-left: 0;
+      flex-basis: 100%;
+    }
+  }
+</style>

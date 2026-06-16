@@ -1,0 +1,186 @@
+---
+/**
+ * The plugin architecture, drawn. The core sits at the center; the three plugin
+ * kinds orbit it and depend on it (arrows point inward). A dashed fence carries
+ * the one rule: the core never knows a plugin exists. Pure SVG + CSS, no JS,
+ * theme-aware through Starlight's --sl-color tokens.
+ */
+---
+
+<figure class="archmap">
+  <svg viewBox="0 0 600 540" role="img" aria-labelledby="archmap-title">
+    <title id="archmap-title">The core at the center, three plugin kinds depending on it from outside a fence</title>
+    <defs>
+      <linearGradient id="arch-core" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="var(--g1)"></stop>
+        <stop offset="1" stop-color="var(--g2)"></stop>
+      </linearGradient>
+      <marker id="arch-head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0L10 5L0 10z" fill="var(--edge)"></path>
+      </marker>
+    </defs>
+
+    <!-- the fence: the one rule -->
+    <circle class="fence" cx="300" cy="270" r="150"></circle>
+
+    <!-- dependency edges, plugin -> core (one way) -->
+    <line class="edge" x1="300" y1="92" x2="300" y2="200" marker-end="url(#arch-head)"></line>
+    <line class="edge" x1="462" y1="366" x2="360" y2="307" marker-end="url(#arch-head)"></line>
+    <line class="edge" x1="138" y1="366" x2="240" y2="307" marker-end="url(#arch-head)"></line>
+
+    <!-- core -->
+    <rect class="core" x="208" y="222" width="184" height="96" rx="18"></rect>
+    <text class="core-name" x="300" y="262">core</text>
+    <text class="core-sub" x="300" y="289">vault</text>
+    <text class="core-cmd" x="300" y="307">ingest · recall · check</text>
+
+    <!-- plugin-kind nodes -->
+    <g class="node" style="--c: var(--k-data)">
+      <rect x="232" y="58" width="136" height="64" rx="14"></rect>
+      <text class="node-name" x="300" y="84">Data</text>
+      <text class="node-eg" x="300" y="104">whenful · kleinanzeigen</text>
+    </g>
+    <g class="node" style="--c: var(--k-behavior)">
+      <rect x="394" y="338" width="170" height="64" rx="14"></rect>
+      <text class="node-name" x="479" y="364">Behavior</text>
+      <text class="node-eg" x="479" y="384">anti-slop · character</text>
+    </g>
+    <g class="node" style="--c: var(--k-harness)">
+      <rect x="36" y="338" width="170" height="64" rx="14"></rect>
+      <text class="node-name" x="121" y="364">Harness</text>
+      <text class="node-eg" x="121" y="384">timemachine · statusline</text>
+    </g>
+  </svg>
+
+  <figcaption>
+    The arrows point one way. A plugin depends on the <strong>core</strong>. The core depends on nothing.
+    The dashed line is the rule: <strong>the core never knows a plugin exists.</strong>
+  </figcaption>
+</figure>
+
+<style>
+  .archmap {
+    margin: 1.75rem 0;
+  }
+  .archmap svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    /* kind accents (mid-tones that read on both themes) */
+    --k-data: #36c7bf;
+    --k-behavior: var(--sl-color-text-accent);
+    --k-harness: #e0a93f;
+    --g1: var(--sl-color-text-accent);
+    --g2: #36c7bf;
+    --edge: var(--sl-color-gray-3);
+  }
+
+  .fence {
+    fill: none;
+    stroke: var(--sl-color-gray-4);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 9;
+    opacity: 0.6;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: arch-spin 80s linear infinite;
+  }
+
+  .edge {
+    stroke: var(--edge);
+    stroke-width: 2;
+    stroke-dasharray: 6 6;
+    animation: arch-flow 1.4s linear infinite;
+  }
+
+  .core {
+    fill: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+    stroke: url(#arch-core);
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 18px color-mix(in oklab, var(--sl-color-text-accent) 45%, transparent));
+    animation: arch-pulse 4s ease-in-out infinite;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  .core-name {
+    fill: var(--sl-color-white);
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 26px;
+    text-anchor: middle;
+  }
+  .core-sub {
+    fill: var(--sl-color-text-accent);
+    font-family: var(--__sl-font-mono, var(--sl-font-mono));
+    font-size: 13px;
+    text-anchor: middle;
+    letter-spacing: 0.04em;
+  }
+  .core-cmd {
+    fill: var(--sl-color-gray-2);
+    font-family: var(--sl-font-mono);
+    font-size: 12px;
+    text-anchor: middle;
+  }
+
+  .node rect {
+    fill: color-mix(in oklab, var(--c) 9%, var(--sl-color-bg));
+    stroke: var(--c);
+    stroke-width: 1.75;
+  }
+  .node-name {
+    fill: var(--c);
+    font-family: var(--sl-font);
+    font-weight: 650;
+    font-size: 16px;
+    text-anchor: middle;
+  }
+  .node-eg {
+    fill: var(--sl-color-gray-3);
+    font-family: var(--sl-font-mono);
+    font-size: 11px;
+    text-anchor: middle;
+  }
+
+  .archmap figcaption {
+    margin-top: 0.9rem;
+    font-size: 0.9rem;
+    line-height: 1.55;
+    color: var(--sl-color-gray-2);
+    text-align: center;
+    max-width: 34rem;
+    margin-inline: auto;
+  }
+  .archmap figcaption strong {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  @keyframes arch-flow {
+    to {
+      stroke-dashoffset: -12;
+    }
+  }
+  @keyframes arch-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes arch-pulse {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 14px color-mix(in oklab, var(--sl-color-text-accent) 35%, transparent));
+    }
+    50% {
+      filter: drop-shadow(0 0 26px color-mix(in oklab, var(--sl-color-text-accent) 60%, transparent));
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fence,
+    .edge,
+    .core {
+      animation: none;
+    }
+  }
+</style>
