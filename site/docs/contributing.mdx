@@ -8,6 +8,7 @@ import ContributingPackages from "../src/components/docs/ContributingPackages.as
 import ContributingBuildFlow from "../src/components/docs/ContributingBuildFlow.astro";
 import ContributingPrivacySplit from "../src/components/docs/ContributingPrivacySplit.astro";
 import ContributingDistTags from "../src/components/docs/ContributingDistTags.astro";
+import ContributingReleaseFlow from "../src/components/docs/ContributingReleaseFlow.astro";
 import ContributingNext from "../src/components/docs/ContributingNext.astro";
 
 This page is for people building imprnt itself. imprnt is open source under [MIT](https://github.com/aleksandr-bogdanov/imprnt/blob/main/LICENSE).
@@ -23,13 +24,13 @@ imprnt is a [bun workspaces](https://bun.sh/docs/install/workspaces) monorepo. O
 ```sh
 bun install
 bun run build      # compile each package
-bun run test       # bun test across the workspace
-bun run check      # typecheck, test, build
+bun run test       # test all packages
+bun run check      # typecheck + test + build
 ```
 
 ## Ship Node, build with Bun
 
-What a user installs runs on **Node**, the runtime everyone already has, so `npm i -g imprnt` works with no "first install Bun" wall. A code plugin builds the same way, so the read path needs no Bun either.
+What a user installs runs on **Node**, the runtime everyone already has, so `npm i -g imprnt` works without making them install Bun first. A code plugin builds the same way, so the read path needs no Bun either.
 
 <ContributingBuildFlow />
 
@@ -47,12 +48,7 @@ Versions are independent per package, decided by [Turborepo's](https://turborepo
 
 All publishing runs through one GitHub Actions workflow that authenticates to npm with OIDC **trusted publishing** (no long-lived tokens) and signs a provenance attestation on every package:
 
-```
-push to master               -> edge: affected packages -> @edge
-                                 (automatic)
-run publish.yml mode=release -> latest: affected since release
-                                 (gated, then tag + Release)
-```
+<ContributingReleaseFlow />
 
 A stable release pauses at a GitHub Environment for a required reviewer's **approval**, so even an automated trigger cannot reach `latest` without a human clicking approve. Trusted publishing is configured once per package on npmjs.com.
 
@@ -76,3 +72,60 @@ npm deprecate imprnt@<bad> "broken release, use <last-good>"
 ## Read next
 
 <ContributingNext />
+
+{/* Page-scoped only (ships on /contributing/ alone): on narrow screens the
+    always-visible expressive-code copy button overlaps the first code line.
+    Reserve room above the first line so the button never covers code. */}
+<style is:global>
+  {`
+  @media (max-width: 40rem) {
+    .sl-markdown-content .expressive-code pre > code {
+      padding-top: 1.9rem;
+    }
+    /* A command line wider than the phone scrolls horizontally with no scrollbar,
+       so the right edge looks like a hard cut. Fade the last ~2rem of every code
+       block to read as "more to the right, scroll it" instead of truncated. The
+       mask only dims the trailing edge, so a line that fits is untouched. */
+    .sl-markdown-content .expressive-code pre {
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+    }
+  }
+  /* Page-scoped: tighten the closing rhythm so the page bottom matches the body.
+     The "Read next" H2 sits after the last npm code block, and Starlight's
+     Previous/Next pager follows the cards. Both carried oversized gaps. */
+  .sl-markdown-content #read-next {
+    margin-top: 1.8rem;
+  }
+  .sl-markdown-content #read-next + * {
+    margin-top: 0.6rem;
+  }
+  /* Page-scoped: the content footer holds an EMPTY .meta div that still carries
+     margin-top: 3rem, and the footer flex container adds gap: 1.5rem before the
+     Previous/Next pager. Together they leave a dead whitespace band between the
+     Read-next cards and the pager. Collapse the empty meta and zero the footer
+     gap so the pager follows the cards on the same ~1.6rem rhythm as the rest of
+     the page. Spacing the pager via a margin (not the footer flex gap) is what
+     actually lands, since the gap is what created the band. */
+  .sl-markdown-content + footer {
+    margin-top: 1.6rem;
+    gap: 0;
+  }
+  .sl-markdown-content + footer .meta:empty {
+    margin-top: 0;
+    display: none;
+  }
+  .pagination-links {
+    margin-top: 0;
+  }
+  /* Page-scoped: on narrow screens the Read-next cards stack full-width. The
+     footer/.meta collapse above closes the residual mobile band too, so the
+     pager sits ~1.6rem below the last card. */
+  @media (max-width: 50rem) {
+    .sl-markdown-content #read-next + * {
+      margin-top: 0.6rem;
+      margin-bottom: 1.6rem;
+    }
+  }
+  `}
+</style>

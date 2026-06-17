@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 /**
@@ -26,6 +27,9 @@ type Kind = {
   tag: string;
   caption: string;
   em: string;
+  // optional renderer for captions that carry inline CLI commands (claude, imp),
+  // which need monospace styling the single-term caption() helper cannot give
+  renderCaption?: (C: ReturnType<typeof usePalette>) => ReactNode;
 };
 
 const KINDS: Kind[] = [
@@ -49,6 +53,11 @@ const KINDS: Kind[] = [
     tag: "change the session runtime",
     caption: "Changes the session runtime, like a hook or the status line. Plain claude stays plain. Only imp sessions see it.",
     em: "session runtime",
+    renderCaption: (C) => (
+      <>
+        Changes the <strong style={{ color: C.onText, fontWeight: 700 }}>session runtime</strong>, like a hook or the status line. Plain {cmd("claude", C)} stays plain. Only {cmd("imp", C)} sessions see it.
+      </>
+    ),
   },
 ];
 
@@ -101,6 +110,25 @@ function useNarrow() {
   return narrow;
 }
 
+// a monospace inline-code span for a CLI command (claude, imp), matching how the
+// rest of the docs write the command in backticks
+function cmd(text: string, C: ReturnType<typeof usePalette>) {
+  return (
+    <code
+      style={{
+        fontFamily: MONO,
+        fontSize: "0.92em",
+        padding: "0.04em 0.3em",
+        borderRadius: 5,
+        background: `color-mix(in oklab, ${C.onText} 12%, transparent)`,
+        color: C.onText,
+      }}
+    >
+      {text}
+    </code>
+  );
+}
+
 function caption(text: string, em: string, color: string) {
   const i = text.indexOf(em);
   if (i < 0) return text;
@@ -123,7 +151,10 @@ export default function PluginsKindsDiagram() {
         margin: "1.6rem 0",
         padding: narrow ? "1.4rem 1rem" : "1.7rem 1.5rem",
         borderRadius: 18,
-        background: `radial-gradient(120% 90% at 50% 0%, color-mix(in oklab, ${C.core} 9%, transparent), transparent 70%)`,
+        // two stacked radials: the top glow tints under the CORE hub, and a soft
+        // bottom one fades the tint into the page so the band dissolves instead of
+        // clipping on a hard rectangular edge above the cards.
+        background: `radial-gradient(120% 70% at 50% 0%, color-mix(in oklab, ${C.core} 9%, transparent), transparent 62%), radial-gradient(140% 60% at 50% 118%, color-mix(in oklab, ${C.core} 5%, transparent), transparent 70%)`,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -154,6 +185,8 @@ export default function PluginsKindsDiagram() {
         </span>
       </div>
 
+      {/* the caption sits right under the CORE box, so the fan that follows reads
+          as branching from the hub the sentence names into the three cards below. */}
       <p
         style={{
           margin: 0,
@@ -165,34 +198,55 @@ export default function PluginsKindsDiagram() {
           maxWidth: "32rem",
         }}
       >
-        Every plugin is one of three kinds. Each kind depends on the core, and the core knows about none of them.
+        Each kind depends on the core, and the core knows about none of them.
       </p>
 
-      {/* connector band: an arrow down to each kind */}
-      <svg
-        width="100%"
-        height={narrow ? 18 : 30}
-        viewBox="0 0 300 30"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-        style={{ maxWidth: "30rem" }}
-      >
-        {narrow ? (
-          <line x1="150" y1="0" x2="150" y2="30" stroke={C.edge} strokeWidth="3" />
-        ) : (
-          <>
-            <path d="M150 0 C150 14, 50 14, 50 30" fill="none" stroke={C.kind.data} strokeWidth="3" opacity="0.55" />
-            <line x1="150" y1="0" x2="150" y2="30" stroke={C.kind.behavior} strokeWidth="3" opacity="0.55" />
-            <path d="M150 0 C150 14, 250 14, 250 30" fill="none" stroke={C.kind.harness} strokeWidth="3" opacity="0.55" />
-          </>
-        )}
-      </svg>
+      {/* connector band: a fan of arrows from the core down into each kind. It sits
+          between the caption and the card row so the three lines land directly on
+          the card tops. All three branches start from the CORE's bottom-center
+          (apex x500 y0) and end at the horizontal center of the card beneath them.
+          The card grid is 3 equal columns inside max-width 44rem with a 1rem gap,
+          so each card is 14rem wide and its center sits at 7/44, 22/44, 37/44 of
+          the band width = x159, x500, x841 of the 1000-unit viewBox. The outer two
+          arcs are exact reflections about x500 (same control offsets, mirrored), so
+          the fan is symmetric; the center line gets a matching gentle S so its
+          apparent length equals the arcs instead of reading shorter as a straight
+          drop. preserveAspectRatio="none" stretches the viewBox to the live width
+          and non-scaling-stroke keeps every line a uniform 3px regardless. The
+          negative top/bottom margins pull the apex up to the CORE box and the
+          endpoints down onto the card tops so each line visibly feeds its card. On
+          narrow the cards stack in one column, so the fan is meaningless: drop it
+          and let the stacked order carry the relationship. */}
+      {!narrow && (
+        <svg
+          width="100%"
+          height={32}
+          viewBox="0 0 1000 32"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          style={{ maxWidth: "44rem", marginTop: "-0.3rem", marginBottom: "-0.85rem" }}
+        >
+          <path d="M500 0 C500 18, 159 14, 159 32" fill="none" stroke={C.kind.data} strokeWidth="2.4" opacity="0.7" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+          {/* center BEHAVIOR drop: a clean straight vertical line in its green,
+              same stroke weight as the side arms, replacing the old S-curve that
+              read as a stray hook at the junction */}
+          <path d="M500 0 L500 32" fill="none" stroke={C.kind.behavior} strokeWidth="2.4" opacity="0.7" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+          <path d="M500 0 C500 18, 841 14, 841 32" fill="none" stroke={C.kind.harness} strokeWidth="2.4" opacity="0.7" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+        </svg>
+      )}
 
-      {/* the three kind cards */}
+      {/* the three kind cards. align-items:start lets each card be content-tall
+          instead of stretching to the tallest sibling, so the bottom padding is
+          identical across the three even though the body text differs in length
+          (a stretched card left a larger empty band under the shorter blurb). The
+          label row and the tag share a fixed top block (the tag's minHeight keeps
+          the body's first line aligned across all three), so the tops still read as
+          one row while the bottom inset stays even. */}
       <div
         style={{
           display: "grid",
           gridTemplateColumns: narrow ? "1fr" : "repeat(3, 1fr)",
+          alignItems: "start",
           gap: narrow ? "0.85rem" : "1rem",
           width: "100%",
           maxWidth: "44rem",
@@ -200,17 +254,24 @@ export default function PluginsKindsDiagram() {
       >
         {KINDS.map((k) => {
           const c = (C.kind as Record<string, string>)[k.id];
+          // Even out the inset border weight across hues: teal reads heaviest at
+          // the same mix, so give it a lower percentage and lift the green/orange
+          // so the three strokes land at one visual weight.
+          const borderMix = { data: 30, behavior: 40, harness: 42 }[k.id] ?? 38;
           return (
             <div
               key={k.id}
               style={{
                 display: "flex",
                 flexDirection: "column",
+                height: "auto",
+                alignSelf: "start",
+                marginTop: 0,
                 gap: "0.45rem",
                 padding: narrow ? "0.95rem 1.05rem" : "1.05rem 1.1rem",
                 borderRadius: 14,
                 background: C.cardBg,
-                boxShadow: `0 8px 26px -16px ${c}, inset 0 0 0 1.5px color-mix(in oklab, ${c} 38%, transparent)`,
+                boxShadow: `0 8px 26px -16px ${c}, inset 0 0 0 1.5px color-mix(in oklab, ${c} ${borderMix}%, transparent)`,
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -219,9 +280,13 @@ export default function PluginsKindsDiagram() {
                   {k.label}
                 </span>
               </div>
-              <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 500, color: c }}>{k.tag}</span>
+              {/* the tagline is a plain-English summary, so set it in the sans
+                  body font in a muted body color. monospace + code color made
+                  these phrases read as literal commands. the accent color stays
+                  on the dot and title only */}
+              <span style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 500, lineHeight: 1.4, minHeight: narrow ? "auto" : "2.4em", display: "flex", alignItems: "flex-start", color: C.subText }}>{k.tag}</span>
               <p style={{ margin: 0, fontFamily: SANS, fontSize: 13, lineHeight: 1.5, color: C.capText }}>
-                {caption(k.caption, k.em, C.onText)}
+                {k.renderCaption ? k.renderCaption(C) : caption(k.caption, k.em, C.onText)}
               </p>
             </div>
           );

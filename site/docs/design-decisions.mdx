@@ -7,10 +7,10 @@ import DesignDecisionsNav from "../src/components/docs/DesignDecisionsNav.astro"
 import DesignFlipsIf from "../src/components/docs/DesignFlipsIf.astro";
 import DesignPaiFlip from "../src/components/docs/DesignPaiFlip.astro";
 import DesignBm25Compare from "../src/components/docs/DesignBm25Compare.astro";
+import DesignRule from "../src/components/docs/DesignRule.astro";
+import DesignContrast from "../src/components/docs/DesignContrast.astro";
 
-The big calls behind imprnt: spend the AI rarely, search with plain math, keep your data complete, and let nothing run on its own. Most are lessons from [PAI](https://github.com/danielmiessler/PAI) steered the other way.
-
-imprnt grew out of PAI, a personal-AI system that pointed the way and showed where a few choices create friction at scale. Most of the calls below take that lesson and commit to the other path. Each one says what was decided and what would have to change to flip it. Every section closes with that reversal condition, the **flips if** line, so you can scan for the one thing that would undo any call.
+The big calls behind imprnt: spend the AI rarely, search with plain math, keep your data complete, and let nothing run on its own. Most take a lesson from [PAI](https://github.com/danielmiessler/PAI), the personal-AI system imprnt grew out of, and steer the other way. Each call below says what was decided and closes with a **flips if** line, the one change that would undo it, so you can scan straight to the reversal condition.
 
 <DesignDecisionsNav />
 
@@ -47,7 +47,7 @@ The one thing kept from the type-first idea: entities (people, orgs, holdings) g
 ## The core stays blind
 Core is the vault plus `ingest`, `recall`, and `check`. Everything else is a plugin. The one rule, with its test:
 
-> You can add or remove any plugin with zero edits to the core.
+<DesignRule label="the one rule, and its test">You can add or remove any plugin with zero edits to the core.</DesignRule>
 
 This is the most important call, a direct lesson from PAI. A core **bloats** when the dependency arrows point from core to module: the core imports, branches on, validates, and loads every subsystem, so every new capability grows it. PAI was built that way, and over time the core carried every feature as always-on overhead you paid for in tokens and misfires whether you used the feature or not.
 
@@ -61,7 +61,7 @@ imprnt flips the arrows. A plugin depends on two things, your notes and its own 
 <DesignFlipsIf>A plugin ever needs a core edit to install, which is the exact signal that the dependency arrows have started pointing the wrong way again.</DesignFlipsIf>
 
 ## Copy, share no code
-The roughly twelve lines a plugin needs to read a note's header are **copied** into each plugin. The core publishes no importable code for plugins to depend on. The reason is reversibility, not purity. If duplication later hurts, pulling the copies into one shared file is a five-minute change that breaks nobody. Un-publishing a shared tool that plugins already import is a breaking change and a magnet for "can it also do X?" creep. Copy is the move you can undo.
+The roughly twelve lines a plugin needs to read a note's header are **copied** into each plugin. The core publishes no importable code for plugins to depend on. The reason is reversibility, not purity. If duplication later hurts, pulling the copies into one shared file is a five-minute change that breaks nobody. Un-publishing a shared tool that plugins already import is a breaking change and a magnet for `can it also do X?` creep. Copy is the move you can undo.
 
 <DesignFlipsIf>The copied lines start drifting between plugins, when one shared file would beat keeping a dozen copies in step.</DesignFlipsIf>
 
@@ -78,9 +78,16 @@ Always-on background machinery is the cost pattern imprnt was built to avoid: a 
 <DesignFlipsIf>A task genuinely needs sub-second reaction that no scheduled run can give, the rare case where you trade audit for latency on purpose.</DesignFlipsIf>
 
 ## Invariants are tests
-The most expensive lesson, another from PAI: a principle written as a **value** ("be private," "ration the model") cannot be checked against reality, so it rots into recitation. PAI carried seventeen such principles.
+The most expensive lesson, another from PAI: a principle written as a **value** (<span style="white-space:nowrap">`be private`</span>, <span style="white-space:nowrap">`ration the model`</span>) cannot be checked against reality, so it rots into recitation. PAI carried seventeen such principles. imprnt's answer is that an invariant earns its place only as a falsifiable check, one that points at a specific failure it would have caught.
 
-imprnt's answer is that an invariant earns its place only as a falsifiable check pointing at a specific failure it would have caught. "On the real corpus, recall tops the right note" is a test. "Deterministic-first" is a value. The first catches a regression on day one. The second gets quoted in a meeting.
+<DesignContrast
+  leftLabel="a test"
+  left={'"On the real corpus, recall tops the right note"'}
+  leftNote="Catches a regression on day one."
+  rightLabel="a value"
+  right={'"Deterministic-first"'}
+  rightNote="Gets quoted in a meeting."
+/>
 
 <DesignFlipsIf>A principle that genuinely cannot be made falsifiable still earns its keep, in which case it lives as documented intent and never as a check that always passes.</DesignFlipsIf>
 

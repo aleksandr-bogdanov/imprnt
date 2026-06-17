@@ -6,10 +6,27 @@
  * No borders, filled surfaces. Scoped CSS, theme-aware via --sl tokens (docs
  * pages do not load Tailwind).
  */
+/**
+ * `sub` is an ordered list of fragments. A plain string renders as prose, an
+ * object `{ code }` renders as an inline monospace chip so the commands match
+ * every other command on the page instead of sitting in plain prose.
+ */
 const STEPS = [
-  { n: "1", label: "Develop in Bun", sub: "write and test the TypeScript with Bun as the dev tool" },
-  { n: "2", label: "Compile to Node", sub: "bun build --target=node makes one self-contained file" },
-  { n: "3", label: "Ship dist/", sub: "the package ships the built file, never src, so npm i -g works" },
+  {
+    n: "1",
+    label: "Develop in Bun",
+    sub: ["write and test the TypeScript with Bun as the dev tool"],
+  },
+  {
+    n: "2",
+    label: "Compile to Node",
+    sub: [{ code: "bun build --target=node" }, " makes one self-contained file"],
+  },
+  {
+    n: "3",
+    label: "Ship dist/",
+    sub: ["the package ships the built file, never src, so ", { code: "npm i -g" }, " works"],
+  },
 ];
 ---
 
@@ -21,7 +38,9 @@ const STEPS = [
           <span class="bnum">{s.n}</span>
           <div class="btext">
             <span class="blabel">{s.label}</span>
-            <span class="bsub">{s.sub}</span>
+            <span class="bsub">
+              {s.sub.map((part) => (typeof part === "string" ? part : <code class="bcode">{part.code}</code>))}
+            </span>
           </div>
         </div>
         {i < STEPS.length - 1 && <span class="barr" aria-hidden="true">&rarr;</span>}
@@ -46,8 +65,11 @@ const STEPS = [
     border-radius: 14px;
     background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
   }
-  .bnode:nth-child(3) {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  .bnode:last-child {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 17%, var(--sl-color-bg));
+  }
+  .bnode:last-child .blabel {
+    color: var(--sl-color-text-accent);
   }
   .bnum {
     flex: 0 0 auto;
@@ -78,6 +100,15 @@ const STEPS = [
     font-size: 0.8rem;
     line-height: 1.35;
     color: var(--sl-color-gray-1);
+  }
+  .bcode {
+    font-family: var(--sl-font-mono);
+    font-size: 0.92em;
+    color: var(--sl-color-white);
+    background: none;
+    border: none;
+    padding: 0;
+    white-space: nowrap;
   }
   .barr {
     align-self: center;

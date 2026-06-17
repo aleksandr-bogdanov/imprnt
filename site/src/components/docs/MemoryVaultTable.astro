@@ -1,43 +1,234 @@
 ---
 /**
- * Horizontal-scroll wrapper for the wide data tables on the Memory and the vault
- * page. On a narrow phone a bare Markdown table either clips its rightmost column
- * off-screen or cramps every cell into 2-4 wrapped lines. This keeps the table at
- * its natural width and lets it scroll sideways, with a soft fade hinting there is
- * more to the right. Scoped CSS, theme-aware via --sl tokens.
+ * Renderer for the wide data tables on the Memory and the vault page. It takes a
+ * Markdown table from the slot, parses it once at build time, and emits two views
+ * of the same data:
+ *   - Desktop: a real <table> with content-sized boolean columns, single-line
+ *     command badges, and yes/no values color-coded for scanning.
+ *   - Phone (<=720px): each row reflows to a stacked label:value card so every
+ *     column (including the yes/no answer the reader came for) is visible with no
+ *     horizontal scroll. No column is dropped; all data is preserved.
+ * Categories/values come straight from the Markdown, so the page stays the source
+ * of truth. Scoped CSS, theme-aware via --sl tokens (docs pages do not load
+ * Tailwind).
  */
+const raw = await Astro.slots.render("default");
+
+// Pull the single Markdown table out of the rendered slot HTML.
+const tableMatch = raw.match(/<table>([\s\S]*?)<\/table>/);
+const inner = tableMatch ? tableMatch[1] : "";
+
+const headerMatch = inner.match(/<thead>([\s\S]*?)<\/thead>/);
+const bodyMatch = inner.match(/<tbody>([\s\S]*?)<\/tbody>/);
+
+const cellHtml = (block: string, tag: "th" | "td") =>
+  [...block.matchAll(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "g"))].map(
+    (m) => m[1]
+  );
+
+const headers = headerMatch ? cellHtml(headerMatch[1], "th") : [];
+const rowBlocks = bodyMatch
+  ? [...bodyMatch[1].matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map((m) => m[1])
+  : [];
+const rows = rowBlocks.map((b) => cellHtml(b, "td"));
+
+// A cell is a yes/no answer when its visible text starts with yes or no. We tag
+// the whole cell so the leading token can be color-coded (green yes / muted no)
+// without touching trailing prose like "no, it is a control file".
+const plain = (html: string) => html.replace(/<[^>]+>/g, "").trim();
+const boolKind = (html: string): "yes" | "no" | "" => {
+  const t = plain(html).toLowerCase();
+  if (t === "yes" || t.startsWith("yes ") || t.startsWith("yes,")) return "yes";
+  if (t === "no" || t.startsWith("no ") || t.startsWith("no,")) return "no";
+  return "";
+};
 ---
 
-<div class="table-scroll">
-  <slot />
+<div class="mvtable">
+  <!-- Desktop: the real table -->
+  <div class="desk">
+    <table>
+      <thead>
+        <tr>{headers.map((h) => <th set:html={h} />)}</tr>
+      </thead>
+      <tbody>
+        {rows.map((cells) => (
+          <tr>
+            {cells.map((c, i) => {
+              const k = boolKind(c);
+              return (
+                <td
+                  class={k ? `bool ${k}` : undefined}
+                  data-col={headers[i] ? plain(headers[i]) : undefined}
+                  set:html={c}
+                />
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Phone: stacked label:value cards, every column visible, no sideways scroll -->
+  <div class="cards">
+    {rows.map((cells) => (
+      <div class="rowcard">
+        {cells.map((c, i) => {
+          const k = boolKind(c);
+          return (
+            <div class="field">
+              <span class="flabel" set:html={headers[i] ?? ""} />
+              <span class={k ? `fval bool ${k}` : "fval"} set:html={c} />
+            </div>
+          );
+        })}
+      </div>
+    ))}
+  </div>
 </div>
 
 <style>
-  .table-scroll {
+  .mvtable {
+    margin: 1rem 0;
+  }
+
+  /* ---------- desktop table ---------- */
+  .desk {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-    margin: 1rem 0;
-    /* fade on the right edge as a scroll affordance */
-    background:
-      linear-gradient(to right, var(--sl-color-bg) 30%, transparent),
-      linear-gradient(to right, transparent, var(--sl-color-bg) 70%) 100% 0,
-      radial-gradient(farthest-side at 0 50%, color-mix(in oklab, var(--sl-color-gray-4) 60%, transparent), transparent),
-      radial-gradient(farthest-side at 100% 50%, color-mix(in oklab, var(--sl-color-gray-4) 60%, transparent), transparent) 100% 0;
-    background-repeat: no-repeat;
-    background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
-    background-attachment: local, local, scroll, scroll;
   }
-  .table-scroll :global(table) {
+  .desk table {
     margin: 0;
-    min-width: 100%;
+    width: 100%;
+    table-layout: auto;
   }
-  .table-scroll :global(th),
-  .table-scroll :global(td) {
+  .desk th,
+  .desk td {
+    white-space: normal;
+    vertical-align: top;
+    /* an even baseline rhythm: a small fixed vertical pad + a tighter line-height
+       keeps single-line and wrapped rows rhythmically equal, so the row dividers
+       march evenly instead of single-line rows sitting tight under taller ones. */
+    padding-top: 0.7rem;
+    padding-bottom: 0.7rem;
+    line-height: 1.45;
+  }
+  .desk th {
     white-space: nowrap;
   }
-  /* let the longest free-text column breathe instead of forcing a wide row */
-  .table-scroll :global(td:first-child) {
-    white-space: normal;
-    min-width: 14rem;
+  /* First column holds the surface/category: give it just enough room that its
+     badge + label stay on one line. The longest first-col cell ("the vault
+     contract" / "the session pointer") fits under 7.5rem, so 9rem was opening an
+     oversized col1->col2 gutter that left the header rhythm lopsided. */
+  .desk th:first-child,
+  .desk td:first-child {
+    min-width: 7.5rem;
+  }
+  /* Last column holds the writer/answer prose ("you, through the model at filing").
+     A min-width lets it keep one line where it can, pulling the wasted middle
+     gutter closed so the table reads dense instead of crammed-right + airy-middle. */
+  .desk th:last-child,
+  .desk td:last-child {
+    min-width: 11rem;
+  }
+  /* A command is one unit: keep "imprnt hot" / "imprnt context" on a single line
+     inside its pill instead of wrapping mid-token into two stacked words. */
+  .desk :global(code) {
+    white-space: nowrap;
+  }
+  /* Boolean columns size to their short content so the answer sits tight under
+     its header instead of floating in an airy gap, freeing width for the prose
+     columns next to them. */
+  .desk td.bool {
+    white-space: nowrap;
+    width: 1%;
+    font-weight: 600;
+  }
+  .desk td.bool.yes {
+    color: var(--sl-color-text-accent);
+  }
+  .desk td.bool.no {
+    color: var(--sl-color-gray-2);
+    font-weight: 500;
+  }
+
+  /* phone-only view stays hidden on desktop */
+  .cards {
+    display: none;
+  }
+
+  /* ---------- phone: stacked cards ---------- */
+  @media (max-width: 720px) {
+    .desk {
+      display: none;
+    }
+    .cards {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .rowcard {
+      display: flex;
+      flex-direction: column;
+      /* tighter than the 0.45rem default: these two tables expand to 5 cards each,
+         every card stacking 4 label/value rows, so the page's heaviest scroll cost
+         is here. Compressing the inter-row gap and the card padding shortens the
+         scroll without dropping a single row. */
+      gap: 0.32rem;
+      border-radius: 12px;
+      padding: 0.55rem 0.8rem;
+      background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
+    }
+    /* Stack the mono label over the value at full card width. The old two-column
+       grid let the widest label ("YOU WANT TO KEEP") set a fixed column that
+       squeezed the value, wrapping prose and code chips raggedly on a ~360px
+       screen. Label-on-its-own-line gives the value the whole width back. */
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.08rem;
+    }
+    .flabel {
+      font-family: var(--sl-font-mono);
+      font-size: 0.64rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--sl-color-gray-3);
+    }
+    .fval {
+      font-size: 0.86rem;
+      line-height: 1.35;
+      color: var(--sl-color-gray-1);
+    }
+    .fval :global(code) {
+      white-space: normal;
+    }
+    .fval.bool {
+      font-weight: 600;
+    }
+    .fval.bool.yes {
+      color: var(--sl-color-text-accent);
+    }
+    .fval.bool.no {
+      color: var(--sl-color-gray-2);
+      font-weight: 500;
+    }
+  }
+
+  /* Narrowest phones: shave the mono labels a touch more and pull the cards even
+     tighter, since these two tables are the longest scroll on the page. Still no
+     row or column dropped. */
+  @media (max-width: 26.25rem) {
+    .flabel {
+      font-size: 0.6rem;
+    }
+    .rowcard {
+      padding: 0.5rem 0.7rem;
+      gap: 0.28rem;
+    }
+    .cards {
+      gap: 0.45rem;
+    }
   }
 </style>

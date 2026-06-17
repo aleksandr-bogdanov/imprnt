@@ -36,6 +36,13 @@ const BEHAVIOR = ["tiny", "always on", "applied every time"];
     gap: 0.9rem;
     margin: 1.5rem 0 1.25rem;
   }
+  /* Starlight's content flow rule injects margin-top onto every grid item after
+     the first (the vs divider and the second card), which shoves the right card
+     ~16px below the left inside its stretched cell and breaks the top-alignment.
+     Zero it so both cards share one top edge. */
+  .kbsplit > * {
+    margin-top: 0;
+  }
   @media (max-width: 720px) {
     .kbsplit {
       grid-template-columns: 1fr;
@@ -48,12 +55,22 @@ const BEHAVIOR = ["tiny", "always on", "applied every time"];
   .card {
     border-radius: 16px;
     padding: 1.1rem 1.2rem 1rem;
+    display: flex;
+    flex-direction: column;
   }
   .card.knowledge {
     background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+    /* a faint inner ring pins the green card's top edge, matching the page's flow
+       diagram (MemoryVaultCollapse) so both card pairs share one edge treatment. */
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sl-color-text-accent) 22%, transparent);
   }
   .card.behavior {
-    background: color-mix(in oklab, var(--sl-color-gray-3) 13%, var(--sl-color-bg));
+    /* lifted to match the diagram's behavior card (gray-3 22% + ring): at the old
+       13% the gray fill was nearly invisible against the cream page, so the gray
+       card looked to float lower and weaker than its green sibling. The denser
+       fill plus an inner ring pins its top edge level with the green card. */
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sl-color-gray-3) 30%, transparent);
   }
 
   .tag {
@@ -76,12 +93,24 @@ const BEHAVIOR = ["tiny", "always on", "applied every time"];
     font-size: 0.9rem;
     line-height: 1.5;
     color: var(--sl-color-gray-1);
+    /* a min slot so the chip rows below start at the same height across the two
+       cards even when one lead wraps to fewer lines */
+    min-height: 5.4rem;
+  }
+  @media (max-width: 720px) {
+    .lead {
+      min-height: 0;
+    }
   }
 
   .chips {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
+    /* a fixed slot so the chip rows line up across the two sibling cards even
+       when the lead text differs in length */
+    min-height: 1.85rem;
+    align-content: flex-start;
   }
   .chip {
     font-family: var(--sl-font-mono);
@@ -95,14 +124,24 @@ const BEHAVIOR = ["tiny", "always on", "applied every time"];
     font-weight: 600;
   }
   .behavior .chip {
-    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
-    color: var(--sl-color-gray-1);
+    /* The gray chips sit on a gray card, the lowest-contrast spot on the page next
+       to the crisp green knowledge pills. Lift them off the card with a near-white
+       fill, full white text at the same 600 weight as the green chips, and a faint
+       hairline ring for figure-ground separation. Hue stays neutral so behavior
+       still reads as gray vs knowledge green. */
+    background: color-mix(in oklab, var(--sl-color-white) 14%, var(--sl-color-bg));
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sl-color-gray-2) 35%, transparent);
+    color: var(--sl-color-white);
+    font-weight: 600;
   }
 
   .foot {
     margin: 0.85rem 0 0;
     font-size: 0.76rem;
     color: var(--sl-color-gray-3);
+    /* pin to the bottom so the two "lives in..." footers share a baseline */
+    margin-top: auto;
+    padding-top: 0.85rem;
   }
 
   .vs {

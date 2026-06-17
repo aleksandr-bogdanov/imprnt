@@ -1,0 +1,20 @@
+---
+/**
+ * Page-specific (how-it-works): a small inline highlight chip, an eye-anchor
+ * for the one standout fact in a prose stretch. Filled surface, no border.
+ * Theme-aware via Starlight tokens. Pass the text as the default slot.
+ */
+---
+
+<span class="chip"><slot /></span>
+
+<style>
+  .chip {
+    display: inline-block;
+    padding: 0.12rem 0.5rem;
+    border-radius: 8px;
+    font-weight: 600;
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+</style>

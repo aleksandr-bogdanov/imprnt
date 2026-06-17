@@ -1,0 +1,109 @@
+---
+/**
+ * Page-specific (getting-started) visual: the two requirements as a two-up filled
+ * card grid, so the section matches the page's card language instead of reading as
+ * a bare bullet list. Link targets and version data are unchanged (data). Two
+ * fixed requirements, no instance list. Filled surfaces, no borders. Theme-aware
+ * via Starlight tokens.
+ */
+const NEEDS = [
+  {
+    name: "Node",
+    version: "18 or newer",
+    note: "The runtime imprnt installs on.",
+    href: "https://nodejs.org",
+  },
+  {
+    name: "Claude Code",
+    version: "any version",
+    note: "The assistant imprnt drives.",
+    href: "https://claude.com/claude-code",
+  },
+];
+---
+
+<div class="gsneed">
+  {
+    NEEDS.map((n) => (
+      <a class="need" href={n.href} target="_blank" rel="noopener">
+        <div class="head">
+          <span class="name">{n.name}</span>
+          <span class="version">{n.version}</span>
+          <span class="go" aria-hidden="true">&#8599;</span>
+        </div>
+        <p class="note">{n.note}</p>
+      </a>
+    ))
+  }
+</div>
+
+<style>
+  .gsneed {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.7rem;
+    margin: 1.2rem 0 1.4rem;
+  }
+  .need {
+    border-radius: 13px;
+    padding: 0.9rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    text-decoration: none;
+    transition:
+      background 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  .need:hover {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
+    box-shadow: inset 0 0 0 1px
+      color-mix(in oklab, var(--sl-color-text-accent) 38%, transparent);
+  }
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+  }
+  .name {
+    font-size: 0.98rem;
+    font-weight: 600;
+    /* Page convention: accent green is reserved for the deliberately-highlighted
+       card in a group (the imp mode card, the plugin add row). This group has no
+       primary card, so the names stay gray like the non-accent mode card. */
+    color: var(--sl-color-gray-1);
+  }
+  /* Persistent link affordance: an outbound-arrow glyph pinned to the right of
+     the card head, so the card reads as tappable without a hover (works on
+     touch). It warms to the accent on hover alongside the card. */
+  .go {
+    margin-left: auto;
+    align-self: center;
+    font-size: 0.95rem;
+    line-height: 1;
+    color: var(--sl-color-gray-3);
+    transition:
+      color 0.15s ease,
+      transform 0.15s ease;
+  }
+  .need:hover .go {
+    color: var(--sl-color-text-accent);
+    transform: translate(1px, -1px);
+  }
+  .version {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    color: var(--sl-color-gray-2);
+  }
+  .note {
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--sl-color-white);
+    margin: 0;
+  }
+  @media (max-width: 640px) {
+    .gsneed {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -26,7 +26,10 @@ const CALLS = [
   <div class="dd-nav-grid">
     {
       CALLS.map((c) => (
-        <a class="dd-nav-card" href={`#${c.anchor}`}>
+        <a
+          class="dd-nav-card"
+          href={`#${c.anchor}`}
+        >
           <span class="dd-nav-call">{c.call}</span>
           <span class="dd-nav-short">{c.short}</span>
         </a>
@@ -53,21 +56,41 @@ const CALLS = [
     grid-template-columns: repeat(2, 1fr);
     gap: 0.7rem;
   }
+  /* eleven calls leave one half-width slot at the bottom-left and a clean gap
+     to its right. A uniform card reads tidier than stretching the last one to
+     full width with short left-aligned text. */
   @media (max-width: 720px) {
     .dd-nav-grid {
       grid-template-columns: 1fr;
     }
   }
   .dd-nav-card {
+    position: relative;
     display: block;
     border-radius: 12px;
-    padding: 0.85rem 1rem;
+    padding: 0.85rem 2.1rem 0.85rem 1rem;
     text-decoration: none;
     background: color-mix(in oklab, var(--sl-color-text-accent) 6%, var(--sl-color-bg));
     transition: background 0.15s ease;
   }
+  /* chevron marks each card as a jump link, distinct from the content cards below */
+  .dd-nav-card::after {
+    content: "\203A";
+    position: absolute;
+    top: 0.8rem;
+    right: 1rem;
+    font-size: 1.1rem;
+    line-height: 1;
+    color: var(--sl-color-text-accent);
+    opacity: 0.55;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
   .dd-nav-card:hover {
     background: color-mix(in oklab, var(--sl-color-text-accent) 13%, var(--sl-color-bg));
+  }
+  .dd-nav-card:hover::after {
+    opacity: 1;
+    transform: translateX(2px);
   }
   .dd-nav-call {
     display: block;

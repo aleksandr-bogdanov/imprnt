@@ -1,0 +1,27 @@
+---
+/**
+ * Page-specific (getting-started) wrapper for the short "you say" terminal
+ * examples. The examples are 2-4 short lines, so the default full-column
+ * expressive-code frame leaves a wide empty band at desktop width. This caps the
+ * frame at a narrow, left-aligned max-width so it hugs the example text, while
+ * the real install/export terminal blocks (outside this wrapper) stay full
+ * width. The .gssay class exists only on this page, so the :global rule that
+ * reaches the slotted code block never affects another page. No data changes:
+ * this only narrows the frame around the same lines.
+ */
+---
+
+<div class="gssay">
+  <slot />
+</div>
+
+<style>
+  .gssay :global(.expressive-code) {
+    max-width: 31rem;
+  }
+  @media (max-width: 640px) {
+    .gssay :global(.expressive-code) {
+      max-width: 100%;
+    }
+  }
+</style>

@@ -1,0 +1,101 @@
+---
+/**
+ * Page-specific (design-decisions). A two-way contrast badge for the page's
+ * recurring "X is a test, Y is a value" move, sibling to DesignPaiFlip but with
+ * caller-set labels and an optional verdict line under each side. Used to lift
+ * the test-vs-value punchline out of a paragraph so it reads at a glance. The
+ * left side carries the accent tint (the one that wins). Borderless tinted
+ * surfaces. Scoped CSS, theme-aware, no Tailwind.
+ */
+interface Props {
+  leftLabel: string;
+  left: string;
+  leftNote?: string;
+  rightLabel: string;
+  right: string;
+  rightNote?: string;
+}
+const { leftLabel, left, leftNote, rightLabel, right, rightNote } = Astro.props;
+---
+
+<div class="ddc">
+  <div class="ddc-col ddc-win">
+    <span class="ddc-tag">{leftLabel}</span>
+    <span class="ddc-text">{left}</span>
+    {leftNote && <span class="ddc-note">{leftNote}</span>}
+  </div>
+  <div class="ddc-col ddc-lose">
+    <span class="ddc-tag">{rightLabel}</span>
+    <span class="ddc-text">{right}</span>
+    {rightNote && <span class="ddc-note">{rightNote}</span>}
+  </div>
+</div>
+
+<style>
+  .ddc {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    /* stretch both cards to one shared height so the win and lose sides keep a
+       single top and bottom edge, matching the already-clean DesignPaiFlip pair */
+    align-items: stretch;
+    gap: 0.6rem;
+    margin: 1.2rem 0;
+  }
+  .ddc-col {
+    border-radius: 12px;
+    padding: 0.95rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 0.35rem;
+    /* Starlight's global adjacent-sibling rule injects margin-top:16px onto the
+       second .ddc-col (the lose card), which both pushed it 16px below the win
+       card and ate 16px of its stretched height, so the labels and bottom notes
+       fell off a shared baseline. Zero it so align-items:stretch makes both
+       cards equal height with one shared top and bottom edge. Harmless when the
+       cards stack single-column on mobile (the gap there comes from grid gap). */
+    margin-top: 0;
+  }
+  .ddc-win {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+  .ddc-lose {
+    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+  }
+  .ddc-tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .ddc-win .ddc-tag {
+    color: var(--sl-color-text-accent);
+  }
+  .ddc-text {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.95rem;
+    line-height: 1.35;
+    color: var(--sl-color-white);
+  }
+  .ddc-note {
+    /* the grid row already shares one height across both cards, so pinning the
+       note to the bottom puts both notes on a single baseline whether the title
+       above wrapped to one line or two */
+    margin-top: auto;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+  @media (max-width: 640px) {
+    .ddc {
+      grid-template-columns: 1fr;
+    }
+    .ddc-note {
+      /* single column: no sibling to baseline-align with, so let the note sit
+         snug under its title instead of being pushed to the card bottom */
+      margin-top: 0;
+    }
+  }
+</style>

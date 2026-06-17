@@ -1,32 +1,28 @@
 ---
 /**
  * Page-specific (statusline): decodes the four panel rows. One table row per
- * panel line, columns Row / What it shows / Example. The "what it shows" column
- * names the segment CATEGORIES (so adding or dropping a segment never touches
- * this), the Example column keeps the verbatim values from the panel. This is
- * data, the component only styles the row-name pill and the example mono cell.
+ * panel line, columns Row / What it shows. The "what it shows" column names the
+ * segment CATEGORIES (so adding or dropping a segment never touches this). The
+ * verbatim example values are NOT repeated here, the dark panel directly above
+ * is the canonical source for every value, so this table stays a pure legend.
  * No borders, theme-aware tokens, alternating filled surfaces.
  */
 const ROWS = [
   {
     name: "model",
     shows: "Which model is running, the session name, the working dir, and git ahead/behind.",
-    example: "Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1",
   },
   {
     name: "cost",
     shows: "Spend so far, elapsed time, and lines added/removed this session.",
-    example: "$0.42 · elapsed 1h12m · lines +156/-23",
   },
   {
     name: "ctx",
     shows: "A gauge of how full the context window is, the fill percent, and the effort level.",
-    example: "▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱ 48% · effort high",
   },
   {
     name: "limits",
     shows: "The 5h and 7d rate-limit windows with reset times, your vault note and review counts, the weather, and the clock.",
-    example: "5h 24% →18:00 · 7d 41% →Thu · vault 247 notes, 3 review · ☀ 22° · 14:05",
   },
 ];
 ---
@@ -34,7 +30,7 @@ const ROWS = [
 <div class="sl-decode">
   <table>
     <thead>
-      <tr><th>Row</th><th>What it shows</th><th>Example</th></tr>
+      <tr><th>Row</th><th>What it shows</th></tr>
     </thead>
     <tbody>
       {
@@ -42,7 +38,6 @@ const ROWS = [
           <tr>
             <td><span class="sl-rowname">{r.name}</span></td>
             <td>{r.shows}</td>
-            <td><code class="sl-ex">{r.example}</code></td>
           </tr>
         ))
       }
@@ -68,11 +63,19 @@ const ROWS = [
     color: var(--sl-color-gray-2);
     padding: 0 0.75rem 0.5rem;
   }
+  th:nth-child(1) {
+    width: 7rem;
+  }
   tbody td {
     padding: 0.6rem 0.75rem;
     vertical-align: top;
     color: var(--sl-color-gray-1);
     background: color-mix(in oklab, var(--sl-color-gray-3) 7%, var(--sl-color-bg));
+  }
+  /* Nudge the pill cell so the pill's text baseline sits on the
+     description's first line when that description wraps (mobile). */
+  tbody td:first-child {
+    padding-top: 0.66rem;
   }
   tbody tr:nth-child(even) td {
     background: color-mix(in oklab, var(--sl-color-gray-3) 14%, var(--sl-color-bg));
@@ -87,11 +90,12 @@ const ROWS = [
     background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
     color: var(--sl-color-text-accent);
   }
-  .sl-ex {
-    font-family: var(--sl-font-mono);
-    font-size: 0.78rem;
-    color: var(--sl-color-white);
-    background: none;
-    overflow-wrap: anywhere;
+  /* On a phone the 7rem gutter is dead space next to a short pill and forces
+     each description into more wrapped lines. Tighten it so the description
+     column gains width and wraps to fewer lines on the narrowest screens. */
+  @media (max-width: 50rem) {
+    th:nth-child(1) {
+      width: 4.5rem;
+    }
   }
 </style>

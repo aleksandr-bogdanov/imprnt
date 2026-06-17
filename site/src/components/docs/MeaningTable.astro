@@ -1,0 +1,155 @@
+---
+/**
+ * Page-specific visual for docs/vault-layout.md: the "What carries the meaning"
+ * table. A plain markdown table left the middle column too narrow (the header
+ * and the short values wrapped), so this controls column widths directly:
+ *  - the Label column renders every axis as a uniform code chip (type, kind,
+ *    tags, folder) so the set reads as one consistent group;
+ *  - the "Where it lives" column never wraps (its values are two words);
+ *  - "What it says" takes the remaining width.
+ * Categories, not instances, so it never goes stale. Scoped CSS, theme-aware
+ * via Starlight --sl tokens, collapses to stacked rows on mobile.
+ */
+const ROWS = [
+  [
+    "type",
+    "the header",
+    "what the object is: person, org, holding, project, principle, note, mistake, event",
+  ],
+  [
+    "kind",
+    "the header",
+    "what form it takes: a belief, a model, a policy, a how-to, a rating",
+  ],
+  [
+    "tags",
+    "the header",
+    "what it is about, a list that grows on its own, one idea per tag",
+  ],
+  [
+    "folder",
+    "the path",
+    "where you browse for it, the one axis search never reads",
+  ],
+];
+---
+
+<table class="meaning">
+  <thead>
+    <tr>
+      <th>Label</th>
+      <th>Where it lives</th>
+      <th>What it says</th>
+    </tr>
+  </thead>
+  <tbody>
+    {
+      ROWS.map(([label, lives, says]) => (
+        <tr>
+          <td>
+            <code>{label}</code>
+          </td>
+          <td class="lives">{lives}</td>
+          <td class="says">{says}</td>
+        </tr>
+      ))
+    }
+  </tbody>
+</table>
+
+<style>
+  .meaning {
+    width: 100%;
+    margin: 1.2rem 0 1.4rem;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 0.9rem;
+  }
+  .meaning th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    padding: 0 1rem 0.55rem 0;
+    white-space: nowrap;
+  }
+  .meaning td {
+    padding: 0.6rem 1rem 0.6rem 0;
+    vertical-align: top;
+    border-top: 1px solid color-mix(in oklab, var(--sl-color-gray-3) 45%, transparent);
+    color: var(--sl-color-gray-1);
+    line-height: 1.5;
+  }
+  /* Label column: every axis is a uniform code chip */
+  .meaning th:first-child,
+  .meaning td:first-child {
+    width: 6.5rem;
+  }
+  .meaning td:first-child code {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.5;
+    color: var(--sl-color-text-accent);
+    padding: 0 0.45rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  /* "Where it lives": short two-word values, never wrap. De-emphasized so the
+     three repeated "the header" cells read as a quiet category, not filler. */
+  .meaning th:nth-child(2),
+  .meaning td.lives {
+    width: 7rem;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    color: color-mix(in oklab, var(--sl-color-gray-2) 70%, var(--sl-color-bg));
+  }
+  .meaning td.says {
+    color: var(--sl-color-white);
+  }
+
+  @media (max-width: 720px) {
+    .meaning,
+    .meaning thead,
+    .meaning tbody,
+    .meaning tr,
+    .meaning td {
+      display: block;
+      width: auto;
+    }
+    .meaning thead {
+      display: none;
+    }
+    .meaning tr {
+      padding: 0.95rem 0;
+      border-top: 1px solid
+        color-mix(in oklab, var(--sl-color-gray-3) 45%, transparent);
+    }
+    .meaning tr:first-child {
+      border-top: none;
+    }
+    .meaning td {
+      border: 0;
+      padding: 0;
+      line-height: 1.4;
+      white-space: normal;
+    }
+    .meaning td:first-child {
+      width: auto;
+      margin-bottom: 0.2rem;
+    }
+    .meaning td.lives {
+      width: auto;
+      white-space: nowrap;
+      font-size: 0.78rem;
+      margin-bottom: 0.1rem;
+    }
+    .meaning td.lives::before {
+      content: "lives in ";
+      color: var(--sl-color-gray-2);
+    }
+  }
+</style>

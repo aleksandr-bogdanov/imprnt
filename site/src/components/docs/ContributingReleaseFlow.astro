@@ -1,0 +1,100 @@
+---
+/**
+ * contributing.mdx ONLY — the two publish paths, the same data the old ASCII
+ * two-column diagram carried, rebuilt as labeled cards so it reflows on a phone
+ * instead of clipping a fixed-width monospace block. Each path reads
+ * trigger -> what runs -> destination, plus the gating note. Edge is automatic
+ * and lands grey, the release path is gated and lands on the green destination.
+ * No borders, filled surfaces. Scoped CSS, theme-aware via --sl tokens (docs
+ * pages do not load Tailwind).
+ */
+const PATHS = [
+  {
+    cls: "edge",
+    trigger: "push to master",
+    runs: "edge: affected packages",
+    dest: "@edge",
+    note: "automatic",
+  },
+  {
+    cls: "release",
+    trigger: "run publish.yml mode=release",
+    runs: "latest: affected since release",
+    dest: "@latest",
+    note: "gated, then tag + Release",
+  },
+];
+---
+
+<div class="rflow" role="img" aria-label="Two publish paths. A push to master builds the affected packages and publishes them to the edge dist-tag automatically. Running publish.yml in release mode builds the packages affected since the last release and publishes them to latest, gated on approval, then tags and cuts a GitHub Release.">
+  {
+    PATHS.map((p) => (
+      <div class={`rpath ${p.cls}`}>
+        <span class="rtrigger"><code>{p.trigger}</code></span>
+        <span class="rarr" aria-hidden="true">&rarr;</span>
+        <span class="rruns">{p.runs}</span>
+        <span class="rarr" aria-hidden="true">&rarr;</span>
+        <span class="rdest"><code>{p.dest}</code></span>
+        <span class="rnote">{p.note}</span>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .rflow {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin: 1.3rem 0 1.1rem;
+  }
+  .rpath {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem 0.6rem;
+    padding: 0.85rem 1rem 0.9rem;
+    border-radius: 14px;
+  }
+  .rpath.edge {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .rpath.release {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .rtrigger code,
+  .rdest code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.84rem;
+    font-weight: 700;
+    background: none;
+    border: none;
+    padding: 0;
+    white-space: nowrap;
+  }
+  .rtrigger code {
+    color: var(--sl-color-white);
+  }
+  .release .rdest code {
+    color: var(--sl-color-text-accent);
+  }
+  .edge .rdest code {
+    color: var(--sl-color-gray-1);
+  }
+  .rruns {
+    font-size: 0.86rem;
+    line-height: 1.35;
+    color: var(--sl-color-gray-1);
+  }
+  .rarr {
+    color: var(--sl-color-gray-3);
+    font-size: 1.05rem;
+    flex: 0 0 auto;
+  }
+  .rnote {
+    flex-basis: 100%;
+    font-size: 0.76rem;
+    line-height: 1.3;
+    color: var(--sl-color-gray-2);
+  }
+</style>

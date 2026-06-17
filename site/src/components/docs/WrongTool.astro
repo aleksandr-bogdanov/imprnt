@@ -35,8 +35,8 @@ const CASES = [
 
 <div class="wt">
   {
-    CASES.map((c) => (
-      <div class="wt-card">
+    CASES.map((c, i) => (
+      <div class={i === CASES.length - 1 ? "wt-card wt-wide" : "wt-card"}>
         <p class="wt-want">{c.want}</p>
         <p class="wt-pick">
           <span class="wt-pick-label">pick instead</span>
@@ -52,18 +52,37 @@ const CASES = [
   .wt {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 0.8rem;
+    /* three shared row tracks (title, pick, why) so a one-line and a two-line
+       title in the same row reserve the same box and the pick-instead badges
+       and body baselines line up across the row */
+    grid-auto-rows: auto auto 1fr;
+    column-gap: 0.8rem;
+    row-gap: 0.8rem;
     margin: 1.4rem 0;
+  }
+  /* the lone fifth card sits in the first column, left-aligned under the column
+     above it, so the trailing gap reads as deliberate, not a stray center. */
+  .wt-wide {
+    grid-column: 1;
   }
   @media (max-width: 720px) {
     .wt {
       grid-template-columns: 1fr;
+      grid-auto-rows: auto;
+    }
+    .wt-wide {
+      grid-column: auto;
     }
   }
   .wt-card {
+    display: grid;
+    grid-row: span 3;
+    grid-template-rows: subgrid;
+    row-gap: 0.55rem;
+    align-content: start;
     border-radius: 14px;
     padding: 1rem 1.15rem 1.05rem;
-    background: color-mix(in oklab, var(--sl-color-gray-3) 9%, var(--sl-color-bg));
+    background: color-mix(in oklab, var(--sl-color-orange) 9%, var(--sl-color-bg));
   }
   .wt-want {
     margin: 0;
@@ -74,20 +93,23 @@ const CASES = [
     color: var(--sl-color-white);
   }
   .wt-pick {
-    margin: 0.5rem 0 0.6rem;
+    margin: 0;
     font-size: 0.92rem;
     color: var(--sl-color-text-accent);
     font-weight: 600;
   }
   .wt-pick-label {
     display: inline-block;
-    margin-right: 0.45rem;
+    margin-right: 0.5rem;
+    padding: 0.12em 0.42em;
+    border-radius: 5px;
     font-family: var(--sl-font-mono);
-    font-size: 0.64rem;
+    font-size: 0.62rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
-    color: var(--sl-color-gray-2);
-    vertical-align: 0.05em;
+    color: var(--sl-color-orange-high);
+    background: color-mix(in oklab, var(--sl-color-orange) 20%, var(--sl-color-bg));
+    vertical-align: 0.1em;
   }
   .wt-why {
     margin: 0;

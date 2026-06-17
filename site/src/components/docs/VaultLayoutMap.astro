@@ -48,7 +48,7 @@ const GROUPS = [
 ---
 
 <div class="root">
-  <span class="root-label">vault/ root</span>
+  <span class="root-label">vault root</span>
   <dl class="root-grid">
     {
       ROOT.map(([name, meaning]) => (
@@ -69,14 +69,22 @@ const GROUPS = [
           <span class="g-name">{g.key}</span>
           <p class="g-why">{g.why}</p>
         </header>
-        <dl class="g-rows">
-          {g.rows.map(([name, meaning]) => (
-            <div class="g-row">
-              <dt>{name}</dt>
-              {meaning && <dd>{meaning}</dd>}
-            </div>
-          ))}
-        </dl>
+        {g.key === "domains" ? (
+          <ul class="g-chips">
+            {g.rows.flatMap(([name]) => name.split(" ")).map((folder) => (
+              <li>{folder}</li>
+            ))}
+          </ul>
+        ) : (
+          <dl class="g-rows">
+            {g.rows.map(([name, meaning]) => (
+              <div class="g-row">
+                <dt>{name}</dt>
+                {meaning && <dd>{meaning}</dd>}
+              </div>
+            ))}
+          </dl>
+        )}
       </section>
     ))
   }
@@ -101,17 +109,23 @@ const GROUPS = [
   }
   .root-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.55rem 1.4rem;
+    /* size each column to its content so the two columns sit close together
+       instead of each filling half the box and leaving a wide middle gap */
+    grid-template-columns: repeat(2, max-content);
+    justify-content: start;
+    align-items: start;
+    gap: 0.55rem 2.4rem;
     margin: 0;
   }
   .root-row {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: baseline;
     gap: 0.2rem 0.7rem;
   }
   .root-row dt {
+    flex: none;
+    min-width: 5rem;
     font-family: var(--sl-font-mono);
     font-size: 0.84rem;
     font-weight: 600;
@@ -131,33 +145,40 @@ const GROUPS = [
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.9rem;
     margin: 0 0 1.4rem;
-    align-items: stretch;
+    /* hug each card's content so the shorter cards (domains, forms) carry no
+       dead green band below their last row, instead of stretching to match
+       the tallest (entities) */
+    align-items: start;
   }
   .group {
+    /* Starlight's content styles add a top margin to every sibling after the
+       first, so the 2nd and 3rd cards dropped ~16px below the entities card.
+       Zero it so all three card tops sit on one baseline (the grid handles
+       spacing via gap). */
+    margin-top: 0;
+    display: flex;
+    flex-direction: column;
     border-radius: 16px;
     padding: 1.1rem 1.2rem 1.15rem;
     background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
   }
-  .group.entities {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
-  }
-  .group.domains {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg));
+  .group.entities,
+  .group.domains,
+  .group.forms {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
   }
   .group header {
     margin-bottom: 0.85rem;
   }
   .g-name {
-    display: inline-block;
+    display: block;
     font-family: var(--sl-font-mono);
     font-size: 0.72rem;
+    line-height: 1;
     letter-spacing: 0.11em;
     text-transform: uppercase;
     color: var(--sl-color-text-accent);
     margin-bottom: 0.4rem;
-  }
-  .group.forms .g-name {
-    color: var(--sl-color-gray-2);
   }
   .g-why {
     margin: 0;
@@ -190,12 +211,46 @@ const GROUPS = [
     color: var(--sl-color-gray-2);
   }
 
+  /* domains carry no per-folder meaning, so render them as compact chips
+     to match the visual density of the labeled pairs in the sibling cards */
+  .g-chips {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .g-chips li {
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--sl-color-white);
+    padding: 0.18rem 0.55rem;
+    border-radius: 7px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 14%, var(--sl-color-bg));
+  }
+
   @media (max-width: 720px) {
     .root-grid {
       grid-template-columns: 1fr;
+      gap: 0.7rem 0;
+    }
+    .root-row {
+      flex-direction: column;
+      gap: 0.1rem;
+    }
+    .root-row dt {
+      min-width: 0;
     }
     .groups {
       grid-template-columns: 1fr;
+    }
+    .group {
+      padding-top: 0.95rem;
+    }
+    .group header {
+      margin-bottom: 0.7rem;
     }
   }
 </style>

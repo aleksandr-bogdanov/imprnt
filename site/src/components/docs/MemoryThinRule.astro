@@ -1,0 +1,116 @@
+---
+/**
+ * The "keep the assistant's memory thin" rule, as a compact 3-row routing strip
+ * for the Memory and the vault page. The section's core is one routing question
+ * (world/project knowledge to the vault, a standing behavior to the assistant
+ * config, never the same fact in both), which read as a wall of plain bullets
+ * against an otherwise component-rich page. This lifts it into the page's split-
+ * card vocabulary: a green "to the vault" lane, a grey "to the assistant config"
+ * lane, and a muted "never both" caution beneath. Categories only, no instances.
+ * Scoped CSS, theme-aware via --sl tokens (docs pages do not load Tailwind).
+ */
+---
+
+<div class="thinrule">
+  <div class="lane knowledge">
+    <span class="tag">to the vault</span>
+    <p class="what">World and project knowledge</p>
+    <p class="why">where <code>recall</code> finds it</p>
+  </div>
+
+  <div class="lane behavior">
+    <span class="tag">to the assistant config</span>
+    <p class="what">A standing behavior or preference</p>
+    <p class="why">in <code>CLAUDE.md</code> or its auto-memory</p>
+  </div>
+
+  <p class="caution">
+    The same fact never lives in both. Two copies drift, and one is invisible to search.
+  </p>
+</div>
+
+<style>
+  .thinrule {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    /* stretch both lanes to equal height so their tags top-align, matching the
+       split-card pair at the top of the page. Without this the taller green lane
+       sits higher than the grey one and the two mono tags fall out of baseline. */
+    align-items: stretch;
+    gap: 0.7rem;
+    margin: 1.25rem 0;
+  }
+  /* Starlight's content flow rule injects margin-top onto every grid item after
+     the first, dropping the grey lane ~16px below the green one inside its
+     stretched cell. Zero it so both lane tops and titles share one baseline. */
+  .thinrule > * {
+    margin-top: 0;
+  }
+  @media (max-width: 720px) {
+    .thinrule {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .lane {
+    border-radius: 14px;
+    padding: 0.85rem 1rem 0.9rem;
+  }
+  .lane.knowledge {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+    /* match the split-card pair and the flow diagram: a faint inner ring defines
+       the green lane's edge so the pair shares one edge treatment across the page. */
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sl-color-text-accent) 22%, transparent);
+  }
+  .lane.behavior {
+    /* lifted from 13% to 22% + an inner ring so the grey lane stops under-reading
+       against the cream page and its green sibling, the same fix the split-card
+       pair and the flow diagram already carry. */
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sl-color-gray-3) 30%, transparent);
+  }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+  .knowledge .tag {
+    color: var(--sl-color-text-accent);
+  }
+  .behavior .tag {
+    color: var(--sl-color-gray-2);
+  }
+
+  .what {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--sl-color-white);
+  }
+  .why {
+    margin: 0.25rem 0 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+  .why :global(code),
+  .what :global(code) {
+    font-size: 0.85em;
+  }
+
+  .caution {
+    grid-column: 1 / -1;
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+    border-radius: 14px;
+    padding: 0.7rem 1rem;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 22%, var(--sl-color-bg));
+  }
+</style>

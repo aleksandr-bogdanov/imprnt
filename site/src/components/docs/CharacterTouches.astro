@@ -33,7 +33,7 @@ const TOUCHES = [
 
 <style>
   .touches {
-    margin: 1.3rem 0 1.5rem;
+    margin: 1.4rem 0 1.6rem;
     border-radius: 14px;
     padding: 1.05rem 1.2rem 1.15rem;
     background: color-mix(in oklab, var(--sl-color-gray-3) 13%, var(--sl-color-bg));
@@ -65,20 +65,33 @@ const TOUCHES = [
     color: var(--sl-color-gray-1);
   }
   .chip.on {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 15%, var(--sl-color-bg));
+    background: color-mix(in oklab, var(--sl-color-text-accent) 22%, var(--sl-color-bg));
     color: var(--sl-color-white);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sl-color-text-accent) 35%, transparent);
   }
   .mark {
     font-size: 0.82rem;
-    color: var(--sl-color-gray-2);
+    color: var(--sl-color-gray-1);
   }
   .chip.on .mark {
     color: var(--sl-color-text-accent);
   }
   .note {
     margin: 0;
-    font-size: 0.86rem;
+    max-width: 50ch;
+    font-size: 0.88rem;
     line-height: 1.5;
     color: var(--sl-color-gray-1);
+  }
+  @media (max-width: 480px) {
+    .chips {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+    .chip {
+      justify-content: flex-start;
+      padding-left: 0.85rem;
+    }
   }
 </style>

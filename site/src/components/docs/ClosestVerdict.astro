@@ -1,0 +1,75 @@
+---
+/**
+ * comparison.mdx ONLY - a compact, scannable verdict strip placed atop each
+ * "closest kin" deep-dive so the takeaway lands before the paragraph. Two
+ * filled cells, borderless: what the tool shares with imprnt, and where they
+ * part. Scoped CSS only, no Tailwind, theme-aware via --sl tokens.
+ */
+interface Props {
+  same: string;
+  delta: string;
+  deltaLabel: string;
+}
+const { same, delta, deltaLabel } = Astro.props;
+---
+
+<div class="cv">
+  <div class="cv-cell cv-same">
+    <span class="cv-label">same as imprnt</span>
+    <span class="cv-text">{same}</span>
+  </div>
+  <div class="cv-cell cv-delta">
+    <span class="cv-label">{deltaLabel}</span>
+    <span class="cv-text">{delta}</span>
+  </div>
+</div>
+
+<style>
+  .cv {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+    gap: 0.7rem;
+    margin: 0.9rem 0 1.2rem;
+  }
+  @media (max-width: 720px) {
+    .cv {
+      grid-template-columns: 1fr;
+    }
+  }
+  .cv-cell {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 0.3rem;
+    align-self: stretch;
+    border-radius: 12px;
+    padding: 0.8rem 0.95rem;
+  }
+  .cv-same {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+  .cv-delta {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 10%, var(--sl-color-bg));
+  }
+  .cv-label {
+    display: block;
+    height: 0.9rem;
+    line-height: 0.9rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .cv-same .cv-label {
+    color: var(--sl-color-text-accent);
+  }
+  .cv-text {
+    font-family: var(--sl-font);
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--sl-color-white);
+  }
+</style>

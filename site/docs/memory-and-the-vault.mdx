@@ -5,6 +5,8 @@ description: One store for what you know, a tiny always-on layer for how the ass
 
 import MemoryVaultSplit from "../src/components/docs/MemoryVaultSplit.astro";
 import MemoryVaultTable from "../src/components/docs/MemoryVaultTable.astro";
+import MemoryVaultCollapse from "../src/components/docs/MemoryVaultCollapse.astro";
+import MemoryThinRule from "../src/components/docs/MemoryThinRule.astro";
 
 Two kinds of "memory" get jumbled together: what you **know**, and rules for how the assistant **behaves**. imprnt keeps one store for knowledge and one strict rule about what loads on its own, so you can always say where a fact went and whether it is in context right now.
 
@@ -42,15 +44,11 @@ An `imp` session loads almost nothing on its own: your behavior plugins, plus a 
 
 ## Your assistant has its own memory, so keep it thin
 
-imprnt usually runs under Claude Code, which ships a memory of its own, separate from the vault. The assistant writes a `MEMORY.md` about a project as it works. The first stretch of it auto-loads every session, stays on your machine, and lives outside `vault/`, so `recall` never sees it. Useful for what the assistant learns about a repo. It is also a second **always-on** store you cannot search.
+imprnt usually runs under Claude Code, which writes a `MEMORY.md` about a project as it works. Its first stretch auto-loads every session and lives outside `vault/`, so `recall` never sees it. That makes it a second **always-on** store you cannot search, and one rule keeps it from turning into a parallel mess:
 
-One rule keeps it from becoming a parallel mess:
+<MemoryThinRule />
 
-- World and project knowledge goes in the vault, where `recall` finds it.
-- A standing behavior or preference goes in the assistant's `CLAUDE.md` or its auto-memory.
-- The same fact never lives in both. Two copies drift, and one is invisible to search.
-
-The easy mistake: parking searchable knowledge in the store that cannot be searched. While building imprnt, project facts about the website and a plugin got written into the assistant's memory and had to be moved into the vault to be findable. Keep the assistant's memory down to a few behavior facts, and let the vault carry everything you will look up later.
+The easy mistake is parking searchable knowledge in the store that cannot be searched. While building imprnt, project facts about the website and a plugin landed in the assistant's memory and had to be moved into the vault to be findable. Keep the assistant's memory down to a few behavior facts, and let the vault carry everything you will look up later.
 
 ## Where each thing goes
 
@@ -60,7 +58,7 @@ The easy mistake: parking searchable knowledge in the store that cannot be searc
 |------------------|-----------|-------------|-----------------|
 | A fact about a person, policy, or decision | a vault note | no | yes |
 | A number, table, or record | a vault note, in full | no | yes |
-| A primer of where things stand | `hot.md`, via `imprnt hot` | no | no, it is a control file |
+| A primer of where things stand | `hot.md`, via `imprnt hot` | no | no - control file |
 | The filing rules | the vault contract, via `imprnt context` | no | no |
 | A writing style or anti-slop ruleset | a behavior plugin in `CLAUDE.local.md` | yes | no |
 | A standing instruction | the assistant's `CLAUDE.md` or its memory | yes | no |
@@ -72,10 +70,25 @@ The easy mistake: parking searchable knowledge in the store that cannot be searc
 
 imprnt grew out of [PAI](https://github.com/danielmiessler/PAI), which pointed the way and also showed where several memory stores blur together. PAI carried at least **three**, and all of them read like "memory":
 
-- **USER/** held identity and life goals, auto-loaded every session.
-- **MEMORY/KNOWLEDGE/** was a curated, typed entity graph, fetched on demand.
-- **MEMORY/LEARNING/** captured wins and failures as raw timestamped records, to be mined later.
+<MemoryVaultCollapse />
 
 Each loaded differently, and the jobs overlapped. USER and KNOWLEDGE both answered "who am I and what am I working on." The two MEMORY stores served opposite ends, one curated and permanent, one raw and temporal. The result: you could rarely say where a fact lived or whether the assistant would see it.
 
 imprnt collapses that into one knowledge store with three on-demand doors, plus the assistant's small always-on behavior layer. One question routes anything you want to keep: is it **knowledge** or is it **behavior**? Knowledge goes to the vault and is found by search. Behavior goes to the config and loads every time. The longer record of these calls is in [design decisions](/design-decisions/).
+
+<div class="page-end-trim" aria-hidden="true"></div>
+
+<style>{`
+  /* On mobile the pagination nav sat ~96px below this last paragraph, more than
+     double the 43px rhythm between sections, so the Previous/Next cards felt
+     detached. This zero-height tail at the end of the content pulls the footer
+     up to match the page's section spacing. Mobile only, this page only. */
+  .page-end-trim {
+    height: 0;
+  }
+  @media (max-width: 50rem) {
+    .page-end-trim {
+      margin-bottom: -3.25rem;
+    }
+  }
+`}</style>

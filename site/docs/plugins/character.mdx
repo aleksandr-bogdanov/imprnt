@@ -38,8 +38,59 @@ A character generalizes to one or many. One ships today (Scribe), and each is it
 
 </Steps>
 
-### Remove
+<div class="remove-block">
+  <span class="remove-label">Remove</span>
 
 ```sh
 imprnt plugin rm character
 ```
+
+</div>
+
+<style>{`
+  .sl-markdown-content p code {
+    padding-block: 0.05em;
+    margin-block: -0.05em;
+  }
+  .remove-block {
+    margin-top: 1.4rem;
+  }
+  .remove-block .remove-label {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    margin-bottom: 0.5rem;
+  }
+  .remove-block .expressive-code,
+  .remove-block pre {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+  /* Finding 1: tighten the oversized content-to-pagination gap on this short page.
+     The void stacks the container's sibling margin (1.5rem), Starlight's empty
+     footer .meta (margin-top: 3rem), and the footer column gap (1.5rem) above the
+     pagination. Halve it page-locally. Unlayered rules win over Starlight's @layer
+     styles, so no !important needed. */
+  .sl-container > footer.sl-flex {
+    margin-top: 0.6rem;
+  }
+  footer.sl-flex .meta:empty {
+    margin-top: 1.2rem;
+  }
+  footer.sl-flex {
+    gap: 0.9rem;
+  }
+  @media (max-width: 640px) {
+    /* Finding 2: let long path chips shrink and break inside so the sentence
+       keeps flowing instead of each chip forcing its own line. */
+    .sl-markdown-content p code {
+      font-size: 0.82em;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+  }
+`}</style>

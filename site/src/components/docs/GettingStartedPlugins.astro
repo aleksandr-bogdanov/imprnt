@@ -1,0 +1,105 @@
+---
+/**
+ * Page-specific (getting-started) visual: the three plugin commands as filled
+ * command rows, matching the page's card language instead of a flat markdown
+ * table. Categories are the three fixed plugin verbs (list / add / rm), so this
+ * never goes stale. All command strings and descriptions kept in full (data).
+ * Each command renders as one non-wrapping chip so a command never splits across
+ * lines on a narrow phone. Filled surfaces, no borders. Theme-aware via tokens.
+ */
+const ROWS = [
+  {
+    cmd: "imprnt plugin list",
+    what: "See what is installed, and what you can add.",
+    accent: false,
+  },
+  {
+    cmd: "imprnt plugin add anti-slop",
+    what: "Fetch a plugin, copy it in, switch it on.",
+    accent: true,
+  },
+  {
+    cmd: "imprnt plugin rm anti-slop",
+    what: "Switch it off (--purge deletes the folder too).",
+    accent: false,
+  },
+];
+---
+
+<div class="gsplugins">
+  {
+    ROWS.map((r) => (
+      <div class={`row${r.accent ? " accent" : ""}`}>
+        <code class="cmd">{r.cmd}</code>
+        <p class="what">{r.what}</p>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .gsplugins {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.55rem;
+    margin: 1.2rem 0 1.4rem;
+  }
+  .row {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    align-items: center;
+    gap: 0.6rem 1.1rem;
+    border-radius: 13px;
+    padding: 0.8rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .row.accent {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  /* Scope to .gsplugins so the rule beats Starlight's global :not(pre)>code
+     styling (the pale green tint + faint border it leaks onto a bare <code>),
+     the same fix the sibling flow strip applies. Without this every command
+     chip reads green and the grey-vs-green row accent is lost. */
+  .gsplugins .cmd {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow-x: auto;
+    font-family: var(--sl-font-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+    padding: 0.22rem 0.6rem;
+    border-radius: 7px;
+    border: none;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 24%, var(--sl-color-bg));
+  }
+  .gsplugins .row.accent .cmd {
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+  }
+  .what {
+    font-size: 0.88rem;
+    line-height: 1.45;
+    color: var(--sl-color-white);
+    margin: 0;
+  }
+  @media (max-width: 640px) {
+    .gsplugins {
+      grid-template-columns: 1fr;
+    }
+    .row {
+      grid-column: auto;
+      grid-template-columns: 1fr;
+      gap: 0.4rem;
+      padding: 0.75rem 0.9rem;
+    }
+    .gsplugins .cmd {
+      justify-self: start;
+      display: inline-block;
+      width: max-content;
+    }
+  }
+</style>

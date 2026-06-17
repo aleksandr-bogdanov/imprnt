@@ -1,0 +1,24 @@
+---
+/**
+ * Page-specific (getting-started) scroll-offset fix. On a phone the sticky "On
+ * this page" TOC bar sits below the nav, so a heading or code-block frame that is
+ * jumped to (or scrolled up to) can land under the bar. Starlight sets
+ * scroll-padding-top on <html>, but the site's Lenis smooth-scroll can bypass it,
+ * so this adds an explicit scroll-margin-top to this page's heading anchors and
+ * expressive-code frames equal to the nav + mobile-TOC height.
+ *
+ * This component renders only on getting-started, so its `is:global` style ships
+ * only in this page's HTML. It changes no other page and no shared stylesheet.
+ */
+---
+
+<style is:global>
+  @media (max-width: 50rem) {
+    .sl-markdown-content :is(h2, h3)[id],
+    .sl-markdown-content .expressive-code {
+      scroll-margin-top: calc(
+        var(--sl-nav-height, 3.5rem) + var(--sl-mobile-toc-height, 3rem) + 1rem
+      );
+    }
+  }
+</style>

@@ -50,6 +50,7 @@ const STATS = [
   .bs {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
+    align-items: stretch;
     gap: 0.8rem;
     margin: 1.4rem 0 0.8rem;
   }
@@ -59,6 +60,11 @@ const STATS = [
     }
   }
   .bs-cell {
+    /* a shared row grid so every card's number, metric, name, and description
+       top-align across the three siblings, regardless of value length */
+    display: grid;
+    grid-template-rows: 1.9rem auto 1.4rem auto;
+    align-content: start;
     border-radius: 14px;
     padding: 1rem 1.1rem 1.05rem;
     background: color-mix(in oklab, var(--sl-color-gray-3) 9%, var(--sl-color-bg));
@@ -70,14 +76,16 @@ const STATS = [
     font-family: var(--sl-font-mono);
     font-size: 1.7rem;
     font-weight: 700;
-    line-height: 1.05;
+    line-height: 1.9rem;
+    white-space: nowrap;
     color: var(--sl-color-white);
   }
   .bs-cell.self .bs-value {
     color: var(--sl-color-text-accent);
   }
   .bs-metric {
-    margin-top: 0.15rem;
+    margin-top: 0.45rem;
+    white-space: nowrap;
     font-family: var(--sl-font-mono);
     font-size: 0.7rem;
     letter-spacing: 0.05em;
@@ -85,7 +93,7 @@ const STATS = [
     color: var(--sl-color-gray-2);
   }
   .bs-who {
-    margin-top: 0.55rem;
+    align-self: center;
     font-family: var(--sl-font);
     font-weight: 700;
     font-size: 0.95rem;
@@ -101,6 +109,7 @@ const STATS = [
     color: var(--sl-color-gray-1);
   }
   .bs-foot {
+    margin-top: 0.5rem;
     font-size: 0.86rem;
     line-height: 1.5;
     color: var(--sl-color-gray-2);

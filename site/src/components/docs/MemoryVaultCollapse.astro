@@ -1,0 +1,183 @@
+---
+/**
+ * The PAI-to-imprnt collapse, as a 3-into-1 visual for the "mess imprnt set out
+ * to avoid" section. PAI carried three stores that all read like "memory" and
+ * loaded differently; imprnt folds them into one knowledge store with on-demand
+ * doors, plus a small always-on behavior layer. Categories only, no instances,
+ * so the prose's data stays the source of truth. Scoped CSS, theme-aware via
+ * --sl tokens (docs pages do not load Tailwind).
+ */
+const PAI = [
+  { name: "USER/", note: "identity and life goals, auto-loaded every session" },
+  { name: "MEMORY/KNOWLEDGE/", note: "a curated, typed entity graph, fetched on demand" },
+  { name: "MEMORY/LEARNING/", note: "raw timestamped wins and failures, mined later" },
+];
+---
+
+<div class="collapse">
+  <div class="before">
+    <span class="grouplabel">PAI: three stores, all read like "memory"</span>
+    <div class="stores">
+      {PAI.map((s) => (
+        <div class="store">
+          <span class="store-name">{s.name}</span>
+          <span class="store-note">{s.note}</span>
+        </div>
+      ))}
+    </div>
+  </div>
+
+  <div class="arrow" aria-hidden="true">
+    <span class="arrow-glyph">&rarr;</span>
+    <span class="arrow-label">collapses into</span>
+  </div>
+
+  <div class="after">
+    <span class="grouplabel">imprnt: one store, one always-on layer</span>
+    <div class="result">
+      <div class="result-card knowledge">
+        <span class="rc-name">knowledge: the vault</span>
+        <span class="rc-note">one store, three on-demand doors, found by search</span>
+      </div>
+      <div class="result-card behavior">
+        <span class="rc-name">behavior: the assistant config</span>
+        <span class="rc-note">a small always-on layer, applied every time</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .collapse {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    /* center the three columns so the shorter right 2-card group sits opposite the
+       middle of the left 3-card block, and the arrow lands on their shared vertical
+       center. This reads as one set folding into the other, instead of the right
+       cards floating high while the arrow points at a gap. */
+    align-items: center;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  /* Starlight's content flow rule injects margin-top on the arrow and the right
+     column (every grid item after the first), nudging them off the shared center.
+     Zero it so all three columns center cleanly. */
+  .collapse > * {
+    margin-top: 0;
+  }
+  @media (max-width: 720px) {
+    .collapse {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .grouplabel {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+    margin-bottom: 0.6rem;
+  }
+
+  .stores {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .store {
+    border-radius: 12px;
+    padding: 0.6rem 0.8rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 13%, var(--sl-color-bg));
+  }
+  .store-name {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    color: var(--sl-color-white);
+  }
+  .store-note {
+    display: block;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+    margin-top: 0.18rem;
+  }
+
+  .arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--sl-color-text-accent);
+    /* the grid's align-items: center already lands the arrow on the shared vertical
+       center of both columns, so the "collapses into" gesture points from the
+       three-card stack straight into the two-card result. No manual offset needed. */
+  }
+  @media (max-width: 720px) {
+    .arrow {
+      margin-top: 0;
+    }
+  }
+  .arrow-glyph {
+    font-size: 1.6rem;
+    line-height: 1;
+  }
+  .arrow-label {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  @media (max-width: 720px) {
+    .arrow-glyph {
+      transform: rotate(90deg);
+    }
+  }
+
+  .result {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  /* the gap handles spacing between the two result cards; zero the content-flow
+     margin-top Starlight adds to the second card so the stack reads as one unit. */
+  .result > * {
+    margin-top: 0;
+  }
+  .result-card {
+    border-radius: 12px;
+    padding: 0.7rem 0.85rem;
+  }
+  .result-card.knowledge {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sl-color-text-accent) 22%, transparent);
+  }
+  .result-card.behavior {
+    /* nudged a step up from the .store grey (13%) so the "after" behavior card
+       reads as a result, not just one more "before" box. A subtle inner ring
+       groups both result cards as the outcome, kept softer than the green card. */
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sl-color-gray-3) 30%, transparent);
+  }
+  /* Match the left store cards' flat mono-title anatomy (.store-name) so both
+     sides of the diagram read as the same object type. The category word now
+     lives in the title line ("knowledge: the vault"), and the green vs gray
+     fill is the only differentiator, which drops the visual noise of a second
+     card recipe. */
+  .rc-name {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    color: var(--sl-color-white);
+  }
+  .rc-note {
+    display: block;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+    margin-top: 0.18rem;
+  }
+</style>

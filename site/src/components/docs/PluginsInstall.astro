@@ -15,9 +15,9 @@
   </p>
   <div class="cmds">
     <span class="cmd-label">install, list, remove</span>
-    <pre class="block"><code><span class="c">imprnt plugin list</span>            <span class="cm"># what is installed</span>
-<span class="c">imprnt plugin add anti-slop</span>   <span class="cm"># add one</span>
-<span class="c">imprnt plugin rm anti-slop</span>    <span class="cm"># remove one</span></code></pre>
+    <pre class="block"><code><span class="row"><span class="c">imprnt plugin list</span><span class="cm"># what is installed</span></span>
+<span class="row"><span class="c">imprnt plugin add anti-slop</span><span class="cm"># add one</span></span>
+<span class="row"><span class="c">imprnt plugin rm anti-slop</span><span class="cm"># remove one</span></span></code></pre>
   </div>
 </div>
 
@@ -67,17 +67,39 @@
     background: color-mix(in oklab, var(--sl-color-gray-4) 20%, var(--sl-color-bg));
   }
   .block code {
+    display: grid;
+    gap: 0.05rem;
     font-family: var(--sl-font-mono);
     font-size: 0.82rem;
     line-height: 1.7;
     background: none;
     padding: 0;
-    white-space: pre;
+    white-space: normal;
+  }
+  /* each command sits in its own row; the comment is pushed to a shared gutter
+     so the two columns line up without literal space padding that would clip on
+     a narrow screen */
+  .block .row {
+    display: grid;
+    grid-template-columns: 15rem 1fr;
+    align-items: baseline;
   }
   .block .c {
     color: var(--sl-color-white);
+    white-space: pre;
   }
   .block .cm {
     color: var(--sl-color-gray-3);
+    white-space: pre;
+  }
+  @media (max-width: 640px) {
+    /* on a phone the comment would wrap to its own indented line and read as a
+       stray fragment, so drop it: the three command names carry themselves */
+    .block .row {
+      grid-template-columns: 1fr;
+    }
+    .block .cm {
+      display: none;
+    }
   }
 </style>
