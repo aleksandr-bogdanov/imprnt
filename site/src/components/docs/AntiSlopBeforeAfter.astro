@@ -1,0 +1,74 @@
+---
+/**
+ * Before/after of what the ban does to a line of prose. Two filled columns,
+ * slop on the left, clean on the right, one row per category so the
+ * transformation is visible at a glance. Scoped CSS, theme-aware via Starlight
+ * tokens (no Tailwind: docs pages do not load it).
+ */
+const ROWS = [
+  {
+    slop: "The tool is robust — seamless, even.",
+    clean: "The tool holds up under load.",
+  },
+  {
+    slop: "It's worth noting that this matters.",
+    clean: "This matters.",
+  },
+  {
+    slop: "This isn't a feature, it's a philosophy.",
+    clean: "This is a philosophy.",
+  },
+];
+---
+
+<div class="ba">
+  <div class="ba-head ba-slop-head">Default voice</div>
+  <div class="ba-head ba-clean-head">With anti-slop</div>
+  {
+    ROWS.map((r) => (
+      <>
+        <p class="ba-cell ba-slop">{r.slop}</p>
+        <p class="ba-cell ba-clean">{r.clean}</p>
+      </>
+    ))
+  }
+</div>
+
+<style>
+  .ba {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin: 1.4rem 0;
+  }
+  .ba-head {
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0 0.3rem 0.15rem;
+  }
+  .ba-slop-head {
+    color: var(--sl-color-gray-3);
+  }
+  .ba-clean-head {
+    color: var(--sl-color-text-accent);
+  }
+  .ba-cell {
+    margin: 0;
+    padding: 0.7rem 0.9rem;
+    border-radius: 12px;
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+  .ba-slop {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 13%, var(--sl-color-bg));
+    color: var(--sl-color-gray-2);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklab, var(--sl-color-gray-3) 60%, transparent);
+  }
+  .ba-clean {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+    color: var(--sl-color-white);
+  }
+</style>

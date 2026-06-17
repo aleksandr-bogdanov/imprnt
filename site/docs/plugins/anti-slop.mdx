@@ -1,0 +1,46 @@
+---
+title: Anti-slop
+description: A ruleset the assistant reads so its prose stops reading like AI.
+---
+
+import AntiSlopCategories from "../../src/components/docs/AntiSlopCategories.astro";
+import AntiSlopBeforeAfter from "../../src/components/docs/AntiSlopBeforeAfter.astro";
+
+Out of the box, an assistant writes like an assistant. **Anti-slop** is a fixed set of rules you hand it so the tells go away.
+
+Those tells are easy to spot once you know them: em-dashes, filler like "robust" and "seamless", openers like "it's worth noting that", the negate-then-affirm rhythm ("this isn't X, it's Y"). The rules ban them across every bit of prose the assistant produces, whether a vault note, a doc, a message, or a deliverable.
+
+<AntiSlopBeforeAfter />
+
+## What it bans
+
+A **behavior** plugin. It hands the assistant a fixed chunk of text you wire into its prompt. No code, no commands, no data, and it never touches the vault. The rules fall into four categories.
+
+<AntiSlopCategories />
+
+To turn it off, delete the import line. The assistant goes back to its default voice.
+
+## Install
+
+```sh
+imprnt plugin add anti-slop
+```
+
+That wires `@plugins/anti-slop/agent.md` into `CLAUDE.local.md`, your per-machine on-off file. You can also hand-edit that file and add the line yourself.
+
+Want the rules in every session, even a plain `claude` in an unrelated repo? Wire them at **user scope**:
+
+```sh
+imprnt global add anti-slop
+imprnt global rm anti-slop
+```
+
+### Make the rules your own
+
+To run your own register and banned words on top, copy the fragment into the private `_personal/` folder, extend it, and wire that copy instead. `_personal/` is gitignored, so your overlay never ships.
+
+### Remove it
+
+```sh
+imprnt plugin rm anti-slop
+```

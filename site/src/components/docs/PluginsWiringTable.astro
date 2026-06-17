@@ -1,0 +1,172 @@
+---
+/**
+ * Page-specific to docs/plugins.mdx. The same agent.md fragment loads either for
+ * one project or for every session; this lays the two choices side by side as
+ * filled lanes, each carrying its verbatim commands and the four facts that
+ * differ (where it wires in, the sessions it reaches, how to remove it). It
+ * replaces the prose paragraph that used to repeat the same project-vs-global
+ * split. Borderless filled surfaces, scoped CSS, theme-aware via Starlight tokens
+ * (no Tailwind on docs pages). All commands are verbatim.
+ */
+const LANES = [
+  {
+    scope: "project",
+    blurb: "the default",
+    add: "imprnt plugin add <name>",
+    where: "CLAUDE.local.md, per-machine and gitignored",
+    reaches: "this project's sessions",
+    remove: "imprnt plugin rm <name>",
+    accent: false,
+  },
+  {
+    scope: "global",
+    blurb: "a house style like anti-slop",
+    add: "imprnt global add <name>",
+    where: "registered with imprnt, never your ~/.claude/CLAUDE.md",
+    reaches: "every session imp launches",
+    remove: "imprnt global rm <name>",
+    accent: true,
+  },
+];
+---
+
+<div class="wiring">
+  {
+    LANES.map((l) => (
+      <div class={`lane${l.accent ? " accent" : ""}`}>
+        <div class="head">
+          <span class="scope">{l.scope}</span>
+          <span class="blurb">{l.blurb}</span>
+        </div>
+        <div class="flow">
+          <span class="chip">agent.md</span>
+          <span class="arr" aria-hidden="true">&rarr;</span>
+          <span class="dest">{l.reaches}</span>
+        </div>
+        <dl class="facts">
+          <div class="fact">
+            <dt>add</dt>
+            <dd><code>{l.add}</code></dd>
+          </div>
+          <div class="fact">
+            <dt>wires in</dt>
+            <dd>{l.where}</dd>
+          </div>
+          <div class="fact">
+            <dt>remove</dt>
+            <dd><code>{l.remove}</code></dd>
+          </div>
+        </dl>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .wiring {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem;
+    margin: 1.5rem 0;
+  }
+  .lane {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    border-radius: 15px;
+    padding: 1.05rem 1.2rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .lane.accent {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+  }
+  .scope {
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--sl-color-gray-2);
+  }
+  .lane.accent .scope {
+    color: var(--sl-color-text-accent);
+  }
+  .blurb {
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-2);
+  }
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.55rem;
+  }
+  .chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 7px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    color: var(--sl-color-gray-1);
+  }
+  .lane.accent .chip {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 18%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+    font-weight: 600;
+  }
+  .arr {
+    color: var(--sl-color-gray-4);
+    font-size: 0.9rem;
+  }
+  .dest {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .facts {
+    margin: 0;
+    display: grid;
+    gap: 0.5rem;
+  }
+  .fact {
+    display: grid;
+    grid-template-columns: 4.2rem 1fr;
+    gap: 0.2rem 0.7rem;
+    align-items: baseline;
+  }
+  .fact dt {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .fact dd {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+  .fact code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 16%, var(--sl-color-bg));
+    color: var(--sl-color-white);
+  }
+  @media (max-width: 640px) {
+    .wiring {
+      grid-template-columns: 1fr;
+    }
+    .fact {
+      grid-template-columns: 3.6rem 1fr;
+    }
+  }
+</style>

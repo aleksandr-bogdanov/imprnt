@@ -1,0 +1,78 @@
+---
+title: Contributing
+description: How imprnt is built, structured, and released, for anyone hacking on it.
+---
+
+import ContributingFactStrip from "../src/components/docs/ContributingFactStrip.astro";
+import ContributingPackages from "../src/components/docs/ContributingPackages.astro";
+import ContributingBuildFlow from "../src/components/docs/ContributingBuildFlow.astro";
+import ContributingPrivacySplit from "../src/components/docs/ContributingPrivacySplit.astro";
+import ContributingDistTags from "../src/components/docs/ContributingDistTags.astro";
+import ContributingNext from "../src/components/docs/ContributingNext.astro";
+
+This page is for people building imprnt itself. imprnt is open source under [MIT](https://github.com/aleksandr-bogdanov/imprnt/blob/main/LICENSE).
+
+<ContributingFactStrip />
+
+## The monorepo
+
+imprnt is a [bun workspaces](https://bun.sh/docs/install/workspaces) monorepo. One git repo, one `bun install`, develop everything together. At publish time it splits into two package families.
+
+<ContributingPackages />
+
+```sh
+bun install
+bun run build      # compile each package
+bun run test       # bun test across the workspace
+bun run check      # typecheck, test, build
+```
+
+## Ship Node, build with Bun
+
+What a user installs runs on **Node**, the runtime everyone already has, so `npm i -g imprnt` works with no "first install Bun" wall. A code plugin builds the same way, so the read path needs no Bun either.
+
+<ContributingBuildFlow />
+
+## Generic ships, personal stays private
+
+<ContributingPrivacySplit />
+
+## Releasing
+
+imprnt publishes to npm on two [dist-tags](https://docs.npmjs.com/cli/v10/commands/npm-dist-tag). It is the same package with two pointers, **not a separate beta registry**.
+
+<ContributingDistTags />
+
+Versions are independent per package, decided by [Turborepo's](https://turborepo.com) `--affected`, so a package whose files did not change is never republished. An edge build is dogfooded against edge plugins automatically.
+
+All publishing runs through one GitHub Actions workflow that authenticates to npm with OIDC **trusted publishing** (no long-lived tokens) and signs a provenance attestation on every package:
+
+```
+push to master               -> edge: affected packages -> @edge
+                                 (automatic)
+run publish.yml mode=release -> latest: affected since release
+                                 (gated, then tag + Release)
+```
+
+A stable release pauses at a GitHub Environment for a required reviewer's **approval**, so even an automated trigger cannot reach `latest` without a human clicking approve. Trusted publishing is configured once per package on npmjs.com.
+
+To cut a stable release, use the `imprnt-release` skill (it fires the workflow and reports), or run it by hand:
+
+```sh
+# fire the release, then approve the npm-production gate
+gh workflow run publish.yml -f mode=release
+
+# plan only, publishes nothing
+gh workflow run publish.yml -f mode=release -f dry_run=true
+```
+
+npm only allows a full unpublish within 72 hours, so for a normal release you cannot count on it. To undo a bad `latest`, point the tag back to the last good version and deprecate the bad one:
+
+```sh
+npm dist-tag add imprnt@<last-good> latest
+npm deprecate imprnt@<bad> "broken release, use <last-good>"
+```
+
+## Read next
+
+<ContributingNext />

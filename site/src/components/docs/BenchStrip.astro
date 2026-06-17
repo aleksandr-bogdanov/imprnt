@@ -1,0 +1,108 @@
+---
+/**
+ * comparison.mdx ONLY - the three benchmark figures pulled out of the prose so
+ * they are scannable: the two LongMemEval recall leaders next to imprnt's
+ * own-task eval, with the explicit note that they are different benchmarks.
+ * Scoped CSS only, no Tailwind, theme-aware via --sl tokens.
+ */
+const STATS = [
+  {
+    value: "0.96",
+    metric: "R@5",
+    who: "mempalace",
+    on: "LongMemEval recall over auto-logged chat dumps",
+  },
+  {
+    value: "0.962",
+    metric: "R@5",
+    who: "iai",
+    on: "LongMemEval, effectively tied with mempalace",
+  },
+  {
+    value: "90% / 97%",
+    metric: "first-hit / top-5",
+    who: "imprnt",
+    self: true,
+    on: "its own in-repo eval, 39 hand-written questions across two vaults",
+  },
+];
+---
+
+<div class="bs">
+  {
+    STATS.map((s) => (
+      <div class={s.self ? "bs-cell self" : "bs-cell"}>
+        <div class="bs-value">{s.value}</div>
+        <div class="bs-metric">{s.metric}</div>
+        <div class="bs-who">{s.who}</div>
+        <div class="bs-on">{s.on}</div>
+      </div>
+    ))
+  }
+</div>
+<p class="bs-foot">
+  Different benchmarks, not one leaderboard. The two on the left score recall over thousands of
+  auto-captured turns. imprnt's runs plain-language questions against curated vaults a tenth the size.
+  A score on one does not carry over to the other.
+</p>
+
+<style>
+  .bs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.8rem;
+    margin: 1.4rem 0 0.8rem;
+  }
+  @media (max-width: 720px) {
+    .bs {
+      grid-template-columns: 1fr;
+    }
+  }
+  .bs-cell {
+    border-radius: 14px;
+    padding: 1rem 1.1rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 9%, var(--sl-color-bg));
+  }
+  .bs-cell.self {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .bs-value {
+    font-family: var(--sl-font-mono);
+    font-size: 1.7rem;
+    font-weight: 700;
+    line-height: 1.05;
+    color: var(--sl-color-white);
+  }
+  .bs-cell.self .bs-value {
+    color: var(--sl-color-text-accent);
+  }
+  .bs-metric {
+    margin-top: 0.15rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .bs-who {
+    margin-top: 0.55rem;
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--sl-color-white);
+  }
+  .bs-cell.self .bs-who {
+    color: var(--sl-color-text-accent);
+  }
+  .bs-on {
+    margin-top: 0.2rem;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+  .bs-foot {
+    font-size: 0.86rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+  }
+</style>

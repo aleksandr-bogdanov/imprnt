@@ -1,0 +1,87 @@
+---
+/**
+ * Page-specific (design-decisions). The intro summary turned into a clickable
+ * jump-nav: each call is a borderless card linking to its in-page section, so
+ * the top block adds navigation instead of previewing text the reader hits
+ * again. Shows the eleven calls as a scannable grid. Scoped CSS, theme-aware
+ * via Starlight tokens, no Tailwind.
+ */
+const CALLS = [
+  { anchor: "ration-the-model", call: "Ration the model", short: "Spend it on filing, keep it off search" },
+  { anchor: "bm25-not-embeddings", call: "BM25, not embeddings", short: "Plain local math, no vector database" },
+  { anchor: "the-data-is-the-knowledge", call: "The data is the knowledge", short: "A note carries the full source, never a summary" },
+  { anchor: "domain-first-folders", call: "Domain-first folders", short: "Sort by life-area, the way you browse" },
+  { anchor: "the-core-stays-blind", call: "The core stays blind", short: "Add or remove any plugin with zero core edits" },
+  { anchor: "copy-share-no-code", call: "Copy, share no code", short: "Reversible beats pure" },
+  { anchor: "commands-never-a-daemon", call: "Commands, never a daemon", short: "Nothing runs unless you run it" },
+  { anchor: "invariants-are-tests", call: "Invariants are tests", short: "A principle you cannot check rots" },
+  { anchor: "private-by-being-private", call: "Private by being private", short: "Local, owner-only, no redaction machinery" },
+  { anchor: "imp-vs-imprnt", call: "imp vs imprnt", short: "One opt-in per keystroke" },
+  { anchor: "context-is-demand-paged", call: "Context is demand-paged", short: "A reading day costs a pointer, not the contract" },
+];
+---
+
+<nav class="dd-nav" aria-label="The calls">
+  <span class="dd-nav-label">the calls, jump to any</span>
+  <div class="dd-nav-grid">
+    {
+      CALLS.map((c) => (
+        <a class="dd-nav-card" href={`#${c.anchor}`}>
+          <span class="dd-nav-call">{c.call}</span>
+          <span class="dd-nav-short">{c.short}</span>
+        </a>
+      ))
+    }
+  </div>
+</nav>
+
+<style>
+  .dd-nav {
+    margin: 1.6rem 0 2rem;
+  }
+  .dd-nav-label {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+    margin-bottom: 0.7rem;
+  }
+  .dd-nav-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.7rem;
+  }
+  @media (max-width: 720px) {
+    .dd-nav-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .dd-nav-card {
+    display: block;
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+    text-decoration: none;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 6%, var(--sl-color-bg));
+    transition: background 0.15s ease;
+  }
+  .dd-nav-card:hover {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 13%, var(--sl-color-bg));
+  }
+  .dd-nav-call {
+    display: block;
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.98rem;
+    line-height: 1.25;
+    color: var(--sl-color-white);
+  }
+  .dd-nav-short {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+</style>

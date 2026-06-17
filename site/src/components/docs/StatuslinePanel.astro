@@ -1,0 +1,140 @@
+---
+/**
+ * Page-specific (statusline): the four-row panel rendered as a dark terminal
+ * card instead of a raw fenced code block, so it never clips on a phone. Each
+ * row is its own line that wraps cleanly with inner padding, and the percentage
+ * segments carry the real alarm-ramp color (calm below 60, amber past 60, red
+ * past 85) so the reader sees the behavior the prose describes. All example
+ * values are verbatim from the source panel: this is data, the card only colors
+ * it. No borders, theme-token surface for the page, fixed dark terminal inside.
+ */
+const ROWS = [
+  {
+    label: "model",
+    segs: [
+      { t: "Fable 5" },
+      { t: "session taxes-deep-dive" },
+      { t: "dir imprint-vault" },
+      { t: "git main ↑2 ⊡1" },
+    ],
+  },
+  {
+    label: "cost",
+    segs: [{ t: "$0.42" }, { t: "elapsed 1h12m" }, { t: "lines +156/-23" }],
+  },
+  {
+    label: "ctx",
+    segs: [
+      { t: "▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱", calm: true },
+      { t: "48%", ramp: "calm" },
+      { t: "effort high" },
+    ],
+  },
+  {
+    label: "limits",
+    segs: [
+      { t: "5h 24% →18:00", ramp: "calm" },
+      { t: "7d 41% →Thu", ramp: "calm" },
+      { t: "vault 247 notes, 3 review" },
+      { t: "☀ 22°" },
+      { t: "14:05" },
+    ],
+  },
+];
+---
+
+<div class="sl-panel" role="img" aria-label="Example imp status panel, four rows: model, cost, context, limits.">
+  <div class="sl-chrome">
+    <span class="sl-dot"></span><span class="sl-dot"></span><span class="sl-dot"></span>
+    <span class="sl-title">imp session</span>
+  </div>
+  <div class="sl-rows">
+    {
+      ROWS.map((row) => (
+        <div class="sl-row">
+          <span class="sl-label">{row.label}</span>
+          <span class="sl-segs">
+            {row.segs.map((seg, i) => (
+              <>
+                {i > 0 && <span class="sl-sep">·</span>}
+                <span class={`sl-seg${seg.ramp ? ` ramp-${seg.ramp}` : ""}`}>{seg.t}</span>
+              </>
+            ))}
+          </span>
+        </div>
+      ))
+    }
+  </div>
+</div>
+
+<style>
+  .sl-panel {
+    margin: 1.4rem 0;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #11131a;
+    box-shadow: 0 1px 3px color-mix(in oklab, #000 30%, transparent);
+  }
+  .sl-chrome {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.85rem;
+    background: #181b24;
+  }
+  .sl-dot {
+    width: 0.62rem;
+    height: 0.62rem;
+    border-radius: 999px;
+    background: #3a3f4d;
+  }
+  .sl-title {
+    margin-left: 0.4rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    color: #6b7180;
+  }
+  .sl-rows {
+    padding: 0.8rem 1rem 0.95rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    line-height: 1.85;
+  }
+  .sl-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+  }
+  .sl-label {
+    flex: 0 0 3.4rem;
+    color: #6b7180;
+    text-align: left;
+  }
+  .sl-segs {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #c3c8d4;
+    overflow-wrap: anywhere;
+  }
+  .sl-sep {
+    color: #454b5a;
+    margin: 0 0.35rem;
+  }
+  .sl-seg {
+    white-space: nowrap;
+  }
+  /* alarm ramp: calm reads near-monochrome, amber past 60, red past 85 */
+  .ramp-calm {
+    color: #9aa0ad;
+  }
+  @media (max-width: 480px) {
+    .sl-rows {
+      font-size: 0.74rem;
+      padding: 0.7rem 0.8rem 0.85rem;
+    }
+    .sl-label {
+      flex-basis: 2.9rem;
+    }
+  }
+</style>

@@ -1,0 +1,117 @@
+---
+/**
+ * Page-specific (getting-started) visual: the two ways imp opens Claude, side by
+ * side so the either/or is scannable. Two filled cards, no borders. The data (the
+ * key difference: current folder vs the vault) stays in full.
+ * Scoped CSS, theme-aware via Starlight tokens.
+ */
+const MODES = [
+  {
+    cmd: "imp",
+    where: "where you stand",
+    lines: [
+      "Opens in your current folder.",
+      "Your plugins and your vault stay in reach.",
+      "A coding session can answer \"who owns this service?\" from your own notes.",
+    ],
+    accent: true,
+  },
+  {
+    cmd: "imp lair",
+    where: "inside the vault",
+    lines: [
+      "Opens inside the vault itself.",
+      "The full contract loads here.",
+      "Your personal chats pile up in one place you can resume.",
+    ],
+    accent: false,
+  },
+];
+---
+
+<div class="gsmodes">
+  {
+    MODES.map((m) => (
+      <div class={`mode${m.accent ? " accent" : ""}`}>
+        <div class="head">
+          <code class="cmd">{m.cmd}</code>
+          <span class="where">{m.where}</span>
+        </div>
+        <ul class="lines">
+          {m.lines.map((l) => <li>{l}</li>)}
+        </ul>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .gsmodes {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.7rem;
+    margin: 1.3rem 0;
+  }
+  .mode {
+    border-radius: 13px;
+    padding: 0.95rem 1.05rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .mode.accent {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+  }
+  .cmd {
+    font-family: var(--sl-font-mono);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+  }
+  .mode.accent .cmd {
+    color: var(--sl-color-text-accent);
+  }
+  .where {
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .lines {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.4rem;
+  }
+  .lines li {
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--sl-color-white);
+    padding-left: 1.1rem;
+    position: relative;
+  }
+  .lines li::before {
+    content: "";
+    position: absolute;
+    left: 0.15rem;
+    top: 0.6rem;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--sl-color-gray-4);
+  }
+  .mode.accent .lines li::before {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 70%, var(--sl-color-bg));
+  }
+  @media (max-width: 640px) {
+    .gsmodes {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

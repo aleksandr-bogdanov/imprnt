@@ -1,0 +1,96 @@
+---
+/**
+ * Page-specific (character) visual: Scribe, the one shipped default, pulled out
+ * of the dense intro sentence into its own filled panel with its traits as a
+ * scannable list. Naming Scribe is fine (it is the single shipped default, not
+ * a list of instances that goes stale). Filled surface, no border, no
+ * left-accent bar. Scoped CSS, theme-aware via Starlight tokens.
+ */
+const TRAITS = [
+  "Pushes back when it disagrees",
+  "Owns mistakes lightly",
+  "Plain prose, no filler",
+  "Works as a peer, not a yes-machine",
+];
+---
+
+<div class="scribe">
+  <div class="head">
+    <span class="name">Scribe</span>
+    <span class="tag">the default character</span>
+  </div>
+  <ul class="traits">
+    {TRAITS.map((t) => <li>{t}</li>)}
+  </ul>
+  <p class="frame">
+    Your vault holds your real people in <code>people/</code>. This folder holds
+    your digital ones.
+  </p>
+</div>
+
+<style>
+  .scribe {
+    margin: 1.4rem 0 1.6rem;
+    border-radius: 14px;
+    padding: 1.15rem 1.25rem 1.25rem;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin-bottom: 0.8rem;
+  }
+  .name {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .traits {
+    list-style: none;
+    margin: 0 0 0.85rem;
+    padding: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.45rem 1.1rem;
+  }
+  .traits li {
+    position: relative;
+    padding-left: 1.15rem;
+    font-size: 0.9rem;
+    line-height: 1.35;
+    color: var(--sl-color-white);
+  }
+  .traits li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.5em;
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 50%;
+    background: var(--sl-color-text-accent);
+  }
+  .frame {
+    margin: 0;
+    font-size: 0.86rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+  .frame code {
+    font-size: 0.82em;
+  }
+  @media (max-width: 640px) {
+    .traits {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

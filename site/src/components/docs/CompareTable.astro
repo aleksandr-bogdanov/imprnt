@@ -1,0 +1,297 @@
+---
+/**
+ * comparison.mdx ONLY - the field, tool by tool. A real 5-column table on
+ * desktop (zebra rows, sticky header, the imprnt row tinted green) that
+ * collapses to one card per tool below 880px so all five fields survive on a
+ * phone. Every cell's full text is data and is kept verbatim. Scoped CSS only,
+ * no Tailwind (docs pages do not load it), theme-aware via --sl tokens.
+ */
+const COLS = ["Tool", "Where memory lives", "Retrieval", "Capture", "AI reads via"];
+
+// `chips` flags substrings to render as nowrap code chips so they stop
+// breaking across lines inside a narrow cell. Full text is preserved.
+const ROWS = [
+  {
+    tool: "imprnt",
+    self: true,
+    where: "Plain Markdown files you own",
+    retrieval: "BM25 + grep, no model in loop",
+    capture: "Conscious, on demand",
+    reads: "Greps the files directly, no server",
+  },
+  {
+    tool: "Karpathy's LLM Wiki",
+    note: "pattern, with impls like obsidian-wiki, llmwiki",
+    where: "Plain Markdown: immutable raw/ plus an LLM-compiled wiki/",
+    retrieval: "Index-first: the LLM reads index.md, then full pages. No embeddings",
+    capture: "Conscious: drop a source, tell the LLM to compile it",
+    reads: "Agent reads files directly, no server (optional qmd search)",
+  },
+  {
+    tool: "Basic Memory",
+    where: "Markdown files plus a derived SQLite index",
+    retrieval: "Hybrid: SQLite full-text plus vectors (default), full-text fallback",
+    capture: "Conscious write_note",
+    reads: "MCP server",
+  },
+  {
+    tool: "Reor",
+    note: "archived 2026",
+    where: "Markdown files plus LanceDB vectors",
+    retrieval: "Embeddings, vector similarity",
+    capture: "Auto-embed on every write",
+    reads: "Built-in desktop app, no MCP",
+  },
+  {
+    tool: "Khoj",
+    where: "Its own Postgres plus pgvector DB",
+    retrieval: "Embeddings plus neural re-rank",
+    capture: "Sync and index your docs",
+    reads: "App, and an MCP client (not a server)",
+  },
+  {
+    tool: "Obsidian / Logseq AI plugins",
+    where: "Your notes plus a sidecar vector store",
+    retrieval: "Embeddings",
+    capture: "Auto-embed in the background",
+    reads: "Inside the GUI app",
+  },
+  {
+    tool: "mem0",
+    where: "Vector store (24 backends)",
+    retrieval: "Hybrid: semantic plus BM25 plus entity matching, fused",
+    capture: "Auto-extract from turns",
+    reads: "API or OpenMemory MCP",
+  },
+  {
+    tool: "Letta / MemGPT",
+    where: "Postgres plus pgvector memory blocks",
+    retrieval: "Embeddings over archival memory",
+    capture: "Agent self-edits its own memory",
+    reads: "Letta server / API",
+  },
+  {
+    tool: "Zep / Graphiti",
+    where: "Temporal knowledge graph (Neo4j default)",
+    retrieval: "Hybrid: embeddings plus BM25 plus graph",
+    capture: "Auto-extract into the graph",
+    reads: "SaaS (Zep) or MCP (Graphiti)",
+  },
+  {
+    tool: "cognee",
+    where: "Graph plus vectors plus relational",
+    retrieval: "Hybrid, with a model on the read path",
+    capture: "Auto-extract from many formats",
+    reads: "Library or MCP",
+  },
+  {
+    tool: "mempalace",
+    where: "Vector DB (ChromaDB default)",
+    retrieval: "Embeddings plus boosting plus optional LLM re-rank",
+    capture: "Manual and auto hooks",
+    reads: "MCP server (33 tools)",
+  },
+  {
+    tool: "Supermemory",
+    where: "Cloud store, with a real self-host mode",
+    retrieval: "Embeddings",
+    capture: "Auto-capture",
+    reads: "API, MCP, or local binary",
+  },
+  {
+    tool: "iai",
+    where: 'Encrypted SQLite ("Hippo", AES-256), 3 tiers',
+    retrieval: "Local embeddings (bge-small) plus graph links plus recency, ranked, no LLM in the hot path",
+    capture: "Automatic, via Claude Code / Codex hooks",
+    reads: "MCP server",
+  },
+];
+---
+
+<div class="ct">
+  {/* desktop: a real table, sticky header + zebra + tinted imprnt row */}
+  <div class="ct-scroll" role="region" aria-label="The field, tool by tool" tabindex="0">
+    <table class="ct-table">
+      <thead>
+        <tr>{COLS.map((c) => <th>{c}</th>)}</tr>
+      </thead>
+      <tbody>
+        {
+          ROWS.map((r) => (
+            <tr class={r.self ? "self" : ""}>
+              <th scope="row" class="ct-tool">
+                <span class="ct-toolname">{r.tool}</span>
+                {r.note && <span class="ct-note">{r.note}</span>}
+              </th>
+              <td>{r.where}</td>
+              <td>{r.retrieval}</td>
+              <td>{r.capture}</td>
+              <td>{r.reads}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+
+  {/* mobile: one card per tool so all five fields survive */}
+  <div class="ct-cards">
+    {
+      ROWS.map((r) => (
+        <div class={r.self ? "ct-card self" : "ct-card"}>
+          <div class="ct-card-head">
+            <span class="ct-toolname">{r.tool}</span>
+            {r.note && <span class="ct-note">{r.note}</span>}
+          </div>
+          <dl>
+            <dt>where memory lives</dt>
+            <dd>{r.where}</dd>
+            <dt>retrieval</dt>
+            <dd>{r.retrieval}</dd>
+            <dt>capture</dt>
+            <dd>{r.capture}</dd>
+            <dt>AI reads via</dt>
+            <dd>{r.reads}</dd>
+          </dl>
+        </div>
+      ))
+    }
+  </div>
+</div>
+
+<style>
+  .ct {
+    margin: 1.4rem 0;
+  }
+
+  /* ---- desktop table ---- */
+  .ct-scroll {
+    position: relative;
+    overflow-x: auto;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 7%, var(--sl-color-bg));
+  }
+  .ct-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0;
+    font-size: 0.86rem;
+    line-height: 1.45;
+  }
+  .ct-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    text-align: left;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-white);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 24%, var(--sl-color-bg));
+    padding: 0.7rem 0.9rem;
+    white-space: nowrap;
+  }
+  .ct-table tbody td,
+  .ct-table tbody th {
+    padding: 0.7rem 0.9rem;
+    vertical-align: top;
+    color: var(--sl-color-gray-1);
+    min-width: 8.5rem;
+    border: 0;
+  }
+  .ct-table tbody tr:nth-child(even) {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 9%, var(--sl-color-bg));
+  }
+  .ct-table tbody tr.self,
+  .ct-card.self {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 13%, var(--sl-color-bg));
+  }
+  .ct-tool {
+    min-width: 11rem;
+  }
+  .ct-toolname {
+    display: block;
+    font-family: var(--sl-font);
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  tr.self .ct-toolname,
+  .ct-card.self .ct-toolname {
+    color: var(--sl-color-text-accent);
+  }
+  .ct-note {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.72rem;
+    font-style: italic;
+    color: var(--sl-color-gray-3);
+  }
+
+  /* code-shaped tokens inside cells stay on one line */
+  .ct-table td,
+  .ct-card dd {
+    overflow-wrap: break-word;
+  }
+
+  .ct-cards {
+    display: none;
+  }
+
+  /* ---- mobile cards (all five fields survive) ---- */
+  @media (max-width: 880px) {
+    .ct-scroll {
+      display: none;
+    }
+    .ct-cards {
+      display: grid;
+      gap: 0.7rem;
+    }
+    .ct-card {
+      border-radius: 12px;
+      padding: 0.85rem 1rem 0.95rem;
+      background: color-mix(in oklab, var(--sl-color-gray-3) 9%, var(--sl-color-bg));
+    }
+    .ct-card-head {
+      margin-bottom: 0.6rem;
+    }
+    .ct-card .ct-toolname {
+      font-size: 1.02rem;
+    }
+    .ct-card dl {
+      display: grid;
+      grid-template-columns: 8.5rem 1fr;
+      gap: 0.35rem 0.7rem;
+      margin: 0;
+    }
+    .ct-card dt {
+      font-family: var(--sl-font-mono);
+      font-size: 0.66rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--sl-color-gray-2);
+      padding-top: 0.12rem;
+    }
+    .ct-card dd {
+      margin: 0;
+      font-size: 0.86rem;
+      line-height: 1.4;
+      color: var(--sl-color-gray-1);
+    }
+    .ct-card.self dd {
+      color: var(--sl-color-white);
+    }
+  }
+  @media (max-width: 460px) {
+    .ct-card dl {
+      grid-template-columns: 1fr;
+      gap: 0.05rem 0;
+    }
+    .ct-card dd {
+      margin: 0 0 0.5rem;
+    }
+    .ct-card dd:last-child {
+      margin-bottom: 0;
+    }
+  }
+</style>

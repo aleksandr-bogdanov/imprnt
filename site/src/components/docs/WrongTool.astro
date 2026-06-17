@@ -1,0 +1,98 @@
+---
+/**
+ * comparison.mdx ONLY - the "is this for me?" answer as a scannable card grid:
+ * what you want -> which tool fits when imprnt does not. Borderless filled
+ * cards. Scoped CSS only, no Tailwind, theme-aware via --sl tokens.
+ */
+const CASES = [
+  {
+    want: "Zero-effort ambient memory",
+    pick: "mem0, Zep, mempalace, iai",
+    why: "You want the assistant to silently remember every chat with no filing step. imprnt's conscious capture gets in the way. These capture turns automatically.",
+  },
+  {
+    want: "Encrypted automatic memory behind Claude Code",
+    pick: "iai",
+    why: "It installs hooks, captures every turn, and keeps an encrypted local store. imprnt keeps plain files with no encryption layer, since privacy comes from the directory being yours and owner-only.",
+  },
+  {
+    want: "A product, not a personal vault",
+    pick: "mem0, Zep, Supermemory",
+    why: "A multi-user app needs a memory API, a hosted service, and per-user isolation. imprnt is single-owner, local, no API surface.",
+  },
+  {
+    want: "An agent that manages its own state at scale",
+    pick: "Letta",
+    why: "The purest version of an agent that pages and self-edits its own memory across long runs.",
+  },
+  {
+    want: "Semantic recall across messy unlabeled text",
+    pick: "any embeddings tool above",
+    why: "If your corpus is large, unstructured, and you will not tag it on the way in, embeddings out-recall BM25. imprnt's bet pays off because the write path does the labeling. Skip that work and the bet weakens.",
+  },
+];
+---
+
+<div class="wt">
+  {
+    CASES.map((c) => (
+      <div class="wt-card">
+        <p class="wt-want">{c.want}</p>
+        <p class="wt-pick">
+          <span class="wt-pick-label">pick instead</span>
+          {c.pick}
+        </p>
+        <p class="wt-why">{c.why}</p>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .wt {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.8rem;
+    margin: 1.4rem 0;
+  }
+  @media (max-width: 720px) {
+    .wt {
+      grid-template-columns: 1fr;
+    }
+  }
+  .wt-card {
+    border-radius: 14px;
+    padding: 1rem 1.15rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 9%, var(--sl-color-bg));
+  }
+  .wt-want {
+    margin: 0;
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 1rem;
+    line-height: 1.3;
+    color: var(--sl-color-white);
+  }
+  .wt-pick {
+    margin: 0.5rem 0 0.6rem;
+    font-size: 0.92rem;
+    color: var(--sl-color-text-accent);
+    font-weight: 600;
+  }
+  .wt-pick-label {
+    display: inline-block;
+    margin-right: 0.45rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    vertical-align: 0.05em;
+  }
+  .wt-why {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+</style>

@@ -1,0 +1,61 @@
+---
+/**
+ * contributing.mdx ONLY — the architecture facts pulled out of the run-on intro
+ * line into a scannable badge strip: monorepo, ships Node, builds with Bun, MIT.
+ * Categories of fact, not a maintained list. No borders, filled chips. Scoped
+ * CSS, theme-aware via --sl tokens (docs pages do not load Tailwind).
+ */
+const FACTS = [
+  { k: "repo", v: "one monorepo" },
+  { k: "runs on", v: "Node" },
+  { k: "built with", v: "Bun" },
+  { k: "license", v: "MIT" },
+];
+---
+
+<div class="fstrip">
+  {
+    FACTS.map((f) => (
+      <div class="fcell">
+        <span class="fk">{f.k}</span>
+        <span class="fv">{f.v}</span>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .fstrip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.7rem;
+    margin: 1.3rem 0 1.6rem;
+  }
+  @media (max-width: 640px) {
+    .fstrip {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  .fcell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.8rem 0.95rem 0.85rem;
+    border-radius: 13px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
+  }
+  .fk {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .fv {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 1rem;
+    line-height: 1.1;
+    color: var(--sl-color-white);
+  }
+</style>

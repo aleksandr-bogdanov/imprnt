@@ -1,0 +1,87 @@
+---
+/**
+ * The four categories Anti-slop bans, as a 2x2 tile grid. Each tile carries a
+ * one-word label, a one-line plain summary, and one example tell as a mono chip.
+ * Shows CATEGORIES not the full ban list, so the live ruleset can grow without
+ * touching this. Borderless filled tiles, scoped CSS, theme-aware via Starlight
+ * tokens (no Tailwind: docs pages do not load it).
+ */
+const CATEGORIES = [
+  {
+    label: "Punctuation",
+    body: "Typography that screams machine.",
+    example: "— em-dash",
+  },
+  {
+    label: "Words",
+    body: "Filler that pads instead of saying anything.",
+    example: '"robust"',
+  },
+  {
+    label: "Phrases",
+    body: "Throat-clearing openers and stock transitions.",
+    example: '"it\'s worth noting"',
+  },
+  {
+    label: "Rhetoric",
+    body: "Patterns and cadences that read as ChatGPT.",
+    example: '"not X, it\'s Y"',
+  },
+];
+---
+
+<div class="cats">
+  {
+    CATEGORIES.map((c) => (
+      <div class="cat">
+        <span class="cat-label">{c.label}</span>
+        <p class="cat-body">{c.body}</p>
+        <span class="cat-ex">{c.example}</span>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .cats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7rem;
+    margin: 1.4rem 0;
+  }
+  @media (max-width: 640px) {
+    .cats {
+      grid-template-columns: 1fr;
+    }
+  }
+  .cat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 1rem 1.1rem 1.05rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 8%, var(--sl-color-bg));
+  }
+  .cat-label {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--sl-color-white);
+  }
+  .cat-body {
+    margin: 0;
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+  .cat-ex {
+    align-self: flex-start;
+    margin-top: auto;
+    font-family: var(--sl-font-mono);
+    font-size: 0.76rem;
+    padding: 0.22rem 0.6rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 18%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+  }
+</style>

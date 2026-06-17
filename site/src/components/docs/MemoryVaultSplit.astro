@@ -1,0 +1,114 @@
+---
+/**
+ * The central thesis of the Memory and the vault page, as two contrasting cards:
+ * Knowledge is big, quiet, and searched on demand (the vault); Behavior is tiny,
+ * always on, and lives in the assistant config. Categories only, no instances, so
+ * adding a door or a plugin never touches this. Scoped CSS, theme-aware via --sl
+ * tokens (docs pages do not load Tailwind).
+ */
+const KNOWLEDGE = ["big", "quiet", "searchable", "on demand"];
+const BEHAVIOR = ["tiny", "always on", "applied every time"];
+---
+
+<div class="kbsplit">
+  <div class="card knowledge">
+    <span class="tag">knowledge</span>
+    <p class="lead">What you know about your world: people, policies, decisions, numbers. You want to find it when it matters and keep it out of the way the rest of the time.</p>
+    <div class="chips">{KNOWLEDGE.map((t) => <span class="chip">{t}</span>)}</div>
+    <p class="foot">lives in the vault</p>
+  </div>
+
+  <div class="vs" aria-hidden="true">vs</div>
+
+  <div class="card behavior">
+    <span class="tag">behavior</span>
+    <p class="lead">How the assistant should act: a house style, an anti-slop ruleset, a standing instruction. You want it applied every time without asking.</p>
+    <div class="chips">{BEHAVIOR.map((t) => <span class="chip">{t}</span>)}</div>
+    <p class="foot">lives in the assistant config</p>
+  </div>
+</div>
+
+<style>
+  .kbsplit {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: stretch;
+    gap: 0.9rem;
+    margin: 1.5rem 0 1.25rem;
+  }
+  @media (max-width: 720px) {
+    .kbsplit {
+      grid-template-columns: 1fr;
+    }
+    .kbsplit .vs {
+      justify-self: center;
+    }
+  }
+
+  .card {
+    border-radius: 16px;
+    padding: 1.1rem 1.2rem 1rem;
+  }
+  .card.knowledge {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+  .card.behavior {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 13%, var(--sl-color-bg));
+  }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.55rem;
+  }
+  .knowledge .tag {
+    color: var(--sl-color-text-accent);
+  }
+  .behavior .tag {
+    color: var(--sl-color-gray-2);
+  }
+
+  .lead {
+    margin: 0 0 0.85rem;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    padding: 0.22rem 0.6rem;
+    border-radius: 999px;
+  }
+  .knowledge .chip {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+    font-weight: 600;
+  }
+  .behavior .chip {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    color: var(--sl-color-gray-1);
+  }
+
+  .foot {
+    margin: 0.85rem 0 0;
+    font-size: 0.76rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  .vs {
+    align-self: center;
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+  }
+</style>

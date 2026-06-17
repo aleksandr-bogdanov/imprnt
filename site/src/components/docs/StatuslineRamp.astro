@@ -1,0 +1,50 @@
+---
+/**
+ * Page-specific (statusline): a tiny legend for the alarm ramp the prose
+ * describes. Three filled swatches show the three bands as CATEGORIES (calm,
+ * amber, red) with the threshold each one starts at, so the reader sees the
+ * color behavior without a screenshot. The fixed band colors are the actual
+ * ramp the script paints, not theme tokens. No borders, filled pills only.
+ */
+const BANDS = [
+  { name: "calm", range: "0 to 60%", swatch: "#9aa0ad", text: "#11131a" },
+  { name: "amber", range: "past 60%", swatch: "#e3a008", text: "#11131a" },
+  { name: "red", range: "past 85%", swatch: "#e0524a", text: "#fff" },
+];
+---
+
+<div class="sl-ramp">
+  {
+    BANDS.map((b) => (
+      <span class="sl-band" style={`background:${b.swatch};color:${b.text}`}>
+        <span class="sl-band-name">{b.name}</span>
+        <span class="sl-band-range">{b.range}</span>
+      </span>
+    ))
+  }
+</div>
+
+<style>
+  .sl-ramp {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 1.2rem 0;
+  }
+  .sl-band {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    padding: 0.32rem 0.7rem;
+    border-radius: 999px;
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+  }
+  .sl-band-name {
+    font-weight: 700;
+  }
+  .sl-band-range {
+    opacity: 0.85;
+    font-size: 0.72rem;
+  }
+</style>

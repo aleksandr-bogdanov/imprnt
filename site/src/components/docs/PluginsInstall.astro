@@ -1,0 +1,83 @@
+---
+/**
+ * Page-specific to docs/plugins.mdx. Pairs the "what a plugin depends on" idea
+ * with the install commands so the top of the page reads as one connected unit
+ * instead of a loose paragraph floating above a bare code block. Reuses the
+ * filled-surface, captioned-token visual language of the four rule cards below.
+ * Borderless, scoped CSS, theme-aware via Starlight tokens (no Tailwind on docs
+ * pages). Commands are verbatim.
+ */
+---
+
+<div class="install">
+  <p class="lead">
+    A plugin leans on <strong>two things only</strong>: your notes (and their header format) and its own folder. Each ships as its own package, <code>imprnt-plugin-&lt;name&gt;</code>.
+  </p>
+  <div class="cmds">
+    <span class="cmd-label">install, list, remove</span>
+    <pre class="block"><code><span class="c">imprnt plugin list</span>            <span class="cm"># what is installed</span>
+<span class="c">imprnt plugin add anti-slop</span>   <span class="cm"># add one</span>
+<span class="c">imprnt plugin rm anti-slop</span>    <span class="cm"># remove one</span></code></pre>
+  </div>
+</div>
+
+<style>
+  .install {
+    display: grid;
+    gap: 0.9rem;
+    margin: 1.4rem 0;
+    padding: 1.15rem 1.3rem;
+    border-radius: 15px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
+  }
+  .lead {
+    margin: 0;
+    font-size: 0.98rem;
+    line-height: 1.55;
+    color: var(--sl-color-gray-1);
+  }
+  .lead strong {
+    color: var(--sl-color-white);
+    font-weight: 700;
+  }
+  .lead code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.85rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 18%, var(--sl-color-bg));
+    color: var(--sl-color-white);
+  }
+  .cmds {
+    display: grid;
+    gap: 0.45rem;
+  }
+  .cmd-label {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .block {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    border-radius: 11px;
+    overflow-x: auto;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 20%, var(--sl-color-bg));
+  }
+  .block code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    line-height: 1.7;
+    background: none;
+    padding: 0;
+    white-space: pre;
+  }
+  .block .c {
+    color: var(--sl-color-white);
+  }
+  .block .cm {
+    color: var(--sl-color-gray-3);
+  }
+</style>

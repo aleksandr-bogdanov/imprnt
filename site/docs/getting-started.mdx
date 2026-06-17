@@ -3,9 +3,15 @@ title: Getting started
 description: Install imprnt, make a vault, and start talking to it.
 ---
 
+import { Steps, Aside } from "@astrojs/starlight/components";
+import GettingStartedFlow from "../src/components/docs/GettingStartedFlow.astro";
+import GettingStartedModes from "../src/components/docs/GettingStartedModes.astro";
+
 imprnt is a folder of plain **markdown** notes on your computer. You talk to your assistant in plain language, it files what matters into notes on your disk, and later it answers from your real history. Nothing it learns is lost when the chat closes.
 
-You never type these commands in normal use. Your **assistant** runs them for you. They are here so you can see what happens and drive it yourself when you want.
+<Aside type="note" title="You drive by talking">
+You never type these commands in normal use. Your assistant runs them for you. They are here so you can see what happens and run them yourself when you want.
+</Aside>
 
 ## What you need
 
@@ -23,9 +29,15 @@ imprnt init
 
 `imprnt init` does three things:
 
+<Steps>
+
 1. Makes the vault folder (`./vault` by default).
+
 2. Writes a `CLAUDE.md` file that teaches your assistant how the vault works.
+
 3. Registers the folder so the `imp` command can find it from anywhere.
+
+</Steps>
 
 Want the vault elsewhere? Point one variable at it and everything follows.
 
@@ -41,14 +53,19 @@ export IMPRNT_VAULT=~/notes/vault
 imp
 ```
 
-- `imp` opens Claude where you stand, with your plugins and your vault in reach. A coding session can answer "who owns this service?" from your own notes. Plain `claude` stays plain, so nothing is added to a session you did not ask for.
-- `imp lair` opens Claude inside the **vault** itself. The full contract loads there, and your personal chats pile up in one place you can resume.
+There are two ways to open it. Plain `claude` stays plain, so nothing is added to a session you did not ask for.
 
-First thing to ask it: **"File a person note for me."** You show up in almost every transcript, so a note about you lets the assistant link you to everything else from then on.
+<GettingStartedModes />
+
+<Aside type="tip" title="Ask this first">
+**"File a person note for me."** You show up in almost every transcript, so a note about you lets the assistant link you to everything else from then on.
+</Aside>
 
 ## The three things it does
 
 You talk. Behind your words, the engine runs one of three commands.
+
+<GettingStartedFlow />
 
 ### File something: `ingest`
 
@@ -61,9 +78,15 @@ You: Save this transcript and file what matters.
 
 What happens:
 
+<Steps>
+
 1. The original is copied untouched into `raw/`, so it stays traceable.
+
 2. The model reads it, decides where each note goes, writes a one-line **summary**, pulls out decisions and actions, tags it, and links the people and projects it mentions.
+
 3. The notes are filed, and one line lands in `log.md`.
+
+</Steps>
 
 A dense source splits into several linked notes from one copy. Tables, numbers, dates, and exact wording are kept in full. The summary is added on top, never instead of the **data**.
 
@@ -91,10 +114,16 @@ It rebuilds the index, learns any new tags, and flags notes that link nothing or
 
 The core is your vault plus those three commands. Everything else is an opt-in **plugin**, and a fresh setup has none.
 
+| Command | What it does |
+| --- | --- |
+| `imprnt plugin list` | See what is installed, and what you can add. |
+| `imprnt plugin add anti-slop` | Fetch a plugin, copy it in, switch it on. |
+| `imprnt plugin rm anti-slop` | Switch it off (`--purge` deletes the folder too). |
+
 ```sh
-imprnt plugin list            # what is installed, and what you can add
-imprnt plugin add anti-slop   # fetch it, copy it in, switch it on
-imprnt plugin rm anti-slop    # switch it off (--purge deletes the folder too)
+imprnt plugin list
+imprnt plugin add anti-slop
+imprnt plugin rm anti-slop
 ```
 
 Or just ask: "add the anti-slop plugin." The full gallery is in [Plugins](/plugins/).
