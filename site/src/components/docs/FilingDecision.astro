@@ -1,0 +1,160 @@
+---
+/**
+ * Page-specific visual for docs/vault-layout.mdx: the "How the model decides
+ * where a note goes" section. Replaces a bare markdown ordered list (the page's
+ * only text-only block) with a vertical numbered decision branch that matches
+ * the numbered-circle + accent rhythm of TagsFlow on the same page. Three steps,
+ * checked top to bottom: the first match wins. Each step keeps its rule verbatim
+ * (a question + where it files), with the load-bearing folder term as a chip.
+ * The third step is the catch-all, styled in accent like the "yours" step in
+ * TagsFlow. Categories not instances, so it never goes stale. Scoped CSS,
+ * theme-aware via Starlight --sl tokens, stacks cleanly on mobile.
+ */
+const STEPS = [
+  {
+    n: "1",
+    q: "Is it a person, org, or holding (an owned thing whose state you track)?",
+    to: "File it in the entity folder, whatever the topic.",
+    folders: ["people/", "orgs/", "holdings/"],
+    catch: false,
+  },
+  {
+    n: "2",
+    q: "Is it a dated event, a lesson learned, or a project with a status?",
+    to: "Those have their own folders.",
+    folders: ["events/", "mistakes/", "projects/"],
+    catch: false,
+  },
+  {
+    n: "3",
+    q: "Otherwise it is topical.",
+    to: "File it by life-area.",
+    folders: ["identity/", "health/", "finances/", "work/", "life/"],
+    catch: true,
+  },
+];
+---
+
+<ol class="filing">
+  {
+    STEPS.map((s) => (
+      <li class={`step ${s.catch ? "catch" : ""}`}>
+        <span class="num">{s.n}</span>
+        <div class="text">
+          <div class="qa">
+            <p class="q">{s.q}</p>
+            <p class="to">{s.to}</p>
+          </div>
+          <ul class="folders">
+            {s.folders.map((f) => (
+              <li>{f}</li>
+            ))}
+          </ul>
+        </div>
+      </li>
+    ))
+  }
+</ol>
+
+<style>
+  .filing {
+    list-style: none;
+    margin: 1.4rem 0 1rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  .step {
+    display: flex;
+    gap: 0.85rem;
+    padding: 1.05rem 1.2rem 1.1rem;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
+  }
+  /* at desktop width, lay the question/answer on the left and the folder chips
+     on the right so the short content fills the row instead of leaving a wide
+     empty band on the right of each full-width card */
+  @media (min-width: 721px) {
+    .text {
+      display: flex;
+      flex-direction: row;
+      align-items: baseline;
+      gap: 1.6rem;
+    }
+    .qa {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+    .folders {
+      flex: none;
+      margin-top: 0;
+      justify-content: flex-end;
+      max-width: 44%;
+      align-self: center;
+    }
+  }
+  .step.catch {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .num {
+    flex: none;
+    width: 1.6rem;
+    height: 1.6rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 30%, var(--sl-color-bg));
+  }
+  .step.catch .num {
+    color: var(--sl-color-bg);
+    background: var(--sl-color-text-accent);
+  }
+  .text {
+    min-width: 0;
+  }
+  .q {
+    margin: 0;
+    font-size: 0.92rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--sl-color-white);
+  }
+  .to {
+    margin: 0.3rem 0 0;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+  }
+  .folders {
+    list-style: none;
+    margin: 0.6rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .folders li {
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--sl-color-text-accent);
+    padding: 0.1rem 0.45rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 14%, var(--sl-color-bg));
+  }
+  .step.catch .folders li {
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
+  }
+
+  @media (max-width: 720px) {
+    .step {
+      padding: 0.95rem 1rem 1rem;
+    }
+  }
+</style>

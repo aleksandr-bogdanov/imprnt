@@ -8,8 +8,8 @@
  */
 const LINKS = [
   { href: "/design-decisions/", title: "Design decisions", sub: "the deep rationale behind each choice" },
-  { href: "/how-it-works/", title: "How it works", sub: "the shape of the system end to end" },
-  { href: "/plugins/", title: "Plugins", sub: "the full plugin contract" },
+  { href: "/how-it-works/", title: "How it works", sub: "the whole system, end to end" },
+  { href: "/plugins/", title: "Plugins", sub: "the full plugin contract and how to build one" },
 ];
 ---
 
@@ -32,7 +32,7 @@ const LINKS = [
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 0.8rem;
-    margin: 1.3rem 0 0.5rem;
+    margin: 0.9rem 0 0.25rem;
   }
   @media (max-width: 720px) {
     .nextrow {
@@ -42,6 +42,7 @@ const LINKS = [
   .ncard {
     display: flex;
     flex-direction: column;
+    justify-content: center;
     gap: 0.3rem;
     padding: 1rem 1.1rem 1.05rem;
     border-radius: 14px;

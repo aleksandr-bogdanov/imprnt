@@ -41,15 +41,33 @@ const ROWS = [
     gap: 0.5rem;
     margin: 1.4rem 0;
   }
+  @media (max-width: 640px) {
+    .ba {
+      grid-template-columns: 1fr;
+      gap: 0.4rem;
+    }
+    .ba-head {
+      display: none;
+    }
+    .ba-slop {
+      margin-top: 0.5rem;
+    }
+    .ba-clean {
+      margin-bottom: 0.5rem;
+    }
+  }
   .ba-head {
+    align-self: end;
     font-family: var(--sl-font-mono);
     font-size: 0.7rem;
+    line-height: 1;
+    min-height: 1em;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    padding: 0 0.3rem 0.15rem;
+    padding: 0 0.9rem 0.15rem;
   }
   .ba-slop-head {
-    color: var(--sl-color-gray-3);
+    color: var(--sl-color-gray-2);
   }
   .ba-clean-head {
     color: var(--sl-color-text-accent);
@@ -60,15 +78,17 @@ const ROWS = [
     border-radius: 12px;
     font-size: 0.88rem;
     line-height: 1.4;
+    display: flex;
+    align-items: center;
   }
   .ba-slop {
-    background: color-mix(in oklab, var(--sl-color-gray-3) 13%, var(--sl-color-bg));
-    color: var(--sl-color-gray-2);
+    background: color-mix(in oklab, var(--sl-color-gray-4) 10%, var(--sl-color-bg));
+    color: var(--sl-color-gray-3);
     text-decoration: line-through;
     text-decoration-color: color-mix(in oklab, var(--sl-color-gray-3) 60%, transparent);
   }
   .ba-clean {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+    background: color-mix(in oklab, var(--sl-color-text-accent) 17%, var(--sl-color-bg));
     color: var(--sl-color-white);
   }
 </style>

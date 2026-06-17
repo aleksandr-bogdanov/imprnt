@@ -8,6 +8,7 @@ import Bets from "../src/components/docs/Bets.astro";
 import CompareTable from "../src/components/docs/CompareTable.astro";
 import BenchStrip from "../src/components/docs/BenchStrip.astro";
 import WrongTool from "../src/components/docs/WrongTool.astro";
+import ClosestVerdict from "../src/components/docs/ClosestVerdict.astro";
 
 Most AI-memory tools build a store for the **machine** to read: a vector index you cannot open. imprnt builds plain notes for **you** to read, that the AI also searches. This page shows where that helps and where it does not.
 
@@ -37,7 +38,11 @@ Posture on cloud varies too. mem0, Zep, and Supermemory are cloud-first with a l
 
 ## The closest kin: Karpathy's LLM Wiki
 
-**Same design, imprnt adds a ranker and a typed contract on top.**
+<ClosestVerdict
+  same="The three-layer design: raw sources, an LLM-compiled wiki, a schema."
+  deltaLabel="imprnt adds"
+  delta="A BM25 ranker and a typed entity contract."
+/>
 
 In design, [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) is imprnt's nearest relative. Same three layers: immutable raw sources, an **LLM-compiled** Markdown wiki, and a `CLAUDE.md` schema. Same `index.md` catalog and append-only `log.md`. No embeddings, the LLM reading the index then full pages. The LLM as a **compiler** that reads a source once and writes durable pages. The agent reading files directly, no server. imprnt sits in that lineage.
 
@@ -51,7 +56,11 @@ Karpathy's gist validates the bet. imprnt is the same bet with more structure on
 
 ## The closest shipped tool: Basic Memory
 
-**Same respect for the file, opposite call on the machinery around it.**
+<ClosestVerdict
+  same="Markdown is the source of truth, captured on a deliberate write."
+  deltaLabel="it differs on"
+  delta="A derived SQLite index and an MCP server between the AI and the files."
+/>
 
 Among finished products, Basic Memory shares imprnt's floor. It treats Markdown as the source of truth, keeps a derived SQLite index in sync, and captures on a deliberate write. If you want imprnt's "own your files" stance with a conventional MCP-server delivery, it is a real and good choice.
 

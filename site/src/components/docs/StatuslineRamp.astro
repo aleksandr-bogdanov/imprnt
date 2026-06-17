@@ -7,7 +7,7 @@
  * ramp the script paints, not theme tokens. No borders, filled pills only.
  */
 const BANDS = [
-  { name: "calm", range: "0 to 60%", swatch: "#9aa0ad", text: "#11131a" },
+  { name: "calm", range: "0 to 60%", swatch: "#6b7280", text: "#11131a" },
   { name: "amber", range: "past 60%", swatch: "#e3a008", text: "#11131a" },
   { name: "red", range: "past 85%", swatch: "#e0524a", text: "#fff" },
 ];
@@ -16,7 +16,7 @@ const BANDS = [
 <div class="sl-ramp">
   {
     BANDS.map((b) => (
-      <span class="sl-band" style={`background:${b.swatch};color:${b.text}`}>
+      <span class={`sl-band sl-band-${b.name}`} style={`background:${b.swatch};color:${b.text}`}>
         <span class="sl-band-name">{b.name}</span>
         <span class="sl-band-range">{b.range}</span>
       </span>
@@ -46,5 +46,18 @@ const BANDS = [
   .sl-band-range {
     opacity: 0.85;
     font-size: 0.72rem;
+  }
+  /* The calm band's slate fill is the darkest of the three, so a dark range
+     label washes out faster than the amber pill's. Pin it to full opacity so
+     all three secondary labels read at the same weight. */
+  .sl-band-calm .sl-band-range {
+    opacity: 1;
+  }
+  /* The red band's range sits on a saturated fill where a tinted off-white
+     reads fainter than the dark text on the calm and amber pills. Pin it to
+     full white at full opacity so all three secondary labels match weight. */
+  .sl-band-red .sl-band-range {
+    color: #fff;
+    opacity: 1;
   }
 </style>

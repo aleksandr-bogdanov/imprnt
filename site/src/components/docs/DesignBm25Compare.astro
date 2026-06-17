@@ -3,8 +3,10 @@
  * Page-specific (design-decisions). Why recall ranks with BM25 and not a vector
  * store, as a side-by-side comparison so the trade lands at a glance instead of
  * in a paragraph. Two borderless columns scored on the same three axes: cost,
- * what it does on a change, and whether you can see why it matched. Static
- * categories, never a list of instances. Scoped CSS, theme-aware, no Tailwind.
+ * what it does on a change, and whether you can see why it matched. One shared
+ * grid across both columns so each axis sits on a single aligned horizontal
+ * band, even when a cell wraps. Static categories, never a list of instances.
+ * Scoped CSS, theme-aware, no Tailwind.
  */
 const AXES = [
   { axis: "Cost", bm25: "Free local arithmetic", vector: "A model embeds every note and every query" },
@@ -14,73 +16,81 @@ const AXES = [
 ---
 
 <div class="bm25">
-  <div class="bm25-col bm25-pick">
-    <div class="bm25-head">
-      <span class="bm25-name">BM25 over plain text</span>
-      <span class="bm25-badge">imprnt picks this</span>
-    </div>
-    <dl class="bm25-axes">
-      {
-        AXES.map((a) => (
-          <div class="bm25-row">
-            <dt>{a.axis}</dt>
-            <dd>{a.bm25}</dd>
-          </div>
-        ))
-      }
-    </dl>
+  <div class="bm25-head bm25-head-pick">
+    <span class="bm25-name">BM25 over plain text</span>
+    <span class="bm25-badge">imprnt picks this</span>
   </div>
-  <div class="bm25-col bm25-alt">
-    <div class="bm25-head">
-      <span class="bm25-name">Vector search</span>
-      <span class="bm25-badge bm25-badge-alt">what most tools ship</span>
-    </div>
-    <dl class="bm25-axes">
-      {
-        AXES.map((a) => (
-          <div class="bm25-row">
-            <dt>{a.axis}</dt>
-            <dd>{a.vector}</dd>
-          </div>
-        ))
-      }
-    </dl>
+  <div class="bm25-head bm25-head-alt">
+    <span class="bm25-name">Vector search</span>
+    <span class="bm25-badge bm25-badge-alt">what most tools ship</span>
   </div>
+  {
+    AXES.map((a, i) => {
+      const last = i === AXES.length - 1 ? " bm25-cell-last" : "";
+      const row = i + 2;
+      return (
+        <>
+          <span class="bm25-axis" style={`grid-row: ${row};`}>{a.axis}</span>
+          <div class={`bm25-cell bm25-cell-pick${last}`} style={`grid-row: ${row};`} data-axis={a.axis}>{a.bm25}</div>
+          <div class={`bm25-cell bm25-cell-alt${last}`} style={`grid-row: ${row};`} data-axis={a.axis}>{a.vector}</div>
+        </>
+      );
+    })
+  }
 </div>
 
 <style>
   .bm25 {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.8rem;
+    grid-template-columns: 7rem 1fr 1fr;
+    column-gap: 0.8rem;
+    row-gap: 0.35rem;
+    align-items: stretch;
     margin: 1.4rem 0;
   }
-  @media (max-width: 640px) {
-    .bm25 {
-      grid-template-columns: 1fr;
-    }
-  }
-  .bm25-col {
-    border-radius: 14px;
-    padding: 1.1rem 1.2rem;
-  }
-  .bm25-pick {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
-  }
-  .bm25-alt {
-    background: color-mix(in oklab, var(--sl-color-gray-4) 40%, var(--sl-color-bg));
+  /* Starlight's global adjacent-sibling rule injects margin-top:16px onto the
+     SECOND grid child (the alt head, and every later cell), which shoved the
+     gray head 16px below the green one and broke the shared top edge. Zero it
+     on the grid's direct children so the declared grid alignment takes effect.
+     The mobile block below re-adds the intentional 1.4rem gap on .bm25-head-alt. */
+  .bm25 > * {
+    margin-top: 0;
   }
   .bm25-head {
+    grid-row: 1;
+    align-self: stretch;
+    box-sizing: border-box;
+    /* both heads share row 1 and a FIXED equal height (not min-height) so the
+       green pick head and the gray alt head are byte-identical boxes, sharing
+       one top edge and one bottom edge regardless of how the name or badge
+       wraps. A min-height let the shorter gray head settle below the taller
+       green head, so the titles landed on different baselines. */
+    height: 5.4rem;
     display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.5rem;
-    margin-bottom: 0.7rem;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 0.3rem;
+    border-radius: 14px 14px 0 0;
+    padding: 0.95rem 1.1rem 0.7rem;
+    margin-bottom: 0.35rem;
+  }
+  .bm25-head-pick {
+    grid-column: 2;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .bm25-head-alt {
+    grid-column: 3;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
   }
   .bm25-name {
     font-family: var(--sl-font);
     font-weight: 700;
     font-size: 1rem;
+    line-height: 1.3;
+    /* reserve two lines so a wrapped name and a one-line name keep the badge
+       at the same height, and both heads stay equal-height + top-aligned */
+    min-height: 2.6em;
     color: var(--sl-color-white);
   }
   .bm25-badge {
@@ -93,30 +103,96 @@ const AXES = [
   .bm25-badge-alt {
     color: var(--sl-color-gray-3);
   }
-  .bm25-axes {
-    margin: 0;
-  }
-  .bm25-row {
-    display: grid;
-    grid-template-columns: 6.5rem 1fr;
-    gap: 0.6rem;
-    padding: 0.45rem 0;
-  }
-  .bm25-row + .bm25-row {
-    border-top: 1px solid color-mix(in oklab, var(--sl-color-gray-4) 35%, transparent);
-  }
-  .bm25-row dt {
+  .bm25-axis {
+    grid-column: 1;
+    align-self: center;
     font-family: var(--sl-font-mono);
     font-size: 0.68rem;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--sl-color-gray-3);
-    padding-top: 0.15rem;
+    padding: 0.55rem 0;
   }
-  .bm25-row dd {
-    margin: 0;
+  .bm25-cell {
+    align-self: stretch;
+    padding: 0.55rem 1.1rem;
     font-size: 0.85rem;
     line-height: 1.4;
     color: var(--sl-color-gray-2);
+  }
+  .bm25-cell-pick {
+    grid-column: 2;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .bm25-cell-alt {
+    grid-column: 3;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+    /* one step darker than the pick column's gray-2 body, so the alt cells stay
+       the clearly-losing tint without washing out below comfortable contrast.
+       45% matches paiflip-from and ddc-lose so every losing-side surface on the
+       page reads at one consistent darkness. */
+    color: var(--sl-color-gray-1);
+  }
+  /* round the bottom of each column's last cell */
+  .bm25-cell-last {
+    border-radius: 0 0 14px 14px;
+  }
+  @media (max-width: 640px) {
+    /* stack into two blocks: the pick column, then the alt column. Flex order
+       groups the cells under their own head since source order interleaves. */
+    .bm25 {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    /* both halves stack flush: head then its 3 cells with no gaps between, so
+       the green block and the gray block share one internal rhythm */
+    .bm25-head,
+    .bm25-cell {
+      margin: 0;
+      align-self: auto;
+    }
+    .bm25-name {
+      /* one head per stack on mobile, the badge stacks under the name already,
+         so the two-line reserve from desktop is not needed */
+      min-height: 0;
+    }
+    .bm25-head {
+      /* the desktop fixed 5.4rem equalizes the two side-by-side heads. On mobile
+         each head stacks above its own cells, so the equalizer has no job and
+         just leaves a dead band under the badge. Let the head hug its content. */
+      height: auto;
+      border-radius: 14px 14px 0 0;
+    }
+    .bm25-head-pick {
+      order: 0;
+    }
+    .bm25-head-alt {
+      order: 2;
+      margin-top: 1.4rem;
+    }
+    .bm25-cell-pick {
+      order: 1;
+    }
+    .bm25-cell-alt {
+      order: 3;
+    }
+    /* axis labels live in their own column on desktop; inline them on mobile */
+    .bm25-axis {
+      display: none;
+    }
+    .bm25-cell::before {
+      content: attr(data-axis);
+      display: block;
+      font-family: var(--sl-font-mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--sl-color-gray-3);
+      margin-bottom: 0.15rem;
+    }
+    .bm25-cell-last {
+      border-radius: 0 0 14px 14px;
+    }
   }
 </style>

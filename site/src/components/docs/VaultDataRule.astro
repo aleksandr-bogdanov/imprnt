@@ -65,14 +65,21 @@
     line-height: 1.55;
     color: var(--sl-color-gray-1);
   }
+  /* match the headline's accent emphasis so the callout reads one bold rank,
+     not two different bold colors */
   .sub strong {
-    color: var(--sl-color-white);
+    color: var(--sl-color-text-accent);
     font-weight: 600;
   }
   .sub code,
   .test code {
     font-family: var(--sl-font-mono);
     font-size: 0.85em;
+    color: var(--sl-color-white);
+    padding: 0.08rem 0.4rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-bg) 78%, var(--sl-color-text-accent));
+    border: 1px solid color-mix(in oklab, var(--sl-color-text-accent) 22%, transparent);
   }
   @media (max-width: 640px) {
     .line {

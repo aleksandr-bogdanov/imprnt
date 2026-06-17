@@ -11,7 +11,7 @@
   <div class="panel paid">
     <span class="tag">when you file</span>
     <span class="big">Spend the model once</span>
-    <span class="line">A messy transcript becomes clean notes. The rare hard job that needs understanding.</span>
+    <span class="line">A messy transcript becomes clean notes. This is the rare hard job that needs real understanding.</span>
   </div>
   <div class="panel free">
     <span class="tag">every search after</span>
@@ -24,6 +24,9 @@
   .levers {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    /* both panels anchor at the top so the eyebrows and headings line up even
+       when one panel's body runs an extra line */
+    align-items: start;
     gap: 0.7rem;
     margin: 1.5rem 0;
   }
@@ -33,6 +36,9 @@
     gap: 0.4rem;
     padding: 1.1rem 1.15rem;
     border-radius: 14px;
+    /* Starlight content owl-spacing leaks margin-top:16px onto the second grid
+       child, pushing the right card below the left. Reset it so both share a top edge. */
+    margin-top: 0;
   }
   .panel.paid {
     background: color-mix(in oklab, var(--sl-color-text-accent) 13%, var(--sl-color-bg));

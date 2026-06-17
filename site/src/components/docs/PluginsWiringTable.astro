@@ -23,7 +23,10 @@ const LANES = [
     blurb: "a house style like anti-slop",
     add: "imprnt global add <name>",
     where: "registered with imprnt, never your ~/.claude/CLAUDE.md",
-    reaches: "every session imp launches",
+    // a string with a {cmd} placeholder so the CLI command renders monospace,
+    // matching how the rest of the docs write it in backticks
+    reaches: "every session {cmd} launches",
+    cmd: "imp",
     remove: "imprnt global rm <name>",
     accent: true,
   },
@@ -41,7 +44,20 @@ const LANES = [
         <div class="flow">
           <span class="chip">agent.md</span>
           <span class="arr" aria-hidden="true">&rarr;</span>
-          <span class="dest">{l.reaches}</span>
+          <span class="dest">
+            {l.reaches.includes("{cmd}")
+              ? (() => {
+                  const [pre, post] = l.reaches.split("{cmd}");
+                  return (
+                    <>
+                      {pre}
+                      <code class="destcmd">{l.cmd}</code>
+                      {post}
+                    </>
+                  );
+                })()
+              : l.reaches}
+          </span>
         </div>
         <dl class="facts">
           <div class="fact">
@@ -66,25 +82,53 @@ const LANES = [
   .wiring {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    /* one shared row track per visual row (head, flow, 3 facts) so the two
+       lanes stay in register even when one lane's text wraps to two lines */
+    grid-template-rows: auto auto auto auto auto;
+    align-items: stretch;
     gap: 0.85rem;
     margin: 1.5rem 0;
   }
   .lane {
-    display: flex;
-    flex-direction: column;
-    gap: 0.7rem;
+    display: grid;
+    grid-row: 1 / -1;
+    align-self: stretch;
+    height: 100%;
+    grid-template-rows: subgrid;
+    /* every row's content sits at the top of its shared track, so when one
+       lane's wires-in text wraps taller the other lane's same-row label still
+       starts at the identical y */
+    align-content: start;
+    justify-items: stretch;
+    row-gap: 0.7rem;
     border-radius: 15px;
     padding: 1.05rem 1.2rem;
-    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    /* PROJECT is the local default: a clearly neutral gray surface, so a glance
+       reads "this machine" without parsing the caption */
+    background: color-mix(in oklab, var(--sl-color-gray-3) 26%, var(--sl-color-bg));
   }
+  .lane > * {
+    align-self: start;
+  }
+  .facts {
+    display: contents;
+  }
+  /* GLOBAL is the house-style scope: a distinctly green surface, so the two
+     scopes never read as the same card */
   .lane.accent {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+    background: color-mix(in oklab, var(--sl-color-text-accent) 17%, var(--sl-color-bg));
   }
   .head {
+    /* scope eyebrow on its own line, blurb on the next, identical two-row shape
+       in both lanes. the old single-row flex let the longer GLOBAL blurb wrap to
+       two lines while PROJECT's stayed one, so the GLOBAL head rendered taller
+       and pushed its card top ~32px lower. a fixed two-line block makes both
+       heads the same height, so the card tops and every labelled row below land
+       on the same y left to right */
     display: flex;
-    align-items: baseline;
-    gap: 0.55rem;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 0.18rem;
+    min-height: 2.75rem;
   }
   .scope {
     font-family: var(--sl-font-mono);
@@ -112,11 +156,15 @@ const LANES = [
     font-size: 0.78rem;
     padding: 0.2rem 0.5rem;
     border-radius: 7px;
-    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    background: color-mix(in oklab, var(--sl-color-gray-2) 26%, var(--sl-color-bg));
     color: var(--sl-color-gray-1);
   }
   .lane.accent .chip {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 18%, var(--sl-color-bg));
+    /* the chip sits on the card's green tint, so a faint green fill vanishes.
+       darken the fill and add a 1px boundary so the chip reads as a crisp box,
+       matching the chip affordance on the gray PROJECT card */
+    background: color-mix(in oklab, var(--sl-color-text-accent) 30%, var(--sl-color-bg));
+    border: 1px solid color-mix(in oklab, var(--sl-color-text-accent) 50%, transparent);
     color: var(--sl-color-text-accent);
     font-weight: 600;
   }
@@ -129,12 +177,22 @@ const LANES = [
     font-weight: 700;
     color: var(--sl-color-white);
   }
-  .facts {
-    margin: 0;
-    display: grid;
-    gap: 0.5rem;
+  .destcmd {
+    font-family: var(--sl-font-mono);
+    font-size: 0.85em;
+    font-weight: 700;
+    padding: 0.05rem 0.32rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+  }
+  .lane:not(.accent) .destcmd {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 20%, var(--sl-color-bg));
+    color: var(--sl-color-white);
   }
   .fact {
+    margin: 0;
+    align-self: start;
     display: grid;
     grid-template-columns: 4.2rem 1fr;
     gap: 0.2rem 0.7rem;
@@ -161,12 +219,38 @@ const LANES = [
     background: color-mix(in oklab, var(--sl-color-gray-3) 16%, var(--sl-color-bg));
     color: var(--sl-color-white);
   }
+  /* on the green GLOBAL card the gray chip fill drops nearly invisible, so give
+     the command chips a darker fill and a defined 1px boundary, the same crisp
+     box they get on the gray PROJECT card */
+  .lane.accent .fact code {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 30%, var(--sl-color-bg));
+    border: 1px solid color-mix(in oklab, var(--sl-color-gray-2) 34%, transparent);
+  }
   @media (max-width: 640px) {
     .wiring {
       grid-template-columns: 1fr;
+      grid-template-rows: none;
     }
+    /* lanes stack one above the other on a phone, so each lane lays out its own
+       rows instead of sharing a cross-card subgrid. tighten the inter-row gap so
+       the facts read as one compact spec block, not a loose stack */
+    .lane {
+      grid-row: auto;
+      grid-template-rows: none;
+      grid-auto-rows: max-content;
+      row-gap: 0.45rem;
+    }
+    /* keep label and value on one line (label: value) with a narrow auto-width
+       label, so the value sits right next to its label near the card's left edge
+       instead of indented on its own line. a long value wraps under itself, still
+       hugging the left edge rather than under a wide empty label column */
     .fact {
-      grid-template-columns: 3.6rem 1fr;
+      grid-template-columns: auto 1fr;
+      gap: 0 0.5rem;
+      align-items: baseline;
+    }
+    .fact dt {
+      white-space: nowrap;
     }
   }
 </style>

@@ -25,7 +25,7 @@ const ROWS = [
   {
     label: "ctx",
     segs: [
-      { t: "▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱", calm: true },
+      { t: "▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱", calm: true, gauge: true },
       { t: "48%", ramp: "calm" },
       { t: "effort high" },
     ],
@@ -55,10 +55,10 @@ const ROWS = [
           <span class="sl-label">{row.label}</span>
           <span class="sl-segs">
             {row.segs.map((seg, i) => (
-              <>
-                {i > 0 && <span class="sl-sep">·</span>}
-                <span class={`sl-seg${seg.ramp ? ` ramp-${seg.ramp}` : ""}`}>{seg.t}</span>
-              </>
+              <span class={`sl-seg${seg.ramp ? ` ramp-${seg.ramp}` : ""}${seg.calm ? " ramp-calm" : ""}${seg.gauge ? " sl-seg-gauge" : ""}`}>
+                {seg.t}
+                {i < row.segs.length - 1 && <span class="sl-sep" aria-hidden="true">·</span>}
+              </span>
             ))}
           </span>
         </div>
@@ -71,16 +71,19 @@ const ROWS = [
   .sl-panel {
     margin: 1.4rem 0;
     border-radius: 14px;
-    overflow: hidden;
     background: #11131a;
     box-shadow: 0 1px 3px color-mix(in oklab, #000 30%, transparent);
   }
+  /* No overflow:hidden on the panel, so a row can never be silently clipped.
+     The chrome rounds its own top corners and the rows round the bottom. */
   .sl-chrome {
     display: flex;
     align-items: center;
     gap: 0.4rem;
     padding: 0.5rem 0.85rem;
     background: #181b24;
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
   }
   .sl-dot {
     width: 0.62rem;
@@ -96,10 +99,12 @@ const ROWS = [
     color: #6b7180;
   }
   .sl-rows {
-    padding: 0.8rem 1rem 0.95rem;
+    padding: 0.55rem 1rem 0.95rem;
     font-family: var(--sl-font-mono);
     font-size: 0.82rem;
     line-height: 1.85;
+    border-bottom-left-radius: 14px;
+    border-bottom-right-radius: 14px;
   }
   .sl-row {
     display: flex;
@@ -119,22 +124,48 @@ const ROWS = [
   }
   .sl-sep {
     color: #454b5a;
-    margin: 0 0.35rem;
+    margin: 0 0.1rem 0 0.35rem;
   }
   .sl-seg {
     white-space: nowrap;
+    margin-right: 0.35rem;
   }
-  /* alarm ramp: calm reads near-monochrome, amber past 60, red past 85 */
+  .sl-seg:last-child {
+    margin-right: 0;
+  }
+  /* alarm ramp: calm is the slate tone the legend swatch shows, amber past 60,
+     red past 85. Keeping the panel's calm and the legend swatch the same color
+     makes the legend->panel link hold for all three bands. */
   .ramp-calm {
-    color: #9aa0ad;
+    color: #8a90a0;
   }
   @media (max-width: 480px) {
     .sl-rows {
       font-size: 0.74rem;
-      padding: 0.7rem 0.8rem 0.85rem;
+      padding: 0.5rem 0.8rem 0.85rem;
     }
     .sl-label {
       flex-basis: 2.9rem;
+    }
+    /* Let each row wrap its segments onto extra lines instead of running off
+       the card. The label stays on the first line, segments flow under it. */
+    .sl-row {
+      flex-wrap: wrap;
+    }
+    .sl-segs {
+      white-space: normal;
+    }
+    /* Each text segment stays whole and wraps as a unit, so a pair like
+       "effort high" moves to the next line together instead of orphaning a
+       trailing word. Only the gauge below is allowed to break mid-run. */
+    .sl-seg {
+      white-space: nowrap;
+    }
+    /* The gauge is one long decorative token wider than a phone column. Let it
+       break mid-run so it never forces the row past the card edge. */
+    .sl-seg-gauge {
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
   }
 </style>

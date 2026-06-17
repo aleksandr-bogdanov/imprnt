@@ -6,6 +6,12 @@ description: Install imprnt, make a vault, and start talking to it.
 import { Steps, Aside } from "@astrojs/starlight/components";
 import GettingStartedFlow from "../src/components/docs/GettingStartedFlow.astro";
 import GettingStartedModes from "../src/components/docs/GettingStartedModes.astro";
+import GettingStartedNeed from "../src/components/docs/GettingStartedNeed.astro";
+import GettingStartedPlugins from "../src/components/docs/GettingStartedPlugins.astro";
+import GettingStartedSay from "../src/components/docs/GettingStartedSay.astro";
+import GettingStartedScrollFix from "../src/components/docs/GettingStartedScrollFix.astro";
+
+<GettingStartedScrollFix />
 
 imprnt is a folder of plain **markdown** notes on your computer. You talk to your assistant in plain language, it files what matters into notes on your disk, and later it answers from your real history. Nothing it learns is lost when the chat closes.
 
@@ -15,14 +21,13 @@ You never type these commands in normal use. Your assistant runs them for you. T
 
 ## What you need
 
-- [Node](https://nodejs.org) 18 or newer.
-- [Claude Code](https://claude.com/claude-code), the assistant imprnt drives.
+<GettingStartedNeed />
 
 ## Install it
 
 Two commands: the first installs the **engine**, the second makes your **vault**.
 
-```sh
+```sh title="terminal"
 npm i -g imprnt
 imprnt init
 ```
@@ -41,7 +46,7 @@ imprnt init
 
 Want the vault elsewhere? Point one variable at it and everything follows.
 
-```sh
+```sh title="terminal"
 export IMPRNT_VAULT=~/notes/vault
 ```
 
@@ -49,7 +54,7 @@ export IMPRNT_VAULT=~/notes/vault
 
 `imp` opens your assistant with imprnt wired in. Type it instead of `claude`, in any folder.
 
-```sh
+```sh title="terminal"
 imp
 ```
 
@@ -58,7 +63,7 @@ There are two ways to open it. Plain `claude` stays plain, so nothing is added t
 <GettingStartedModes />
 
 <Aside type="tip" title="Ask this first">
-**"File a person note for me."** You show up in almost every transcript, so a note about you lets the assistant link you to everything else from then on.
+<strong>{'"File a person note for me."'}</strong> You show up in almost every transcript, so a note about you lets the assistant link you to everything else from then on.
 </Aside>
 
 ## The three things it does
@@ -69,12 +74,18 @@ You talk. Behind your words, the engine runs one of three commands.
 
 ### File something: `ingest`
 
-A **source** is anything: a meeting transcript, a pasted doc, a prose dump, a single fact. Hand it over.
+A source is anything: a meeting transcript, a pasted doc, a prose dump, a single fact. Hand it over.
 
+<GettingStartedSay>
+
+```text title="you say" frame="terminal"
+You:
+  Save this transcript
+  and file what matters.
+  [paste or drop the source]
 ```
-You: Save this transcript and file what matters.
-     [paste or drop the source]
-```
+
+</GettingStartedSay>
 
 What happens:
 
@@ -82,21 +93,27 @@ What happens:
 
 1. The original is copied untouched into `raw/`, so it stays traceable.
 
-2. The model reads it, decides where each note goes, writes a one-line **summary**, pulls out decisions and actions, tags it, and links the people and projects it mentions.
+2. The model reads it, decides where each note goes, writes a one-line summary, pulls out decisions and actions, tags it, and links the people and projects it mentions.
 
 3. The notes are filed, and one line lands in `log.md`.
 
 </Steps>
 
-A dense source splits into several linked notes from one copy. Tables, numbers, dates, and exact wording are kept in full. The summary is added on top, never instead of the **data**.
+A dense source splits into several linked notes from one copy. Tables, numbers, dates, and exact wording are kept in full. The summary is added on top, never instead of the data.
 
 ### Find something: `recall`
 
 Ask in plain words.
 
+<GettingStartedSay>
+
+```text title="you say" frame="terminal"
+You:
+  What did we decide about
+  the access-platform cutover?
 ```
-You: What did we decide about the access-platform cutover?
-```
+
+</GettingStartedSay>
 
 The engine ranks your notes with **BM25**, a plain local formula with no model and no embeddings, and hands the best ones to the assistant to read and answer. It searches your real notes only. The `raw/` archive is never searched, so nothing leaks from a snapshot into an answer.
 
@@ -104,26 +121,21 @@ The engine ranks your notes with **BM25**, a plain local formula with no model a
 
 After filing or hand-editing, ask for a tidy pass.
 
-```
-You: Tidy up. What needs my attention?
+<GettingStartedSay>
+
+```text title="you say" frame="terminal"
+You:
+  Tidy up. What needs my attention?
 ```
 
-It rebuilds the index, learns any new tags, and flags notes that link nothing or have a broken link. It only ever touches the **control files**, never your notes.
+</GettingStartedSay>
+
+It rebuilds the index, learns any new tags, and flags notes that link nothing or have a broken link. It only ever touches the control files, never your notes.
 
 ## Add a plugin
 
 The core is your vault plus those three commands. Everything else is an opt-in **plugin**, and a fresh setup has none.
 
-| Command | What it does |
-| --- | --- |
-| `imprnt plugin list` | See what is installed, and what you can add. |
-| `imprnt plugin add anti-slop` | Fetch a plugin, copy it in, switch it on. |
-| `imprnt plugin rm anti-slop` | Switch it off (`--purge` deletes the folder too). |
+<GettingStartedPlugins />
 
-```sh
-imprnt plugin list
-imprnt plugin add anti-slop
-imprnt plugin rm anti-slop
-```
-
-Or just ask: "add the anti-slop plugin." The full gallery is in [Plugins](/plugins/).
+Or just ask: {'"add the anti-slop plugin."'} The full gallery is in [Plugins](/plugins/).

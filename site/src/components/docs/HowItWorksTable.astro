@@ -26,8 +26,11 @@ const ROWS = [
       {
         ROWS.map(([step, who, why]) => (
           <tr>
-            <td>{step}</td>
-            <td><span class={`who ${who}`}>{who}</span></td>
+            <td>
+              <span class="step-text">{step}</span>
+              <span class={`who step-who ${who}`}>{who}</span>
+            </td>
+            <td><span class={`who cell-who ${who}`}>{who}</span></td>
             <td>{why}</td>
           </tr>
         ))
@@ -55,8 +58,13 @@ const ROWS = [
     padding: 0 0.75rem 0.5rem;
   }
   tbody td {
+    /* reset Starlight's inherited td bottom border (1px hairline) so it never
+       paints stray dividers, clearest on mobile where cells stack into one card */
+    border: 0;
     padding: 0.55rem 0.75rem;
-    vertical-align: top;
+    /* center the WHO pill in the row band so 1- and 2-line rows share an even
+       vertical rhythm down the column (mobile resets this, cells stack there) */
+    vertical-align: middle;
     color: var(--sl-color-gray-1);
     background: color-mix(in oklab, var(--sl-color-gray-3) 7%, var(--sl-color-bg));
   }
@@ -75,12 +83,82 @@ const ROWS = [
     padding: 0.15rem 0.55rem;
     border-radius: 999px;
   }
+  /* the step-cell pill is mobile-only, the dedicated Who-cell pill is desktop-only */
+  .step-who {
+    display: none;
+  }
   .who.model {
     background: color-mix(in oklab, var(--sl-color-text-accent) 22%, var(--sl-color-bg));
     color: var(--sl-color-text-accent);
   }
   .who.code {
-    background: color-mix(in oklab, var(--sl-color-gray-3) 30%, var(--sl-color-bg));
-    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 48%, var(--sl-color-bg));
+    /* darker text on the gray fill so the "code" pill reads as cleanly as "model" */
+    color: var(--sl-color-gray-0);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sl-color-gray-2) 35%, transparent);
+  }
+
+  @media (max-width: 640px) {
+    .hiw-table {
+      overflow-x: visible;
+    }
+    table,
+    tbody,
+    tr,
+    td {
+      display: block;
+      width: 100%;
+    }
+    thead {
+      display: none;
+    }
+    /* one continuous card per row: the row carries the surface, the stacked
+       cells inside it go transparent so there is no internal seam between the
+       step+pill block and the why block. Gap shows only between rows. */
+    tbody tr {
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 0.55rem;
+      padding: 0.85rem 0.95rem;
+      background: color-mix(in oklab, var(--sl-color-gray-3) 7%, var(--sl-color-bg));
+    }
+    tbody tr:nth-child(even) {
+      background: color-mix(in oklab, var(--sl-color-gray-3) 14%, var(--sl-color-bg));
+    }
+    tbody td,
+    tbody tr:nth-child(even) td {
+      padding: 0;
+      background: transparent;
+    }
+    tbody td:first-child {
+      display: flex;
+      align-items: baseline;
+      gap: 0.35rem 0.5rem;
+      flex-wrap: wrap;
+      font-size: 1rem;
+    }
+    /* drop the dedicated Who cell, the pill is lifted into the step heading */
+    tbody td:nth-child(2) {
+      display: none;
+    }
+    /* the step text always takes the full row so the pill drops to its own line
+       below every heading, one- and two-line alike, for a uniform pill rhythm */
+    .step-text {
+      flex-basis: 100%;
+    }
+    .step-who {
+      display: inline-block;
+      /* snug under the step heading, matching the comparison-card eyebrow gap */
+      margin-top: 0.3rem;
+      /* tight line-box so the pill adds no descender space below itself, which
+         was inflating the gap to the WHY line into a hollow ~3-4x the gap above */
+      line-height: 1;
+    }
+    tbody td:last-child {
+      /* symmetric ~0.3rem gap above and below the pill so the card reads evenly
+         balanced top-to-bottom, no hollow space under the chip */
+      padding-top: 0.3rem;
+      font-size: 0.88rem;
+    }
   }
 </style>

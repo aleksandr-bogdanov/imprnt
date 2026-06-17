@@ -1,0 +1,132 @@
+---
+/**
+ * Page-specific (statusline): the install command rendered as a dark terminal
+ * card that mirrors StatuslinePanel's chrome (same #11131a body, #181b24 chrome,
+ * grey dots, left-aligned title, 14px radius) so the two terminals on the page
+ * read as one design family instead of the light Starlight default. The remove
+ * line lives here as a commented command so the install paragraph stays light on
+ * inline-code chips. The copy button copies the runnable lines only (no comment).
+ */
+const LINES = [
+  { kind: "cmd", text: "imprnt plugin add statusline" },
+  { kind: "blank", text: "" },
+  { kind: "comment", text: "# remove (--purge also deletes the folder)" },
+  { kind: "cmd", text: "imprnt plugin rm statusline" },
+];
+const COPY = LINES.filter((l) => l.kind === "cmd")
+  .map((l) => l.text)
+  .join("\n");
+const esc = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const BODY = LINES.map(
+  (l) => `<span class="sl-term-line sl-term-${l.kind}">${esc(l.text)}</span>`,
+).join("\n");
+---
+
+<div class="sl-term" role="img" aria-label="Terminal: imprnt plugin add statusline, and imprnt plugin rm statusline to remove.">
+  <div class="sl-term-chrome">
+    <span class="sl-term-dot"></span><span class="sl-term-dot"></span><span class="sl-term-dot"></span>
+    <span class="sl-term-title">terminal</span>
+    <button class="sl-term-copy" type="button" data-copy={COPY} aria-label="Copy commands">copy</button>
+  </div>
+  <pre class="sl-term-body"><code set:html={BODY}></code></pre>
+</div>
+
+<style>
+  .sl-term {
+    margin: 1.4rem 0;
+    border-radius: 14px;
+    background: #11131a;
+    box-shadow: 0 1px 3px color-mix(in oklab, #000 30%, transparent);
+  }
+  .sl-term-chrome {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.85rem;
+    background: #181b24;
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+  }
+  .sl-term-dot {
+    width: 0.62rem;
+    height: 0.62rem;
+    border-radius: 999px;
+    background: #3a3f4d;
+  }
+  .sl-term-title {
+    margin-left: 0.4rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    color: #6b7180;
+  }
+  .sl-term-copy {
+    margin-left: auto;
+    padding: 0.18rem 0.55rem;
+    border: 0;
+    border-radius: 7px;
+    background: #262b37;
+    color: #c3c8d4;
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .sl-term-copy:hover {
+    background: #313847;
+    color: #e6e9f0;
+  }
+  .sl-term-copy.copied {
+    background: #2f5e3a;
+    color: #d7f0dd;
+  }
+  .sl-term-body {
+    margin: 0;
+    padding: 0.7rem 1rem 0.85rem;
+    background: transparent;
+    font-family: var(--sl-font-mono);
+    font-size: 0.85rem;
+    line-height: 1.75;
+    overflow-x: auto;
+    border-bottom-left-radius: 14px;
+    border-bottom-right-radius: 14px;
+  }
+  .sl-term-body code {
+    background: transparent;
+    padding: 0;
+    border: 0;
+    color: #c3c8d4;
+    white-space: pre;
+  }
+  .sl-term-line {
+    display: block;
+  }
+  .sl-term-cmd {
+    color: #c3c8d4;
+  }
+  .sl-term-comment {
+    color: #6b7180;
+  }
+</style>
+
+<script>
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(".sl-term-copy")) {
+    btn.addEventListener("click", async () => {
+      const text = btn.dataset.copy || "";
+      try {
+        await navigator.clipboard.writeText(text);
+        const prev = btn.textContent;
+        btn.textContent = "copied";
+        btn.classList.add("copied");
+        setTimeout(() => {
+          btn.textContent = prev;
+          btn.classList.remove("copied");
+        }, 1400);
+      } catch {
+        /* clipboard blocked, leave the visible command for manual copy */
+      }
+    });
+  }
+</script>

@@ -1,0 +1,191 @@
+---
+/**
+ * Page-specific visual for docs/vault-layout.md: the "Tags grow on their own"
+ * flow. Replaces a five-line paragraph (the page's only wall-of-text) with a
+ * three-step flow that matches the card / table / callout rhythm around it.
+ * The three beats: the model coins a tag if none fits, `check` syncs every tag
+ * your notes use, `check` flags near-duplicate spellings for you to merge. The
+ * third step is highlighted as the one manual call. Categories not instances,
+ * so it never goes stale. Scoped CSS, theme-aware via Starlight --sl tokens,
+ * collapses to a stacked column on mobile.
+ */
+const STEPS = [
+  {
+    n: "1",
+    head: "the model tags it",
+    body: "It picks the best tag that fits, and coins a new one if none does.",
+    manual: false,
+  },
+  {
+    n: "2",
+    head: "check syncs the list",
+    body: "Every tag your notes use lands in _tags.md, along with the synonym map.",
+    manual: false,
+  },
+  {
+    n: "3",
+    head: "check flags lookalikes",
+    body: "Near-duplicate spellings get surfaced for you to merge.",
+    manual: true,
+  },
+];
+---
+
+<div class="tags">
+  <ol class="steps">
+    {
+      STEPS.map((s) => (
+        <li class={`step ${s.manual ? "manual" : ""}`}>
+          <span class="num">{s.n}</span>
+          <div class="text">
+            <span class="head">
+              {s.head}
+              {s.manual && <span class="badge">you</span>}
+            </span>
+            <p class="body">{s.body}</p>
+            {s.manual && (
+              <ul class="chips">
+                <li>finance</li>
+                <li>finances</li>
+              </ul>
+            )}
+          </div>
+        </li>
+      ))
+    }
+  </ol>
+  <p class="foot">
+    Coining is automatic, but picking the winning name is a judgment call, so that
+    last step stays <strong>yours</strong>.
+  </p>
+</div>
+
+<style>
+  .tags {
+    margin: 1.4rem 0 1rem;
+  }
+  .steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.9rem;
+    /* hug each card's content so cards 1 and 2 carry no dead gray band below
+       their last line, instead of stretching to match the taller card 3,
+       matching the sibling card groups (VaultLayoutMap, FilingDecision) */
+    align-items: start;
+  }
+  .step {
+    position: relative;
+    display: flex;
+    gap: 0.7rem;
+    padding: 1.05rem 1.15rem 1.1rem;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
+  }
+  .step.manual {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .num {
+    flex: none;
+    width: 1.6rem;
+    height: 1.6rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 30%, var(--sl-color-bg));
+  }
+  .step.manual .num {
+    color: var(--sl-color-bg);
+    background: var(--sl-color-text-accent);
+  }
+  .text {
+    min-width: 0;
+  }
+  .head {
+    display: block;
+    /* reserve two lines so the body always starts at the same y across all
+       three cards, whether the head wraps to one line or two */
+    min-height: 2.4em;
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--sl-color-white);
+  }
+  /* the manual card's badge floats at the card's top-right, so keep the head
+     text clear of it */
+  .step.manual .head {
+    padding-right: 2.6rem;
+  }
+  /* anchor the badge to the card's top-right so it never wraps onto its own
+     line in the head, which would push card 3's body below cards 1 and 2.
+     out of the head's flow, the body still starts on the shared baseline */
+  .badge {
+    position: absolute;
+    top: 0.9rem;
+    right: 1.05rem;
+    white-space: nowrap;
+    font-family: var(--sl-font-mono);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-bg);
+    background: var(--sl-color-text-accent);
+    padding: 0.08rem 0.35rem;
+    border-radius: 5px;
+  }
+  .body {
+    margin: 0.35rem 0 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+  }
+  /* a dedicated chip row below the body, matching FilingDecision's .folders
+     block instead of trailing the body sentence */
+  .chips {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .chips li {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--sl-color-text-accent);
+    padding: 0.1rem 0.45rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+  }
+  .foot {
+    margin: 0.85rem 0 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+  }
+  .foot strong {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  @media (max-width: 720px) {
+    .steps {
+      grid-template-columns: 1fr;
+      gap: 0.7rem;
+    }
+    /* one column stacked, so no cross-card body-start alignment is needed.
+       Drop the reserved two-line head height so the body follows tightly. */
+    .head {
+      min-height: 0;
+    }
+  }
+</style>

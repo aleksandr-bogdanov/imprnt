@@ -1,0 +1,110 @@
+---
+/**
+ * Page-specific (how-it-works): the two token levers as a compact contrast block,
+ * so the "Why no search server" section keeps the page's visual cadence instead of
+ * dropping to a prose wall. Wording is reused verbatim from the paragraph beside it,
+ * no new data. Two levers, each shown as a live server cost vs the imprnt move.
+ * Filled surfaces, no borders. Scoped CSS, theme-aware via Starlight tokens.
+ */
+const LEVERS = [
+  {
+    lever: "Payload size",
+    server: "the model re-fetches and re-reads on every read",
+    imprnt: "code does the heavy scan, the model gets a tight result",
+  },
+  {
+    lever: "Caching",
+    server: "a round-trip on every read, nothing cached",
+    imprnt: "one batched sync caches locally, every read after is free",
+  },
+];
+---
+
+<div class="server">
+  {
+    LEVERS.map((l) => (
+      <div class="row">
+        <span class="lever">{l.lever}</span>
+        <div class="sides">
+          <div class="side live">
+            <span class="who">live server</span>
+            <span class="what">{l.server}</span>
+          </div>
+          <div class="side imp">
+            <span class="who">imprnt</span>
+            <span class="what">{l.imprnt}</span>
+          </div>
+        </div>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .server {
+    display: grid;
+    gap: 0.6rem;
+    margin: 1.4rem 0;
+  }
+  .row {
+    display: grid;
+    gap: 0.5rem;
+    /* Starlight content owl-spacing leaks margin-top:16px onto later grid
+       children. Reset it so rows and their cards share their intended top edges. */
+    margin-top: 0;
+  }
+  .lever {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .sides {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    /* both cards in a row grow to the taller card's height and share a top edge */
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+  .side {
+    display: flex;
+    flex-direction: column;
+    /* reset Starlight owl-spacing leak (margin-top:16px on the second grid child)
+       so the imprnt card lines up with the live-server card */
+    margin-top: 0;
+    /* fill the grid track so the shorter card matches the taller one's height */
+    height: 100%;
+    /* content anchored to the top so a one-line card lines up with a two-line one */
+    justify-content: flex-start;
+    gap: 0.3rem;
+    padding: 0.85rem 0.95rem;
+    border-radius: 12px;
+  }
+  .side.live {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 18%, var(--sl-color-bg));
+  }
+  .side.imp {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .who {
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--sl-color-gray-1);
+  }
+  .side.imp .who {
+    color: var(--sl-color-text-accent);
+  }
+  .what {
+    font-size: 0.86rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+  @media (max-width: 640px) {
+    .sides {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

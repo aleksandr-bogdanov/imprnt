@@ -10,19 +10,16 @@ const PILLARS = [
     cmd: "ingest",
     verb: "file something",
     what: "Hand over any source. The model reads it and files clean notes.",
-    accent: true,
   },
   {
     cmd: "recall",
     verb: "find something",
     what: "Ask in plain words. It ranks your notes and answers from them.",
-    accent: false,
   },
   {
     cmd: "check",
     verb: "tidy up",
     what: "Rebuild the index, learn new tags, flag anything broken.",
-    accent: false,
   },
 ];
 ---
@@ -40,8 +37,8 @@ const PILLARS = [
 
   <div class="pillars">
     {
-      PILLARS.map((p) => (
-        <div class={`pillar${p.accent ? " accent" : ""}`}>
+      PILLARS.map((p, i) => (
+        <div class={`pillar${i === 0 ? " accent" : ""}`}>
           <code class="cmd">{p.cmd}</code>
           <span class="verb">{p.verb}</span>
           <p class="what">{p.what}</p>
@@ -67,7 +64,7 @@ const PILLARS = [
   }
   .node {
     font-family: var(--sl-font-mono);
-    font-size: 0.82rem;
+    font-size: 0.85rem;
     padding: 0.24rem 0.6rem;
     border-radius: 7px;
     background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
@@ -93,8 +90,12 @@ const PILLARS = [
   }
   .pillar {
     border-radius: 13px;
-    padding: 0.95rem 1rem 1.05rem;
+    padding: 0.95rem 1rem 0.9rem;
     background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    /* Starlight's prose rhythm adds a 16px top margin to siblings 2 and 3,
+       which lifted the first pillar 16px above the other two. Reset it and let
+       the grid gap handle spacing (columns on desktop, stacked on mobile). */
+    margin-top: 0;
   }
   .pillar.accent {
     background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
@@ -102,12 +103,21 @@ const PILLARS = [
   .cmd {
     display: inline-block;
     font-family: var(--sl-font-mono);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     font-weight: 600;
     color: var(--sl-color-gray-1);
+    /* Match the flow strip's .node chip exactly, and override Starlight's
+       global inline-code styling (the pale green tint + faint border it leaks
+       onto a bare <code>) so the pillar command tokens read as the same gray
+       chip as the flow strip directly above. */
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    padding: 0.24rem 0.6rem;
+    border-radius: 7px;
+    border: none;
   }
   .pillar.accent .cmd {
     color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
   }
   .verb {
     display: block;
@@ -115,7 +125,7 @@ const PILLARS = [
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--sl-color-gray-2);
-    margin: 0.15rem 0 0.5rem;
+    margin: 0.38rem 0 0.55rem;
   }
   .what {
     font-size: 0.86rem;
@@ -124,6 +134,14 @@ const PILLARS = [
     margin: 0;
   }
   @media (max-width: 640px) {
+    .flow {
+      gap: 0.35rem 0.45rem;
+      padding: 0.65rem 0.8rem;
+    }
+    .node {
+      font-size: 0.78rem;
+      padding: 0.22rem 0.5rem;
+    }
     .pillars {
       grid-template-columns: 1fr;
     }

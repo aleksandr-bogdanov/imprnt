@@ -1,0 +1,55 @@
+---
+/**
+ * Page-scoped style tweaks for the Anti-slop doc page ONLY. MDX <style> tags are
+ * not auto-scoped by Astro, and this page's heading IDs (#install,
+ * #make-the-rules-your-own) are not unique across the docs set, so every rule is
+ * gated under `body:has(.antislop-page-marker)`. That marker element is rendered
+ * only by this page, so these rules never reach any other page sharing the bundle.
+ *
+ * Three fixes:
+ *  1. Widen the H2/H3 gap so "Make the rules your own" (H3) clearly reads as a
+ *     sub-step of "Install" (H2), not a peer section.
+ *  2. Keep the negate-then-affirm inline-code example from splitting a lone "Y"
+ *     onto its own line on mobile (a stray green pill fragment).
+ *  3. Even out the intro leading: an inline-code chip's box is taller than a
+ *     plain text line, so on the narrow mobile column a chip line gets nudged
+ *     wider than its neighbors. Trim the chip's vertical padding and pin the
+ *     paragraph line-height so chip lines and plain lines share one rhythm.
+ */
+---
+
+<span class="antislop-page-marker" aria-hidden="true"></span>
+
+<style is:global>
+  /* 1. H3 ranks visibly below H2 in this page's content. */
+  body:has(.antislop-page-marker) .sl-markdown-content h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+    margin-top: 1.5rem;
+  }
+
+  /* 2. Hold this one inline-code example together so it wraps as a whole pill.
+     The code is authored as a backtick node (keeps apostrophes straight) inside
+     a span wrapper, so the nowrap rule lives on the wrapper. */
+  body:has(.antislop-page-marker) .sl-markdown-content .antislop-nowrap {
+    white-space: nowrap;
+  }
+
+  /* 3. Shave the inline chips and pin the paragraph leading so a chip line sits
+     at the same height as a plain text line. The chip box is otherwise taller
+     than the surrounding text, which nudges the leading on the narrow mobile
+     column. Applied to body paragraphs on this page only. */
+  body:has(.antislop-page-marker) .sl-markdown-content p {
+    line-height: 1.85;
+  }
+  body:has(.antislop-page-marker) .sl-markdown-content p > code {
+    padding-top: 0.05em;
+    padding-bottom: 0.05em;
+    line-height: 1.6;
+  }
+
+  .antislop-page-marker {
+    display: none;
+  }
+</style>

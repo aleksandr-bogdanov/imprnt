@@ -1,10 +1,11 @@
 ---
 /**
- * contributing.mdx ONLY — the npm dist-tag table, kept as full data, restyled so
- * it scrolls horizontally on a phone instead of crushing the three columns. The
- * install commands keep a min-width and never wrap mid-command. No borders, a
- * filled header row. Scoped CSS, theme-aware via --sl tokens (docs pages do not
- * load Tailwind).
+ * contributing.mdx ONLY — the npm dist-tag data, kept in full. On wide screens it
+ * is a three-column table. On a phone it reflows into stacked cards (channel +
+ * install on top, the description on its own line beneath) so the sentence reads
+ * in normal multi-word lines instead of crushing into a scrollable column. Same
+ * ROWS feed both layouts. No borders, filled surfaces. Scoped CSS, theme-aware
+ * via --sl tokens (docs pages do not load Tailwind).
  */
 const ROWS = [
   {
@@ -20,7 +21,7 @@ const ROWS = [
 ];
 ---
 
-<div class="dt-scroll">
+<div class="dt-wrap">
   <table class="dt">
     <thead>
       <tr>
@@ -41,19 +42,34 @@ const ROWS = [
       }
     </tbody>
   </table>
+
+  <div class="dt-stack" aria-hidden="true">
+    {
+      ROWS.map((r) => (
+        <div class="dt-card">
+          <div class="dt-head">
+            <code class="ch">{r.channel}</code>
+            <code class="cmd">{r.install}</code>
+          </div>
+          <p class="what">{r.what}</p>
+        </div>
+      ))
+    }
+  </div>
 </div>
 
 <style>
-  .dt-scroll {
-    overflow-x: auto;
+  .dt-wrap {
     margin: 1.3rem 0 1.1rem;
-    border-radius: 14px;
   }
+
+  /* Wide-screen table */
   .dt {
     width: 100%;
-    min-width: 34rem;
     border-collapse: collapse;
     margin: 0;
+    border-radius: 14px;
+    overflow: hidden;
     font-size: 0.88rem;
   }
   .dt th,
@@ -77,11 +93,46 @@ const ROWS = [
   .dt tbody tr:nth-child(even) {
     background: color-mix(in oklab, var(--sl-color-gray-3) 13%, var(--sl-color-bg));
   }
+
+  /* Stacked phone cards, hidden on wide screens */
+  .dt-stack {
+    display: none;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .dt-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.85rem 0.95rem 0.9rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .dt-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.4rem 0.7rem;
+  }
+  .dt-card .what {
+    margin: 0;
+  }
+
+  @media (max-width: 48rem) {
+    .dt {
+      display: none;
+    }
+    .dt-stack {
+      display: flex;
+    }
+  }
+
   .ch {
     font-family: var(--sl-font-mono);
     font-weight: 700;
     color: var(--sl-color-text-accent);
     background: none;
+    border: none;
     padding: 0;
     white-space: nowrap;
   }
@@ -89,12 +140,12 @@ const ROWS = [
     font-family: var(--sl-font-mono);
     color: var(--sl-color-white);
     background: none;
+    border: none;
     padding: 0;
     white-space: nowrap;
   }
   .what {
     color: var(--sl-color-gray-1);
     line-height: 1.45;
-    min-width: 13rem;
   }
 </style>

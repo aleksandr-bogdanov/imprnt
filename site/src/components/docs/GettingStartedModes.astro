@@ -49,13 +49,18 @@ const MODES = [
   .gsmodes {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
+    align-items: start;
     gap: 0.7rem;
     margin: 1.3rem 0;
   }
   .mode {
     border-radius: 13px;
-    padding: 0.95rem 1.05rem 1.05rem;
+    padding: 0.95rem 1.05rem 0.9rem;
     background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    /* Starlight's prose rhythm adds a 16px top margin to any element that
+       follows a sibling, which shoved the second card (and all its content)
+       16px lower than the first. Reset it so both grid cards top-align. */
+    margin-top: 0;
   }
   .mode.accent {
     background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
@@ -67,14 +72,23 @@ const MODES = [
     gap: 0.5rem;
     margin-bottom: 0.6rem;
   }
-  .cmd {
+  /* Scope to .gsmodes so the explicit grey chip beats Starlight's global
+     :not(pre)>code styling (the pale green tint + faint border it leaks onto a
+     bare <code>). Without this the non-accent "imp lair" command reads green and
+     muddies the one-card-is-highlighted signal. Green only on the accent card. */
+  .gsmodes .cmd {
     font-family: var(--sl-font-mono);
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     font-weight: 600;
     color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 24%, var(--sl-color-bg));
+    padding: 0.22rem 0.6rem;
+    border-radius: 7px;
+    border: none;
   }
-  .mode.accent .cmd {
+  .gsmodes .mode.accent .cmd {
     color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
   }
   .where {
     font-size: 0.72rem;
@@ -100,7 +114,8 @@ const MODES = [
     content: "";
     position: absolute;
     left: 0.15rem;
-    top: 0.6rem;
+    top: 0.725em;
+    transform: translateY(-50%);
     width: 5px;
     height: 5px;
     border-radius: 50%;

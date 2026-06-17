@@ -1,0 +1,115 @@
+---
+/**
+ * Page-specific to docs/plugins/anti-slop.mdx. The four wiring commands (add and
+ * remove, at project and user scope) in one filled surface instead of four
+ * separate Starlight code-block frames. Each scope is a column on desktop and
+ * stacks on mobile, so the two add and the two remove commands read as a small
+ * scope-by-action grid. This halves the vertical footprint and drops the
+ * repeated half-empty title bars. Reuses the filled-surface, captioned-mono
+ * language of PluginsInstall on the plugins page. Borderless, scoped CSS,
+ * theme-aware via Starlight tokens (no Tailwind on docs pages). Commands are
+ * verbatim and selectable to copy.
+ */
+const SCOPES = [
+  {
+    label: "Project - this repo only",
+    note: "edits CLAUDE.local.md",
+    add: "imprnt plugin add anti-slop",
+    rm: "imprnt plugin rm anti-slop",
+  },
+  {
+    label: "User - every session, anywhere",
+    note: "edits your global config",
+    add: "imprnt global add anti-slop",
+    rm: "imprnt global rm anti-slop",
+  },
+];
+---
+
+<div class="asi">
+  {
+    SCOPES.map((s) => (
+      <div class="asi-col">
+        <div class="asi-head">
+          <span class="asi-label">{s.label}</span>
+          <span class="asi-note">{s.note}</span>
+        </div>
+        <div class="asi-cmds">
+          <span class="asi-tag">add</span>
+          <code class="asi-cmd">{s.add}</code>
+          <span class="asi-tag asi-tag-rm">remove</span>
+          <code class="asi-cmd">{s.rm}</code>
+        </div>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .asi {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7rem;
+    margin: 1.4rem 0;
+  }
+  @media (max-width: 640px) {
+    .asi {
+      grid-template-columns: 1fr;
+    }
+  }
+  .asi-col {
+    display: grid;
+    gap: 0.7rem;
+    padding: 1rem 1.1rem 1.05rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 12%, var(--sl-color-bg));
+  }
+  .asi-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .asi-label {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--sl-color-white);
+  }
+  .asi-note {
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    color: var(--sl-color-text-accent);
+  }
+  .asi-cmds {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: baseline;
+    column-gap: 0.6rem;
+    row-gap: 0.4rem;
+  }
+  .asi-tag {
+    justify-self: start;
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.12rem 0.4rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 18%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+  }
+  .asi-tag-rm {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 20%, var(--sl-color-bg));
+    color: var(--sl-color-gray-2);
+  }
+  .asi-cmd {
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--sl-color-white);
+    background: none;
+    padding: 0;
+    overflow-wrap: anywhere;
+  }
+</style>

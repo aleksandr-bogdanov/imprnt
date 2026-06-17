@@ -1,0 +1,118 @@
+---
+/**
+ * Page-specific (how-it-works): the two correction mechanisms as a visual,
+ * so the "Edits are cheap" section is not an all-prose wall. Two filled
+ * mini-cards, each showing a before-state, the one mechanical move, and the
+ * after-state. Shows the MECHANISM (alias-keep, supersede-stamp), not real
+ * named instances, so it never goes stale. No borders. Theme-aware tokens.
+ */
+const CASES = [
+  {
+    tag: "renamed",
+    before: "Carl, Engineer",
+    move: "one edit, old name kept as an alias",
+    after: "Boris, Director, right everywhere",
+  },
+  {
+    tag: "contradicted",
+    before: "the old date",
+    move: "old line stamped superseded, never overwritten",
+    after: "the new date, the stale one still traceable",
+  },
+];
+---
+
+<div class="edits">
+  {
+    CASES.map((c) => (
+      <div class="ecard">
+        <span class="etag">{c.tag}</span>
+        <div class="row">
+          <span class="before">{c.before}</span>
+          <span class="arr" aria-hidden="true">&rarr;</span>
+          <span class="after">{c.after}</span>
+        </div>
+        <span class="move">{c.move}</span>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .edits {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    /* both cards anchor at the top so the eyebrows share a top edge even when
+       one card's after-line wraps to two lines */
+    align-items: start;
+    gap: 0.6rem;
+    margin: 1.4rem 0;
+  }
+  .ecard {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.95rem 1rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    /* Starlight content owl-spacing leaks margin-top:16px onto the second grid
+       child, pushing the right card below the left. Reset it so both share a top edge. */
+    margin-top: 0;
+  }
+  .etag {
+    /* the edit cards carry an accent kicker so this family is distinct at a glance
+       from the grey kickers on the intro panels and the comparison block. */
+    align-self: flex-start;
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.5rem;
+  }
+  .before {
+    font-size: 0.92rem;
+    color: var(--sl-color-gray-1);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklab, var(--sl-color-gray-2) 70%, transparent);
+  }
+  .arr {
+    /* the before -> after transform is this family's signature, so the arrow is a
+       small filled accent badge. it sets the edit cards apart from the flat intro
+       panels and the side-by-side comparison block, which use no such badge. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    border-radius: 999px;
+    flex: none;
+    font-size: 0.85rem;
+    line-height: 1;
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+  }
+  .after {
+    font-size: 0.98rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .move {
+    font-size: 0.8rem;
+    line-height: 1.35;
+    color: var(--sl-color-text-accent);
+  }
+  @media (max-width: 640px) {
+    .edits {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -69,6 +69,7 @@ const PRIVATE = [
   .psplit {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    align-items: stretch;
     gap: 0.9rem;
     margin: 1rem 0 0.9rem;
   }
@@ -78,22 +79,27 @@ const PRIVATE = [
     }
   }
   .pcard {
+    display: flex;
+    flex-direction: column;
+    align-self: start;
+    margin: 0;
     padding: 1rem 1.15rem 1.05rem;
     border-radius: 16px;
   }
   .pcard.ships {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+    background: color-mix(in oklab, var(--sl-color-text-accent) 8%, var(--sl-color-bg));
   }
   .pcard.local {
-    background: color-mix(in oklab, var(--sl-color-gray-3) 14%, var(--sl-color-bg));
+    background: color-mix(in oklab, var(--sl-color-gray-3) 13%, var(--sl-color-bg));
   }
   .ptag {
     display: block;
     font-family: var(--sl-font-mono);
     font-size: 0.66rem;
+    line-height: 1.2;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    margin-bottom: 0.6rem;
+    margin: 0 0 0.6rem;
   }
   .ships .ptag {
     color: var(--sl-color-text-accent);
