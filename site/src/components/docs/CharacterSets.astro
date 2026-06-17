@@ -1,0 +1,131 @@
+---
+/**
+ * Page-specific (character) visual: the three things a character file sets,
+ * pulled out of the intro prose, then a small flow for the core idea (a
+ * character wired into the prompt keeps the same identity across sessions and
+ * systems). Categories only, no instance list. Filled surfaces, no borders.
+ * Scoped CSS, theme-aware via Starlight tokens.
+ */
+const SETS = [
+  {
+    label: "how it talks",
+    title: "Voice",
+    what: "The register and tone, so replies read like one consistent person.",
+    accent: true,
+  },
+  {
+    label: "what it values",
+    title: "Standards",
+    what: "The bar it holds work to, and the calls it makes when it disagrees.",
+    accent: false,
+  },
+  {
+    label: "what it never does",
+    title: "Limits",
+    what: "The lines it will not cross, from flattery to skipping a check.",
+    accent: false,
+  },
+];
+---
+
+<div class="charsets">
+  <div class="cards">
+    {
+      SETS.map((s) => (
+        <div class={`card${s.accent ? " accent" : ""}`}>
+          <span class="label">{s.label}</span>
+          <span class="title">{s.title}</span>
+          <p class="what">{s.what}</p>
+        </div>
+      ))
+    }
+  </div>
+
+  <div class="flow" aria-label="A character file is wired into the prompt, so the same identity persists across sessions and systems">
+    <span class="node start">character file</span>
+    <span class="arr" aria-hidden="true">&rarr;</span>
+    <span class="node">wired into the prompt</span>
+    <span class="arr" aria-hidden="true">&rarr;</span>
+    <span class="node end">same identity, every session and system</span>
+  </div>
+</div>
+
+<style>
+  .charsets {
+    margin: 1.4rem 0 1.6rem;
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.7rem;
+    margin-bottom: 0.9rem;
+  }
+  .card {
+    border-radius: 13px;
+    padding: 0.95rem 1rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .card.accent {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+  .label {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .card.accent .label {
+    color: var(--sl-color-text-accent);
+  }
+  .title {
+    display: block;
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--sl-color-white);
+    margin: 0.3rem 0 0.45rem;
+  }
+  .what {
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+    margin: 0;
+  }
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.55rem;
+    padding: 0.7rem 0.95rem;
+    border-radius: 13px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .node {
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    padding: 0.24rem 0.6rem;
+    border-radius: 7px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    color: var(--sl-color-gray-1);
+  }
+  .node.start {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+    font-weight: 600;
+  }
+  .node.end {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+  .arr {
+    color: var(--sl-color-gray-4);
+    font-size: 0.95rem;
+  }
+  @media (max-width: 640px) {
+    .cards {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

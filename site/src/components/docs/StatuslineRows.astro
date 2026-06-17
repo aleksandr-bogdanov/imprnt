@@ -1,0 +1,97 @@
+---
+/**
+ * Page-specific (statusline): decodes the four panel rows. One table row per
+ * panel line, columns Row / What it shows / Example. The "what it shows" column
+ * names the segment CATEGORIES (so adding or dropping a segment never touches
+ * this), the Example column keeps the verbatim values from the panel. This is
+ * data, the component only styles the row-name pill and the example mono cell.
+ * No borders, theme-aware tokens, alternating filled surfaces.
+ */
+const ROWS = [
+  {
+    name: "model",
+    shows: "Which model is running, the session name, the working dir, and git ahead/behind.",
+    example: "Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1",
+  },
+  {
+    name: "cost",
+    shows: "Spend so far, elapsed time, and lines added/removed this session.",
+    example: "$0.42 · elapsed 1h12m · lines +156/-23",
+  },
+  {
+    name: "ctx",
+    shows: "A gauge of how full the context window is, the fill percent, and the effort level.",
+    example: "▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱ 48% · effort high",
+  },
+  {
+    name: "limits",
+    shows: "The 5h and 7d rate-limit windows with reset times, your vault note and review counts, the weather, and the clock.",
+    example: "5h 24% →18:00 · 7d 41% →Thu · vault 247 notes, 3 review · ☀ 22° · 14:05",
+  },
+];
+---
+
+<div class="sl-decode">
+  <table>
+    <thead>
+      <tr><th>Row</th><th>What it shows</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      {
+        ROWS.map((r) => (
+          <tr>
+            <td><span class="sl-rowname">{r.name}</span></td>
+            <td>{r.shows}</td>
+            <td><code class="sl-ex">{r.example}</code></td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .sl-decode {
+    margin: 1.4rem 0;
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  thead th {
+    text-align: left;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    padding: 0 0.75rem 0.5rem;
+  }
+  tbody td {
+    padding: 0.6rem 0.75rem;
+    vertical-align: top;
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 7%, var(--sl-color-bg));
+  }
+  tbody tr:nth-child(even) td {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 14%, var(--sl-color-bg));
+  }
+  .sl-rowname {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.76rem;
+    font-weight: 700;
+    padding: 0.16rem 0.6rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+  }
+  .sl-ex {
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+    color: var(--sl-color-white);
+    background: none;
+    overflow-wrap: anywhere;
+  }
+</style>

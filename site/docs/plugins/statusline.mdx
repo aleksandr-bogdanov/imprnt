@@ -1,0 +1,36 @@
+---
+title: Statusline
+description: "A status panel at the bottom of every imp session: model, branch, context, cost, rate limits, clock."
+---
+
+import StatuslinePanel from "../../src/components/docs/StatuslinePanel.astro";
+import StatuslineRows from "../../src/components/docs/StatuslineRows.astro";
+import StatuslineRamp from "../../src/components/docs/StatuslineRamp.astro";
+import StatuslineCustomize from "../../src/components/docs/StatuslineCustomize.astro";
+
+A four-row **panel** at the bottom of your imp session. A long session loses track of where it stands, and the status line keeps the numbers that matter in front of you.
+
+<StatuslinePanel />
+
+## How it works
+
+A harness plugin draws four aligned rows. Each row reads left to right as a label and its segments.
+
+<StatuslineRows />
+
+Color is a single **alarm ramp**. Every percentage and the gauge stay calm below 60, turn amber past 60, and go red past 85, so a quiet session is nearly monochrome and any color is news.
+
+<StatuslineRamp />
+
+On a narrow terminal each row drops segments in a fixed order rather than wrapping. There is no command to run. Claude Code pipes session data to the script and the script prints the line.
+
+<StatuslineCustomize />
+
+## Install
+
+```sh
+imprnt plugin add statusline
+```
+
+This copies the plugin into `plugins/statusline/` and wires it. `imp` forwards the `statusLine` setting to every session it launches, so nothing is written into your Claude settings and plain `claude` stays untouched. Remove with `imprnt plugin rm statusline` (add `--purge` to delete the folder too).
+

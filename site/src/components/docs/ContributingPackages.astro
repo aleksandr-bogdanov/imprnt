@@ -1,0 +1,112 @@
+---
+/**
+ * contributing.mdx ONLY — the two package families in the monorepo as side-by-side
+ * cards: the core CLI vs the plugin gallery. Shows the naming convention and what
+ * each family is, by CATEGORY (one core, many plugins), so a new plugin never
+ * touches this. No borders, filled surfaces. Scoped CSS, theme-aware via --sl
+ * tokens (docs pages do not load Tailwind).
+ */
+const PKGS = [
+  {
+    name: "imprnt",
+    path: "packages/imprnt/",
+    role: "the core CLI",
+    count: "one package",
+    desc: "ingest, recall, check, plus init, snapshot, hot, context, and plugin. Installs two commands from one dispatcher: imprnt for machinery, imp for humans.",
+    accent: true,
+  },
+  {
+    name: "imprnt-plugin-*",
+    path: "packages/plugin-*/",
+    role: "the gallery",
+    count: "one package each",
+    desc: "every plugin ships on its own. The naming convention matches the shape ESLint uses, so anyone can publish a plugin without joining an npm org. The core never imports or names one.",
+    accent: false,
+  },
+];
+---
+
+<div class="pkgs">
+  {
+    PKGS.map((p) => (
+      <div class={p.accent ? "pcard core" : "pcard"}>
+        <code class="pname">{p.name}</code>
+        <span class="ppath">{p.path}</span>
+        <div class="prole">
+          <span class="role">{p.role}</span>
+          <span class="count">{p.count}</span>
+        </div>
+        <p class="pdesc">{p.desc}</p>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .pkgs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.9rem;
+    margin: 1.4rem 0 1.2rem;
+  }
+  @media (max-width: 720px) {
+    .pkgs {
+      grid-template-columns: 1fr;
+    }
+  }
+  .pcard {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 1.1rem 1.2rem 1.05rem;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .pcard.core {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+  .pname {
+    font-family: var(--sl-font-mono);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+    background: none;
+    padding: 0;
+  }
+  .pcard.core .pname {
+    color: var(--sl-color-text-accent);
+  }
+  .ppath {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    color: var(--sl-color-gray-2);
+  }
+  .prole {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-top: 0.3rem;
+  }
+  .role {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.92rem;
+    color: var(--sl-color-white);
+  }
+  .pcard.core .role {
+    color: var(--sl-color-text-accent);
+  }
+  .count {
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .pdesc {
+    margin: 0.35rem 0 0;
+    font-size: 0.86rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+</style>

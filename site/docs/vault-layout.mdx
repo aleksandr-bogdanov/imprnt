@@ -1,0 +1,44 @@
+---
+title: Vault layout
+description: Folders you browse by hand, and note headers that carry the meaning.
+---
+
+import VaultLayoutMap from "../src/components/docs/VaultLayoutMap.astro";
+import VaultDataRule from "../src/components/docs/VaultDataRule.astro";
+
+**Folders** are for you to browse, never for search to use. `recall` ignores them, so where you put a note never affects whether you find it. That frees the folders to be an honest map of your life instead of a filing system you fight.
+
+## The layout
+
+Three kinds of folder, each with a real reason to exist. Entities get one home and everything links to them, domains hold most of your content and you pick which ones, forms are split out by how you use them.
+
+<VaultLayoutMap />
+
+## How the model decides where a note goes
+
+One call, in order:
+
+1. Is it a person, org, or **holding** (an owned thing whose state you track)? File it in the entity folder, whatever the topic.
+2. Is it a dated **event**, a **lesson** learned, or a **project** with a status? Those have their own folders.
+3. Otherwise it is topical. File it by **life-area**.
+
+## What carries the meaning
+
+Three labels do the real work, and keeping them separate is what stops the folders from sprawling.
+
+| Label | Where it lives | What it says |
+|------|-------|------------------|
+| `type` | the header | what the object is: person, org, holding, project, principle, note, mistake, event |
+| `kind` | the header | what form it takes: a belief, a model, a policy, a how-to, a rating |
+| `tags` | the header | what it is about, a list that grows on its own, one idea per tag |
+| folder | the path | where you browse for it, the one axis search never reads |
+
+The meaning rides in the header, not the path. A note in a life-area folder also says `domain:` in that header, and `check` complains if the folder and the field disagree. Move the note or export it, and its **meaning** comes along.
+
+## Tags grow on their own
+
+`_tags.md` holds your tags and a synonym map, and the list grows with **no approval step**. When the model files a note it picks the best tag that fits, and coins a new one if none does. Then `check` syncs every tag your notes use into the list, and flags near-duplicate spellings (`finance` next to `finances`) so you can merge them by hand. Picking the winning name is a judgment call, so that one step stays yours.
+
+## The data is the knowledge
+
+<VaultDataRule />

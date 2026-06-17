@@ -1,0 +1,137 @@
+---
+/**
+ * contributing.mdx ONLY — the generic-vs-personal cut, with the privacy takeaway
+ * led first as a filled banner, then two contrasting cards: what the public
+ * gallery ships vs what stays local in _personal/. Categories, not a list of
+ * plugins, so the cast can change without touching this. No borders, filled
+ * surfaces. Scoped CSS, theme-aware via --sl tokens (docs pages do not load
+ * Tailwind).
+ */
+const PUBLIC = [
+  "the generic plugin gallery",
+  "Scribe, the default character you copy",
+  "the universal anti-slop core",
+];
+const PRIVATE = [
+  "your edited copy of a gallery plugin",
+  "your own character and house style",
+  "anything in plugins/_personal/",
+];
+---
+
+<div class="lead-banner">
+  <span class="lb-tag">the one rule</span>
+  <p class="lb-text">
+    Your private plugins never ship. They live in <code>plugins/_personal/</code>, gitignored and never
+    published, and <code>imprnt plugin list</code> skips them so your private cast stays off the public listing.
+  </p>
+</div>
+
+<div class="psplit">
+  <div class="pcard ships">
+    <span class="ptag">ships in the public gallery</span>
+    <ul class="plist">{PUBLIC.map((t) => <li>{t}</li>)}</ul>
+  </div>
+  <div class="pcard local">
+    <span class="ptag">stays local, never published</span>
+    <ul class="plist">{PRIVATE.map((t) => <li>{t}</li>)}</ul>
+  </div>
+</div>
+
+<p class="psplit-foot">
+  To personalize, copy a gallery plugin into <code>_personal/</code>, edit it, and wire the local file directly.
+</p>
+
+<style>
+  .lead-banner {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 1rem 1.15rem 1.05rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 13%, var(--sl-color-bg));
+    margin: 1.3rem 0 1rem;
+  }
+  .lb-tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .lb-text {
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    color: var(--sl-color-white);
+  }
+
+  .psplit {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.9rem;
+    margin: 1rem 0 0.9rem;
+  }
+  @media (max-width: 720px) {
+    .psplit {
+      grid-template-columns: 1fr;
+    }
+  }
+  .pcard {
+    padding: 1rem 1.15rem 1.05rem;
+    border-radius: 16px;
+  }
+  .pcard.ships {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .pcard.local {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 14%, var(--sl-color-bg));
+  }
+  .ptag {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.6rem;
+  }
+  .ships .ptag {
+    color: var(--sl-color-text-accent);
+  }
+  .local .ptag {
+    color: var(--sl-color-gray-2);
+  }
+  .plist {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+  .plist li {
+    font-size: 0.88rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+    padding-left: 1.1rem;
+    position: relative;
+  }
+  .plist li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.5rem;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: var(--sl-color-gray-3);
+  }
+  .ships .plist li::before {
+    background: var(--sl-color-text-accent);
+  }
+  .psplit-foot {
+    font-size: 0.86rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+  }
+</style>

@@ -1,0 +1,82 @@
+---
+/**
+ * Page-specific callout for docs/vault-layout.md: the one rule of filing, lifted
+ * out of thin trailing prose into a single highlighted surface so the eye lands
+ * on it. Borderless filled accent surface (no border, no left bar). Scoped CSS,
+ * theme-aware via Starlight --sl tokens, no Tailwind on docs pages.
+ */
+---
+
+<div class="rule">
+  <span class="label">the one rule of filing</span>
+  <p class="line">
+    Filing <strong>adds</strong>, it never removes.
+  </p>
+  <p class="sub">
+    <code>recall</code> searches <code>vault/</code> only, so anything left behind in
+    <code>raw/</code> is invisible to it. The note has to carry the source's real
+    <strong>payload</strong> in full: tables, lists, IDs, numbers, dates, prices, doses,
+    exact wording. The summary goes on top of that, never in place of it.
+  </p>
+  <p class="test">
+    The test before a note is done: could you answer a specific question from the vault
+    note alone, without opening the original? If the answer is only in <code>raw/</code>,
+    you dropped the knowledge. Put it back.
+  </p>
+</div>
+
+<style>
+  .rule {
+    margin: 1.6rem 0 1rem;
+    padding: 1.3rem 1.5rem;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 13%, var(--sl-color-bg));
+  }
+  .label {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+    margin-bottom: 0.5rem;
+  }
+  .line {
+    margin: 0;
+    font-family: var(--sl-font);
+    font-size: 1.3rem;
+    line-height: 1.3;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .line strong {
+    color: var(--sl-color-text-accent);
+    font-weight: 700;
+  }
+  .sub {
+    margin: 0.7rem 0 0;
+    font-size: 0.9rem;
+    line-height: 1.55;
+    color: var(--sl-color-gray-2);
+  }
+  .test {
+    margin: 0.7rem 0 0;
+    font-size: 0.9rem;
+    line-height: 1.55;
+    color: var(--sl-color-gray-1);
+  }
+  .sub strong {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+  .sub code,
+  .test code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.85em;
+  }
+  @media (max-width: 640px) {
+    .line {
+      font-size: 1.1rem;
+    }
+  }
+</style>

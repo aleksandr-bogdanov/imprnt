@@ -1,0 +1,100 @@
+---
+/**
+ * contributing.mdx ONLY — the npm dist-tag table, kept as full data, restyled so
+ * it scrolls horizontally on a phone instead of crushing the three columns. The
+ * install commands keep a min-width and never wrap mid-command. No borders, a
+ * filled header row. Scoped CSS, theme-aware via --sl tokens (docs pages do not
+ * load Tailwind).
+ */
+const ROWS = [
+  {
+    channel: "latest",
+    install: "npm i -g imprnt",
+    what: "Stable. What a normal user gets. Promoted deliberately.",
+  },
+  {
+    channel: "edge",
+    install: "npm i -g imprnt@edge",
+    what: "Every push to master. May be rough.",
+  },
+];
+---
+
+<div class="dt-scroll">
+  <table class="dt">
+    <thead>
+      <tr>
+        <th>Channel</th>
+        <th>Install</th>
+        <th>What it is</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        ROWS.map((r) => (
+          <tr>
+            <td><code class="ch">{r.channel}</code></td>
+            <td><code class="cmd">{r.install}</code></td>
+            <td class="what">{r.what}</td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .dt-scroll {
+    overflow-x: auto;
+    margin: 1.3rem 0 1.1rem;
+    border-radius: 14px;
+  }
+  .dt {
+    width: 100%;
+    min-width: 34rem;
+    border-collapse: collapse;
+    margin: 0;
+    font-size: 0.88rem;
+  }
+  .dt th,
+  .dt td {
+    text-align: left;
+    padding: 0.7rem 0.95rem;
+    border: none;
+    vertical-align: top;
+  }
+  .dt thead th {
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 16%, var(--sl-color-bg));
+  }
+  .dt tbody tr {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 8%, var(--sl-color-bg));
+  }
+  .dt tbody tr:nth-child(even) {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 13%, var(--sl-color-bg));
+  }
+  .ch {
+    font-family: var(--sl-font-mono);
+    font-weight: 700;
+    color: var(--sl-color-text-accent);
+    background: none;
+    padding: 0;
+    white-space: nowrap;
+  }
+  .cmd {
+    font-family: var(--sl-font-mono);
+    color: var(--sl-color-white);
+    background: none;
+    padding: 0;
+    white-space: nowrap;
+  }
+  .what {
+    color: var(--sl-color-gray-1);
+    line-height: 1.45;
+    min-width: 13rem;
+  }
+</style>

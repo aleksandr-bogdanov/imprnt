@@ -1,0 +1,97 @@
+---
+/**
+ * contributing.mdx ONLY — the runtime story as three ordered steps so the reader
+ * sees the shape at a glance: develop and test in Bun, compile to a Node file,
+ * ship dist not src. Numbered badges, reads left-to-right and stacks on mobile.
+ * No borders, filled surfaces. Scoped CSS, theme-aware via --sl tokens (docs
+ * pages do not load Tailwind).
+ */
+const STEPS = [
+  { n: "1", label: "Develop in Bun", sub: "write and test the TypeScript with Bun as the dev tool" },
+  { n: "2", label: "Compile to Node", sub: "bun build --target=node makes one self-contained file" },
+  { n: "3", label: "Ship dist/", sub: "the package ships the built file, never src, so npm i -g works" },
+];
+---
+
+<div class="bflow" role="img" aria-label="Develop in Bun, compile to a Node file with bun build target node, ship the dist folder not src.">
+  {
+    STEPS.map((s, i) => (
+      <>
+        <div class="bnode">
+          <span class="bnum">{s.n}</span>
+          <div class="btext">
+            <span class="blabel">{s.label}</span>
+            <span class="bsub">{s.sub}</span>
+          </div>
+        </div>
+        {i < STEPS.length - 1 && <span class="barr" aria-hidden="true">&rarr;</span>}
+      </>
+    ))
+  }
+</div>
+
+<style>
+  .bflow {
+    display: flex;
+    align-items: stretch;
+    gap: 0.4rem;
+    margin: 1.4rem 0 1.1rem;
+  }
+  .bnode {
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.95rem 1rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .bnode:nth-child(3) {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .bnum {
+    flex: 0 0 auto;
+    width: 1.55rem;
+    height: 1.55rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
+  }
+  .btext {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .blabel {
+    font-size: 0.98rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--sl-color-white);
+  }
+  .bsub {
+    font-size: 0.8rem;
+    line-height: 1.35;
+    color: var(--sl-color-gray-1);
+  }
+  .barr {
+    align-self: center;
+    color: var(--sl-color-gray-3);
+    font-size: 1.3rem;
+    flex: 0 0 auto;
+  }
+  @media (max-width: 720px) {
+    .bflow {
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .barr {
+      transform: rotate(90deg);
+    }
+  }
+</style>

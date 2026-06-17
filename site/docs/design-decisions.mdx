@@ -3,82 +3,100 @@ title: Design decisions
 description: The calls behind imprnt, why each was made, and what would flip it.
 ---
 
-The big calls behind imprnt: spend the AI rarely, search with plain math, keep your data complete, and let nothing run on its own. Most are lessons from PAI steered the other way.
+import DesignDecisionsNav from "../src/components/docs/DesignDecisionsNav.astro";
+import DesignFlipsIf from "../src/components/docs/DesignFlipsIf.astro";
+import DesignPaiFlip from "../src/components/docs/DesignPaiFlip.astro";
+import DesignBm25Compare from "../src/components/docs/DesignBm25Compare.astro";
 
-imprnt grew out of [PAI](https://github.com/danielmiessler/PAI), a personal-AI system that pointed the way and showed where a few choices create friction at scale. Most of the calls below take that lesson and commit to the other path. Each one says what was decided and what would have to change to flip it.
+The big calls behind imprnt: spend the AI rarely, search with plain math, keep your data complete, and let nothing run on its own. Most are lessons from [PAI](https://github.com/danielmiessler/PAI) steered the other way.
 
-| The call | In short |
-|----------|----------|
-| Ration the model by frequency | Spend it on filing, keep it off search |
-| BM25, not embeddings | Plain local math, no vector database |
-| The data is the knowledge | A note carries the full source, never a summary of it |
-| Domain-first folders | Sort by life-area, the way you browse |
-| The core never knows a plugin | Add or remove any plugin with zero core edits |
-| Copy the reader, share no code | Reversible beats pure |
-| Commands, never a daemon | Nothing runs unless you run it |
-| Invariants are tests, not values | A principle you cannot check rots |
-| Private by being private | Local and owner-only, no redaction machinery |
-| `imp` is the door, `imprnt` the engine | One opt-in per keystroke |
-| Context is demand-paged | A reading day costs a pointer, not the contract |
+imprnt grew out of PAI, a personal-AI system that pointed the way and showed where a few choices create friction at scale. Most of the calls below take that lesson and commit to the other path. Each one says what was decided and what would have to change to flip it. Every section closes with that reversal condition, the **flips if** line, so you can scan for the one thing that would undo any call.
 
-## Ration the model by frequency, not by rule
+<DesignDecisionsNav />
 
-The axis behind every other call: spend the model where it pays (filing, once per item) and keep it off the path that runs thousands of times a day (search). [How it works](/how-it-works/) covers that split. The decision here is to measure "the dumbest thing that works" against the model, which makes BM25 the default ranker, not an opt-in. **Flips if:** a read-time quality problem appears that no local ranking can fix, and even then the move is a better local index, never a model in the loop.
+## Ration the model
+Spend the model where it pays, filing each item once, and keep it off the path that runs thousands of times a day, search. [How it works](/how-it-works/) covers that split. The decision here is to measure "the dumbest thing that works" against the model, which makes BM25 the default ranker, not an opt-in.
 
-## Retrieval is BM25, not embeddings or a query layer
+<DesignFlipsIf>A read-time quality problem appears that no local ranking can fix, and even then the move is a better local index, never a model in the loop.</DesignFlipsIf>
 
+## BM25, not embeddings
 `recall` ranks with standard **BM25** and no per-query rerank, embeddings, vectors, or protocol over the vault. The mechanics are in [How it works](/how-it-works/). Two calls are specific to this page.
 
 The scaling path stays local at every step: a full scan to about 10k notes, grep-prefilter then BM25 to about 100k, a persistent inverted index above that. Scaling adds a local index, never a vector store or a model.
 
-Vector search sounds smarter but costs more, re-indexes on every change, and hides why it matched. BM25 over plain text is free, clear, and good enough once notes are tagged well on the way in. **Flips if:** the corpus grows large and untagged enough that semantic recall beats keyword match, which the write-time tagging is built to prevent.
+Vector search sounds smarter but costs more, re-indexes on every change, and hides why it matched. BM25 over plain text is free, clear, and good enough once notes are tagged well on the way in.
+
+<DesignBm25Compare />
+
+<DesignFlipsIf>The corpus grows large and untagged enough that semantic recall beats keyword match, which the write-time tagging is built to prevent.</DesignFlipsIf>
 
 ## The data is the knowledge
-
 A note must carry the source's real payload in full, never a summary in place of it. [Vault layout](/vault-layout/) states the rule and the lookup test that checks it.
 
 The call earned its teeth from a real failure: a vault rebuild kept the prose summaries and left the tables behind in `raw/`, where `recall` never looks, so the rows were silently deleted. The fix is a stated invariant, filing adds and never removes, plus a falsifiable check, the **lookup test**: could you answer a specific question from the vault note alone?
 
-## Layout is domain-first, with cross-cutting entity folders
+<DesignFlipsIf>A cheaper store proves it can hold the full payload and stay searchable, which no summary-in-place-of-data design has managed.</DesignFlipsIf>
 
+## Domain-first folders
 An earlier type-first layout produced a **junk drawer**: a single typeless `notes/` bucket grew to nearly half the vault, because most of life is reference-about-a-domain with no type-home. The fix is to organize by life-area, the way a person actually browses their own knowledge. Folders are browse-drawers only. Search ignores them, so layout costs retrieval nothing.
 
 The one thing kept from the type-first idea: entities (people, orgs, holdings) get their own cross-cutting folders, because an entity is referenced from many domains and needs one canonical home. That resolvable-entity graph is the single real gain over PAI, which kept knowledge as prose files with no typed entity layer.
 
-## The core never knows a plugin exists
+<DesignFlipsIf>Search starts depending on folders, at which point browsing and retrieval would need different homes for the same note.</DesignFlipsIf>
 
+## The core stays blind
 Core is the vault plus `ingest`, `recall`, and `check`. Everything else is a plugin. The one rule, with its test:
 
 > You can add or remove any plugin with zero edits to the core.
 
 This is the most important call, a direct lesson from PAI. A core **bloats** when the dependency arrows point from core to module: the core imports, branches on, validates, and loads every subsystem, so every new capability grows it. PAI was built that way, and over time the core carried every feature as always-on overhead you paid for in tokens and misfires whether you used the feature or not.
 
-imprnt flips the arrows. A plugin depends on two things, your notes and its own folder, and the core stays blind to both. PAI shipped a fixed set you took whole. imprnt ships a small core plus plugins you compose, with a real off-switch.
+imprnt flips the arrows. A plugin depends on two things, your notes and its own folder, and the core stays blind to both.
 
-## Copy the reader, share no core code
+<DesignPaiFlip
+  pai="A fixed set of subsystems, taken whole, each one always-on overhead."
+  imprnt="A small core plus plugins you compose, each with a real off-switch."
+/>
 
+<DesignFlipsIf>A plugin ever needs a core edit to install, which is the exact signal that the dependency arrows have started pointing the wrong way again.</DesignFlipsIf>
+
+## Copy, share no code
 The roughly twelve lines a plugin needs to read a note's header are **copied** into each plugin. The core publishes no importable code for plugins to depend on. The reason is reversibility, not purity. If duplication later hurts, pulling the copies into one shared file is a five-minute change that breaks nobody. Un-publishing a shared tool that plugins already import is a breaking change and a magnet for "can it also do X?" creep. Copy is the move you can undo.
 
-## Commands only, never a daemon
+<DesignFlipsIf>The copied lines start drifting between plugins, when one shared file would beat keeping a dozen copies in step.</DesignFlipsIf>
 
-The core and every plugin ship commands. Scheduling them (cron, launchd, a watcher) is your **opt-in**. Nothing runs in the background just by being installed. A data plugin keeps its local copy warm because you scheduled a token-free sync, not because imprnt runs a daemon. Always-on background machinery is the cost pattern imprnt was built to avoid: a tool that works without you ever thinking about it is also one you cannot audit, cannot stop, and do not fully own.
+## Commands, never a daemon
+The core and every plugin ship commands. Scheduling them (cron, launchd, a watcher) is your **opt-in**. Nothing runs in the background just by being installed. A data plugin keeps its local copy warm because you scheduled a token-free sync, not because imprnt runs a daemon.
 
-## Invariants are tests, not values
+Always-on background machinery is the cost pattern imprnt was built to avoid: a tool that works without you ever thinking about it is also one you cannot audit, cannot stop, and do not fully own.
 
+<DesignPaiFlip
+  pai="Background machinery running by default, quietly billing you in tokens and misfires."
+  imprnt="Commands that sit still until you schedule them, so every run is one you chose."
+/>
+
+<DesignFlipsIf>A task genuinely needs sub-second reaction that no scheduled run can give, the rare case where you trade audit for latency on purpose.</DesignFlipsIf>
+
+## Invariants are tests
 The most expensive lesson, another from PAI: a principle written as a **value** ("be private," "ration the model") cannot be checked against reality, so it rots into recitation. PAI carried seventeen such principles.
 
 imprnt's answer is that an invariant earns its place only as a falsifiable check pointing at a specific failure it would have caught. "On the real corpus, recall tops the right note" is a test. "Deterministic-first" is a value. The first catches a regression on day one. The second gets quoted in a meeting.
 
-## Private by being private
+<DesignFlipsIf>A principle that genuinely cannot be made falsifiable still earns its keep, in which case it lives as documented intent and never as a check that always passes.</DesignFlipsIf>
 
+## Private by being private
 The whole vault is local and owner-only. There is no sensitivity field, no redaction pass, no secret-fencing, because the vault is meant to hold everything, including medical, financial, and personal data. The only rule is that it never goes near a public repo. Publishing a subset is an **export-time** filter you run consciously, not a tax paid on every note at filing.
 
-## `imp` is the front door, `imprnt` stays the engine
+<DesignFlipsIf>The vault ever syncs to a shared or hosted store, where being local stops being the whole privacy model and real fencing would have to start.</DesignFlipsIf>
 
+## imp vs imprnt
 The package ships two commands from one dispatcher, split by **audience**. `imp` is for humans: typed in any directory it opens a Claude session there with imprnt riding along, and `imp lair` opens it inside the vault. `imprnt` is for machinery: agents and scripts call `imprnt recall`, `imprnt check`, and the rest.
 
 Two earlier models lost. Injecting imprnt into the assistant's global config pays tokens in every session forever, the always-on cost again. A launcher-only model left the vault unreachable from the coding repos where most of the day happens. The resolution is per-keystroke **consent**: typing `imp` instead of `claude` is the entire opt-in. Plain `claude` stays plain, nothing is written into the global config, and each session carries the context because you asked for it by name.
 
-## Session context is demand-paged
+<DesignFlipsIf>A safe way appears to give the vault to every session without the per-session token cost, which would retire the per-keystroke opt-in.</DesignFlipsIf>
 
+## Context is demand-paged
 What a session loads up front follows the same frequency axis. Always loaded: your enabled behavior plugins plus a small **pointer** that says the vault exists, when to search it, and where to write. The full filing contract is never loaded up front outside the vault. `imprnt context` prints it on demand, so the rules are paid only by the sessions that actually write, at the moment they write. A reading day costs a pointer, not the whole contract.
+
+<DesignFlipsIf>The pointer alone stops being enough to route a session correctly, at which point a slightly larger always-loaded primer beats paying for a wrong turn.</DesignFlipsIf>

@@ -1,0 +1,122 @@
+---
+/**
+ * Page-specific (design-decisions). Why recall ranks with BM25 and not a vector
+ * store, as a side-by-side comparison so the trade lands at a glance instead of
+ * in a paragraph. Two borderless columns scored on the same three axes: cost,
+ * what it does on a change, and whether you can see why it matched. Static
+ * categories, never a list of instances. Scoped CSS, theme-aware, no Tailwind.
+ */
+const AXES = [
+  { axis: "Cost", bm25: "Free local arithmetic", vector: "A model embeds every note and every query" },
+  { axis: "On a change", bm25: "Scores the new text on the spot", vector: "Re-indexes the changed notes" },
+  { axis: "Why it matched", bm25: "Plain: the shared terms", vector: "Hidden inside the vectors" },
+];
+---
+
+<div class="bm25">
+  <div class="bm25-col bm25-pick">
+    <div class="bm25-head">
+      <span class="bm25-name">BM25 over plain text</span>
+      <span class="bm25-badge">imprnt picks this</span>
+    </div>
+    <dl class="bm25-axes">
+      {
+        AXES.map((a) => (
+          <div class="bm25-row">
+            <dt>{a.axis}</dt>
+            <dd>{a.bm25}</dd>
+          </div>
+        ))
+      }
+    </dl>
+  </div>
+  <div class="bm25-col bm25-alt">
+    <div class="bm25-head">
+      <span class="bm25-name">Vector search</span>
+      <span class="bm25-badge bm25-badge-alt">what most tools ship</span>
+    </div>
+    <dl class="bm25-axes">
+      {
+        AXES.map((a) => (
+          <div class="bm25-row">
+            <dt>{a.axis}</dt>
+            <dd>{a.vector}</dd>
+          </div>
+        ))
+      }
+    </dl>
+  </div>
+</div>
+
+<style>
+  .bm25 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.8rem;
+    margin: 1.4rem 0;
+  }
+  @media (max-width: 640px) {
+    .bm25 {
+      grid-template-columns: 1fr;
+    }
+  }
+  .bm25-col {
+    border-radius: 14px;
+    padding: 1.1rem 1.2rem;
+  }
+  .bm25-pick {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .bm25-alt {
+    background: color-mix(in oklab, var(--sl-color-gray-4) 40%, var(--sl-color-bg));
+  }
+  .bm25-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.7rem;
+  }
+  .bm25-name {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--sl-color-white);
+  }
+  .bm25-badge {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .bm25-badge-alt {
+    color: var(--sl-color-gray-3);
+  }
+  .bm25-axes {
+    margin: 0;
+  }
+  .bm25-row {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    gap: 0.6rem;
+    padding: 0.45rem 0;
+  }
+  .bm25-row + .bm25-row {
+    border-top: 1px solid color-mix(in oklab, var(--sl-color-gray-4) 35%, transparent);
+  }
+  .bm25-row dt {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+    padding-top: 0.15rem;
+  }
+  .bm25-row dd {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+</style>

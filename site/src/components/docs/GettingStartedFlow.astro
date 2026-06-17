@@ -1,0 +1,131 @@
+---
+/**
+ * Page-specific (getting-started) visual: the talk -> ingest -> recall -> check
+ * flow, then the three command pillars as a 3-up map. Categories only (the three
+ * commands are fixed core), no instance lists. Filled surfaces, no borders.
+ * Scoped CSS, theme-aware via Starlight tokens.
+ */
+const PILLARS = [
+  {
+    cmd: "ingest",
+    verb: "file something",
+    what: "Hand over any source. The model reads it and files clean notes.",
+    accent: true,
+  },
+  {
+    cmd: "recall",
+    verb: "find something",
+    what: "Ask in plain words. It ranks your notes and answers from them.",
+    accent: false,
+  },
+  {
+    cmd: "check",
+    verb: "tidy up",
+    what: "Rebuild the index, learn new tags, flag anything broken.",
+    accent: false,
+  },
+];
+---
+
+<div class="gsflow">
+  <div class="flow" aria-label="You talk, then the engine runs ingest, recall, or check">
+    <span class="node start">you talk</span>
+    <span class="arr" aria-hidden="true">&rarr;</span>
+    <span class="node">ingest</span>
+    <span class="sep" aria-hidden="true">/</span>
+    <span class="node">recall</span>
+    <span class="sep" aria-hidden="true">/</span>
+    <span class="node">check</span>
+  </div>
+
+  <div class="pillars">
+    {
+      PILLARS.map((p) => (
+        <div class={`pillar${p.accent ? " accent" : ""}`}>
+          <code class="cmd">{p.cmd}</code>
+          <span class="verb">{p.verb}</span>
+          <p class="what">{p.what}</p>
+        </div>
+      ))
+    }
+  </div>
+</div>
+
+<style>
+  .gsflow {
+    margin: 1.4rem 0 1.6rem;
+  }
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.55rem;
+    padding: 0.7rem 0.95rem;
+    border-radius: 13px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    margin-bottom: 0.9rem;
+  }
+  .node {
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    padding: 0.24rem 0.6rem;
+    border-radius: 7px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    color: var(--sl-color-gray-1);
+  }
+  .node.start {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+    font-weight: 600;
+  }
+  .arr {
+    color: var(--sl-color-gray-4);
+    font-size: 0.95rem;
+  }
+  .sep {
+    color: var(--sl-color-gray-4);
+    font-size: 0.9rem;
+  }
+  .pillars {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.7rem;
+  }
+  .pillar {
+    border-radius: 13px;
+    padding: 0.95rem 1rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .pillar.accent {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .cmd {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+  }
+  .pillar.accent .cmd {
+    color: var(--sl-color-text-accent);
+  }
+  .verb {
+    display: block;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    margin: 0.15rem 0 0.5rem;
+  }
+  .what {
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--sl-color-white);
+    margin: 0;
+  }
+  @media (max-width: 640px) {
+    .pillars {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

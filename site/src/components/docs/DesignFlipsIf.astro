@@ -1,0 +1,50 @@
+---
+/**
+ * Page-specific (design-decisions). The reversal condition for one call,
+ * surfaced as a consistent filled-surface callout so a reader scanning the page
+ * finds every "what would undo this" line at a glance. Borderless: a tinted
+ * surface, a mono label, the condition as the body. The <slot> carries the
+ * prose so it can hold inline code and links. Scoped CSS, no Tailwind.
+ */
+---
+
+<aside class="flips">
+  <span class="flips-label">flips if</span>
+  <p class="flips-body"><slot /></p>
+</aside>
+
+<style>
+  .flips {
+    display: grid;
+    grid-template-columns: 4.4rem 1fr;
+    align-items: start;
+    gap: 0.7rem;
+    margin: 1.1rem 0 0.4rem;
+    padding: 0.85rem 1.1rem;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
+  }
+  .flips-label {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+    padding-top: 0.2rem;
+  }
+  .flips-body {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--sl-color-white);
+  }
+  .flips-body :global(code) {
+    font-size: 0.85em;
+  }
+  @media (max-width: 640px) {
+    .flips {
+      grid-template-columns: 1fr;
+      gap: 0.3rem;
+    }
+  }
+</style>

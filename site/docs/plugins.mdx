@@ -3,34 +3,27 @@ title: How plugins work
 description: A tiny core plus add-ons you switch on by name. How they compose, and how they wire into Claude.
 ---
 
-import PluginGraph from "../src/islands/PluginGraph.tsx";
+import PluginsKindsDiagram from "../src/islands/PluginsKindsDiagram.tsx";
 import Rules from "../src/components/docs/Rules.astro";
 import RuleBanner from "../src/components/docs/RuleBanner.astro";
-import Wiring from "../src/components/docs/Wiring.astro";
+import PluginsWiringTable from "../src/components/docs/PluginsWiringTable.astro";
+import PluginsInstall from "../src/components/docs/PluginsInstall.astro";
 
 The **core** is your notes plus three commands: ingest, recall, and check. Every other behavior is a **plugin** you add when you want it and remove with one line. The core never knows a plugin exists.
 
 <RuleBanner />
 
-A plugin leans on **two things only**: your notes (and their header format) and its own folder. Each one ships as its own package, `imprnt-plugin-<name>`.
+<PluginsInstall />
 
-```sh
-imprnt plugin list            # what is installed
-imprnt plugin add anti-slop   # add one
-imprnt plugin rm anti-slop    # remove one
-```
+Every plugin is one of **three kinds**, by how it reaches the assistant.
 
-Every plugin is one of **three kinds**, by how it reaches the assistant. The core sits in the middle, and each kind depends on it.
-
-<PluginGraph client:load />
+<PluginsKindsDiagram client:load />
 
 ## How a plugin reaches Claude
 
-A plugin is a folder with an `agent.md` fragment, a chunk of instructions for the assistant. Installing it makes that fragment load into your sessions. **Where it loads decides the reach.**
+A plugin is a folder with an `agent.md` fragment, instructions for the assistant. Installing it loads that fragment into your sessions, and **where it loads decides the reach**.
 
-<Wiring />
-
-By default a plugin loads for the **project** you installed it in, through `CLAUDE.local.md` (per-machine, gitignored). `imprnt global add <name>` instead registers it with imprnt, and `imp` carries it into **every** session it launches, without ever touching your `~/.claude/CLAUDE.md`. A house style like **anti-slop** is the natural global one. Removing it is `imprnt global rm`.
+<PluginsWiringTable />
 
 ## Four rules keep the core blind
 

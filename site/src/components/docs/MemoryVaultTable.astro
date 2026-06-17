@@ -1,0 +1,43 @@
+---
+/**
+ * Horizontal-scroll wrapper for the wide data tables on the Memory and the vault
+ * page. On a narrow phone a bare Markdown table either clips its rightmost column
+ * off-screen or cramps every cell into 2-4 wrapped lines. This keeps the table at
+ * its natural width and lets it scroll sideways, with a soft fade hinting there is
+ * more to the right. Scoped CSS, theme-aware via --sl tokens.
+ */
+---
+
+<div class="table-scroll">
+  <slot />
+</div>
+
+<style>
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 1rem 0;
+    /* fade on the right edge as a scroll affordance */
+    background:
+      linear-gradient(to right, var(--sl-color-bg) 30%, transparent),
+      linear-gradient(to right, transparent, var(--sl-color-bg) 70%) 100% 0,
+      radial-gradient(farthest-side at 0 50%, color-mix(in oklab, var(--sl-color-gray-4) 60%, transparent), transparent),
+      radial-gradient(farthest-side at 100% 50%, color-mix(in oklab, var(--sl-color-gray-4) 60%, transparent), transparent) 100% 0;
+    background-repeat: no-repeat;
+    background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
+  .table-scroll :global(table) {
+    margin: 0;
+    min-width: 100%;
+  }
+  .table-scroll :global(th),
+  .table-scroll :global(td) {
+    white-space: nowrap;
+  }
+  /* let the longest free-text column breathe instead of forcing a wide row */
+  .table-scroll :global(td:first-child) {
+    white-space: normal;
+    min-width: 14rem;
+  }
+</style>

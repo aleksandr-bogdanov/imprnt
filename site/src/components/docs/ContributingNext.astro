@@ -1,0 +1,82 @@
+---
+/**
+ * contributing.mdx ONLY — the three "read next" destinations as link cards,
+ * replacing the one-sentence "Where the rest lives" section. Categories of
+ * reading, fixed set of core pages. No borders, filled surfaces, whole card is
+ * the link. Scoped CSS, theme-aware via --sl tokens (docs pages do not load
+ * Tailwind).
+ */
+const LINKS = [
+  { href: "/design-decisions/", title: "Design decisions", sub: "the deep rationale behind each choice" },
+  { href: "/how-it-works/", title: "How it works", sub: "the shape of the system end to end" },
+  { href: "/plugins/", title: "Plugins", sub: "the full plugin contract" },
+];
+---
+
+<div class="nextrow">
+  {
+    LINKS.map((l) => (
+      <a class="ncard" href={l.href}>
+        <span class="ntitle">
+          {l.title}
+          <span class="narr" aria-hidden="true">&rarr;</span>
+        </span>
+        <span class="nsub">{l.sub}</span>
+      </a>
+    ))
+  }
+</div>
+
+<style>
+  .nextrow {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.8rem;
+    margin: 1.3rem 0 0.5rem;
+  }
+  @media (max-width: 720px) {
+    .nextrow {
+      grid-template-columns: 1fr;
+    }
+  }
+  .ncard {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 1rem 1.1rem 1.05rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
+    text-decoration: none;
+    transition: background 0.15s ease;
+  }
+  .ncard:hover {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .ntitle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.98rem;
+    color: var(--sl-color-white);
+  }
+  .ncard:hover .ntitle {
+    color: var(--sl-color-text-accent);
+  }
+  .narr {
+    color: var(--sl-color-gray-3);
+    font-size: 1rem;
+    transition: transform 0.15s ease;
+  }
+  .ncard:hover .narr {
+    color: var(--sl-color-text-accent);
+    transform: translateX(2px);
+  }
+  .nsub {
+    font-size: 0.84rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+</style>

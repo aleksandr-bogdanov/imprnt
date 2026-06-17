@@ -1,0 +1,86 @@
+---
+/**
+ * Page-specific (how-it-works): the Step / Who / Why table, with the Who cell
+ * rendered as a colored pill so the two actors (model, code) read apart at a
+ * glance. All eight rows and all three columns are kept verbatim. This is data,
+ * the component only restyles the actor cell. No borders. Theme-aware tokens.
+ */
+const ROWS = [
+  ["Copy the source, hash it, log it", "code", "mechanical, exact, free"],
+  ["Read messy prose to find its shape", "model", "nothing to parse, it takes reading"],
+  ["Pick the type, write the summary, pull decisions", "model", "needs real understanding, the conscious work"],
+  ["Assign tags, set the kind, wire the links", "model", "judgment about meaning, paid once"],
+  ["File the note in its folder", "code", "once the type is decided, writing is mechanical"],
+  ["Rebuild the index from every summary", "code", "a plain read over the note headers"],
+  ["Rank notes for a search", "code", "fast, free, clear, over thousands of notes"],
+  ["Turn a question into search words, read the top hits", "model", "it is the interface, with the question in hand"],
+];
+---
+
+<div class="hiw-table">
+  <table>
+    <thead>
+      <tr><th>Step</th><th>Who</th><th>Why</th></tr>
+    </thead>
+    <tbody>
+      {
+        ROWS.map(([step, who, why]) => (
+          <tr>
+            <td>{step}</td>
+            <td><span class={`who ${who}`}>{who}</span></td>
+            <td>{why}</td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+</div>
+
+<style>
+  .hiw-table {
+    margin: 1.4rem 0;
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+  }
+  thead th {
+    text-align: left;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    padding: 0 0.75rem 0.5rem;
+  }
+  tbody td {
+    padding: 0.55rem 0.75rem;
+    vertical-align: top;
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 7%, var(--sl-color-bg));
+  }
+  tbody tr:nth-child(even) td {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 14%, var(--sl-color-bg));
+  }
+  tbody td:first-child {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+  .who {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+  }
+  .who.model {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 22%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+  }
+  .who.code {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 30%, var(--sl-color-bg));
+    color: var(--sl-color-gray-1);
+  }
+</style>

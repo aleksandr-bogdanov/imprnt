@@ -1,0 +1,201 @@
+---
+/**
+ * Page-specific visual for docs/vault-layout.md. Two parts:
+ *  1) the three folder GROUPS (entities / domains / forms) as a borderless
+ *     three-card row, each card naming its folder types + the one-line reason.
+ *  2) the control files at the vault root, as a responsive folder + meaning
+ *     grid that wraps under itself on a phone (the old code block clipped the
+ *     description column on narrow screens).
+ * Folder TYPES are categories, not instances, so this never goes stale.
+ * Scoped CSS only, theme-aware via Starlight --sl tokens (no Tailwind on docs
+ * pages), every grid collapses to one column on mobile.
+ */
+const ROOT = [
+  ["index.md", "a generated map of everything"],
+  ["hot.md", "a short primer and what needs review"],
+  ["log.md", "an append-only timeline"],
+  ["_tags.md", "the tag list and synonyms"],
+];
+
+const GROUPS = [
+  {
+    key: "entities",
+    why: "one canonical home, the rest of your notes point here",
+    rows: [
+      ["people/", "a human"],
+      ["orgs/", "an employer, insurer, bank, vendor"],
+      ["holdings/", "an owned thing whose state changes"],
+    ],
+  },
+  {
+    key: "domains",
+    why: "your life-areas, you pick these, most content lives here",
+    rows: [
+      ["identity/ health/", ""],
+      ["finances/ work/", ""],
+      ["life/ projects/", ""],
+    ],
+  },
+  {
+    key: "forms",
+    why: "set apart by how you use them, not by topic",
+    rows: [
+      ["events/", "a dated thing worth its own note"],
+      ["mistakes/", "a lesson: believed, found false, true now"],
+    ],
+  },
+];
+---
+
+<div class="root">
+  <span class="root-label">vault/ root</span>
+  <dl class="root-grid">
+    {
+      ROOT.map(([name, meaning]) => (
+        <div class="root-row">
+          <dt>{name}</dt>
+          <dd>{meaning}</dd>
+        </div>
+      ))
+    }
+  </dl>
+</div>
+
+<div class="groups">
+  {
+    GROUPS.map((g) => (
+      <section class={`group ${g.key}`}>
+        <header>
+          <span class="g-name">{g.key}</span>
+          <p class="g-why">{g.why}</p>
+        </header>
+        <dl class="g-rows">
+          {g.rows.map(([name, meaning]) => (
+            <div class="g-row">
+              <dt>{name}</dt>
+              {meaning && <dd>{meaning}</dd>}
+            </div>
+          ))}
+        </dl>
+      </section>
+    ))
+  }
+</div>
+
+<style>
+  /* root control files */
+  .root {
+    margin: 1.4rem 0 1.1rem;
+    padding: 1.05rem 1.2rem 1.1rem;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
+  }
+  .root-label {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    margin-bottom: 0.7rem;
+  }
+  .root-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem 1.4rem;
+    margin: 0;
+  }
+  .root-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.2rem 0.7rem;
+  }
+  .root-row dt {
+    font-family: var(--sl-font-mono);
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: var(--sl-color-white);
+    margin: 0;
+  }
+  .root-row dd {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+
+  /* three folder groups */
+  .groups {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.9rem;
+    margin: 0 0 1.4rem;
+    align-items: stretch;
+  }
+  .group {
+    border-radius: 16px;
+    padding: 1.1rem 1.2rem 1.15rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .group.entities {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .group.domains {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg));
+  }
+  .group header {
+    margin-bottom: 0.85rem;
+  }
+  .g-name {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+    margin-bottom: 0.4rem;
+  }
+  .group.forms .g-name {
+    color: var(--sl-color-gray-2);
+  }
+  .g-why {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+  }
+  .g-rows {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .g-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+  }
+  .g-row dt {
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--sl-color-white);
+    margin: 0;
+  }
+  .g-row dd {
+    margin: 0;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+
+  @media (max-width: 720px) {
+    .root-grid {
+      grid-template-columns: 1fr;
+    }
+    .groups {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
