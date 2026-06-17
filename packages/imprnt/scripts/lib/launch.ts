@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { enabledPluginDirs, entryExists, importTargets } from "./plugins.ts";
+import { globalFragment } from "./global.ts";
 
 // Resolve one @import target the way Claude Code does: absolute stays absolute, ~/ expands to
 // the home dir, everything else is project-relative.
@@ -155,42 +156,22 @@ function childEnv(vaultProject: string): NodeJS.ProcessEnv {
     : { ...process.env, IMPRNT_VAULT: join(vaultProject, "vault") };
 }
 
-// Pure assembly of the spawn inputs (args + env), separated from the spawn so tests can assert
-// the exact composition. Inside the vault project (or with no vault registered) nothing is
-// injected: claude runs as-is and context loads natively from cwd.
-export function buildLaunch(opts: {
-  cwd: string;
-  vaultProject?: string;
-  pkgRoot: string;
-  passthrough?: string[];
-}): { args: string[]; env: NodeJS.ProcessEnv } {
-  const pass = [...(opts.passthrough ?? [])];
-  if (!opts.vaultProject) return { args: pass, env: process.env };
-  // A resolved project that is missing or a plain file (a stale IMPRNT_ROOT, a moved dir) must
-  // not get injected - the pointer would advertise a phantom vault and shadow reality. Warn and
-  // fall back to plain claude, same shape as nothing-registered. `imp lair` keeps its hard error.
-  if (!isDir(opts.vaultProject)) {
-    console.error(`imp: vault project not found at ${opts.vaultProject} - launching plain claude (re-run \`imprnt init\` there, or fix IMPRNT_ROOT)`);
-    return { args: pass, env: process.env };
-  }
-  // Harness plugins (a guard hook, a statusline) load ONLY through these flags — Claude Code never
-  // auto-discovers plugins/<name>/ — so unlike the cast fragment they ride every imp launch, inside
-  // the project included. PREPENDED, so a user-passed --settings comes later and wins (claude keeps
-  // the last occurrence of a single-value flag); --plugin-dir is repeatable, position is moot.
-  const harness = harnessFlags(opts.vaultProject);
-  // Inside the project (root or any subdir) the prompt loads natively, so injecting would double
-  // the cast - but a subdir cwd still strands the engine's ./vault default, so the env (not a
-  // prompt injection) is set either way. The exact root gets it too: one uniform rule.
-  if (isInside(opts.cwd, opts.vaultProject))
-    return { args: [...harness, ...pass], env: childEnv(opts.vaultProject) };
+// The default global config dir Claude Code reads (and where imprnt copies its global modules):
+// $CLAUDE_CONFIG_DIR || ~/.claude. Resolved here so buildLaunch can default it, while tests pass an
+// explicit tmp dir. Globals are imprnt-owned and live at <globalDir>/imprnt/ - never in CLAUDE.md.
+export function defaultGlobalDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+}
 
-  const fragment = [castFragment(opts.vaultProject), pointerFragment(opts.pkgRoot, opts.vaultProject)]
-    .filter(Boolean)
-    .join("\n\n");
-  // A user-supplied --append-system-prompt would collide with ours (claude keeps one value per
-  // single-value flag), so merge the fragment into theirs instead of adding a second flag -
-  // matching both the `--flag value` and the `--flag=value` spellings, last occurrence wins
-  // (mirroring how claude resolves a repeated flag).
+// Inject `fragment` into the args' --append-system-prompt, plus any `extraInject` flags (e.g.
+// `--add-dir <vault>`). A user-supplied --append-system-prompt would collide with ours (claude keeps
+// one value per single-value flag), so MERGE the fragment into theirs rather than add a second flag,
+// matching both the `--flag value` and the `--flag=value` spellings (last occurrence wins, mirroring
+// how claude resolves a repeated flag). When no user flag exists, the fragment rides as its own
+// `--append-system-prompt <fragment>`. Everything respects the `--` terminator: flags injected past
+// it would read as positional prompt text and be lost, so they go BEFORE the first `--`. Returns a
+// fresh args array; `fragment` is assumed non-empty (callers guard the empty case).
+function mergeFragment(pass: string[], fragment: string, extraInject: string[]): string[] {
   const args = [...pass];
   // Everything from the first `--` on is positional prompt text to claude, never a flag, so the
   // merge scan stops there - a `-- --append-system-prompt=...` positional must not be merged into.
@@ -221,14 +202,76 @@ export function buildLaunch(opts: {
       merged = true;
     }
   }
-  // Inject before a `--` terminator if the user passed one: everything after `--` is positional
-  // prompt text to claude, so flags appended past it would be read as prompt and --add-dir lost.
-  // No terminator -> append at the end (the round-1 shape).
+  // Inject before a `--` terminator if the user passed one (see above). No terminator -> append at
+  // the end. When merged into a user flag, only the extra flags need injecting (the fragment already
+  // landed); otherwise the fragment rides as its own flag ahead of the extras.
   const term = args.indexOf("--");
-  const inject = merged ? ["--add-dir", opts.vaultProject] : ["--append-system-prompt", fragment, "--add-dir", opts.vaultProject];
+  const inject = merged ? extraInject : ["--append-system-prompt", fragment, ...extraInject];
+  if (!inject.length) return args;
   if (term >= 0) args.splice(term, 0, ...inject);
   else args.push(...inject);
+  return args;
+}
 
+// Pure assembly of the spawn inputs (args + env), separated from the spawn so tests can assert
+// the exact composition. Inside the vault project the project cast is NOT injected (it loads
+// natively from cwd), but the global cast IS - globals live in <globalDir>/imprnt/, not in the
+// project's CLAUDE.local.md, so claude never loads them on its own anywhere. With no vault
+// registered, claude runs plain (no project, no pointer) but globals still ride: imprnt only ever
+// affects imp sessions, and a global module is exactly "every imp session".
+export function buildLaunch(opts: {
+  cwd: string;
+  vaultProject?: string;
+  pkgRoot: string;
+  passthrough?: string[];
+  globalDir?: string;
+}): { args: string[]; env: NodeJS.ProcessEnv } {
+  const pass = [...(opts.passthrough ?? [])];
+  const globalDir = opts.globalDir ?? defaultGlobalDir();
+  // Dedupe: a plugin enabled both project-locally and globally must inject once. The project cast is
+  // only injected on the OUTSIDE branch (inside loads it natively), so dedupe only matters there;
+  // pass the project's enabled names as the skip set so the global pass drops a name already wired
+  // project-locally. Inside/lair has no project-cast injection, so nothing to skip.
+  if (!opts.vaultProject) {
+    // No vault: plain claude + globals. mergeFragment handles the --append-system-prompt plumbing.
+    const globals = globalFragment(globalDir);
+    if (!globals) return { args: pass, env: process.env };
+    return { args: mergeFragment(pass, globals, []), env: process.env };
+  }
+  // A resolved project that is missing or a plain file (a stale IMPRNT_ROOT, a moved dir) must
+  // not get injected - the pointer would advertise a phantom vault and shadow reality. Warn and
+  // fall back to plain claude, same shape as nothing-registered. `imp lair` keeps its hard error.
+  if (!isDir(opts.vaultProject)) {
+    console.error(`imp: vault project not found at ${opts.vaultProject} - launching plain claude (re-run \`imprnt init\` there, or fix IMPRNT_ROOT)`);
+    return { args: pass, env: process.env };
+  }
+  // Harness plugins (a guard hook, a statusline) load ONLY through these flags — Claude Code never
+  // auto-discovers plugins/<name>/ — so unlike the cast fragment they ride every imp launch, inside
+  // the project included. PREPENDED, so a user-passed --settings comes later and wins (claude keeps
+  // the last occurrence of a single-value flag); --plugin-dir is repeatable, position is moot.
+  const harness = harnessFlags(opts.vaultProject);
+  // The project plugins enabled in this vault's CLAUDE.local.md. Used to dedupe globals: a plugin
+  // enabled BOTH project-locally and globally must inject once, so the global pass skips a name that
+  // the project cast already carries (outside) / loads natively (inside).
+  const projectPlugins = new Set(enabledPluginDirs(opts.vaultProject));
+  // Inside the project (root or any subdir) the project prompt + pointer load natively, so injecting
+  // those would double the cast - but globals live in <globalDir>/imprnt/, NOT in this project, so
+  // claude never loads them on its own here; imp must still inject them (deduped against the project
+  // plugins claude already loaded natively). The env is set either way (a subdir cwd strands the
+  // engine's ./vault default).
+  if (isInside(opts.cwd, opts.vaultProject)) {
+    const globals = globalFragment(globalDir, projectPlugins);
+    const args = globals ? mergeFragment(pass, globals, []) : pass;
+    return { args: [...harness, ...args], env: childEnv(opts.vaultProject) };
+  }
+
+  // Outside: inject the project cast + pointer, then the globals (deduped), then point --add-dir at
+  // the vault. One combined fragment so a user --append-system-prompt is merged into once.
+  const globals = globalFragment(globalDir, projectPlugins);
+  const fragment = [castFragment(opts.vaultProject), pointerFragment(opts.pkgRoot, opts.vaultProject), globals]
+    .filter(Boolean)
+    .join("\n\n");
+  const args = mergeFragment(pass, fragment, ["--add-dir", opts.vaultProject]);
   return { args: [...harness, ...args], env: childEnv(opts.vaultProject) };
 }
 

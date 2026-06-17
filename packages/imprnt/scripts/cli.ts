@@ -303,21 +303,23 @@ switch (cmd) {
     process.exit(1);
   }
   case "global": {
-    // Global-scope behavior modules: wire a universal fragment (anti-slop, a house style) into Claude
-    // Code's user-level CLAUDE.md so it loads in EVERY session in every directory, not just imp
-    // sessions or the vault project. Targets `$CLAUDE_CONFIG_DIR || ~/.claude` (where Claude Code reads
-    // its global CLAUDE.md), owning only a fenced managed block inside it. This replaces the old hack of
-    // hand-editing ~/.claude/CLAUDE.md to @import an absolute path into a dev checkout.
+    // Global-scope behavior modules: a universal fragment (anti-slop, a house style) imp injects into
+    // EVERY imp session via --append-system-prompt, the same mechanism it uses for the project cast.
+    // Globals are imprnt-owned: the copy lives at `<globalDir>/imprnt/<name>/` and the enable list at
+    // `<globalDir>/imprnt/global.json` (globalDir = $CLAUDE_CONFIG_DIR || ~/.claude). imprnt NEVER
+    // writes them into ~/.claude/CLAUDE.md - a plain `claude` no longer loads globals, by design, so
+    // the user's hand-maintained global instructions stay pristine. (A legacy managed block from the
+    // old design is migrated forward and stripped on any global command - see lib/global.ts.)
     const globalDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
     const [sub, ...gargs] = rest;
     if (sub === "list") {
-      const wired = listGlobalModules(globalDir);
+      const enabled = listGlobalModules(globalDir);
       const onDisk = installedGlobalDirs(globalDir);
-      console.log(`global modules (in ${globalDir}/CLAUDE.md):`);
-      if (!wired.length && !onDisk.length) console.log("  (none) - add one with `imprnt global add <name> --from <dir>`");
-      for (const n of wired) console.log(`  [on]  ${n}${onDisk.includes(n) ? "" : "  ⚠ wired but no copy on disk - re-add it"}`);
-      for (const n of onDisk) if (!wired.includes(n)) console.log(`  [off] ${n}  (copied but not wired - run: imprnt global add ${n})`);
-      console.log("\nthese load in EVERY claude session. enable: imprnt global add <name>   disable: imprnt global rm <name> [--purge]");
+      console.log(`global modules (in ${globalDir}/imprnt/):`);
+      if (!enabled.length && !onDisk.length) console.log("  (none) - add one with `imprnt global add <name> --from <dir>`");
+      for (const n of enabled) console.log(`  [on]  ${n}${onDisk.includes(n) ? "" : "  ⚠ enabled but no copy on disk - re-add it"}`);
+      for (const n of onDisk) if (!enabled.includes(n)) console.log(`  [off] ${n}  (copied but not enabled - run: imprnt global add ${n})`);
+      console.log("\nthese load in every imp session (not a plain `claude`). enable: imprnt global add <name>   disable: imprnt global rm <name> [--purge]");
       break;
     }
     if (sub === "add") {
@@ -342,7 +344,7 @@ switch (cmd) {
       }
       const r = addGlobalModule(globalDir, name, srcDir);
       if (!r.ok) { console.error(`global add ${name}: ${r.error}`); process.exit(1); }
-      console.log(r.changed ? `wired ${name} globally → loads in every claude session (copied to ${globalDir}/imprnt/${name}/)` : `${name} already wired globally (refreshed the copy)`);
+      console.log(r.changed ? `enabled ${name} globally → loads in every imp session (copied to ${globalDir}/imprnt/${name}/)` : `${name} already enabled globally (refreshed the copy)`);
       break;
     }
     if (sub === "rm") {
@@ -352,7 +354,7 @@ switch (cmd) {
       if (names.length !== 1) { console.error("usage: imprnt global rm <name> [--purge]"); process.exit(1); }
       const r = rmGlobalModule(globalDir, names[0]!, { purge });
       if (!r.ok) { console.error(`global rm ${names[0]}: ${r.error}`); process.exit(1); }
-      console.log(r.changed ? `unwired ${names[0]} globally${purge ? ` and purged ${globalDir}/imprnt/${names[0]}/` : ""}` : `${names[0]} was not wired globally`);
+      console.log(r.changed ? `disabled ${names[0]} globally${purge ? ` and purged ${globalDir}/imprnt/${names[0]}/` : ""}` : `${names[0]} was not enabled globally`);
       break;
     }
     console.error("usage: imprnt global list | add <name> [--from <dir>] | rm <name> [--purge]");
@@ -546,9 +548,9 @@ engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt plugin list                       show installed plugins (on/off) + official ones available to add
   imprnt plugin add <name> [--from D]      fetch imprnt-plugin-<name>, copy into plugins/, wire it (idempotent; --force refreshes)
   imprnt plugin rm <name> [--purge]        unwire a plugin; --purge also deletes plugins/<name>/
-  imprnt global add <name> [--from D]      wire a behavior module (e.g. anti-slop) into EVERY claude session via ~/.claude/CLAUDE.md (managed block); bare name promotes a project plugin
-  imprnt global rm <name> [--purge]        unwire a global module; --purge deletes the global copy
-  imprnt global list                       show globally-wired modules
+  imprnt global add <name> [--from D]      enable a behavior module (e.g. anti-slop) in EVERY imp session (imp injects it; ~/.claude/CLAUDE.md is never touched); bare name promotes a project plugin
+  imprnt global rm <name> [--purge]        disable a global module; --purge deletes the global copy
+  imprnt global list                       show globally-enabled modules
   imprnt <module> <command> [...]          run an installed module's command (e.g. \`imprnt session-host login\`, \`imprnt kleinanzeigen sync\`) — no \`node\` paths
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
