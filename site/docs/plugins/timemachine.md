@@ -1,4 +1,5 @@
 ---
+draft: true
 title: Timemachine
 description: Snapshots your working tree before each change, so you can recover what the agent breaks.
 ---

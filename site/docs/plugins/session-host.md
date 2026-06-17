@@ -1,4 +1,5 @@
 ---
+draft: true
 title: Session host
 description: A warm browser that holds your logged-in sessions and hands out a fresh token over localhost.
 ---

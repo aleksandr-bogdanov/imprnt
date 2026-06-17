@@ -1,0 +1,79 @@
+---
+/**
+ * The four rules that keep plugins composable and the core blind. A compact
+ * 4-row grid: each row is a short plain-language summary with the relevant code
+ * token as a chip on the right. Borderless filled rows, scoped CSS, theme-aware
+ * via Starlight tokens (no Tailwind: docs pages do not load it).
+ */
+const RULES = [
+  {
+    title: "A plugin reads your notes, not the core",
+    body: "A plugin opens your note files like any script would, and never imports imprnt's own code. So the core can change without breaking the plugin.",
+  },
+  {
+    title: "A plugin never edits your notes",
+    body: "A plugin writes only inside its own folder. To change one of your notes, the plugin hands you the edit and you approve it.",
+  },
+  {
+    title: "Search only sees your vault",
+    body: "Recall looks at your real notes, never a plugin's folder. A plugin gets into search only by proposing a note you approve.",
+  },
+  {
+    title: "Nothing runs on its own",
+    body: "A plugin acts only when you run or schedule it. Any label a plugin adds to your notes is name-tagged, so the core ignores it.",
+  },
+];
+---
+
+<div class="rules">
+  {
+    RULES.map((r, i) => (
+      <div class="rule">
+        <span class="num">{i + 1}</span>
+        <div class="rule-body">
+          <span class="rule-title">{r.title}</span>
+          <p class="rule-text">{r.body}</p>
+        </div>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .rules {
+    display: grid;
+    gap: 0.55rem;
+    margin: 1.4rem 0;
+  }
+  .rule {
+    display: grid;
+    grid-template-columns: 1.7rem 1fr;
+    align-items: baseline;
+    gap: 0.4rem 0.9rem;
+    padding: 0.8rem 1.05rem;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg));
+  }
+  .num {
+    font-family: var(--sl-font-mono);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--sl-color-text-accent);
+    text-align: center;
+  }
+  .rule-body {
+    min-width: 0;
+  }
+  .rule-title {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--sl-color-white);
+  }
+  .rule-text {
+    margin: 0.2rem 0 0;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+</style>
