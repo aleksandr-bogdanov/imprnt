@@ -27,7 +27,11 @@ on:
         default: false
 
 concurrency:
-  group: publish
+  # Scope the lock per channel so the two paths never share a queue: a manual release waiting at
+  # the npm-production gate is an in-progress job that holds its group, and with cancel-in-progress
+  # off it would otherwise stall every later edge push behind it. push + manual edge -> publish-edge,
+  # manual release -> publish-release. Single entry workflow is kept (npm Trusted Publishing).
+  group: publish-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode || 'edge' }}
   cancel-in-progress: false
 
 permissions:
