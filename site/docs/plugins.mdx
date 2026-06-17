@@ -1,51 +1,37 @@
 ---
-title: Plugins
-description: A tiny core, plus add-ons you switch on by name and remove with one command.
+title: How plugins work
+description: A tiny core plus add-ons you switch on by name. How they compose, and how they wire into Claude.
 ---
 
 import PluginGraph from "../src/islands/PluginGraph.tsx";
-import KindCards from "../src/components/docs/KindCards.astro";
-import Bridges from "../src/components/docs/Bridges.astro";
+import Rules from "../src/components/docs/Rules.astro";
+import RuleBanner from "../src/components/docs/RuleBanner.astro";
+import Wiring from "../src/components/docs/Wiring.astro";
 
-The **core** is your notes plus `ingest`, `recall`, and `check`. Every other behavior is a **plugin** you add when you want it and remove with one command. The core never knows a plugin exists.
+The **core** is your notes plus three commands: ingest, recall, and check. Every other behavior is a **plugin** you add when you want it and remove with one line. The core never knows a plugin exists.
 
-## The one rule
+<RuleBanner />
 
-You can add or remove **any** plugin without editing one line of core code. If a plugin forces a core edit, the plugin is wrong.
-
-That is what stops imprnt from growing to know about every add-on, the rot that bloats this kind of system over time. A plugin leans on two things only: your `vault/` notes (and their header format) and its own folder.
-
-## Add and remove
-
-Each plugin is its own package, `imprnt-plugin-<name>`.
-
-**Adding** one copies its files into `plugins/<name>/` and wires one import line into `CLAUDE.local.md`, your per-machine on-off file.
+A plugin leans on **two things only**: your notes (and their header format) and its own folder. Each one ships as its own package, `imprnt-plugin-<name>`.
 
 ```sh
-imprnt plugin list            # what is installed, and what you can add
-imprnt plugin add anti-slop   # fetch, copy in, wire the import line
-imprnt plugin rm anti-slop    # unwire it (--purge deletes the folder too)
+imprnt plugin list            # what is installed
+imprnt plugin add anti-slop   # add one
+imprnt plugin rm anti-slop    # remove one
 ```
 
-A fresh clone with no `CLAUDE.local.md` loads zero plugins. Hand-edit that file any time. It is the single source of truth for what is on.
-
-## Architecture
+Every plugin is one of **three kinds**, by how it reaches the assistant. The core sits in the middle, and each kind depends on it.
 
 <PluginGraph client:load />
 
-Every plugin is one of **three kinds**, split by how it reaches the assistant:
+## How a plugin reaches Claude
 
-<KindCards />
+A plugin is a folder with an `agent.md` fragment, a chunk of instructions for the assistant. Installing it makes that fragment load into your sessions. **Where it loads decides the reach.**
 
-Four rules keep them composable and the core blind:
+<Wiring />
 
-- A plugin reads your note **headers**, never core code. The core exports nothing for a plugin to import.
-- **One writer per note.** A plugin writes only its own folder. To change a note it proposes an edit you approve through `ingest`.
-- `recall` searches `vault/` only. A plugin reaches search by **proposing** a real note you approve.
-- Every action is a **command you run** or schedule. Nothing runs just by being installed. Any label a plugin adds is namespaced (`whenful.synced`) and read only by it.
+By default a plugin loads for the **project** you installed it in, through `CLAUDE.local.md` (per-machine, gitignored). `imprnt global add <name>` instead registers it with imprnt, and `imp` carries it into **every** session it launches, without ever touching your `~/.claude/CLAUDE.md`. A house style like **anti-slop** is the natural global one. Removing it is `imprnt global rm`.
 
-**Scope.** A plugin loads for its **project** by default, and `imp` carries it into the sessions it launches. `imprnt global add <name>` wires a universal one, like a house style, into every session through your user `CLAUDE.md`.
+## Four rules keep the core blind
 
-The core touches a plugin in **two spots only**, both found by filename, never by import:
-
-<Bridges />
+<Rules />

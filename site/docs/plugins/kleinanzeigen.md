@@ -1,4 +1,5 @@
 ---
+draft: true
 title: Kleinanzeigen watcher
 description: A marketplace inbox watcher. Code sorts the hostile messages, the model drafts the rest, you press send.
 ---
