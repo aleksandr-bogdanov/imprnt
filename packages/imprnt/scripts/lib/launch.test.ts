@@ -7,14 +7,24 @@ import { castFragment, pointerFragment, harnessFlags, isInside, buildLaunch, lau
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-// buildLaunch reads IMPRNT_VAULT/IMPRINT_VAULT to decide whether to set the child env; keep the
-// suite hermetic against the developer's shell.
+// An empty global dir, so buildLaunch's default global injection contributes nothing unless a test
+// opts in. Every buildLaunch call below passes this so the suite never reads the developer's real
+// ~/.claude/imprnt/. A dedicated tmp dir per call keeps cross-test isolation.
+function emptyGlobalDir(): string {
+  return mkdtempSync(join(tmpdir(), "imprnt-launch-glob-"));
+}
+
+// buildLaunch reads IMPRNT_VAULT/IMPRINT_VAULT to decide whether to set the child env, and
+// CLAUDE_CONFIG_DIR for the default global dir; keep the suite hermetic against the developer's shell.
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
-  for (const k of ["IMPRNT_VAULT", "IMPRINT_VAULT"]) {
+  for (const k of ["IMPRNT_VAULT", "IMPRINT_VAULT", "CLAUDE_CONFIG_DIR"]) {
     saved[k] = process.env[k];
     delete process.env[k];
   }
+  // Default every buildLaunch to an empty global dir, so a test that does not care about globals
+  // never picks up the developer's real ~/.claude. CLAUDE_CONFIG_DIR is honored by defaultGlobalDir.
+  process.env.CLAUDE_CONFIG_DIR = emptyGlobalDir();
 });
 afterEach(() => {
   for (const [k, v] of Object.entries(saved)) {
@@ -27,6 +37,22 @@ function tmpVaultProject(): string {
   const root = mkdtempSync(join(tmpdir(), "imprnt-launch-"));
   mkdirSync(join(root, "vault"));
   return root;
+}
+
+// Stage an enabled global module under a fresh global dir and return that dir, for the global-
+// injection tests. Mirrors what `imprnt global add` lands: a copy at <dir>/imprnt/<name>/agent.md
+// plus a registry entry.
+function globalDirWith(modules: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), "imprnt-glob-"));
+  const names: string[] = [];
+  for (const [name, body] of Object.entries(modules)) {
+    const mdir = join(dir, "imprnt", name);
+    mkdirSync(mdir, { recursive: true });
+    writeFileSync(join(mdir, "agent.md"), body);
+    names.push(name);
+  }
+  writeFileSync(join(dir, "imprnt", "global.json"), JSON.stringify({ enabled: names.sort() }));
+  return dir;
 }
 
 // --- castFragment: inline the enabled @imports, skip comments and dangling ones ---
@@ -345,6 +371,86 @@ test("a phantom vault project (missing dir or plain file) warns and launches pla
   }
   expect(errors.length).toBe(2);
   expect(errors[0]).toContain("/nope/missing");
+});
+
+// --- global modules: imp injects them on EVERY launch (bare, outside, AND inside/lair) ---
+
+test("globals inject on the OUTSIDE launch, after the cast and pointer", () => {
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "x"), { recursive: true });
+  writeFileSync(join(root, "plugins", "x", "agent.md"), "# My cast\n");
+  writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/x/agent.md\n");
+  const globalDir = globalDirWith({ "anti-slop": "# GLOBAL anti-slop\n" });
+  const { args } = buildLaunch({ cwd: "/somewhere/else", vaultProject: root, pkgRoot, globalDir });
+  const fragment = args[args.indexOf("--append-system-prompt") + 1]!;
+  expect(fragment).toContain("# My cast");
+  expect(fragment).toContain("imprnt recall"); // pointer
+  expect(fragment).toContain("# GLOBAL anti-slop");
+  // Order: cast, then pointer, then globals.
+  expect(fragment.indexOf("# My cast")).toBeLessThan(fragment.indexOf("imprnt recall"));
+  expect(fragment.indexOf("imprnt recall")).toBeLessThan(fragment.indexOf("# GLOBAL anti-slop"));
+});
+
+test("globals inject INSIDE the vault project / lair (no project cast there, but globals still ride)", () => {
+  const root = tmpVaultProject();
+  const globalDir = globalDirWith({ "anti-slop": "# GLOBAL anti-slop\n" });
+  // Inside the project: claude loads CLAUDE.md + CLAUDE.local.md natively, so no project cast is
+  // injected - but globals live in <globalDir>/imprnt/, which claude never loads, so imp injects them.
+  const { args } = buildLaunch({ cwd: root, vaultProject: root, pkgRoot, passthrough: ["-c"], globalDir });
+  const aspIdx = args.indexOf("--append-system-prompt");
+  expect(aspIdx).toBeGreaterThanOrEqual(0);
+  const fragment = args[aspIdx + 1]!;
+  expect(fragment).toBe("# GLOBAL anti-slop"); // ONLY the global, no cast, no pointer
+  expect(fragment).not.toContain("imprnt recall");
+  expect(args).toContain("-c"); // passthrough preserved
+  expect(args).not.toContain("--add-dir"); // inside: no --add-dir
+});
+
+test("inside with NO globals injects nothing (the original native-loading shape is preserved)", () => {
+  const root = tmpVaultProject();
+  const globalDir = mkdtempSync(join(tmpdir(), "imprnt-glob-empty-")); // no imprnt/ at all
+  expect(buildLaunch({ cwd: root, vaultProject: root, pkgRoot, passthrough: ["--resume"], globalDir }).args).toEqual(["--resume"]);
+  expect(buildLaunch({ cwd: join(root, "vault"), vaultProject: root, pkgRoot, globalDir }).args).toEqual([]);
+});
+
+test("globals inject on the NO-VAULT launch (plain claude + globals, no pointer, no --add-dir)", () => {
+  const globalDir = globalDirWith({ "anti-slop": "# GLOBAL anti-slop\n" });
+  const { args } = buildLaunch({ cwd: "/x", pkgRoot, passthrough: ["-c"], globalDir });
+  const aspIdx = args.indexOf("--append-system-prompt");
+  expect(aspIdx).toBeGreaterThanOrEqual(0);
+  expect(args[aspIdx + 1]).toBe("# GLOBAL anti-slop");
+  expect(args).not.toContain("--add-dir");
+  expect(args[0]).toBe("-c");
+});
+
+test("no vault and no globals: plain claude, just the passthrough (unchanged)", () => {
+  const globalDir = mkdtempSync(join(tmpdir(), "imprnt-glob-none-"));
+  expect(buildLaunch({ cwd: "/x", pkgRoot, passthrough: ["-c"], globalDir }).args).toEqual(["-c"]);
+});
+
+test("a plugin enabled BOTH project-locally and globally injects ONCE (deduped)", () => {
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "anti-slop"), { recursive: true });
+  writeFileSync(join(root, "plugins", "anti-slop", "agent.md"), "# PROJECT anti-slop\n");
+  writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/anti-slop/agent.md\n");
+  const globalDir = globalDirWith({ "anti-slop": "# GLOBAL anti-slop\n", "house-style": "# GLOBAL house style\n" });
+  const { args } = buildLaunch({ cwd: "/somewhere/else", vaultProject: root, pkgRoot, globalDir });
+  const fragment = args[args.indexOf("--append-system-prompt") + 1]!;
+  // The project copy is what loads (via the project cast); the global anti-slop is SKIPPED.
+  expect(fragment).toContain("# PROJECT anti-slop");
+  expect(fragment).not.toContain("# GLOBAL anti-slop");
+  // The other global (not enabled project-locally) still injects.
+  expect(fragment).toContain("# GLOBAL house style");
+});
+
+test("globals merge into a user-passed --append-system-prompt on the no-vault path (one flag)", () => {
+  const globalDir = globalDirWith({ "anti-slop": "# GLOBAL anti-slop\n" });
+  const { args } = buildLaunch({ cwd: "/x", pkgRoot, passthrough: ["--append-system-prompt", "be terse"], globalDir });
+  const occurrences = args.filter((a) => a === "--append-system-prompt").length;
+  expect(occurrences).toBe(1);
+  const merged = args[args.indexOf("--append-system-prompt") + 1]!;
+  expect(merged).toContain("be terse");
+  expect(merged).toContain("# GLOBAL anti-slop");
 });
 
 // --- launchClaude: the cwd guard (no spawn happens when the guard fires) ---
