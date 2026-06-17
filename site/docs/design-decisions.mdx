@@ -58,7 +58,7 @@ imprnt flips the arrows. A plugin depends on two things, your notes and its own 
   imprnt="A small core plus plugins you compose, each with a real off-switch."
 />
 
-<DesignFlipsIf>A plugin ever needs a core edit to install, which is the exact signal that the dependency arrows have started pointing the wrong way again.</DesignFlipsIf>
+<DesignFlipsIf>A plugin ever needs a core edit to install, which is the exact sign that the dependency arrows have started pointing the wrong way again.</DesignFlipsIf>
 
 ## Copy, share no code
 The roughly twelve lines a plugin needs to read a note's header are **copied** into each plugin. The core publishes no importable code for plugins to depend on. The reason is reversibility, not purity. If duplication later hurts, pulling the copies into one shared file is a five-minute change that breaks nobody. Un-publishing a shared tool that plugins already import is a breaking change and a magnet for `can it also do X?` creep. Copy is the move you can undo.
