@@ -23,28 +23,21 @@ imprnt grew out of [PAI](https://github.com/danielmiessler/PAI), a personal-AI s
 
 ## Ration the model by frequency, not by rule
 
-Deterministic-first does not mean "avoid the model." It means spend the model where it pays and keep it out of the hot path. The axis is how often a step runs.
-
-- The **write path** runs once per item, so it earns the model: read the prose, choose the type, write the summary, pull decisions, assign tags, wire links.
-- The **read path** runs thousands of times, so it stays cheap, local, and free: grep plus BM25, no model in the loop.
-
-"The dumbest thing that works" is measured against the model. BM25 is pure **arithmetic**, so it is the default ranker, not an opt-in. **Flips if:** a read-time quality problem appears that no local ranking can fix, and even then the move is a better local index, never a model in the loop.
+The axis behind every other call: spend the model where it pays (filing, once per item) and keep it off the path that runs thousands of times a day (search). [How it works](/how-it-works/) covers that split. The decision here is to measure "the dumbest thing that works" against the model, which makes BM25 the default ranker, not an opt-in. **Flips if:** a read-time quality problem appears that no local ranking can fix, and even then the move is a better local index, never a model in the loop.
 
 ## Retrieval is BM25, not embeddings or a query layer
 
-`recall` ranks with standard **BM25** (term frequency times inverse document frequency) with title and tag boosts. No per-query model rerank, no embeddings, no vectors, no protocol over the vault. A rare matched term floats above a common one, so you get a tight, well-separated set.
+`recall` ranks with standard **BM25** and no per-query rerank, embeddings, vectors, or protocol over the vault. The mechanics are in [How it works](/how-it-works/). Two calls are specific to this page.
 
 The scaling path stays local at every step: a full scan to about 10k notes, grep-prefilter then BM25 to about 100k, a persistent inverted index above that. Scaling adds a local index, never a vector store or a model.
 
-A protocol over plain files would cost far more tokens than grep and go stale on every edit. Vector search sounds smarter but costs more, re-indexes on every change, and hides why it matched. BM25 over plain text is free, clear, and good enough once notes are tagged well on the way in.
+Vector search sounds smarter but costs more, re-indexes on every change, and hides why it matched. BM25 over plain text is free, clear, and good enough once notes are tagged well on the way in. **Flips if:** the corpus grows large and untagged enough that semantic recall beats keyword match, which the write-time tagging is built to prevent.
 
 ## The data is the knowledge
 
-A note must carry the source's real payload in full: tables as tables, IDs, numbers, dates, prices, exact legal text. The summary sits on top of the data, never in place of it.
+A note must carry the source's real payload in full, never a summary in place of it. [Vault layout](/vault-layout/) states the rule and the lookup test that checks it.
 
-The reason is mechanical. `recall` searches `vault/` only, so anything left in `raw/` is **invisible** to retrieval. Summarizing a catalog to prose and pointing at the snapshot silently deletes that knowledge, because the rows were the note.
-
-This rule earned its teeth from a real failure: a vault rebuild kept the prose summaries and left the tables behind in `raw/`. The fix is a stated invariant (filing adds, never removes) and a falsifiable check, the **lookup test**: could you answer a specific question from the vault note alone?
+The call earned its teeth from a real failure: a vault rebuild kept the prose summaries and left the tables behind in `raw/`, where `recall` never looks, so the rows were silently deleted. The fix is a stated invariant, filing adds and never removes, plus a falsifiable check, the **lookup test**: could you answer a specific question from the vault note alone?
 
 ## Layout is domain-first, with cross-cutting entity folders
 

@@ -16,7 +16,7 @@ export const site = {
 
 export const nav = [
   { label: "How it works", href: "/how-it-works/" },
-  { label: "The model", href: "/the-model/" },
+  { label: "Vault layout", href: "/vault-layout/" },
   { label: "Plugins", href: "/plugins/" },
   { label: "Docs", href: "/getting-started/" },
 ];
@@ -70,7 +70,7 @@ export const different = {
       title: "Own your files",
       body: "Plain markdown on your disk, owner-only and local. It opens in any editor, graphs in Obsidian, and traces every note back to its source.",
       icon: "files",
-      href: "/the-model/",
+      href: "/vault-layout/",
     },
     {
       title: "Cheap, local recall",
@@ -110,7 +110,7 @@ export const footer = {
       links: [
         { label: "Getting started", href: "/getting-started/" },
         { label: "How it works", href: "/how-it-works/" },
-        { label: "The model", href: "/the-model/" },
+        { label: "Vault layout", href: "/vault-layout/" },
         { label: "Plugins", href: "/plugins/" },
       ],
     },
@@ -119,7 +119,7 @@ export const footer = {
       links: [
         { label: "GitHub", href: "https://github.com/aleksandr-bogdanov/imprnt", external: true },
         { label: "The vault contract", href: "https://github.com/aleksandr-bogdanov/imprnt/blob/main/CLAUDE.md", external: true },
-        { label: "Architecture", href: "/architecture/" },
+        { label: "How it compares", href: "/comparison/" },
         { label: "Design decisions", href: "/design-decisions/" },
       ],
     },

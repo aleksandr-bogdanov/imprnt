@@ -29,16 +29,20 @@ export default defineConfig({
       social: [{ icon: "github", label: "GitHub", href: REPO }],
       disable404Route: true,
       sidebar: [
-        { label: "Start here", items: [{ label: "Getting started", slug: "getting-started" }] },
+        {
+          label: "Start here",
+          items: [
+            { label: "Getting started", slug: "getting-started" },
+            { label: "How it compares", slug: "comparison" },
+          ],
+        },
         {
           label: "Concepts",
           items: [
             { label: "How it works", slug: "how-it-works" },
-            { label: "The model", slug: "the-model" },
+            { label: "Vault layout", slug: "vault-layout" },
             { label: "Memory and the vault", slug: "memory-and-the-vault" },
-            { label: "Architecture", slug: "architecture" },
             { label: "How plugins work", slug: "plugins" },
-            { label: "How it compares", slug: "comparison" },
           ],
         },
         {
