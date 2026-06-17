@@ -63,4 +63,4 @@ npm deprecate imprnt@<bad> "broken release, use <last-good>"
 
 ## Where the rest lives
 
-The deep design rationale is in [Design decisions](/design-decisions/), the system shape in [Architecture](/architecture/), and the full plugin contract in [Plugins](/plugins/).
+The deep design rationale is in [Design decisions](/design-decisions/), the system shape in [How it works](/how-it-works/), and the full plugin contract in [Plugins](/plugins/).

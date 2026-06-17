@@ -1,5 +1,5 @@
 ---
-title: The model
+title: Vault layout
 description: Folders you browse by hand, and note headers that carry the meaning.
 ---
 
