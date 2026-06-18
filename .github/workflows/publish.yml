@@ -17,10 +17,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "edge = republish all to @edge; release = gated stable to @latest"
+        # Default edge so a stray "Run workflow" click is harmless (republish all to @edge, ungated).
+        # A stable release is a deliberate act: pick `release` here, or just run the imprnt-release
+        # skill, which always passes `-f mode=release`. The push trigger ignores this input entirely.
+        description: "edge = republish all to @edge; release = gated stable to @latest (prefer the imprnt-release skill)"
         type: choice
-        options: [release, edge]
-        default: release
+        options: [edge, release]
+        default: edge
       dry_run:
         description: "release mode only: plan, publish nothing"
         type: boolean
