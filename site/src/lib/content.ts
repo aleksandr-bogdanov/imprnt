@@ -67,10 +67,10 @@ export const different = {
   lead: "You own the files, you run the commands, and the off switch is real.",
   features: [
     {
-      title: "Own your files",
-      body: "Plain markdown on your disk, owner-only and local. It opens in any editor, graphs in Obsidian, and traces every note back to its source.",
+      title: "No lock-in",
+      body: "Plain markdown you own, on your disk, searched locally with no vendor memory store. Read it, grep it, open it in any editor, and keep it. The vault outlives whatever model you run this year, and the agent on top stays swappable.",
       icon: "files",
-      href: "/vault-layout/",
+      href: "/comparison/",
     },
     {
       title: "Cheap, local recall",
