@@ -33,8 +33,12 @@ function note(dir: string, rel: string, fm: string, body: string): void {
   writeFileSync(p, `---\n${fm}\n---\n\n${body}\n`);
 }
 
-function runCheck(dir: string, extra: string[] = []): { code: number; out: string } {
-  const proc = Bun.spawnSync(["bun", CHECK, "--vault", dir, ...extra]);
+function runCheck(dir: string, extra: string[] = [], env: Record<string, string> = {}): { code: number; out: string } {
+  // Pin the host auto-memory guard OFF by default (a path that never exists) so existing tests don't
+  // depend on the machine's real ~/.claude state. The dedicated guard tests pass their own dir.
+  const proc = Bun.spawnSync(["bun", CHECK, "--vault", dir, ...extra], {
+    env: { ...process.env, IMPRNT_HOST_MEMORY_DIR: join(dir, ".no-host-memory"), ...env },
+  });
   return { code: proc.exitCode, out: proc.stdout.toString() + proc.stderr.toString() };
 }
 
@@ -1150,4 +1154,66 @@ test("a note whose only entity link is inside a code fence is still disconnected
   expect(out).toContain("disconnected notes");
   expect(disconnectedList(out)).toContain("work/howto");
   expect(code).not.toBe(0);
+});
+
+// --- host auto-memory guard (the vault is the only store) ---------------------
+// imprnt's rule: the host's Claude auto-memory (MEMORY.md + memory/*.md) is a second always-on store
+// recall can't search, so any entry note parked there is flagged (and drives a non-zero exit) until it
+// is migrated to the vault + a behavior fragment and the store is emptied. The path is normally derived
+// from projectRoot(); IMPRNT_HOST_MEMORY_DIR overrides it (here, a controlled temp dir). MEMORY.md (the
+// index) alone counts as empty, and an absent dir is clean.
+
+test("a non-empty host auto-memory store is flagged and exits non-zero", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  // an otherwise-clean vault: the ONLY issue is the stray host-memory entry below.
+  const mem = mkdtempSync(join(tmpdir(), "imprnt-hostmem-"));
+  writeFileSync(join(mem, "MEMORY.md"), "# Memory index\n");
+  writeFileSync(join(mem, "stray-fact.md"), "---\nname: stray\n---\n\nknowledge parked in the wrong store\n");
+  const { code, out } = runCheck(dir, [], { IMPRNT_HOST_MEMORY_DIR: mem });
+  expect(out).toContain("host auto-memory not empty");
+  expect(out).toContain("stray-fact.md");
+  expect(code).not.toBe(0);
+});
+
+test("a host-memory store with only MEMORY.md (the index) counts as empty", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const mem = mkdtempSync(join(tmpdir(), "imprnt-hostmem-"));
+  writeFileSync(join(mem, "MEMORY.md"), "# Memory index\n");
+  const { code, out } = runCheck(dir, [], { IMPRNT_HOST_MEMORY_DIR: mem });
+  expect(out).toContain("host auto-memory empty");
+  expect(out).toContain("clean.");
+  expect(code).toBe(0);
+});
+
+test("an absent host-memory dir counts as empty and does not crash", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const { code, out } = runCheck(dir, [], { IMPRNT_HOST_MEMORY_DIR: join(dir, "definitely-absent") });
+  expect(out).toContain("host auto-memory empty");
+  expect(code).toBe(0);
+});
+
+// The default path (no IMPRNT_HOST_MEMORY_DIR) derives from projectRoot under the user home, encoding
+// each `/` and `.` as `-` to match Claude Code's per-project memory dir. Pin that convention: set HOME
+// + IMPRNT_ROOT to known values, plant a stray note at the derived path, and assert the guard finds it
+// WITHOUT the override. This is the only test that exercises the homedir()+projectRoot default branch.
+test("the default host-memory path derives from projectRoot under HOME, encoding pinned", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const home = mkdtempSync(join(tmpdir(), "imprnt-home-"));
+  const proj = "/Some/Project.Dir/vault-root"; // the dot pins the `.`->`-` half of the rule
+  const encoded = proj.replace(/[/.]/g, "-");
+  const memDir = join(home, ".claude", "projects", encoded, "memory");
+  mkdirSync(memDir, { recursive: true });
+  writeFileSync(join(memDir, "stray.md"), "---\nname: stray\n---\n\nx\n");
+  // No IMPRNT_HOST_MEMORY_DIR: force the homedir() + projectRoot(IMPRNT_ROOT) derivation.
+  const proc = Bun.spawnSync(["bun", CHECK, "--vault", dir], {
+    env: { ...process.env, HOME: home, IMPRNT_ROOT: proj },
+  });
+  const out = proc.stdout.toString() + proc.stderr.toString();
+  expect(out).toContain("host auto-memory not empty");
+  expect(out).toContain("stray.md");
+  expect(proc.exitCode).not.toBe(0);
 });
