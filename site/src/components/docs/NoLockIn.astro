@@ -1,0 +1,93 @@
+---
+/**
+ * comparison.mdx ONLY - the no-lock-in moat, stated explicitly. A single filled
+ * accent surface (no border-box) carrying the claim, plus a small row of what
+ * is portable today, so the point lands without repeating the proof on the
+ * memory-and-the-vault page. Honest scope: the claim is the knowledge is
+ * portable and the agent is swappable, never "runs on any LLM today". Scoped
+ * CSS only, no Tailwind (docs pages do not load it), theme-aware via --sl tokens.
+ */
+const PORTABLE = ["the markdown notes", "the raw sources", "the whole folder, owner-only"];
+---
+
+<aside class="moat">
+  <span class="moat-tag">the one axis where imprnt wins cleanly</span>
+  <p class="moat-claim">
+    Your knowledge is plain Markdown you own, searched locally with no proprietary memory
+    store. Most other tools bind your data to one vendor's store, format, or vector index.
+    imprnt keeps it in files you can read, grep, and move, so the vault outlives whatever
+    model you run this year and the agent on top stays swappable.
+  </p>
+  <div class="moat-portable">
+    <span class="moat-portable-label">portable today</span>
+    <div class="moat-chips">
+      {PORTABLE.map((p) => <span class="moat-chip">{p}</span>)}
+    </div>
+  </div>
+  <p class="moat-foot">
+    Retrieval is BM25 over those files, so the search travels with them. Nothing proprietary
+    to export or rebuild.
+  </p>
+</aside>
+
+<style>
+  .moat {
+    margin: 1.5rem 0;
+    border-radius: 16px;
+    padding: 1.3rem 1.4rem 1.4rem;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+
+  .moat-tag {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+    margin-bottom: 0.7rem;
+  }
+
+  .moat-claim {
+    margin: 0;
+    font-size: 1.05rem;
+    line-height: 1.55;
+    color: var(--sl-color-white);
+  }
+
+  .moat-portable {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem 0.7rem;
+    margin-top: 1.1rem;
+  }
+  .moat-portable-label {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .moat-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+  .moat-chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+    line-height: 1.2;
+    padding: 0.3rem 0.6rem;
+    border-radius: 8px;
+    color: var(--sl-color-white);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
+  }
+
+  .moat-foot {
+    margin: 0.9rem 0 0;
+    font-size: 0.88rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+</style>

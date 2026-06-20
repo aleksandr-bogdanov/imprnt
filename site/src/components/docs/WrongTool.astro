@@ -26,6 +26,11 @@ const CASES = [
     why: "The purest version of an agent that pages and self-edits its own memory across long runs.",
   },
   {
+    want: "An outliner and graph you drive by hand",
+    pick: "Logseq, Obsidian",
+    why: "Block notes, bidirectional links, a graph view, and queries you run yourself. imprnt has no GUI and no human query language. It is a typed vault an agent greps. If the point is you navigating the knowledge, a PKM app wins.",
+  },
+  {
     want: "Semantic recall across messy unlabeled text",
     pick: "any embeddings tool above",
     why: "If your corpus is large, unstructured, and you will not tag it on the way in, embeddings out-recall BM25. imprnt's bet pays off because the write path does the labeling. Skip that work and the bet weakens.",
@@ -35,8 +40,8 @@ const CASES = [
 
 <div class="wt">
   {
-    CASES.map((c, i) => (
-      <div class={i === CASES.length - 1 ? "wt-card wt-wide" : "wt-card"}>
+    CASES.map((c) => (
+      <div class="wt-card">
         <p class="wt-want">{c.want}</p>
         <p class="wt-pick">
           <span class="wt-pick-label">pick instead</span>
@@ -60,18 +65,10 @@ const CASES = [
     row-gap: 0.8rem;
     margin: 1.4rem 0;
   }
-  /* the lone fifth card sits in the first column, left-aligned under the column
-     above it, so the trailing gap reads as deliberate, not a stray center. */
-  .wt-wide {
-    grid-column: 1;
-  }
   @media (max-width: 720px) {
     .wt {
       grid-template-columns: 1fr;
       grid-auto-rows: auto;
-    }
-    .wt-wide {
-      grid-column: auto;
     }
   }
   .wt-card {

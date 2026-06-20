@@ -9,6 +9,8 @@ import CompareTable from "../src/components/docs/CompareTable.astro";
 import BenchStrip from "../src/components/docs/BenchStrip.astro";
 import WrongTool from "../src/components/docs/WrongTool.astro";
 import ClosestVerdict from "../src/components/docs/ClosestVerdict.astro";
+import FieldVerdicts from "../src/components/docs/FieldVerdicts.astro";
+import NoLockIn from "../src/components/docs/NoLockIn.astro";
 
 Most AI-memory tools build a store for the **machine** to read: a vector index you cannot open. imprnt builds plain notes for **you** to read, that the AI also searches. This page shows where that helps and where it does not.
 
@@ -20,6 +22,12 @@ Almost every tool here sorts on a single question: **is the memory built for the
 
 <SplitPanels />
 
+## No lock-in
+
+Most tools here bind your knowledge to a store you do not control. The few that keep plain files still wrap them in a derived index or a server. imprnt is the one that keeps both the files and the search portable.
+
+<NoLockIn />
+
 ## imprnt's four bets
 
 Each is the minority position in the field.
@@ -28,13 +36,21 @@ Each is the minority position in the field.
 
 imprnt's white space is **plain Markdown the AI reads directly, BM25 and grep, no vector DB, no server.** It pays off when BM25 over a well-tagged vault answers the questions you actually ask. It loses when your queries need vector recall over raw, untagged text. The benchmark section below makes that tradeoff concrete.
 
-## The field, tool by tool
+## The field at a glance
 
-Facts are pulled from each project's own README and docs (checked 2026-06-16). Benchmark numbers are **self-reported** by the vendor under its own harness, so read them as "the project claims X", never a settled leaderboard. The numbers are contested even among the vendors: Zep published a rebuttal of mem0's headline LoCoMo claim, mem0 fired back disputing Zep's, the clearest public sign these scores are not neutral.
+Facts are pulled from each project's own README and docs (checked 2026-06-18). Benchmark numbers are **self-reported** by the vendor under its own harness, so read them as "the project claims X", never a settled leaderboard. The numbers are contested even among the vendors: Zep published a rebuttal of mem0's headline LoCoMo claim, mem0 fired back disputing Zep's, the clearest public sign these scores are not neutral.
 
 <CompareTable />
 
-Posture on cloud varies too. mem0, Zep, and Supermemory are cloud-first with a local mode. Letta, Khoj, cognee, mempalace, and iai self-host. Karpathy's LLM Wiki and imprnt have no hosted mode and no account, because the files are already on your disk.
+Posture on cloud varies. mem0, Zep, and Supermemory are cloud-first with a local mode. Letta, cognee, mempalace, and iai self-host, and Khoj is self-host only after closing its cloud in 2026. Obsidian and Logseq are local apps with optional paid sync. Karpathy's LLM Wiki and imprnt have no hosted mode and no account, because the files are already on your disk.
+
+Logseq shows how fast this moves. Its original version keeps your notes as plain Markdown you can grep and edit by hand. The new default stores them in a local SQLite database and treats Markdown as an export. If owning plain files is the reason you picked a tool, check which version you are on before you rely on that.
+
+## Each tool, against imprnt
+
+The table is the matrix. This is the read on each one: what it is, the single sharpest line away from imprnt, and the case where it wins. Grouped by the camp it sits in.
+
+<FieldVerdicts />
 
 ## The closest kin: Karpathy's LLM Wiki
 

@@ -1,0 +1,276 @@
+---
+/**
+ * comparison.mdx ONLY - the deep, per-tool read on the whole field, grouped by
+ * the camp each tool sits in. Every tool gets one card: what it is in a line,
+ * the single sharpest split against imprnt, and when it wins. Backed by
+ * site/research/competitors-2026-06.md (primary sources, dated). Scoped CSS
+ * only, no Tailwind (docs pages do not load it), theme-aware via --sl tokens.
+ */
+const CAMPS = [
+  {
+    name: "Same floor: plain files you own",
+    blurb:
+      "Markdown the user owns and reads. The split is the machinery on top, and who the first reader is.",
+    tools: [
+      {
+        tool: "Karpathy's LLM Wiki",
+        what: "A pattern, not a product: immutable raw sources, an LLM-compiled Markdown wiki, a schema file. Implementations range from desktop apps to MCP servers.",
+        split:
+          "imprnt's closest kin. It adds a real BM25 ranker so recall never asks the model to scan index.md, a typed entity contract with alias resolution, and a shipped CLI plus plugins.",
+        wins: "A wiki you browse visually in Obsidian, where index-reading is fine and you want no schema discipline.",
+      },
+      {
+        tool: "Basic Memory",
+        what: "Markdown as the source of truth with a derived SQLite index, reached over an MCP server. The closest shipped product.",
+        split:
+          "Same floor, opposite machinery. Since March 2026 it defaults to hybrid full-text plus vector, so a model sits in the read loop. imprnt is BM25 plus grep, no server, the AI reads files directly.",
+        wins: "Semantic recall and cross-device sync out of the box, with a hosted tier if you want it.",
+      },
+      {
+        tool: "Obsidian",
+        what: "Plain Markdown files you own, the field's strongest your-files stance, no DB pivot. The base app ships no AI.",
+        split:
+          "Same floor, different reader. Obsidian's reader is a human in a GUI, and any AI builds a sidecar vector store beside your notes. imprnt's reader is an agent that greps directly, no sidecar to keep in sync.",
+        wins: "A human browsing, linking, and exploring a vault by hand in a polished GUI.",
+      },
+      {
+        tool: "Logseq",
+        note: "mid-pivot to SQLite",
+        what: "A local-first block outliner. The original keeps Markdown or org files, and the new default moves them into a canonical SQLite database.",
+        split:
+          "Its file version shares imprnt's floor and carries no vectors either, but recall is Datalog queries and a graph you run by hand. The DB version is walking away from the plain-files property imprnt is built on.",
+        wins: "Outliner workflows: daily notes, block references, and queries you drive yourself.",
+      },
+    ],
+  },
+  {
+    name: "Vector memory engines",
+    blurb:
+      "Embeddings as the core recall driver, into a vector store, usually auto-captured. The bulk of the field.",
+    tools: [
+      {
+        tool: "Reor",
+        note: "archived March 2026",
+        what: "A desktop notes app: Markdown files plus a LanceDB vector index, auto-embed on every write. No longer maintained.",
+        split:
+          "An embeddings read path and a closed GUI that owns the index, against imprnt's BM25 plus grep over files the agent reads directly. No typed entities, notes are undifferentiated chunks.",
+        wins: "Historically, one-click local-model semantic linking with no CLI or git.",
+      },
+      {
+        tool: "Khoj",
+        note: "self-host only since the cloud closed",
+        what: "A self-hosted server (Postgres plus pgvector) that indexes many file types and answers with a bi-encoder plus a cross-encoder rerank.",
+        split:
+          "A server stack that owns your data in its schema, a model in the read path, a full re-index when the embedding model changes. imprnt is plain files with BM25 plus grep, no server. Khoj is an MCP client, not a server over its store.",
+        wins: "A large multi-format corpus (PDF, Word, Notion) where semantic recall beats grep.",
+      },
+      {
+        tool: "mem0",
+        what: "The most-adopted agent-memory framework: a managed multi-store (vector across about 20 backends, optional graph, key-value) that auto-extracts from chat turns.",
+        split:
+          "A hosted or server memory layer with embeddings-led hybrid retrieval, where BM25 is one fused signal. imprnt is owned files with BM25 as the whole ranker, no embeddings, the model only on the write path.",
+        wins: "Zero-effort automatic memory and managed multi-user infrastructure across many agents.",
+      },
+      {
+        tool: "mempalace",
+        what: "A memory-palace MCP server (33 tools) over ChromaDB and SQLite, embeddings with boosting and an optional LLM rerank, auto-saving transcripts from editor hooks.",
+        split:
+          "Embeddings into a vector DB behind a 33-tool server, auto-capturing verbatim transcripts. imprnt greps plain files directly and files consciously into a typed contract.",
+        wins: "Zero-effort capture of full chat history with top-of-table semantic recall.",
+      },
+      {
+        tool: "iai",
+        what: "An encrypted-SQLite memory (AES-256, three tiers) over MCP, with local embeddings and fully automatic capture from Claude Code and Codex hooks.",
+        split:
+          "It captures everything verbatim from every turn into an encrypted binary tied to its daemon. imprnt files only what you choose, into human-readable Markdown that outlives the tool.",
+        wins: "Never-miss automatic capture and high benchmark recall, behind an encryption layer, with no filing decisions.",
+      },
+      {
+        tool: "Supermemory",
+        what: "Cloud-first infrastructure with a real self-host binary: a vector-graph engine that auto-extracts facts, builds user profiles, and auto-forgets.",
+        split:
+          "Cloud-first, multi-modal, API and MCP-served, a model in the read loop. imprnt is local plain files with BM25 plus grep, conscious capture, and no API surface.",
+        wins: "A multi-modal, multi-user memory backend that auto-extracts and auto-forgets at scale.",
+      },
+    ],
+  },
+  {
+    name: "Graph memory",
+    blurb:
+      "An LLM-built knowledge graph as the store, queried by traversal. Strong at multi-hop, heavy to run.",
+    tools: [
+      {
+        tool: "Zep / Graphiti",
+        what: "A bi-temporal knowledge graph (Neo4j by default) where every fact carries a validity window. Hybrid semantic, BM25, and graph traversal, auto-extracted on ingest.",
+        split:
+          "Memory as graph nodes and edges in a database, with an LLM building the graph on ingest. imprnt models change as superseded-line markers and typed notes in owned files, no graph DB and no model in the read loop. Zep adds compliant multi-tenant SaaS imprnt has no equivalent of.",
+        wins: "Automatic low-latency memory across many users and sessions, with point-in-time temporal queries.",
+      },
+      {
+        tool: "cognee",
+        what: "An extract-cognify-load pipeline into graph, vector, and relational stores, with many search modes and a model on the read path.",
+        split:
+          "An LLM-built knowledge graph plus embeddings across three databases. imprnt keeps plain files with BM25 plus grep and the model off the read path entirely.",
+        wins: "Multi-hop reasoning across large auto-ingested corpora where graph traversal beats keyword ranking.",
+      },
+    ],
+  },
+  {
+    name: "Agent-state runtime",
+    blurb:
+      "Memory as the live state of a running agent, served from a database. A different problem from a personal vault.",
+    tools: [
+      {
+        tool: "Letta / MemGPT",
+        note: "pivoting to git-backed context repos",
+        what: "A stateful agent runtime with OS-style tiered memory in Postgres and pgvector, the agent self-editing its own memory, served over an API.",
+        split:
+          "A Postgres-backed server reached through a REST API, the agent auto-editing memory blocks mid-run. imprnt is plain files the agent greps, conscious filing, no server. Letta's own best benchmark came from a filesystem variant beating its tool-based memory.",
+        wins: "An always-on agent that autonomously remembers across long sessions, if you will run a server.",
+      },
+    ],
+  },
+];
+---
+
+<div class="fv">
+  {
+    CAMPS.map((camp) => (
+      <section class="fv-camp">
+        <div class="fv-camp-head">
+          <h3 class="fv-camp-name">{camp.name}</h3>
+          <p class="fv-camp-blurb">{camp.blurb}</p>
+        </div>
+        <div class="fv-grid">
+          {camp.tools.map((t) => (
+            <article class="fv-card">
+              <div class="fv-card-head">
+                <span class="fv-tool">{t.tool}</span>
+                {t.note && <span class="fv-note">{t.note}</span>}
+              </div>
+              <p class="fv-what">{t.what}</p>
+              <div class="fv-rows">
+                <div class="fv-row">
+                  <span class="fv-label">vs imprnt</span>
+                  <span class="fv-text">{t.split}</span>
+                </div>
+                <div class="fv-row">
+                  <span class="fv-label">wins when</span>
+                  <span class="fv-text">{t.wins}</span>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    ))
+  }
+</div>
+
+<style>
+  .fv {
+    margin: 1.5rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1.8rem;
+  }
+
+  .fv-camp-head {
+    margin-bottom: 0.8rem;
+  }
+  .fv-camp-name {
+    margin: 0;
+    font-size: 0.78rem;
+    font-family: var(--sl-font-mono);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .fv-camp-blurb {
+    margin: 0.3rem 0 0;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+
+  .fv-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.8rem;
+  }
+  @media (max-width: 720px) {
+    .fv-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .fv-card {
+    display: flex;
+    flex-direction: column;
+    border-radius: 14px;
+    padding: 1rem 1.1rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 9%, var(--sl-color-bg));
+  }
+
+  .fv-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.45rem;
+  }
+  .fv-tool {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 1.02rem;
+    color: var(--sl-color-white);
+  }
+  .fv-note {
+    font-size: 0.72rem;
+    font-style: italic;
+    color: var(--sl-color-gray-3);
+  }
+
+  .fv-what {
+    margin: 0 0 0.85rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+  }
+
+  .fv-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: auto;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--sl-color-hairline-shade);
+  }
+  .fv-row {
+    display: grid;
+    grid-template-columns: 5.2rem 1fr;
+    gap: 0.7rem;
+  }
+  @media (max-width: 460px) {
+    .fv-row {
+      grid-template-columns: 1fr;
+      gap: 0.15rem;
+    }
+  }
+  .fv-label {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    padding-top: 0.18rem;
+  }
+  .fv-row:first-child .fv-label {
+    color: var(--sl-color-text-accent);
+  }
+  .fv-text {
+    font-size: 0.86rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+  }
+</style>
