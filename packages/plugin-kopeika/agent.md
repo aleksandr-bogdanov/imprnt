@@ -51,6 +51,28 @@ are deterministic. To change how a transaction is treated, edit the data file th
 (`rules.csv` for category, `tiers.csv` for floor/flex, `savings.csv` for destinations, `profile.json`
 for display labels and net-worth marks), then re-run. Never hand-edit a ledger row.
 
+## Adding new data and publishing (the "eat this CSV" loop)
+
+When the user hands you a fresh export ("here is my Revolut CSV, add it and update the site"), run the
+loop and report what changed at each step:
+
+1. `imprnt kopeika import <connector> <path> --account <label> --owner <owner>` — confirm the
+   imported / skipped-dup counts and any missing FX rates it warns about.
+2. `imprnt kopeika categorize` then `imprnt kopeika transfers`.
+3. `imprnt kopeika categorize --review` — for each new merchant worth a label, add one line to
+   `data/rules.csv` and re-run `categorize`. This is the one judgement step.
+4. `imprnt kopeika report` (and `project`) to sanity-check the month against the known anchor.
+5. Publish: render both languages, then deploy the `deploy/` bundle to the host.
+   ```
+   imprnt kopeika report --html deploy/public/en.html --lang en
+   imprnt kopeika report --html deploy/public/ru.html --lang ru
+   # then deploy the deploy/ bundle (the exact host command is in the user's deploy note)
+   ```
+
+Reuse the same `--account` label for an account every month; the display aliases and savings
+destinations are keyed to them. The plugin's `data/` folder is the single source of truth for both the
+CLI and the hosted dashboard.
+
 ## Rules (always-on while this fragment is installed)
 
 - **Personal data stays in `data/` (gitignored), never in a vault note.** The PII is `data/profile.json`.
