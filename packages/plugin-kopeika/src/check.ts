@@ -10,6 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = basename(HERE) === "src" ? dirname(HERE) : HERE;
@@ -17,6 +18,27 @@ const DATA = join(ROOT, "data");
 
 const problems: string[] = [];
 const notes: string[] = [];
+
+// The one hard rule for a money tool: financial data must never reach a remote.
+// Committing data/ is fine in a remoteless private store (the imprnt vault); it is
+// dangerous the moment a remote exists. Fail loudly only in that combination.
+function git(args: string[]): string {
+  const r = spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
+  return r.status === 0 ? (r.stdout ?? "").trim() : "";
+}
+const dataTracked = git(["ls-files", "data"]).length > 0;
+const hasRemote = git(["remote"]).length > 0;
+if (dataTracked && hasRemote) {
+  problems.push(
+    "data/ is git-tracked in a repo that HAS A REMOTE — your financial data (ledger, raw bank " +
+      "exports, profile.json) could be pushed. Add data/ to .gitignore, or remove the remote. " +
+      "Committing data/ is only safe in a remoteless local store like the imprnt vault.",
+  );
+} else if (dataTracked) {
+  notes.push("data: committed (no remote — canonical local store, safe)");
+} else {
+  notes.push("data: not tracked by git");
+}
 
 // Profile: optional (absent = generic mode), but if present it must be valid JSON.
 const profilePath = join(DATA, "profile.json");

@@ -97,9 +97,9 @@ Some connectors flag a row as a likely internal transfer when it names one of yo
 
 ## The personal layer (the profile)
 
-Every personal fact lives in `data/profile.json` (gitignored), never in the code. This is the same "data is the source of truth" rule the ledger config follows, applied to identity and display: own names and IBANs for transfer detection, the net-worth marks, the account and merchant display labels, and the footer. `src/profile.ts` loads it once at startup. A committed `profile.example.json` is the template.
+Every personal fact lives in `data/profile.json` (kept local, never on a remote), never in the code. This is the same "data is the source of truth" rule the ledger config follows, applied to identity and display: own names and IBANs for transfer detection, the net-worth marks, the account and merchant display labels, and the footer. `src/profile.ts` loads it once at startup. A committed `profile.example.json` is the template.
 
-Loading is forgiving by design. A missing file yields an empty profile, so a fresh checkout runs in generic mode: no own-name matching, no net-worth layer, raw merchant and account strings. Filling the profile in lights those features up. The payoff is that the repository ships with no personal data and the same binary works for anyone, while one gitignored file holds everything specific to one household.
+Loading is forgiving by design. A missing file yields an empty profile, so a fresh checkout runs in generic mode: no own-name matching, no net-worth layer, raw merchant and account strings. Filling the profile in lights those features up. The payoff is that the package ships with no personal data and the same binary works for anyone, while one local file holds everything specific to one household. That file, and the whole `data/` folder, must never reach a remote: committed in a remoteless private store (the imprnt vault) is the intended setup, and `check.js` fails if `data/` is tracked in a repo that has a remote.
 
 ## Data scope
 
