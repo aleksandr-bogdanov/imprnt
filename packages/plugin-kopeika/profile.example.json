@@ -1,0 +1,28 @@
+{
+  "_comment": "Copy this file to data/profile.json and fill in your own values. data/ is gitignored, so your real profile never enters git. Every field is optional: omit a section and that feature stays off (no own-name transfer detection, no net-worth layer, raw merchant/account labels).",
+
+  "owners": ["me", "partner"],
+
+  "ownNames": ["firstname lastname", "partner firstname lastname"],
+
+  "ownIbans": ["DE00000000000000000000"],
+
+  "footer": { "en": "for the household", "ru": "для семьи" },
+
+  "netWorth": {
+    "flatsRub": 0,
+    "mortgageRub": 0,
+    "bcsNominalCny": 0,
+    "propertyApr": 0.08
+  },
+
+  "accountLabels": {
+    "revolut-main": { "en": "Revolut", "ru": "Revolut" },
+    "n26-main": { "en": "N26", "ru": "N26" }
+  },
+
+  "merchantInfo": [
+    { "pat": "REWE", "name": "REWE" },
+    { "pat": "your-landlord-string", "en": "rent", "ru": "аренда" }
+  ]
+}

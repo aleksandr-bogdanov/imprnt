@@ -1,0 +1,5 @@
+# Local-only — real financial data and the rendered deploy bundle. Never committed.
+# In an installed plugin these live under plugins/kopeika/; here they only appear if
+# you run the CLI from this dir during development.
+data/
+deploy/
