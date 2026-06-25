@@ -37,6 +37,14 @@
         "typescript": "^5.7.2",
       },
     },
+    "packages/plugin-kopeika": {
+      "name": "imprnt-plugin-kopeika",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/bun": "^1.3.14",
+        "typescript": "^5.7.2",
+      },
+    },
     "packages/plugin-session-host": {
       "name": "imprnt-plugin-session-host",
       "version": "0.1.0",
@@ -103,6 +111,8 @@
     "imprnt-plugin-character": ["imprnt-plugin-character@workspace:packages/plugin-character"],
 
     "imprnt-plugin-kleinanzeigen": ["imprnt-plugin-kleinanzeigen@workspace:packages/plugin-kleinanzeigen"],
+
+    "imprnt-plugin-kopeika": ["imprnt-plugin-kopeika@workspace:packages/plugin-kopeika"],
 
     "imprnt-plugin-session-host": ["imprnt-plugin-session-host@workspace:packages/plugin-session-host"],
 

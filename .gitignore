@@ -26,6 +26,7 @@ packages/plugin-*/check.js
 packages/plugin-*/whenful.js
 packages/plugin-*/timemachine.js
 packages/plugin-*/statusline.js
+packages/plugin-*/kopeika.js
 
 # Runtime
 node_modules/
