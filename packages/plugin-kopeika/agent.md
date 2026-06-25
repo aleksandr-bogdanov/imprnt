@@ -25,7 +25,9 @@ Everything personal stays inside this plugin folder, gitignored, never in a vaul
   start one. This file is the PII. It is gitignored and never leaves the machine.
 - `deploy/` — the optional hosted-dashboard bundle (the rendered HTML plus a tiny server). Gitignored.
 
-`data/` and `deploy/` are gitignored in full. None of it ships with the plugin code.
+`data/` holds raw financial data and must never reach a remote. In a remoteless private store like the
+imprnt vault it is committed as the canonical source of truth; anywhere a remote exists, gitignore it.
+`deploy/` is derived and stays local. Neither ships with the plugin code.
 
 ## Commands (you run these; nothing runs on its own)
 
@@ -80,6 +82,8 @@ CLI and the hosted dashboard.
   `proposed/` for `imprnt ingest --apply`. Never a per-transaction dump, never account numbers or balances.
 - **The pipeline is deterministic; no LLM touches a row at runtime.** An LLM may propose a categorization
   *rule* at authoring time, never mutate a ledger row directly.
-- **Never commit `data/` or `deploy/`.** They hold the real financial data and the rendered figures.
+- **Financial data must never reach a remote.** `data/` holds the real exports, ledger, and profile.
+  Committing it in a remoteless private store (the imprnt vault) is the intended setup; anywhere with a
+  remote, gitignore `data/`. `check.js` fails if tracked `data/` meets a remote. `deploy/` stays local.
 - **Namespace any vault label** you ever add with `kopeika.*`.
 - The hosted dashboard carries no account numbers, IBANs, or balances, and sits behind a password.

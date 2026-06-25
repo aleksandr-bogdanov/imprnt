@@ -3,7 +3,7 @@
 A deterministic, local-first personal-finance and net-worth CLI, packaged as an imprnt plugin. It
 parses bank CSV exports into one clean, deduplicated ledger, categorizes via ratified rules, tracks
 savings, and projects net worth, then renders a self-contained bilingual dashboard. No LLM touches a
-row at runtime. All personal data lives in the plugin's own gitignored folder, never in a vault note.
+row at runtime. All personal data lives in the plugin's own `data/` folder (local only, never on a remote), never in a vault note.
 
 It is a sibling of [imprnt](https://github.com/aleksandr-bogdanov/imprnt). The shared idea: the LLM
 builds the tools at authoring time, the deterministic tools do the work at runtime, and verification is
@@ -80,7 +80,7 @@ imprnt kopeika project [--rate <eur/mo>] [--lump-sum <eur>] [--years N]
 `report --html <path> --lang <en|ru>` writes the self-contained dashboard. The deep model (raw vs
 clean, stock vs flow, the two axes, net worth, projection) is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Data files (all under `plugins/kopeika/data/`, gitignored)
+## Data files (all under `plugins/kopeika/data/`, local only)
 
 | File | Format |
 |------|--------|
@@ -94,7 +94,7 @@ clean, stock vs flow, the two axes, net worth, projection) is in [docs/ARCHITECT
 
 ## Profile
 
-Every personal fact lives in `data/profile.json`, gitignored. The code ships generic. Copy
+Every personal fact lives in `data/profile.json`, kept local (never on a remote). The code ships generic. Copy
 `profile.example.json` and fill in: `owners` (allowed `--owner` labels), `ownNames` / `ownIbans` (for
 internal-transfer detection), `netWorth` (`flatsRub`, `mortgageRub`, `bcsNominalCny`, `propertyApr`),
 `accountLabels`, `merchantInfo`, and `footer`. Every field is optional. A missing profile runs in
@@ -102,7 +102,14 @@ generic mode. Nothing here is hardcoded in the source, so the package carries no
 
 ## Privacy
 
-`data/` and `deploy/` are gitignored in full. Your raw exports, the clean ledger, your
-`data/profile.json` (names, IBANs, net-worth marks), and the rendered dashboard never enter git and
-never leave the machine. The hosted page carries no account numbers, IBANs, or balances, and sits
-behind a password.
+Your `data/` folder holds raw financial data: the bank exports, the clean ledger, and
+`data/profile.json` with your names, IBANs, and net-worth marks. The one hard rule is that **it must
+never reach a remote.**
+
+There are two safe setups. In a private, remoteless store like the imprnt vault, `data/` is committed
+as the canonical source of truth - that is the intended arrangement, and the data never leaves the
+machine because the repo has no remote. Anywhere a remote exists, gitignore `data/` so it is never
+committed. `check.js` enforces exactly this: it fails if `data/` is tracked in a repo that has a
+remote, and passes otherwise. The published package itself ships no personal data (only the generic
+code and `profile.example.json`). The rendered `deploy/` bundle is derived, so it stays local. The
+hosted page carries no account numbers, IBANs, or balances, and sits behind a password.
