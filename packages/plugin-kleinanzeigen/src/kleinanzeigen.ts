@@ -1,28 +1,36 @@
 // imprnt · kleinanzeigen plugin — the watcher CLI. Shipped as built kleinanzeigen.js (node banner).
 //
-//   sync     refresh the local mirror from the message box   (the ONLY wire-touching command; offline
-//            with KLEINANZEIGEN_FIXTURES)
+//   sync     refresh the local mirror from the message box   (the ONLY message-box wire command;
+//            offline with KLEINANZEIGEN_FIXTURES)
 //   rate     classify each mirrored conversation — pure regex, zero LLM, writes ratings back
 //   notify   compose a phone-sized digest and ship it via $WATCHER_NOTIFY_CMD (stdout fallback)
 //   send     post ONE approved reply to ONE conversation (refuses scam without --force)
+//   contact  start a NEW conversation on someone's ad and send ONE message (--dry-run prints the request)
+//   search   search the public marketplace; cache-gated, persists a local market mirror
+//   watch    saved deal-searches: add/list/rm/run; `run` diffs each search and ships a deal digest
+//   detail   capture one public ad page (seller rating + metadata) into market/ads/<adId>.json
 //   probe    (Alex runs this once, logged in) discover live endpoints → endpoints.json
 //   check    integrity (delegates to ./check.js)
 //
 // Contract: writes ONLY this plugin's own folder, never a vault note. Render-at-read off the mirror.
-// The send button is human — nothing here sends without an explicit `send` invocation.
+// The send button is human — nothing here sends without an explicit `send`/`contact` invocation. The
+// public search/detail/watch carry NO auth (they read server-rendered public pages).
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { fetchConversations, postReply } from "./client.ts";
+import { fetchConversations, postReply, postContact } from "./client.ts";
 import { loadFacts } from "./facts.ts";
 import { classify, belowFloor } from "./rate.ts";
 import {
-  listConversations, readConversation, writeConversation, latestBuyerMessage,
-  type Conversation,
+  listConversations, readConversation, writeConversation,
+  latestCounterpartMessage, lastMessage, turnAwaiting, type Conversation,
 } from "./mirror.ts";
 import { composeDigest, deliver } from "./notify.ts";
 import { guardSend } from "./send.ts";
+import { cmdSearch, extractAdId } from "./search.ts";
+import { cmdWatch } from "./watch.ts";
+import { cmdDetail } from "./detail.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MIRROR = join(here, "mirror");
@@ -37,24 +45,33 @@ async function cmdSync(): Promise<number> {
     return 1;
   }
   let written = 0;
+  const syncedAt = new Date().toISOString();
   for (const r of raws) {
-    // Preserve a prior answered/closed state so a re-sync doesn't reopen a conversation Alex handled.
+    // Preserve ONLY a prior `closed` state so a re-sync doesn't reopen a conversation Alex closed. A
+    // prior "answered" (legacy) or "open" both re-derive to open + a fresh turnAwaiting below.
     const existingPath = join(MIRROR, `${r.conv}.md`);
     let state: Conversation["state"] = "open";
     if (existsSync(existingPath)) {
       const prev = readConversation(existingPath);
-      if (prev.state === "answered" || prev.state === "closed") state = prev.state;
+      if (prev.state === "closed") state = "closed";
     }
     const last = r.messages.length ? r.messages[r.messages.length - 1].at : "";
-    writeConversation(MIRROR, {
+    const conv: Conversation = {
       conv: r.conv,
+      side: r.side ?? "selling",
       listing: r.listing,
+      ad_title: r.ad_title ?? "",
+      ad_status: r.ad_status ?? "",
       counterpart: r.counterpart,
       state,
       synthetic: r.synthetic ?? false,
       messages: r.messages,
       last_message_at: last,
-    });
+      unread: r.unread ?? 0,
+      synced: syncedAt,
+    };
+    conv.awaiting = turnAwaiting(conv);
+    writeConversation(MIRROR, conv);
     written++;
   }
   writeFileSync(join(MIRROR, ".last-sync"), new Date().toISOString() + "\n");
@@ -71,17 +88,22 @@ function cmdRate(): number {
   }
   let rated = 0;
   for (const c of convs) {
-    const buyer = latestBuyerMessage(c);
-    if (!buyer) continue;
+    const them = latestCounterpartMessage(c);
+    const last = lastMessage(c);
+    if (last) c.last_message_at = last.at;
+    c.awaiting = turnAwaiting(c); // keep whose-turn fresh even when there's nothing to classify
+    if (!them) {
+      writeConversation(MIRROR, c);
+      continue;
+    }
     const facts = loadFacts(c.listing, LISTINGS);
-    const r = classify(buyer.body, c.counterpart, facts);
+    const r = classify(them.body, c.counterpart, facts, c.side);
     c.rating = r.rating;
     c.tells = r.tells;
     c.needs_fact = r.needs_fact;
     c.draft = r.draft;
     c.offer_amount = r.offer_amount;
     c.below_floor = belowFloor(r.offer_amount, facts);
-    c.last_message_at = buyer.at;
     writeConversation(MIRROR, c);
     rated++;
   }
@@ -119,9 +141,9 @@ async function cmdSend(args: string[]): Promise<number> {
   const c = readConversation(p);
   // Classify right here before guarding — never trust a possibly-absent mirror rating (a send issued
   // before `rate` ran would otherwise bypass the scam guard). The guard must see a fresh verdict.
-  const buyer = latestBuyerMessage(c);
-  if (buyer) {
-    const r = classify(buyer.body, c.counterpart, loadFacts(c.listing, LISTINGS));
+  const them = latestCounterpartMessage(c);
+  if (them) {
+    const r = classify(them.body, c.counterpart, loadFacts(c.listing, LISTINGS), c.side);
     c.rating = r.rating;
     c.tells = r.tells;
   }
@@ -137,11 +159,40 @@ async function cmdSend(args: string[]): Promise<number> {
     console.error(`send: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
-  // record the reply in the mirror and mark the conversation answered
-  c.messages.push({ from: "seller", at: new Date().toISOString(), body: text });
-  c.state = "answered";
+  // record the reply in the mirror as your message and mark the conversation awaiting them
+  c.messages.push({ from: "me", at: new Date().toISOString(), body: text });
+  c.awaiting = "them";
   writeConversation(MIRROR, c);
-  console.log(`send: ${result.note}. Conversation ${conv} marked answered.`);
+  console.log(`send: ${result.note}. Conversation ${conv} now awaiting them.`);
+  return 0;
+}
+
+async function cmdContact(args: string[]): Promise<number> {
+  const dryRun = args.includes("--dry-run");
+  const force = args.includes("--force");
+  const positional = args.filter((a) => a !== "--dry-run" && a !== "--force");
+  const target = positional[0];
+  const text = positional.slice(1).join(" ").trim();
+  if (!target || !text) {
+    console.error('usage: contact <listing-id-or-url> "<message>" [--dry-run] [--force]');
+    console.error("  Starts a NEW conversation on a seller's listing and sends exactly ONE message.");
+    return 1;
+  }
+  const adId = extractAdId(target);
+  if (!adId) {
+    console.error(`contact: couldn't extract a numeric ad id from "${target}"`);
+    return 1;
+  }
+  console.log(`contact: ad ${adId}`);
+  console.log(`  message: ${text}`);
+  let result;
+  try {
+    result = await postContact(here, adId, text, { dryRun, force });
+  } catch (e) {
+    console.error(`contact: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+  console.log(`contact: ${result.note}`);
   return 0;
 }
 
@@ -170,11 +221,13 @@ function cmdProbe(args: string[]): number {
     listPath: "/users/{userId}/conversations?page={page}&size={size}",
     detailPath: "/users/{userId}/conversations/{convId}?contentWarnings=true",
     // OPTIONS preflight confirms POST is allowed on the conversation endpoint, so reply posts there.
-    // The request BODY shape ({ message }) is a best guess until one live send confirms it — a wrong
-    // guess returns a clean 4xx (no message sent), and send is human-invoked, so it's safe to ship.
+    // contactPath POSTs {adId, message} to start a NEW conversation on an ad. Both body shapes are a
+    // best guess until one live send/contact confirms — a wrong guess returns a clean 4xx (no message
+    // sent), and send/contact are human-invoked, so it's safe to ship.
     replyPath: "/users/{userId}/conversations/{convId}",
+    contactPath: "/users/{userId}/ads/{adId}/conversations",
     headers: { accept: "application/json", "x-ecg-user-agent": "messagebox-1", origin: "https://www.kleinanzeigen.de", referer: "https://www.kleinanzeigen.de/" },
-    note: "Auth is Bearer <access_token>, read from the browser session at sync time. replyPath POSTs to the conversation endpoint; body shape unverified until the first live send.",
+    note: "Auth is Bearer <access_token>, read from the browser session at sync time. replyPath POSTs to the conversation endpoint; contactPath POSTs {adId, message} to start a NEW conversation on an ad. Body shapes unverified until the first live send/contact.",
   };
   writeFileSync(join(here, "endpoints.json"), JSON.stringify(ep, null, 2) + "\n");
   console.log(`probe: wrote endpoints.json (base ${base}, userId ${userId}).`);
@@ -191,13 +244,17 @@ async function main(): Promise<number> {
     case "rate": return cmdRate();
     case "notify": return cmdNotify();
     case "send": return await cmdSend(rest);
+    case "contact": return await cmdContact(rest);
+    case "search": return await cmdSearch(rest);
+    case "watch": return await cmdWatch(rest);
+    case "detail": return await cmdDetail(rest);
     case "probe": return cmdProbe(rest);
     case "check": {
       const proc = spawnSync(process.execPath, [join(here, "check.js")], { stdio: "inherit" });
       return proc.status ?? 1;
     }
     default:
-      console.error("usage: node kleinanzeigen.js <sync|rate|notify|send|probe|check>");
+      console.error("usage: node kleinanzeigen.js <sync|rate|notify|send|contact|search|watch|detail|probe|check>");
       return 1;
   }
 }
