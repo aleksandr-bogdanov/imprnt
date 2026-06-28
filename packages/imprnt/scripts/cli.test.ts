@@ -601,6 +601,20 @@ test("init <explicit-path> (non-interactive) scaffolds, registers, and contracts
   expect(config.vaults.personal).toBe(target);
 });
 
+// The privacy promise made real: the contract + site say the vault is owner-only (`chmod 700`), so
+// init must lock the project ROOT to 0700 (its traversal bit makes the whole tree owner-only). Without
+// this the scaffold lands at the umask default (0755, world-readable). POSIX-only assertion.
+test("init locks the vault project root to owner-only (0700)", async () => {
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  cpSync(contractSrc, join(root, "CLAUDE.md"), { recursive: true });
+  const target = join(root, "elsewhere", "myvault");
+  const r = await runCli(root, ["init", target], { XDG_CONFIG_HOME: join(root, "xdg") });
+  expect(r.code).toBe(0);
+  // Low 9 permission bits === 0o700: rwx for owner, nothing for group/other.
+  expect(statSync(target).mode & 0o777).toBe(0o700);
+});
+
 test("init <path> with --register before the path still reads the path as the positional", async () => {
   const root = tmpRepo();
   cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
