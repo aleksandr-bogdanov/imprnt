@@ -1,7 +1,7 @@
 // imprnt — dispatcher. Subcommands are thin; the real work is in sibling scripts.
 // No shebang: the shipped bin gets `#!/usr/bin/env node` injected at build time (--banner), and
 // dev runs this via `bun scripts/cli.ts`. A source shebang would survive bundling and collide.
-import { cpSync, mkdirSync, existsSync, readFileSync, lstatSync, statSync, realpathSync } from "node:fs";
+import { cpSync, mkdirSync, chmodSync, existsSync, readFileSync, lstatSync, statSync, realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, dirname, resolve, basename } from "node:path";
 import { homedir } from "node:os";
@@ -464,6 +464,19 @@ switch (cmd) {
     if (cmSlot === "create" && existsSync(join(pkgRoot, "CLAUDE.md"))) {
       cpSync(join(pkgRoot, "CLAUDE.md"), claudeMd);
       added.push("CLAUDE.md");
+    }
+
+    // Owner-only, for real: the contract (and the site) promise the vault is `chmod 700`, but the
+    // scaffold above ran at the default umask (0755 = world-readable). Lock the project ROOT to 0700
+    // — the traversal bit on the top dir makes the whole tree (vault/, raw/, plugins/, notes) reachable
+    // only by the owner, regardless of each child's mode, so this one chmod delivers the promise. Run
+    // on every init (idempotent, self-healing: a vault scaffolded before this lands tightens on re-init).
+    // Best-effort: a filesystem without POSIX modes (Windows) or a dir we cannot chmod must NOT abort a
+    // successful scaffold — warn once and carry on, same tolerance as a failed registration below.
+    try {
+      chmodSync(target, 0o700);
+    } catch (e) {
+      console.error(`could not set owner-only (chmod 700) on ${target}: ${e instanceof Error ? e.message : String(e)} — tighten it by hand to honor the private-vault promise`);
     }
 
     // Register this project so `imp` and `imprnt context` find the vault from any directory.
