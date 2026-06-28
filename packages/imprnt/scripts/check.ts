@@ -7,7 +7,7 @@
 //   2. disconnected notes    — a domain/form note that links no entity at all (graph island)
 //   3. untagged notes        — a note with no tags (findable by body/title only — the tag axis is empty)
 //   4. uncovered snapshots   — a raw/ source no vault note points back to (the migration to-do ledger)
-//   5. host auto-memory      — a non-empty Claude MEMORY.md store (a second always-on store recall can't see)
+//   5. host auto-memory      — a non-empty Claude MEMORY.md store in ANY project (a second always-on store recall can't see)
 //   + regenerate index.md from every note's `summary` (deterministic map-of-content)
 //
 // check PRINTS its findings (the agent reads them) and mirrors them into vault/_needs-review.md
@@ -255,19 +255,41 @@ const uncovered = [...new Set(rawEntries.map(norm))].filter((r) => !refNorm.has(
 for (const r of uncovered) review.push(`- [ ] unclassified snapshot \`${r}\` — no vault note points back`);
 
 // --- host auto-memory guard -------------------------------------------------
-// imprnt's rule (CLAUDE.md "Memory: the vault is the only store"): the vault is the ONLY knowledge
-// store. The host's auto-memory (Claude Code's MEMORY.md + memory/*.md) is a second always-on store
-// recall can't search, so a fact parked there is invisible and silently misleads the next session.
-// Flag it when it holds any entry note — migrate knowledge to vault notes and behavior to a
-// CLAUDE.local.md fragment, then empty it. Read-only: we never touch that dir. The path is the one
-// Claude Code derives from the project root (each `/` and `.` → `-`); override with
-// IMPRNT_HOST_MEMORY_DIR for another host or a test. MEMORY.md (the index) alone counts as empty.
-const hostMemoryDir = process.env.IMPRNT_HOST_MEMORY_DIR
-  ?? join(homedir(), ".claude", "projects", projectRoot().replace(/[/.]/g, "-"), "memory");
-const strayMemory = existsSync(hostMemoryDir)
-  ? readdirSync(hostMemoryDir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md").sort()
-  : [];
-if (strayMemory.length) review.push(`- [ ] host auto-memory not empty — ${strayMemory.length} note(s) in ${hostMemoryDir}; migrate knowledge → vault notes, behavior → a CLAUDE.local.md fragment, then empty it`);
+// imprnt's rule (the vault contract's "Memory: the vault is the only store"): the vault is the ONLY
+// knowledge store. Claude Code's per-project auto-memory (its MEMORY.md + memory/*.md) is a second
+// always-on store recall can't search, so a fact parked there is invisible and silently misleads the
+// next session. We SWEEP EVERY project's store, not just this vault's — a leak from ANY session,
+// including a plain `claude` run in another repo (the kind that caused this), is caught here, not only
+// a leak from an imp session in this vault. Strictly READ-ONLY: we only readdir, never write, so the
+// sweep respects imprnt's promise to never touch ~/.claude. The roots are Claude Code's own layout,
+// <configDir>/projects/*/memory (configDir = $CLAUDE_CONFIG_DIR || ~/.claude). MEMORY.md (the index)
+// alone counts as empty. IMPRNT_HOST_MEMORY_DIR overrides to a SINGLE dir (a test, or another host).
+function hostMemoryStores(): string[] {
+  const override = process.env.IMPRNT_HOST_MEMORY_DIR;
+  if (override) return [override];
+  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  const projectsDir = join(configDir, "projects");
+  if (!existsSync(projectsDir)) return [];
+  let entries: string[];
+  try { entries = readdirSync(projectsDir); } catch { return []; }
+  return entries
+    .map((p) => join(projectsDir, p, "memory"))
+    .filter((d) => { try { return statSync(d).isDirectory(); } catch { return false; } })
+    .sort();
+}
+const memoryStores = hostMemoryStores();
+// One entry per store that still holds a stray note (an .md other than the MEMORY.md index).
+const strayStores = memoryStores
+  .map((dir) => ({
+    dir,
+    files: existsSync(dir)
+      ? readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md").sort()
+      : [],
+  }))
+  .filter((s) => s.files.length > 0);
+const strayCount = strayStores.reduce((n, s) => n + s.files.length, 0);
+// One needs-review line PER store, so each clears independently as that store is emptied.
+for (const s of strayStores) review.push(`- [ ] host auto-memory not empty — ${s.files.length} note(s) in ${s.dir}; migrate knowledge → vault notes, behavior → a CLAUDE.local.md fragment, then empty it`);
 
 // --- needs-review routing ---------------------------------------------------
 // The contract's soft-fail net (CLAUDE.md, "The ingest pass" step 4): check's findings land in the
@@ -348,8 +370,12 @@ if (rawEntries.length) {
   else console.log("✓ every raw snapshot has a derived note");
 }
 
-if (strayMemory.length) { console.log(`⚠ host auto-memory not empty (${strayMemory.length}) — a second store recall can't see, at ${hostMemoryDir}:`); console.log(cap(strayMemory.map((f) => "  " + f)).join("\n")); console.log("  migrate knowledge → vault notes, behavior → a CLAUDE.local.md fragment, then empty it.\n"); }
-else console.log(`✓ host auto-memory empty (vault is the only store) — checked ${hostMemoryDir}`);
+if (strayCount) {
+  console.log(`⚠ host auto-memory not empty (${strayCount} in ${strayStores.length} project store(s)) — a second store recall can't see:`);
+  for (const s of strayStores) { console.log(`  ${s.dir}`); console.log(cap(s.files.map((f) => "    " + f)).join("\n")); }
+  console.log("  migrate knowledge → vault notes, behavior → a CLAUDE.local.md fragment, then empty each.\n");
+}
+else console.log(`✓ host auto-memory empty (vault is the only store) — swept ${memoryStores.length} project store(s)`);
 
 const { count, folders } = generateIndex(vault);
 console.log(`↻ regenerated index.md — ${count} notes across ${folders} folders`);
@@ -358,7 +384,7 @@ const synced = syncNeedsReview(review);
 if (synced === "written") console.log(`↻ ${review.length} finding(s) → _needs-review.md (run \`imprnt hot\` to see them)`);
 else if (synced === "cleared") console.log("↻ cleared resolved findings from _needs-review.md");
 
-const issues = orphans.length + disconnected.length + domainIssues.length + untagged.length + uncovered.length + dupPairs.length + strayMemory.length;
+const issues = orphans.length + disconnected.length + domainIssues.length + untagged.length + uncovered.length + dupPairs.length + strayCount;
 console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
 // check still PRINTS everything and never blocks or mutates a note — only the exit CODE reflects health,
 // so `imprnt check` is usable in CI and `&&` chains. Core issues alone make the process exit non-zero.

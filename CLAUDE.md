@@ -13,6 +13,16 @@ You never run the CLI by hand. You speak in plain language ("ingest this", "load
 
 The whole vault is yours, local, owner-only (`chmod 700`), never shared. There is **no** sensitivity field, no redaction pass, no secret-fencing. It holds everything, including medical, financial, and personal data, because that's the point. The only rule: it never goes near a public repo (`.gitignore` guards it if the dir is ever git-init'd). If you ever publish a subset (an article), that's an **export-time** filter you run consciously then, not a tax paid on every note at ingest.
 
+## Memory: the vault is the only store
+
+One knowledge store, reached on demand. Do **not** use the host's auto-memory (Claude Code's `MEMORY.md` + `memory/*.md`), and do not treat it as a place facts may live. It is a second always-on store `recall` cannot search, so anything parked there is invisible knowledge that silently misleads the next session.
+
+The routing test, applied before saving anything durable:
+- **Knowledge** (a fact about a person, a record, a number, project state, a reference) is a **vault note**, found by `recall`.
+- **Behavior** (a standing instruction, a taste rule, how to act) is a markdown fragment loaded every session: this contract for the universal rules, `CLAUDE.local.md` + `plugins/_personal/*` (gitignored) for the personal ones. Never the auto-memory.
+
+The same fact never lives in both. Two copies drift, and one is invisible to search. `imprnt check` sweeps every project's host auto-memory (read-only) and flags any that is non-empty, so a leak is caught, not trusted. This is also what keeps imprnt vendor-neutral: the knowledge is plain files you own, with nothing locked inside one vendor's memory, so the agent underneath is swappable.
+
 ## The one rule: deterministic-first = ration the LLM by WHERE it runs
 
 Deterministic-first does **not** mean "avoid the LLM." It means **invest it where it pays and keep it out of the hot path**. The line is drawn by *how often a step runs*:
