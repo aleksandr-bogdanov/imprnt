@@ -1,0 +1,35 @@
+---
+/**
+ * Page-specific (why-imprnt): a pull-quote for the one line the page turns on.
+ * A filled tinted surface, larger type, no left-border bar (that reads as a
+ * callout tell). Pass the line as the default slot. Scoped CSS, theme-aware.
+ */
+---
+
+<blockquote class="pull">
+  <slot />
+</blockquote>
+
+<style>
+  .pull {
+    margin: 1.5rem 0;
+    padding: 1.2rem 1.4rem;
+    border: none;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+    font-size: 1.18rem;
+    line-height: 1.5;
+    font-weight: 500;
+    color: var(--sl-color-white);
+  }
+  .pull :global(strong) {
+    color: var(--sl-color-text-accent);
+    font-weight: 700;
+  }
+  @media (max-width: 640px) {
+    .pull {
+      font-size: 1.05rem;
+      padding: 1rem 1.1rem;
+    }
+  }
+</style>

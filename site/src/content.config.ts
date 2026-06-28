@@ -7,7 +7,10 @@ import { docsSchema } from "@astrojs/starlight/schema";
 // editing a file in site/docs/ is the only place a doc page is defined.
 export const collections = {
   docs: defineCollection({
-    loader: glob({ pattern: "**/*.{md,mdx}", base: "./docs" }),
+    // competitors/ holds the internal competitor research dossiers (the source
+    // of truth behind the comparison page). Kept inside docs/ for proximity but
+    // excluded from the glob so it never becomes a published route.
+    loader: glob({ pattern: ["**/*.{md,mdx}", "!competitors/**"], base: "./docs" }),
     schema: docsSchema(),
   }),
 };

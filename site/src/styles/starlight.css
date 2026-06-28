@@ -125,3 +125,11 @@
 .sl-markdown-content {
   --sl-content-width: 48rem;
 }
+
+/* Invisible scroll targets for the why-imprnt story rail. Zero-height markers in
+   the flow, offset so a click lands the beat below the sticky header. */
+.beat-anchor {
+  display: block;
+  height: 0;
+  scroll-margin-top: 5rem;
+}
