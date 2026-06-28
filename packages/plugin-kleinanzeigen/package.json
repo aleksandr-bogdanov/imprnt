@@ -11,8 +11,8 @@
     "endpoints.example.json",
     "listings",
     "fixtures",
-    "proposed",
-    "mirror"
+    "proposed/.gitkeep",
+    "mirror/.gitkeep"
   ],
   "scripts": {
     "build": "bun build src/check.ts --target=node --outfile=check.js --banner '#!/usr/bin/env node' && bun build src/kleinanzeigen.ts --target=node --outfile=kleinanzeigen.js --banner '#!/usr/bin/env node'",
