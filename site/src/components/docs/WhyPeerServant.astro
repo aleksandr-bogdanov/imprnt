@@ -1,0 +1,105 @@
+---
+/**
+ * Page-specific (why-imprnt): the load-bearing idea made visible. The model is a
+ * peer you spend once for judgment. Plain code is the servant that runs free and
+ * identical forever. Two filled surfaces, the peer in accent, no border boxes.
+ * Scoped CSS, theme-aware via Starlight tokens, no Tailwind.
+ */
+const COLS = [
+  {
+    tag: "the peer",
+    who: "The model",
+    points: ["Has judgment", "Costs real money", "You spend it once, to build the tool"],
+    accent: true,
+  },
+  {
+    tag: "the servant",
+    who: "Plain code",
+    points: ["Does the mechanical work", "Costs nothing to run", "Runs a thousand times, identically"],
+    accent: false,
+  },
+];
+---
+
+<div class="ps">
+  {
+    COLS.map((c) => (
+      <div class={`col${c.accent ? " accent" : ""}`}>
+        <span class="tag">{c.tag}</span>
+        <span class="who">{c.who}</span>
+        <ul class="points">
+          {c.points.map((p) => <li>{p}</li>)}
+        </ul>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .ps {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7rem;
+    margin: 1.4rem 0;
+  }
+  .col {
+    border-radius: 13px;
+    padding: 1rem 1.1rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+    margin-top: 0;
+  }
+  .col.accent {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+  .tag {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .accent .tag {
+    color: var(--sl-color-text-accent);
+  }
+  .who {
+    display: block;
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: var(--sl-color-white);
+    margin: 0.3rem 0 0.7rem;
+  }
+  .points {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .points li {
+    font-size: 0.88rem;
+    line-height: 1.4;
+    color: var(--sl-color-white);
+    padding-left: 1.05rem;
+    position: relative;
+  }
+  .points li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.5rem;
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 50%;
+    background: color-mix(in oklab, var(--sl-color-white) 45%, var(--sl-color-bg));
+  }
+  .accent .points li::before {
+    background: var(--sl-color-text-accent);
+  }
+  @media (max-width: 640px) {
+    .ps {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

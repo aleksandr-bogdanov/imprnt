@@ -26,12 +26,19 @@ export default defineConfig({
       logo: { src: "./public/favicon.svg", alt: "imprnt" },
       favicon: "/favicon.svg",
       customCss: ["./src/styles/starlight.css"],
+      // The "Why imprnt?" page swaps the right-sidebar TOC for an interactive
+      // story rail. Every other page keeps the default (the override falls
+      // through). See src/components/overrides/TableOfContents.astro.
+      components: {
+        TableOfContents: "./src/components/overrides/TableOfContents.astro",
+      },
       social: [{ icon: "github", label: "GitHub", href: REPO }],
       disable404Route: true,
       sidebar: [
         {
           label: "Start here",
           items: [
+            { label: "Why imprnt?", slug: "why-imprnt" },
             { label: "Getting started", slug: "getting-started" },
             { label: "How it compares", slug: "comparison" },
           ],

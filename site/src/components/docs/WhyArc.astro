@@ -1,0 +1,100 @@
+---
+/**
+ * Page-specific (why-imprnt): the origin story as a scannable spine. Each step
+ * is one beat of the path from "the assistant forgot everything" to imprnt. The
+ * last step is the payoff and reads in the accent color. Categories of the story,
+ * not a hand-maintained instance list. Filled surfaces, a thin rail, no border
+ * boxes. Scoped CSS, theme-aware via Starlight tokens, no Tailwind.
+ */
+const STEPS = [
+  { label: "The bike", gist: "I cannot buy anything without understanding it inside out first." },
+  { label: "Ask Claude", gist: "Brilliant answers, zero memory. Every chat met a stranger." },
+  { label: "PAI", gist: "Finally a tool that remembered me, with real depth." },
+  { label: "Version 5", gist: "It grew machinery I never asked for and could not remove." },
+  { label: "The token bill", gist: "At work, metered, the bloat ate the budget I needed to work." },
+  { label: "A colleague's rule", gist: "Treat the model as a peer. The script is the servant." },
+  { label: "imprnt", gist: "Spend the model once to build the tool. Run the tool free, forever.", payoff: true },
+];
+---
+
+<ol class="arc" aria-label="The path from a forgetful assistant to imprnt">
+  {
+    STEPS.map((s, i) => (
+      <li class={`step${s.payoff ? " payoff" : ""}`}>
+        <span class="dot" aria-hidden="true">{i + 1}</span>
+        <div class="body">
+          <span class="label">{s.label}</span>
+          <span class="gist">{s.gist}</span>
+        </div>
+      </li>
+    ))
+  }
+</ol>
+
+<style>
+  .arc {
+    list-style: none;
+    margin: 1.6rem 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+  .step {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.85rem;
+    align-items: start;
+    padding: 0.55rem 0;
+    position: relative;
+  }
+  /* The rail: a thin filled line behind the dots, drawn per-step so it stops at
+     the last dot instead of overshooting. */
+  .step:not(:last-child)::before {
+    content: "";
+    position: absolute;
+    left: 0.92rem;
+    top: 2rem;
+    bottom: -0.35rem;
+    width: 2px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 35%, var(--sl-color-bg));
+  }
+  .dot {
+    z-index: 1;
+    width: 1.85rem;
+    height: 1.85rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+  }
+  .payoff .dot {
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 18%, var(--sl-color-bg));
+  }
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding-top: 0.18rem;
+  }
+  .label {
+    font-weight: 600;
+    font-size: 0.98rem;
+    color: var(--sl-color-white);
+  }
+  .payoff .label {
+    color: var(--sl-color-text-accent);
+  }
+  .gist {
+    font-size: 0.9rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+</style>

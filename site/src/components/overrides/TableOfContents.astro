@@ -1,0 +1,14 @@
+---
+/**
+ * Starlight override for the right-sidebar table of contents. On the "Why imprnt?"
+ * page it renders the interactive story rail instead of the heading list. Every
+ * other page falls through to Starlight's default TOC unchanged.
+ */
+import Default from "@astrojs/starlight/components/TableOfContents.astro";
+import WhyRail from "../../islands/WhyRail.tsx";
+
+const route = Astro.locals.starlightRoute;
+const isWhy = String(route?.id ?? "").includes("why-imprnt");
+---
+
+{isWhy ? <WhyRail client:load /> : <Default />}
