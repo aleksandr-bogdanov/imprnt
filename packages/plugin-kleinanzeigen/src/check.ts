@@ -21,7 +21,9 @@ const STALE_HOURS = 2; // cron is documented at 15min; a mirror older than 2h me
 const problems: string[] = [];
 const notes: string[] = [];
 
-// How many conversation mirror files exist, and which listings they reference (for the fact-sheet check).
+// How many conversation mirror files exist, and which listings they reference (for the fact-sheet
+// check). A fact sheet is a SELL-side concern (it fuels FAQ drafts to buyers); buy-side conversations
+// (you contacted a seller) need none, so they're skipped. Absent `side:` means a legacy/sell file.
 function mirrorConversations(): { count: number; listings: Set<string>; unparseable: string[] } {
   const listings = new Set<string>();
   const unparseable: string[] = [];
@@ -33,6 +35,9 @@ function mirrorConversations(): { count: number; listings: Set<string>; unparsea
     const text = readFileSync(join(MIRROR, f), "utf8");
     const m = text.match(/^listing:\s*(.+)$/m);
     if (!m) { unparseable.push(`${f} has no \`listing:\` field`); continue; }
+    const sideM = text.match(/^side:\s*(.+)$/m);
+    const side = sideM ? sideM[1].trim().replace(/^["']|["']$/g, "") : "selling";
+    if (side === "buying") continue;
     listings.add(m[1].trim().replace(/^["']|["']$/g, ""));
   }
   return { count, listings, unparseable };
