@@ -588,7 +588,9 @@ test("--all surfaces a failing plugin: aggregate exit non-zero and plugin stdout
     stubPlugin(copy, "boom", "PLUGIN_BOOM_OUTPUT", 1);
     const vault = makeCleanVault();
     const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault], {
-      env: { ...process.env, IMPRNT_ROOT: copy },
+      // Pin the host auto-memory sweep OFF (a path that never exists) — these test plugin aggregation,
+      // not the memory guard, and must not read the machine's real ~/.claude/projects state.
+      env: { ...process.env, IMPRNT_ROOT: copy, IMPRNT_HOST_MEMORY_DIR: join(vault, ".no-host-memory") },
     });
     const out = proc.stdout.toString() + proc.stderr.toString();
     // core is clean, but the plugin exited 1 -> aggregate must be non-zero (the failed-plugin path).
@@ -609,7 +611,9 @@ test("--all with only a passing plugin and a clean core exits 0", () => {
     stubPlugin(copy, "ok", "PLUGIN_OK_OUTPUT", 0);
     const vault = makeCleanVault();
     const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault], {
-      env: { ...process.env, IMPRNT_ROOT: copy },
+      // Pin the host auto-memory sweep OFF (a path that never exists) — these test plugin aggregation,
+      // not the memory guard, and must not read the machine's real ~/.claude/projects state.
+      env: { ...process.env, IMPRNT_ROOT: copy, IMPRNT_HOST_MEMORY_DIR: join(vault, ".no-host-memory") },
     });
     const out = proc.stdout.toString() + proc.stderr.toString();
     expect(out).toContain("clean.");
@@ -631,7 +635,9 @@ test("--all tolerates a broken symlink under plugins/ and still runs the remaini
     symlinkSync(join(copy, "plugins", "no-such-target"), join(copy, "plugins", "dead"));
     const vault = makeCleanVault();
     const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault], {
-      env: { ...process.env, IMPRNT_ROOT: copy },
+      // Pin the host auto-memory sweep OFF (a path that never exists) — these test plugin aggregation,
+      // not the memory guard, and must not read the machine's real ~/.claude/projects state.
+      env: { ...process.env, IMPRNT_ROOT: copy, IMPRNT_HOST_MEMORY_DIR: join(vault, ".no-host-memory") },
     });
     const out = proc.stdout.toString() + proc.stderr.toString();
     expect(out).toContain("PLUGIN_OK_OUTPUT");
@@ -1195,25 +1201,54 @@ test("an absent host-memory dir counts as empty and does not crash", () => {
   expect(code).toBe(0);
 });
 
-// The default path (no IMPRNT_HOST_MEMORY_DIR) derives from projectRoot under the user home, encoding
-// each `/` and `.` as `-` to match Claude Code's per-project memory dir. Pin that convention: set HOME
-// + IMPRNT_ROOT to known values, plant a stray note at the derived path, and assert the guard finds it
-// WITHOUT the override. This is the only test that exercises the homedir()+projectRoot default branch.
-test("the default host-memory path derives from projectRoot under HOME, encoding pinned", () => {
+// The default branch (no IMPRNT_HOST_MEMORY_DIR) SWEEPS every <configDir>/projects/*/memory store, not
+// just this vault's — a leak from ANY session is caught. Pin that: set HOME to a sandbox, plant strays in
+// TWO different project stores (neither is the vault under test), and assert BOTH are found without the
+// override. This is the only test that exercises the homedir()+sweep default branch.
+test("the default host-memory sweep finds strays in EVERY project store under HOME", () => {
   const dir = makeVault();
   note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
   const home = mkdtempSync(join(tmpdir(), "imprnt-home-"));
-  const proj = "/Some/Project.Dir/vault-root"; // the dot pins the `.`->`-` half of the rule
-  const encoded = proj.replace(/[/.]/g, "-");
-  const memDir = join(home, ".claude", "projects", encoded, "memory");
-  mkdirSync(memDir, { recursive: true });
-  writeFileSync(join(memDir, "stray.md"), "---\nname: stray\n---\n\nx\n");
-  // No IMPRNT_HOST_MEMORY_DIR: force the homedir() + projectRoot(IMPRNT_ROOT) derivation.
+  const projects = join(home, ".claude", "projects");
+  // Two unrelated project memory stores (mimicking e.g. a whenful repo session and a kopeika one),
+  // each with the MEMORY.md index (ignored) plus one stray that the sweep must surface.
+  const memA = join(projects, "-Users-abogdanov-IdeaProjects-whenful", "memory");
+  const memB = join(projects, "-Users-abogdanov-IdeaProjects-kopeika", "memory");
+  for (const m of [memA, memB]) { mkdirSync(m, { recursive: true }); writeFileSync(join(m, "MEMORY.md"), "# Memory index\n"); }
+  writeFileSync(join(memA, "stray-whenful.md"), "---\nname: a\n---\n\nx\n");
+  writeFileSync(join(memB, "stray-kopeika.md"), "---\nname: b\n---\n\ny\n");
+  // No IMPRNT_HOST_MEMORY_DIR: force the homedir() + sweep default branch.
   const proc = Bun.spawnSync(["bun", CHECK, "--vault", dir], {
-    env: { ...process.env, HOME: home, IMPRNT_ROOT: proj },
+    env: { ...process.env, HOME: home, IMPRNT_ROOT: dir },
   });
   const out = proc.stdout.toString() + proc.stderr.toString();
   expect(out).toContain("host auto-memory not empty");
-  expect(out).toContain("stray.md");
+  // both stores, both strays — the sweep is not limited to the current project.
+  expect(out).toContain("stray-whenful.md");
+  expect(out).toContain("stray-kopeika.md");
+  expect(out).toContain("2 in 2 project store(s)");
+  expect(proc.exitCode).not.toBe(0);
+});
+
+// CLAUDE_CONFIG_DIR wins over ~/.claude for the sweep root, matching how Claude Code (and imp's
+// defaultGlobalDir) resolve the config home — so a non-default config dir is still swept.
+test("the sweep honors CLAUDE_CONFIG_DIR over HOME/.claude", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const home = mkdtempSync(join(tmpdir(), "imprnt-home-"));
+  const cfg = mkdtempSync(join(tmpdir(), "imprnt-cfg-"));
+  // A stray under ~/.claude must be IGNORED when CLAUDE_CONFIG_DIR points elsewhere.
+  const homeMem = join(home, ".claude", "projects", "-some-proj", "memory");
+  mkdirSync(homeMem, { recursive: true });
+  writeFileSync(join(homeMem, "ignored.md"), "---\nname: i\n---\n\nz\n");
+  const cfgMem = join(cfg, "projects", "-real-proj", "memory");
+  mkdirSync(cfgMem, { recursive: true });
+  writeFileSync(join(cfgMem, "found.md"), "---\nname: f\n---\n\nq\n");
+  const proc = Bun.spawnSync(["bun", CHECK, "--vault", dir], {
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: cfg, IMPRNT_ROOT: dir },
+  });
+  const out = proc.stdout.toString() + proc.stderr.toString();
+  expect(out).toContain("found.md");
+  expect(out).not.toContain("ignored.md");
   expect(proc.exitCode).not.toBe(0);
 });
