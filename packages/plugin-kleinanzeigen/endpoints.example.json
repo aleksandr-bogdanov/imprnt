@@ -5,11 +5,13 @@
   "listPath": "/users/{userId}/conversations?page={page}&size={size}",
   "detailPath": "/users/{userId}/conversations/{convId}?contentWarnings=true",
   "replyPath": "/users/{userId}/conversations/{convId}",
+  "contactPath": "/users/{userId}/ads/{adId}/conversations",
+  "contacterName": "YOUR_DISPLAY_NAME",
   "headers": {
     "accept": "application/json",
     "x-ecg-user-agent": "messagebox-1",
     "origin": "https://www.kleinanzeigen.de",
     "referer": "https://www.kleinanzeigen.de/"
   },
-  "note": "Auth is Bearer <access_token>, read from the browser session at sync time. userId is the numeric id in the message-box URLs. replyPath POSTs to the conversation endpoint (OPTIONS confirms POST); the body shape { message } is unverified until the first live send. Run `probe --har <file>` to generate this."
+  "note": "Auth is Bearer <access_token>, read from the browser session at sync time. userId is the numeric id in the message-box URLs. replyPath POSTs to the conversation endpoint to reply; contactPath POSTs {adId, message} to start a NEW conversation on an ad (the create-conversation API needs your display name as contacterName). Body shapes unverified until the first live send/contact. Run `probe --har <file>` to generate this."
 }

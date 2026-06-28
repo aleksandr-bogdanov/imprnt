@@ -6,9 +6,14 @@
 // is watching — never here, never in the scheduled loop.
 //
 // Buckets, in priority order (first hit wins): scam > offer > faq > pickup > interest > odd.
+//
+// Two-sided: the offer/faq/pickup/interest/odd ladder is the SELL-side triage (you're answering a
+// buyer). On the BUY side (you contacted a seller, the seller replied) there are no template drafts to
+// generate — you're the human in that thread — so a non-scam buy-side message rates `reply`: surface it,
+// let the human answer. The scam tells run on BOTH sides (a seller can phish a buyer too).
 import type { Facts } from "./facts.ts";
 
-export type Bucket = "scam" | "offer" | "faq" | "pickup" | "interest" | "odd";
+export type Bucket = "scam" | "offer" | "faq" | "pickup" | "interest" | "reply" | "odd";
 
 export type Rating = {
   rating: Bucket;
@@ -149,11 +154,16 @@ function interestDraft(facts: Facts): string {
 }
 
 // ── the classifier ────────────────────────────────────────────────────────────────────────────────
-export function classify(body: string, counterpart: string, facts: Facts | null): Rating {
-  // 1. scam — any blocklist hit wins outright.
+export function classify(body: string, counterpart: string, facts: Facts | null, side: "selling" | "buying" = "selling"): Rating {
+  // 1. scam — any blocklist hit wins outright. Runs on both sides.
   const tells = scamTells(body, counterpart);
   if (tells.length) {
     return { rating: "scam", tells, needs_fact: [], draft: null, offer_amount: null };
+  }
+
+  // buy side: no template ladder — a non-scam seller reply just goes to the human as `reply`.
+  if (side === "buying") {
+    return { rating: "reply", tells: [], needs_fact: [], draft: null, offer_amount: null };
   }
 
   // 2. offer — an amount proposed. Never auto-accepted; the draft is a neutral holder, the human decides.
