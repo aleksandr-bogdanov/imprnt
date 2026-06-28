@@ -6,12 +6,13 @@ import { fileURLToPath } from "node:url";
 import { fetchConversations } from "./client.ts";
 import { loadFacts } from "./facts.ts";
 import { classify, belowFloor } from "./rate.ts";
-import { writeConversation, listConversations, type Conversation } from "./mirror.ts";
+import { writeConversation, listConversations, turnAwaiting, type Conversation } from "./mirror.ts";
 import { composeDigest } from "./notify.ts";
 import { guardSend } from "./send.ts";
 
 // End-to-end over the REAL fixtures (the 2026-06-12 inbox) and the REAL shipped fact sheets. We drive
-// the actual client -> facts -> rate -> mirror -> notify modules, exactly what the CLI wires together.
+// the actual client -> facts -> rate -> mirror -> notify modules, exactly what the CLI wires together,
+// in the new me/them + two-sided shape (the fixtures are all selling-side buyer inquiries).
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURES = join(pkgRoot, "fixtures");
 const LISTINGS = join(pkgRoot, "listings");
@@ -24,15 +25,17 @@ beforeAll(async () => {
   const raws = await fetchConversations(pkgRoot); // fixtures env wins
   for (const r of raws) {
     const facts = loadFacts(r.listing, LISTINGS);
-    const buyer = [...r.messages].reverse().find((m) => m.from === "buyer")!;
-    const c = classify(buyer.body, r.counterpart, facts);
-    writeConversation(mirror, {
-      conv: r.conv, listing: r.listing, counterpart: r.counterpart,
-      state: "open", synthetic: r.synthetic ?? false, messages: r.messages,
-      rating: c.rating, tells: c.tells, needs_fact: c.needs_fact, draft: c.draft,
-      offer_amount: c.offer_amount, below_floor: belowFloor(c.offer_amount, facts),
-      last_message_at: buyer.at,
-    });
+    const them = [...r.messages].reverse().find((m) => m.from === "them")!;
+    const cl = classify(them.body, r.counterpart, facts, r.side);
+    const conv: Conversation = {
+      conv: r.conv, side: r.side, listing: r.listing, ad_title: r.ad_title, ad_status: r.ad_status,
+      counterpart: r.counterpart, state: "open", unread: r.unread, synthetic: r.synthetic ?? false,
+      messages: r.messages, rating: cl.rating, tells: cl.tells, needs_fact: cl.needs_fact, draft: cl.draft,
+      offer_amount: cl.offer_amount, below_floor: belowFloor(cl.offer_amount, facts),
+      last_message_at: them.at,
+    };
+    conv.awaiting = turnAwaiting(conv);
+    writeConversation(mirror, conv);
   }
   rated = listConversations(mirror);
 });
@@ -40,6 +43,11 @@ beforeAll(async () => {
 describe("the real inbox, classified", () => {
   test("all 15 conversations mirrored", () => {
     expect(rated).toHaveLength(15);
+  });
+
+  test("every fixture conversation reads as selling-side and awaiting you", () => {
+    expect(rated.every((c) => c.side === "selling")).toBe(true);
+    expect(rated.every((c) => c.awaiting === "me")).toBe(true);
   });
 
   test("the bucket distribution matches the hand-traced expectation", () => {
@@ -82,13 +90,15 @@ describe("the real inbox, classified", () => {
 });
 
 describe("the digest (the phone-sized money demo)", () => {
-  test("renders all 15 into one message, scam first, both listings counted", () => {
+  test("renders all 15 awaiting-you lines, scam first, grouped under Selling", () => {
     const d = composeDigest(rated);
-    expect(d).toContain("3432924231: 14 new");
-    expect(d).toContain("3432924164: 1 new"); // Kitty on the 7590
+    expect(d).toContain("15 awaiting you (15 selling, 0 buying)");
+    expect(d).toContain("Selling:");
     const lines = d.split("\n");
-    expect(lines[1]).toContain("scam"); // scam sorts to the top
-    expect(lines).toHaveLength(16); // 1 header + 15 conversations
+    // header + blank + "Selling:" + 15 conversation lines
+    expect(lines).toHaveLength(18);
+    expect(lines[3]).toContain("david-thiess"); // scam sorts to the top
+    expect(lines[3]).toContain("scam");
   });
 });
 

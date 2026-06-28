@@ -125,3 +125,28 @@ describe("the buckets, priority order scam > offer > faq > pickup > interest > o
     expect(r.draft).toBeNull();
   });
 });
+
+describe("two-sided: the buy side skips the template ladder, the scam guard runs on both", () => {
+  test("a benign seller reply on the buy side rates `reply`, no draft (you write buy-side replies)", () => {
+    const r = classify("Ja, ist noch da. Kannst du Samstag abholen?", "Seller Sam", null, "buying");
+    expect(r.rating).toBe("reply");
+    expect(r.draft).toBeNull();
+    expect(r.offer_amount).toBeNull();
+  });
+
+  test("a buy-side message that LOOKS like an offer is NOT bucketed as an offer — it's just `reply`", () => {
+    // off-side, the "70€" would trip detectOffer on the sell side; on the buy side it must stay reply.
+    const r = classify("ich gebe dir 70€ dafür", "Seller Sam", null, "buying");
+    expect(r.rating).toBe("reply");
+  });
+
+  test("a scam still wins on the buy side (a seller can phish a buyer too)", () => {
+    const r = classify("zahl bitte per PayPal Friends & Family", "Seller Sam", null, "buying");
+    expect(r.rating).toBe("scam");
+    expect(r.tells).toContain("paypal");
+  });
+
+  test("side defaults to selling, so the existing offer/faq ladder is unchanged", () => {
+    expect(classify("ich würde dir 70€ geben", "Frank", facts6660).rating).toBe("offer");
+  });
+});

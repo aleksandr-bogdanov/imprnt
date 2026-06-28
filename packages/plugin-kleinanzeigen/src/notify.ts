@@ -4,41 +4,61 @@
 // plumbing: notify writes the digest text to whatever `WATCHER_NOTIFY_CMD` names (a curl to a Telegram
 // bot, ntfy, terminal-notifier, anything that reads stdin), and falls back to stdout when unset. No
 // channel framework, no coupling to any one messenger — swap the env var, swap the channel.
+//
+// Two-sided: the digest shows only what's awaiting YOU (state !== closed && awaiting === "me"), split
+// into a Selling group (per-rating template lines) and a Buying group (the seller replied, your turn).
 import { spawnSync } from "node:child_process";
-import type { Conversation } from "./mirror.ts";
+import { latestCounterpartMessage, type Conversation } from "./mirror.ts";
 
-// One line per conversation, grouped so the scams and the ready-to-send drafts are scannable at a glance.
+// One sell-side line: lead with the conv id (the verifiable anchor and the exact `send <conv>` arg),
+// the counterpart name rides along as a hint, then the rating verdict / draft / needs-you tail.
+function sellLine(c: Conversation): string {
+  const who = c.counterpart ? ` (${c.counterpart})` : "";
+  const id = c.conv;
+  const tag = c.rating ?? "odd";
+  if (tag === "scam") return `⚠ ${id}${who} [scam: ${(c.tells ?? []).join(", ")}] — no draft, do not reply`;
+  if (tag === "offer") {
+    const amt = c.offer_amount != null ? `${c.offer_amount}€` : "?";
+    const floor = c.below_floor ? " (below floor)" : "";
+    return `${id}${who} [offer ${amt}${floor}] — your call`;
+  }
+  if ((c.needs_fact ?? []).length) return `${id}${who} [${tag}] — needs you: confirm ${(c.needs_fact ?? []).join(", ")}`;
+  if (c.draft) return `${id}${who} [${tag}] draft: "${c.draft}"`;
+  return `${id}${who} [${tag}] — no draft`;
+}
+
+// One buy-side line: there's no template to send (you write buy-side replies yourself), so just surface
+// that the seller replied, the ad it's about, and an 80-char snippet of their latest message.
+function buyLine(c: Conversation): string {
+  const who = c.counterpart ? ` (${c.counterpart})` : "";
+  const what = c.ad_title ? ` ${c.ad_title}` : ` ad ${c.listing}`;
+  if (c.rating === "scam") return `⚠ ${c.conv}${who}${what} [scam: ${(c.tells ?? []).join(", ")}] — do not reply`;
+  const them = latestCounterpartMessage(c);
+  const snip = them ? ` "${them.body.replace(/\s+/g, " ").slice(0, 80)}"` : "";
+  return `${c.conv}${who}${what} [buying] seller replied — your turn:${snip}`;
+}
+
+// Compose the digest: only conversations awaiting you, grouped Selling / Buying, scams first within each.
 export function composeDigest(convs: Conversation[]): string {
-  const fresh = convs.filter((c) => c.state !== "answered" && c.state !== "closed");
-  if (fresh.length === 0) return "Kleinanzeigen: nothing new.";
+  const fresh = convs.filter((c) => c.state !== "closed" && (c.awaiting ?? "none") === "me");
+  if (fresh.length === 0) return "Kleinanzeigen: nothing awaiting your reply.";
 
-  const order = ["scam", "offer", "faq", "pickup", "interest", "odd"];
-  const sorted = [...fresh].sort(
-    (a, b) => order.indexOf(a.rating ?? "odd") - order.indexOf(b.rating ?? "odd"),
-  );
+  const order = ["scam", "offer", "faq", "pickup", "interest", "reply", "odd"];
+  const byRating = (a: Conversation, b: Conversation) => order.indexOf(a.rating ?? "odd") - order.indexOf(b.rating ?? "odd");
+  const sell = fresh.filter((c) => (c.side ?? "selling") !== "buying").sort(byRating);
+  const buy = fresh.filter((c) => (c.side ?? "selling") === "buying").sort(byRating);
 
-  const byListing = new Map<string, number>();
-  for (const c of fresh) byListing.set(c.listing, (byListing.get(c.listing) ?? 0) + 1);
-  const header = [...byListing.entries()].map(([l, n]) => `${l}: ${n} new`).join(" · ");
-
-  // Lead with the conv id — it's the verifiable anchor (checkable against the server, and the exact
-  // argument `send <conv>` takes). The counterpart name rides along as a human-readable hint only.
-  const lines = sorted.map((c) => {
-    const who = c.counterpart ? ` (${c.counterpart})` : "";
-    const id = c.conv;
-    const tag = c.rating ?? "odd";
-    if (tag === "scam") return `⚠ ${id}${who} [scam: ${(c.tells ?? []).join(", ")}] — no draft, do not reply`;
-    if (tag === "offer") {
-      const amt = c.offer_amount != null ? `${c.offer_amount}€` : "?";
-      const floor = c.below_floor ? " (below floor)" : "";
-      return `${id}${who} [offer ${amt}${floor}] — your call`;
-    }
-    if ((c.needs_fact ?? []).length) return `${id}${who} [${tag}] — needs you: confirm ${(c.needs_fact ?? []).join(", ")}`;
-    if (c.draft) return `${id}${who} [${tag}] draft: "${c.draft}"`;
-    return `${id}${who} [${tag}] — no draft`;
-  });
-
-  return [`Kleinanzeigen — ${header}`, ...lines].join("\n");
+  const lines = [`Kleinanzeigen — ${fresh.length} awaiting you (${sell.length} selling, ${buy.length} buying)`];
+  const mark = (c: Conversation) => ((c.unread ?? 0) > 0 ? "  ·unread" : "");
+  if (sell.length) {
+    lines.push("", "Selling:");
+    for (const c of sell) lines.push("  " + sellLine(c) + mark(c));
+  }
+  if (buy.length) {
+    lines.push("", "Buying:");
+    for (const c of buy) lines.push("  " + buyLine(c) + mark(c));
+  }
+  return lines.join("\n");
 }
 
 // Ship the digest. Returns how it went, for the CLI to print honestly.
@@ -50,7 +70,7 @@ export function deliver(text: string): { channel: "cmd" | "stdout"; ok: boolean;
   }
   // Run the command through a shell so a user can write a full pipeline ("curl ... -d @-"). The digest
   // arrives on the command's stdin. We never interpolate the text into the command string (no shell
-  // injection from buyer-derived content).
+  // injection from counterpart-derived content).
   const proc = spawnSync(cmd, { input: text, shell: true, stdio: ["pipe", "inherit", "inherit"] });
   const ok = proc.status === 0;
   return { channel: "cmd", ok, detail: ok ? `delivered via WATCHER_NOTIFY_CMD` : `WATCHER_NOTIFY_CMD exited ${proc.status}` };

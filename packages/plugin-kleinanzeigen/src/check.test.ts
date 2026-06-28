@@ -24,6 +24,12 @@ function writeConv(pluginDir: string, conv: string, listing: string) {
     `---\nconv: ${conv}\nlisting: ${listing}\ncounterpart: X\nstate: open\nsynthetic: false\n---\n# X\n`,
   );
 }
+function writeBuyConv(pluginDir: string, conv: string, listing: string) {
+  writeFileSync(
+    join(pluginDir, "mirror", `${conv}.md`),
+    `---\nconv: ${conv}\nside: buying\nlisting: ${listing}\ncounterpart: X\nstate: open\nsynthetic: false\n---\n# X\n`,
+  );
+}
 function writeFactSheet(pluginDir: string, listing: string) {
   writeFileSync(join(pluginDir, "listings", `${listing}.yaml`), `listing: ${listing}\nmodel: X\n`);
 }
@@ -75,11 +81,20 @@ test("future .last-sync stamp -> corrupt, exit 1", () => {
   expect(r.stdout).toContain("future");
 });
 
-test("orphan listing ref (conversation about a listing with no fact sheet) -> exit 1", () => {
+test("orphan listing ref (SELLING conversation about a listing with no fact sheet) -> exit 1", () => {
   const { pluginDir } = makeRepo();
   writeConv(pluginDir, "erik", "9999999999"); // no fact sheet for this listing
   stampSync(pluginDir, new Date().toISOString());
   const r = run(pluginDir);
   expect(r.exitCode).not.toBe(0);
   expect(r.stdout).toContain("no fact sheet");
+});
+
+test("a BUYING conversation needs no fact sheet — no orphan, exit 0", () => {
+  const { pluginDir } = makeRepo();
+  writeBuyConv(pluginDir, "rtx-seller", "9999999999"); // buying side: a fact sheet is a sell-side concern
+  stampSync(pluginDir, new Date().toISOString());
+  const r = run(pluginDir);
+  expect(r.exitCode).toBe(0);
+  expect(r.stdout).toContain("sound.");
 });
