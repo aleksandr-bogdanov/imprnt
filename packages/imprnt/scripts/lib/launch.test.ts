@@ -719,3 +719,32 @@ test("geminiBackend: a user-passed -m wins over the configured default, and its 
   expect(args.filter((a) => a === "-m").length).toBe(1);
   expect(args[args.indexOf("-m") + 1]).toBe("gemini-3.5-flash");
 });
+
+// --- gemini context gotchas: @ in the cast is escaped, a bare -r resumes latest ---
+
+test("geminiBackend escapes every @ in the generated GEMINI.md (a literal @handle is not import-processed)", () => {
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "x"), { recursive: true });
+  writeFileSync(join(root, "plugins", "x", "agent.md"), "calibration ref: @aemilius211 (RU-lit)\n");
+  writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/x/agent.md\n");
+  const args = geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot }));
+  const dir = args[args.indexOf("--include-directories") + 1]!.split(",")[0]!;
+  const gm = readFileSync(join(dir, "GEMINI.md"), "utf8");
+  expect(gm).toContain("\\@aemilius211"); // the handle is escaped
+  expect(gm).not.toMatch(/(^|[^\\])@/); // no un-escaped @ remains anywhere
+});
+
+test("geminiBackend turns a value-less -r / --resume into 'latest', leaves an explicit value alone", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const mk = (passthrough: string[]) => geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, passthrough }));
+  expect(mk(["-r"])[mk(["-r"]).indexOf("-r") + 1]).toBe("latest");
+  expect(mk(["--resume"])[mk(["--resume"]).indexOf("--resume") + 1]).toBe("latest");
+  // -r followed by another flag has no value, so latest is inserted between them
+  const withFlag = mk(["-r", "--foo"]);
+  expect(withFlag[withFlag.indexOf("-r") + 1]).toBe("latest");
+  // an explicit value is untouched, and no stray "latest" is added
+  const explicit = mk(["-r", "3"]);
+  expect(explicit[explicit.indexOf("-r") + 1]).toBe("3");
+  expect(explicit.filter((a) => a === "latest").length).toBe(0);
+});
