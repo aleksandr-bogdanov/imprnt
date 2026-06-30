@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync, 
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { castFragment, pointerFragment, harnessFlags, isInside, buildLaunch, launchClaude, assembleSession, resolveLaunch, claudeBackend, geminiBackend } from "./launch.ts";
+import { castFragment, pointerFragment, harnessFlags, isInside, buildLaunch, launchClaude, assembleSession, resolveLaunch, claudeBackend, geminiBackend, parseGeminiSessions } from "./launch.ts";
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -747,4 +747,27 @@ test("geminiBackend turns a value-less -r / --resume into 'latest', leaves an ex
   const explicit = mk(["-r", "3"]);
   expect(explicit[explicit.indexOf("-r") + 1]).toBe("3");
   expect(explicit.filter((a) => a === "latest").length).toBe(0);
+});
+
+// --- parseGeminiSessions: the clean source for imp's own resume picker ---
+
+test("parseGeminiSessions parses the --list-sessions rows by real prompt name, skipping the header", () => {
+  const out = parseGeminiSessions(
+    [
+      "Available sessions for this project (3):",
+      "  1. how do you know I want you to write (2 minutes ago) [b6965347-c6a8-4fb0-b537-0336022e27c5]",
+      "  2. help me draft the tax letter (1 hour ago) [1ba8e3f5-d7de-4e97-8841-30f6eaee6f44]",
+      "  3. arena-fps map review (3 hours ago) [02855dba-c42b-4946-bc1b-28fb88efe6ac]",
+      "",
+    ].join("\n"),
+  );
+  expect(out.length).toBe(3);
+  expect(out[0]).toEqual({ index: 1, name: "how do you know I want you to write", age: "2 minutes ago", id: "b6965347-c6a8-4fb0-b537-0336022e27c5" });
+  expect(out[2]!.name).toBe("arena-fps map review");
+  expect(out[2]!.id).toBe("02855dba-c42b-4946-bc1b-28fb88efe6ac");
+});
+
+test("parseGeminiSessions returns [] for empty or session-less output", () => {
+  expect(parseGeminiSessions("")).toEqual([]);
+  expect(parseGeminiSessions("No sessions found for this project.")).toEqual([]);
 });

@@ -457,6 +457,25 @@ export const geminiBackend: Backend = {
   renderArgs: geminiRenderArgs,
 };
 
+// One row of `gemini --list-sessions`. `name` is the real first user prompt (the useful label),
+// `age` a human string ("2 minutes ago"), `id` the session UUID to resume with `-r <id>`.
+export type GeminiSession = { index: number; name: string; age: string; id: string };
+
+// Parse `gemini --list-sessions` output into rows. A session line looks like:
+//   "  1. how do you know I want you to write (2 minutes ago) [b6965347-c6a8-4fb0-...]"
+// gemini's list names each chat by its real first prompt, unlike its /resume browser, which labels
+// every chat with the raw <session_context> block (identical garbage across chats). So this is the
+// clean source for imp's own picker. The header and blank lines do not match and are skipped. The
+// `[uuid]` at the end is the anchor; the name is everything before the trailing `(age) [id]`.
+export function parseGeminiSessions(stdout: string): GeminiSession[] {
+  const out: GeminiSession[] = [];
+  for (const raw of stdout.split(/\r?\n/)) {
+    const m = raw.match(/^\s*(\d+)\.\s+(.+?)\s+\(([^()]+)\)\s+\[([0-9a-fA-F-]{8,})\]\s*$/);
+    if (m) out.push({ index: Number(m[1]), name: m[2]!.trim(), age: m[3]!.trim(), id: m[4]! });
+  }
+  return out;
+}
+
 export const backends: Record<string, Backend> = {
   claude: claudeBackend,
   gemini: geminiBackend,
