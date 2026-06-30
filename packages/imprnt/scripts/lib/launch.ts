@@ -332,12 +332,14 @@ function claudeRenderArgs(spec: SessionSpec): string[] {
   const systemPrompt = spec.insideProject ? spec.globals : joinFragments([spec.cast, spec.pointer, spec.globals]);
   const harness = spec.pluginsRoot ? harnessFlags(spec.pluginsRoot) : [];
   const extra = spec.addDirs.flatMap((d) => ["--add-dir", d]);
-  // skip-permissions maps to claude's --dangerously-skip-permissions, prepended so it sits in flag
-  // position before any `--` terminator. Skipped if the user already passed it.
-  const pass =
-    spec.skipPermissions && !spec.passthrough.includes("--dangerously-skip-permissions")
-      ? ["--dangerously-skip-permissions", ...spec.passthrough]
-      : spec.passthrough;
+  // skip-permissions (claude's --dangerously-skip-permissions) and a configured default model ride as
+  // prepended flags when the user did not already pass their own. claude takes the model value
+  // LITERALLY (the gemini alias map is gemini's), so a model id/alias claude understands works. Both
+  // stay absent unless set, so a no-config claude launch is byte-identical to the pre-feature launcher.
+  const lead: string[] = [];
+  if (spec.skipPermissions && !spec.passthrough.includes("--dangerously-skip-permissions")) lead.push("--dangerously-skip-permissions");
+  if (spec.model && !spec.passthrough.some((a) => a === "--model" || a.startsWith("--model="))) lead.push("--model", spec.model);
+  const pass = lead.length ? [...lead, ...spec.passthrough] : spec.passthrough;
   const body = systemPrompt ? mergeFragment(pass, systemPrompt, extra) : [...pass, ...extra];
   return [...harness, ...body];
 }
@@ -402,6 +404,26 @@ function escapeGeminiImports(text: string): string {
   return text.replaceAll("@", "\\@");
 }
 
+// Throwaway GEMINI.md context dirs to remove on exit. Tracked in a module-level set behind ONE
+// lazily-armed exit handler, so repeated renders in a single process (the test suite, a future retry)
+// do not pile up exit listeners (Node warns past 10). Production renders once per process anyway.
+const geminiTempDirs = new Set<string>();
+let geminiCleanupArmed = false;
+function trackGeminiTempDir(dir: string): void {
+  geminiTempDirs.add(dir);
+  if (geminiCleanupArmed) return;
+  geminiCleanupArmed = true;
+  process.on("exit", () => {
+    for (const d of geminiTempDirs) {
+      try {
+        rmSync(d, { recursive: true, force: true });
+      } catch {
+        // best-effort: the OS reaps its tmp dir eventually
+      }
+    }
+  });
+}
+
 // The Gemini edge. gemini has no --append-system-prompt: its native context channel is a GEMINI.md
 // the CLI discovers in every workspace directory (verified - a GEMINI.md in an --include-directories
 // dir loads as memory, @imports inlined and all). So the whole fragment (cast + pointer + globals,
@@ -415,13 +437,7 @@ function geminiRenderArgs(spec: SessionSpec): string[] {
   if (systemPrompt) {
     const dir = mkdtempSync(join(tmpdir(), "imprnt-gemini-"));
     writeFileSync(join(dir, "GEMINI.md"), escapeGeminiImports(systemPrompt) + "\n");
-    process.on("exit", () => {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {
-        // best-effort: the OS reaps its tmp dir eventually
-      }
-    });
+    trackGeminiTempDir(dir);
     includes.push(dir);
   }
   includes.push(...spec.addDirs);
@@ -438,15 +454,19 @@ function geminiRenderArgs(spec: SessionSpec): string[] {
   }
   // Model: expand an alias to the full id in a user-passed -m/--model (space OR equals form), else
   // inject the configured default model (alias-expanded). A user-passed model flag of ANY form wins
-  // over the configured default; a bare -m with no value is left for gemini to reject clearly.
+  // over the configured default; a bare -m with no value is left for gemini to reject clearly. The
+  // scan respects the `--` terminator (a -m in literal prompt text is the agent's, not imp's to
+  // expand), the same discipline valuelessResumeIndex applies to -r.
   const pass = [...spec.passthrough];
+  const mTerm = pass.indexOf("--");
+  const mEnd = mTerm < 0 ? pass.length : mTerm;
   const isModelFlag = (a: string) => a === "-m" || a === "--model" || a.startsWith("-m=") || a.startsWith("--model=");
-  const mIdx = pass.findIndex(isModelFlag);
+  const mIdx = pass.slice(0, mEnd).findIndex(isModelFlag);
   if (mIdx >= 0) {
     const tok = pass[mIdx]!;
     const eq = tok.indexOf("=");
     if (eq >= 0) pass[mIdx] = tok.slice(0, eq + 1) + expandGeminiModel(tok.slice(eq + 1));
-    else if (pass[mIdx + 1] !== undefined) pass[mIdx + 1] = expandGeminiModel(pass[mIdx + 1]!);
+    else if (mIdx + 1 < mEnd && pass[mIdx + 1] !== undefined) pass[mIdx + 1] = expandGeminiModel(pass[mIdx + 1]!);
   } else if (spec.model) {
     pass.unshift("-m", expandGeminiModel(spec.model));
   }
@@ -492,9 +512,17 @@ export function parseGeminiSessions(stdout: string): GeminiSession[] {
 // interactively from a pick, and geminiRenderArgs fills it with "latest" non-interactively, so they
 // can never drift on what "value-less" means.
 export function valuelessResumeIndex(args: string[]): number {
-  const i = args.findIndex((a) => a === "-r" || a === "--resume");
+  // A -r/--resume AFTER a `--` terminator is literal prompt text for the agent, not a resume flag, so
+  // only scan the head. Value-less = it is the last token before the terminator, or the next token is
+  // another flag.
+  const term = args.indexOf("--");
+  const end = term < 0 ? args.length : term;
+  let i = -1;
+  for (let k = 0; k < end; k++) {
+    if (args[k] === "-r" || args[k] === "--resume") { i = k; break; }
+  }
   if (i < 0) return -1;
-  const next = args[i + 1];
+  const next = i + 1 < end ? args[i + 1] : undefined;
   return next === undefined || next.startsWith("-") ? i : -1;
 }
 
@@ -505,7 +533,10 @@ export function valuelessResumeIndex(args: string[]): number {
 // changed: warn so a break is diagnosable, never a silent "you have no chats".
 function listGeminiSessions(cwd: string): { sessions: GeminiSession[]; ran: boolean } {
   const r = spawnSync("gemini", ["--list-sessions", "--skip-trust"], { cwd, encoding: "utf8" });
-  if (r.error) return { sessions: [], ran: false };
+  // ran:false covers a missing binary (r.error) AND a non-zero / signal exit (r.status) - an older
+  // gemini without --list-sessions, a runtime failure - so geminiResolveResume keeps the -r and lets
+  // launchBackend surface gemini's real error, instead of fabricating "no chats" and dropping resume.
+  if (r.error || r.status !== 0) return { sessions: [], ran: false };
   const stdout = r.stdout || "";
   const sessions = parseGeminiSessions(stdout);
   if (!sessions.length && stdout.trim() && !/\(\s*0\s*\)|no sessions/i.test(stdout)) {

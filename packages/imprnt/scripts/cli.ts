@@ -14,7 +14,7 @@ import { addGlobalModule, rmGlobalModule, listGlobalModules, installedGlobalDirs
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
 import { registerVault, vaultProjectRoot, registeredRoot, configPath, isVaultProject, readDefaultAgent, setDefaultAgent, readSkipPermissions, setSkipPermissions, readDefaultModel, setDefaultModel } from "./lib/registry.ts";
-import { assembleSession, resolveLaunch, launchBackend, GEMINI_MODEL_ALIASES } from "./lib/launch.ts";
+import { assembleSession, resolveLaunch, launchBackend, backends, GEMINI_MODEL_ALIASES } from "./lib/launch.ts";
 
 // packageRoot: the install location, source for templates/ + CLAUDE.md. Computed from THIS entry
 // file, which sits one level under the root in both dev (scripts/cli.ts) and the bundle (dist/cli.js).
@@ -206,8 +206,8 @@ switch (cmd) {
       console.log("set: imprnt agent <claude|gemini>   override one session: imp --gemini | imp --claude");
       break;
     }
-    if (name !== "claude" && name !== "gemini") {
-      console.error(`unknown agent "${name}" — valid: claude, gemini`);
+    if (!(name in backends)) {
+      console.error(`unknown agent "${name}" — valid: ${Object.keys(backends).join(", ")}`);
       process.exit(1);
     }
     const r = setDefaultAgent(name);
