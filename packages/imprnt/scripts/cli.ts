@@ -13,8 +13,8 @@ import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install
 import { addGlobalModule, rmGlobalModule, listGlobalModules, installedGlobalDirs } from "./lib/global.ts";
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
-import { registerVault, vaultProjectRoot, registeredRoot, configPath, isVaultProject } from "./lib/registry.ts";
-import { buildLaunch, launchClaude } from "./lib/launch.ts";
+import { registerVault, vaultProjectRoot, registeredRoot, configPath, isVaultProject, readDefaultAgent, setDefaultAgent, readSkipPermissions, setSkipPermissions, readDefaultModel, setDefaultModel } from "./lib/registry.ts";
+import { assembleSession, resolveLaunch, launchBackend } from "./lib/launch.ts";
 
 // packageRoot: the install location, source for templates/ + CLAUDE.md. Computed from THIS entry
 // file, which sits one level under the root in both dev (scripts/cli.ts) and the bundle (dist/cli.js).
@@ -175,8 +175,9 @@ switch (cmd) {
     // plugins/<name>/, lair included), and the env gets IMPRNT_VAULT so an in-session cd keeps the
     // engine on this vault. Personal history + permission grants accumulate in one resumable place.
     const home = requireVaultHome();
-    const lair = buildLaunch({ cwd: home, vaultProject: home, pkgRoot, passthrough: rest });
-    process.exit(launchClaude(home, lair.args, lair.env));
+    const { backend, skipPermissions, passthrough } = resolveLaunch(rest, { agent: readDefaultAgent(), yolo: readSkipPermissions() });
+    const spec = assembleSession({ cwd: home, vaultProject: home, pkgRoot, passthrough, skipPermissions, model: readDefaultModel() });
+    process.exit(launchBackend(backend, home, backend.renderArgs(spec), spec.env));
   }
   case "context": {
     // The demand-paged contract: prints the vault project's CLAUDE.md. The pointer injected into
@@ -189,6 +190,74 @@ switch (cmd) {
       process.exit(1);
     }
     process.stdout.write(readFileSync(contract, "utf8"));
+    break;
+  }
+  case "agent": {
+    // The per-machine default agent backend for `imp` (claude | gemini). Bare prints the current
+    // resolution; a name persists it in the registry config. Selection precedence at launch stays:
+    // `imp --gemini` / `imp --claude` overrides per-session, IMPRNT_AGENT overrides the stored
+    // default, this command sets that stored default. Home stays on claude, work pins gemini once.
+    const [name] = rest;
+    if (!name) {
+      const stored = readDefaultAgent();
+      console.log(`default agent: ${stored ?? "claude (built-in)"}`);
+      if (process.env.IMPRNT_AGENT) console.log(`  IMPRNT_AGENT=${process.env.IMPRNT_AGENT} overrides it in this shell`);
+      console.log("set: imprnt agent <claude|gemini>   override one session: imp --gemini | imp --claude");
+      break;
+    }
+    if (name !== "claude" && name !== "gemini") {
+      console.error(`unknown agent "${name}" — valid: claude, gemini`);
+      process.exit(1);
+    }
+    const r = setDefaultAgent(name);
+    if (!r.ok) { console.error(`could not set default agent (${configPath()}): ${r.error}`); process.exit(1); }
+    console.log(`default agent set to ${name} (${configPath()})`);
+    break;
+  }
+  case "yolo": {
+    // The per-machine skip-permissions default: claude's --dangerously-skip-permissions / gemini's
+    // --yolo + --skip-trust, injected for you so you never type them. SHIPS OFF (a fresh install
+    // prompts, the safe default); turn it on only on a machine where git + snapshots are your net.
+    // Per-session override stays: `imp --yolo` forces it on, `imp --safe` forces it off for one run.
+    const [arg] = rest;
+    if (!arg) {
+      console.log(`skip-permissions default: ${readSkipPermissions() ? "on" : "off"}`);
+      if ("IMPRNT_YOLO" in process.env) console.log(`  IMPRNT_YOLO=${process.env.IMPRNT_YOLO} overrides it in this shell`);
+      console.log("set: imprnt yolo on|off   override one session: imp --yolo | imp --safe");
+      break;
+    }
+    if (arg !== "on" && arg !== "off") { console.error("usage: imprnt yolo [on|off]"); process.exit(1); }
+    const r = setSkipPermissions(arg === "on");
+    if (!r.ok) { console.error(`could not set yolo default (${configPath()}): ${r.error}`); process.exit(1); }
+    console.log(
+      arg === "on"
+        ? `skip-permissions ENABLED (${configPath()}) — every imp session now runs without permission prompts`
+        : `skip-permissions disabled (${configPath()})`,
+    );
+    break;
+  }
+  case "model": {
+    // The per-machine default model imp passes to the agent. Bare prints the current one; a value
+    // (a backend alias like `pro` or a full id) persists it; `off`/`default` clears it so the agent
+    // uses its own default again. A backend that takes a model (gemini, via -m) expands the alias
+    // and injects it when you did not pass your own -m; per-session `imp --gemini -m <x>` overrides.
+    const [arg] = rest;
+    if (!arg) {
+      const m = readDefaultModel();
+      console.log(`default model: ${m ?? "(agent's own default)"}`);
+      console.log("set: imprnt model <alias|id>   clear: imprnt model off");
+      console.log("gemini aliases: pro=gemini-3.1-pro-preview, flash=gemini-3.5-flash, pro25=gemini-2.5-pro, lite=gemini-3.1-flash-lite, gemma31, gemma26");
+      break;
+    }
+    if (arg === "off" || arg === "default" || arg === "none") {
+      const r = setDefaultModel("");
+      if (!r.ok) { console.error(`could not clear default model (${configPath()}): ${r.error}`); process.exit(1); }
+      console.log(`default model cleared (${configPath()}) — the agent uses its own default`);
+      break;
+    }
+    const r = setDefaultModel(arg);
+    if (!r.ok) { console.error(`could not set default model (${configPath()}): ${r.error}`); process.exit(1); }
+    console.log(`default model set to ${arg} (${configPath()})`);
     break;
   }
   case "plugin": {
@@ -537,17 +606,21 @@ switch (cmd) {
     if (wantsLaunch && (!bare || (process.stdin.isTTY && process.stdout.isTTY))) {
       const home = vaultProjectRoot();
       if (!home) {
-        console.error("imp: no vault registered yet — run `imprnt init` in your vault project to give your assistant a memory. Launching plain claude.");
+        console.error("imp: no vault registered yet — run `imprnt init` in your vault project to give your assistant a memory. Launching a plain session.");
       }
-      const { args, env } = buildLaunch({ cwd: process.cwd(), vaultProject: home, pkgRoot, passthrough: bare ? [] : [cmd, ...rest] });
-      process.exit(launchClaude(process.cwd(), args, env));
+      const raw = bare ? [] : [cmd, ...rest];
+      const { backend, skipPermissions, passthrough } = resolveLaunch(raw, { agent: readDefaultAgent(), yolo: readSkipPermissions() });
+      const spec = assembleSession({ cwd: process.cwd(), vaultProject: home, pkgRoot, passthrough, skipPermissions, model: readDefaultModel() });
+      process.exit(launchBackend(backend, process.cwd(), backend.renderArgs(spec), spec.env));
     }
     console.log(`imprnt — deterministic-first markdown knowledge vault
 
 the front door (the \`imp\` bin):
-  imp                                      open your assistant HERE: claude + your cast + the vault pointer
+  imp                                      open your assistant HERE: your agent + your cast + the vault pointer
   imp lair                                 open it in your vault project — full contract, resumable history
-  imp -c | --resume | <claude flags>       flags pass through to claude
+  imp --gemini | --claude                  pick the agent backend for this session (default: imprnt agent)
+  imp --yolo | --safe                      skip / keep permission prompts for this session (default: imprnt yolo)
+  imp -c | --resume | <agent flags>        flags pass through to the chosen agent
 
 engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt init [path] [--register]          scaffold vault (entities/domains/forms) + raw, register as imp's default; prompts for a location when run interactively with no path (default ~/imprnt)
@@ -555,6 +628,9 @@ engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt ingest <file|text> [--vault D]    snapshot a source -> raw/; a transcript file also gets an event skeleton (no LLM)
   imprnt recall "<query>" [--vault D]      synonym-aware BM25 ranking over the vault
   imprnt context                           print the vault contract — agents run this before writing any note
+  imprnt agent [claude|gemini]             show or set the per-machine default agent backend for imp
+  imprnt yolo [on|off]                      show or set the per-machine skip-permissions default for imp
+  imprnt model [alias|id|off]               show or set the per-machine default model (gemini aliases: pro, flash, pro25, lite, ...)
   imprnt check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.js
   imprnt ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
   imprnt hot [--vault D]                   needs-review + the session primer

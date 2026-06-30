@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-export type Registry = { default?: string; vaults: Record<string, string> };
+export type Registry = { default?: string; vaults: Record<string, string>; defaultAgent?: string; skipPermissions?: boolean; defaultModel?: string };
 
 export function configPath(): string {
   const base = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
@@ -22,7 +22,13 @@ export function readRegistry(): Registry {
     const raw = JSON.parse(readFileSync(configPath(), "utf8"));
     const vaults: Record<string, string> = {};
     for (const [k, v] of Object.entries(raw?.vaults ?? {})) if (typeof v === "string") vaults[k] = v;
-    return { default: typeof raw?.default === "string" ? raw.default : undefined, vaults };
+    return {
+      default: typeof raw?.default === "string" ? raw.default : undefined,
+      vaults,
+      defaultAgent: typeof raw?.defaultAgent === "string" ? raw.defaultAgent : undefined,
+      skipPermissions: typeof raw?.skipPermissions === "boolean" ? raw.skipPermissions : undefined,
+      defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : undefined,
+    };
   } catch {
     return { vaults: {} };
   }
@@ -71,6 +77,64 @@ export function registerVault(
     return { status: "error", current: path, error: e instanceof Error ? e.message : String(e) };
   }
   return { status: "registered", current: path };
+}
+
+// The per-machine default agent backend (claude | gemini | ...), or undefined when unset. imp's
+// resolveBackend falls back through this between IMPRNT_AGENT and the built-in claude default, so a
+// work machine pins `gemini` once while a home machine stays on claude.
+export function readDefaultAgent(): string | undefined {
+  return readRegistry().defaultAgent;
+}
+
+// Persist the default agent backend, preserving the vault registration in the same file. Same
+// convenience-cache tolerance as registerVault: an unwritable config dir is returned as data, never
+// a throw, so it can never block a command.
+export function setDefaultAgent(name: string): { ok: boolean; error?: string } {
+  const reg = readRegistry();
+  reg.defaultAgent = name;
+  return writeRegistry(reg);
+}
+
+// The per-machine skip-permissions default (claude --dangerously-skip-permissions / gemini --yolo),
+// or false when unset. Ships OFF: only a machine where git + snapshots are the safety net opts in.
+export function readSkipPermissions(): boolean {
+  return readRegistry().skipPermissions ?? false;
+}
+
+// Persist the skip-permissions default, preserving the rest of the registry. Same tolerance as above.
+export function setSkipPermissions(on: boolean): { ok: boolean; error?: string } {
+  const reg = readRegistry();
+  reg.skipPermissions = on;
+  return writeRegistry(reg);
+}
+
+// The per-machine default model the agent runs (a backend alias like `pro` or a full id), or
+// undefined when unset. A backend that takes a model (gemini, via -m) expands and injects it; one
+// that does not just ignores it. Unset means "let the agent use its own configured default".
+export function readDefaultModel(): string | undefined {
+  return readRegistry().defaultModel;
+}
+
+// Persist the default model, preserving the rest of the registry. An empty value clears it (the
+// field is dropped, so readDefaultModel reads undefined and the agent uses its own default). Same
+// tolerance as above.
+export function setDefaultModel(model: string): { ok: boolean; error?: string } {
+  const reg = readRegistry();
+  reg.defaultModel = model || undefined;
+  return writeRegistry(reg);
+}
+
+// Write the registry back, returning an unwritable-config error as data rather than throwing, so a
+// preference write can never block a command (the preference just does not persist).
+function writeRegistry(reg: Registry): { ok: boolean; error?: string } {
+  const p = configPath();
+  try {
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, JSON.stringify(reg, null, 2) + "\n");
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ok: true };
 }
 
 // What marks a dir as a vault PROJECT for the walk-up: a vault/ DIRECTORY holding BOTH generated
