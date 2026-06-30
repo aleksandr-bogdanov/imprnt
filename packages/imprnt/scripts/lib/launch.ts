@@ -387,6 +387,14 @@ function expandGeminiModel(m: string): string {
   return GEMINI_MODEL_ALIASES[m] ?? m;
 }
 
+// gemini reads `@token` in a context file as a file-import directive, so a literal @ in the cast (an
+// @handle like @aemilius211, an email) makes it try to import a nonexistent file and log an error.
+// The generated GEMINI.md has NO intentional imports (castFragment already inlined them), so escape
+// every @ as `\@`, which gemini treats as a literal and does not import (verified against the CLI).
+function escapeGeminiImports(text: string): string {
+  return text.replaceAll("@", "\\@");
+}
+
 // The Gemini edge. gemini has no --append-system-prompt: its native context channel is a GEMINI.md
 // the CLI discovers in every workspace directory (verified - a GEMINI.md in an --include-directories
 // dir loads as memory, @imports inlined and all). So the whole fragment (cast + pointer + globals,
@@ -399,7 +407,7 @@ function geminiRenderArgs(spec: SessionSpec): string[] {
   const systemPrompt = joinFragments([spec.cast, spec.pointer, spec.globals]);
   if (systemPrompt) {
     const dir = mkdtempSync(join(tmpdir(), "imprnt-gemini-"));
-    writeFileSync(join(dir, "GEMINI.md"), systemPrompt + "\n");
+    writeFileSync(join(dir, "GEMINI.md"), escapeGeminiImports(systemPrompt) + "\n");
     process.on("exit", () => {
       try {
         rmSync(dir, { recursive: true, force: true });
@@ -429,6 +437,14 @@ function geminiRenderArgs(spec: SessionSpec): string[] {
     pass[mIdx + 1] = expandGeminiModel(pass[mIdx + 1]!);
   } else if (mIdx < 0 && spec.model) {
     pass.unshift("-m", expandGeminiModel(spec.model));
+  }
+  // gemini's --resume needs a value (latest | index | id); claude's resumes the most recent with no
+  // arg. Make a value-less -r/--resume mean "latest" so `imp -r` matches the claude muscle memory
+  // instead of silently resuming nothing. A -r that already has a value (or the --resume=x form) is
+  // left alone.
+  const rIdx = pass.findIndex((a) => a === "-r" || a === "--resume");
+  if (rIdx >= 0 && (pass[rIdx + 1] === undefined || pass[rIdx + 1]!.startsWith("-"))) {
+    pass.splice(rIdx + 1, 0, "latest");
   }
   // --include-directories takes a comma-separated list, so one flag carries the context dir + vault.
   const flags = includes.length ? ["--include-directories", includes.join(",")] : [];
