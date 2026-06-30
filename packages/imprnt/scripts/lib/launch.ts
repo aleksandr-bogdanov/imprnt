@@ -8,8 +8,9 @@
 // the agent to run `imprnt context` before writing, the same frequency rule as the engine.
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 import { enabledPluginDirs, entryExists, importTargets } from "./plugins.ts";
 import { globalFragment } from "./global.ts";
 
@@ -250,8 +251,9 @@ export type SessionSpec = {
   // Extra working dirs the agent should read without a prompt: the vault project, launched from
   // outside it. Empty inside (cwd covers it) and with no vault.
   addDirs: string[];
-  // The vault project root WHEN live, so a backend can render its enabled plugins (claude:
-  // --plugin-dir + --settings; gemini: mcpServers). Undefined on the no-vault / phantom paths.
+  // The vault project root WHEN live, so a backend can act on its enabled plugins: claude renders
+  // them as --plugin-dir + --settings; gemini has no host for harness plugins, so it only detects
+  // them to warn-and-skip. Undefined on the no-vault / phantom paths.
   pluginsRoot?: string;
   // Run without permission prompts. Each backend maps it to its own flag (claude:
   // --dangerously-skip-permissions; gemini: --yolo + --skip-trust). Resolved by resolveLaunch
@@ -364,6 +366,11 @@ export interface Backend {
   // The one-line install hint shown when the binary is not on PATH.
   readonly missingHint: string;
   renderArgs(spec: SessionSpec): string[];
+  // Optional interactive pre-launch hook: resolve a session-resume request into concrete args (e.g.
+  // a chat picker) before renderArgs runs. The dispatcher calls it generically, so the gemini-only
+  // picker lives at the gemini edge, not in the launcher's neutral path. A backend without it keeps
+  // its passthrough as-is.
+  resolveResume?(passthrough: string[], cwd: string): Promise<string[]>;
 }
 
 export const claudeBackend: Backend = {
@@ -375,7 +382,7 @@ export const claudeBackend: Backend = {
 // Short aliases for the gemini models, so a user types `imp --gemini -m pro` (or `imprnt model pro`)
 // instead of the full id. A value that is not an alias passes through unchanged, so a full id always
 // works and a new model is usable before this map learns it. Vendor data, so it lives at the edge.
-const GEMINI_MODEL_ALIASES: Record<string, string> = {
+export const GEMINI_MODEL_ALIASES: Record<string, string> = {
   pro: "gemini-3.1-pro-preview",
   flash: "gemini-3.5-flash",
   pro25: "gemini-2.5-pro",
@@ -429,23 +436,26 @@ function geminiRenderArgs(spec: SessionSpec): string[] {
     if (!spec.passthrough.includes("--yolo") && !spec.passthrough.includes("-y")) lead.push("--yolo");
     if (!spec.passthrough.includes("--skip-trust")) lead.push("--skip-trust");
   }
-  // Model: expand an alias in a user-passed -m/--model value, else inject the configured default
-  // model (alias-expanded). The user's explicit -m always wins over the configured default.
+  // Model: expand an alias to the full id in a user-passed -m/--model (space OR equals form), else
+  // inject the configured default model (alias-expanded). A user-passed model flag of ANY form wins
+  // over the configured default; a bare -m with no value is left for gemini to reject clearly.
   const pass = [...spec.passthrough];
-  const mIdx = pass.findIndex((a) => a === "-m" || a === "--model");
-  if (mIdx >= 0 && pass[mIdx + 1] !== undefined) {
-    pass[mIdx + 1] = expandGeminiModel(pass[mIdx + 1]!);
-  } else if (mIdx < 0 && spec.model) {
+  const isModelFlag = (a: string) => a === "-m" || a === "--model" || a.startsWith("-m=") || a.startsWith("--model=");
+  const mIdx = pass.findIndex(isModelFlag);
+  if (mIdx >= 0) {
+    const tok = pass[mIdx]!;
+    const eq = tok.indexOf("=");
+    if (eq >= 0) pass[mIdx] = tok.slice(0, eq + 1) + expandGeminiModel(tok.slice(eq + 1));
+    else if (pass[mIdx + 1] !== undefined) pass[mIdx + 1] = expandGeminiModel(pass[mIdx + 1]!);
+  } else if (spec.model) {
     pass.unshift("-m", expandGeminiModel(spec.model));
   }
-  // gemini's --resume needs a value (latest | index | id); claude's resumes the most recent with no
-  // arg. Make a value-less -r/--resume mean "latest" so `imp -r` matches the claude muscle memory
-  // instead of silently resuming nothing. A -r that already has a value (or the --resume=x form) is
-  // left alone.
-  const rIdx = pass.findIndex((a) => a === "-r" || a === "--resume");
-  if (rIdx >= 0 && (pass[rIdx + 1] === undefined || pass[rIdx + 1]!.startsWith("-"))) {
-    pass.splice(rIdx + 1, 0, "latest");
-  }
+  // Resume: the interactive chat picker (geminiResolveResume) owns `imp -r` and fills in the chosen
+  // session before this runs. This renderer branch is only the NON-interactive fallback: gemini's
+  // --resume needs a value, so a still-value-less -r/--resume here means "resume the most recent".
+  // An explicit -r <value> (or the --resume=x form) is left untouched.
+  const rIdx = valuelessResumeIndex(pass);
+  if (rIdx >= 0) pass.splice(rIdx + 1, 0, "latest");
   // --include-directories takes a comma-separated list, so one flag carries the context dir + vault.
   const flags = includes.length ? ["--include-directories", includes.join(",")] : [];
   return [...lead, ...flags, ...pass];
@@ -455,6 +465,7 @@ export const geminiBackend: Backend = {
   name: "gemini",
   missingHint: "Install the Gemini CLI first: npm i -g @google/gemini-cli",
   renderArgs: geminiRenderArgs,
+  resolveResume: geminiResolveResume,
 };
 
 // One row of `gemini --list-sessions`. `name` is the real first user prompt (the useful label),
@@ -476,6 +487,77 @@ export function parseGeminiSessions(stdout: string): GeminiSession[] {
   return out;
 }
 
+// Index of a -r/--resume that carries NO value (it is the last token, or the next token is another
+// flag), else -1. The two resume paths share this one predicate: geminiResolveResume fills the value
+// interactively from a pick, and geminiRenderArgs fills it with "latest" non-interactively, so they
+// can never drift on what "value-less" means.
+export function valuelessResumeIndex(args: string[]): number {
+  const i = args.findIndex((a) => a === "-r" || a === "--resume");
+  if (i < 0) return -1;
+  const next = args[i + 1];
+  return next === undefined || next.startsWith("-") ? i : -1;
+}
+
+// Run `gemini --list-sessions` for the chats of the project at `cwd` (gemini keys sessions by cwd, so
+// this lists exactly the chats `imp` made here). `ran` distinguishes "gemini could not run" (binary
+// missing — leave the resume request for launchBackend to surface with the real install hint) from a
+// genuinely empty list. A non-empty output that parses to zero rows means gemini's list format
+// changed: warn so a break is diagnosable, never a silent "you have no chats".
+function listGeminiSessions(cwd: string): { sessions: GeminiSession[]; ran: boolean } {
+  const r = spawnSync("gemini", ["--list-sessions", "--skip-trust"], { cwd, encoding: "utf8" });
+  if (r.error) return { sessions: [], ran: false };
+  const stdout = r.stdout || "";
+  const sessions = parseGeminiSessions(stdout);
+  if (!sessions.length && stdout.trim() && !/\(\s*0\s*\)|no sessions/i.test(stdout)) {
+    console.error("imp: couldn't parse gemini's session list (its format may have changed) - starting fresh");
+  }
+  return { sessions, ran: true };
+}
+
+// Render imp's own chat picker to stderr (stdout stays clean) and read a choice. A number resumes
+// that chat, Enter resumes the newest, q cancels (start fresh). An out-of-range / non-numeric entry
+// falls back to fresh.
+async function pickGeminiSession(sessions: GeminiSession[], label: string): Promise<string | null> {
+  const cols = process.stdout.columns || 80;
+  const nameW = Math.max(20, Math.min(64, cols - 16));
+  const trunc = (s: string) => (s.length > nameW ? s.slice(0, nameW - 1) + "…" : s);
+  process.stderr.write(`\n  resume a chat - gemini · ${label}\n\n`);
+  sessions.forEach((s, i) => {
+    process.stderr.write(`  ${String(i + 1).padStart(2)}  ${trunc(s.name).padEnd(nameW)}  ${s.age.replace(/\s*ago$/, "")}\n`);
+  });
+  process.stderr.write("\n");
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  const answer = (await rl.question("  number to resume · enter for newest · q to cancel › ")).trim();
+  rl.close();
+  if (answer === "") return "latest";
+  if (answer.toLowerCase() === "q") return null;
+  const n = Number(answer);
+  if (Number.isInteger(n) && n >= 1 && n <= sessions.length) return sessions[n - 1]!.id;
+  process.stderr.write("  not a valid choice - starting a fresh session\n");
+  return null;
+}
+
+// The gemini resume hook (Backend.resolveResume). On a value-less -r/--resume in an interactive TTY,
+// list this project's chats and show imp's own picker, then rewrite the passthrough to resume the
+// chosen chat (or drop -r to start fresh). Returned untouched otherwise: an explicit -r <value>, a
+// non-interactive run (geminiRenderArgs then defaults to resume-latest), or gemini not being runnable.
+async function geminiResolveResume(passthrough: string[], cwd: string): Promise<string[]> {
+  const rIdx = valuelessResumeIndex(passthrough);
+  if (rIdx < 0) return passthrough;
+  if (!(process.stdin.isTTY && process.stdout.isTTY)) return passthrough;
+  const { sessions, ran } = listGeminiSessions(cwd);
+  if (!ran) return passthrough; // gemini missing - leave -r; launchBackend prints the install hint
+  if (!sessions.length) {
+    console.error("imp: no saved gemini chats for this project yet - starting fresh");
+    return passthrough.filter((_, i) => i !== rIdx);
+  }
+  const chosen = await pickGeminiSession(sessions, basename(cwd));
+  if (chosen === null) return passthrough.filter((_, i) => i !== rIdx); // cancel - fresh session
+  const out = [...passthrough];
+  out.splice(rIdx + 1, 0, chosen); // the picked id (or "latest" on Enter) becomes the -r value
+  return out;
+}
+
 export const backends: Record<string, Backend> = {
   claude: claudeBackend,
   gemini: geminiBackend,
@@ -492,10 +574,16 @@ export function resolveLaunch(
   passthrough: string[],
   config: { agent?: string; yolo?: boolean } = {},
 ): { backend: Backend; skipPermissions: boolean; passthrough: string[] } {
+  // Stop consuming imp's selection flags at the first `--` terminator: everything from there on is
+  // literal prompt text for the agent, so a `--yolo` typed inside a prompt must NOT flip
+  // skip-permissions. Scan the head; pass the terminator and tail through untouched.
+  const term = passthrough.indexOf("--");
+  const head = term < 0 ? passthrough : passthrough.slice(0, term);
+  const tail = term < 0 ? [] : passthrough.slice(term);
   let agentFlag: string | undefined;
   let yoloFlag: boolean | undefined;
   const rest: string[] = [];
-  for (const a of passthrough) {
+  for (const a of head) {
     if (a === "--gemini") agentFlag = agentFlag ?? "gemini";
     else if (a === "--claude") agentFlag = agentFlag ?? "claude";
     else if (a === "--yolo") yoloFlag = yoloFlag ?? true;
@@ -508,11 +596,14 @@ export function resolveLaunch(
     console.error(`imp: unknown agent "${name}" - falling back to claude (valid: ${Object.keys(backends).join(", ")})`);
     backend = claudeBackend;
   }
-  // IMPRNT_YOLO is read as a tri-state: present-and-truthy → on, present-and-falsy → off, absent →
-  // defer to config. "0"/"false"/"" count as off so `IMPRNT_YOLO=0 imp` is a clean one-shot opt-out.
-  const envYolo = "IMPRNT_YOLO" in process.env ? !["0", "false", ""].includes(process.env.IMPRNT_YOLO ?? "") : undefined;
+  // IMPRNT_YOLO is a tri-state: present-and-truthy → on, present-and-falsy → off, absent → defer to
+  // config. The off-set is generous on purpose (0/false/off/no/"") because the risk is asymmetric:
+  // accidentally GRANTING skip-permissions is worse than withholding it, so only an explicit truthy
+  // spelling keeps it on.
+  const yoloEnv = process.env.IMPRNT_YOLO;
+  const envYolo = yoloEnv === undefined ? undefined : !["0", "false", "", "off", "no"].includes(yoloEnv.toLowerCase());
   const skipPermissions = yoloFlag ?? envYolo ?? config.yolo ?? false;
-  return { backend, skipPermissions, passthrough: rest };
+  return { backend, skipPermissions, passthrough: [...rest, ...tail] };
 }
 
 // Spawn a resolved backend interactively and hand back its exit code. The cwd guard (a dead or

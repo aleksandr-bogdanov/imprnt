@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync, 
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { castFragment, pointerFragment, harnessFlags, isInside, buildLaunch, launchClaude, assembleSession, resolveLaunch, claudeBackend, geminiBackend, parseGeminiSessions } from "./launch.ts";
+import { castFragment, pointerFragment, harnessFlags, isInside, buildLaunch, launchClaude, assembleSession, resolveLaunch, claudeBackend, geminiBackend, parseGeminiSessions, valuelessResumeIndex } from "./launch.ts";
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -770,4 +770,58 @@ test("parseGeminiSessions parses the --list-sessions rows by real prompt name, s
 test("parseGeminiSessions returns [] for empty or session-less output", () => {
   expect(parseGeminiSessions("")).toEqual([]);
   expect(parseGeminiSessions("No sessions found for this project.")).toEqual([]);
+});
+
+// --- review-pass fixes: model equals-form, the -- terminator, IMPRNT_YOLO off-spellings, resume hook ---
+
+test("geminiBackend expands an alias in the --model=value equals form and does not double-inject the default", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const args = geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, model: "flash", passthrough: ["--model=pro"] }));
+  expect(args).toContain("--model=gemini-3.1-pro-preview"); // the user's equals-form alias, expanded in place
+  expect(args.filter((a) => a === "-m").length).toBe(0); // the configured default is NOT also injected
+  expect(args).not.toContain("gemini-3.5-flash");
+});
+
+test("geminiBackend leaves a bare -m (no value) alone and suppresses the configured default", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const args = geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, model: "pro", passthrough: ["-m"] }));
+  expect(args.filter((a) => a === "-m").length).toBe(1); // the user's -m stays for gemini to reject
+  expect(args).not.toContain("gemini-3.1-pro-preview"); // and the default is NOT injected
+});
+
+test("resolveLaunch does not consume a selection flag after a -- terminator (it is literal prompt text)", () => {
+  const r = resolveLaunch(["--", "explain", "the", "--yolo", "flag"]);
+  expect(r.skipPermissions).toBe(false); // --yolo after -- must NOT flip skip-permissions
+  expect(r.passthrough).toEqual(["--", "explain", "the", "--yolo", "flag"]); // tail passed through verbatim
+  const r2 = resolveLaunch(["--yolo", "--", "--safe"]);
+  expect(r2.skipPermissions).toBe(true); // leading --yolo (before --) IS consumed
+  expect(r2.passthrough).toEqual(["--", "--safe"]); // --safe after -- is preserved, not consumed
+});
+
+test("resolveLaunch: IMPRNT_YOLO off-spellings (0/false/off/no, any case) read as off", () => {
+  for (const v of ["0", "false", "off", "no", "OFF", "No", ""]) {
+    process.env.IMPRNT_YOLO = v;
+    expect(resolveLaunch([], { yolo: true }).skipPermissions).toBe(false);
+  }
+  process.env.IMPRNT_YOLO = "1";
+  expect(resolveLaunch([], { yolo: false }).skipPermissions).toBe(true);
+});
+
+test("valuelessResumeIndex finds a value-less -r/--resume, else -1", () => {
+  expect(valuelessResumeIndex(["-c", "-r"])).toBe(1); // last token
+  expect(valuelessResumeIndex(["-r", "--foo"])).toBe(0); // followed by a flag
+  expect(valuelessResumeIndex(["--resume"])).toBe(0);
+  expect(valuelessResumeIndex(["-r", "3"])).toBe(-1); // has a value
+  expect(valuelessResumeIndex(["--resume=5"])).toBe(-1); // equals form carries its value
+  expect(valuelessResumeIndex(["-c"])).toBe(-1); // no -r at all
+});
+
+test("geminiBackend.resolveResume is a no-op without an interactive TTY, and for an explicit -r value", async () => {
+  // the test process is not a TTY, so the picker is skipped and gemini is never spawned.
+  expect(await geminiBackend.resolveResume!(["-r"], "/x")).toEqual(["-r"]);
+  expect(await geminiBackend.resolveResume!(["-r", "3"], "/x")).toEqual(["-r", "3"]);
+  expect(await geminiBackend.resolveResume!(["-c"], "/x")).toEqual(["-c"]);
+  expect(claudeBackend.resolveResume).toBeUndefined(); // claude has no resume hook (uses its own picker)
 });
