@@ -1,9 +1,9 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { castFragment, pointerFragment, harnessFlags, isInside, buildLaunch, launchClaude } from "./launch.ts";
+import { castFragment, pointerFragment, harnessFlags, isInside, buildLaunch, launchClaude, assembleSession, resolveLaunch, claudeBackend, geminiBackend } from "./launch.ts";
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -18,7 +18,7 @@ function emptyGlobalDir(): string {
 // CLAUDE_CONFIG_DIR for the default global dir; keep the suite hermetic against the developer's shell.
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
-  for (const k of ["IMPRNT_VAULT", "IMPRINT_VAULT", "CLAUDE_CONFIG_DIR"]) {
+  for (const k of ["IMPRNT_VAULT", "IMPRINT_VAULT", "CLAUDE_CONFIG_DIR", "IMPRNT_AGENT", "IMPRNT_YOLO"]) {
     saved[k] = process.env[k];
     delete process.env[k];
   }
@@ -563,4 +563,159 @@ test("buildLaunch carries harness flags on EVERY launch, inside the project incl
   expect(outside.args.indexOf("--settings")).toBe(2); // ours, right after the --plugin-dir pair
   expect(outside.args.lastIndexOf("--settings")).toBeGreaterThan(outside.args.indexOf("--settings"));
   expect(outside.args).toContain("--append-system-prompt");
+});
+
+// --- resolveLaunch: which agent, whether to skip prompts, and stripping imp's own flags ---
+
+test("resolveLaunch: --gemini / --claude flag wins and is stripped from the passthrough", () => {
+  const g = resolveLaunch(["-c", "--gemini", "--resume"]);
+  expect(g.backend.name).toBe("gemini");
+  expect(g.passthrough).toEqual(["-c", "--resume"]);
+  const c = resolveLaunch(["--claude", "-c"]);
+  expect(c.backend.name).toBe("claude");
+  expect(c.passthrough).toEqual(["-c"]);
+});
+
+test("resolveLaunch: agent precedence is flag > IMPRNT_AGENT > config > built-in claude", () => {
+  // beforeEach cleared IMPRNT_AGENT / IMPRNT_YOLO, so the suite is hermetic against the dev shell.
+  expect(resolveLaunch([]).backend.name).toBe("claude"); // built-in default
+  expect(resolveLaunch([], { agent: "gemini" }).backend.name).toBe("gemini"); // config default
+  process.env.IMPRNT_AGENT = "gemini";
+  expect(resolveLaunch([]).backend.name).toBe("gemini"); // env over absent config
+  expect(resolveLaunch([], { agent: "claude" }).backend.name).toBe("gemini"); // env over config
+  expect(resolveLaunch(["--claude"]).backend.name).toBe("claude"); // flag over env
+});
+
+test("resolveLaunch: an unknown agent falls back to claude with a warning, never a crash", () => {
+  const errors: string[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+  try {
+    expect(resolveLaunch([], { agent: "grok" }).backend.name).toBe("claude");
+  } finally {
+    console.error = orig;
+  }
+  expect(errors.length).toBe(1);
+  expect(errors[0]).toContain("grok");
+});
+
+test("resolveLaunch: --yolo / --safe sets skipPermissions and is stripped from the passthrough", () => {
+  const y = resolveLaunch(["-c", "--yolo"]);
+  expect(y.skipPermissions).toBe(true);
+  expect(y.passthrough).toEqual(["-c"]);
+  const s = resolveLaunch(["--safe", "-c"], { yolo: true }); // flag overrides a config default of on
+  expect(s.skipPermissions).toBe(false);
+  expect(s.passthrough).toEqual(["-c"]);
+});
+
+test("resolveLaunch: skip precedence is flag > IMPRNT_YOLO > config > off (shipped safe)", () => {
+  expect(resolveLaunch([]).skipPermissions).toBe(false); // built-in default: prompts on
+  expect(resolveLaunch([], { yolo: true }).skipPermissions).toBe(true); // config default
+  process.env.IMPRNT_YOLO = "0";
+  expect(resolveLaunch([], { yolo: true }).skipPermissions).toBe(false); // env "0" over config-on
+  process.env.IMPRNT_YOLO = "1";
+  expect(resolveLaunch([], { yolo: false }).skipPermissions).toBe(true); // env "1" over config-off
+  expect(resolveLaunch(["--safe"], { yolo: true }).skipPermissions).toBe(false); // flag over env
+});
+
+// --- geminiBackend: the full fragment rides a generated GEMINI.md, never the user's cwd ---
+
+test("geminiBackend writes the full fragment to a temp GEMINI.md and adds it (plus the vault) via --include-directories (outside)", () => {
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "x"), { recursive: true });
+  writeFileSync(join(root, "plugins", "x", "agent.md"), "# My cast\n");
+  writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/x/agent.md\n");
+  const spec = assembleSession({ cwd: "/somewhere/else", vaultProject: root, pkgRoot });
+  const args = geminiBackend.renderArgs(spec);
+  const inclIdx = args.indexOf("--include-directories");
+  expect(inclIdx).toBeGreaterThanOrEqual(0);
+  const dirs = args[inclIdx + 1]!.split(",");
+  // The vault rides as a workspace dir; the FIRST dir is the throwaway context dir.
+  expect(dirs).toContain(root);
+  const gm = readFileSync(join(dirs[0]!, "GEMINI.md"), "utf8");
+  expect(gm).toContain("# My cast"); // the cast
+  expect(gm).toContain("imprnt recall"); // the pointer
+});
+
+test("geminiBackend inside the vault STILL injects cast+pointer (gemini loads nothing natively) and adds no vault dir", () => {
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "x"), { recursive: true });
+  writeFileSync(join(root, "plugins", "x", "agent.md"), "# My cast\n");
+  writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/x/agent.md\n");
+  const spec = assembleSession({ cwd: root, vaultProject: root, pkgRoot });
+  const args = geminiBackend.renderArgs(spec);
+  const dirs = args[args.indexOf("--include-directories") + 1]!.split(",");
+  expect(dirs).not.toContain(root); // inside: cwd already is the vault, no extra --include
+  const gm = readFileSync(join(dirs[0]!, "GEMINI.md"), "utf8");
+  expect(gm).toContain("# My cast"); // unlike claude inside, gemini DOES get the cast + pointer
+  expect(gm).toContain("imprnt recall");
+});
+
+test("geminiBackend with no vault and no globals just passes through (no --include-directories)", () => {
+  const globalDir = mkdtempSync(join(tmpdir(), "imprnt-glob-none-"));
+  const spec = assembleSession({ cwd: "/x", pkgRoot, passthrough: ["-r", "latest"], globalDir });
+  expect(geminiBackend.renderArgs(spec)).toEqual(["-r", "latest"]);
+});
+
+// --- skip-permissions: each backend maps the neutral flag to its own, never doubled ---
+
+test("claudeBackend injects --dangerously-skip-permissions when skipPermissions is set, once, off by default", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const on = claudeBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, skipPermissions: true }));
+  expect(on.filter((a) => a === "--dangerously-skip-permissions").length).toBe(1);
+  const off = claudeBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, skipPermissions: false }));
+  expect(off).not.toContain("--dangerously-skip-permissions");
+  // Not doubled when the user already passed it.
+  const dup = claudeBackend.renderArgs(
+    assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, skipPermissions: true, passthrough: ["--dangerously-skip-permissions"] }),
+  );
+  expect(dup.filter((a) => a === "--dangerously-skip-permissions").length).toBe(1);
+});
+
+test("geminiBackend injects --yolo + --skip-trust when skipPermissions is set, off by default, not doubled on -y", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const on = geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, skipPermissions: true }));
+  expect(on).toContain("--yolo");
+  expect(on).toContain("--skip-trust");
+  const off = geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, skipPermissions: false }));
+  expect(off).not.toContain("--yolo");
+  expect(off).not.toContain("--skip-trust");
+  // gemini's short form -y already passed: no duplicate --yolo.
+  const dup = geminiBackend.renderArgs(
+    assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, skipPermissions: true, passthrough: ["-y"] }),
+  );
+  expect(dup).not.toContain("--yolo");
+});
+
+// --- gemini model: alias expansion + the configured default, with the user's -m winning ---
+
+test("geminiBackend injects the configured default model, expanding an alias", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const args = geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, model: "pro" }));
+  const mIdx = args.indexOf("-m");
+  expect(mIdx).toBeGreaterThanOrEqual(0);
+  expect(args[mIdx + 1]).toBe("gemini-3.1-pro-preview"); // alias expanded
+});
+
+test("geminiBackend passes a full model id through unchanged and never injects when none is configured", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const full = geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, model: "gemini-2.5-pro" }));
+  expect(full[full.indexOf("-m") + 1]).toBe("gemini-2.5-pro");
+  const none = geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot }));
+  expect(none).not.toContain("-m"); // no configured model -> let gemini use its own default
+});
+
+test("geminiBackend: a user-passed -m wins over the configured default, and its alias is expanded", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const args = geminiBackend.renderArgs(
+    assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, model: "pro", passthrough: ["-m", "flash"] }),
+  );
+  // Exactly one -m, and it is the user's choice (flash), alias-expanded, not the configured pro.
+  expect(args.filter((a) => a === "-m").length).toBe(1);
+  expect(args[args.indexOf("-m") + 1]).toBe("gemini-3.5-flash");
 });

@@ -6,8 +6,8 @@
 // CLAUDE.md and CLAUDE.local.md load natively — so nothing is injected there (injecting would
 // double-load the cast). The full vault contract is never injected anywhere: the pointer tells
 // the agent to run `imprnt context` before writing, the same frequency rule as the engine.
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { enabledPluginDirs, entryExists, importTargets } from "./plugins.ts";
@@ -48,7 +48,19 @@ export function castFragment(root: string): string {
 // The ~150-token pointer: what exists, when to recall, and the one entry point for writing.
 // Lives in templates/ so it ships with the package and stays editable without a code change.
 export function pointerFragment(pkgRoot: string, vaultProject: string): string {
-  const tpl = readFileSync(join(pkgRoot, "templates", "pointer.md"), "utf8");
+  // assembleSession now computes the pointer for EVERY live-vault launch (so a backend that does not
+  // load it natively, like gemini, can inject it), inside the project included - where the pre-seam
+  // launcher never read it. A missing template (a broken install, a test sandbox that ships no
+  // templates/) must therefore degrade to no-pointer with a warning, never hard-crash the launch -
+  // the same tolerance castFragment has for a missing import. In a real install the template always
+  // ships, so this never fires there.
+  let tpl: string;
+  try {
+    tpl = readFileSync(join(pkgRoot, "templates", "pointer.md"), "utf8");
+  } catch {
+    console.error(`imp: pointer template missing at ${join(pkgRoot, "templates", "pointer.md")} - launching without the vault pointer`);
+    return "";
+  }
   // Function replacement: a string replacement runs $-pattern substitution, so a path with $$
   // would render corrupted ($$ collapses to $) and the pointer would advertise a phantom path.
   return tpl.replaceAll("{{VAULT_PROJECT}}", () => vaultProject);
@@ -213,12 +225,123 @@ function mergeFragment(pass: string[], fragment: string, extraInject: string[]):
   return args;
 }
 
-// Pure assembly of the spawn inputs (args + env), separated from the spawn so tests can assert
-// the exact composition. Inside the vault project the project cast is NOT injected (it loads
-// natively from cwd), but the global cast IS - globals live in <globalDir>/imprnt/, not in the
-// project's CLAUDE.local.md, so claude never loads them on its own anywhere. With no vault
-// registered, claude runs plain (no project, no pointer) but globals still ride: imprnt only ever
-// affects imp sessions, and a global module is exactly "every imp session".
+// ── The agent-backend seam ──────────────────────────────────────────────────
+// A launch has two halves. assembleSession() is the NEUTRAL half: it gathers the raw materials a
+// session needs (the cast / pointer / globals fragments, the working dirs, the plugins, the env) and
+// names no vendor. A Backend is the EDGE half: it knows ONE agent's native behavior - which of those
+// fragments the agent loads on its own, and how the rest reach it - and renders the invocation.
+// claude loads the project cast + pointer natively from cwd when you are inside the vault, so its
+// renderer injects only what is NOT already loaded; gemini loads nothing from the vault, so its
+// renderer injects the whole fragment through a generated GEMINI.md. Same spec, two renderers, zero
+// vendor knowledge in assembleSession - a grep for a vendor name inside it must come back empty.
+export type SessionSpec = {
+  // The project cast (CLAUDE.local.md @imports, inlined), "" when none. A backend that loads it
+  // natively (claude, inside the project) drops it; one that does not (gemini) injects it.
+  cast: string;
+  // The ~150-token vault pointer, "" when no vault. Same native-vs-injected split as the cast.
+  pointer: string;
+  // The global behavior modules (deduped against the project plugins), "" when none. NO agent loads
+  // these on its own (they live in the host config dir, not the project), so every backend injects
+  // them on every launch.
+  globals: string;
+  // cwd is inside the vault project, so an agent that auto-loads project context from cwd already
+  // has the cast + pointer. The neutral fact; each backend decides what it means for injection.
+  insideProject: boolean;
+  // Extra working dirs the agent should read without a prompt: the vault project, launched from
+  // outside it. Empty inside (cwd covers it) and with no vault.
+  addDirs: string[];
+  // The vault project root WHEN live, so a backend can render its enabled plugins (claude:
+  // --plugin-dir + --settings; gemini: mcpServers). Undefined on the no-vault / phantom paths.
+  pluginsRoot?: string;
+  // Run without permission prompts. Each backend maps it to its own flag (claude:
+  // --dangerously-skip-permissions; gemini: --yolo + --skip-trust). Resolved by resolveLaunch
+  // (flag > env > per-machine config > off), so the SHIPPED default is safe - a fresh install
+  // prompts, and only a machine where git + snapshots are the net opts in.
+  skipPermissions: boolean;
+  // The per-machine default model (a backend alias like `pro`, or a full id), or undefined to let
+  // the agent use its own default. A backend that takes a model (gemini, via -m) expands the alias
+  // and injects it when the user did not pass their own -m; others ignore it.
+  model?: string;
+  env: NodeJS.ProcessEnv;
+  passthrough: string[];
+};
+
+// The neutral half: gather the session's raw materials, vendor-free. The cast + pointer are computed
+// whenever there is a live vault (even inside it) so a backend that does NOT load them natively can
+// still inject them; a backend that DOES (claude inside) just ignores them. Globals are always
+// gathered and always injected by every backend. The project plugins are the dedupe skip-set so a
+// plugin enabled BOTH project-locally and globally contributes its global copy zero extra times.
+export function assembleSession(opts: {
+  cwd: string;
+  vaultProject?: string;
+  pkgRoot: string;
+  passthrough?: string[];
+  globalDir?: string;
+  skipPermissions?: boolean;
+  model?: string;
+}): SessionSpec {
+  const passthrough = [...(opts.passthrough ?? [])];
+  const globalDir = opts.globalDir ?? defaultGlobalDir();
+  const skipPermissions = opts.skipPermissions ?? false;
+  const base = { cast: "", pointer: "", insideProject: false, addDirs: [] as string[], skipPermissions, model: opts.model, passthrough };
+  // No vault registered: a plain session, globals only (may be "").
+  if (!opts.vaultProject) {
+    return { ...base, globals: globalFragment(globalDir) || "", env: process.env };
+  }
+  // A resolved project that is missing or a plain file (a stale IMPRNT_ROOT, a moved dir) must not
+  // get injected - the pointer would advertise a phantom vault and shadow reality. Warn and fall back
+  // to a plain session with NO globals, matching the pre-seam phantom path. `imp lair` keeps its hard
+  // error elsewhere.
+  if (!isDir(opts.vaultProject)) {
+    console.error(`imp: vault project not found at ${opts.vaultProject} - launching a plain session (re-run \`imprnt init\` there, or fix IMPRNT_ROOT)`);
+    return { ...base, globals: "", env: process.env };
+  }
+  const projectPlugins = new Set(enabledPluginDirs(opts.vaultProject));
+  const inside = isInside(opts.cwd, opts.vaultProject);
+  // Inside: cast + pointer ride in the spec too (a non-native backend needs them), but addDirs stays
+  // empty - cwd already covers the vault. Outside: add the vault as a readable working dir.
+  return {
+    cast: castFragment(opts.vaultProject),
+    pointer: pointerFragment(opts.pkgRoot, opts.vaultProject),
+    globals: globalFragment(globalDir, projectPlugins) || "",
+    insideProject: inside,
+    addDirs: inside ? [] : [opts.vaultProject],
+    pluginsRoot: opts.vaultProject,
+    skipPermissions,
+    model: opts.model,
+    env: childEnv(opts.vaultProject),
+    passthrough,
+  };
+}
+
+// Join the fragments an agent must be GIVEN (vs. loads itself) into one block, cast→pointer→globals,
+// dropping empties.
+function joinFragments(parts: string[]): string {
+  return parts.filter(Boolean).join("\n\n");
+}
+
+// The Claude edge. claude loads the project cast + pointer natively from cwd when inside the vault,
+// so inside it is handed ONLY the globals; outside it gets the whole fragment. The systemPrompt rides
+// --append-system-prompt (merged into a user-passed one, never a second flag); addDirs become
+// --add-dir; enabled plugins become harness flags (--plugin-dir + one merged --settings), PREPENDED
+// so a user-passed --settings wins. This is the exact composition the pre-seam launcher produced,
+// pinned by the suite.
+function claudeRenderArgs(spec: SessionSpec): string[] {
+  const systemPrompt = spec.insideProject ? spec.globals : joinFragments([spec.cast, spec.pointer, spec.globals]);
+  const harness = spec.pluginsRoot ? harnessFlags(spec.pluginsRoot) : [];
+  const extra = spec.addDirs.flatMap((d) => ["--add-dir", d]);
+  // skip-permissions maps to claude's --dangerously-skip-permissions, prepended so it sits in flag
+  // position before any `--` terminator. Skipped if the user already passed it.
+  const pass =
+    spec.skipPermissions && !spec.passthrough.includes("--dangerously-skip-permissions")
+      ? ["--dangerously-skip-permissions", ...spec.passthrough]
+      : spec.passthrough;
+  const body = systemPrompt ? mergeFragment(pass, systemPrompt, extra) : [...pass, ...extra];
+  return [...harness, ...body];
+}
+
+// Back-compat wrapper: the pre-seam entry point, now assemble-then-render-for-claude. Kept so the
+// existing tests that pin the exact arg composition stay green; live call sites resolve a backend.
 export function buildLaunch(opts: {
   cwd: string;
   vaultProject?: string;
@@ -226,75 +349,162 @@ export function buildLaunch(opts: {
   passthrough?: string[];
   globalDir?: string;
 }): { args: string[]; env: NodeJS.ProcessEnv } {
-  const pass = [...(opts.passthrough ?? [])];
-  const globalDir = opts.globalDir ?? defaultGlobalDir();
-  // Dedupe: a plugin enabled both project-locally and globally must inject once. The project cast is
-  // only injected on the OUTSIDE branch (inside loads it natively), so dedupe only matters there;
-  // pass the project's enabled names as the skip set so the global pass drops a name already wired
-  // project-locally. Inside/lair has no project-cast injection, so nothing to skip.
-  if (!opts.vaultProject) {
-    // No vault: plain claude + globals. mergeFragment handles the --append-system-prompt plumbing.
-    const globals = globalFragment(globalDir);
-    if (!globals) return { args: pass, env: process.env };
-    return { args: mergeFragment(pass, globals, []), env: process.env };
-  }
-  // A resolved project that is missing or a plain file (a stale IMPRNT_ROOT, a moved dir) must
-  // not get injected - the pointer would advertise a phantom vault and shadow reality. Warn and
-  // fall back to plain claude, same shape as nothing-registered. `imp lair` keeps its hard error.
-  if (!isDir(opts.vaultProject)) {
-    console.error(`imp: vault project not found at ${opts.vaultProject} - launching plain claude (re-run \`imprnt init\` there, or fix IMPRNT_ROOT)`);
-    return { args: pass, env: process.env };
-  }
-  // Harness plugins (a guard hook, a statusline) load ONLY through these flags — Claude Code never
-  // auto-discovers plugins/<name>/ — so unlike the cast fragment they ride every imp launch, inside
-  // the project included. PREPENDED, so a user-passed --settings comes later and wins (claude keeps
-  // the last occurrence of a single-value flag); --plugin-dir is repeatable, position is moot.
-  const harness = harnessFlags(opts.vaultProject);
-  // The project plugins enabled in this vault's CLAUDE.local.md. Used to dedupe globals: a plugin
-  // enabled BOTH project-locally and globally must inject once, so the global pass skips a name that
-  // the project cast already carries (outside) / loads natively (inside).
-  const projectPlugins = new Set(enabledPluginDirs(opts.vaultProject));
-  // Inside the project (root or any subdir) the project prompt + pointer load natively, so injecting
-  // those would double the cast - but globals live in <globalDir>/imprnt/, NOT in this project, so
-  // claude never loads them on its own here; imp must still inject them (deduped against the project
-  // plugins claude already loaded natively). The env is set either way (a subdir cwd strands the
-  // engine's ./vault default).
-  if (isInside(opts.cwd, opts.vaultProject)) {
-    const globals = globalFragment(globalDir, projectPlugins);
-    const args = globals ? mergeFragment(pass, globals, []) : pass;
-    return { args: [...harness, ...args], env: childEnv(opts.vaultProject) };
-  }
-
-  // Outside: inject the project cast + pointer, then the globals (deduped), then point --add-dir at
-  // the vault. One combined fragment so a user --append-system-prompt is merged into once.
-  const globals = globalFragment(globalDir, projectPlugins);
-  const fragment = [castFragment(opts.vaultProject), pointerFragment(opts.pkgRoot, opts.vaultProject), globals]
-    .filter(Boolean)
-    .join("\n\n");
-  const args = mergeFragment(pass, fragment, ["--add-dir", opts.vaultProject]);
-  return { args: [...harness, ...args], env: childEnv(opts.vaultProject) };
+  const spec = assembleSession(opts);
+  return { args: claudeRenderArgs(spec), env: spec.env };
 }
 
-// Spawn claude interactively and hand back its exit code. The two failure modes a novice
-// actually hits get a real message; everything else streams through inherited stdio.
-export function launchClaude(cwd: string, args: string[], env: NodeJS.ProcessEnv = process.env): number {
-  // A dead cwd surfaces as ENOENT from spawnSync (masquerading as "claude missing") and a
-  // plain-file cwd as ENOTDIR (blaming claude for a vault-path problem) - catch both first with
-  // the fix that actually applies.
+// ── Backends ─────────────────────────────────────────────────────────────────
+// A Backend renders a neutral SessionSpec into one agent's invocation. Adding a third (codex, a
+// local model) is a new entry + a line in `backends`, with ZERO change to assembleSession - the
+// litmus the vault already holds plugins to, one layer up. The spawn itself (launchBackend) is
+// generic: every backend is `spawnSync(backend.name, ...)`, so the binary name is the only thing
+// that differs there.
+export interface Backend {
+  readonly name: string;
+  // The one-line install hint shown when the binary is not on PATH.
+  readonly missingHint: string;
+  renderArgs(spec: SessionSpec): string[];
+}
+
+export const claudeBackend: Backend = {
+  name: "claude",
+  missingHint: "Install Claude Code first: npm i -g @anthropic-ai/claude-code",
+  renderArgs: claudeRenderArgs,
+};
+
+// Short aliases for the gemini models, so a user types `imp --gemini -m pro` (or `imprnt model pro`)
+// instead of the full id. A value that is not an alias passes through unchanged, so a full id always
+// works and a new model is usable before this map learns it. Vendor data, so it lives at the edge.
+const GEMINI_MODEL_ALIASES: Record<string, string> = {
+  pro: "gemini-3.1-pro-preview",
+  flash: "gemini-3.5-flash",
+  pro25: "gemini-2.5-pro",
+  lite: "gemini-3.1-flash-lite",
+  gemma31: "gemma-4-31b-it",
+  gemma26: "gemma-4-26b-a4b-it",
+};
+function expandGeminiModel(m: string): string {
+  return GEMINI_MODEL_ALIASES[m] ?? m;
+}
+
+// The Gemini edge. gemini has no --append-system-prompt: its native context channel is a GEMINI.md
+// the CLI discovers in every workspace directory (verified - a GEMINI.md in an --include-directories
+// dir loads as memory, @imports inlined and all). So the whole fragment (cast + pointer + globals,
+// since gemini loads none of it from the vault) is written to a throwaway GEMINI.md in a temp dir,
+// and that dir is added to the workspace alongside the vault: the user's cwd is never written to.
+// The temp dir is removed on process exit. claude-only harness plugins (statusline, timemachine)
+// have no gemini host, so they are skipped with one honest line, never silently.
+function geminiRenderArgs(spec: SessionSpec): string[] {
+  const includes: string[] = [];
+  const systemPrompt = joinFragments([spec.cast, spec.pointer, spec.globals]);
+  if (systemPrompt) {
+    const dir = mkdtempSync(join(tmpdir(), "imprnt-gemini-"));
+    writeFileSync(join(dir, "GEMINI.md"), systemPrompt + "\n");
+    process.on("exit", () => {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort: the OS reaps its tmp dir eventually
+      }
+    });
+    includes.push(dir);
+  }
+  includes.push(...spec.addDirs);
+  if (spec.pluginsRoot && harnessFlags(spec.pluginsRoot).length) {
+    console.error("imp: gemini does not host claude harness plugins (statusline, timemachine) - skipping them");
+  }
+  // skip-permissions on gemini means no gates at all: --yolo auto-approves every tool, and
+  // --skip-trust clears the workspace-trust prompt (a gate too). Each added only when not already
+  // passed (-y is gemini's short form of --yolo).
+  const lead: string[] = [];
+  if (spec.skipPermissions) {
+    if (!spec.passthrough.includes("--yolo") && !spec.passthrough.includes("-y")) lead.push("--yolo");
+    if (!spec.passthrough.includes("--skip-trust")) lead.push("--skip-trust");
+  }
+  // Model: expand an alias in a user-passed -m/--model value, else inject the configured default
+  // model (alias-expanded). The user's explicit -m always wins over the configured default.
+  const pass = [...spec.passthrough];
+  const mIdx = pass.findIndex((a) => a === "-m" || a === "--model");
+  if (mIdx >= 0 && pass[mIdx + 1] !== undefined) {
+    pass[mIdx + 1] = expandGeminiModel(pass[mIdx + 1]!);
+  } else if (mIdx < 0 && spec.model) {
+    pass.unshift("-m", expandGeminiModel(spec.model));
+  }
+  // --include-directories takes a comma-separated list, so one flag carries the context dir + vault.
+  const flags = includes.length ? ["--include-directories", includes.join(",")] : [];
+  return [...lead, ...flags, ...pass];
+}
+
+export const geminiBackend: Backend = {
+  name: "gemini",
+  missingHint: "Install the Gemini CLI first: npm i -g @google/gemini-cli",
+  renderArgs: geminiRenderArgs,
+};
+
+export const backends: Record<string, Backend> = {
+  claude: claudeBackend,
+  gemini: geminiBackend,
+};
+
+// Resolve a launch: which backend, whether to skip permission prompts, and the passthrough with
+// imp's own selection flags stripped (so the chosen agent never receives `--gemini`/`--yolo`/...).
+// Two independent precedence chains, each first-match-wins:
+//   backend: --gemini/--claude flag > IMPRNT_AGENT env > config.agent (per-machine) > claude.
+//   skip   : --yolo/--safe flag    > IMPRNT_YOLO env  > config.yolo  (per-machine) > off.
+// SHIPPED defaults (claude, prompts-on) are the safe ones, so a fresh install is unsurprising and a
+// stranger never inherits skip-permissions. An unknown agent falls back to claude with a warning.
+export function resolveLaunch(
+  passthrough: string[],
+  config: { agent?: string; yolo?: boolean } = {},
+): { backend: Backend; skipPermissions: boolean; passthrough: string[] } {
+  let agentFlag: string | undefined;
+  let yoloFlag: boolean | undefined;
+  const rest: string[] = [];
+  for (const a of passthrough) {
+    if (a === "--gemini") agentFlag = agentFlag ?? "gemini";
+    else if (a === "--claude") agentFlag = agentFlag ?? "claude";
+    else if (a === "--yolo") yoloFlag = yoloFlag ?? true;
+    else if (a === "--safe") yoloFlag = yoloFlag ?? false;
+    else rest.push(a);
+  }
+  const name = agentFlag ?? process.env.IMPRNT_AGENT ?? config.agent ?? "claude";
+  let backend = backends[name];
+  if (!backend) {
+    console.error(`imp: unknown agent "${name}" - falling back to claude (valid: ${Object.keys(backends).join(", ")})`);
+    backend = claudeBackend;
+  }
+  // IMPRNT_YOLO is read as a tri-state: present-and-truthy → on, present-and-falsy → off, absent →
+  // defer to config. "0"/"false"/"" count as off so `IMPRNT_YOLO=0 imp` is a clean one-shot opt-out.
+  const envYolo = "IMPRNT_YOLO" in process.env ? !["0", "false", ""].includes(process.env.IMPRNT_YOLO ?? "") : undefined;
+  const skipPermissions = yoloFlag ?? envYolo ?? config.yolo ?? false;
+  return { backend, skipPermissions, passthrough: rest };
+}
+
+// Spawn a resolved backend interactively and hand back its exit code. The cwd guard (a dead or
+// plain-file cwd) fires first with the fix that actually applies, never blaming the agent binary;
+// a missing binary gets the backend's own install hint. Generic over the backend: the binary name
+// is backend.name, everything else streams through inherited stdio.
+export function launchBackend(backend: Backend, cwd: string, args: string[], env: NodeJS.ProcessEnv = process.env): number {
   if (!isDir(cwd)) {
     console.error(`imp: vault project not found at ${cwd} — re-run \`imprnt init\` in its new location (add --register to switch the default)`);
     return 1;
   }
-  const r = spawnSync("claude", args, { cwd, stdio: "inherit", env });
+  const r = spawnSync(backend.name, args, { cwd, stdio: "inherit", env });
   if (r.error) {
     const code = (r.error as NodeJS.ErrnoException).code;
     console.error(
       code === "ENOENT"
-        ? "imp: `claude` not found on PATH. Install Claude Code first: npm i -g @anthropic-ai/claude-code"
-        : `imp: failed to launch claude: ${r.error.message}`,
+        ? `imp: \`${backend.name}\` not found on PATH. ${backend.missingHint}`
+        : `imp: failed to launch ${backend.name}: ${r.error.message}`,
     );
     return 1;
   }
-  // status is null when claude died to a signal — that is not a success.
+  // status is null when the agent died to a signal — that is not a success.
   return r.status ?? 1;
+}
+
+// Back-compat wrapper for the claude spawn: kept so the launch test's cwd-guard assertions stay green
+// and any caller still importing it works. New call sites use launchBackend with a resolved backend.
+export function launchClaude(cwd: string, args: string[], env: NodeJS.ProcessEnv = process.env): number {
+  return launchBackend(claudeBackend, cwd, args, env);
 }
