@@ -65,22 +65,17 @@ export function registerVault(
   const name = opts.name ?? "personal";
   reg.vaults[name] = path;
   reg.default = name;
-  const p = configPath();
-  // The registry is a convenience cache, never a thing that can block a command. An unwritable
-  // config dir (EACCES on a locked-down ~/.config) used to throw a raw stack AFTER init had fully
-  // scaffolded the vault, leaving it usable but un-init'd-looking. Catch it and return the failure
-  // as data so the caller prints one clean line and keeps the scaffold. Nothing was recorded.
-  try {
-    mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, JSON.stringify(reg, null, 2) + "\n");
-  } catch (e) {
-    return { status: "error", current: path, error: e instanceof Error ? e.message : String(e) };
-  }
+  // The registry is a convenience cache, never a thing that can block a command. An unwritable config
+  // dir (EACCES on a locked-down ~/.config) must not throw a raw stack AFTER init has scaffolded the
+  // vault; writeRegistry returns that failure as data so the caller prints one clean line and keeps
+  // the scaffold. Single writer, shared with the agent/yolo/model setters.
+  const w = writeRegistry(reg);
+  if (!w.ok) return { status: "error", current: path, error: w.error };
   return { status: "registered", current: path };
 }
 
 // The per-machine default agent backend (claude | gemini | ...), or undefined when unset. imp's
-// resolveBackend falls back through this between IMPRNT_AGENT and the built-in claude default, so a
+// resolveLaunch falls back through this between IMPRNT_AGENT and the built-in claude default, so a
 // work machine pins `gemini` once while a home machine stays on claude.
 export function readDefaultAgent(): string | undefined {
   return readRegistry().defaultAgent;

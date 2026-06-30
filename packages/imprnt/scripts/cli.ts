@@ -14,7 +14,7 @@ import { addGlobalModule, rmGlobalModule, listGlobalModules, installedGlobalDirs
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
 import { registerVault, vaultProjectRoot, registeredRoot, configPath, isVaultProject, readDefaultAgent, setDefaultAgent, readSkipPermissions, setSkipPermissions, readDefaultModel, setDefaultModel } from "./lib/registry.ts";
-import { assembleSession, resolveLaunch, launchBackend, parseGeminiSessions, type GeminiSession } from "./lib/launch.ts";
+import { assembleSession, resolveLaunch, launchBackend, GEMINI_MODEL_ALIASES } from "./lib/launch.ts";
 
 // packageRoot: the install location, source for templates/ + CLAUDE.md. Computed from THIS entry
 // file, which sits one level under the root in both dev (scripts/cli.ts) and the bundle (dist/cli.js).
@@ -137,60 +137,6 @@ function controlSlot(dst: string): Slot {
   return "blocked-non-regular-file";
 }
 
-// gemini's own /resume browser labels every chat with the raw <session_context> block (identical
-// garbage across chats), but `gemini --list-sessions` names each by its real first prompt. So on a
-// value-less `imp ... -r` for gemini, imp lists the project's chats and shows its OWN clean numbered
-// menu, then resumes the chosen one. Project-scoped by cwd, same as gemini keys sessions.
-function listGeminiSessions(cwd: string): GeminiSession[] {
-  const r = spawnSync("gemini", ["--list-sessions", "--skip-trust"], { cwd, encoding: "utf8" });
-  return parseGeminiSessions(r.stdout || "");
-}
-
-// Render the picker to stderr (stdout stays clean) and read a choice. A number resumes that chat,
-// Enter resumes the newest, q cancels (start fresh). An out-of-range entry falls back to fresh.
-async function pickGeminiSession(sessions: GeminiSession[], label: string): Promise<string | null> {
-  const cols = process.stdout.columns || 80;
-  const nameW = Math.max(20, Math.min(64, cols - 16));
-  const trunc = (s: string) => (s.length > nameW ? s.slice(0, nameW - 1) + "…" : s);
-  process.stderr.write(`\n  resume a chat — gemini · ${label}\n\n`);
-  sessions.forEach((s, i) => {
-    process.stderr.write(`  ${String(i + 1).padStart(2)}  ${trunc(s.name).padEnd(nameW)}  ${s.age.replace(/\s*ago$/, "")}\n`);
-  });
-  process.stderr.write("\n");
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  const answer = (await rl.question("  number to resume · enter for newest · q to cancel › ")).trim();
-  rl.close();
-  if (answer === "") return "latest";
-  if (answer.toLowerCase() === "q") return null;
-  const n = Number(answer);
-  if (Number.isInteger(n) && n >= 1 && n <= sessions.length) return sessions[n - 1]!.id;
-  process.stderr.write("  not a valid choice — starting a fresh session\n");
-  return null;
-}
-
-// If this is a gemini launch with a value-less -r/--resume in an interactive TTY, run the picker and
-// rewrite the passthrough to resume the chosen chat (or drop -r to start fresh). Everything else is
-// returned untouched: a non-gemini backend, an explicit `-r <value>`, or a non-interactive run (where
-// the backend's own default — resume latest — applies).
-async function resolveGeminiResume(backendName: string, passthrough: string[], cwd: string): Promise<string[]> {
-  if (backendName !== "gemini") return passthrough;
-  const rIdx = passthrough.findIndex((a) => a === "-r" || a === "--resume");
-  if (rIdx < 0) return passthrough;
-  const next = passthrough[rIdx + 1];
-  if (next !== undefined && !next.startsWith("-")) return passthrough; // explicit value, leave it
-  if (!(process.stdin.isTTY && process.stdout.isTTY)) return passthrough; // non-interactive
-  const sessions = listGeminiSessions(cwd);
-  if (!sessions.length) {
-    console.error("imp: no saved gemini chats for this project yet — starting fresh");
-    return passthrough.filter((_, i) => i !== rIdx);
-  }
-  const chosen = await pickGeminiSession(sessions, basename(cwd));
-  if (chosen === null) return passthrough.filter((_, i) => i !== rIdx); // cancel → fresh session
-  const out = [...passthrough];
-  out.splice(rIdx + 1, 0, chosen); // insert the resolved id (or "latest") as the -r value
-  return out;
-}
-
 // Delegated scripts parse process.argv.slice(2) themselves. Strip the subcommand token
 // so `cli.ts ingest <file>` looks like `ingest.ts <file>` to the delegate.
 if (["ingest", "recall", "snapshot", "check"].includes(cmd)) process.argv.splice(2, 1);
@@ -230,7 +176,7 @@ switch (cmd) {
     // engine on this vault. Personal history + permission grants accumulate in one resumable place.
     const home = requireVaultHome();
     const { backend, skipPermissions, passthrough } = resolveLaunch(rest, { agent: readDefaultAgent(), yolo: readSkipPermissions() });
-    const resumed = await resolveGeminiResume(backend.name, passthrough, home);
+    const resumed = backend.resolveResume ? await backend.resolveResume(passthrough, home) : passthrough;
     const spec = assembleSession({ cwd: home, vaultProject: home, pkgRoot, passthrough: resumed, skipPermissions, model: readDefaultModel() });
     process.exit(launchBackend(backend, home, backend.renderArgs(spec), spec.env));
   }
@@ -301,7 +247,7 @@ switch (cmd) {
       const m = readDefaultModel();
       console.log(`default model: ${m ?? "(agent's own default)"}`);
       console.log("set: imprnt model <alias|id>   clear: imprnt model off");
-      console.log("gemini aliases: pro=gemini-3.1-pro-preview, flash=gemini-3.5-flash, pro25=gemini-2.5-pro, lite=gemini-3.1-flash-lite, gemma31, gemma26");
+      console.log(`gemini aliases: ${Object.entries(GEMINI_MODEL_ALIASES).map(([k, v]) => `${k}=${v}`).join(", ")}`);
       break;
     }
     if (arg === "off" || arg === "default" || arg === "none") {
@@ -665,7 +611,7 @@ switch (cmd) {
       }
       const raw = bare ? [] : [cmd, ...rest];
       const { backend, skipPermissions, passthrough } = resolveLaunch(raw, { agent: readDefaultAgent(), yolo: readSkipPermissions() });
-      const resumed = await resolveGeminiResume(backend.name, passthrough, process.cwd());
+      const resumed = backend.resolveResume ? await backend.resolveResume(passthrough, process.cwd()) : passthrough;
       const spec = assembleSession({ cwd: process.cwd(), vaultProject: home, pkgRoot, passthrough: resumed, skipPermissions, model: readDefaultModel() });
       process.exit(launchBackend(backend, process.cwd(), backend.renderArgs(spec), spec.env));
     }
