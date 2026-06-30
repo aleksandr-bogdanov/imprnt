@@ -825,3 +825,41 @@ test("geminiBackend.resolveResume is a no-op without an interactive TTY, and for
   expect(await geminiBackend.resolveResume!(["-c"], "/x")).toEqual(["-c"]);
   expect(claudeBackend.resolveResume).toBeUndefined(); // claude has no resume hook (uses its own picker)
 });
+
+// --- round 2: claude --model, terminator-aware scans, single exit handler ---
+
+test("claudeBackend renders --model from a configured default (literal), only when the user passed none", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const on = claudeBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, model: "opus" }));
+  expect(on[on.indexOf("--model") + 1]).toBe("opus"); // literal - no gemini alias map on claude
+  const user = claudeBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, model: "opus", passthrough: ["--model", "sonnet"] }));
+  expect(user.filter((a) => a === "--model").length).toBe(1); // the user's --model wins
+  expect(user).not.toContain("opus");
+  const none = claudeBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot }));
+  expect(none).not.toContain("--model"); // no configured model -> byte-identical to before the feature
+});
+
+test("valuelessResumeIndex respects the -- terminator (a -r after -- is prompt text)", () => {
+  expect(valuelessResumeIndex(["--", "-r"])).toBe(-1); // -r after -- is not a resume flag
+  expect(valuelessResumeIndex(["-r", "--", "x"])).toBe(0); // -r before -- (value-less) still found
+  expect(valuelessResumeIndex(["-r", "3", "--", "x"])).toBe(-1); // explicit value before --
+});
+
+test("geminiBackend does not expand a -m that appears after a -- terminator (literal prompt text)", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const args = geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, passthrough: ["--", "tell me about", "-m", "flash"] }));
+  expect(args).not.toContain("gemini-3.5-flash"); // the post-`--` -m flash is NOT expanded
+  expect(args).toContain("flash"); // it survives verbatim as prompt text
+});
+
+test("geminiBackend registers at most one exit handler across repeated renders", () => {
+  const root = tmpVaultProject();
+  mkdirSync(join(root, "plugins", "x"), { recursive: true });
+  writeFileSync(join(root, "plugins", "x", "agent.md"), "# cast\n");
+  writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/x/agent.md\n");
+  const before = process.listenerCount("exit");
+  for (let i = 0; i < 4; i++) geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot }));
+  expect(process.listenerCount("exit") - before).toBeLessThanOrEqual(1);
+});
