@@ -2,7 +2,7 @@ import { test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { configPath, readRegistry, registeredRoot, registerVault, vaultProjectRoot, isVaultProject } from "./registry.ts";
+import { configPath, readRegistry, registeredRoot, registerVault, vaultProjectRoot, isVaultProject, readDefaultModel, setDefaultModel } from "./registry.ts";
 
 // Every test sandboxes the config under a throwaway XDG_CONFIG_HOME so the suite never touches
 // (or depends on) the developer's real ~/.config/imprnt. Env is restored after each test.
@@ -242,4 +242,41 @@ test("a CLAUDE.local.md alone does NOT mark a vault project (coding repos carry 
   const repo = tmpDir();
   writeFileSync(join(repo, "CLAUDE.local.md"), "# repo-local\n");
   expect(vaultProjectRoot(repo)).toBe(registered);
+});
+
+// --- the per-backend default model (the `imprnt model` knob) ---
+// One unscoped string let a gemini alias like `pro` ride into a one-off `imp --claude` session
+// (claude takes the value literally and rejects it), so the knob is stored per backend.
+
+test("readDefaultModel is scoped per backend - one backend's model never leaks into the other", () => {
+  setDefaultModel("pro", "gemini");
+  setDefaultModel("opus", "claude");
+  expect(readDefaultModel("gemini")).toBe("pro");
+  expect(readDefaultModel("claude")).toBe("opus");
+  setDefaultModel("", "gemini"); // clear gemini's only
+  expect(readDefaultModel("gemini")).toBeUndefined();
+  expect(readDefaultModel("claude")).toBe("opus");
+});
+
+test("a legacy unscoped defaultModel string applies ONLY to the machine's stored default agent", () => {
+  // The pre-scoping config shape: one string, set on a gemini-pinned machine. It must keep working
+  // for gemini launches and must NOT poison a per-session `imp --claude`.
+  mkdirSync(join(xdg, "imprnt"), { recursive: true });
+  writeFileSync(configPath(), JSON.stringify({ vaults: {}, defaultAgent: "gemini", defaultModel: "pro" }));
+  expect(readDefaultModel("gemini")).toBe("pro");
+  expect(readDefaultModel("claude")).toBeUndefined();
+  // No stored agent: the legacy string belonged to the built-in claude default.
+  writeFileSync(configPath(), JSON.stringify({ vaults: {}, defaultModel: "opus" }));
+  expect(readDefaultModel("claude")).toBe("opus");
+  expect(readDefaultModel("gemini")).toBeUndefined();
+});
+
+test("setDefaultModel migrates a legacy string into the scoped map instead of dropping it", () => {
+  mkdirSync(join(xdg, "imprnt"), { recursive: true });
+  writeFileSync(configPath(), JSON.stringify({ vaults: {}, defaultAgent: "gemini", defaultModel: "pro" }));
+  setDefaultModel("opus", "claude"); // a write for the OTHER backend
+  expect(readDefaultModel("gemini")).toBe("pro"); // gemini's inherited default survives, scoped now
+  expect(readDefaultModel("claude")).toBe("opus");
+  expect(readRegistry().defaultModel).toBeUndefined(); // the unscoped field is gone from disk
+  expect(readRegistry().defaultModels).toEqual({ gemini: "pro", claude: "opus" });
 });

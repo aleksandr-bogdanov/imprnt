@@ -863,3 +863,37 @@ test("geminiBackend registers at most one exit handler across repeated renders",
   for (let i = 0; i < 4; i++) geminiBackend.renderArgs(assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot }));
   expect(process.listenerCount("exit") - before).toBeLessThanOrEqual(1);
 });
+
+// --- round 3: the already-passed dedup scans respect the -- terminator too ---
+// resolveLaunch, the gemini model scan, and valuelessResumeIndex already stop at `--`; the four
+// dedup scans (claude --dangerously-skip-permissions/--model, gemini --yolo/-y/--skip-trust) must
+// as well, or a flag-looking word in an unquoted prompt silently suppresses a configured default.
+
+test("claudeBackend still injects --model and --dangerously-skip-permissions when the words appear only after -- (prompt text)", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const prompt = ["--", "fix", "the", "--model", "help", "and", "--dangerously-skip-permissions", "docs"];
+  const args = claudeBackend.renderArgs(
+    assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, skipPermissions: true, model: "opus", passthrough: [...prompt] }),
+  );
+  const term = args.indexOf("--");
+  expect(args.slice(0, term)).toContain("--dangerously-skip-permissions"); // still injected, before the terminator
+  const mIdx = args.indexOf("--model");
+  expect(mIdx).toBeGreaterThanOrEqual(0);
+  expect(mIdx).toBeLessThan(term); // the injected flag, not the prompt token
+  expect(args[mIdx + 1]).toBe("opus");
+  expect(args.slice(term)).toEqual(prompt); // the prompt tail rides through verbatim
+});
+
+test("geminiBackend still injects --yolo AND --skip-trust when those words appear only after -- (no half-yolo session)", () => {
+  const root = tmpVaultProject();
+  writeFileSync(join(root, "CLAUDE.local.md"), "");
+  const prompt = ["--", "explain", "what", "the", "--yolo", "flag", "and", "--skip-trust", "and", "-y", "do"];
+  const args = geminiBackend.renderArgs(
+    assembleSession({ cwd: "/elsewhere", vaultProject: root, pkgRoot, skipPermissions: true, passthrough: [...prompt] }),
+  );
+  const term = args.indexOf("--");
+  expect(args.slice(0, term)).toContain("--yolo");
+  expect(args.slice(0, term)).toContain("--skip-trust");
+  expect(args.slice(term)).toEqual(prompt); // the prompt tail rides through verbatim
+});
