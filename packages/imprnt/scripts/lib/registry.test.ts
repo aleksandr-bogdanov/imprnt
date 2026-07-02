@@ -137,6 +137,18 @@ test("corrupt config reads as empty and is overwritten by the next register", ()
   expect(registeredRoot()).toBe(a);
 });
 
+test("unknown config keys survive a read→write round-trip", () => {
+  // A newer imprnt's key (or a hand-added one) must not silently vanish the next time an older
+  // binary persists a preference — readRegistry used to rebuild only the five known keys.
+  mkdirSync(join(xdg, "imprnt"), { recursive: true });
+  writeFileSync(configPath(), JSON.stringify({ vaults: {}, futureKnob: { nested: true }, note: "hand-edited" }));
+  setDefaultModel("opus", "claude"); // any preference setter triggers the write-back
+  const onDisk = JSON.parse(readFileSync(configPath(), "utf8"));
+  expect(onDisk.futureKnob).toEqual({ nested: true });
+  expect(onDisk.note).toBe("hand-edited");
+  expect(onDisk.defaultModels).toEqual({ claude: "opus" }); // the known write still landed
+});
+
 test("non-string vault values are dropped instead of flowing into path code", () => {
   mkdirSync(join(xdg, "imprnt"), { recursive: true });
   writeFileSync(configPath(), JSON.stringify({ default: "personal", vaults: { personal: 123 } }));

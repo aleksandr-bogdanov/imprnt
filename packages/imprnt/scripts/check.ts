@@ -284,6 +284,11 @@ const memoryStores = hostMemoryStores();
 // invisible-knowledge leak this sweep exists to catch. Anything beyond the "# Memory index" header
 // and blank lines counts as content. Unreadable (or absent) reads as bare - the sweep is read-only
 // and best-effort over state imprnt does not own.
+//
+// PINNED ASSUMPTION: the sweep is deliberately NON-recursive. Claude Code writes auto-memory as a
+// FLAT dir - MEMORY.md plus sibling memory/*.md topic files, never nested subdirectories - so one
+// readdirSync per store sees everything. If the host ever nests memory dirs, the readdirSync below
+// must become a walk, or a nested note slips past the sweep unseen.
 function memoryIndexHasContent(dir: string): boolean {
   try {
     return readFileSync(join(dir, "MEMORY.md"), "utf8")

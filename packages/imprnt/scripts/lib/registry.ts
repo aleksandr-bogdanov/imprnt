@@ -6,7 +6,9 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-export type Registry = { default?: string; vaults: Record<string, string>; defaultAgent?: string; skipPermissions?: boolean; defaultModel?: string; defaultModels?: Record<string, string> };
+// The index signature carries UNKNOWN keys through a read→write round-trip: a newer imprnt's config
+// key (or a hand-added one) must survive an older binary's preference write, not silently vanish.
+export type Registry = { default?: string; vaults: Record<string, string>; defaultAgent?: string; skipPermissions?: boolean; defaultModel?: string; defaultModels?: Record<string, string> } & Record<string, unknown>;
 
 export function configPath(): string {
   const base = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
@@ -24,7 +26,12 @@ export function readRegistry(): Registry {
     for (const [k, v] of Object.entries(raw?.vaults ?? {})) if (typeof v === "string") vaults[k] = v;
     const defaultModels: Record<string, string> = {};
     for (const [k, v] of Object.entries(raw?.defaultModels ?? {})) if (typeof v === "string") defaultModels[k] = v;
+    // Spread the raw object FIRST, then override the known keys with their validated values: unknown
+    // keys ride along untouched (writeRegistry serializes the whole object back), while an invalid
+    // known value still reads as undefined and drops from the next write, exactly as before.
+    const passthrough = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
     return {
+      ...passthrough,
       default: typeof raw?.default === "string" ? raw.default : undefined,
       vaults,
       defaultAgent: typeof raw?.defaultAgent === "string" ? raw.defaultAgent : undefined,

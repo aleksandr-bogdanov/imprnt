@@ -636,7 +636,10 @@ export function resolveLaunch(
     else rest.push(a);
   }
   const name = agentFlag ?? process.env.IMPRNT_AGENT ?? config.agent ?? "claude";
-  let backend = backends[name];
+  // Object.hasOwn, not a bare index: backends is a plain object, so backends["toString"] is the
+  // inherited Function — truthy, and it would ride to launch and crash at renderArgs. An inherited
+  // key must read as unknown and take the fallback below.
+  let backend = Object.hasOwn(backends, name) ? backends[name] : undefined;
   if (!backend) {
     console.error(`imp: unknown agent "${name}" - falling back to claude (valid: ${Object.keys(backends).join(", ")})`);
     backend = claudeBackend;

@@ -9,11 +9,12 @@
 //
 // Scoring (standard BM25 with field boosts):
 //   - Each note is tokenized into terms (lowercased, split on non Unicode-letter/number characters).
-//   - A term's occurrences in the TITLE/aliases count 3x, in TAGS and the SUMMARY 2x, in BODY 1x —
+//   - A term's occurrences in the TITLE/aliases count 3x, in TAGS 2x, in the SUMMARY and BODY 1x —
 //     folded into the term frequency, so "harbor" in a title outweighs "harbor" buried in prose. One
 //     BM25 pass. The `summary` is the LLM's curated one-line "what this note is about" (written once on
-//     the write path), so its terms are aboutness, the same band as tags - and it is the only field
-//     that carries a note's defining role word ("doctor", "founder") when the body never restates it.
+//     the write path), indexed deliberately in the BODY band (a boost let generic summary words drown
+//     rare body terms) - what indexing it adds is the note's defining role word ("doctor", "founder")
+//     when the body never restates it.
 //   - idf(t) = ln(1 + (N - df + 0.5) / (df + 0.5));  k1 = 1.5, b = 0.75.
 //   - score = Σ_query-terms idf(t) * (tf*(k1+1)) / (tf + k1*(1 - b + b*dl/avgdl)).
 //   - idf subsumes the old df-weighting (a rare matched term scores; a common one barely moves the
