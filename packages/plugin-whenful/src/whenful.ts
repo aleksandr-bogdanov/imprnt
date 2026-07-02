@@ -62,7 +62,7 @@ async function runSync(): Promise<never> {
 
   if (ids.length === 0) {
     console.log("whenful sync: no links in links.tsv yet — nothing to mirror.");
-    console.log("  add task↔note rows to plugins/whenful/links.tsv, then sync.");
+    console.log("  add task↔note rows to plugins/whenful/links.tsv (links.example.tsv shows the format), then sync.");
     process.exit(0);
   }
 

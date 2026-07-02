@@ -9,7 +9,7 @@
     "check.js",
     "kopeika.js",
     "profile.example.json",
-    "proposed",
+    "proposed/.gitkeep",
     "docs"
   ],
   "scripts": {

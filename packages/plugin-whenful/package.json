@@ -8,7 +8,7 @@
     "README.md",
     "check.js",
     "whenful.js",
-    "links.tsv",
+    "links.example.tsv",
     "proposed/.gitkeep",
     "mirror/.gitkeep"
   ],
