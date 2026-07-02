@@ -260,9 +260,11 @@ export type SessionSpec = {
   // (flag > env > per-machine config > off), so the SHIPPED default is safe - a fresh install
   // prompts, and only a machine where git + snapshots are the net opts in.
   skipPermissions: boolean;
-  // The per-machine default model (a backend alias like `pro`, or a full id), or undefined to let
-  // the agent use its own default. A backend that takes a model (gemini, via -m) expands the alias
-  // and injects it when the user did not pass their own -m; others ignore it.
+  // The per-machine default model for the CHOSEN backend (an alias like `pro`, or a full id), or
+  // undefined to let the agent use its own default. Callers read it backend-scoped
+  // (readDefaultModel(backend.name)), so a gemini alias stored on a gemini-pinned machine never
+  // rides into a one-off `imp --claude` session (claude takes the value literally and rejects
+  // `pro`). Each renderer injects it only when the user did not pass their own model flag.
   model?: string;
   env: NodeJS.ProcessEnv;
   passthrough: string[];
@@ -322,6 +324,15 @@ function joinFragments(parts: string[]): string {
   return parts.filter(Boolean).join("\n\n");
 }
 
+// Everything before the first `--` terminator - the only region where the user's tokens are flags.
+// Every already-passed dedup scan must look here ONLY: a flag-looking word in post-`--` prompt text
+// (`imp -- explain what the --yolo flag does`) is the agent's prose and must not suppress an
+// injected default. The same discipline resolveLaunch and valuelessResumeIndex apply to their scans.
+function flagHead(args: string[]): string[] {
+  const term = args.indexOf("--");
+  return term < 0 ? args : args.slice(0, term);
+}
+
 // The Claude edge. claude loads the project cast + pointer natively from cwd when inside the vault,
 // so inside it is handed ONLY the globals; outside it gets the whole fragment. The systemPrompt rides
 // --append-system-prompt (merged into a user-passed one, never a second flag); addDirs become
@@ -333,12 +344,14 @@ function claudeRenderArgs(spec: SessionSpec): string[] {
   const harness = spec.pluginsRoot ? harnessFlags(spec.pluginsRoot) : [];
   const extra = spec.addDirs.flatMap((d) => ["--add-dir", d]);
   // skip-permissions (claude's --dangerously-skip-permissions) and a configured default model ride as
-  // prepended flags when the user did not already pass their own. claude takes the model value
+  // prepended flags when the user did not already pass their own (scanned in the flag head only - a
+  // "--model" inside post-`--` prompt text is not the user's flag). claude takes the model value
   // LITERALLY (the gemini alias map is gemini's), so a model id/alias claude understands works. Both
   // stay absent unless set, so a no-config claude launch is byte-identical to the pre-feature launcher.
   const lead: string[] = [];
-  if (spec.skipPermissions && !spec.passthrough.includes("--dangerously-skip-permissions")) lead.push("--dangerously-skip-permissions");
-  if (spec.model && !spec.passthrough.some((a) => a === "--model" || a.startsWith("--model="))) lead.push("--model", spec.model);
+  const head = flagHead(spec.passthrough);
+  if (spec.skipPermissions && !head.includes("--dangerously-skip-permissions")) lead.push("--dangerously-skip-permissions");
+  if (spec.model && !head.some((a) => a === "--model" || a.startsWith("--model="))) lead.push("--model", spec.model);
   const pass = lead.length ? [...lead, ...spec.passthrough] : spec.passthrough;
   const body = systemPrompt ? mergeFragment(pass, systemPrompt, extra) : [...pass, ...extra];
   return [...harness, ...body];
@@ -446,11 +459,13 @@ function geminiRenderArgs(spec: SessionSpec): string[] {
   }
   // skip-permissions on gemini means no gates at all: --yolo auto-approves every tool, and
   // --skip-trust clears the workspace-trust prompt (a gate too). Each added only when not already
-  // passed (-y is gemini's short form of --yolo).
+  // passed in the flag head (-y is gemini's short form of --yolo; a "--yolo" in post-`--` prompt
+  // text must not produce a half-yolo session with --skip-trust alone).
   const lead: string[] = [];
+  const head = flagHead(spec.passthrough);
   if (spec.skipPermissions) {
-    if (!spec.passthrough.includes("--yolo") && !spec.passthrough.includes("-y")) lead.push("--yolo");
-    if (!spec.passthrough.includes("--skip-trust")) lead.push("--skip-trust");
+    if (!head.includes("--yolo") && !head.includes("-y")) lead.push("--yolo");
+    if (!head.includes("--skip-trust")) lead.push("--skip-trust");
   }
   // Model: expand an alias to the full id in a user-passed -m/--model (space OR equals form), else
   // inject the configured default model (alias-expanded). A user-passed model flag of ANY form wins
@@ -458,8 +473,7 @@ function geminiRenderArgs(spec: SessionSpec): string[] {
   // scan respects the `--` terminator (a -m in literal prompt text is the agent's, not imp's to
   // expand), the same discipline valuelessResumeIndex applies to -r.
   const pass = [...spec.passthrough];
-  const mTerm = pass.indexOf("--");
-  const mEnd = mTerm < 0 ? pass.length : mTerm;
+  const mEnd = flagHead(pass).length;
   const isModelFlag = (a: string) => a === "-m" || a === "--model" || a.startsWith("-m=") || a.startsWith("--model=");
   const mIdx = pass.slice(0, mEnd).findIndex(isModelFlag);
   if (mIdx >= 0) {

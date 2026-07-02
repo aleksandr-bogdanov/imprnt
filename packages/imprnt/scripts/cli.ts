@@ -177,7 +177,7 @@ switch (cmd) {
     const home = requireVaultHome();
     const { backend, skipPermissions, passthrough } = resolveLaunch(rest, { agent: readDefaultAgent(), yolo: readSkipPermissions() });
     const resumed = backend.resolveResume ? await backend.resolveResume(passthrough, home) : passthrough;
-    const spec = assembleSession({ cwd: home, vaultProject: home, pkgRoot, passthrough: resumed, skipPermissions, model: readDefaultModel() });
+    const spec = assembleSession({ cwd: home, vaultProject: home, pkgRoot, passthrough: resumed, skipPermissions, model: readDefaultModel(backend.name) });
     process.exit(launchBackend(backend, home, backend.renderArgs(spec), spec.env));
   }
   case "context": {
@@ -238,27 +238,33 @@ switch (cmd) {
     break;
   }
   case "model": {
-    // The per-machine default model imp passes to the agent. Bare prints the current one; a value
-    // (a backend alias like `pro` or a full id) persists it; `off`/`default` clears it so the agent
-    // uses its own default again. A backend that takes a model (gemini, via -m) expands the alias
-    // and injects it when you did not pass your own -m; per-session `imp --gemini -m <x>` overrides.
+    // The per-machine default model imp passes to the agent, stored PER BACKEND: a gemini alias
+    // like `pro` breaks a claude launch (claude takes the value literally), so this command reads
+    // and writes the entry for the CURRENT default agent only, and each launch reads the entry for
+    // the backend it actually picked - `imp --claude` on a gemini-pinned machine inherits nothing.
+    // Bare prints the current one; a value (a backend alias like `pro` or a full id) persists it;
+    // `off`/`default` clears it so the agent uses its own default again. A backend that takes an
+    // alias (gemini, via -m) expands it; per-session `imp --gemini -m <x>` overrides.
+    const envAgent = process.env.IMPRNT_AGENT;
+    const agentName = envAgent ?? readDefaultAgent() ?? "claude";
+    const agent = agentName in backends ? agentName : "claude";
     const [arg] = rest;
     if (!arg) {
-      const m = readDefaultModel();
-      console.log(`default model: ${m ?? "(agent's own default)"}`);
+      const m = readDefaultModel(agent);
+      console.log(`default model for ${agent}: ${m ?? "(agent's own default)"}`);
       console.log("set: imprnt model <alias|id>   clear: imprnt model off");
       console.log(`gemini aliases: ${Object.entries(GEMINI_MODEL_ALIASES).map(([k, v]) => `${k}=${v}`).join(", ")}`);
       break;
     }
     if (arg === "off" || arg === "default" || arg === "none") {
-      const r = setDefaultModel("");
+      const r = setDefaultModel("", agent);
       if (!r.ok) { console.error(`could not clear default model (${configPath()}): ${r.error}`); process.exit(1); }
-      console.log(`default model cleared (${configPath()}) — the agent uses its own default`);
+      console.log(`default model for ${agent} cleared (${configPath()}) — the agent uses its own default`);
       break;
     }
-    const r = setDefaultModel(arg);
+    const r = setDefaultModel(arg, agent);
     if (!r.ok) { console.error(`could not set default model (${configPath()}): ${r.error}`); process.exit(1); }
-    console.log(`default model set to ${arg} (${configPath()})`);
+    console.log(`default model for ${agent} set to ${arg} (${configPath()})`);
     break;
   }
   case "plugin": {
@@ -612,7 +618,7 @@ switch (cmd) {
       const raw = bare ? [] : [cmd, ...rest];
       const { backend, skipPermissions, passthrough } = resolveLaunch(raw, { agent: readDefaultAgent(), yolo: readSkipPermissions() });
       const resumed = backend.resolveResume ? await backend.resolveResume(passthrough, process.cwd()) : passthrough;
-      const spec = assembleSession({ cwd: process.cwd(), vaultProject: home, pkgRoot, passthrough: resumed, skipPermissions, model: readDefaultModel() });
+      const spec = assembleSession({ cwd: process.cwd(), vaultProject: home, pkgRoot, passthrough: resumed, skipPermissions, model: readDefaultModel(backend.name) });
       process.exit(launchBackend(backend, process.cwd(), backend.renderArgs(spec), spec.env));
     }
     console.log(`imprnt — deterministic-first markdown knowledge vault
@@ -632,7 +638,7 @@ engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt context                           print the vault contract — agents run this before writing any note
   imprnt agent [claude|gemini]             show or set the per-machine default agent backend for imp
   imprnt yolo [on|off]                      show or set the per-machine skip-permissions default for imp
-  imprnt model [alias|id|off]               show or set the per-machine default model (gemini aliases: pro, flash, pro25, lite, ...)
+  imprnt model [alias|id|off]               show or set the per-machine default model for the current default agent (gemini aliases: pro, flash, pro25, lite, ...)
   imprnt check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.js
   imprnt ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
   imprnt hot [--vault D]                   needs-review + the session primer

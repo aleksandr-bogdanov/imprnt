@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-export type Registry = { default?: string; vaults: Record<string, string>; defaultAgent?: string; skipPermissions?: boolean; defaultModel?: string };
+export type Registry = { default?: string; vaults: Record<string, string>; defaultAgent?: string; skipPermissions?: boolean; defaultModel?: string; defaultModels?: Record<string, string> };
 
 export function configPath(): string {
   const base = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
@@ -22,12 +22,15 @@ export function readRegistry(): Registry {
     const raw = JSON.parse(readFileSync(configPath(), "utf8"));
     const vaults: Record<string, string> = {};
     for (const [k, v] of Object.entries(raw?.vaults ?? {})) if (typeof v === "string") vaults[k] = v;
+    const defaultModels: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw?.defaultModels ?? {})) if (typeof v === "string") defaultModels[k] = v;
     return {
       default: typeof raw?.default === "string" ? raw.default : undefined,
       vaults,
       defaultAgent: typeof raw?.defaultAgent === "string" ? raw.defaultAgent : undefined,
       skipPermissions: typeof raw?.skipPermissions === "boolean" ? raw.skipPermissions : undefined,
       defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : undefined,
+      defaultModels: Object.keys(defaultModels).length ? defaultModels : undefined,
     };
   } catch {
     return { vaults: {} };
@@ -103,19 +106,34 @@ export function setSkipPermissions(on: boolean): { ok: boolean; error?: string }
   return writeRegistry(reg);
 }
 
-// The per-machine default model the agent runs (a backend alias like `pro` or a full id), or
-// undefined when unset. A backend that takes a model (gemini, via -m) expands and injects it; one
-// that does not just ignores it. Unset means "let the agent use its own configured default".
-export function readDefaultModel(): string | undefined {
-  return readRegistry().defaultModel;
+// The per-machine default model for ONE backend (a backend alias like `pro` or a full id), or
+// undefined when unset. Scoped PER BACKEND on purpose: every backend consumes the value (gemini
+// alias-expands it into -m, claude passes it literally to --model), so a single unscoped knob let a
+// gemini alias like `pro` ride into a one-off `imp --claude` session and break it. The legacy
+// unscoped `defaultModel` string is honored only for the machine's stored default agent (the
+// backend the user was on when they set it) and migrates to the scoped map on the next write.
+// Unset means "let the agent use its own configured default".
+export function readDefaultModel(agent: string): string | undefined {
+  const reg = readRegistry();
+  const scoped = reg.defaultModels?.[agent];
+  if (scoped !== undefined) return scoped;
+  return agent === (reg.defaultAgent ?? "claude") ? reg.defaultModel : undefined;
 }
 
-// Persist the default model, preserving the rest of the registry. An empty value clears it (the
-// field is dropped, so readDefaultModel reads undefined and the agent uses its own default). Same
-// tolerance as above.
-export function setDefaultModel(model: string): { ok: boolean; error?: string } {
+// Persist the default model for ONE backend, preserving the rest of the registry. An empty value
+// clears that backend's entry (readDefaultModel reads undefined and the agent uses its own
+// default). A legacy unscoped `defaultModel` string is folded into the map first - under the agent
+// it was honored for - so a write for one backend never silently drops the other's inherited
+// default. Same tolerance as above.
+export function setDefaultModel(model: string, agent: string): { ok: boolean; error?: string } {
   const reg = readRegistry();
-  reg.defaultModel = model || undefined;
+  const models = { ...(reg.defaultModels ?? {}) };
+  const legacyAgent = reg.defaultAgent ?? "claude";
+  if (reg.defaultModel && models[legacyAgent] === undefined) models[legacyAgent] = reg.defaultModel;
+  reg.defaultModel = undefined;
+  if (model) models[agent] = model;
+  else delete models[agent];
+  reg.defaultModels = Object.keys(models).length ? models : undefined;
   return writeRegistry(reg);
 }
 
