@@ -206,7 +206,10 @@ switch (cmd) {
       console.log("set: imprnt agent <claude|gemini>   override one session: imp --gemini | imp --claude");
       break;
     }
-    if (!(name in backends)) {
+    // Object.hasOwn, not `in`: backends is a plain object, so `"toString" in backends` is true via
+    // the prototype chain — persisting such a name would then crash every launch (resolveLaunch
+    // guards its own lookup the same way).
+    if (!Object.hasOwn(backends, name)) {
       console.error(`unknown agent "${name}" — valid: ${Object.keys(backends).join(", ")}`);
       process.exit(1);
     }
@@ -550,7 +553,12 @@ switch (cmd) {
     // Best-effort: a filesystem without POSIX modes (Windows) or a dir we cannot chmod must NOT abort a
     // successful scaffold — warn once and carry on, same tolerance as a failed registration below.
     try {
+      // Say so when the bits actually change: a re-init used to re-chmod silently and then print
+      // "left untouched", which was a lie about the one thing init did do. An already-0700 root
+      // stays quiet, so the line only ever reports a real change (fresh scaffold or drifted mode).
+      const prevMode = statSync(target).mode & 0o777;
       chmodSync(target, 0o700);
+      if (prevMode !== 0o700) console.log(`locked ${target} to owner-only (chmod 700, was ${prevMode.toString(8).padStart(3, "0")})`);
     } catch (e) {
       console.error(`could not set owner-only (chmod 700) on ${target}: ${e instanceof Error ? e.message : String(e)} — tighten it by hand to honor the private-vault promise`);
     }

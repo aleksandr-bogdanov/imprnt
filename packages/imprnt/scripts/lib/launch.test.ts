@@ -599,6 +599,23 @@ test("resolveLaunch: an unknown agent falls back to claude with a warning, never
   expect(errors[0]).toContain("grok");
 });
 
+test("resolveLaunch: a prototype-chain name (toString) reads as unknown, never as a backend", () => {
+  // backends is a plain object, so backends["toString"] is the inherited Function — truthy. Without
+  // Object.hasOwn it rode to launch as the backend and crashed at renderArgs on every imp.
+  const errors: string[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+  try {
+    expect(resolveLaunch([], { agent: "toString" }).backend.name).toBe("claude");
+    process.env.IMPRNT_AGENT = "hasOwnProperty";
+    expect(resolveLaunch([]).backend.name).toBe("claude");
+  } finally {
+    console.error = orig;
+  }
+  expect(errors.length).toBe(2);
+  expect(errors[0]).toContain("toString");
+});
+
 test("resolveLaunch: --yolo / --safe sets skipPermissions and is stripped from the passthrough", () => {
   const y = resolveLaunch(["-c", "--yolo"]);
   expect(y.skipPermissions).toBe(true);
