@@ -27,7 +27,14 @@ test("npm pack ships the .gitkeep placeholder but never planted proposed data", 
   writeFileSync(join(dir, "proposed", "note.md"), "staged vault note with real balances - must never ship\n");
 
   // --ignore-scripts skips prepack (the copy has no src/ to build); --json lists the tarball.
-  const proc = Bun.spawnSync(["npm", "pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: dir });
+  const proc = Bun.spawnSync(["npm", "pack", "--dry-run", "--json", "--ignore-scripts"], {
+    cwd: dir,
+    env: {
+      ...process.env,
+      HOME: dir,
+      npm_config_cache: join(dir, ".npm-cache"),
+    },
+  });
   expect(proc.exitCode).toBe(0);
   const [report] = JSON.parse(proc.stdout.toString());
   const shipped = report.files.map((f: { path: string }) => f.path);
