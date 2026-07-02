@@ -2,9 +2,9 @@ import { test, expect, describe } from "bun:test";
 import { classify, scamTells, belowFloor } from "./rate.ts";
 import { parseFacts, type Facts } from "./facts.ts";
 
-// The 6660 fact sheet, as shipped: artikelnummer + cable + age deliberately EMPTY (unverified).
+// The 6660 fact sheet, shaped like a real one: artikelnummer + cable + age deliberately EMPTY (unverified).
 const facts6660: Facts = parseFacts(`
-listing: 3432924231
+listing: 9000000001
 model: FRITZ!Box 6660 Cable
 variant: DOCSIS 3.1, WiFi 6, Retail-Version
 artikelnummer:
@@ -21,11 +21,11 @@ shipping: Versand möglich gegen Aufpreis
 `);
 
 describe("scam detection (the whole point — hostile text, zero LLM)", () => {
-  test("the real David Thiess message: paypal + name-mismatch + instant-full-price, >=3 tells", () => {
+  test("the classic PayPal + drop-address pitch: paypal + name-mismatch + instant-full-price, >=3 tells", () => {
     const body =
       "Könnten Sie mir Ihre PayPal-Daten schicken, ich zahle den Preis zusammen mit dem Versand.\n" +
-      "Lieferung bitte an:\nEmpfänger: Cara Burrichter\nHaspelstrasse 24\nPLZ 35037 Marburg";
-    const r = classify(body, "David Thiess", facts6660);
+      "Lieferung bitte an:\nEmpfänger: Mara Weidmann\nMusterstrasse 12\nPLZ 12345 Musterstadt";
+    const r = classify(body, "Timo Falkner", facts6660);
     expect(r.rating).toBe("scam");
     expect(r.tells).toContain("paypal");
     expect(r.tells).toContain("name-mismatch");
@@ -36,10 +36,21 @@ describe("scam detection (the whole point — hostile text, zero LLM)", () => {
 
   test("name-mismatch needs a payer/recipient surname difference, not just any name", () => {
     // Same surname as counterpart -> NOT a mismatch (a buyer shipping to themselves).
-    const same = scamTells("Empfänger: David Thiess, Haspelstr. 24", "David Thiess");
+    const same = scamTells("Empfänger: Timo Falkner, Musterstr. 12", "Timo Falkner");
     expect(same).not.toContain("name-mismatch");
-    const diff = scamTells("Empfänger: Cara Burrichter, Haspelstr. 24", "David Thiess");
+    const diff = scamTells("Empfänger: Mara Weidmann, Musterstr. 12", "Timo Falkner");
     expect(diff).toContain("name-mismatch");
+  });
+
+  test("a tell-free follow-up can NOT wash out an earlier pitch (tells run over the whole history)", () => {
+    const pitch = "Könnten Sie mir Ihre PayPal-Daten schicken, ich zahle den Preis zusammen mit dem Versand.";
+    // Alone, the follow-up is harmless interest…
+    expect(classify("Na, noch da?", "Timo Falkner", facts6660).rating).toBe("interest");
+    // …but with the pitch in the history, the thread stays scam.
+    const r = classify("Na, noch da?", "Timo Falkner", facts6660, "selling", [pitch]);
+    expect(r.rating).toBe("scam");
+    expect(r.tells).toContain("paypal");
+    expect(r.draft).toBeNull();
   });
 
   test("an honest 'I'll pay full price' WITHOUT a payment push is not a scam", () => {
@@ -56,7 +67,7 @@ describe("scam detection (the whole point — hostile text, zero LLM)", () => {
 
 describe("the buckets, priority order scam > offer > faq > pickup > interest > odd", () => {
   test("offer: amount extracted, flagged below the floor", () => {
-    const r = classify("ich würde dir 70€ geben", "Frank Pürschel", facts6660);
+    const r = classify("ich würde dir 70€ geben", "Frank Bergmann", facts6660);
     expect(r.rating).toBe("offer");
     expect(r.offer_amount).toBe(70);
     expect(belowFloor(r.offer_amount, facts6660)).toBe(true);

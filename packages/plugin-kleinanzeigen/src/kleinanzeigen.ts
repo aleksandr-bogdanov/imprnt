@@ -24,7 +24,7 @@ import { loadFacts } from "./facts.ts";
 import { classify, belowFloor } from "./rate.ts";
 import {
   listConversations, readConversation, writeConversation,
-  latestCounterpartMessage, lastMessage, turnAwaiting, type Conversation,
+  latestCounterpartMessage, priorCounterpartBodies, lastMessage, turnAwaiting, type Conversation,
 } from "./mirror.ts";
 import { composeDigest, deliver } from "./notify.ts";
 import { guardSend } from "./send.ts";
@@ -45,8 +45,12 @@ async function cmdSync(): Promise<number> {
     return 1;
   }
   let written = 0;
+  let failed = 0;
   const syncedAt = new Date().toISOString();
   for (const r of raws) {
+    // A conversation whose detail fetch failed has NO message log — writing it would blank the prior
+    // mirror file (messages, rating and all). Keep the existing file untouched and say so below.
+    if (r.detail_failed) { failed++; continue; }
     // Preserve ONLY a prior `closed` state so a re-sync doesn't reopen a conversation Alex closed. A
     // prior "answered" (legacy) or "open" both re-derive to open + a fresh turnAwaiting below.
     const existingPath = join(MIRROR, `${r.conv}.md`);
@@ -76,7 +80,8 @@ async function cmdSync(): Promise<number> {
   }
   writeFileSync(join(MIRROR, ".last-sync"), new Date().toISOString() + "\n");
   const src = process.env.KLEINANZEIGEN_FIXTURES ? "fixtures" : "live";
-  console.log(`sync (${src}): ${written} conversation(s) mirrored, .last-sync stamped.`);
+  const failNote = failed ? `, ${failed} conversation(s) failed to refresh (prior mirror kept)` : "";
+  console.log(`sync (${src}): ${written} conversation(s) mirrored${failNote}, .last-sync stamped.`);
   return 0;
 }
 
@@ -97,7 +102,7 @@ function cmdRate(): number {
       continue;
     }
     const facts = loadFacts(c.listing, LISTINGS);
-    const r = classify(them.body, c.counterpart, facts, c.side);
+    const r = classify(them.body, c.counterpart, facts, c.side, priorCounterpartBodies(c));
     c.rating = r.rating;
     c.tells = r.tells;
     c.needs_fact = r.needs_fact;
@@ -140,10 +145,11 @@ async function cmdSend(args: string[]): Promise<number> {
   }
   const c = readConversation(p);
   // Classify right here before guarding — never trust a possibly-absent mirror rating (a send issued
-  // before `rate` ran would otherwise bypass the scam guard). The guard must see a fresh verdict.
+  // before `rate` ran would otherwise bypass the scam guard). The guard must see a fresh verdict, and
+  // the verdict scans the WHOLE counterpart history, so a scammer's benign follow-up can't clear it.
   const them = latestCounterpartMessage(c);
   if (them) {
-    const r = classify(them.body, c.counterpart, loadFacts(c.listing, LISTINGS), c.side);
+    const r = classify(them.body, c.counterpart, loadFacts(c.listing, LISTINGS), c.side, priorCounterpartBodies(c));
     c.rating = r.rating;
     c.tells = r.tells;
   }
@@ -168,13 +174,14 @@ async function cmdSend(args: string[]): Promise<number> {
 }
 
 async function cmdContact(args: string[]): Promise<number> {
+  // No --force here: contact has no scam guard to override (there's no rated conversation yet — you
+  // are opening one). Advertising the flag would imply a safety gate that does not exist.
   const dryRun = args.includes("--dry-run");
-  const force = args.includes("--force");
-  const positional = args.filter((a) => a !== "--dry-run" && a !== "--force");
+  const positional = args.filter((a) => a !== "--dry-run");
   const target = positional[0];
   const text = positional.slice(1).join(" ").trim();
   if (!target || !text) {
-    console.error('usage: contact <listing-id-or-url> "<message>" [--dry-run] [--force]');
+    console.error('usage: contact <listing-id-or-url> "<message>" [--dry-run]');
     console.error("  Starts a NEW conversation on a seller's listing and sends exactly ONE message.");
     return 1;
   }
@@ -187,7 +194,7 @@ async function cmdContact(args: string[]): Promise<number> {
   console.log(`  message: ${text}`);
   let result;
   try {
-    result = await postContact(here, adId, text, { dryRun, force });
+    result = await postContact(here, adId, text, { dryRun });
   } catch (e) {
     console.error(`contact: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
