@@ -38,11 +38,11 @@ dependencies.
 The broker: `GET http://127.0.0.1:8787/session/token?site=<host>` → `{ token }`. Consumers copy the
 tiny `client.js` (`sessionToken(site)` → string | null) and fall back when it returns null.
 
-## Setup
+## Install
 
 ```sh
-npm i -g playwright-core      # uses your installed system Chrome — no browser download
 imprnt plugin add session-host
+(cd plugins/session-host && npm i playwright-core)  # local to the module — Node never resolves a -g install; uses your system Chrome, no browser download
 node plugins/session-host/session-host.js login https://www.kleinanzeigen.de/m-einloggen.html  # sign in once
 node plugins/session-host/session-host.js serve   # leave running (or schedule on a Pi)
 ```
@@ -62,7 +62,9 @@ One entry in `src/sites.ts` (login URL, a warm URL to keep loaded, the token coo
 ## Audit
 
 Every token handout and miss appends to `audit.log`: `{ ts, event, site, fingerprint }` — the token's
-SHA-256 prefix, never the token. `profile/` and `audit.log` are gitignored.
+SHA-256 prefix, never the token. `profile/` and `audit.log` are gitignored: `serve` and `login` write
+this folder's `.gitignore` themselves before creating either (npm strips `.gitignore` from tarballs,
+so an installed copy has to lay down its own guard).
 
 ## Building
 

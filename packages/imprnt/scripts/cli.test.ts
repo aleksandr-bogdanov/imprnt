@@ -373,6 +373,17 @@ test("init registers the project as the default vault; a second init keeps it un
   expect(JSON.parse(readFileSync(join(xdg, "imprnt", "config.json"), "utf8")).vaults.personal).toBe(realpathSync(b));
 });
 
+test("agent rejects a prototype-chain name (toString) instead of persisting it", async () => {
+  // `"toString" in backends` is true via Object.prototype, so the old gate persisted the name and
+  // every later imp crashed resolving it. Object.hasOwn keeps inherited keys out of the valid set.
+  const root = tmpRepo();
+  const r = await runCli(root, ["agent", "toString"]);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain('unknown agent "toString"');
+  // Nothing was written: the sandboxed registry never came into existence.
+  expect(existsSync(join(root, "xdg", "imprnt", "config.json"))).toBe(false);
+});
+
 test("init with an unwritable config dir still scaffolds the vault, warns it could not register, exits 0", async () => {
   // The scaffold is the irreversible work and it succeeds: vault/ + control files land, and the
   // vault is fully usable via ./vault or IMPRNT_VAULT even unregistered. Only the convenience
@@ -612,6 +623,28 @@ test("init locks the vault project root to owner-only (0700)", async () => {
   const r = await runCli(root, ["init", target], { XDG_CONFIG_HOME: join(root, "xdg") });
   expect(r.code).toBe(0);
   // Low 9 permission bits === 0o700: rwx for owner, nothing for group/other.
+  expect(statSync(target).mode & 0o777).toBe(0o700);
+});
+
+test("re-init reports a real mode change and stays quiet when the root is already 0700", async () => {
+  // Re-init used to re-chmod the project root silently while printing "left untouched" — honest
+  // output names the tighten when the bits actually change, and only then.
+  const root = tmpRepo();
+  cpSync(join(realRoot, "templates"), join(root, "templates"), { recursive: true });
+  cpSync(contractSrc, join(root, "CLAUDE.md"), { recursive: true });
+  const xdg = join(root, "xdg");
+  const target = join(root, "revault");
+  await runCli(root, ["init", target], { XDG_CONFIG_HOME: xdg });
+  // Already 0700: the re-init must not claim a tighten that didn't happen.
+  const quiet = await runCli(root, ["init", target], { XDG_CONFIG_HOME: xdg });
+  expect(quiet.code).toBe(0);
+  expect(quiet.stdout).toContain("left untouched");
+  expect(quiet.stdout).not.toContain("chmod 700");
+  // The mode drifted (a cp restore, a umask accident): the re-init tightens AND says so.
+  chmodSync(target, 0o755);
+  const honest = await runCli(root, ["init", target], { XDG_CONFIG_HOME: xdg });
+  expect(honest.code).toBe(0);
+  expect(honest.stdout).toContain("chmod 700");
   expect(statSync(target).mode & 0o777).toBe(0o700);
 });
 

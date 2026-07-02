@@ -8,9 +8,9 @@
     "README.md",
     "check.js",
     "whenful.js",
-    "links.tsv",
-    "proposed",
-    "mirror"
+    "links.example.tsv",
+    "proposed/.gitkeep",
+    "mirror/.gitkeep"
   ],
   "scripts": {
     "build": "bun build src/check.ts --target=node --outfile=check.js --banner '#!/usr/bin/env node' && bun build src/whenful.ts --target=node --outfile=whenful.js --banner '#!/usr/bin/env node'",

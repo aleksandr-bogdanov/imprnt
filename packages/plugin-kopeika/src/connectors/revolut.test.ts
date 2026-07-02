@@ -114,6 +114,23 @@ describe("parseRevolut", () => {
     expect(rows[1]!.transferCandidate).toBe(false);
   });
 
+  test("dedupExtra carries the Started Date time, so two identical same-day rows stay distinct", () => {
+    const rows = parseRevolut(
+      csv(
+        "Card Payment,Current,2026-05-10 09:12:00,2026-05-10 09:13:00,BVG Ticket,-3.50,0,EUR,COMPLETED,50.00",
+        "Card Payment,Current,2026-05-10 18:40:00,2026-05-10 18:41:00,BVG Ticket,-3.50,0,EUR,COMPLETED,46.50",
+      ),
+    );
+    expect(rows.map((r) => r.dedupExtra)).toEqual(["09:12:00", "18:40:00"]);
+  });
+
+  test("dedupExtra is empty when Started Date has no time part", () => {
+    const rows = parseRevolut(
+      csv("Card Payment,Current,2025-01-15,2025-01-15,REWE,-12.34,0,EUR,COMPLETED,100.00"),
+    );
+    expect(rows[0]!.dedupExtra).toBe("");
+  });
+
   test("empty fee parses as 0", () => {
     const rows = parseRevolut(
       csv("Card Payment,Current,2025-01-01,2025-01-01,X,-1,,EUR,COMPLETED,1"),

@@ -13,8 +13,12 @@ const LANES = [
     scope: "project",
     blurb: "the default",
     add: "imprnt plugin add <name>",
-    where: "CLAUDE.local.md, per-machine and gitignored",
-    reaches: "this project's sessions",
+    note: "",
+    where: "CLAUDE.local.md, per-machine, never committed",
+    // a string with a {cmd} placeholder so the CLI command renders monospace,
+    // matching how the rest of the docs write it in backticks
+    reaches: "this project's sessions, plus every {cmd} session (it inlines the project's plugins from any directory)",
+    cmd: "imp",
     remove: "imprnt plugin rm <name>",
     accent: false,
   },
@@ -22,10 +26,9 @@ const LANES = [
     scope: "global",
     blurb: "a house style like anti-slop",
     add: "imprnt global add <name>",
+    note: "promotes an installed project plugin (or pass --from <dir>)",
     where: "registered with imprnt, never your ~/.claude/CLAUDE.md",
-    // a string with a {cmd} placeholder so the CLI command renders monospace,
-    // matching how the rest of the docs write it in backticks
-    reaches: "every session {cmd} launches",
+    reaches: "every session {cmd} launches, even with no vault project",
     cmd: "imp",
     remove: "imprnt global rm <name>",
     accent: true,
@@ -62,7 +65,10 @@ const LANES = [
         <dl class="facts">
           <div class="fact">
             <dt>add</dt>
-            <dd><code>{l.add}</code></dd>
+            <dd>
+              <code>{l.add}</code>
+              {l.note && <span class="note">{l.note}</span>}
+            </dd>
           </div>
           <div class="fact">
             <dt>wires in</dt>
@@ -218,6 +224,14 @@ const LANES = [
     border-radius: 6px;
     background: color-mix(in oklab, var(--sl-color-gray-3) 16%, var(--sl-color-bg));
     color: var(--sl-color-white);
+  }
+  /* fine print under a command, e.g. the promote-vs---from caveat on global add */
+  .fact .note {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.74rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
   }
   /* on the green GLOBAL card the gray chip fill drops nearly invisible, so give
      the command chips a darker fill and a defined 1px boundary, the same crisp

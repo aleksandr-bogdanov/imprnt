@@ -2,9 +2,9 @@
 
 **One-line:** A local, MIT-licensed MCP memory server (full name "iai-pme", Independent Autistic Intelligence Personal Memory Engine) that automatically captures every conversation turn verbatim, consolidates it into an encrypted episodic/semantic/procedural store, and auto-injects a relevant memory slice at the start of each new AI coding session.
 
-**Status (checked 2026-06-20):** active - the repo's most recent commit is dated `2026-06-20T04:00:36Z` ("docs: mark Linux supported, Windows coming soon"), the GitHub API reports `"pushed_at": "2026-06-20T04:00:44Z"` and `"archived": false`, and the newest release v1.1.2 shipped 2026-06-18, two days before this check. This is an actively developed project.
+**Status (checked 2026-07-02):** active - the GitHub API reports `"pushed_at": "2026-07-01T21:55:38Z"` and `"archived": false`, and the newest release v1.2.1 shipped 2026-07-01, one day before this check. Windows support (beta) landed in v1.2.0 on 2026-06-26, closing the "Windows coming soon" gap noted at the prior check. This is an actively developed project.
 
-**Latest release:** v1.1.2, 2026-06-18 | **Stars:** 265 | **License:** MIT | **Hosting:** self-host (fully local, no cloud)
+**Latest release:** v1.2.1, 2026-07-01 | **Stars:** 325 | **License:** MIT | **Hosting:** self-host (fully local, no cloud)
 
 ## What it is
 
@@ -14,11 +14,11 @@ iai is a local memory layer for AI coding assistants. It runs as a background da
 
 Source: https://raw.githubusercontent.com/CodeAbra/iai-personal-memory-engine/main/README.md (accessed 2026-06-20)
 
-The repo's own tagline positions it on benchmark performance:
+The repo's tagline led with benchmark performance at the 2026-06-20 check ("The best-benchmarked open-source memory system for AI coding assistants"). As of 2026-07-02 the positioning shifted to MCP-client breadth:
 
-> "The best-benchmarked open-source memory system for AI coding assistants"
+> "MCP memory server for AI coding assistants. Works with Claude Code, Cursor, Codex, Gemini CLI, Cline, Continue, Cherry Studio, Zed, Hermes, OpenClaw, and any MCP client. Local, encrypted, verbatim recall. MIT."
 
-Source: https://api.github.com/repos/CodeAbra/iai-personal-memory-engine (the `description` field, accessed 2026-06-20)
+Source: https://api.github.com/repos/CodeAbra/iai-personal-memory-engine (the `description` field, accessed 2026-07-02). The README's own headline now reads "The best open-source personal memory engine for AI coding assistants" (accessed 2026-07-02).
 
 The "IAI" acronym expands to "Independent Autistic Intelligence" and the privacy stance is explicit:
 
@@ -40,10 +40,13 @@ Naming note up front: the canonical repository is `CodeAbra/iai-personal-memory-
 - 2026-06-08: v1.0.2, packaging fixes (launchd plist and systemd unit ship inside the wheel). Source: same releases API (accessed 2026-06-20).
 - 2026-06-11: v1.0.3, MCP `tools/list` no longer stalls when the daemon is down. Full-transcript session capture. Source: same releases API (accessed 2026-06-20).
 - 2026-06-15: v1.1.0, "Experimental Linux support" plus source restructured into focused packages, then v1.1.1 same day (Linux runtime fixes). Source: same releases API (accessed 2026-06-20).
-- 2026-06-18: v1.1.2 (latest), "macOS Keychain credentials for nightly consolidation" fix. Source: same releases API (accessed 2026-06-20).
-- 2026-06-20 (today): latest commit `"docs: mark Linux supported, Windows coming soon"` at `2026-06-20T04:00:36Z`. API `"pushed_at": "2026-06-20T04:00:44Z"`. Source: https://api.github.com/repos/CodeAbra/iai-personal-memory-engine/commits?per_page=1 and the repo API (accessed 2026-06-20).
-- Recency verdict: very fresh. 15 tagged releases in roughly six weeks (2026-05-11 through 2026-06-18), a commit landed the same day as this check. Not dormant, not archived. `"archived": false`, `"disabled": false`. Source: https://api.github.com/repos/CodeAbra/iai-personal-memory-engine (accessed 2026-06-20).
-- Stars 265, forks 37, open issues 4. Source: https://api.github.com/repos/CodeAbra/iai-personal-memory-engine (accessed 2026-06-20).
+- 2026-06-18: v1.1.2, "macOS Keychain credentials for nightly consolidation" fix. Source: same releases API (accessed 2026-06-20).
+- 2026-06-20: commit `"docs: mark Linux supported, Windows coming soon"` at `2026-06-20T04:00:36Z`. Source: https://api.github.com/repos/CodeAbra/iai-personal-memory-engine/commits?per_page=1 (accessed 2026-06-20).
+- 2026-06-21 to 2026-06-22: v1.1.3 through v1.1.7, a fix-and-hardening burst: ambient-capture vector embedding fix, repaired bulk-load store migration, deferred-embed rows now encrypted at rest, daemon memory/CPU optimization under sustained load, Linux install helper script and systemd unit fixes. Source: same releases API (accessed 2026-07-02).
+- 2026-06-26: v1.2.0, "Windows support (beta)" - Windows runtime with a TCP loopback fallback, validated on Windows 11. Source: same releases API (accessed 2026-07-02).
+- 2026-07-01: v1.2.1 (latest), fixes to MCP entry wiring, HNSW integrity checks, session cache refresh, and macOS CI socket tests. Source: same releases API (accessed 2026-07-02).
+- Recency verdict: very fresh. 22 tagged releases in roughly seven weeks (2026-05-11 through 2026-07-01), the latest push landed the day before this check (`"pushed_at": "2026-07-01T21:55:38Z"`). Not dormant, not archived. `"archived": false`, `"disabled": false`. Source: https://api.github.com/repos/CodeAbra/iai-personal-memory-engine (accessed 2026-07-02).
+- Stars 325, forks 44, open issues 1. Source: https://api.github.com/repos/CodeAbra/iai-personal-memory-engine (accessed 2026-07-02).
 - Author: "By Areg Aramovich Noya, in collaboration with the team at [lcgc.dev](https://lcgc.dev)." Note: lcgc.dev returned HTTP 403 to a live fetch on 2026-06-20, so the org behind it is unverified beyond the README credit. Source: https://raw.githubusercontent.com/CodeAbra/iai-personal-memory-engine/main/README.md (accessed 2026-06-20).
 
 ## Where memory lives (storage and architecture)
@@ -114,7 +117,7 @@ There is no conscious, on-demand filing path described. Capture is the always-on
 
 ## How the AI reads it
 
-The AI reads memory through an MCP server speaking MCP-over-stdio. Hosts (Claude Code, Codex CLI, Gemini CLI, Cursor CLI) connect via a config block pointing `node` at the wrapper's built `index.js`. A `SessionStart` hook also auto-injects a memory slice into `additionalContext` before the conversation begins, so reading is partly push (auto-injected) and partly pull (MCP tool calls). Source: https://raw.githubusercontent.com/CodeAbra/iai-personal-memory-engine/main/README.md (accessed 2026-06-20).
+The AI reads memory through an MCP server speaking MCP-over-stdio. Hosts (Claude Code, Claude Desktop, Codex CLI, Gemini CLI, Cursor CLI, and any MCP-over-stdio client such as Cline, Continue.dev, or Zed) connect via a config block pointing `node` at the wrapper's built `index.js`. Ambient capture hooks exist for Claude Code and Codex, other clients use the MCP tools directly. A `SessionStart` hook also auto-injects a memory slice into `additionalContext` before the conversation begins, so reading is partly push (auto-injected) and partly pull (MCP tool calls). Source: https://raw.githubusercontent.com/CodeAbra/iai-personal-memory-engine/main/README.md (accessed 2026-07-02).
 
 There is also a CLI, surfacing the same operations:
 
@@ -128,7 +131,7 @@ The session-start auto-injection is sized to a token budget: measured 1,629 (min
 
 Free and open-source under MIT. There is no paid tier, no cloud service, no account, no telemetry, no API key required for normal use (the optional nightly consolidation rides the user's existing Claude subscription via `claude -p`). License field from the GitHub API: `"license_spdx_id": "MIT"`. Sources: https://api.github.com/repos/CodeAbra/iai-personal-memory-engine and the README (both accessed 2026-06-20).
 
-Distribution is from source, not a package registry. Install is `git clone` then `pip install .` (which builds the Rust extension via `setuptools-rust`), then `npm install && npm run build` in `mcp-wrapper`, then `iai-mcp daemon install` and `iai-mcp capture-hooks install`. There is no PyPI package: a live fetch of `https://pypi.org/pypi/iai-pme/json` returned HTTP 404 on 2026-06-20, consistent with the README's "there is no PyPI package name." Requirements: "macOS (Apple Silicon) or Linux · Python 3.11 or 3.12 · Node.js 18+ · A Rust toolchain." Sources: https://raw.githubusercontent.com/CodeAbra/iai-personal-memory-engine/main/README.md and https://pypi.org/pypi/iai-pme/json (both accessed 2026-06-20).
+Distribution is from source, not a package registry. Install is `git clone` then `pip install .` (which builds the Rust extension via `setuptools-rust`), then `npm install && npm run build` in `mcp-wrapper`, then `iai-mcp daemon install` and `iai-mcp capture-hooks install`. There is no PyPI package: a live fetch of `https://pypi.org/pypi/iai-pme/json` returned HTTP 404 on 2026-06-20, consistent with the README's "there is no PyPI package name." Requirements per the README as of 2026-07-02: macOS (Apple Silicon), Linux, or Windows (beta, added in v1.2.0 on 2026-06-26), Python 3.11 or 3.12, Node.js 18+, a Rust toolchain. Sources: https://raw.githubusercontent.com/CodeAbra/iai-personal-memory-engine/main/README.md (accessed 2026-07-02) and https://pypi.org/pypi/iai-pme/json (accessed 2026-06-20).
 
 ## Benchmarks (vendor self-reported)
 
@@ -181,10 +184,10 @@ Source (all tables): https://raw.githubusercontent.com/CodeAbra/iai-personal-mem
 
 ## Sources
 
-- [iai-personal-memory-engine README (raw, main branch)](https://raw.githubusercontent.com/CodeAbra/iai-personal-memory-engine/main/README.md) - accessed 2026-06-20
+- [iai-personal-memory-engine README (raw, main branch)](https://raw.githubusercontent.com/CodeAbra/iai-personal-memory-engine/main/README.md) - accessed 2026-07-02
 - [GitHub repo: CodeAbra/iai-personal-memory-engine](https://github.com/CodeAbra/iai-personal-memory-engine) - accessed 2026-06-20
-- [GitHub API: repo metadata (stars, forks, dates, license, archived flag)](https://api.github.com/repos/CodeAbra/iai-personal-memory-engine) - accessed 2026-06-20
-- [GitHub API: releases (full dated list)](https://api.github.com/repos/CodeAbra/iai-personal-memory-engine/releases) - accessed 2026-06-20
+- [GitHub API: repo metadata (stars, forks, dates, license, archived flag)](https://api.github.com/repos/CodeAbra/iai-personal-memory-engine) - accessed 2026-07-02
+- [GitHub API: releases (full dated list)](https://api.github.com/repos/CodeAbra/iai-personal-memory-engine/releases) - accessed 2026-07-02
 - [GitHub API: tags](https://api.github.com/repos/CodeAbra/iai-personal-memory-engine/tags) - accessed 2026-06-20
 - [GitHub API: latest commit](https://api.github.com/repos/CodeAbra/iai-personal-memory-engine/commits?per_page=1) - accessed 2026-06-20
 - [Redirect-source URL github.com/CodeAbra/iai-mcp (redirects to iai-personal-memory-engine)](https://github.com/CodeAbra/iai-mcp) - accessed 2026-06-20
@@ -193,10 +196,10 @@ Source (all tables): https://raw.githubusercontent.com/CodeAbra/iai-personal-mem
 
 ## Confidence and gaps
 
-- High confidence on status, recency, version, stars, license, and the dated timeline: all pulled from the live GitHub API and the raw README on 2026-06-20.
+- High confidence on status, recency, version, stars, license, and the dated timeline: all pulled from the live GitHub API and the raw README on 2026-06-20 and re-verified on 2026-07-02.
 - Repo name correction is high confidence: the canonical name is `iai-personal-memory-engine` (GitHub API `full_name`), and `iai-mcp` is the redirect alias. The prior internal notes stated the rename direction backwards.
 - All benchmark numbers are vendor self-reported. They were read verbatim from the README's tables. They were not independently reproduced (the README cites a `bench/` directory. That harness was not run here). Treat R@5 0.962, R@10 0.978, Rescue@10 1.000, drift 0.9933, p95 77 ms / 368 ms, RSS 589 MB as the vendor's claims, unverified by a third party.
 - The author credit (Areg Aramovich Noya, lcgc.dev) is taken from the README. lcgc.dev returned HTTP 403 on a live fetch, so the organization behind it is unverified beyond that one README line.
 - No PyPI/npm distribution exists. Install is from source. Confirmed by the README's installation section and a 404 on the expected PyPI path.
 - "Independent Autistic Intelligence" as the IAI expansion comes from the README and a secondary search summary, both consistent. Confidence high but the phrasing is the project's own.
-- Star count (265) is a point-in-time snapshot at 2026-06-20 and will drift.
+- Star count (325) is a point-in-time snapshot at 2026-07-02 and will drift.

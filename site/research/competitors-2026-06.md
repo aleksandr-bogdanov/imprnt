@@ -337,3 +337,83 @@ deleted.
   you will run a Postgres-backed server.
 - **Sources:** https://github.com/letta-ai/letta , https://docs.letta.com/core-concepts/ ,
   https://www.letta.com/blog/benchmarking-ai-agent-memory/
+
+---
+
+## Addendum 2026-07-02: ECC + freshness re-check
+
+Two things landed on 2026-07-02: one new entry (ECC, added on request) and a freshness pass
+over four dossiers in `site/docs/competitors/`. The full sourced records live in that folder
+(`ecc.md` plus the four edited files). Same rules as the rest of this file: primary sources,
+vendor numbers are claims.
+
+### ECC (everything-claude-code)
+- **Status (2026-07):** Active, viral, effectively one maintainer (Affaan Mustafa). 225,052
+  stars, pushed 2026-07-01, latest release v2.0.0 (2026-06-10), MIT. Renamed from the viral
+  `everything-claude-code` (the old API URL 301-redirects to the same repository id). The
+  stars are real but lopsided: ~196:1 star-to-watcher ratio and ~42k total npm installs of
+  `ecc-universal`, so most stargazers never became users.
+- **What it is:** The honest category is a cross-harness config and prompt pack: 268 skills,
+  66 agent definitions, 122 rules files, 92 command shims, and per-harness config trees for
+  eleven harnesses (Claude Code, Codex, Cursor, Gemini, Zed, and more), plus a thin npm
+  installer (`ecc-universal`), lifecycle hook scripts, a sql.js state store, and a paid
+  hosted GitHub App (ECC Pro, $19/seat/mo). It runs no agents of its own. Memory is one
+  bolt-on subsystem among many. It enters this research because it was asked for and because
+  readers will hold the field's most-starred agent repo next to imprnt anyway.
+- **Where memory lives:** Plain files under the home dir: per-project markdown session
+  summaries (`~/.claude/session-data/`, `ECC:SUMMARY` markers), YAML instinct files with
+  confidence scores (`~/.local/share/ecc-homunculus/projects/<hash>/` or
+  `~/.claude/homunculus/`), JSONL observation logs, learned skills as markdown, and a sql.js
+  SQLite store for operational state.
+- **Retrieval:** Recency injection, no search. The SessionStart hook prints the newest
+  session summary (7-day window, 8,000-char default budget) plus up to 6 instincts at
+  confidence >= 0.7 and up to 6 learned-skill summaries. No BM25, no embeddings, no vector
+  store, no query-time search over memory. Older sessions only via explicit commands
+  (`/sessions`, `/resume-session`).
+- **Capture:** Automatic lifecycle hooks (SessionEnd summarizes the transcript, PreCompact
+  preserves state, PostToolUse appends observations) plus a background Haiku observer that
+  distills instincts. Local by default, stated in the hook README. Optional richer summaries
+  shell out to `claude -p` with Haiku, reusing existing auth.
+- **AI reads via:** Context injection at session start, through the harness itself. No MCP,
+  no server, no memory tools mid-session.
+- **Benchmark:** none that holds. No comparative benchmark backs the "performance
+  optimization system" tagline. The mgrep token-reduction numbers are the mgrep vendor's own
+  benchmark copied into ECC's guide, and the config-tip percentages ship without data.
+- **vs imprnt:** Different category, one shared conviction: plain local files, zero
+  embeddings, no MCP over memory. The split is the read path and the scope. ECC injects
+  whatever is newest for coding-session continuity ("what was I doing"), while imprnt runs
+  ranked BM25 search over a permanent typed vault ("what do I know") on any question at any
+  time, with conscious capture instead of ambient hooks and a background LLM.
+- **Style note:** ecc.tools and imprnt's site share only generic dev-tool-landing defaults
+  (near-black background, JetBrains Mono, the stock feTurbulence grain, an install command
+  with a copy button, an "Open source · MIT" chip). Side-by-side verdict: same-model house
+  style, zero imprnt-specific fingerprints in ECC, no evidence of derivation either way.
+- **Wins when:** you want a ready-made catalog across many harnesses, zero-effort session
+  continuity, passive habit-distillation into skills, or the adjacent tooling (AgentShield,
+  hosted PR audits).
+- **Sources:** https://github.com/affaan-m/ECC ,
+  https://raw.githubusercontent.com/affaan-m/ECC/main/hooks/memory-persistence/README.md ,
+  https://raw.githubusercontent.com/affaan-m/ECC/main/scripts/hooks/session-start.js
+
+### Freshness deltas applied to the dossier folder (2026-07-02)
+
+- **Zep / Graphiti:** Zep Cloud's Free tier now shows 10,000 credits/month on the live
+  pricing page ("no rollover or auto-topup"), where the dossier recorded 1,000/month as of
+  2026-06-20. Flex and Flex Plus annual prices unchanged ($1,250 and $3,750/year). Graphiti
+  itself unchanged: latest release still v0.29.2 (2026-06-08), 28,283 stars, pushed
+  2026-07-02. Dossier corrected.
+- **mempalace:** v3.5.0 (2026-06-23) adds an opt-in local write daemon (`mempalace daemon`),
+  opt-in HTTP transport for the MCP server, MCP tools 33 -> 35 (added
+  `mempalace_checkpoint`, `mempalace_delete_by_source`), and new transcript parsers
+  (Continue.dev, Gemini CLI, Pi agent). Stars ~56,900. No pricing, license, benchmark, or
+  star-scandal changes. Dossier updated.
+- **iai:** Seven releases since 2026-06-18 (v1.1.3 through v1.2.1, latest 2026-07-01).
+  v1.2.0 (2026-06-26) added Windows support (beta), invalidating the "macOS or Linux"
+  requirement. The repo description repositioned to MCP-client breadth and the README
+  headline now reads "The best open-source personal memory engine for AI coding assistants".
+  Stars 265 -> 325. Storage engine, benchmarks, and MIT license unchanged. Dossier updated.
+- **cognee:** v1.2.x went stable: v1.2.0 and v1.2.1 on 2026-06-21 (breaking env-var renames,
+  public registration disabled by default, enforced API auth), v1.2.2 on 2026-06-26 now the
+  latest stable. Cloud pricing reworked from per-document seat tiers to usage-based token
+  pricing (Free 1M tokens + 1 workspace, Standard $2.50 per 1M tokens + $5 per extra
+  workspace, Enterprise custom). Search-mode docs re-verified unchanged. Dossier updated.

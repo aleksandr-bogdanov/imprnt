@@ -22,11 +22,10 @@ packages/imprnt/README.md
 packages/imprnt/LICENSE
 
 # Built plugin artifacts — compiled from each plugin's src/ by its build script, shipped, not committed.
-packages/plugin-*/check.js
-packages/plugin-*/whenful.js
-packages/plugin-*/timemachine.js
-packages/plugin-*/statusline.js
-packages/plugin-*/kopeika.js
+# One glob, not a per-name list, so a new plugin's built entry is ignored without editing this file.
+# Every top-level .js in a plugin package is built output. Hand-written top-level scripts are
+# .mjs/.sh and don't match; a deliberately committed .js would need a `!` exception here.
+packages/plugin-*/*.js
 
 # Runtime
 node_modules/

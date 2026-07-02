@@ -4,14 +4,14 @@ import type { Conversation } from "./mirror.ts";
 
 function c(over: Partial<Conversation>): Conversation {
   return {
-    conv: "x", side: "selling", listing: "3432924231", ad_title: "", ad_status: "",
+    conv: "x", side: "selling", listing: "9000000001", ad_title: "", ad_status: "",
     counterpart: "X", state: "open", awaiting: "me", unread: 0, synthetic: true, messages: [], ...over,
   };
 }
 
 test("selling digest: only awaiting-you, scams first, drafts and needs-you lines, grouped under Selling", () => {
   const convs: Conversation[] = [
-    c({ conv: "2932z:1:scam", counterpart: "David Thiess", rating: "scam", tells: ["paypal", "name-mismatch"] }),
+    c({ conv: "2932z:1:scam", counterpart: "Timo Falkner", rating: "scam", tells: ["paypal", "name-mismatch"] }),
     c({ conv: "2932z:2:offer", counterpart: "Frank", rating: "offer", offer_amount: 70, below_floor: true }),
     c({ conv: "2932z:3:faq", counterpart: "Erik", rating: "faq", needs_fact: ["artikelnummer"], draft: null }),
     c({ conv: "2932z:4:pick", counterpart: "Patrick", rating: "pickup", draft: "Hi, Abholung ist möglich in Berlin. ..." }),
@@ -23,7 +23,7 @@ test("selling digest: only awaiting-you, scams first, drafts and needs-you lines
   const lines = d.split("\n");
   // header, blank, "Selling:", then the four conversation lines (scam first)
   expect(lines[3]).toContain("2932z:1:scam");
-  expect(lines[3]).toContain("(David Thiess)");
+  expect(lines[3]).toContain("(Timo Falkner)");
   expect(lines[3]).toContain("scam: paypal, name-mismatch");
   expect(d).toContain("2932z:2:offer (Frank) [offer 70€ (below floor)]");
   expect(d).toContain("2932z:3:faq (Erik) [faq] — needs you: confirm artikelnummer");

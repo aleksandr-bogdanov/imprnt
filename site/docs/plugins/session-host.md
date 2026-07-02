@@ -22,13 +22,13 @@ node plugins/session-host/session-host.js login <site>   # open the browser to s
 node plugins/session-host/session-host.js status         # health + which sites are enrolled
 ```
 
-Run `login` with `serve` stopped, since they share one profile. Automation never types a password. The login is the one **human** step. To enroll a new site, add one entry to `src/sites.ts` (login URL, a warm URL, the token cookie and domain), then run `login`.
+Run `login` with `serve` stopped, since they share one profile. Automation never types a password. The login is the one **human** step. To enroll a new site, add one entry to `src/sites.ts` in the plugin's source repo (login URL, a warm URL, the token cookie and domain), rebuild, and copy the rebuilt `session-host.js` into `plugins/session-host/`, then run `login`. The registry is compiled into the bundled `session-host.js`, so the installed plugin folder has no `src/` to edit. (A reinstall with `--force --from <dir>` works too, but it wipes the folder, including the browser profile and the local `npm i`.)
 
 ## Install
 
 ```sh
-npm i -g playwright-core      # uses your installed system Chrome, no browser download
 imprnt plugin add session-host
+(cd plugins/session-host && npm i playwright-core)   # local install, uses your installed system Chrome, no browser download
 node plugins/session-host/session-host.js login https://www.kleinanzeigen.de/m-einloggen.html
 node plugins/session-host/session-host.js serve
 ```

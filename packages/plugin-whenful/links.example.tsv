@@ -1,4 +1,4 @@
-# whenful join table — one row per task↔note link. TAB-separated. Starts empty.
+# whenful join table TEMPLATE — copy to links.tsv (gitignored: real rows are your data) and add rows.
 # format: task_id<TAB>note_slug<TAB>step_label?
 #   task_id    — the Whenful task id (string), the key into mirror/<task_id>.md
 #   note_slug  — the vault note this task belongs to, as folder/slug (e.g. projects/whenful)

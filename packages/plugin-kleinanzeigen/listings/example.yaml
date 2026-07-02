@@ -1,0 +1,20 @@
+# Fact sheet TEMPLATE — copy to listings/<your-listing-id>.yaml, one per active listing.
+# Fuel for FAQ drafts. An empty field is an honest "not confirmed yet" — the rater turns an
+# empty-but-asked field into needs_fact rather than guessing. Fill fields as facts are confirmed.
+#
+# Real fact sheets carry your live listing ids and your private price floors, so they are
+# gitignored — only this template is tracked or shipped.
+listing: 1234567890
+model: FRITZ!Box 6660 Cable
+variant: DOCSIS 3.1, WiFi 6, Retail-Version
+artikelnummer:                      # leave empty until confirmed from the label
+includes:
+  - Netzteil
+condition: einwandfrei, voll funktionsfähig
+age:                                # unknown — fill if confirmed
+software: FRITZ!OS (aktuelle Version)
+cable:                              # unconfirmed whether a cable is included
+price: 90
+floor: 75                           # the lowest you'll take — an offer below this is flagged, never auto-accepted
+pickup_area: Berlin
+shipping: Versand möglich gegen Aufpreis

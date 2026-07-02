@@ -192,7 +192,7 @@ describe("archiveRaw", () => {
     }
   });
 
-  test("re-archiving the same file is harmless (overwrites identically)", () => {
+  test("re-archiving the same file is harmless (identical bytes, same name)", () => {
     const { dir, cleanup } = scratch();
     try {
       const srcPath = join(dir, "export.csv");
@@ -202,6 +202,41 @@ describe("archiveRaw", () => {
       const name = archiveRaw(dataDir, "n26", srcPath);
       expect(name).toBe("export.csv");
       expect(readFileSync(join(dataDir, "raw", "n26", "export.csv"), "utf8")).toBe("data\n");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a same-named export with DIFFERENT bytes never clobbers the prior archive", () => {
+    const { dir, cleanup } = scratch();
+    try {
+      const srcPath = join(dir, "export.csv");
+      const dataDir = join(dir, "data");
+      writeFileSync(srcPath, "january\n", "utf8");
+      archiveRaw(dataDir, "n26", srcPath);
+      writeFileSync(srcPath, "february\n", "utf8"); // fresh monthly export, same basename
+      const name = archiveRaw(dataDir, "n26", srcPath);
+      expect(name).not.toBe("export.csv"); // disambiguated (<stem>-<hash8>.csv)
+      expect(name).toMatch(/^export-[0-9a-f]{8}\.csv$/);
+      // The original archive is untouched; the new bytes live under the new name.
+      expect(readFileSync(join(dataDir, "raw", "n26", "export.csv"), "utf8")).toBe("january\n");
+      expect(readFileSync(join(dataDir, "raw", "n26", name), "utf8")).toBe("february\n");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("re-archiving the same CHANGED bytes lands on the same disambiguated name", () => {
+    const { dir, cleanup } = scratch();
+    try {
+      const srcPath = join(dir, "export.csv");
+      const dataDir = join(dir, "data");
+      writeFileSync(srcPath, "january\n", "utf8");
+      archiveRaw(dataDir, "n26", srcPath);
+      writeFileSync(srcPath, "february\n", "utf8");
+      const first = archiveRaw(dataDir, "n26", srcPath);
+      const second = archiveRaw(dataDir, "n26", srcPath); // content-addressed: stable
+      expect(second).toBe(first);
     } finally {
       cleanup();
     }

@@ -3,8 +3,11 @@
  * comparison.mdx ONLY - the deep, per-tool read on the whole field, grouped by
  * the camp each tool sits in. Every tool gets one card: what it is in a line,
  * the single sharpest split against imprnt, and when it wins. Backed by
- * docs/competitors/ (per-tool dossiers, primary sources, dated 2026-06-20). Scoped CSS
- * only, no Tailwind (docs pages do not load it), theme-aware via --sl tokens.
+ * docs/competitors/ (per-tool dossiers, primary sources, dated 2026-06-20;
+ * ECC and four others freshness re-checked 2026-07-02). The page states
+ * imprnt's own position once above this component, so the vs-imprnt cells
+ * carry only the other tool's side of the split. Scoped CSS only, no Tailwind
+ * (docs pages do not load it), theme-aware via --sl tokens.
  */
 const CAMPS = [
   {
@@ -23,20 +26,20 @@ const CAMPS = [
         tool: "Basic Memory",
         what: "Markdown as the source of truth with a derived SQLite index, reached over an MCP server. The closest shipped product.",
         split:
-          "Same floor, opposite machinery. Since March 2026 it defaults to hybrid full-text plus vector, so a model sits in the read loop. imprnt is BM25 plus grep, no server, the AI reads files directly.",
+          "Same floor, opposite machinery: a derived index kept in sync, a server between the AI and the files, and since March 2026 a model inside every search by default.",
         wins: "Semantic recall and cross-device sync out of the box, with a hosted tier if you want it.",
       },
       {
         tool: "Obsidian",
         what: "Plain Markdown files you own, the field's strongest your-files stance, no DB pivot. The base app ships no AI.",
         split:
-          "Same floor, different reader. Obsidian's reader is a human in a GUI, and any AI builds a sidecar vector store beside your notes. imprnt's reader is an agent that greps directly, no sidecar to keep in sync.",
+          "Same floor, different reader. Obsidian's first reader is a human in a GUI, and any AI arrives via a plugin that builds a sidecar vector store beside your notes, one more index to keep in sync.",
         wins: "A human browsing, linking, and exploring a vault by hand in a polished GUI.",
       },
       {
         tool: "Logseq",
         note: "mid-pivot to SQLite",
-        what: "A local-first block outliner. The original keeps Markdown or org files, and the new default moves them into a canonical SQLite database.",
+        what: "A local-first block outliner. The original keeps Markdown or org files, and the DB version now in beta makes a local SQLite database canonical.",
         split:
           "Its file version shares imprnt's floor and carries no vectors either, but recall is Datalog queries and a graph you run by hand. The DB version is walking away from the plain-files property imprnt is built on.",
         wins: "Outliner workflows: daily notes, block references, and queries you drive yourself.",
@@ -53,29 +56,29 @@ const CAMPS = [
         note: "archived March 2026",
         what: "A desktop notes app: Markdown files plus a LanceDB vector index, auto-embed on every write. No longer maintained.",
         split:
-          "An embeddings read path and a closed GUI that owns the index, against imprnt's BM25 plus grep over files the agent reads directly. No typed entities, notes are undifferentiated chunks.",
+          "An embeddings read path and a desktop app that owns the index. No typed entities, notes are undifferentiated chunks, and the app that did the searching is no longer maintained.",
         wins: "Historically, one-click local-model semantic linking with no CLI or git.",
       },
       {
         tool: "Khoj",
         note: "self-host only since the cloud closed",
-        what: "A self-hosted server (Postgres plus pgvector) that indexes many file types and answers with a bi-encoder plus a cross-encoder rerank.",
+        what: "A self-hosted server (Postgres plus pgvector) that indexes many file types and answers with two-stage neural search: one model recalls candidates, a second re-ranks them.",
         split:
-          "A server stack that owns your data in its schema, a model in the read path, a full re-index when the embedding model changes. imprnt is plain files with BM25 plus grep, no server. Khoj is an MCP client, not a server over its store.",
+          "A server stack that owns your data in its own schema, a model in the read path, and capture by bulk sync rather than chosen notes.",
         wins: "A large multi-format corpus (PDF, Word, Notion) where semantic recall beats grep.",
       },
       {
         tool: "mem0",
-        what: "The most-adopted agent-memory framework: a managed multi-store (vector across about 20 backends, optional graph, key-value) that auto-extracts from chat turns.",
+        what: "A $24M-funded universal memory layer for agents: a managed multi-store (vector across about 20 backends, optional graph, key-value) that auto-extracts facts from chat turns.",
         split:
-          "A hosted or server memory layer with embeddings-led hybrid retrieval, where BM25 is one fused signal. imprnt is owned files with BM25 as the whole ranker, no embeddings, the model only on the write path.",
+          "A hosted or server memory layer with embeddings-led hybrid retrieval, where BM25 is one boost signal over vector-picked candidates. In imprnt BM25 is the whole ranker, over files you own.",
         wins: "Zero-effort automatic memory and managed multi-user infrastructure across many agents.",
       },
       {
         tool: "mempalace",
-        what: "A memory-palace MCP server (33 tools) over ChromaDB and SQLite, embeddings with boosting and an optional LLM rerank, auto-saving transcripts from editor hooks.",
+        what: "A memory-palace MCP server (35 tools) over ChromaDB and SQLite, embeddings with boosting and an optional LLM rerank, auto-saving transcripts from coding-agent hooks.",
         split:
-          "Embeddings into a vector DB behind a 33-tool server, auto-capturing verbatim transcripts. imprnt greps plain files directly and files consciously into a typed contract.",
+          "Embeddings into a vector DB behind a 35-tool server, auto-capturing every message verbatim. Delete the tool and the memory is unreadable, the opposite of a vault of plain notes.",
         wins: "Zero-effort capture of full chat history with top-of-table semantic recall.",
       },
       {
@@ -89,7 +92,7 @@ const CAMPS = [
         tool: "Supermemory",
         what: "Cloud-first infrastructure with a real self-host binary: a vector-graph engine that auto-extracts facts, builds user profiles, and auto-forgets.",
         split:
-          "Cloud-first, multi-modal, API and MCP-served, a model in the read loop. imprnt is local plain files with BM25 plus grep, conscious capture, and no API surface.",
+          "Cloud-first, multi-modal, API-served, with a model in the read loop and auto-forgetting on. imprnt has no API surface and no cloud at all.",
         wins: "A multi-modal, multi-user memory backend that auto-extracts and auto-forgets at scale.",
       },
     ],
@@ -103,14 +106,14 @@ const CAMPS = [
         tool: "Zep / Graphiti",
         what: "A bi-temporal knowledge graph (Neo4j by default) where every fact carries a validity window. Hybrid semantic, BM25, and graph traversal, auto-extracted on ingest.",
         split:
-          "Memory as graph nodes and edges in a database, with an LLM building the graph on ingest. imprnt models change as superseded-line markers and typed notes in owned files, no graph DB and no model in the read loop. Zep adds compliant multi-tenant SaaS imprnt has no equivalent of.",
+          "Memory as graph nodes and edges in a database, an LLM building the graph on every ingest. imprnt marks a changed fact as a superseded line in a typed note. Zep adds compliant multi-tenant SaaS imprnt has no equivalent of.",
         wins: "Automatic low-latency memory across many users and sessions, with point-in-time temporal queries.",
       },
       {
         tool: "cognee",
-        what: "An extract-cognify-load pipeline into graph, vector, and relational stores, with many search modes and a model on the read path.",
+        what: "A pipeline that ingests sources and runs an LLM extraction pass into graph, vector, and relational stores, with many search modes and a model on the read path.",
         split:
-          "An LLM-built knowledge graph plus embeddings across three databases. imprnt keeps plain files with BM25 plus grep and the model off the read path entirely.",
+          "An LLM-built knowledge graph plus embeddings across three databases, with a model on the read path imprnt keeps entirely clear.",
         wins: "Multi-hop reasoning across large auto-ingested corpora where graph traversal beats keyword ranking.",
       },
     ],
@@ -125,8 +128,23 @@ const CAMPS = [
         note: "pivoting to git-backed context repos",
         what: "A stateful agent runtime with OS-style tiered memory in Postgres and pgvector, the agent self-editing its own memory, served over an API.",
         split:
-          "A Postgres-backed server reached through a REST API, the agent auto-editing memory blocks mid-run. imprnt is plain files the agent greps, conscious filing, no server. Letta's own best benchmark came from a filesystem variant beating its tool-based memory.",
+          "A Postgres-backed server reached through a REST API, the agent auto-editing memory blocks mid-run. Its own best published benchmark came from a filesystem variant beating its tool-based memory, and its pivot heads toward files.",
         wins: "An always-on agent that autonomously remembers across long sessions, if you will run a server.",
+      },
+    ],
+  },
+  {
+    name: "A different shelf: the config pack",
+    blurb:
+      "A catalog of prompts, rules, and configs for coding agents, with memory as one bolt-on subsystem, measured on the same axes.",
+    tools: [
+      {
+        tool: "ECC",
+        note: "225k stars, a different category",
+        what: "A pack of 268 skills, 66 agent definitions, and config trees for eleven coding-agent harnesses, plus lifecycle hooks that write a per-session summary and re-inject the newest at the next start.",
+        split:
+          "Its memory answers what-was-I-doing-last-session: newest-first injection, a 7-day window, no search or ranking of any kind. imprnt answers what-do-I-know: BM25 over permanent typed notes, on any question, any time. It does keep plain local files and uses zero embeddings.",
+        wins: "Ready-made skills and zero-effort session continuity across many coding harnesses, with a large community and adjacent tooling.",
       },
     ],
   },

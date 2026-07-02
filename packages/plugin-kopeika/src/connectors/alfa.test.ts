@@ -70,6 +70,17 @@ describe("parseAlfa", () => {
     expect(rows[0]!.amount_native).toBe(50000);
   });
 
+  test("dedupExtra is empty on the verified date-only export (ids unchanged)", () => {
+    const rows = parseAlfa(csv(row()));
+    expect(rows[0]!.dedupExtra).toBe("");
+  });
+
+  test("dedupExtra carries the intraday time when the export has one", () => {
+    const rows = parseAlfa(csv(row({ operationDate: "20.05.2026 10:11:09" })));
+    expect(rows[0]!.date).toBe("2026-05-20");
+    expect(rows[0]!.dedupExtra).toBe("10:11:09");
+  });
+
   test("missing required header throws", () => {
     expect(() => parseAlfa('"operationDate","amount"\r\n"20.05.2026","1"\r\n')).toThrow(
       /missing expected column/,

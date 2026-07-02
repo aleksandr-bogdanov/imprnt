@@ -49,5 +49,6 @@ plus a manual login is the whole onboarding.
   FINGERPRINT — never the token itself). Read it to confirm nothing rogue ran.
 - **Deterministic only.** No LLM drives the browser. It answers requests; it doesn't act on its own,
   never auto-injects into the agent or the vault.
-- **The profile is private.** `profile/` (real sessions) and `audit.log` are gitignored — never
-  committed, never in the vault.
+- **The profile is private.** `profile/` (real sessions) and `audit.log` are gitignored — `serve` and
+  `login` write this folder's `.gitignore` themselves (npm strips one from the tarball), so an
+  installed copy is covered too. Never committed, never in the vault.

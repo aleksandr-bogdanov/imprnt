@@ -1,6 +1,7 @@
 // imprnt · kleinanzeigen plugin — the rater. PURE regex + arithmetic, ZERO LLM, by design.
 //
-// Buyer messages are attacker-controlled text (the David Thiess scam in the fixtures is real). A model
+// Buyer messages are attacker-controlled text (the scam fixture replays a real PayPal + drop-address
+// pitch, re-cast with invented names — real inbox data never ships). A model
 // reading that text and able to act is a prompt-injection target; a regex cannot be social-engineered.
 // So classification is code. The model only ever drafts the `odd` residue, later, in a session a human
 // is watching — never here, never in the scheduled loop.
@@ -154,9 +155,13 @@ function interestDraft(facts: Facts): string {
 }
 
 // ── the classifier ────────────────────────────────────────────────────────────────────────────────
-export function classify(body: string, counterpart: string, facts: Facts | null, side: "selling" | "buying" = "selling"): Rating {
-  // 1. scam — any blocklist hit wins outright. Runs on both sides.
-  const tells = scamTells(body, counterpart);
+// `priorBodies` is the counterpart's earlier messages (oldest first). Buckets and drafts answer only
+// the LATEST message, but the scam tells run over the WHOLE history: a scammer's tell-free follow-up
+// ("Na, noch da?") must never wash out yesterday's pitch — that would open the send guard exactly
+// when the scammer nudges.
+export function classify(body: string, counterpart: string, facts: Facts | null, side: "selling" | "buying" = "selling", priorBodies: string[] = []): Rating {
+  // 1. scam — any blocklist hit anywhere in the counterpart's history wins outright. Runs on both sides.
+  const tells = [...new Set([...priorBodies, body].flatMap((b) => scamTells(b, counterpart)))];
   if (tells.length) {
     return { rating: "scam", tells, needs_fact: [], draft: null, offer_amount: null };
   }

@@ -198,7 +198,7 @@ export default function PluginsKindsDiagram() {
           maxWidth: "32rem",
         }}
       >
-        Each kind depends on the core, and the core knows about none of them.
+        Each kind depends on the core, and the core depends on none of them.
       </p>
 
       {/* connector band: a fan of arrows from the core down into each kind. It sits

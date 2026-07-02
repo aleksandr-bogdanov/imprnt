@@ -27,6 +27,9 @@ export type RawConv = {
   unread: number;
   synthetic?: boolean;
   messages: Msg[];
+  // The per-conversation detail fetch failed (transient 429/5xx, bad JSON): messages is empty because
+  // we couldn't read them, not because there are none. sync must keep the prior mirror file, not wipe it.
+  detail_failed?: boolean;
 };
 
 export type Endpoints = {
@@ -117,11 +120,50 @@ export function fixturesToConvs(rows: FixtureRow[]): RawConv[] {
   }));
 }
 
+// One row of the message-box list view, as the gateway returns it.
+export type ListConv = {
+  id: string; adId?: string; adTitle?: string; adStatus?: string;
+  buyerName?: string; sellerName?: string; role?: string; unreadMessagesCount?: number;
+};
+
+// One list page holds at most PAGE_SIZE conversations, so a fuller box needs a page walk — the old
+// single page=0 fetch silently dropped everything past the first 100. Walk page 0,1,2… until a short
+// page (the last one). Two guards keep the walk finite and safe against API drift:
+//   - a page that adds no NEW conversation id stops the walk (an API that ignored `page` would
+//     otherwise serve page 0 forever);
+//   - a non-OK page AFTER the first warns loudly and returns the partial list instead of sinking the
+//     whole sync (sync updates per conversation and never prunes, so a partial list is safe). Page 0
+//     failing still throws — that's an auth/endpoint problem, not a mid-walk hiccup.
+// Exported for tests: the page walk is exercised directly, without 100+ detail fetches.
+const PAGE_SIZE = 100;
+export async function fetchConversationList(ep: Endpoints, headers: Record<string, string>): Promise<ListConv[]> {
+  const out: ListConv[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; ; page++) {
+    // The same politeness gap the detail loop keeps — back-to-back page GETs earn transient 429s.
+    if (page > 0) await new Promise((r) => setTimeout(r, 250));
+    const listUrl = ep.base + fill(ep.listPath, { userId: ep.userId, page, size: PAGE_SIZE });
+    const listRes = await fetch(listUrl, { headers });
+    if (!listRes.ok) {
+      if (page === 0) throw new Error(`list fetch ${listRes.status} ${listRes.statusText} — session expired? reload kleinanzeigen.de in your browser`);
+      console.error(`⚠ list page ${page} fetch ${listRes.status} ${listRes.statusText} — syncing the ${out.length} conversation(s) already listed, the rest keep their prior mirror`);
+      return out;
+    }
+    const list = (await listRes.json()) as { conversations?: ListConv[] };
+    const convs = list.conversations ?? [];
+    const fresh = convs.filter((c) => !seen.has(String(c.id)));
+    for (const c of fresh) seen.add(String(c.id));
+    out.push(...fresh);
+    if (convs.length < PAGE_SIZE || fresh.length === 0) return out;
+  }
+}
+
 // Fetch every conversation (both sides) with FULL message bodies. Fixtures win when the env var is set
 // (offline). Live path: Bearer-auth with the access_token from the local browser session, GET the
-// conversation list, then GET each conversation's detail for the full thread. `role` decides side and
-// which name is the counterpart (Buyer → you're buying, the seller is the counterpart; else selling).
-// The list view trims long messages, so the detail fetch is what makes classification honest.
+// conversation list (paged, see fetchConversationList), then GET each conversation's detail for the
+// full thread. `role` decides side and which name is the counterpart (Buyer → you're buying, the
+// seller is the counterpart; else selling). The list view trims long messages, so the detail fetch is
+// what makes classification honest.
 export async function fetchConversations(here: string): Promise<RawConv[]> {
   const fixtures = process.env.KLEINANZEIGEN_FIXTURES;
   if (fixtures) return fixturesToConvs(readFixtures(fixtures));
@@ -132,30 +174,28 @@ export async function fetchConversations(here: string): Promise<RawConv[]> {
   if (!auth) throw new Error(AUTH_HINT);
 
   const headers = { ...ep.headers, authorization: `Bearer ${auth.token}` };
-  const listUrl = ep.base + fill(ep.listPath, { userId: ep.userId, page: 0, size: 100 });
-  const listRes = await fetch(listUrl, { headers });
-  if (!listRes.ok) throw new Error(`list fetch ${listRes.status} ${listRes.statusText} — session expired? reload kleinanzeigen.de in your browser`);
-  const list = (await listRes.json()) as {
-    conversations?: Array<{
-      id: string; adId?: string; adTitle?: string; adStatus?: string;
-      buyerName?: string; sellerName?: string; role?: string; unreadMessagesCount?: number;
-    }>;
-  };
-  const convs = list.conversations ?? [];
+  const convs = await fetchConversationList(ep, headers);
 
   const out: RawConv[] = [];
-  for (const c of convs) {
+  for (let i = 0; i < convs.length; i++) {
+    const c = convs[i];
+    // A small politeness gap between detail GETs — up to 100 back-to-back requests is how you earn
+    // the transient 429 that used to blank threads (the bulk search path waits 1500ms per page).
+    if (i > 0) await new Promise((r) => setTimeout(r, 250));
     const role = c.role ?? "Seller";
     const side: RawConv["side"] = role === "Buyer" ? "buying" : "selling";
     const detUrl = ep.base + fill(ep.detailPath, { userId: ep.userId, convId: c.id });
-    let messages: Msg[];
+    // null = the detail fetch FAILED (non-2xx, unparseable body, or an error body without .messages).
+    // A single failed detail must not sink the whole sync — but it must not be mistaken for an empty
+    // thread either, so it's flagged and sync keeps the prior mirror file untouched.
+    let messages: Msg[] | null = null;
     try {
       const detRes = await fetch(detUrl, { headers });
-      const det = (await detRes.json()) as { messages?: Array<{ textShort?: string; boundness?: string; receivedDate?: string }> };
-      messages = toMsgs(det.messages ?? []);
-    } catch {
-      messages = []; // a single failed detail must not sink the whole sync
-    }
+      if (detRes.ok) {
+        const det = (await detRes.json()) as { messages?: Array<{ textShort?: string; boundness?: string; receivedDate?: string }> };
+        if (Array.isArray(det.messages)) messages = toMsgs(det.messages);
+      }
+    } catch { /* fall through: messages stays null */ }
     out.push({
       conv: String(c.id),
       side,
@@ -165,7 +205,8 @@ export async function fetchConversations(here: string): Promise<RawConv[]> {
       ad_status: clean(c.adStatus),
       unread: Number(c.unreadMessagesCount ?? 0) || 0,
       synthetic: false,
-      messages,
+      messages: messages ?? [],
+      detail_failed: messages === null,
     });
   }
   return out;
@@ -233,7 +274,7 @@ export async function postContact(
   here: string,
   adId: string,
   text: string,
-  opts: { dryRun?: boolean; force?: boolean } = {},
+  opts: { dryRun?: boolean } = {},
 ): Promise<SendResult> {
   const ep = loadEndpoints(here);
   if (!ep) throw new Error(PROBE_HINT);

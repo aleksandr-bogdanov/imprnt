@@ -2,7 +2,7 @@
 // (bug 2), plus regression coverage for index.md regen and clean-vault behavior. Each test gets its
 // own temp vault and runs check.ts as a real subprocess so we assert both stdout AND the exit code.
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, symlinkSync, rmSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -1198,6 +1198,49 @@ test("an absent host-memory dir counts as empty and does not crash", () => {
   note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
   const { code, out } = runCheck(dir, [], { IMPRNT_HOST_MEMORY_DIR: join(dir, "definitely-absent") });
   expect(out).toContain("host auto-memory empty");
+  expect(code).toBe(0);
+});
+
+// MEMORY.md is exempt only as the bare auto-created index. Claude Code also writes facts STRAIGHT
+// into MEMORY.md (the most common auto-memory write), and a store whose only file is a fact-filled
+// MEMORY.md used to pass as "empty" - a false negative on the exact leak class the guard catches.
+test("a MEMORY.md carrying facts beyond the bare index header is flagged as a stray", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const mem = mkdtempSync(join(tmpdir(), "imprnt-hostmem-"));
+  writeFileSync(join(mem, "MEMORY.md"), "# Memory index\n# userTaxId\nThe user's tax ID is 12/345/67890.\n");
+  const { code, out } = runCheck(dir, [], { IMPRNT_HOST_MEMORY_DIR: mem });
+  expect(out).toContain("host auto-memory not empty");
+  expect(out).toContain("MEMORY.md (has content)");
+  expect(code).not.toBe(0);
+});
+
+// The sweep walks state imprnt does not own, so one unreadable store must degrade to a warned skip,
+// never an uncaught readdir throw that aborts check before index.md regen / the needs-review sync.
+test("an unreadable host-memory dir (EACCES) degrades to a warned skip, and check completes", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const mem = mkdtempSync(join(tmpdir(), "imprnt-hostmem-"));
+  writeFileSync(join(mem, "MEMORY.md"), "# Memory index\n");
+  chmodSync(mem, 0o000);
+  try {
+    const { code, out } = runCheck(dir, [], { IMPRNT_HOST_MEMORY_DIR: mem });
+    expect(out).toContain("could not read");
+    expect(out).toContain("regenerated index.md"); // the run got past the sweep
+    expect(code).toBe(0);
+  } finally {
+    chmodSync(mem, 0o755);
+  }
+});
+
+test("IMPRNT_HOST_MEMORY_DIR pointing at a plain file (ENOTDIR) does not crash check either", () => {
+  const dir = makeVault();
+  note(dir, "people/anna.md", "type: person\ntags: [family]", "# Anna");
+  const file = join(mkdtempSync(join(tmpdir(), "imprnt-hostmem-")), "not-a-dir");
+  writeFileSync(file, "plain file\n");
+  const { code, out } = runCheck(dir, [], { IMPRNT_HOST_MEMORY_DIR: file });
+  expect(out).toContain("could not read");
+  expect(out).toContain("regenerated index.md");
   expect(code).toBe(0);
 });
 

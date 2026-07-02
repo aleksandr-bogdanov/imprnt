@@ -20,24 +20,44 @@ const problems: string[] = [];
 const notes: string[] = [];
 
 // The one hard rule for a money tool: financial data must never reach a remote.
-// Committing data/ is fine in a remoteless private store (the imprnt vault); it is
-// dangerous the moment a remote exists. Fail loudly only in that combination.
-function git(args: string[]): string {
+// That covers data/ (ledger, raw exports, profile) AND deploy/ (the rendered
+// dashboard carries the same numbers). Committing either is fine in a remoteless
+// private store (the imprnt vault); it is dangerous the moment a remote exists.
+// Fail loudly only in that combination. A failed git call (git missing, not a
+// repo) returns null so the guard admits it could not check instead of quietly
+// reporting "not tracked".
+function git(args: string[]): string | null {
   const r = spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
-  return r.status === 0 ? (r.stdout ?? "").trim() : "";
+  return r.status === 0 ? (r.stdout ?? "").trim() : null;
 }
-const dataTracked = git(["ls-files", "data"]).length > 0;
-const hasRemote = git(["remote"]).length > 0;
-if (dataTracked && hasRemote) {
-  problems.push(
-    "data/ is git-tracked in a repo that HAS A REMOTE — your financial data (ledger, raw bank " +
-      "exports, profile.json) could be pushed. Add data/ to .gitignore, or remove the remote. " +
-      "Committing data/ is only safe in a remoteless local store like the imprnt vault.",
-  );
-} else if (dataTracked) {
-  notes.push("data: committed (no remote — canonical local store, safe)");
+const dataLs = git(["ls-files", "data"]);
+const deployLs = git(["ls-files", "deploy"]);
+const remoteLs = git(["remote"]);
+if (dataLs === null || deployLs === null || remoteLs === null) {
+  notes.push("data: could not check git tracking (git unavailable or not a repo)");
 } else {
-  notes.push("data: not tracked by git");
+  const dataTracked = dataLs.length > 0;
+  const deployTracked = deployLs.length > 0;
+  const hasRemote = remoteLs.length > 0;
+  if (dataTracked && hasRemote) {
+    problems.push(
+      "data/ is git-tracked in a repo that HAS A REMOTE — your financial data (ledger, raw bank " +
+        "exports, profile.json) could be pushed. Add data/ to .gitignore, or remove the remote. " +
+        "Committing data/ is only safe in a remoteless local store like the imprnt vault.",
+    );
+  } else if (dataTracked) {
+    notes.push("data: committed (no remote — canonical local store, safe)");
+  } else {
+    notes.push("data: not tracked by git");
+  }
+  if (deployTracked && hasRemote) {
+    problems.push(
+      "deploy/ is git-tracked in a repo that HAS A REMOTE — the rendered dashboard (net worth, " +
+        "savings, transactions) could be pushed. Add deploy/ to .gitignore, or remove the remote.",
+    );
+  } else if (deployTracked) {
+    notes.push("deploy: committed (no remote — safe)");
+  }
 }
 
 // Profile: optional (absent = generic mode), but if present it must be valid JSON.

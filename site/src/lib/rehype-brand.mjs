@@ -25,6 +25,8 @@ const TOOLS = [
   "Reor",
   "mem0",
   "Zep",
+  "ECC",
+  "iai",
 ].sort((a, b) => b.length - a.length);
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

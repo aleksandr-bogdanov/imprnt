@@ -34,12 +34,30 @@ test("captures untracked-not-ignored, excludes gitignored secrets", () => {
 test("excludes secret shapes even when not gitignored", () => {
   writeFileSync(join(repo, "id_rsa"), "PRIVATE KEY\n");
   writeFileSync(join(repo, "deploy.pem"), "CERT\n");
+  writeFileSync(join(repo, ".env.local"), "API_KEY=hunter2\n");
   writeFileSync(join(repo, "notes.md"), "keep\n");
   const sha = snapshot(repo);
   const tree = g(["ls-tree", "-r", "--name-only", sha!]);
   expect(tree).toContain("notes.md");
   expect(tree).not.toContain("id_rsa");
   expect(tree).not.toContain("deploy.pem");
+  expect(tree).not.toContain(".env.local");
+});
+
+test("excludes files ignored only via the user's core.excludesFile", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "timemachine-test-gx-"));
+  try {
+    writeFileSync(join(tmp, "ignore"), "private-notes.txt\n");
+    g(["config", "core.excludesFile", join(tmp, "ignore")]); // the effective excludes a bare -c would clobber
+    writeFileSync(join(repo, "private-notes.txt"), "git hides this\n");
+    writeFileSync(join(repo, "notes.md"), "keep\n");
+    const sha = snapshot(repo);
+    const tree = g(["ls-tree", "-r", "--name-only", sha!]);
+    expect(tree).toContain("notes.md");
+    expect(tree).not.toContain("private-notes.txt");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test("does not disturb the working tree or index", () => {

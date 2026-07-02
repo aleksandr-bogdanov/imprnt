@@ -262,8 +262,9 @@ for (const r of uncovered) review.push(`- [ ] unclassified snapshot \`${r}\` —
 // including a plain `claude` run in another repo (the kind that caused this), is caught here, not only
 // a leak from an imp session in this vault. Strictly READ-ONLY: we only readdir, never write, so the
 // sweep respects imprnt's promise to never touch ~/.claude. The roots are Claude Code's own layout,
-// <configDir>/projects/*/memory (configDir = $CLAUDE_CONFIG_DIR || ~/.claude). MEMORY.md (the index)
-// alone counts as empty. IMPRNT_HOST_MEMORY_DIR overrides to a SINGLE dir (a test, or another host).
+// <configDir>/projects/*/memory (configDir = $CLAUDE_CONFIG_DIR || ~/.claude). A MEMORY.md that is
+// only the bare "# Memory index" header counts as empty; one carrying facts is flagged (see below).
+// IMPRNT_HOST_MEMORY_DIR overrides to a SINGLE dir (a test, or another host).
 function hostMemoryStores(): string[] {
   const override = process.env.IMPRNT_HOST_MEMORY_DIR;
   if (override) return [override];
@@ -278,14 +279,41 @@ function hostMemoryStores(): string[] {
     .sort();
 }
 const memoryStores = hostMemoryStores();
-// One entry per store that still holds a stray note (an .md other than the MEMORY.md index).
+// MEMORY.md is exempt only while it is the bare auto-created index: Claude Code also writes short
+// facts STRAIGHT into MEMORY.md (the most common auto-memory write), and those are exactly the
+// invisible-knowledge leak this sweep exists to catch. Anything beyond the "# Memory index" header
+// and blank lines counts as content. Unreadable (or absent) reads as bare - the sweep is read-only
+// and best-effort over state imprnt does not own.
+//
+// PINNED ASSUMPTION: the sweep is deliberately NON-recursive. Claude Code writes auto-memory as a
+// FLAT dir - MEMORY.md plus sibling memory/*.md topic files, never nested subdirectories - so one
+// readdirSync per store sees everything. If the host ever nests memory dirs, the readdirSync below
+// must become a walk, or a nested note slips past the sweep unseen.
+function memoryIndexHasContent(dir: string): boolean {
+  try {
+    return readFileSync(join(dir, "MEMORY.md"), "utf8")
+      .split(/\r?\n/)
+      .some((l) => l.trim() !== "" && l.trim() !== "# Memory index");
+  } catch {
+    return false;
+  }
+}
+// One entry per store that still holds a stray note (an .md other than the bare MEMORY.md index).
 const strayStores = memoryStores
-  .map((dir) => ({
-    dir,
-    files: existsSync(dir)
-      ? readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md").sort()
-      : [],
-  }))
+  .map((dir) => {
+    // Per-store tolerance: one unreadable memory dir (perms broken by a root-run session, an
+    // IMPRNT_HOST_MEMORY_DIR pointing at a plain file) degrades to a warned skip, never an uncaught
+    // throw that would abort the index.md regen and needs-review sync below - the same treatment
+    // the statSync filter above and the --all plugin glob already get.
+    let files: string[] = [];
+    try {
+      if (existsSync(dir)) files = readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md").sort();
+    } catch (e) {
+      console.error(`⚠ host auto-memory sweep: could not read ${dir} (${e instanceof Error ? e.message : String(e)}) - skipping it`);
+    }
+    if (memoryIndexHasContent(dir)) files.push("MEMORY.md (has content)");
+    return { dir, files };
+  })
   .filter((s) => s.files.length > 0);
 const strayCount = strayStores.reduce((n, s) => n + s.files.length, 0);
 // One needs-review line PER store, so each clears independently as that store is emptied.

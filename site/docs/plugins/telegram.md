@@ -29,6 +29,6 @@ That wires the behavior fragment. Then the one-time channel setup, in any Claude
 
 ## Honest constraints
 
-- The session answers only while it is running on an **awake** machine. A message sent while the link is down arrives when you next start it. There is no way to cold-start a local session from the phone.
+- The session answers only while it is running on an **awake** machine. A message sent while the link is down arrives when you next start it (Telegram holds undelivered bot updates for a limited time, roughly a day). There is no way to cold-start a local session from the phone.
 - Telegram bot chats are **not** end-to-end encrypted. Your questions and the answers transit Telegram's servers, so keep the bot private and the allowlist on.
 - The official channel (v0.0.6) has a bug that pins a CPU core when two pollers share a token. The plugin ships `fix-cpu-leak.mjs` to re-apply the community fix. Run it after install and after any channel-plugin update.
