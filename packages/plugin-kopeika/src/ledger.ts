@@ -7,8 +7,9 @@
  * Dedup is by transaction id: an id already in the ledger is never re-appended.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { basename, dirname, extname, join } from "node:path";
 import { parseCsv, writeCsv } from "./csv.ts";
 import {
   isOwner,
@@ -149,13 +150,34 @@ export function appendDeduped(
 /**
  * Archive the original export under data/raw/<source>/, preserving the file
  * basename. Returns the stored basename for the ledger's source_file column.
- * Idempotent at the byte level: copying the same file again overwrites with an
- * identical copy, so re-archiving is harmless.
+ * raw/ is immutable: an existing archive is NEVER overwritten. Re-archiving
+ * identical bytes is a harmless no-op; a same-named file with DIFFERENT bytes
+ * (banks reuse fixed export filenames month after month) is filed under a
+ * content-address-disambiguated name (<stem>-<hash8><ext>, the core snapshot
+ * scheme), leaving the prior archive untouched.
  */
 export function archiveRaw(dataDir: string, source: string, sourceFilePath: string): string {
-  const name = basename(sourceFilePath);
   const destDir = join(dataDir, "raw", source);
   mkdirSync(destDir, { recursive: true });
-  copyFileSync(sourceFilePath, join(destDir, name));
+
+  const srcBytes = readFileSync(sourceFilePath);
+  let name = basename(sourceFilePath);
+  if (existsSync(join(destDir, name)) && !srcBytes.equals(readFileSync(join(destDir, name)))) {
+    const ext = extname(name);
+    const stem = name.slice(0, name.length - ext.length);
+    const hash8 = createHash("sha256").update(srcBytes).digest("hex").slice(0, 8);
+    // hash8 is content-addressed, so re-archiving the same changed bytes lands on
+    // the same name. If that name too holds different bytes (a hash8 collision),
+    // step a numeric suffix until a free or identical slot is found.
+    name = `${stem}-${hash8}${ext}`;
+    let n = 2;
+    while (existsSync(join(destDir, name)) && !srcBytes.equals(readFileSync(join(destDir, name)))) {
+      name = `${stem}-${hash8}-${n}${ext}`;
+      n += 1;
+    }
+  }
+
+  const dest = join(destDir, name);
+  if (!existsSync(dest)) writeFileSync(dest, srcBytes);
   return name;
 }

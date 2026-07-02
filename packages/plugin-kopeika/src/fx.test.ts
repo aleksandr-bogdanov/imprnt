@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { loadRates, toEur, monthOf, round2, type RateTable } from "./fx.ts";
-import { tmpCsv, cleanupTmp } from "./test-helpers.ts";
+import { backfillEur, loadRates, toEur, monthOf, round2, type RateTable } from "./fx.ts";
+import { tmpCsv, cleanupTmp, tx } from "./test-helpers.ts";
 
 /** Build a RateTable inline without touching disk. */
 function table(entries: Record<string, number>): RateTable {
@@ -75,6 +75,32 @@ describe("toEur", () => {
   test("missing report carries the upper-cased currency and the row's month", () => {
     const r = toEur(1, "czk", "2024-11-02", table({ "2025-01|CZK": 0.04 }));
     expect(r.missing).toEqual({ month: "2024-11", currency: "CZK" });
+  });
+});
+
+describe("backfillEur", () => {
+  test("fills null amount_eur rows whose rate now exists, leaves the rest null", () => {
+    const rows = [
+      tx({ amount_eur: null, currency: "RUB", amount_native: -1000, date: "2026-05-10" }),
+      tx({ amount_eur: null, currency: "CZK", amount_native: -100, date: "2026-05-11" }), // still no rate
+    ];
+    const filled = backfillEur(rows, table({ "2026-05|RUB": 0.0105 }));
+    expect(filled).toBe(1);
+    expect(rows[0]!.amount_eur).toBe(-10.5);
+    expect(rows[1]!.amount_eur).toBeNull(); // never guessed
+  });
+
+  test("never touches a row that already has amount_eur", () => {
+    const rows = [tx({ amount_eur: -4, currency: "RUB", amount_native: -1000, date: "2026-05-10" })];
+    const filled = backfillEur(rows, table({ "2026-05|RUB": 0.0105 }));
+    expect(filled).toBe(0);
+    expect(rows[0]!.amount_eur).toBe(-4); // kept, not recomputed
+  });
+
+  test("no rates -> nothing filled, all rows stay null", () => {
+    const rows = [tx({ amount_eur: null, currency: "RUB", amount_native: -1000 })];
+    expect(backfillEur(rows, table({}))).toBe(0);
+    expect(rows[0]!.amount_eur).toBeNull();
   });
 });
 

@@ -45,6 +45,13 @@ function toIsoDate(raw: string): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/** The "HH:MM:SS" part of "16.06.2026 10:11:09", or "" when the export omits it
+ *  (the verified export is date-only, so this is normally "" and ids are unchanged). */
+function timePart(raw: string): string {
+  const t = raw.trim().slice(11);
+  return /^\d{2}:\d{2}:\d{2}$/.test(t) ? t : "";
+}
+
 /** Parse an unsigned Alfa amount ("50 000,00") to a positive magnitude. */
 function parseMagnitude(raw: string): number {
   return Number(raw.replace(/\s/g, "").replace(",", "."));
@@ -67,7 +74,8 @@ export function parseAlfa(text: string): ParsedRow[] {
     const accountName = rec.get("accountName").trim();
     if (!SAVINGS_ACCOUNT.test(accountName)) continue; // savings vehicles only; spend accounts dropped
 
-    const date = toIsoDate(rec.get("operationDate"));
+    const opTimestamp = rec.get("operationDate");
+    const date = toIsoDate(opTimestamp);
     if (date === "") continue; // no usable date -> cannot dedup or FX; skip defensively
 
     const magnitude = parseMagnitude(rec.get("amount").trim());
@@ -101,6 +109,9 @@ export function parseAlfa(text: string): ParsedRow[] {
       transferCandidate: type === "transfer",
       amountEur: currency === "EUR" ? amount : null,
       balance: null,
+      // Intraday time disambiguates two otherwise-identical same-day rows should
+      // the export carry it; "" on the verified date-only shape keeps ids as-is.
+      dedupExtra: timePart(opTimestamp),
     });
   }
 
