@@ -5,7 +5,10 @@
 > effort, thinking-when-off), world (rate-limit windows with reset times, vault note +
 > needs-review counts, cached weather, clock). Rows align on a label gutter, one alarm ramp
 > carries all color, and each row drops segments by priority on a narrow terminal. It changes nothing about how
-> the agent works and needs nothing from the agent. If the user asks about the status line or
+> the agent works and needs nothing from the agent. The weather segment is the plugin's only
+> network touch: IP geolocation (https://ipwho.is) plus an open-meteo call, HTTPS, at most every
+> 15 minutes, no vault or session data - `IMPRNT_STATUSLINE_NO_NET=1` disables it entirely. If
+> the user asks about the status line or
 > wants it changed, the line is produced by `plugins/statusline/statusline.js` - edit the
 > segments there (source ships in the repo's `packages/plugin-statusline/src/`), or copy it into
 > `plugins/_personal/` to personalize.
