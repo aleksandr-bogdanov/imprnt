@@ -1,0 +1,9 @@
+# Belt-and-suspenders for the publish: real financial data must NEVER ship to npm.
+# (package.json `files` already ships only proposed/.gitkeep for the staging dir; this guards
+#  against that list ever being loosened, and npm `files` + this exclusion are both applied.)
+proposed/*
+!proposed/.gitkeep
+data
+deploy
+.turbo
+node_modules

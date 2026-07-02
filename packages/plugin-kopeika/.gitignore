@@ -3,3 +3,6 @@
 # you run the CLI from this dir during development.
 data/
 deploy/
+# Staged vault notes are real personal data too — only the placeholder is tracked.
+proposed/*
+!proposed/.gitkeep
