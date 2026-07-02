@@ -30,7 +30,7 @@ If the agent clobbered something, run `list`, find a recent snapshot, and `resto
 imprnt plugin add timemachine
 ```
 
-This copies the plugin into `plugins/timemachine/` and wires it as a native Claude Code plugin. `imp` passes the folder to every session it launches, so the hook is active without touching your Claude settings. Remove with `imprnt plugin rm timemachine` (add `--purge` to delete the folder too). Existing snapshots stay in `.git` until you `wipe` them.
+This copies the plugin into `plugins/timemachine/` and wires it as a native Claude Code plugin. `imp` passes the folder to every Claude Code session it launches, so the hook is active without touching your Claude settings. (A gemini session cannot host Claude hooks, so `imp --gemini` skips timemachine with a warning and runs without the safety net.) Remove with `imprnt plugin rm timemachine` (add `--purge` to delete the folder too). Existing snapshots stay in `.git` until you `wipe` them.
 
 ## Limits
 
