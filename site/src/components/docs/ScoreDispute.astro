@@ -1,0 +1,108 @@
+---
+/**
+ * comparison.mdx ONLY - makes "self-reported" concrete as one exhibit: three
+ * published answers to the single question "what does Zep score on LoCoMo",
+ * each from a different party's run, plus a footer on mem0 disagreeing with
+ * itself. Facts from docs/competitors/zep-graphiti.md and mem0.md (primary
+ * sources, dated 2026-06-20). Same three-cell card style as BenchStrip,
+ * collapses to one column at 720px. Scoped CSS only, no Tailwind (docs pages
+ * do not load it), theme-aware via --sl tokens.
+ */
+const CELLS = [
+  {
+    value: "~84%",
+    who: "Zep's original paper",
+    on: "arXiv, January 2025",
+  },
+  {
+    value: "58.44%",
+    who: "mem0's public correction",
+    on: "zep-papers issue #5, May 2025",
+  },
+  {
+    value: "75.14%",
+    who: "Zep's re-run",
+    on: "Zep's rebuttal blog, May 2025",
+  },
+];
+---
+
+<div class="sd">
+  <p class="sd-q">One question, three published answers: what does Zep score on the LoCoMo memory test?</p>
+  <div class="sd-grid">
+    {
+      CELLS.map((c) => (
+        <div class="sd-cell">
+          <div class="sd-value">{c.value}</div>
+          <div class="sd-who">{c.who}</div>
+          <div class="sd-on">{c.on}</div>
+        </div>
+      ))
+    }
+  </div>
+  <p class="sd-foot">
+    mem0's own pages disagree with each other too: LoCoMo 91.6 on its README against 92.5 on its
+    research page, and LongMemEval 93.4, 94.4, or 94.8 depending on which mem0 page you read.
+    No neutral third party has settled any of it.
+  </p>
+</div>
+
+<style>
+  .sd {
+    margin: 1.4rem 0 0.8rem;
+  }
+  .sd-q {
+    margin: 0 0 0.7rem;
+    font-size: 0.92rem;
+    line-height: 1.5;
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+  .sd-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    align-items: stretch;
+    gap: 0.8rem;
+  }
+  @media (max-width: 720px) {
+    .sd-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .sd-cell {
+    display: grid;
+    grid-template-rows: 1.9rem 1.4rem auto;
+    align-content: start;
+    border-radius: 14px;
+    padding: 1rem 1.1rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 9%, var(--sl-color-bg));
+  }
+  .sd-value {
+    font-family: var(--sl-font-mono);
+    font-size: 1.7rem;
+    font-weight: 700;
+    line-height: 1.9rem;
+    white-space: nowrap;
+    color: var(--sl-color-white);
+  }
+  .sd-who {
+    align-self: center;
+    margin-top: 0.45rem;
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--sl-color-white);
+  }
+  .sd-on {
+    margin-top: 0.35rem;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+  .sd-foot {
+    margin-top: 0.6rem;
+    font-size: 0.86rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+  }
+</style>

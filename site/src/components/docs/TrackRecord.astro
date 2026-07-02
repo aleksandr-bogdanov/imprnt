@@ -1,0 +1,171 @@
+---
+/**
+ * comparison.mdx ONLY - the survival question answered with the field's own
+ * record instead of assertions: a dated ledger of six moves (when / tool /
+ * what happened / what users keep), each traced to docs/competitors/ (vendor
+ * repos and announcements, dated 2026-06-20, re-checked 2026-07-02). The
+ * Letta row is the one move toward files and carries the accent tint so the
+ * ledger reads as evidence, not a dunk parade. Scoped CSS only, no Tailwind
+ * (docs pages do not load it), theme-aware via --sl tokens. Rows stack at 720px.
+ */
+const ROWS = [
+  {
+    when: "May 2025",
+    tool: "Zep",
+    what: 'Retired memory search, session summaries, and document collections, weeks after deprecating the self-hostable Community Edition ("no longer supported").',
+    keep: "A graph-database dump that needs Graphiti or a custom reader to interpret.",
+  },
+  {
+    when: "2026",
+    tool: "mem0",
+    what: 'OpenMemory, the local-first memory server it launched in May 2025, "is being sunset" per its own README, pointing users at the self-hosted server instead.',
+    keep: "The local option retires. Its memories sit in a vector store and Postgres that only mem0's own stack reads.",
+  },
+  {
+    when: "Mar 2026",
+    tool: "Reor",
+    what: "Archived by its owner after roughly a year without updates. No successor named.",
+    keep: "The Markdown survives. The semantic search and the related-notes map lived in the app's index and go with it.",
+  },
+  {
+    when: "Apr 2026",
+    tool: "Khoj",
+    what: "Khoj Cloud sunset on April 15. The team moved to two new products, Pipali and Open Paper, and the repo coasts.",
+    keep: "The hosted service is gone. Self-hosters keep a server and a Postgres database to run themselves.",
+  },
+  {
+    when: "ongoing",
+    tool: "Logseq",
+    what: 'Mid-move from plain files to a SQLite database that makes Markdown an export. The beta README warns "data loss is possible". The newest stable release is dated 2025-12-01.',
+    keep: "File-version users keep plain Markdown, for as long as they stay on the old version.",
+  },
+  {
+    when: "Mar 2026",
+    tool: "Letta",
+    accent: true,
+    what: 'Announced its "next phase": server memory tools removed "in favor of straightforward filesystem operations" over Markdown files tracked in git.',
+    keep: "The one move toward files. A memory company rebuilding its flagship around the format users get to keep.",
+  },
+];
+---
+
+<div class="trk">
+  <div class="trk-head" aria-hidden="true">
+    <span>when</span>
+    <span>tool</span>
+    <span>what happened</span>
+    <span>what users keep</span>
+  </div>
+  {
+    ROWS.map((r) => (
+      <div class={r.accent ? "trk-row accent" : "trk-row"}>
+        <span class="trk-when">{r.when}</span>
+        <span class="trk-tool">{r.tool}</span>
+        <p class="trk-what">
+          <span class="trk-label">what happened</span>
+          {r.what}
+        </p>
+        <p class="trk-keep">
+          <span class="trk-label">what users keep</span>
+          {r.keep}
+        </p>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .trk {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin: 1.4rem 0;
+  }
+
+  .trk-head,
+  .trk-row {
+    display: grid;
+    grid-template-columns: 5.2rem 5.8rem 1.2fr 1fr;
+    gap: 0.9rem;
+    align-items: start;
+  }
+
+  .trk-head {
+    padding: 0 1.1rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+
+  .trk-row {
+    border-radius: 14px;
+    padding: 0.85rem 1.1rem 0.9rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 9%, var(--sl-color-bg));
+  }
+  .trk-row.accent {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+
+  .trk-when {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    line-height: 1.4;
+    padding-top: 0.15rem;
+    white-space: nowrap;
+    color: var(--sl-color-gray-2);
+  }
+  .trk-tool {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.95rem;
+    line-height: 1.35;
+    color: var(--sl-color-white);
+  }
+  .trk-row.accent .trk-tool {
+    color: var(--sl-color-text-accent);
+  }
+  .trk-what,
+  .trk-keep {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+  }
+  .trk-keep {
+    color: var(--sl-color-gray-2);
+  }
+  .trk-row.accent .trk-what,
+  .trk-row.accent .trk-keep {
+    color: var(--sl-color-gray-1);
+  }
+
+  /* the per-cell labels only exist once rows stack */
+  .trk-label {
+    display: none;
+  }
+
+  @media (max-width: 720px) {
+    .trk-head {
+      display: none;
+    }
+    .trk-row {
+      grid-template-columns: 5.2rem 1fr;
+      gap: 0.35rem 0.9rem;
+    }
+    .trk-what,
+    .trk-keep {
+      grid-column: 1 / -1;
+    }
+    .trk-label {
+      display: block;
+      margin-bottom: 0.15rem;
+      font-family: var(--sl-font-mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--sl-color-gray-3);
+    }
+  }
+</style>
