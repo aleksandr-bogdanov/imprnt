@@ -2,9 +2,9 @@
 
 **One-line:** Graphiti is an Apache-2.0 open-source engine that builds bi-temporal knowledge graphs for AI agents (extracting entities, facts, and relationships into a graph database like Neo4j, FalkorDB, or Amazon Neptune, with hybrid semantic + BM25 + graph-traversal retrieval), and Zep is the commercial hosted SaaS built on top of it (a managed "Context Lake" served over an API, founded 2023, YC W24, Daniel Chalef).
 
-**Status (checked 2026-06-20):** active - both alive and shipping. Graphiti repo `getzep/graphiti` pushed 2026-06-19, latest release v0.29.2 published 2026-06-08, `archived: false`. GitHub API reports `pushed_at: 2026-06-19T00:37:03Z`, `archived: false`, 27,639 stars ([api.github.com/repos/getzep/graphiti](https://api.github.com/repos/getzep/graphiti), accessed 2026-06-20). Zep Cloud is a live commercial product with a public pricing page and active blog ([getzep.com/pricing](https://www.getzep.com/pricing), accessed 2026-06-20). Note: the self-hostable Zep server (Community Edition) is dead - "Zep Community Edition, which allows you to host Zep locally, is deprecated and no longer supported" ([help.getzep.com/faq](https://help.getzep.com/faq), accessed 2026-06-20). Graphiti is the only open-source path that remains.
+**Status (checked 2026-07-02):** active - both alive and shipping. Graphiti repo `getzep/graphiti` pushed 2026-07-02, latest release v0.29.2 published 2026-06-08, `archived: false`. GitHub API reports `pushed_at: 2026-07-02T01:57:27Z`, `archived: false`, 28,283 stars ([api.github.com/repos/getzep/graphiti](https://api.github.com/repos/getzep/graphiti), accessed 2026-07-02). Zep Cloud is a live commercial product with a public pricing page and active blog ([getzep.com/pricing](https://www.getzep.com/pricing), accessed 2026-07-02). Note: the self-hostable Zep server (Community Edition) is dead - "Zep Community Edition, which allows you to host Zep locally, is deprecated and no longer supported" ([help.getzep.com/faq](https://help.getzep.com/faq), accessed 2026-06-20). Graphiti is the only open-source path that remains.
 
-**Latest release:** v0.29.2, 2026-06-08 | **Stars:** 27,639 | **License:** Apache-2.0 | **Hosting:** both (Graphiti self-host on Apache-2.0, Zep cloud SaaS / enterprise BYOC)
+**Latest release:** v0.29.2, 2026-06-08 | **Stars:** 28,283 | **License:** Apache-2.0 | **Hosting:** both (Graphiti self-host on Apache-2.0, Zep cloud SaaS / enterprise BYOC)
 
 ## What it is
 
@@ -36,7 +36,7 @@ So the relationship is: Graphiti = the open engine you self-host (one graph at a
 - **Winter 2024 (W24)** - Zep's Y Combinator batch. YC page tagline: "Agent Context Is Hard. We Fixed It." Team size listed as 5, location San Francisco, status Active ([ycombinator.com/companies/zep-ai](https://www.ycombinator.com/companies/zep-ai), accessed 2026-06-20). Specific funding amount is unverified (see Confidence and gaps).
 - **2024-08-08** - Graphiti repo created. GitHub API `created_at: 2024-08-08T22:08:30Z` ([api.github.com/repos/getzep/graphiti](https://api.github.com/repos/getzep/graphiti), accessed 2026-06-20).
 - **2025-01-20** - The Zep paper "Zep: A Temporal Knowledge Graph Architecture for Agent Memory" submitted to arXiv (2501.13956). Authors: Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais, Jack Ryan, Daniel Chalef. Submission date "Monday, 20 January 2025", v1 only, no listed revisions ([arxiv.org/abs/2501.13956](https://arxiv.org/abs/2501.13956), accessed 2026-06-20).
-- **~early 2025** - Graphiti crossed 20k GitHub stars "in under 12 months" per third-party coverage ([generational.pub/p/building-ai-products-with-zep](https://www.generational.pub/p/building-ai-products-with-zep), accessed 2026-06-20). Now 27,639 (primary, below).
+- **~early 2025** - Graphiti crossed 20k GitHub stars "in under 12 months" per third-party coverage ([generational.pub/p/building-ai-products-with-zep](https://www.generational.pub/p/building-ai-products-with-zep), accessed 2026-06-20). Now 28,283 (primary, below).
 - **2025-04 (April 2025)** - Zep Community Edition (the self-hostable Zep server) deprecated. After this, Graphiti is the only open-source component. Confirmed via FAQ: "Zep Community Edition, which allows you to host Zep locally, is deprecated and no longer supported" ([help.getzep.com/faq](https://help.getzep.com/faq), accessed 2026-06-20). The exact April-2025 date is from third-party summaries and is partially unverified (see gaps).
 - **2025-05-06** - Zep publishes its rebuttal blog "Is Mem0 Really SOTA in Agent Memory?" reporting a corrected LoCoMo J score of 75.14% for itself. Page dated "May 6, 2025 (with updates through June 3, 2026)" ([blog.getzep.com/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/](https://blog.getzep.com/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/), accessed 2026-06-20).
 - **2025-05-08** - Mem0 CTO Deshraj files the public correction (zep-papers issue #5) reporting 58.44% for Zep on LoCoMo, not 84% ([github.com/getzep/zep-papers/issues/5](https://github.com/getzep/zep-papers/issues/5), accessed 2026-06-20).
@@ -112,14 +112,16 @@ So an agent talks to Graphiti either via the Python SDK (calling search/add-epis
 
 License: Graphiti is Apache-2.0 (GitHub API `license.spdx_id: Apache-2.0`, name "Apache License 2.0", [api.github.com/repos/getzep/graphiti](https://api.github.com/repos/getzep/graphiti), accessed 2026-06-20). The Zep Cloud serving engine is proprietary and closed. The previously self-hostable Zep server (Community Edition) is deprecated and unsupported ([help.getzep.com/faq](https://help.getzep.com/faq), accessed 2026-06-20).
 
-Zep Cloud pricing, verbatim tiers ([getzep.com/pricing](https://www.getzep.com/pricing), accessed 2026-06-20):
+Zep Cloud pricing, verbatim tiers ([getzep.com/pricing](https://www.getzep.com/pricing), accessed 2026-07-02):
 
 | Tier | Price | Key inclusions |
 |------|-------|----------------|
-| Free | $0/month | 1,000 credits/month (no rollover), 2 projects, 5 custom entity & edge types, variable rate limits, lower priority processing |
+| Free | $0/month | 10,000 credits/month ("no rollover or auto-topup"), 2 projects, 5 custom entity & edge types, variable rate limits, lower priority processing |
 | Flex | $125/month ($1,250/year, saves 17%) | 50,000 credits/month with 30-day rollover, 600 requests/minute, 5 projects, 10 custom entity & edge types, 1-day API logs, unlimited memories/retrieval/users. Overage: $25 per 10,000 credits; auto top-up at 20% ($25) |
 | Flex Plus | $375/month ($3,750/year, saves 17%) | 200,000 credits/month with 60-day rollover, 1,000 requests/minute, 10 projects, 20 custom entity & edge types, Observations, custom extraction instructions, Webhooks, Analytics, 7-day API logs, unlimited memories/retrieval/users. Overage: $75 per 40,000 credits; auto top-up at 20% ($75) |
 | Enterprise | Custom (negotiated rates) | Custom credits, guaranteed rate limits with SLA, unlimited projects, SOC 2 Type II, HIPAA BAA, 1-year API/audit logs, dedicated Slack/Teams support and account manager |
+
+Change since the 2026-06-20 check: the Free tier now reads 10,000 credits/month where 1,000/month was recorded on 2026-06-20. The 2026-07-02 page was fetched twice and both reads say "10,000 credits per month," so either Zep raised the free allowance 10x or the earlier figure was a misread. Flex/Flex Plus prices are unchanged ($1,250/year and $3,750/year, shown on 2026-07-02 as $104 and $312 per month billed annually).
 
 Note from the pricing page: "Memory, retrieval, storage, and users are unmetered." The metered unit is credits, which are consumed by processing (extraction/ingest), so the cost scales with how much you capture, not how much you store ([getzep.com/pricing](https://www.getzep.com/pricing), accessed 2026-06-20). Enterprise adds BYOC: "For enterprise customers who need VPC residency and maximum control, we offer BYOC deployments where Zep runs in your own cloud infrastructure" ([help.getzep.com/faq](https://help.getzep.com/faq), accessed 2026-06-20).
 
@@ -164,12 +166,12 @@ The two systems answer the same need (an AI that remembers across sessions) with
 ## Sources
 
 - [raw.githubusercontent.com/getzep/graphiti/main/README.md](https://raw.githubusercontent.com/getzep/graphiti/main/README.md) - Graphiti README (primary, repo) - accessed 2026-06-20
-- [api.github.com/repos/getzep/graphiti](https://api.github.com/repos/getzep/graphiti) - GitHub API repo metadata (stars, license, pushed_at, archived) - accessed 2026-06-20
+- [api.github.com/repos/getzep/graphiti](https://api.github.com/repos/getzep/graphiti) - GitHub API repo metadata (stars, license, pushed_at, archived) - accessed 2026-07-02
 - [github.com/getzep/graphiti/releases](https://github.com/getzep/graphiti/releases) - Graphiti releases page - accessed 2026-06-20
 - [api.github.com/repos/getzep/graphiti/releases/latest](https://github.com/getzep/graphiti/releases) - latest release (v0.29.2, 2026-06-08) - accessed 2026-06-20
 - [help.getzep.com/graphiti/getting-started/overview](https://help.getzep.com/graphiti/getting-started/overview) - Zep / Graphiti docs overview (Context Lake, Context Graph Engine, backends, latency) - accessed 2026-06-20
 - [help.getzep.com/faq](https://help.getzep.com/faq) - Zep FAQ (Community Edition deprecation, BYOC, self-host) - accessed 2026-06-20
-- [getzep.com/pricing](https://www.getzep.com/pricing) - Zep Cloud pricing tiers - accessed 2026-06-20
+- [getzep.com/pricing](https://www.getzep.com/pricing) - Zep Cloud pricing tiers - accessed 2026-07-02
 - [arxiv.org/abs/2501.13956](https://arxiv.org/abs/2501.13956) - "Zep: A Temporal Knowledge Graph Architecture for Agent Memory" (DMR, LongMemEval) - accessed 2026-06-20
 - [blog.getzep.com/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/](https://blog.getzep.com/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/) - Zep's LoCoMo rebuttal (75.14%) - accessed 2026-06-20
 - [github.com/getzep/zep-papers/issues/5](https://github.com/getzep/zep-papers/issues/5) - Mem0's LoCoMo correction (58.44%) - accessed 2026-06-20
@@ -179,7 +181,7 @@ The two systems answer the same need (an AI that remembers across sessions) with
 
 ## Confidence and gaps
 
-- **High confidence (primary-verified):** Graphiti is active (pushed 2026-06-19, latest release v0.29.2 on 2026-06-08, `archived: false`), Apache-2.0, 27,639 stars, supported backends (Neo4j, FalkorDB, Neptune, Kuzu deprecated), bi-temporal model with fact invalidation, hybrid semantic+BM25+graph retrieval, MCP server + FastAPI REST service, Zep Cloud pricing tiers and prices, the arXiv paper's DMR 94.8% and LongMemEval up to 18.5% / 90% latency claims, the LoCoMo three-way dispute (84% / 58.44% / 75.14%), Community Edition deprecation, Zep founded 2023, YC W24.
+- **High confidence (primary-verified):** Graphiti is active (pushed 2026-07-02, latest release v0.29.2 on 2026-06-08, `archived: false`), Apache-2.0, 28,283 stars, supported backends (Neo4j, FalkorDB, Neptune, Kuzu deprecated), bi-temporal model with fact invalidation, hybrid semantic+BM25+graph retrieval, MCP server + FastAPI REST service, Zep Cloud pricing tiers and prices, the arXiv paper's DMR 94.8% and LongMemEval up to 18.5% / 90% latency claims, the LoCoMo three-way dispute (84% / 58.44% / 75.14%), Community Edition deprecation, Zep founded 2023, YC W24.
 - **Release-date rendering caveat:** the GitHub releases-page summarizer initially printed "2024" for several tags (v0.29.0 through v0.29.2). The authoritative `releases/latest` API returns `published_at: 2026-06-08T14:25:35Z` and the repo `pushed_at` is `2026-06-19`, so the real timeline is 2026. The "2024" strings were a fetch artifact, corrected above.
 - **Funding amount: unverified.** The YC page lists status Active and team size 5 but no funding stage or dollar amount, and I did not find a primary press release stating a round size or total raised. Zep is YC-backed (W24) and described as "backed" in third-party pieces, but the specific amount is unverified from a primary source.
 - **Community Edition deprecation exact date: partially verified.** The FAQ confirms it is "deprecated and no longer supported" (primary). The specific "April 2025" date comes from third-party summaries, not a dated primary announcement I could fetch, so the month is partially unverified while the fact of deprecation is confirmed.
