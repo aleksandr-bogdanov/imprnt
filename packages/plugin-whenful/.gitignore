@@ -1,0 +1,5 @@
+# Local, private, never committed: real task mirrors and staged vault notes.
+mirror/*
+!mirror/.gitkeep
+proposed/*
+!proposed/.gitkeep
