@@ -64,6 +64,12 @@ function datePart(timestamp: string): string {
   return timestamp.trim().split(" ")[0] ?? "";
 }
 
+/** The "HH:MM:SS" part of "YYYY-MM-DD HH:MM:SS", or "" when the export omits it. */
+function timePart(timestamp: string): string {
+  const t = timestamp.trim().split(" ")[1] ?? "";
+  return /^\d{2}:\d{2}:\d{2}$/.test(t) ? t : "";
+}
+
 export function parseRevolut(text: string): ParsedRow[] {
   const { header, records } = parseCsv(text);
   for (const required of REQUIRED_HEADERS) {
@@ -126,6 +132,10 @@ export function parseRevolut(text: string): ParsedRow[] {
       // the row is already EUR the pipeline's toEur() passes it through at 1.
       amountEur: null,
       balance,
+      // Intraday time disambiguates two otherwise-identical same-day rows (two
+      // equal metro tickets, two equal P2P payments) that would share an id on
+      // date alone. Started Date is always populated; "" when it has no time.
+      dedupExtra: timePart(rec.get("Started Date")),
     });
   }
 
