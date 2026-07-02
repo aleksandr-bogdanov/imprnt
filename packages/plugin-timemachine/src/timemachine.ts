@@ -16,7 +16,7 @@
 //   node timemachine.js status               # where snapshots live, how many, when last
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 const REF = "refs/timemachine"; // side ref namespace - not pushed by default, not on any branch
@@ -28,7 +28,7 @@ const KEEP = 200; // bound .git growth: keep the most recent N snapshots
 // (which still applies), so a secret is skipped without ever being named in a pathspec - naming an
 // ignored path in a pathspec makes `git add` error.
 const SECRET_PATTERNS = [
-  ".env", "*.env", "*.pem", "*.key", "*.p12", "*.pfx",
+  ".env", ".env.*", "*.env", "*.pem", "*.key", "*.p12", "*.pfx",
   "id_rsa", "id_ed25519", "*credentials*", "*.secret",
 ];
 
@@ -58,7 +58,14 @@ export function snapshot(cwd: string): string | null {
   // respects .gitignore (ignored files are never staged), and the excludes drop secret shapes.
   const tmp = mkdtempSync(join(tmpdir(), "timemachine-"));
   const excludes = join(tmp, "excludes");
-  writeFileSync(excludes, SECRET_PATTERNS.join("\n") + "\n");
+  // `-c core.excludesFile=<tmp>` REPLACES the effective excludes file (a single-valued key), so
+  // fold the user's own into the throwaway one - a file ignored only globally must stay hidden.
+  const userExcludes =
+    git(["config", "--path", "--get", "core.excludesFile"], root, true) ||
+    join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "git", "ignore");
+  let userPatterns = "";
+  try { userPatterns = readFileSync(userExcludes, "utf8"); } catch { /* no excludes file: fine */ }
+  writeFileSync(excludes, userPatterns + "\n" + SECRET_PATTERNS.join("\n") + "\n");
   const env = { ...process.env, GIT_INDEX_FILE: join(tmp, "index") };
   try {
     execFileSync("git", ["-c", `core.excludesFile=${excludes}`, "add", "-A", "--", "."], { cwd: root, env, stdio: "ignore" });
