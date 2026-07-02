@@ -52,8 +52,11 @@ console.log(`kleinanzeigen check — ${count} conversation(s) in mirror`);
 if (!existsSync(ENDPOINTS)) {
   notes.push("no endpoints.json yet — live sync isn't wired; run `node kleinanzeigen.js probe` (or use KLEINANZEIGEN_FIXTURES offline)");
 }
-if (!process.env.KLEINANZEIGEN_COOKIES) {
-  notes.push("KLEINANZEIGEN_COOKIES not set in this shell — needed for probe/live sync, not for offline use");
+// Auth resolves at sync time through a chain (KLEINANZEIGEN_TOKEN / KLEINANZEIGEN_COOKIES override →
+// the session-host broker → a direct browser-session read), so an unset env var is normal, not a
+// problem. Only note the absence of an explicit override, and name the chain that runs instead.
+if (!process.env.KLEINANZEIGEN_TOKEN && !process.env.KLEINANZEIGEN_COOKIES) {
+  notes.push("no KLEINANZEIGEN_TOKEN/KLEINANZEIGEN_COOKIES override in this shell — live sync auths via the session host or the local browser session (offline fixtures need neither)");
 }
 
 // 2. mirror staleness

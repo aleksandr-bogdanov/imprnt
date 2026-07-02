@@ -120,11 +120,50 @@ export function fixturesToConvs(rows: FixtureRow[]): RawConv[] {
   }));
 }
 
+// One row of the message-box list view, as the gateway returns it.
+export type ListConv = {
+  id: string; adId?: string; adTitle?: string; adStatus?: string;
+  buyerName?: string; sellerName?: string; role?: string; unreadMessagesCount?: number;
+};
+
+// One list page holds at most PAGE_SIZE conversations, so a fuller box needs a page walk — the old
+// single page=0 fetch silently dropped everything past the first 100. Walk page 0,1,2… until a short
+// page (the last one). Two guards keep the walk finite and safe against API drift:
+//   - a page that adds no NEW conversation id stops the walk (an API that ignored `page` would
+//     otherwise serve page 0 forever);
+//   - a non-OK page AFTER the first warns loudly and returns the partial list instead of sinking the
+//     whole sync (sync updates per conversation and never prunes, so a partial list is safe). Page 0
+//     failing still throws — that's an auth/endpoint problem, not a mid-walk hiccup.
+// Exported for tests: the page walk is exercised directly, without 100+ detail fetches.
+const PAGE_SIZE = 100;
+export async function fetchConversationList(ep: Endpoints, headers: Record<string, string>): Promise<ListConv[]> {
+  const out: ListConv[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; ; page++) {
+    // The same politeness gap the detail loop keeps — back-to-back page GETs earn transient 429s.
+    if (page > 0) await new Promise((r) => setTimeout(r, 250));
+    const listUrl = ep.base + fill(ep.listPath, { userId: ep.userId, page, size: PAGE_SIZE });
+    const listRes = await fetch(listUrl, { headers });
+    if (!listRes.ok) {
+      if (page === 0) throw new Error(`list fetch ${listRes.status} ${listRes.statusText} — session expired? reload kleinanzeigen.de in your browser`);
+      console.error(`⚠ list page ${page} fetch ${listRes.status} ${listRes.statusText} — syncing the ${out.length} conversation(s) already listed, the rest keep their prior mirror`);
+      return out;
+    }
+    const list = (await listRes.json()) as { conversations?: ListConv[] };
+    const convs = list.conversations ?? [];
+    const fresh = convs.filter((c) => !seen.has(String(c.id)));
+    for (const c of fresh) seen.add(String(c.id));
+    out.push(...fresh);
+    if (convs.length < PAGE_SIZE || fresh.length === 0) return out;
+  }
+}
+
 // Fetch every conversation (both sides) with FULL message bodies. Fixtures win when the env var is set
 // (offline). Live path: Bearer-auth with the access_token from the local browser session, GET the
-// conversation list, then GET each conversation's detail for the full thread. `role` decides side and
-// which name is the counterpart (Buyer → you're buying, the seller is the counterpart; else selling).
-// The list view trims long messages, so the detail fetch is what makes classification honest.
+// conversation list (paged, see fetchConversationList), then GET each conversation's detail for the
+// full thread. `role` decides side and which name is the counterpart (Buyer → you're buying, the
+// seller is the counterpart; else selling). The list view trims long messages, so the detail fetch is
+// what makes classification honest.
 export async function fetchConversations(here: string): Promise<RawConv[]> {
   const fixtures = process.env.KLEINANZEIGEN_FIXTURES;
   if (fixtures) return fixturesToConvs(readFixtures(fixtures));
@@ -135,16 +174,7 @@ export async function fetchConversations(here: string): Promise<RawConv[]> {
   if (!auth) throw new Error(AUTH_HINT);
 
   const headers = { ...ep.headers, authorization: `Bearer ${auth.token}` };
-  const listUrl = ep.base + fill(ep.listPath, { userId: ep.userId, page: 0, size: 100 });
-  const listRes = await fetch(listUrl, { headers });
-  if (!listRes.ok) throw new Error(`list fetch ${listRes.status} ${listRes.statusText} — session expired? reload kleinanzeigen.de in your browser`);
-  const list = (await listRes.json()) as {
-    conversations?: Array<{
-      id: string; adId?: string; adTitle?: string; adStatus?: string;
-      buyerName?: string; sellerName?: string; role?: string; unreadMessagesCount?: number;
-    }>;
-  };
-  const convs = list.conversations ?? [];
+  const convs = await fetchConversationList(ep, headers);
 
   const out: RawConv[] = [];
   for (let i = 0; i < convs.length; i++) {

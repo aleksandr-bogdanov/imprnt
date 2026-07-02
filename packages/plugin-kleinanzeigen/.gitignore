@@ -5,6 +5,8 @@ mirror/*
 # Real fact sheets carry live listing ids + private price floors — only the template is tracked.
 listings/*
 !listings/example.yaml
+# The local market mirror (search snapshots, the deduped listings store, saved watches) — live data.
+market/
 *.har
 cookies*
 *.cookies
