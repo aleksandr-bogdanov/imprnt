@@ -1,0 +1,240 @@
+---
+/**
+ * Page-specific (getting-started) visual: what ingest does behind the reply, as a
+ * three-stage pipeline. Plain code makes an exact copy in raw/, the model gives
+ * the source its one careful read (home, summary, decisions, tags, links), and
+ * the vault receives several linked notes plus one log line. Replaces the prose
+ * step list with the same facts, in full: every work item from the old steps is a
+ * row here. Three fixed stages, no instance list. Stages fade in staggered and
+ * the fanned notes pop when scrolled into view (script gated on motion, so no-JS
+ * and reduced-motion visitors get the static pipeline). Filled surfaces, no
+ * borders. Scoped CSS, theme-aware via Starlight tokens.
+ */
+const WORK = [
+  "decides where each note goes",
+  "writes a one-line summary",
+  "pulls out decisions and actions",
+  "tags it, links the people and projects it mentions",
+];
+const NOTES = ["a person", "a project", "a dated event"];
+---
+
+<div
+  class="gsingest"
+  role="img"
+  aria-label="What ingest does: plain code copies the original untouched into raw, so it stays traceable. The model reads it once, decides where each note goes, writes a one-line summary, pulls out decisions and actions, tags it, and links the people and projects it mentions. The vault receives several linked notes from that one copy, and one line lands in log.md."
+>
+  <div class="stage" style="--i: 0">
+    <span class="who">plain code</span>
+    <span class="label">An exact copy</span>
+    <p class="sub">
+      The original lands in <code class="mono">raw/</code> untouched, so every note stays
+      traceable to its source.
+    </p>
+  </div>
+  <span class="arr" aria-hidden="true" style="--i: 1">&rarr;</span>
+  <div class="stage model" style="--i: 1">
+    <span class="who">the model</span>
+    <span class="label">One careful read</span>
+    <ul class="work">
+      {WORK.map((w) => <li>{w}</li>)}
+    </ul>
+  </div>
+  <span class="arr" aria-hidden="true" style="--i: 2">&rarr;</span>
+  <div class="stage" style="--i: 2">
+    <span class="who">your vault</span>
+    <span class="label">Linked notes</span>
+    <div class="fan">
+      {NOTES.map((n, j) => (
+        <span class="note" style={`--j: ${j}`}>
+          {n}
+        </span>
+      ))}
+    </div>
+    <p class="sub">several notes from one copy, linked to each other</p>
+    <p class="log">
+      <code class="mono">log.md</code>
+      <span>one new line</span>
+    </p>
+  </div>
+</div>
+
+<style>
+  .gsingest {
+    display: flex;
+    align-items: stretch;
+    gap: 0.4rem;
+    margin: 1.4rem 0 1.6rem;
+  }
+  .stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.95rem 1rem 0.9rem;
+    border-radius: 13px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    /* Starlight's prose rhythm adds a top margin to siblings, which would
+       misalign the second and third stage. Flex gap owns spacing. */
+    margin-top: 0;
+  }
+  .stage.model {
+    flex: 1.35;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+  }
+  .who {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .stage.model .who {
+    color: var(--sl-color-text-accent);
+  }
+  .label {
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--sl-color-white);
+  }
+  .sub {
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+    margin: 0;
+  }
+  /* Scope to .gsingest so the chip beats Starlight's global :not(pre)>code
+     styling (the pale tint + faint border it leaks onto a bare <code>). */
+  .gsingest .mono {
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    border: none;
+    border-radius: 6px;
+    padding: 0.08rem 0.4rem;
+  }
+  .work {
+    list-style: none;
+    margin: 0.1rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.35rem;
+  }
+  .work li {
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--sl-color-white);
+    padding-left: 1rem;
+    position: relative;
+    margin: 0;
+  }
+  .work li::before {
+    content: "";
+    position: absolute;
+    left: 0.1rem;
+    top: 0.7em;
+    transform: translateY(-50%);
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 70%, var(--sl-color-bg));
+  }
+  .fan {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.1rem;
+  }
+  .note {
+    font-size: 0.78rem;
+    line-height: 1.3;
+    color: var(--sl-color-white);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 24%, var(--sl-color-bg));
+    border-radius: 7px;
+    padding: 0.24rem 0.55rem;
+  }
+  .log {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: auto 0 0;
+    padding-top: 0.5rem;
+  }
+  .log span {
+    font-size: 0.78rem;
+    color: var(--sl-color-gray-2);
+  }
+  .arr {
+    align-self: center;
+    color: var(--sl-color-gray-1);
+    font-size: 1.25rem;
+    flex: 0 0 auto;
+  }
+
+  /* Reveal states, applied only when the script adds .anim (motion allowed). */
+  .gsingest.anim :is(.stage, .arr) {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  .gsingest.anim .note {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  .gsingest.anim.on :is(.stage, .arr) {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.55s ease,
+      transform 0.55s ease;
+    transition-delay: calc(var(--i) * 160ms);
+  }
+  .gsingest.anim.on .note {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.4s ease,
+      transform 0.4s ease;
+    transition-delay: calc(480ms + var(--j) * 110ms);
+  }
+
+  @media (max-width: 760px) {
+    .gsingest {
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .arr {
+      transform: rotate(90deg);
+      align-self: center;
+      font-size: 1.1rem;
+    }
+    .gsingest.anim.on .arr {
+      transform: rotate(90deg);
+    }
+    .log {
+      margin-top: 0.2rem;
+    }
+  }
+</style>
+
+<script>
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    for (const root of document.querySelectorAll(".gsingest")) {
+      root.classList.add("anim");
+      const io = new IntersectionObserver(
+        (entries, obs) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              root.classList.add("on");
+              obs.disconnect();
+            }
+          }
+        },
+        { threshold: 0.2 },
+      );
+      io.observe(root);
+    }
+  }
+</script>

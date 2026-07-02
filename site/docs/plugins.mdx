@@ -9,19 +9,19 @@ import RuleBanner from "../src/components/docs/RuleBanner.astro";
 import PluginsWiringTable from "../src/components/docs/PluginsWiringTable.astro";
 import PluginsInstall from "../src/components/docs/PluginsInstall.astro";
 
-The **core** is your notes plus three commands: ingest, recall, and check. Every other behavior is a **plugin** you add when you want it and remove with one line. The core discovers plugins by folder convention and never depends on one (the only plugin names it carries are a display hint for `imprnt plugin list`).
+The **core** is your notes plus three commands: ingest, recall, and check. Everything else is a **plugin** you add when you want it and remove with one line. The core finds plugins by the name of their folder and never depends on one (the only plugin names it carries are a display hint for `imprnt plugin list`).
+
+Every plugin is one of **three kinds**, by how it reaches the assistant. The switches below are live: pull a kind out and watch what happens to the core.
+
+<PluginsKindsDiagram client:load />
 
 <RuleBanner />
 
 <PluginsInstall />
 
-Every plugin is one of **three kinds**, by how it reaches the assistant.
-
-<PluginsKindsDiagram client:load />
-
 ## How a plugin reaches Claude
 
-A plugin is a folder with an `agent.md` fragment, instructions for the assistant. Installing it loads that fragment into your sessions, and **where it loads decides the reach**.
+A plugin is a folder with one instruction file, `agent.md`, that tells the assistant what the plugin is and how to use it. Installing the plugin loads that file into your sessions, and **where it loads decides the reach**.
 
 <PluginsWiringTable />
 

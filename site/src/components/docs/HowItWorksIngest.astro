@@ -1,0 +1,212 @@
+---
+/**
+ * Page-specific (how-it-works): the four filing steps as a numbered rail, so
+ * "only one step spends the model" is visible before a word is read. Steps 1,
+ * 3, 4 are neutral code steps, step 2 is the single accent-filled model step
+ * with a paid tag and a small fan-out glyph (one source, several notes).
+ * All step facts are kept in full. Markup is written out per step (not a data
+ * array) so inline code spans stay real elements. Filled surfaces, no border
+ * boxes. Scoped CSS, theme-aware via Starlight tokens.
+ */
+---
+
+<ol class="rail">
+  <li class="step">
+    <span class="n" aria-hidden="true">1</span>
+    <div class="card">
+      <div class="head">
+        <span class="title">Copy</span>
+        <span class="who code">code</span>
+      </div>
+      <p class="body">
+        The source goes into <code>raw/</code> untouched, hashed, with the obvious
+        structure pulled out. Free.
+      </p>
+    </div>
+  </li>
+  <li class="step paid">
+    <span class="n" aria-hidden="true">2</span>
+    <div class="card">
+      <div class="head">
+        <span class="title">Understand</span>
+        <span class="who model">model</span>
+        <span class="paidtag">the only paid step</span>
+      </div>
+      <div class="paidrow">
+        <p class="body">
+          For each thing in the source: pick its type and folder, write a one-line
+          summary, pull out the decisions and actions, and tag it with the words you
+          will search for later, even if the source never used them. A dense source
+          fans out into several small notes.
+        </p>
+        <svg class="fan" viewBox="0 0 92 56" aria-hidden="true">
+          <rect class="src" x="2" y="21" width="20" height="14" rx="3.5"></rect>
+          <path class="wire" d="M24 28 C 40 28, 44 9, 62 9"></path>
+          <path class="wire" d="M24 28 L 62 28"></path>
+          <path class="wire" d="M24 28 C 40 28, 44 47, 62 47"></path>
+          <rect class="out" x="64" y="2" width="20" height="14" rx="3.5"></rect>
+          <rect class="out" x="64" y="21" width="20" height="14" rx="3.5"></rect>
+          <rect class="out" x="64" y="40" width="20" height="14" rx="3.5"></rect>
+        </svg>
+      </div>
+    </div>
+  </li>
+  <li class="step">
+    <span class="n" aria-hidden="true">3</span>
+    <div class="card">
+      <div class="head">
+        <span class="title">File</span>
+        <span class="who code">code</span>
+      </div>
+      <p class="body">
+        Look up people by name and alias, flag anything unresolved for review, and
+        write the note without ever overwriting an existing one. Merging a renamed
+        person into their old note is the model's call, made back in step 2.
+      </p>
+    </div>
+  </li>
+  <li class="step">
+    <span class="n" aria-hidden="true">4</span>
+    <div class="card">
+      <div class="head">
+        <span class="title">Tidy</span>
+        <span class="who code">code</span>
+      </div>
+      <p class="body">
+        <code>check</code> rebuilds the index and flags broken links, topic and event
+        notes that link to no person, organization, or thing, and any note with no
+        tags. It never blocks and never silently drops anything.
+      </p>
+    </div>
+  </li>
+</ol>
+
+<style>
+  .rail {
+    list-style: none;
+    margin: 1.5rem 0;
+    padding: 0;
+    display: grid;
+    gap: 0.55rem;
+  }
+  .step {
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    gap: 0.7rem;
+    margin: 0;
+    padding: 0;
+  }
+  /* Starlight owl-spacing leaks margin-top onto later grid children */
+  .rail > .step,
+  .step > * {
+    margin-top: 0;
+  }
+  .n {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    font-family: var(--sl-font-mono);
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+  }
+  .step.paid .n {
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 18%, var(--sl-color-bg));
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.85rem 1rem;
+    border-radius: 13px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 10%, var(--sl-color-bg));
+  }
+  .step.paid .card {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.55rem;
+  }
+  .title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .who {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+  }
+  .who.code {
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 34%, var(--sl-color-bg));
+  }
+  .who.model {
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
+  }
+  .paidtag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .body {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+  .body code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.83rem;
+    padding: 0.08rem 0.35rem;
+    border-radius: 6px;
+    color: var(--sl-color-white);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 25%, var(--sl-color-bg));
+  }
+  .paidrow {
+    display: flex;
+    align-items: center;
+    gap: 1.1rem;
+    margin-top: 0;
+  }
+  .paidrow .body {
+    flex: 1 1 auto;
+    margin-top: 0;
+  }
+  .fan {
+    flex: 0 0 92px;
+    width: 92px;
+    height: 56px;
+    margin-top: 0;
+  }
+  .fan .src {
+    fill: color-mix(in oklab, var(--sl-color-gray-2) 45%, var(--sl-color-bg));
+  }
+  .fan .out {
+    fill: color-mix(in oklab, var(--sl-color-text-accent) 42%, var(--sl-color-bg));
+  }
+  .fan .wire {
+    fill: none;
+    stroke: color-mix(in oklab, var(--sl-color-text-accent) 55%, transparent);
+    stroke-width: 1.6;
+  }
+  @media (max-width: 640px) {
+    .fan {
+      display: none;
+    }
+  }
+</style>

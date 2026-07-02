@@ -1,69 +1,103 @@
 ---
 /**
- * Page-specific visual for docs/vault-layout.mdx: the "How the model decides
- * where a note goes" section. Replaces a bare markdown ordered list (the page's
- * only text-only block) with a vertical numbered decision branch that matches
- * the numbered-circle + accent rhythm of TagsFlow on the same page. Three steps,
- * checked top to bottom: the first match wins. Each step keeps its rule verbatim
- * (a question + where it files), with the load-bearing folder term as a chip.
- * The third step is the catch-all, styled in accent like the "yours" step in
- * TagsFlow. Categories not instances, so it never goes stale. Scoped CSS,
- * theme-aware via Starlight --sl tokens, stacks cleanly on mobile.
+ * Page-specific visual for docs/vault-layout.mdx: the "How the model files a
+ * note" section. A vertical decision cascade, checked top to bottom, first
+ * match wins. Between the cards a small connector says the fall-through out
+ * loud, so the top-to-bottom rule is visible, and the folder chips reuse the
+ * exact hue coding of the tree above (green entities, amber life-areas, blue
+ * forms), so the two visuals read as one system. The third step is the
+ * catch-all, highlighted in accent. Categories not instances, so it never
+ * goes stale. Scoped CSS, theme-aware via Starlight --sl tokens, root carries
+ * `not-content` to keep Starlight's markdown margins out. Scroll reveal is
+ * gated behind prefers-reduced-motion and only arms once JS is running.
  */
-const STEPS = [
+type Chip = { name: string; c: "ent" | "dom" | "form"; ghost?: boolean };
+type Step = { n: string; q: string; to: string; chips: Chip[]; catch?: boolean };
+
+const STEPS: Step[] = [
   {
     n: "1",
     q: "Is it a person, org, or holding (an owned thing whose state you track)?",
     to: "File it in the entity folder, whatever the topic.",
-    folders: ["people/", "orgs/", "holdings/"],
-    catch: false,
+    chips: [
+      { name: "people/", c: "ent" },
+      { name: "orgs/", c: "ent" },
+      { name: "holdings/", c: "ent" },
+    ],
   },
   {
     n: "2",
     q: "Is it a dated event, a lesson learned, or a project with a status?",
     to: "Those have their own folders.",
-    folders: ["events/", "mistakes/", "projects/"],
-    catch: false,
+    chips: [
+      { name: "events/", c: "form" },
+      { name: "mistakes/", c: "form" },
+      { name: "projects/", c: "dom" },
+    ],
   },
   {
     n: "3",
     q: "Otherwise it is topical.",
     to: "File it by life-area.",
-    folders: ["identity/", "health/", "finances/", "work/", "life/"],
     catch: true,
+    chips: [
+      { name: "identity/", c: "dom" },
+      { name: "health/", c: "dom" },
+      { name: "finances/", c: "dom" },
+      { name: "work/", c: "dom" },
+      { name: "life/", c: "dom" },
+      { name: "+ your own", c: "dom", ghost: true },
+    ],
   },
 ];
 ---
 
-<ol class="filing">
+<ol class="filing not-content" data-filing>
   {
-    STEPS.map((s) => (
-      <li class={`step ${s.catch ? "catch" : ""}`}>
-        <span class="num">{s.n}</span>
-        <div class="text">
-          <div class="qa">
-            <p class="q">{s.q}</p>
-            <p class="to">{s.to}</p>
+    STEPS.map((s, i) => (
+      <>
+        {i > 0 && (
+          <li class="joint" aria-hidden="true" style={`--i:${i * 2 - 1}`}>
+            <span class="jline" />
+            <span class="jtext">no match, keep going</span>
+          </li>
+        )}
+        <li class={`step ${s.catch ? "catch" : ""}`} style={`--i:${i * 2}`}>
+          <span class="num">{s.n}</span>
+          <div class="text">
+            <div class="qa">
+              <p class="q">{s.q}</p>
+              <p class="to">{s.to}</p>
+            </div>
+            <ul class="folders">
+              {s.chips.map((f) => (
+                <li class={`c-${f.c} ${f.ghost ? "ghost" : ""}`}>{f.name}</li>
+              ))}
+            </ul>
           </div>
-          <ul class="folders">
-            {s.folders.map((f) => (
-              <li>{f}</li>
-            ))}
-          </ul>
-        </div>
-      </li>
+        </li>
+      </>
     ))
   }
 </ol>
 
 <style>
   .filing {
+    --c-ent: var(--sl-color-text-accent);
+    --c-dom: #dcb96a;
+    --c-form: #7fb3e3;
     list-style: none;
     margin: 1.4rem 0 1rem;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.7rem;
+  }
+  :global([data-theme="light"]) .filing {
+    --c-dom: #8f6c12;
+    --c-form: #21659e;
+  }
+  .filing li {
+    margin: 0;
   }
   .step {
     display: flex;
@@ -72,31 +106,30 @@ const STEPS = [
     border-radius: 16px;
     background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
   }
-  /* at desktop width, lay the question/answer on the left and the folder chips
-     on the right so the short content fills the row instead of leaving a wide
-     empty band on the right of each full-width card */
-  @media (min-width: 721px) {
-    .text {
-      display: flex;
-      flex-direction: row;
-      align-items: baseline;
-      gap: 1.6rem;
-    }
-    .qa {
-      flex: 1 1 0;
-      min-width: 0;
-    }
-    .folders {
-      flex: none;
-      margin-top: 0;
-      justify-content: flex-end;
-      max-width: 44%;
-      align-self: center;
-    }
-  }
   .step.catch {
     background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
   }
+
+  /* the fall-through connector between cards */
+  .joint {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.3rem 0 0.3rem 1.95rem;
+  }
+  .jline {
+    width: 1px;
+    height: 1.15rem;
+    background: color-mix(in oklab, var(--sl-color-gray-2) 55%, transparent);
+  }
+  .jtext {
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+
   .num {
     flex: none;
     width: 1.6rem;
@@ -116,6 +149,28 @@ const STEPS = [
   }
   .text {
     min-width: 0;
+    flex: 1;
+  }
+  /* at desktop width, question/answer left, folder chips right, so the short
+     content fills the row instead of leaving a wide empty band */
+  @media (min-width: 721px) {
+    .text {
+      display: flex;
+      flex-direction: row;
+      align-items: baseline;
+      gap: 1.6rem;
+    }
+    .qa {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+    .folders {
+      flex: none;
+      margin-top: 0;
+      justify-content: flex-end;
+      max-width: 44%;
+      align-self: center;
+    }
   }
   .q {
     margin: 0;
@@ -142,19 +197,69 @@ const STEPS = [
     font-family: var(--sl-font-mono);
     font-size: 0.78rem;
     font-weight: 600;
-    color: var(--sl-color-text-accent);
     padding: 0.1rem 0.45rem;
     border-radius: 6px;
-    background: color-mix(in oklab, var(--sl-color-text-accent) 14%, var(--sl-color-bg));
   }
-  .step.catch .folders li {
-    color: var(--sl-color-text-accent);
-    background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
+  .folders li.c-ent {
+    color: var(--c-ent);
+    background: color-mix(in oklab, var(--c-ent) 14%, var(--sl-color-bg));
+  }
+  .folders li.c-dom {
+    color: var(--c-dom);
+    background: color-mix(in oklab, var(--c-dom) 14%, var(--sl-color-bg));
+  }
+  .folders li.c-form {
+    color: var(--c-form);
+    background: color-mix(in oklab, var(--c-form) 14%, var(--sl-color-bg));
+  }
+  .folders li.ghost {
+    background: transparent;
+    border: 1px dashed color-mix(in oklab, var(--c-dom) 50%, transparent);
+    font-weight: 500;
+  }
+
+  /* scroll reveal: the cascade lands top to bottom, matching the rule it draws */
+  @media (prefers-reduced-motion: no-preference) {
+    .filing.js > li {
+      opacity: 0;
+      transform: translateY(8px);
+      transition:
+        opacity 0.45s ease,
+        transform 0.45s ease;
+      transition-delay: calc(var(--i, 0) * 90ms);
+    }
+    .filing.js.in > li {
+      opacity: 1;
+      transform: none;
+    }
   }
 
   @media (max-width: 720px) {
     .step {
       padding: 0.95rem 1rem 1rem;
     }
+    .joint {
+      padding-left: 1.75rem;
+    }
   }
 </style>
+
+<script>
+  const filingMotionOk = window.matchMedia("(prefers-reduced-motion: no-preference)").matches;
+  for (const el of document.querySelectorAll<HTMLElement>("[data-filing]")) {
+    if (!filingMotionOk || !("IntersectionObserver" in window)) continue;
+    el.classList.add("js");
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            el.classList.add("in");
+            io.disconnect();
+          }
+        }
+      },
+      { threshold: 0.15 },
+    );
+    io.observe(el);
+  }
+</script>

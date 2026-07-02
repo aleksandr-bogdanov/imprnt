@@ -3,60 +3,54 @@ title: How it works
 description: Spend the AI once, when you file. Read with cheap local code, every time after.
 ---
 
-import HowItWorksFlow from "../src/components/docs/HowItWorksFlow.astro";
-import HowItWorksLevers from "../src/components/docs/HowItWorksLevers.astro";
+import HowItWorksSplit from "../src/components/docs/HowItWorksSplit.astro";
+import HowItWorksIngest from "../src/components/docs/HowItWorksIngest.astro";
+import HowItWorksRanking from "../src/components/docs/HowItWorksRanking.astro";
 import HowItWorksEval from "../src/components/docs/HowItWorksEval.astro";
 import HowItWorksTable from "../src/components/docs/HowItWorksTable.astro";
 import HowItWorksServer from "../src/components/docs/HowItWorksServer.astro";
 import HowItWorksEdits from "../src/components/docs/HowItWorksEdits.astro";
 import HowItWorksChip from "../src/components/docs/HowItWorksChip.astro";
 
-imprnt is plain **markdown** files on your computer. No database, no cloud, no app to log into. You talk to your assistant and it drives imprnt underneath, filing what you tell it and recalling what you ask.
+imprnt is plain **markdown** files on your computer. No database, no cloud, no app to log into. You talk to your assistant, and it drives imprnt underneath, filing what you tell it and recalling what you ask.
 
-A model costs money every time it thinks, and it forgets everything between sessions. So imprnt keeps it out of the mechanical jobs (parsing, filing, searching) and spends it on the one job that needs **understanding**. Which side a step falls on comes down to one question: how often does it run?
+A model costs money every time it thinks, and it forgets everything between sessions. So imprnt gives it exactly one job, the one that needs real **understanding**, and keeps it out of the mechanical work of parsing, filing, and searching. Which side a step lands on comes down to one thing: how often the step runs.
 
-<HowItWorksLevers />
+<HowItWorksSplit />
 
 That is the whole trick: pay the model for the rare hard job, keep it out of the job you do a hundred times a day.
 
-## The shape
-
-The loop reads in order and starts and ends at your assistant. You talk, the model understands and files once, plain code searches thousands of times, the model reads the best hits and answers.
-
-<HowItWorksFlow />
-
 ## When you file: the model works
 
-Hand over a transcript or a document, and imprnt runs one pass of four steps. Only one spends the model:
+Hand over a transcript or a document, and imprnt runs one pass of four steps. Only one of them spends the model.
 
-1. **Copy** (code): the source goes into `raw/` untouched, hashed, with the obvious structure pulled out. Free.
-2. **Understand** (the model, the only paid step): for each thing in the source, pick its type and [folder](/vault-layout/), write a one-line summary, pull the decisions and actions, and tag it with the words you will search for later, even if the source never used them. A dense source fans out into several small notes here.
-3. **File** (code): look up people by name and alias, flag anything unresolved for review, and write the note without ever overwriting an existing one. Merging a renamed person into their existing note, old name kept as an alias, is the model's call back in the understand step.
-4. **Tidy** (code): `check` rebuilds the index and flags broken links, topic and event notes that link no entity, and any note with no tags. It never blocks and never silently drops anything.
+<HowItWorksIngest />
 
-{'"Not sure where this goes? Hand it to the model"'} is fine here. The thing to avoid is throwing everything at the model on every **search** and hoping for magic.
+The rules for where a note lands are in [Vault layout](/vault-layout/). Handing the model a source you cannot place yourself is exactly what step 2 is for. The thing to avoid is throwing everything at the model on every **search** and hoping for magic.
 
 ## Edits are cheap, originals are forever
 
 <HowItWorksEdits />
 
-**One edit fixes a fact everywhere it appears.** Say you filed a colleague as Carl, an Engineer, and a later meeting reveals he is Boris, a Director. That sounds like hunting down every note that mentions him. It is not. Filing looks him up by **alias**, finds the existing note, fixes that one note, and adds {'"Carl"'} to the aliases so old references still resolve. Every other note points at him by his permanent file ID, so fixing that one note shows the right name and role across every meeting and project.
+**One edit fixes a fact everywhere it appears.** Say you filed a colleague as Carl, an Engineer, and a later meeting reveals he is Boris, a Director. Filing looks him up by **alias**, finds the existing note, corrects that one note, and keeps {'"Carl"'} in the aliases so old references still resolve. Every other note points at him by his permanent file ID, so the single fix shows the right name and role across every meeting and project.
 
 A contradiction is the special case. If a new meeting says a date moved, filing updates the note and stamps the old line as **superseded**, so search can tell the live fact from the stale one. Old information is marked, never quietly overwritten.
 
-**Your raw sources are kept forever**, one immutable snapshot per source under `raw/`. To change how notes are structured, re-run filing over the originals and get the new layout for free. You are never stuck in an old format, and any claim in a note traces back to its **snapshot**.
+**Your raw sources are kept forever**, one untouched snapshot per source under `raw/`. To change how notes are structured, re-run filing over the originals and get the new layout for free. You are never stuck in an old format, and any claim in a note traces back to its **snapshot**.
 
 ## When you read: plain code works
 
-**Ranking is arithmetic, so no model touches it.** `recall` ranks your notes with **BM25**, <HowItWorksChip>a formula from the 1990s, pure arithmetic, no server</HowItWorksChip>. It counts how often your search words appear and weighs a rare word heavier than a common one, and a word in the title counts more than the same word in the body. No embeddings, no vectors.
+**Ranking is arithmetic, so no model touches it.** `recall` scores your notes with **BM25**, <HowItWorksChip>a formula from the 1990s, pure arithmetic, no server</HowItWorksChip>. Three things set a note's score:
 
-The model only turns your question into search words at the start and reads the few best notes at the end. It never does the **ranking**. Because a rare matched word floats to the top on its own, you get a short, sharp list of hits, not a dump of the whole vault. Does plain search hold up? We put a number on it.
+<HowItWorksRanking />
+
+The model only turns your question into search words at the start and reads the few best notes at the end. It never does the **ranking**, and nothing AI-made sits under the search: no embeddings, no vectors (numeric codes a model would have to compute for every note). Because a rare matched word floats to the top on its own, you get a short, sharp list of hits, not a dump of the whole vault. We put a number on how well that holds up.
 
 <HowItWorksEval />
 
-The harness lives in [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval).
+The test harness lives in [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval).
 
-## The whole thing on one line
+## The whole loop, step by step
 
 Who does each step, and why:
 
@@ -64,12 +58,12 @@ Who does each step, and why:
 
 ## Why no search server
 
-**Every tool call the model makes costs tokens**, whatever the wires look like. The two levers are **payload size** and **caching**. So imprnt does the heavy scan in code, hands the model a tight result, and caches locally to skip the re-fetch.
+**Every tool call the model makes costs tokens**, the units AI work is billed in, whatever the wires look like. The two levers are **payload size** and **caching**. So imprnt does the heavy scan in code, hands the model a tight result, and caches locally to skip the re-fetch.
 
 <HowItWorksServer />
 
-A live server answering search queries breaks both levers. That is why there is no query layer over the vault. A plugin&apos;s `sync` is fine, because it is one batched call that caches locally, and everything after it reads the cache.
+A live server answering search queries breaks both levers, which is why there is no query layer over the vault. A plugin's `sync` is fine: one batched call that caches locally, and everything after it reads the cache.
 
 ## Core plus plugins
 
-The only thing always present is the core: the vault plus `ingest`, `recall`, and `check`. Everything else is an optional **plugin** you add or delete with one command, under one rule that keeps the core small: the core never knows a plugin exists. The how is in [How plugins work](/plugins/), the why in [Design decisions](/design-decisions/).
+The only thing always present is the core: the vault plus `ingest`, `recall`, and `check`. Everything else is an optional **plugin** you add or delete with one command, under one rule that keeps the core small: the core never depends on a plugin. The how is in [How plugins work](/plugins/), the why in [Design decisions](/design-decisions/).

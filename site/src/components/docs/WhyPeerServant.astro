@@ -2,8 +2,11 @@
 /**
  * Page-specific (why-imprnt): the load-bearing idea made visible. The model is a
  * peer you spend once for judgment. Plain code is the servant that runs free and
- * identical forever. Two filled surfaces, the peer in accent, no border boxes.
- * Scoped CSS, theme-aware via Starlight tokens, no Tailwind.
+ * identical forever. Two filled surfaces, the peer in accent, no border boxes,
+ * and under each a run-cadence strip: one pulse for the peer (x1), a dense row
+ * of ticks for the servant (x1000). The ticks light up left to right on reveal.
+ * Scoped CSS, theme-aware via Starlight tokens, no Tailwind. No JS or reduced
+ * motion renders both strips static.
  */
 const COLS = [
   {
@@ -19,9 +22,10 @@ const COLS = [
     accent: false,
   },
 ];
+const TICKS = Array.from({ length: 36 }, (_, i) => i);
 ---
 
-<div class="ps">
+<div class="ps" data-ps>
   {
     COLS.map((c) => (
       <div class={`col${c.accent ? " accent" : ""}`}>
@@ -30,6 +34,19 @@ const COLS = [
         <ul class="points">
           {c.points.map((p) => <li>{p}</li>)}
         </ul>
+        {c.accent ? (
+          <div class="cad" role="img" aria-label="Runs once per source.">
+            <span class="strip peer"><i class="pulse" /></span>
+            <span class="mult">&times;1</span>
+          </div>
+        ) : (
+          <div class="cad" role="img" aria-label="Runs on every search after, at no cost.">
+            <span class="strip srv">
+              {TICKS.map((i) => <i style={`--d:${i * 28}ms`} />)}
+            </span>
+            <span class="mult">&times;1000</span>
+          </div>
+        )}
       </div>
     ))
   }
@@ -47,6 +64,8 @@ const COLS = [
     padding: 1rem 1.1rem 1.05rem;
     background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
     margin-top: 0;
+    display: flex;
+    flex-direction: column;
   }
   .col.accent {
     background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
@@ -97,9 +116,108 @@ const COLS = [
   .accent .points li::before {
     background: var(--sl-color-text-accent);
   }
+
+  /* run cadence */
+  .cad {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.95rem;
+  }
+  .strip {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    height: 0.85rem;
+    border-radius: 999px;
+    padding: 0 0.45rem;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 60%, var(--sl-color-bg));
+  }
+  .peer .pulse {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: var(--sl-color-text-accent);
+  }
+  .srv {
+    justify-content: space-between;
+  }
+  .srv i {
+    width: 2px;
+    height: 0.5rem;
+    border-radius: 1px;
+    background: var(--sl-color-gray-2);
+    opacity: 0.65;
+  }
+  .mult {
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-2);
+    flex: none;
+  }
+  .accent .mult {
+    color: var(--sl-color-text-accent);
+  }
+
+  /* reveal: armed only by JS, so no-JS and reduced-motion render static */
+  .ps.armed .peer .pulse {
+    animation: none;
+  }
+  .ps.armed.in .peer .pulse {
+    animation: ps-pulse 1.3s ease 0.2s 1;
+  }
+  .ps.armed .srv i {
+    opacity: 0.12;
+  }
+  .ps.armed.in .srv i {
+    animation: ps-tick 0.6s ease var(--d) 1 both;
+  }
+  @keyframes ps-pulse {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in oklab, var(--sl-color-text-accent) 55%, transparent);
+    }
+    100% {
+      box-shadow: 0 0 0 0.85rem transparent;
+    }
+  }
+  @keyframes ps-tick {
+    0% {
+      opacity: 0.12;
+    }
+    45% {
+      opacity: 1;
+      background: var(--sl-color-text-accent);
+    }
+    100% {
+      opacity: 0.65;
+      background: var(--sl-color-gray-2);
+    }
+  }
+
   @media (max-width: 640px) {
     .ps {
       grid-template-columns: 1fr;
     }
   }
 </style>
+
+<script>
+  const reducedPs = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("[data-ps]").forEach((el) => {
+    if (reducedPs || !("IntersectionObserver" in window)) return;
+    el.classList.add("armed");
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            el.classList.add("in");
+            io.disconnect();
+          }
+        }
+      },
+      { threshold: 0.35 },
+    );
+    io.observe(el);
+  });
+</script>

@@ -4,12 +4,14 @@
  * describes. Three filled swatches show the three bands as CATEGORIES (green,
  * amber, red) with the threshold each one starts at, so the reader sees the
  * color behavior without a screenshot. The fixed band colors are the actual
- * ramp the script paints, not theme tokens. No borders, filled pills only.
+ * ramp the script paints (statusline.ts palette: ok #9ece6a, warn #e0af68,
+ * bad #f7768e), not theme tokens. All three fills are light enough to carry
+ * the same dark text. No borders, filled pills only.
  */
 const BANDS = [
   { name: "green", range: "0 to 60%", swatch: "#9ece6a", text: "#11131a" },
-  { name: "amber", range: "past 60%", swatch: "#e3a008", text: "#11131a" },
-  { name: "red", range: "past 85%", swatch: "#e0524a", text: "#fff" },
+  { name: "amber", range: "past 60%", swatch: "#e0af68", text: "#11131a" },
+  { name: "red", range: "past 85%", swatch: "#f7768e", text: "#11131a" },
 ];
 ---
 
@@ -46,12 +48,5 @@ const BANDS = [
   .sl-band-range {
     opacity: 0.85;
     font-size: 0.72rem;
-  }
-  /* The red band's range sits on a saturated fill where a tinted off-white
-     reads fainter than the dark text on the green and amber pills. Pin it to
-     full white at full opacity so all three secondary labels match weight. */
-  .sl-band-red .sl-band-range {
-    color: #fff;
-    opacity: 1;
   }
 </style>

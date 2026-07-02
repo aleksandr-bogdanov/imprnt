@@ -1,0 +1,160 @@
+---
+/**
+ * Page-specific (how-it-works): the three things that decide a note's search
+ * score (how often a word appears, how rare it is, where it sits), each as a
+ * mini panel with a two-bar weight comparison. States exactly the three
+ * verified ranking facts from the page prose, no more. Bars grow on scroll
+ * where JS and motion allow, and are simply visible otherwise. Filled
+ * surfaces, no border boxes. Scoped CSS, theme-aware via Starlight tokens.
+ */
+const PANELS = [
+  {
+    tag: "how often",
+    title: "Repeats count",
+    heavy: { label: "says your word 4 times", w: 92 },
+    light: { label: "says it once", w: 34 },
+    cap: "Your search words are counted in every note.",
+  },
+  {
+    tag: "how rare",
+    title: "Rare words weigh more",
+    heavy: { label: '"osteopath"', w: 88 },
+    light: { label: '"meeting"', w: 26 },
+    cap: "A rare word narrows the search more than a common one.",
+  },
+  {
+    tag: "where it sits",
+    title: "Title beats body",
+    heavy: { label: "in the title", w: 90 },
+    light: { label: "in the body", w: 38 },
+    cap: "The same word counts more in a note's title than in its text.",
+  },
+];
+---
+
+<div class="rank" data-hiw-rank>
+  {
+    PANELS.map((p) => (
+      <div class="panel">
+        <span class="tag">{p.tag}</span>
+        <span class="title">{p.title}</span>
+        <div class="bars">
+          <span class="blabel">{p.heavy.label}</span>
+          <span class="btrack">
+            <i class="bar heavy" style={`width:${p.heavy.w}%`} />
+          </span>
+          <span class="blabel">{p.light.label}</span>
+          <span class="btrack">
+            <i class="bar light" style={`width:${p.light.w}%`} />
+          </span>
+        </div>
+        <span class="cap">{p.cap}</span>
+      </div>
+    ))
+  }
+</div>
+
+<script>
+  // grow the bars on scroll, only when JS runs and motion is allowed
+  const roots = document.querySelectorAll("[data-hiw-rank]");
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  roots.forEach((root) => {
+    if (reduce || !("IntersectionObserver" in window)) return;
+    root.classList.add("js");
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            e.target.classList.add("in");
+            obs.unobserve(e.target);
+          }
+        }
+      },
+      { threshold: 0.4 },
+    );
+    root.querySelectorAll(".panel").forEach((el) => obs.observe(el));
+  });
+</script>
+
+<style>
+  .rank {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    align-items: start;
+    gap: 0.6rem;
+    margin: 1.4rem 0;
+  }
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.95rem 1rem;
+    border-radius: 13px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
+    /* Starlight owl-spacing leaks margin-top onto later grid children */
+    margin-top: 0;
+  }
+  .tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .title {
+    font-size: 0.98rem;
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--sl-color-white);
+  }
+  .bars {
+    display: grid;
+    gap: 0.18rem;
+    margin: 0.15rem 0;
+  }
+  .blabel {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    color: var(--sl-color-gray-1);
+  }
+  .btrack {
+    display: block;
+    height: 8px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    overflow: hidden;
+  }
+  .bar {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+  }
+  .bar.heavy {
+    background: var(--sl-color-text-accent);
+  }
+  .bar.light {
+    background: color-mix(in oklab, var(--sl-color-gray-2) 55%, var(--sl-color-bg));
+  }
+  /* grow-on-scroll, armed by JS only so bars are never invisible without it */
+  .rank.js .bar {
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  .rank.js .panel.in .bar {
+    transform: scaleX(1);
+  }
+  .rank.js .panel.in .bar.light {
+    transition-delay: 0.12s;
+  }
+  .cap {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+  @media (max-width: 720px) {
+    .rank {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

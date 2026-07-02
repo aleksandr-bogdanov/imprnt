@@ -11,13 +11,13 @@ import ContributingDistTags from "../src/components/docs/ContributingDistTags.as
 import ContributingReleaseFlow from "../src/components/docs/ContributingReleaseFlow.astro";
 import ContributingNext from "../src/components/docs/ContributingNext.astro";
 
-This page is for people building imprnt itself. imprnt is open source under [MIT](https://github.com/aleksandr-bogdanov/imprnt/blob/master/LICENSE).
+This page is for people building imprnt itself. imprnt is open source under the [MIT license](https://github.com/aleksandr-bogdanov/imprnt/blob/master/LICENSE).
 
 <ContributingFactStrip />
 
 ## The monorepo
 
-imprnt is a [bun workspaces](https://bun.sh/docs/install/workspaces) monorepo. One git repo, one `bun install`, develop everything together. At publish time it splits into two package families.
+Everything lives in one git repository: the core and every plugin, wired together with [bun workspaces](https://bun.sh/docs/install/workspaces) so a single `bun install` sets up the whole thing and you develop it all side by side. At publish time the one repo splits into two package families.
 
 <ContributingPackages />
 

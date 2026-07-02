@@ -1,256 +1,565 @@
 ---
 /**
- * Page-specific visual for docs/vault-layout.md. Two parts:
- *  1) the three folder GROUPS (entities / domains / forms) as a borderless
- *     three-card row, each card naming its folder types + the one-line reason.
- *  2) the control files at the vault root, as a responsive folder + meaning
- *     grid that wraps under itself on a phone (the old code block clipped the
- *     description column on narrow screens).
- * Folder TYPES are categories, not instances, so this never goes stale.
- * Scoped CSS only, theme-aware via Starlight --sl tokens (no Tailwind on docs
- * pages), every grid collapses to one column on mobile.
+ * Page-specific visual for docs/vault-layout.mdx: the vault as an interactive,
+ * annotated folder tree (the page's hero visual). Left pane: the tree, with the
+ * four groups (control files at the root, entities, life-areas, forms) labeled
+ * inline and hue-coded. Right pane: a sticky detail card that swaps as you
+ * hover, tap, or keyboard-focus a row. On mobile the panel hides and each row
+ * expands its detail inline instead. Folder TYPES are categories plus the
+ * shipped defaults, matching the vault contract, so this never goes stale.
+ * Scoped CSS, theme-aware via Starlight --sl tokens (two extra hues carry the
+ * life-areas and forms groups, with a light-theme override). Root carries
+ * `not-content` so Starlight's markdown margins keep out. Scroll reveal is
+ * gated behind prefers-reduced-motion and only arms once JS is running.
  */
-const ROOT = [
-  ["index.md", "a generated map of everything"],
-  ["hot.md", "a short primer and what needs review"],
-  ["log.md", "an append-only timeline"],
-  ["_tags.md", "the tag list and synonyms"],
+type TreeNode = {
+  id: string;
+  name: string;
+  what: string;
+  ex?: string;
+  extra?: string;
+  ghost?: boolean;
+};
+type TreeGroup = {
+  color: "ctrl" | "ent" | "dom" | "form";
+  label: string;
+  kicker: string;
+  why: string;
+  nodes: TreeNode[];
+};
+
+const GROUPS: TreeGroup[] = [
+  {
+    color: "ctrl",
+    label: "at the root",
+    kicker: "control file",
+    why: "the vault's own bookkeeping: a map, a primer, a timeline, the tag list",
+    nodes: [
+      {
+        id: "index",
+        name: "index.md",
+        what: "A generated map of the whole vault.",
+        extra: "check rebuilds it from every note's one-line summary. You never edit it by hand.",
+      },
+      {
+        id: "hot",
+        name: "hot.md",
+        what: "A short primer, plus the list of notes that need review.",
+      },
+      {
+        id: "log",
+        name: "log.md",
+        what: "An append-only timeline of everything that ever landed.",
+        extra: "One line per note, in the order things happened.",
+      },
+      {
+        id: "tags",
+        name: "_tags.md",
+        what: "Every tag in use, plus a map of synonyms.",
+        extra: "It grows on its own. check syncs in any tag your notes carry.",
+      },
+    ],
+  },
+  {
+    color: "ent",
+    label: "entities",
+    kicker: "entity",
+    why: "one home each, everything else links here",
+    nodes: [
+      {
+        id: "people",
+        name: "people/",
+        what: "One note per human you deal with.",
+        ex: "people/<name>.md",
+        extra:
+          "A rename moves the old name into aliases and keeps the file, so nothing that links here breaks.",
+      },
+      {
+        id: "orgs",
+        name: "orgs/",
+        what: "An institution: an employer, an insurer, a bank, an authority, a vendor.",
+        ex: "orgs/<name>.md",
+      },
+      {
+        id: "holdings",
+        name: "holdings/",
+        what: "An owned thing whose state you track: a policy, a med and its dose, an account and its balance, a subscription and its renewal.",
+        ex: "holdings/<name>.md",
+        extra: "If nothing about it changes over time, it is a plain note in a life-area instead.",
+      },
+    ],
+  },
+  {
+    color: "dom",
+    label: "life-areas",
+    kicker: "life-area",
+    why: "you pick the set, most content lives here",
+    nodes: [
+      {
+        id: "identity",
+        name: "identity/",
+        what: "The spine: mission, beliefs, held positions. Who you are.",
+        ex: "identity/<slug>.md",
+      },
+      {
+        id: "health",
+        name: "health/",
+        what: "Topical health notes: reference facts, how-tos, preferences.",
+        ex: "health/<slug>.md",
+      },
+      {
+        id: "finances",
+        name: "finances/",
+        what: "Topical money notes: tax facts, plans, strategies.",
+        ex: "finances/<slug>.md",
+      },
+      {
+        id: "work",
+        name: "work/",
+        what: "Topical work notes: your stack, your setup, how you operate.",
+        ex: "work/<slug>.md",
+      },
+      {
+        id: "life",
+        name: "life/",
+        what: "Everything topical that fits no narrower life-area.",
+        ex: "life/<slug>.md",
+      },
+      {
+        id: "projects",
+        name: "projects/",
+        what: "A bounded effort with a status: active, paused, or done.",
+        ex: "projects/<slug>.md",
+      },
+      {
+        id: "yours",
+        name: "+ your own",
+        ghost: true,
+        what: "The set is yours. A consultant adds clients/, a researcher adds topics/.",
+        extra: "A folder you add browses and searches like any shipped one.",
+      },
+    ],
+  },
+  {
+    color: "form",
+    label: "forms",
+    kicker: "form",
+    why: "split out by how you use them, not by topic",
+    nodes: [
+      {
+        id: "events",
+        name: "events/",
+        what: "A dated occurrence worth its own note.",
+        ex: "events/<date>-<slug>.md",
+        extra: "The date leads the filename.",
+      },
+      {
+        id: "mistakes",
+        name: "mistakes/",
+        what: "A lesson: what you believed, what proved false, what holds now.",
+        ex: "mistakes/<slug>.md",
+      },
+    ],
+  },
 ];
 
-const GROUPS = [
-  {
-    key: "entities",
-    why: "one canonical home, the rest of your notes point here",
-    rows: [
-      ["people/", "a human"],
-      ["orgs/", "an employer, insurer, bank, vendor"],
-      ["holdings/", "an owned thing whose state changes"],
-    ],
-  },
-  {
-    key: "domains",
-    why: "your life-areas, you pick these, most content lives here",
-    rows: [
-      ["identity/ health/", ""],
-      ["finances/ work/", ""],
-      ["life/ projects/", ""],
-    ],
-  },
-  {
-    key: "forms",
-    why: "set apart by how you use them, not by topic",
-    rows: [
-      ["events/", "a dated thing worth its own note"],
-      ["mistakes/", "a lesson: believed, found false, true now"],
-    ],
-  },
-];
+type FlatNode = TreeNode & { color: TreeGroup["color"]; kicker: string };
+type Row =
+  | { kind: "ghead"; color: TreeGroup["color"]; label: string; why: string }
+  | { kind: "node"; node: FlatNode };
+
+const ROWS: Row[] = [];
+const FLAT: FlatNode[] = [];
+for (const g of GROUPS) {
+  ROWS.push({ kind: "ghead", color: g.color, label: g.label, why: g.why });
+  for (const n of g.nodes) {
+    const flat = { ...n, color: g.color, kicker: g.kicker };
+    ROWS.push({ kind: "node", node: flat });
+    FLAT.push(flat);
+  }
+}
+
+const DEFAULT = "people";
 ---
 
-<div class="root">
-  <span class="root-label">vault root</span>
-  <dl class="root-grid">
-    {
-      ROOT.map(([name, meaning]) => (
-        <div class="root-row">
-          <dt>{name}</dt>
-          <dd>{meaning}</dd>
-        </div>
-      ))
-    }
-  </dl>
-</div>
-
-<div class="groups">
-  {
-    GROUPS.map((g) => (
-      <section class={`group ${g.key}`}>
-        <header>
-          <span class="g-name">{g.key}</span>
-          <p class="g-why">{g.why}</p>
-        </header>
-        {g.key === "domains" ? (
-          <ul class="g-chips">
-            {g.rows.flatMap(([name]) => name.split(" ")).map((folder) => (
-              <li>{folder}</li>
-            ))}
-          </ul>
-        ) : (
-          <dl class="g-rows">
-            {g.rows.map(([name, meaning]) => (
-              <div class="g-row">
-                <dt>{name}</dt>
-                {meaning && <dd>{meaning}</dd>}
+<div class="vlt not-content" data-vlt>
+  <div class="split">
+    <ul class="tree">
+      <li class="rootline" style="--i:0">
+        <span class="rname">vault/</span>
+        <span class="rwhy">everything search sees</span>
+      </li>
+      {
+        ROWS.map((r, idx) =>
+          r.kind === "ghead" ? (
+            <li class={`ghead g-${r.color}`} style={`--i:${idx + 1}`}>
+              <span class="dot" aria-hidden="true" />
+              <span class="glabel">{r.label}</span>
+              <span class="gwhy">{r.why}</span>
+            </li>
+          ) : (
+            <li class={`node g-${r.node.color} ${r.node.ghost ? "ghost" : ""}`} style={`--i:${idx + 1}`}>
+              <button
+                type="button"
+                class={r.node.id === DEFAULT ? "on" : ""}
+                data-node={r.node.id}
+                aria-expanded={r.node.id === DEFAULT ? "true" : "false"}
+              >
+                <span class="dot" aria-hidden="true" />
+                <span class="nname">{r.node.name}</span>
+                <span class="tgl" aria-hidden="true" />
+              </button>
+              <div
+                class={`inline-detail d-${r.node.color}`}
+                data-detail={r.node.id}
+                hidden={r.node.id !== DEFAULT}
+              >
+                <p class="dwhat">{r.node.what}</p>
+                {r.node.ex && <code class="dex">{r.node.ex}</code>}
+                {r.node.extra && <p class="dextra">{r.node.extra}</p>}
               </div>
-            ))}
-          </dl>
-        )}
-      </section>
-    ))
-  }
+            </li>
+          ),
+        )
+      }
+    </ul>
+    <aside class="panel" style="--i:5">
+      {
+        FLAT.map((n) => (
+          <article class={`detail d-${n.color}`} data-detail={n.id} hidden={n.id !== DEFAULT}>
+            <span class="kicker">{n.kicker}</span>
+            <span class="dname">{n.name}</span>
+            <p class="dwhat">{n.what}</p>
+            {n.ex && <code class="dex">{n.ex}</code>}
+            {n.extra && <p class="dextra">{n.extra}</p>}
+          </article>
+        ))
+      }
+    </aside>
+  </div>
 </div>
 
 <style>
-  /* root control files */
-  .root {
-    margin: 1.4rem 0 1.1rem;
-    padding: 1.05rem 1.2rem 1.1rem;
-    border-radius: 16px;
-    background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
+  .vlt {
+    --c-ctrl: var(--sl-color-gray-2);
+    --c-ent: var(--sl-color-text-accent);
+    --c-dom: #dcb96a;
+    --c-form: #7fb3e3;
+    margin: 1.4rem 0 1.4rem;
   }
-  .root-label {
-    display: inline-block;
-    font-family: var(--sl-font-mono);
-    font-size: 0.7rem;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
-    color: var(--sl-color-gray-2);
-    margin-bottom: 0.7rem;
+  :global([data-theme="light"]) .vlt {
+    --c-dom: #8f6c12;
+    --c-form: #21659e;
   }
-  .root-grid {
+
+  .split {
     display: grid;
-    /* size each column to its content so the two columns sit close together
-       instead of each filling half the box and leaving a wide middle gap */
-    grid-template-columns: repeat(2, max-content);
-    justify-content: start;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 1rem;
     align-items: start;
-    gap: 0.55rem 2.4rem;
+  }
+
+  /* ---- the tree ---- */
+  .tree {
+    list-style: none;
+    margin: 0;
+    padding: 1rem 0.9rem 1.1rem;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 10%, var(--sl-color-bg));
+  }
+  .tree li {
     margin: 0;
   }
-  .root-row {
+  .rootline {
     display: flex;
-    flex-wrap: nowrap;
     align-items: baseline;
-    gap: 0.2rem 0.7rem;
+    gap: 0.6rem;
+    padding: 0 0.35rem 0.35rem;
   }
-  .root-row dt {
+  .rname {
+    font-family: var(--sl-font-mono);
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .rwhy {
+    font-size: 0.72rem;
+    color: var(--sl-color-gray-2);
+  }
+
+  .ghead {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    padding: 0.85rem 0.35rem 0.3rem;
+  }
+  .ghead .dot {
+    align-self: center;
+  }
+  .glabel {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+  .g-ctrl .glabel { color: var(--c-ctrl); }
+  .g-ent .glabel { color: var(--c-ent); }
+  .g-dom .glabel { color: var(--c-dom); }
+  .g-form .glabel { color: var(--c-form); }
+  .gwhy {
+    font-size: 0.72rem;
+    line-height: 1.35;
+    color: var(--sl-color-gray-2);
+  }
+
+  .dot {
     flex: none;
-    min-width: 5rem;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .g-ctrl .dot { background: color-mix(in oklab, var(--c-ctrl) 70%, transparent); }
+  .g-ent .dot { background: var(--c-ent); }
+  .g-dom .dot { background: var(--c-dom); }
+  .g-form .dot { background: var(--c-form); }
+
+  .node {
+    position: relative;
+    padding-left: 0.55rem;
+  }
+  /* the indent guide: contiguous nodes draw one continuous line per group */
+  .node::before {
+    content: "";
+    position: absolute;
+    left: 0.35rem;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 35%, transparent);
+  }
+  .node button {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    padding: 0.34rem 0.6rem;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+  }
+  .node button:hover {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 14%, transparent);
+  }
+  .node button:focus-visible {
+    outline: 2px solid var(--sl-color-text-accent);
+    outline-offset: 1px;
+  }
+  .nname {
     font-family: var(--sl-font-mono);
     font-size: 0.84rem;
     font-weight: 600;
-    color: var(--sl-color-white);
-    margin: 0;
-  }
-  .root-row dd {
-    margin: 0;
-    font-size: 0.82rem;
-    line-height: 1.4;
     color: var(--sl-color-gray-1);
+  }
+  .ghost .nname {
+    padding: 0 0.4rem;
+    border: 1px dashed color-mix(in oklab, var(--c-dom) 50%, transparent);
+    border-radius: 6px;
+    color: color-mix(in oklab, var(--c-dom) 80%, var(--sl-color-gray-1));
+    font-weight: 500;
+  }
+  .g-ent button.on { background: color-mix(in oklab, var(--c-ent) 14%, transparent); }
+  .g-dom button.on { background: color-mix(in oklab, var(--c-dom) 14%, transparent); }
+  .g-form button.on { background: color-mix(in oklab, var(--c-form) 14%, transparent); }
+  .g-ctrl button.on { background: color-mix(in oklab, var(--c-ctrl) 14%, transparent); }
+  .g-ent button.on .nname { color: var(--c-ent); }
+  .g-dom button.on .nname { color: var(--c-dom); }
+  .g-form button.on .nname { color: var(--c-form); }
+  .g-ctrl button.on .nname { color: var(--sl-color-white); }
+
+  /* mobile expand hint: a plus that turns into a cross */
+  .tgl {
+    display: none;
+    margin-left: auto;
+    font-family: var(--sl-font-mono);
+    font-size: 0.85rem;
+    line-height: 1;
+    color: var(--sl-color-gray-3);
+    transition: transform 0.18s ease;
+  }
+  .tgl::before {
+    content: "+";
+  }
+  button.on .tgl {
+    transform: rotate(45deg);
   }
 
-  /* three folder groups */
-  .groups {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.9rem;
-    margin: 0 0 1.4rem;
-    /* hug each card's content so the shorter cards (domains, forms) carry no
-       dead green band below their last row, instead of stretching to match
-       the tallest (entities) */
-    align-items: start;
-  }
-  .group {
-    /* Starlight's content styles add a top margin to every sibling after the
-       first, so the 2nd and 3rd cards dropped ~16px below the entities card.
-       Zero it so all three card tops sit on one baseline (the grid handles
-       spacing via gap). */
-    margin-top: 0;
-    display: flex;
-    flex-direction: column;
-    border-radius: 16px;
-    padding: 1.1rem 1.2rem 1.15rem;
-    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
-  }
-  .group.entities,
-  .group.domains,
-  .group.forms {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
-  }
-  .group header {
-    margin-bottom: 0.85rem;
-  }
-  .g-name {
+  /* ---- detail content (shared by panel and inline) ---- */
+  .kicker {
     display: block;
     font-family: var(--sl-font-mono);
-    font-size: 0.72rem;
-    line-height: 1;
-    letter-spacing: 0.11em;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--sl-color-text-accent);
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.45rem;
   }
-  .g-why {
+  .d-ctrl .kicker { color: var(--c-ctrl); }
+  .d-ent .kicker { color: var(--c-ent); }
+  .d-dom .kicker { color: var(--c-dom); }
+  .d-form .kicker { color: var(--c-form); }
+  .dname {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+    margin-bottom: 0.45rem;
+  }
+  .dwhat {
     margin: 0;
-    font-size: 0.82rem;
-    line-height: 1.45;
+    font-size: 0.88rem;
+    line-height: 1.5;
     color: var(--sl-color-gray-1);
   }
-  .g-rows {
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .g-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.12rem;
-  }
-  .g-row dt {
+  .dex {
+    display: inline-block;
+    margin: 0.6rem 0 0;
     font-family: var(--sl-font-mono);
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--sl-color-white);
-    margin: 0;
+    font-size: 0.76rem;
+    color: var(--sl-color-gray-1);
+    padding: 0.14rem 0.5rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
   }
-  .g-row dd {
-    margin: 0;
-    font-size: 0.78rem;
-    line-height: 1.4;
+  .dextra {
+    margin: 0.6rem 0 0;
+    font-size: 0.8rem;
+    line-height: 1.5;
     color: var(--sl-color-gray-2);
   }
 
-  /* domains carry no per-folder meaning, so render them as compact chips
-     to match the visual density of the labeled pairs in the sibling cards */
-  .g-chips {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
+  /* ---- the sticky panel (desktop) ---- */
+  .panel {
+    position: sticky;
+    top: calc(var(--sl-nav-height, 3.5rem) + 1.25rem);
+    min-height: 13rem;
+    padding: 1.15rem 1.25rem 1.25rem;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 10%, var(--sl-color-bg));
   }
-  .g-chips li {
-    font-family: var(--sl-font-mono);
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--sl-color-white);
-    padding: 0.18rem 0.55rem;
-    border-radius: 7px;
-    background: color-mix(in oklab, var(--sl-color-text-accent) 14%, var(--sl-color-bg));
+  .inline-detail {
+    display: none;
   }
 
+  @media (prefers-reduced-motion: no-preference) {
+    .panel .detail:not([hidden]) {
+      animation: vlt-in 0.22s ease both;
+    }
+    @keyframes vlt-in {
+      from {
+        opacity: 0;
+        transform: translateY(5px);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+  }
+
+  /* ---- scroll reveal (armed only once JS runs, skipped on reduced motion) ---- */
+  @media (prefers-reduced-motion: no-preference) {
+    .vlt.js .tree li,
+    .vlt.js .panel {
+      opacity: 0;
+      transform: translateY(8px);
+      transition:
+        opacity 0.45s ease,
+        transform 0.45s ease;
+      transition-delay: calc(var(--i, 0) * 30ms);
+    }
+    .vlt.js.in .tree li,
+    .vlt.js.in .panel {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* ---- mobile: panel hides, rows expand inline ---- */
   @media (max-width: 720px) {
-    .root-grid {
-      grid-template-columns: 1fr;
-      gap: 0.7rem 0;
-    }
-    .root-row {
-      flex-direction: column;
-      gap: 0.1rem;
-    }
-    .root-row dt {
-      min-width: 0;
-    }
-    .groups {
+    .split {
       grid-template-columns: 1fr;
     }
-    .group {
-      padding-top: 0.95rem;
+    .panel {
+      display: none;
     }
-    .group header {
-      margin-bottom: 0.7rem;
+    .tgl {
+      display: block;
+    }
+    .inline-detail {
+      display: block;
+      margin: 0.25rem 0.35rem 0.6rem 1.2rem;
+      padding: 0.75rem 0.85rem 0.85rem;
+      border-radius: 10px;
+      background: color-mix(in oklab, var(--sl-color-gray-3) 14%, var(--sl-color-bg));
+    }
+    .inline-detail[hidden] {
+      display: none;
+    }
+    .inline-detail .dwhat {
+      font-size: 0.82rem;
+    }
+    .gwhy {
+      flex-basis: 100%;
+      padding-left: 1rem;
     }
   }
 </style>
+
+<script>
+  const hoverable = window.matchMedia("(hover: hover)").matches;
+  const motionOk = window.matchMedia("(prefers-reduced-motion: no-preference)").matches;
+
+  for (const w of document.querySelectorAll<HTMLElement>("[data-vlt]")) {
+    const btns = [...w.querySelectorAll<HTMLButtonElement>("button[data-node]")];
+    const details = [...w.querySelectorAll<HTMLElement>("[data-detail]")];
+
+    const select = (id: string) => {
+      for (const b of btns) {
+        const on = b.dataset.node === id;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-expanded", String(on));
+      }
+      for (const d of details) d.hidden = d.dataset.detail !== id;
+    };
+
+    for (const b of btns) {
+      const id = b.dataset.node ?? "";
+      b.addEventListener("click", () => select(id));
+      b.addEventListener("focus", () => select(id));
+      if (hoverable) b.addEventListener("mouseenter", () => select(id));
+    }
+    select("people");
+
+    if (motionOk && "IntersectionObserver" in window) {
+      w.classList.add("js");
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              w.classList.add("in");
+              io.disconnect();
+            }
+          }
+        },
+        { threshold: 0.08 },
+      );
+      io.observe(w);
+    }
+  }
+</script>
