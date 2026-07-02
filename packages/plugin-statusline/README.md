@@ -21,6 +21,16 @@ honest, and on a narrow terminal each row drops segments in a fixed order (house
 load-bearing last) instead of wrapping. Made to be edited - the shipped panel is a starting
 point.
 
+## Weather and the network
+
+The weather segment is the only part of the panel that touches the network. When its cache is
+older than 15 minutes, a detached curl geolocates the machine by public IP (https://ipwho.is) and
+asks https://open-meteo.com for the current weather, both over HTTPS, no keys, cached in your tmp
+dir. No vault or session data is sent - the services see your public IP, as any HTTP request
+does, and the panel itself only ever reads the cache, never the network. Set
+`IMPRNT_STATUSLINE_NO_NET=1` to keep the script fully offline (the segment just disappears), or
+delete the segment from the script.
+
 ## Install
 
 ```sh

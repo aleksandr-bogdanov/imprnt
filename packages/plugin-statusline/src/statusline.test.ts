@@ -93,8 +93,13 @@ test("the vault segment shows note count and a needs-review flag from IMPRNT_VAU
   writeFileSync(join(vault, "finances", "..", "note.md"), "# Note\n");
   writeFileSync(join(vault, "_tags.md"), "control file, not a note\n");
   writeFileSync(join(vault, "_needs-review.md"), "# review\n- orphan link in x\n- untagged y\n");
+  // Root-level generated control surfaces are not notes; a nested control basename is one.
+  writeFileSync(join(vault, "index.md"), "generated map of content\n");
+  writeFileSync(join(vault, "hot.md"), "generated primer\n");
+  writeFileSync(join(vault, "log.md"), "chronological stream\n");
+  writeFileSync(join(vault, "people", "index.md"), "# A real note that happens to be named index\n");
   const r = lineFor(JSON.stringify({}), { IMPRNT_VAULT: vault });
-  expect(r.out).toMatch(/vault\s+2 notes, 2 review/); // the comma binds review to the vault
+  expect(r.out).toMatch(/vault\s+3 notes, 2 review/); // the comma binds review to the vault
 });
 
 test("a narrow terminal drops housekeeping segments first, per row, never wraps", () => {

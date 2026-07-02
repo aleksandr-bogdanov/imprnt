@@ -178,13 +178,19 @@ function gitSegment(dir: string): string {
 // vault 247 notes, 3 review — the vault at a glance: how many notes, and a red count when
 // `imprnt check` flagged anything. The review count binds to the vault with a comma — it is a
 // property of the vault, not its own segment. Reads the vault imp pointed the session at.
+// Root-level index.md/hot.md/log.md are generated control surfaces, not notes — excluded with
+// the same root anchoring core's walks use (a nested work/index.md is genuine knowledge, so a
+// control basename only counts when the relative path has no directory component).
+const CONTROL = new Set(["index.md", "hot.md", "log.md"]);
 function vaultSegment(): string {
   const vault = process.env.IMPRNT_VAULT || process.env.IMPRINT_VAULT;
   if (!vault || !existsSync(vault)) return "";
   try {
-    const notes = readdirSync(vault, { recursive: true }).filter(
-      (f) => String(f).endsWith(".md") && !basename(String(f)).startsWith("_"),
-    ).length;
+    const notes = readdirSync(vault, { recursive: true }).filter((f) => {
+      const rel = String(f);
+      if (!rel.endsWith(".md") || basename(rel).startsWith("_")) return false;
+      return rel.includes("/") || rel.includes("\\") || !CONTROL.has(rel);
+    }).length;
     const review = existsSync(join(vault, "_needs-review.md"))
       ? readFileSync(join(vault, "_needs-review.md"), "utf8")
           .split("\n")
@@ -200,7 +206,9 @@ function vaultSegment(): string {
 // ☀ 22° — text-presentation weather glyphs (no emoji variation selector: single-width,
 // monochrome, they match the panel's register). Rendered ONLY from a cache file; when the cache
 // is stale a detached curl refreshes it for the NEXT render. The panel never waits on the
-// network. Delete this segment if you'd rather the script touch no network at all.
+// network. This is the one segment that touches the network (IP geolocation + open-meteo, both
+// HTTPS, no vault or session data): set IMPRNT_STATUSLINE_NO_NET=1 (or delete the segment) if
+// you'd rather the script touch no network at all.
 function weatherSegment(): string {
   if (process.env.IMPRNT_STATUSLINE_NO_NET) return "";
   const dir = join(tmpdir(), "imprnt-statusline");
@@ -225,9 +233,10 @@ function weatherSegment(): string {
     try {
       mkdirSync(dir, { recursive: true });
       // One shell, detached, output to the cache: geolocate by IP, then ask open-meteo. Both
-      // free, no keys. -m caps each call so a dead network can't accumulate zombie curls.
+      // free, no keys, HTTPS only. -m caps each call so a dead network can't accumulate zombie
+      // curls.
       spawn("sh", ["-c",
-        `loc=$(curl -sm 3 http://ip-api.com/json) && curl -sm 3 -o "${cache}" "https://api.open-meteo.com/v1/forecast?latitude=$(echo "$loc" | sed -n 's/.*"lat":\\([0-9.-]*\\).*/\\1/p')&longitude=$(echo "$loc" | sed -n 's/.*"lon":\\([0-9.-]*\\).*/\\1/p')&current_weather=true"`,
+        `loc=$(curl -sm 3 https://ipwho.is) && curl -sm 3 -o "${cache}" "https://api.open-meteo.com/v1/forecast?latitude=$(echo "$loc" | sed -n 's/.*"latitude": *\\([0-9.-]*\\).*/\\1/p')&longitude=$(echo "$loc" | sed -n 's/.*"longitude": *\\([0-9.-]*\\).*/\\1/p')&current_weather=true"`,
       ], { detached: true, stdio: "ignore" }).unref();
     } catch {
       // no curl, read-only tmp — fine, the segment just stays empty
