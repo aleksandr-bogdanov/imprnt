@@ -3,7 +3,7 @@
  * Page-specific (statusline): the four-row panel rendered as a dark terminal
  * card instead of a raw fenced code block, so it never clips on a phone. Each
  * row is its own line that wraps cleanly with inner padding, and the percentage
- * segments carry the real alarm-ramp color (calm below 60, amber past 60, red
+ * segments carry the real alarm-ramp color (green below 60, amber past 60, red
  * past 85) so the reader sees the behavior the prose describes. All example
  * values are verbatim from the source panel: this is data, the card only colors
  * it. No borders, theme-token surface for the page, fixed dark terminal inside.
@@ -133,11 +133,11 @@ const ROWS = [
   .sl-seg:last-child {
     margin-right: 0;
   }
-  /* alarm ramp: calm is the slate tone the legend swatch shows, amber past 60,
-     red past 85. Keeping the panel's calm and the legend swatch the same color
-     makes the legend->panel link hold for all three bands. */
+  /* alarm ramp: green below 60 is the script's actual paint (#9ece6a), amber
+     past 60, red past 85. Keeping the panel's calm band and the legend swatch
+     the same green makes the legend->panel link hold for all three bands. */
   .ramp-calm {
-    color: #8a90a0;
+    color: #9ece6a;
   }
   @media (max-width: 480px) {
     .sl-rows {

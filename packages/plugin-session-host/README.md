@@ -38,7 +38,7 @@ dependencies.
 The broker: `GET http://127.0.0.1:8787/session/token?site=<host>` → `{ token }`. Consumers copy the
 tiny `client.js` (`sessionToken(site)` → string | null) and fall back when it returns null.
 
-## Setup
+## Install
 
 ```sh
 npm i -g playwright-core      # uses your installed system Chrome — no browser download
