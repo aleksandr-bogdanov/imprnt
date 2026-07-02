@@ -265,7 +265,7 @@ export default function HeroGraph() {
         )}
       </div>
 
-      <p className="absolute -bottom-2 right-1 hidden font-mono text-[10px] text-ink-faint lg:block">hover, drag, or click a link</p>
+      <p className="absolute -bottom-2 right-1 hidden font-mono text-[10px] text-ink-faint lg:block">a real example vault - hover, drag, or click a link</p>
     </div>
   );
 }

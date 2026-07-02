@@ -1,0 +1,200 @@
+---
+/**
+ * Page-specific (getting-started) visual: what recall does with a question. Every
+ * note gets a score from plain math (BM25), the bars show the ranking, the top
+ * hits go to the assistant, and the raw/ archive sits outside the search. The
+ * note names are illustrative examples for the cutover question asked just above
+ * (concrete beats abstract), never a maintained list. Bars grow staggered when
+ * scrolled into view (script gated on motion, so no-JS and reduced-motion
+ * visitors get the static panel). Filled surfaces, no borders. Scoped CSS,
+ * theme-aware via Starlight tokens.
+ */
+const ROWS = [
+  { name: "events/cutover-call", w: 92, top: true },
+  { name: "projects/access-platform", w: 76, top: true },
+  { name: "people/dana-reyes", w: 54, top: true },
+  { name: "finances/q3-budget", w: 21, top: false },
+  { name: "life/berlin-move", w: 9, top: false },
+];
+---
+
+<div
+  class="gsrecall"
+  role="img"
+  aria-label="What recall does with the question: every note gets a score from plain math, BM25, with no model. The highest-scoring notes go to the assistant, which reads them and answers. Lower-scoring notes stay on disk. The raw archive is never searched."
+>
+  <div class="lead" style="--i: 0">
+    <span class="larr" aria-hidden="true">&darr;</span>
+    <span class="ltext">every note gets a score. plain math, no model</span>
+  </div>
+  <div class="panel" style="--i: 1">
+    {
+      ROWS.map((r, j) => (
+        <div class={`row${r.top ? " top" : ""}`} style={`--w: ${r.w}%; --j: ${j}`}>
+          <code class="name">{r.name}</code>
+          <span class="track">
+            <span class="bar" />
+          </span>
+        </div>
+      ))
+    }
+    <div class="raw">
+      <code class="name">raw/</code>
+      <span class="never">never searched</span>
+    </div>
+  </div>
+  <div class="lead foot" style="--i: 2">
+    <span class="larr" aria-hidden="true">&darr;</span>
+    <span class="ltext">the highest bars open in front of the assistant, the rest stay on disk</span>
+  </div>
+</div>
+
+<style>
+  .gsrecall {
+    margin: 1.4rem 0 1.6rem;
+  }
+  .lead {
+    display: flex;
+    align-items: baseline;
+    gap: 0.55rem;
+    padding: 0.15rem 0.35rem;
+    margin: 0 0 0.6rem;
+  }
+  .lead.foot {
+    margin: 0.6rem 0 0;
+  }
+  .larr {
+    color: var(--sl-color-gray-2);
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+  .ltext {
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .panel {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.95rem 1.05rem 0.85rem;
+    border-radius: 13px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    margin-top: 0;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: minmax(7.5rem, 12rem) 1fr;
+    align-items: center;
+    gap: 0.7rem;
+    margin: 0;
+  }
+  /* Scope to .gsrecall so the plain name beats Starlight's global :not(pre)>code
+     styling (the pale tint + faint border it leaks onto a bare <code>). These
+     are labels in a chart, not copyable commands, so they stay unboxed. */
+  .gsrecall .name {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    color: var(--sl-color-gray-2);
+    background: transparent;
+    border: none;
+    padding: 0;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .row.top .name {
+    color: var(--sl-color-gray-1);
+  }
+  .track {
+    display: block;
+    height: 0.55rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 16%, var(--sl-color-bg));
+    overflow: hidden;
+  }
+  .bar {
+    display: block;
+    height: 100%;
+    width: var(--w);
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 55%, var(--sl-color-bg));
+    transform-origin: left center;
+  }
+  .row.top .bar {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 62%, var(--sl-color-bg));
+  }
+  .raw {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    margin: 0.35rem 0 0;
+    padding-top: 0.55rem;
+    box-shadow: 0 -1px 0 color-mix(in oklab, var(--sl-color-gray-3) 22%, transparent);
+  }
+  .gsrecall .raw .name {
+    color: var(--sl-color-gray-3);
+  }
+  .never {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+
+  /* Reveal states, applied only when the script adds .anim (motion allowed). */
+  .gsrecall.anim :is(.lead, .panel) {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  .gsrecall.anim .bar {
+    transform: scaleX(0);
+  }
+  .gsrecall.anim.on :is(.lead, .panel) {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.55s ease,
+      transform 0.55s ease;
+    transition-delay: calc(var(--i) * 180ms);
+  }
+  .gsrecall.anim.on .bar {
+    transform: scaleX(1);
+    transition: transform 0.7s cubic-bezier(0.25, 1, 0.4, 1);
+    transition-delay: calc(280ms + var(--j) * 110ms);
+  }
+
+  @media (max-width: 640px) {
+    .row {
+      grid-template-columns: minmax(0, 7.6rem) 1fr;
+      gap: 0.5rem;
+    }
+    .gsrecall .name {
+      font-size: 0.62rem;
+    }
+    .ltext {
+      font-size: 0.64rem;
+    }
+  }
+</style>
+
+<script>
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    for (const root of document.querySelectorAll(".gsrecall")) {
+      root.classList.add("anim");
+      const io = new IntersectionObserver(
+        (entries, obs) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              root.classList.add("on");
+              obs.disconnect();
+            }
+          }
+        },
+        { threshold: 0.2 },
+      );
+      io.observe(root);
+    }
+  }
+</script>

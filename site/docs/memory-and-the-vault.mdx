@@ -7,8 +7,9 @@ import MemoryVaultSplit from "../src/components/docs/MemoryVaultSplit.astro";
 import MemoryVaultTable from "../src/components/docs/MemoryVaultTable.astro";
 import MemoryVaultCollapse from "../src/components/docs/MemoryVaultCollapse.astro";
 import MemoryThinRule from "../src/components/docs/MemoryThinRule.astro";
+import MemoryVaultDoors from "../src/islands/MemoryVaultDoors.tsx";
 
-Two kinds of "memory" get jumbled together: what you **know**, and rules for how the assistant **behaves**. imprnt keeps one store for knowledge and one strict rule about what loads on its own, so you can always say where a fact went and whether it is in context right now.
+Two kinds of "memory" get jumbled together: what you **know**, and rules for how the assistant should **behave**. imprnt keeps one store for knowledge and one strict rule about what loads on its own, so you can always say where a fact went and whether the assistant sees it right now.
 
 ## Two jobs people keep mixing up
 
@@ -16,17 +17,17 @@ A store does one of two jobs. The trouble starts when one store tries to do both
 
 <MemoryVaultSplit />
 
-**Knowledge** should be searchable and fetched on demand. **Behavior** should be small and applied every time without asking. These pull in opposite directions: knowledge wants to be big and quiet, behavior tiny and loud. Put them in one bucket and the whole thing turns into a junk drawer.
+**Knowledge** should be searchable and fetched on demand. **Behavior** should be small and applied every time without asking. The two pull in opposite directions: knowledge wants to be big and quiet, behavior tiny and loud. Force them into one bucket and the bucket turns into a junk drawer.
 
-A house style or an anti-slop ruleset is a **behavior plugin**: a fixed chunk of text you wire into your assistant with one import line in `CLAUDE.local.md`, your per-machine on-off file. It loads because you added the line, and leaves when you delete it. See [plugins](/plugins/). The vault holds zero behavior and force-feeds nothing.
+A house style or an anti-slop ruleset is a **behavior plugin**: a fixed chunk of text you wire into your assistant with one import line in `CLAUDE.local.md`, your per-machine on-off file. It loads because you added the line, and it leaves when you delete it. See [plugins](/plugins/). The vault holds zero behavior and force-feeds nothing.
 
-## imprnt's answer: one store, fetched on demand
+## One store, three doors
 
-The **vault** is the only place knowledge lives, and nothing about it pushes itself into a session. You reach it through three doors, each on demand:
+The **vault** is the only place knowledge lives: plain files on your disk, readable in any editor, and nothing about them pushes itself into a session. Everything crosses through one of three doors, each opened on demand.
 
-- **`recall`** searches the vault with BM25 and hands back the best hits. The everyday door. See [how it works](/how-it-works/).
-- **`imprnt hot`** prints the short primer in `hot.md` plus anything that needs review. The "where was I" glance.
-- **`imprnt context`** prints the full filing rules. The assistant runs it right before it writes a note, so outside the vault project the heavy rules are paid only by the sessions that write. A session inside the vault project, like `imp lair`, loads the contract natively from its `CLAUDE.md`.
+<MemoryVaultDoors client:load />
+
+`recall` is the everyday door. It searches the vault with BM25, plain ranking math that scores every note against your keywords, and hands back the best hits ([how it works](/how-it-works/)). `imprnt hot` is the "where was I" glance: the short primer in `hot.md` plus anything that needs review. `imprnt context` prints the full filing rules, and the assistant runs it right before it writes a note, so outside the vault project the heavy rules are paid only by the sessions that write. A session inside the vault project, like `imp lair`, loads the contract natively from its `CLAUDE.md`.
 
 An `imp` session loads almost nothing on its own: your behavior plugins, plus a small pointer (~150 tokens) saying the vault exists, how to search it, and to run `imprnt context` before writing. A day of reading costs that pointer, never the whole vault.
 
@@ -44,7 +45,7 @@ An `imp` session loads almost nothing on its own: your behavior plugins, plus a 
 
 ## Your assistant has its own memory, so keep it thin
 
-imprnt usually runs under Claude Code, which writes a `MEMORY.md` about a project as it works. Its first stretch auto-loads every session and lives outside `vault/`, so `recall` never sees it. That makes it a second **always-on** store you cannot search, and one rule keeps it from turning into a parallel mess:
+imprnt usually runs under Claude Code, which writes itself a `MEMORY.md` about each project as it works. The first stretch of that file auto-loads every session and lives outside `vault/`, so `recall` never sees it. That makes it a second **always-on** store you cannot search, and one rule keeps it from turning into a parallel mess:
 
 <MemoryThinRule />
 
@@ -68,13 +69,13 @@ The easy mistake is parking searchable knowledge in the store that cannot be sea
 
 ## The mess imprnt set out to avoid
 
-imprnt grew out of [PAI](https://github.com/danielmiessler/PAI), which pointed the way and also showed where several memory stores blur together. PAI carried at least **three**, and all of them read like "memory":
+imprnt grew out of [PAI](https://github.com/danielmiessler/PAI), which pointed the way and also showed where several memory stores blur together. PAI carried at least **three**, and every one of them read like "memory":
 
 <MemoryVaultCollapse />
 
-Each loaded differently, and the jobs overlapped. USER and KNOWLEDGE both answered "who am I and what am I working on." The two MEMORY stores served opposite ends, one curated and permanent, one raw and temporal. The result: you could rarely say where a fact lived or whether the assistant would see it.
+Each store loaded differently, and the jobs overlapped. USER and KNOWLEDGE both answered "who am I and what am I working on". The two MEMORY stores sat at opposite ends, one curated and permanent, one a raw timestamped stream. The result: you could rarely say where a fact lived or whether the assistant would see it.
 
-imprnt collapses that into one knowledge store with three on-demand doors, plus the assistant's small always-on behavior layer. One question routes anything you want to keep: is it **knowledge** or is it **behavior**? Knowledge goes to the vault and is found by search. Behavior goes to the config and loads every time. The longer record of these calls is in [design decisions](/design-decisions/).
+imprnt collapses that into one knowledge store with three on-demand doors, plus the assistant's small always-on behavior layer. One question routes anything you want to keep: knowledge or behavior. Knowledge goes to the vault and is found by search. Behavior goes to the config and loads every time. The longer record of these calls is in [design decisions](/design-decisions/).
 
 <div class="page-end-trim" aria-hidden="true"></div>
 

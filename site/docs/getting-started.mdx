@@ -4,10 +4,14 @@ description: Install imprnt, make a vault, and start talking to it.
 ---
 
 import { Steps, Aside } from "@astrojs/starlight/components";
+import GettingStartedCheck from "../src/components/docs/GettingStartedCheck.astro";
 import GettingStartedFlow from "../src/components/docs/GettingStartedFlow.astro";
+import GettingStartedIngestPath from "../src/components/docs/GettingStartedIngestPath.astro";
+import GettingStartedJourney from "../src/components/docs/GettingStartedJourney.astro";
 import GettingStartedModes from "../src/components/docs/GettingStartedModes.astro";
 import GettingStartedNeed from "../src/components/docs/GettingStartedNeed.astro";
 import GettingStartedPlugins from "../src/components/docs/GettingStartedPlugins.astro";
+import GettingStartedRecallRank from "../src/components/docs/GettingStartedRecallRank.astro";
 import GettingStartedSay from "../src/components/docs/GettingStartedSay.astro";
 import GettingStartedScrollFix from "../src/components/docs/GettingStartedScrollFix.astro";
 
@@ -15,9 +19,9 @@ import GettingStartedScrollFix from "../src/components/docs/GettingStartedScroll
 
 imprnt is a folder of plain **markdown** notes on your computer. You talk to your assistant in plain language, it files what matters into notes on your disk, and later it answers from your real history. Nothing it learns is lost when the chat closes.
 
-<Aside type="note" title="You drive by talking">
-You never type these commands in normal use. Your assistant runs them for you. They are here so you can see what happens and run them yourself when you want.
-</Aside>
+The whole path, from an empty machine to a first answer out of your own notes:
+
+<GettingStartedJourney />
 
 ## What you need
 
@@ -44,7 +48,7 @@ imprnt init
 
 </Steps>
 
-Already have a vault elsewhere (moved by hand, or made on another machine)? Point one variable at it and every command follows. `imprnt init` ignores this variable, so to create a new vault in a custom spot, pass the path to `init` instead.
+If your vault already lives somewhere else (moved by hand, or made on another machine), point one variable at it and every command follows. `imprnt init` ignores this variable, so to create a new vault in a custom spot, pass the path to `init` instead.
 
 ```sh title="terminal"
 export IMPRNT_VAULT=~/notes/vault
@@ -72,6 +76,10 @@ You talk. Behind your words, the engine runs one of three commands.
 
 <GettingStartedFlow />
 
+<Aside type="note" title="You drive by talking">
+You never type these commands in normal use. Your assistant runs them for you. They are here so you can see what happens and run them yourself when you want.
+</Aside>
+
 ### File something: `ingest`
 
 A source is anything: a meeting transcript, a pasted doc, a prose dump, a single fact. Hand it over.
@@ -87,19 +95,11 @@ You:
 
 </GettingStartedSay>
 
-What happens:
+What happens behind the reply:
 
-<Steps>
+<GettingStartedIngestPath />
 
-1. The original is copied untouched into `raw/`, so it stays traceable.
-
-2. The model reads it, decides where each note goes, writes a one-line summary, pulls out decisions and actions, tags it, and links the people and projects it mentions.
-
-3. The notes are filed, and one line lands in `log.md`.
-
-</Steps>
-
-A dense source splits into several linked notes from one copy. Tables, numbers, dates, and exact wording are kept in full. The summary is added on top, never instead of the data.
+However dense the source, nothing thins out on the way in. Tables, numbers, dates, and exact wording are kept in full, and the one-line summary is written above them, never in their place.
 
 ### Find something: `recall`
 
@@ -115,7 +115,9 @@ You:
 
 </GettingStartedSay>
 
-The engine ranks your notes with **BM25**, a plain local formula with no model and no embeddings, and hands the best ones to the assistant to read and answer. It searches your real notes only. The `raw/` archive is never searched, so nothing leaks from a snapshot into an answer.
+<GettingStartedRecallRank />
+
+The scoring is **BM25**, a plain formula that measures how well each note's words match your question. It is ordinary arithmetic running on your machine, with no model in the middle. It searches your real notes only: the `raw/` archive of originals is never searched, so nothing leaks from a snapshot into an answer.
 
 ### Tidy up: `check`
 
@@ -130,7 +132,7 @@ You:
 
 </GettingStartedSay>
 
-It rebuilds the index, learns any new tags, and flags notes that link nothing or have a broken link. It only ever touches the control files, never your notes.
+<GettingStartedCheck />
 
 ## Add a plugin
 

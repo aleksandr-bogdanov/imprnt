@@ -1,0 +1,371 @@
+---
+/**
+ * Page-specific (how-it-works): THE visual centerpiece. The write path / read
+ * path split as two lanes with the vault between them. The write lane runs once
+ * per note and is where the model is spent (accent). The read lane runs
+ * thousands of times and is plain code (neutral). Animated dots travel each
+ * lane at very different rates, one slow trickle vs a fast stream, so the
+ * frequency argument lands before a word is read. Dots pause under
+ * prefers-reduced-motion, and the scroll reveal only arms itself when JS and
+ * motion are both available, so the block is never invisible without them.
+ * Filled surfaces, no border boxes. Scoped CSS, theme-aware Starlight tokens.
+ */
+---
+
+<div class="split" data-hiw-split>
+  <section
+    class="lane write"
+    data-reveal
+    role="img"
+    aria-label="Write path, runs once per note: you hand over a source, the model reads and files it, clean notes land in the vault. This is the only place the model is spent."
+  >
+    <div class="lanehead">
+      <span class="lanetag">write path</span>
+      <span class="lanetitle">Spend the model once</span>
+      <span class="freq">runs <b>once</b> per note</span>
+    </div>
+    <div class="flowrow">
+      <div class="station">
+        <span class="who you">you</span>
+        <span class="name">Hand over a source</span>
+        <span class="sub">a transcript, a doc, a stray fact</span>
+      </div>
+      <div class="seg" aria-hidden="true"><i class="dot"></i></div>
+      <div class="station hot">
+        <span class="who model">model &middot; paid</span>
+        <span class="name">It reads and sorts</span>
+        <span class="sub">summary, tags, links, folder</span>
+      </div>
+      <div class="seg" aria-hidden="true"><i class="dot d2"></i></div>
+      <div class="station">
+        <span class="who out">result</span>
+        <span class="name">Clean notes</span>
+        <span class="sub">one source can fan out into several</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="mid" data-reveal aria-hidden="true">
+    <span class="pipe">&darr; filing writes in</span>
+    <div class="vaultcard">
+      <span class="vname">the vault</span>
+      <span class="vsub">plain markdown files on your disk</span>
+    </div>
+    <span class="pipe">&darr; every search reads out</span>
+  </div>
+
+  <section
+    class="lane read"
+    data-reveal
+    role="img"
+    aria-label="Read path, runs thousands of times: you ask in plain words, plain code ranks every note with no model involved, the model reads only the top hits and answers."
+  >
+    <div class="lanehead">
+      <span class="lanetag">read path</span>
+      <span class="lanetitle">Search with cheap local code</span>
+      <span class="freq">runs <b>thousands</b> of times</span>
+    </div>
+    <div class="flowrow">
+      <div class="station">
+        <span class="who you">you</span>
+        <span class="name">Ask in plain words</span>
+        <span class="sub">any question, all day long</span>
+      </div>
+      <div class="seg" aria-hidden="true"><i class="dot"></i><i class="dot d2"></i></div>
+      <div class="station">
+        <span class="who code">code &middot; free</span>
+        <span class="name">Code ranks every note</span>
+        <span class="sub">counting, no model, no server</span>
+      </div>
+      <div class="seg" aria-hidden="true"><i class="dot"></i><i class="dot d2"></i></div>
+      <div class="station">
+        <span class="who model">model</span>
+        <span class="name">It reads the top hits</span>
+        <span class="sub">a handful of notes, then answers</span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+  // scroll reveal, armed only when JS runs AND motion is allowed, so the block
+  // is fully visible for no-JS readers and reduced-motion users
+  const roots = document.querySelectorAll("[data-hiw-split]");
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  roots.forEach((root) => {
+    if (reduce || !("IntersectionObserver" in window)) return;
+    root.classList.add("js");
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            e.target.classList.add("in");
+            obs.unobserve(e.target);
+          }
+        }
+      },
+      { threshold: 0.25, rootMargin: "0px 0px -8% 0px" },
+    );
+    root.querySelectorAll("[data-reveal]").forEach((el) => obs.observe(el));
+  });
+</script>
+
+<style>
+  .split {
+    display: grid;
+    gap: 0.55rem;
+    margin: 1.6rem 0;
+  }
+  /* Starlight owl-spacing leaks margin-top:16px onto later grid children */
+  .split > * {
+    margin-top: 0;
+  }
+
+  /* ---- scroll reveal (armed by JS only) ---- */
+  .split.js [data-reveal] {
+    opacity: 0;
+    transform: translateY(14px);
+    transition:
+      opacity 0.55s ease,
+      transform 0.55s ease;
+  }
+  .split.js [data-reveal].in {
+    opacity: 1;
+    transform: none;
+  }
+  .split.js .mid[data-reveal].in {
+    transition-delay: 0.1s;
+  }
+  .split.js .lane.read[data-reveal].in {
+    transition-delay: 0.18s;
+  }
+
+  /* ---- lanes ---- */
+  .lane {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    padding: 1.05rem 1.15rem 1.15rem;
+    border-radius: 16px;
+  }
+  .lane.write {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
+  }
+  .lane.read {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 15%, var(--sl-color-bg));
+  }
+  .lanehead {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.75rem;
+  }
+  .lanetag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    padding: 0.14rem 0.5rem;
+    border-radius: 999px;
+  }
+  .write .lanetag {
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+  }
+  .read .lanetag {
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 32%, var(--sl-color-bg));
+  }
+  .lanetitle {
+    font-size: 1.12rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--sl-color-white);
+  }
+  .freq {
+    margin-left: auto;
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    color: var(--sl-color-gray-2);
+  }
+  .freq b {
+    color: var(--sl-color-white);
+    font-weight: 700;
+  }
+  .write .freq b {
+    color: var(--sl-color-text-accent);
+  }
+
+  /* ---- stations + connectors ---- */
+  .flowrow {
+    display: flex;
+    align-items: stretch;
+    gap: 0.45rem;
+  }
+  .station {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.22rem;
+    padding: 0.75rem 0.85rem;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--sl-color-bg) 55%, transparent);
+  }
+  .station.hot {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 24%, var(--sl-color-bg));
+  }
+  .who {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .who.you {
+    color: color-mix(in oklab, #5a8dd6 70%, var(--sl-color-gray-1));
+  }
+  .who.model {
+    color: var(--sl-color-text-accent);
+  }
+  .name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--sl-color-white);
+  }
+  .sub {
+    font-size: 0.78rem;
+    line-height: 1.3;
+    color: var(--sl-color-gray-1);
+  }
+
+  .seg {
+    position: relative;
+    flex: 0 1 2.6rem;
+    min-width: 1.4rem;
+    height: 2px;
+    align-self: center;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-gray-2) 32%, transparent);
+  }
+  .dot {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 7px;
+    height: 7px;
+    margin-top: -3.5px;
+    border-radius: 50%;
+  }
+  /* one slow dot on the write lane: the trickle */
+  .write .dot {
+    background: var(--sl-color-text-accent);
+    box-shadow: 0 0 7px color-mix(in oklab, var(--sl-color-text-accent) 65%, transparent);
+    animation: hiw-travel-x 4.4s linear infinite;
+  }
+  .write .dot.d2 {
+    animation-delay: -2.2s;
+  }
+  /* a fast stream on the read lane: the point of the whole diagram */
+  .read .dot {
+    background: color-mix(in oklab, var(--sl-color-gray-1) 85%, var(--sl-color-white));
+    animation: hiw-travel-x 1.3s linear infinite;
+  }
+  .read .dot.d2 {
+    animation-delay: -0.65s;
+  }
+  @keyframes hiw-travel-x {
+    from {
+      left: 0;
+    }
+    to {
+      left: calc(100% - 7px);
+    }
+  }
+  @keyframes hiw-travel-y {
+    from {
+      top: 0;
+    }
+    to {
+      top: calc(100% - 7px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dot {
+      animation: none !important;
+    }
+  }
+
+  /* ---- middle band: the vault ---- */
+  .mid {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0;
+  }
+  .pipe {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    color: var(--sl-color-gray-2);
+  }
+  .vaultcard {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 0.7rem 1.6rem;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 24%, var(--sl-color-bg));
+    /* owl-spacing reset for a flex child following a sibling */
+    margin-top: 0;
+  }
+  .vname {
+    font-family: var(--sl-font-mono);
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .vsub {
+    font-size: 0.78rem;
+    color: var(--sl-color-gray-1);
+  }
+
+  /* ---- mobile: lanes stack their stations, connectors go vertical ---- */
+  @media (max-width: 640px) {
+    .flowrow {
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .seg {
+      flex: none;
+      width: 2px;
+      height: 1.5rem;
+      min-width: 0;
+      align-self: center;
+    }
+    .dot {
+      top: 0;
+      left: 50%;
+      margin-top: 0;
+      margin-left: -3.5px;
+    }
+    .write .dot {
+      animation-name: hiw-travel-y;
+    }
+    .read .dot {
+      animation-name: hiw-travel-y;
+    }
+    .freq {
+      margin-left: 0;
+      flex-basis: 100%;
+    }
+    .vaultcard {
+      padding: 0.7rem 1.1rem;
+      text-align: center;
+    }
+  }
+</style>

@@ -1,0 +1,112 @@
+---
+/**
+ * Landing (index.astro only): the file behind the demo answer, shown as the
+ * plain-markdown note it is. Rendered on the bright "paper" surface from the
+ * design tokens, a deliberate contrast block on the dark page. The paper
+ * tokens are static (not theme-flipped), so hardcoded accents here are tuned
+ * for paper and read the same in both themes. The fiction matches the
+ * terminal demo one column over: Boris, the access-platform cutover, the
+ * superseded June date. The frontmatter fields (type, status, owner, updated,
+ * tags, summary) and the superseded stamp are the real vault contract.
+ */
+---
+
+<figure class="m-0">
+  <div class="note">
+    <div class="tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14 3v5h5"></path>
+        <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"></path>
+      </svg>
+      <span>projects/access-platform.md</span>
+    </div>
+    <div class="body">
+      <p class="fence">---</p>
+      <p><span class="k">type:</span> project</p>
+      <p><span class="k">status:</span> active</p>
+      <p><span class="k">owner:</span> "<span class="link">[[people/boris-carter]]</span>"</p>
+      <p><span class="k">updated:</span> 2026-06-11</p>
+      <p><span class="k">tags:</span> [work, access-platform]</p>
+      <p><span class="k">summary:</span> Cutover moved to July 15, gated on the parallel-run numbers.</p>
+      <p class="fence">---</p>
+
+      <p class="h1"># Access platform</p>
+      <p class="prose">
+        Cutover is <mark>July 15</mark>, gated on the two-week parallel-run numbers.
+        <span class="link">[[people/boris-carter]]</span> owns it.
+      </p>
+      <p class="dead"><s>Cutover is June 20.</s></p>
+      <p class="stamp">&gt; superseded by <span class="link">[[events/2026-06-11-boris-1-1]]</span></p>
+    </div>
+  </div>
+</figure>
+
+<style>
+  .note {
+    overflow: hidden;
+    border-radius: 1.1rem;
+    border: 1px solid var(--color-paper-line);
+    background: var(--color-paper);
+    color: var(--color-paper-ink);
+    box-shadow: 0 26px 70px -30px rgba(0, 0, 0, 0.55);
+  }
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1.05rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: #6f6b5e;
+    background: var(--color-paper-soft);
+    border-bottom: 1px solid var(--color-paper-line);
+  }
+  .tab svg {
+    width: 0.9rem;
+    height: 0.9rem;
+    flex: 0 0 auto;
+    color: #178a4e;
+  }
+  .body {
+    padding: 1.05rem 1.2rem 1.2rem;
+    font-family: var(--font-mono);
+    font-size: 0.79rem;
+    line-height: 1.7;
+    overflow-wrap: break-word;
+  }
+  .body p {
+    margin: 0;
+  }
+  .fence {
+    color: #a49f8e;
+  }
+  .k {
+    color: #8a8471;
+  }
+  .h1 {
+    margin: 0.9rem 0 0.45rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+  .prose {
+    margin: 0 0 0.85rem;
+  }
+  .link {
+    color: #178a4e;
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+  }
+  mark {
+    background: color-mix(in srgb, #178a4e 16%, transparent);
+    color: inherit;
+    padding: 0 0.15em;
+    border-radius: 3px;
+  }
+  .dead {
+    color: #a49f8e;
+  }
+  .stamp {
+    font-size: 0.72rem;
+    color: #9a6a15;
+  }
+</style>

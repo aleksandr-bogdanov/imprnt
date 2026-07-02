@@ -1,0 +1,357 @@
+---
+/**
+ * Page-specific (why-imprnt): the keep-vs-lose argument, visual. Top half shows
+ * the SAME fact stored two ways: a plain note you can read next to a machine-
+ * store's rows of numbers you cannot. Bottom half is a four-row ledger: what a
+ * plain-file vault keeps and what a machine-store loses, on the four moments
+ * that matter (read it, fix it, switch tools, vendor moves on). The claims
+ * restate the verified comparison-page facts, never more. Filled surfaces, no
+ * border boxes. Scoped CSS, theme-aware via Starlight tokens, no Tailwind.
+ * Reveal animation is additive: no JS or reduced motion renders fully visible.
+ */
+const NOTE = [
+  { k: "h", t: "# Dr. Weber" },
+  { k: "m", t: "tags: health, cardiology" },
+  { k: "m", t: "summary: My cardiologist since 2024." },
+  { k: "b", t: "" },
+  { k: "b", t: "Moved her practice to Friedrichstrasse" },
+  { k: "b", t: "in May. Next checkup due in October." },
+];
+
+const VEC = [
+  " 0.0132  -0.8841   0.5590  -0.1127",
+  "-0.4203   0.7719  -0.0865   0.3341",
+  " 0.9034  -0.2210   0.6402  -0.5577",
+  "-0.1848   0.4466  -0.9152   0.0719",
+  " 0.3305  -0.6674   0.2081   0.8420",
+];
+
+const ROWS = [
+  {
+    q: "Read it",
+    keep: "Open the note like any text file.",
+    lose: "Rows of numbers, nothing to read.",
+  },
+  {
+    q: "Fix a wrong fact",
+    keep: "Find the line, edit it, done.",
+    lose: "There is no line to find.",
+  },
+  {
+    q: "Switch assistants",
+    keep: "The folder and its search go with you.",
+    lose: "The store stays behind with the tool.",
+  },
+  {
+    q: "The vendor moves on",
+    keep: "Nothing happens. The files are on your disk.",
+    lose: "Whatever lived in the store is gone.",
+  },
+];
+---
+
+<div class="kl" data-kl>
+  <span class="kl-tag">the same fact, stored two ways</span>
+
+  <div class="kl-cards">
+    <figure class="kl-fig" style="--d: 0ms">
+      <figcaption class="kl-cap"><span class="kl-dot keep-dot" aria-hidden="true"></span> a note in your vault</figcaption>
+      <div class="kl-file" role="img" aria-label="A plain text note: Dr. Weber, tagged health and cardiology, summary line, and the fact that she moved her practice to Friedrichstrasse in May.">
+        <span class="kl-path">people/dr-weber.md</span>
+        <div class="kl-note">
+          {NOTE.map((l) => <span class={`ln ln-${l.k}`}>{l.t}</span>)}
+        </div>
+      </div>
+    </figure>
+    <figure class="kl-fig" style="--d: 140ms">
+      <figcaption class="kl-cap"><span class="kl-dot lose-dot" aria-hidden="true"></span> the same fact in a machine-store</figcaption>
+      <div class="kl-vec" role="img" aria-label="The same fact converted to long rows of decimal numbers. No sentence survives the conversion.">
+        <span class="kl-path dim">memory.index</span>
+        <div class="kl-nums" aria-hidden="true">
+          {VEC.map((r) => <span class="vr">{r}</span>)}
+          <span class="vr more">+ hundreds more numbers</span>
+        </div>
+      </div>
+    </figure>
+  </div>
+
+  <div class="kl-ledger" role="table" aria-label="What you keep with plain files and what you lose with a machine-store">
+    <div class="lrow lhead" role="row" style="--d: 220ms">
+      <span class="lq" role="columnheader"></span>
+      <span class="lc lk head" role="columnheader">plain files</span>
+      <span class="lc ll head" role="columnheader">a machine-store</span>
+    </div>
+    {
+      ROWS.map((r, i) => (
+        <div class="lrow" role="row" style={`--d:${300 + i * 110}ms`}>
+          <span class="lq" role="rowheader">{r.q}</span>
+          <span class="lc lk" role="cell">
+            <span class="mini" aria-hidden="true">plain files</span>
+            <span class="mark ok" aria-hidden="true">&#10003;</span>
+            {r.keep}
+          </span>
+          <span class="lc ll" role="cell">
+            <span class="mini" aria-hidden="true">machine-store</span>
+            <span class="mark no" aria-hidden="true">&#10005;</span>
+            {r.lose}
+          </span>
+        </div>
+      ))
+    }
+  </div>
+</div>
+
+<style>
+  .kl {
+    margin: 1.7rem 0;
+  }
+  .kl-tag {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+    margin-bottom: 0.8rem;
+  }
+
+  /* the two cards */
+  .kl-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7rem;
+    margin: 0 0 1rem;
+  }
+  .kl-fig {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .kl-cap {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+    margin-bottom: 0.45rem;
+  }
+  .kl-dot {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    flex: none;
+  }
+  .keep-dot {
+    background: var(--sl-color-text-accent);
+  }
+  .lose-dot {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 70%, var(--sl-color-bg));
+  }
+  .kl-file,
+  .kl-vec {
+    flex: 1;
+    border-radius: 13px;
+    padding: 0.8rem 0.95rem 0.9rem;
+    font-family: var(--sl-font-mono);
+  }
+  .kl-file {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
+  }
+  .kl-vec {
+    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+  }
+  .kl-path {
+    display: inline-block;
+    font-size: 0.66rem;
+    letter-spacing: 0.04em;
+    padding: 0.16rem 0.5rem;
+    border-radius: 7px;
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+    margin-bottom: 0.6rem;
+  }
+  .kl-path.dim {
+    color: var(--sl-color-gray-2);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+  }
+  .kl-note {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+  }
+  .ln {
+    font-size: 0.76rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    min-height: 0.6rem;
+  }
+  .ln-h {
+    color: var(--sl-color-text-accent);
+    font-weight: 700;
+  }
+  .ln-m {
+    color: var(--sl-color-gray-2);
+  }
+  .ln-b {
+    color: var(--sl-color-white);
+  }
+  .kl-nums {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+    mask-image: linear-gradient(to bottom, #000 45%, transparent 98%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent 98%);
+  }
+  .vr {
+    font-size: 0.76rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--sl-color-gray-3);
+  }
+  .vr.more {
+    color: var(--sl-color-gray-3);
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+  }
+
+  /* the ledger */
+  .kl-ledger {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .lrow {
+    display: grid;
+    grid-template-columns: minmax(7.6rem, 0.62fr) 1fr 1fr;
+    gap: 0.4rem;
+    align-items: stretch;
+  }
+  .lq {
+    display: flex;
+    align-items: center;
+    font-size: 0.84rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--sl-color-white);
+    padding: 0.55rem 0.2rem 0.55rem 0;
+  }
+  .lc {
+    position: relative;
+    border-radius: 11px;
+    padding: 0.55rem 0.75rem 0.55rem 2rem;
+    font-size: 0.82rem;
+    line-height: 1.42;
+    color: var(--sl-color-white);
+  }
+  .lk {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
+  }
+  .ll {
+    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+    color: var(--sl-color-gray-1);
+  }
+  .mark {
+    position: absolute;
+    left: 0.7rem;
+    top: 0.62rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .mark.ok {
+    color: var(--sl-color-text-accent);
+  }
+  .mark.no {
+    color: var(--sl-color-gray-3);
+  }
+  .lhead .lc {
+    background: none;
+    padding-top: 0.1rem;
+    padding-bottom: 0;
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .lhead .lk {
+    color: var(--sl-color-text-accent);
+  }
+  .lhead .ll {
+    color: var(--sl-color-gray-2);
+  }
+  .mini {
+    display: none;
+  }
+
+  /* reveal: armed only by JS, so no-JS and reduced-motion render static */
+  .kl.armed .kl-fig,
+  .kl.armed .lrow {
+    opacity: 0;
+    transform: translateY(12px);
+    transition:
+      opacity 0.55s ease var(--d),
+      transform 0.55s ease var(--d);
+  }
+  .kl.armed.in .kl-fig,
+  .kl.armed.in .lrow {
+    opacity: 1;
+    transform: none;
+  }
+
+  @media (max-width: 700px) {
+    .kl-cards {
+      grid-template-columns: 1fr;
+    }
+    .lrow {
+      grid-template-columns: 1fr;
+      gap: 0.35rem;
+      margin-bottom: 0.5rem;
+    }
+    .lhead {
+      display: none;
+    }
+    .lq {
+      padding: 0.1rem 0 0;
+    }
+    .mini {
+      display: block;
+      font-family: var(--sl-font-mono);
+      font-size: 0.58rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 0.15rem;
+    }
+    .lk .mini {
+      color: var(--sl-color-text-accent);
+    }
+    .ll .mini {
+      color: var(--sl-color-gray-2);
+    }
+    .mark {
+      top: 1.55rem;
+    }
+  }
+</style>
+
+<script>
+  const reducedKl = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("[data-kl]").forEach((el) => {
+    if (reducedKl || !("IntersectionObserver" in window)) return;
+    el.classList.add("armed");
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            el.classList.add("in");
+            io.disconnect();
+          }
+        }
+      },
+      { threshold: 0.12 },
+    );
+    io.observe(el);
+  });
+</script>

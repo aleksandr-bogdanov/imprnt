@@ -1,0 +1,376 @@
+---
+/**
+ * Page-specific visual for docs/vault-layout.mdx: the "What carries the
+ * meaning" section. Replaces the old MeaningTable with an anatomy view: a
+ * mock note (path bar plus header) on the left, and the four meaning axes
+ * (type, kind, tags, folder) as a color-keyed legend on the right. Hovering,
+ * tapping, or keyboard-focusing a legend row lights up the matching token in
+ * the note and dims the rest, and the tokens work the same way in reverse.
+ * The legend keeps every definition the old table carried, so no data was
+ * traded for the visual. The quiet lines (domain, summary, the H1) carry tiny
+ * inline annotations instead of a paragraph. Scoped CSS, theme-aware via
+ * Starlight --sl tokens with a light-theme hue override, root carries
+ * `not-content`. Scroll reveal is gated behind prefers-reduced-motion.
+ */
+const AXES = [
+  {
+    id: "type",
+    lives: "in the header",
+    says: "what the object is: person, org, holding, project, principle, note, mistake, event",
+  },
+  {
+    id: "kind",
+    lives: "in the header",
+    says: "what form it takes: a belief, a model, a policy, a how-to, a rating",
+  },
+  {
+    id: "tags",
+    lives: "in the header",
+    says: "what it is about, a list that grows on its own, one idea per tag",
+  },
+  {
+    id: "folder",
+    lives: "in the path",
+    says: "where you browse for it, the one axis search never reads",
+  },
+];
+---
+
+<div class="ana not-content" data-ana>
+  <figure class="note" style="--i:0">
+    <figcaption class="path">
+      <span class="crumb">vault/</span><button type="button" class="tok t-folder" data-axis="folder"
+        >finances/</button
+      ><span class="crumb file">german-tax-classes.md</span>
+    </figcaption>
+    <div class="body">
+      <div class="ln fence"><span>---</span></div>
+      <div class="ln">
+        <button type="button" class="tok t-type" data-axis="type">type: note</button>
+      </div>
+      <div class="ln">
+        <button type="button" class="tok t-kind" data-axis="kind">kind: reference</button>
+      </div>
+      <div class="ln">
+        <button type="button" class="tok t-tags" data-axis="tags">tags: [taxes, germany]</button>
+      </div>
+      <div class="ln quiet">
+        <span>domain: finances</span>
+        <span class="ann">mirrors the folder</span>
+      </div>
+      <div class="ln quiet">
+        <span>summary: How the German tax classes pair up</span>
+        <span class="ann">one line, written at ingest</span>
+      </div>
+      <div class="ln fence"><span>---</span></div>
+      <div class="ln quiet h1">
+        <span># German tax classes</span>
+        <span class="ann">the H1 is the title</span>
+      </div>
+    </div>
+  </figure>
+  <ul class="legend">
+    {
+      AXES.map((a, i) => (
+        <li style={`--i:${i + 1}`}>
+          <button type="button" class={`row r-${a.id}`} data-axis={a.id}>
+            <span class="head">
+              <span class={`chip c-${a.id}`}>{a.id}</span>
+              <span class="lives">{a.lives}</span>
+            </span>
+            <span class="says">{a.says}</span>
+          </button>
+        </li>
+      ))
+    }
+  </ul>
+</div>
+
+<style>
+  .ana {
+    --c-type: var(--sl-color-text-accent);
+    --c-kind: #7fb3e3;
+    --c-tags: #dcb96a;
+    --c-folder: var(--sl-color-gray-2);
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    gap: 1rem;
+    align-items: start;
+    margin: 1.4rem 0 1.4rem;
+  }
+  :global([data-theme="light"]) .ana {
+    --c-kind: #21659e;
+    --c-tags: #8f6c12;
+  }
+
+  /* ---- the mock note ---- */
+  .note {
+    margin: 0;
+    border-radius: 16px;
+    overflow: hidden;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 10%, var(--sl-color-bg));
+  }
+  .path {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    row-gap: 0.2rem;
+    padding: 0.7rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 20%, var(--sl-color-bg));
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+  }
+  .crumb {
+    color: var(--sl-color-gray-2);
+  }
+  .crumb.file {
+    color: var(--sl-color-gray-1);
+  }
+  .body {
+    padding: 0.95rem 1.05rem 1.05rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.42rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+  .ln {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.15rem 1rem;
+    margin: 0;
+    color: var(--sl-color-gray-1);
+  }
+  .ln.fence span {
+    color: var(--sl-color-gray-3);
+  }
+  .ln.quiet > span:first-child {
+    color: color-mix(in oklab, var(--sl-color-gray-1) 75%, var(--sl-color-bg));
+  }
+  .ln.h1 > span:first-child {
+    color: var(--sl-color-gray-1);
+    font-weight: 600;
+  }
+  .ann {
+    margin-left: auto;
+    font-family: var(--sl-font);
+    font-size: 0.7rem;
+    color: var(--sl-color-gray-2);
+    text-align: right;
+  }
+
+  /* ---- tokens ---- */
+  .tok {
+    display: inline-block;
+    border: 0;
+    margin: 0;
+    padding: 0.06rem 0.38rem;
+    border-radius: 6px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.18s ease;
+  }
+  .tok:focus-visible {
+    outline: 2px solid var(--sl-color-text-accent);
+    outline-offset: 1px;
+  }
+  .t-type {
+    color: var(--c-type);
+    background: color-mix(in oklab, var(--c-type) 13%, var(--sl-color-bg));
+  }
+  .t-kind {
+    color: var(--c-kind);
+    background: color-mix(in oklab, var(--c-kind) 13%, var(--sl-color-bg));
+  }
+  .t-tags {
+    color: var(--c-tags);
+    background: color-mix(in oklab, var(--c-tags) 13%, var(--sl-color-bg));
+  }
+  .t-folder {
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    border: 1px dashed color-mix(in oklab, var(--c-folder) 50%, transparent);
+    padding: 0.02rem 0.36rem;
+    margin: 0 0.1rem;
+  }
+
+  /* ---- the legend ---- */
+  .legend {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+  .legend li {
+    margin: 0;
+  }
+  .row {
+    display: block;
+    width: 100%;
+    border: 0;
+    margin: 0;
+    padding: 0.6rem 0.75rem 0.65rem;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 10%, var(--sl-color-bg));
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: opacity 0.18s ease;
+  }
+  .row:focus-visible {
+    outline: 2px solid var(--sl-color-text-accent);
+    outline-offset: 1px;
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.55rem;
+    margin-bottom: 0.25rem;
+  }
+  .chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.76rem;
+    font-weight: 700;
+    padding: 0.04rem 0.42rem;
+    border-radius: 6px;
+  }
+  .c-type {
+    color: var(--c-type);
+    background: color-mix(in oklab, var(--c-type) 13%, var(--sl-color-bg));
+  }
+  .c-kind {
+    color: var(--c-kind);
+    background: color-mix(in oklab, var(--c-kind) 13%, var(--sl-color-bg));
+  }
+  .c-tags {
+    color: var(--c-tags);
+    background: color-mix(in oklab, var(--c-tags) 13%, var(--sl-color-bg));
+  }
+  .c-folder {
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+  }
+  .lives {
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .says {
+    display: block;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+  }
+
+  /* ---- highlight states: light the axis, dim the rest ---- */
+  .ana[data-hi] .tok,
+  .ana[data-hi] .row {
+    opacity: 0.35;
+  }
+  .ana[data-hi] .ln.quiet,
+  .ana[data-hi] .ln.fence {
+    opacity: 0.35;
+  }
+  .ana[data-hi="type"] .tok.t-type,
+  .ana[data-hi="type"] .row.r-type,
+  .ana[data-hi="kind"] .tok.t-kind,
+  .ana[data-hi="kind"] .row.r-kind,
+  .ana[data-hi="tags"] .tok.t-tags,
+  .ana[data-hi="tags"] .row.r-tags,
+  .ana[data-hi="folder"] .tok.t-folder,
+  .ana[data-hi="folder"] .row.r-folder {
+    opacity: 1;
+  }
+  .ana[data-hi="type"] .tok.t-type {
+    background: color-mix(in oklab, var(--c-type) 24%, var(--sl-color-bg));
+  }
+  .ana[data-hi="kind"] .tok.t-kind {
+    background: color-mix(in oklab, var(--c-kind) 24%, var(--sl-color-bg));
+  }
+  .ana[data-hi="tags"] .tok.t-tags {
+    background: color-mix(in oklab, var(--c-tags) 24%, var(--sl-color-bg));
+  }
+  .ana[data-hi="folder"] .tok.t-folder {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 36%, var(--sl-color-bg));
+  }
+
+  /* ---- scroll reveal ---- */
+  @media (prefers-reduced-motion: no-preference) {
+    .ana.js .note,
+    .ana.js .legend li {
+      opacity: 0;
+      transform: translateY(8px);
+      transition:
+        opacity 0.45s ease,
+        transform 0.45s ease;
+      transition-delay: calc(var(--i, 0) * 80ms);
+    }
+    .ana.js.in .note,
+    .ana.js.in .legend li {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .ana {
+      grid-template-columns: 1fr;
+    }
+    .ann {
+      margin-left: 0;
+      flex-basis: 100%;
+      text-align: left;
+      padding-left: 0.9rem;
+    }
+  }
+</style>
+
+<script>
+  const anaHover = window.matchMedia("(hover: hover)").matches;
+  const anaMotionOk = window.matchMedia("(prefers-reduced-motion: no-preference)").matches;
+
+  for (const w of document.querySelectorAll<HTMLElement>("[data-ana]")) {
+    const set = (axis: string) => {
+      if (axis) w.dataset.hi = axis;
+      else delete w.dataset.hi;
+    };
+
+    for (const b of w.querySelectorAll<HTMLButtonElement>("[data-axis]")) {
+      const axis = b.dataset.axis ?? "";
+      if (anaHover) {
+        b.addEventListener("mouseenter", () => set(axis));
+      } else {
+        b.addEventListener("click", () => set(w.dataset.hi === axis ? "" : axis));
+      }
+      b.addEventListener("focus", () => set(axis));
+    }
+    if (anaHover) w.addEventListener("mouseleave", () => set(""));
+    w.addEventListener("focusout", () => {
+      requestAnimationFrame(() => {
+        if (!w.contains(document.activeElement)) set("");
+      });
+    });
+
+    if (anaMotionOk && "IntersectionObserver" in window) {
+      w.classList.add("js");
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              w.classList.add("in");
+              io.disconnect();
+            }
+          }
+        },
+        { threshold: 0.15 },
+      );
+      io.observe(w);
+    }
+  }
+</script>

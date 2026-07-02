@@ -31,11 +31,11 @@ const STEPS = [
 ];
 ---
 
-<div class="tags">
+<div class="tags" data-tagsflow>
   <ol class="steps">
     {
-      STEPS.map((s) => (
-        <li class={`step ${s.manual ? "manual" : ""}`}>
+      STEPS.map((s, i) => (
+        <li class={`step ${s.manual ? "manual" : ""}`} style={`--i:${i}`}>
           <span class="num">{s.n}</span>
           <div class="text">
             <span class="head">
@@ -188,4 +188,41 @@ const STEPS = [
       min-height: 0;
     }
   }
+
+  /* scroll reveal: the three beats land left to right, gated behind
+     prefers-reduced-motion and armed only once JS is running */
+  @media (prefers-reduced-motion: no-preference) {
+    .tags.js .step {
+      opacity: 0;
+      transform: translateY(8px);
+      transition:
+        opacity 0.45s ease,
+        transform 0.45s ease;
+      transition-delay: calc(var(--i, 0) * 110ms);
+    }
+    .tags.js.in .step {
+      opacity: 1;
+      transform: none;
+    }
+  }
 </style>
+
+<script>
+  const tagsMotionOk = window.matchMedia("(prefers-reduced-motion: no-preference)").matches;
+  for (const el of document.querySelectorAll<HTMLElement>("[data-tagsflow]")) {
+    if (!tagsMotionOk || !("IntersectionObserver" in window)) continue;
+    el.classList.add("js");
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            el.classList.add("in");
+            io.disconnect();
+          }
+        }
+      },
+      { threshold: 0.15 },
+    );
+    io.observe(el);
+  }
+</script>

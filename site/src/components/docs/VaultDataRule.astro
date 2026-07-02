@@ -1,23 +1,54 @@
 ---
 /**
- * Page-specific callout for docs/vault-layout.md: the one rule of filing, lifted
- * out of thin trailing prose into a single highlighted surface so the eye lands
- * on it. Borderless filled accent surface (no border, no left bar). Scoped CSS,
- * theme-aware via Starlight --sl tokens, no Tailwind on docs pages.
+ * Page-specific callout for docs/vault-layout.mdx: the one rule of filing,
+ * lifted out of thin trailing prose into a single highlighted surface, plus a
+ * two-pane demo that shows the failure and the fix side by side: the note
+ * that waves at the source file versus the note that carries the rows. The
+ * mock prices are schematic scaffolding, not product facts. Borderless filled
+ * surfaces throughout (no border, no left bar). Scoped CSS, theme-aware via
+ * Starlight --sl tokens with a light-theme override for the failure hue, root
+ * carries `not-content` to keep Starlight's markdown margins out.
  */
 ---
 
-<div class="rule">
+<div class="rule not-content">
   <span class="label">the one rule of filing</span>
   <p class="line">
     Filing <strong>adds</strong>, it never removes.
   </p>
   <p class="sub">
     <code>recall</code> searches <code>vault/</code> only, so anything left behind in
-    <code>raw/</code> is invisible to it. The note has to carry the source's real
-    <strong>payload</strong> in full: tables, lists, IDs, numbers, dates, prices, doses,
-    exact wording. The summary goes on top of that, never in place of it.
+    <code>raw/</code> (the folder of untouched originals) is invisible to it. The note has to
+    carry the source's real <strong>payload</strong> in full: tables, lists, IDs, numbers,
+    dates, prices, doses, exact wording. The summary goes on top of that, never in place of it.
   </p>
+
+  <div class="demo">
+    <section class="pane bad">
+      <span class="ptag">the note that loses it</span>
+      <div class="mock">
+        <span class="mtitle"># health insurance</span>
+        <p class="mline">Premiums went up this year.</p>
+        <p class="mline gone">full table: see the source file</p>
+      </div>
+      <p class="verdict">The numbers stayed behind in <code>raw/</code>, where search never looks.</p>
+    </section>
+    <section class="pane good">
+      <span class="ptag">the note that keeps it</span>
+      <div class="mock">
+        <span class="mtitle"># health insurance</span>
+        <p class="mline">Premiums went up this year.</p>
+        <table class="mtable">
+          <tbody>
+            <tr><td>basic</td><td>89 &rarr; 104 /mo</td></tr>
+            <tr><td>plus</td><td>129 &rarr; 151 /mo</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="verdict">The rows ride in the note, so any question about them has an answer.</p>
+    </section>
+  </div>
+
   <p class="test">
     The test before a note is done: could you answer a specific question from the vault
     note alone, without opening the original? If the answer is only in <code>raw/</code>,
@@ -27,10 +58,14 @@
 
 <style>
   .rule {
+    --bad: #e09a86;
     margin: 1.6rem 0 1rem;
-    padding: 1.3rem 1.5rem;
+    padding: 1.3rem 1.5rem 1.4rem;
     border-radius: 16px;
     background: color-mix(in oklab, var(--sl-color-text-accent) 13%, var(--sl-color-bg));
+  }
+  :global([data-theme="light"]) .rule {
+    --bad: #a84a2e;
   }
   .label {
     display: inline-block;
@@ -60,19 +95,19 @@
     color: var(--sl-color-gray-2);
   }
   .test {
-    margin: 0.7rem 0 0;
+    margin: 1rem 0 0;
     font-size: 0.9rem;
     line-height: 1.55;
     color: var(--sl-color-gray-1);
   }
-  /* match the headline's accent emphasis so the callout reads one bold rank,
-     not two different bold colors */
+  /* match the headline's accent emphasis so the callout reads one bold rank */
   .sub strong {
     color: var(--sl-color-text-accent);
     font-weight: 600;
   }
   .sub code,
-  .test code {
+  .test code,
+  .verdict code {
     font-family: var(--sl-font-mono);
     font-size: 0.85em;
     color: var(--sl-color-white);
@@ -81,9 +116,99 @@
     background: color-mix(in oklab, var(--sl-color-bg) 78%, var(--sl-color-text-accent));
     border: 1px solid color-mix(in oklab, var(--sl-color-text-accent) 22%, transparent);
   }
+
+  /* ---- the two-pane demo ---- */
+  .demo {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.8rem;
+    margin: 1rem 0 0;
+    align-items: stretch;
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0.9rem 1rem 1rem;
+    border-radius: 12px;
+  }
+  .pane.bad {
+    background: color-mix(in oklab, var(--bad) 11%, var(--sl-color-bg));
+  }
+  .pane.good {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 15%, var(--sl-color-bg));
+  }
+  .ptag {
+    display: block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.6rem;
+  }
+  .pane.bad .ptag {
+    color: var(--bad);
+  }
+  .pane.good .ptag {
+    color: var(--sl-color-text-accent);
+  }
+  .mock {
+    padding: 0.7rem 0.8rem 0.8rem;
+    border-radius: 8px;
+    background: color-mix(in oklab, var(--sl-color-bg) 62%, transparent);
+    font-family: var(--sl-font-mono);
+    font-size: 0.76rem;
+    line-height: 1.5;
+  }
+  .mtitle {
+    display: block;
+    font-weight: 700;
+    color: var(--sl-color-white);
+    margin-bottom: 0.3rem;
+  }
+  .mline {
+    margin: 0;
+    color: var(--sl-color-gray-1);
+  }
+  .mline.gone {
+    margin-top: 0.3rem;
+    color: var(--bad);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+    opacity: 0.85;
+  }
+  .mtable {
+    width: auto;
+    margin: 0.45rem 0 0;
+    border-collapse: collapse;
+    font-size: 0.74rem;
+  }
+  .mtable td {
+    padding: 0.14rem 1.1rem 0.14rem 0;
+    color: var(--sl-color-gray-1);
+    border-top: 1px solid color-mix(in oklab, var(--sl-color-gray-3) 40%, transparent);
+  }
+  .mtable tr:first-child td {
+    border-top: 0;
+  }
+  .mtable td:last-child {
+    color: var(--sl-color-white);
+    padding-right: 0;
+  }
+  .verdict {
+    margin: 0.65rem 0 0;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+  }
+
   @media (max-width: 640px) {
     .line {
       font-size: 1.1rem;
+    }
+    .demo {
+      grid-template-columns: 1fr;
     }
   }
 </style>

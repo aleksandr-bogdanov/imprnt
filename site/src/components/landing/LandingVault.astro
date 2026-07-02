@@ -1,0 +1,76 @@
+---
+/**
+ * Landing (index.astro only): the no-lock-in story as one picture. Three
+ * readers on top, dashed because each one is replaceable, all pointing at the
+ * single folder that stays. Tree entries mirror the real example vault
+ * (examples/organization). Static markup, no island.
+ */
+const readers = [
+  { label: "This year's assistant", sub: "reads and writes it" },
+  { label: "Next year's assistant", sub: "picks up the same files" },
+  { label: "Any text editor", sub: "it is just text" },
+];
+
+const tree = [
+  { name: "people/", note: "everyone you mention", file: false },
+  { name: "orgs/", note: "companies and institutions", file: false },
+  { name: "projects/", note: "work in flight, with a status", file: false },
+  { name: "events/", note: "dated meetings and moments", file: false },
+  { name: "mistakes/", note: "lessons learned", file: false },
+  { name: "holdings/", note: "things you own and track", file: false },
+  { name: "index.md", note: "the auto-built map", file: true },
+  { name: "log.md", note: "the running timeline", file: true },
+];
+---
+
+<div class="mx-auto max-w-3xl">
+  {/* the replaceable readers */}
+  <div class="grid grid-cols-3 gap-2.5 sm:gap-4" role="list">
+    {
+      readers.map((r) => (
+        <div role="listitem" class="rounded-xl border border-dashed border-line bg-surface/40 px-2.5 py-3 text-center sm:px-4">
+          <p class="text-[12.5px] font-semibold leading-snug text-ink sm:text-sm">{r.label}</p>
+          <p class="mt-1 font-mono text-[9.5px] leading-snug text-ink-faint sm:text-[11px]">{r.sub}</p>
+        </div>
+      ))
+    }
+  </div>
+
+  {/* three lines converging on the folder */}
+  <svg class="mx-auto block h-12 w-full text-ink-faint/60" viewBox="0 0 600 48" fill="none" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M100 6 C 100 34, 292 18, 297 40" stroke="currentColor" stroke-width="1.3" stroke-dasharray="4 4"></path>
+    <path d="M300 6 L 300 40" stroke="currentColor" stroke-width="1.3" stroke-dasharray="4 4"></path>
+    <path d="M500 6 C 500 34, 308 18, 303 40" stroke="currentColor" stroke-width="1.3" stroke-dasharray="4 4"></path>
+    <path d="M294 38 L 300 46 L 306 38" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
+  </svg>
+
+  {/* the folder that stays */}
+  <div class="overflow-hidden rounded-2xl border border-line bg-surface/60">
+    <div class="flex flex-wrap items-center gap-2 border-b border-line/70 px-5 py-3">
+      <svg class="h-4 w-4 text-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+      </svg>
+      <span class="font-mono text-sm text-ink">vault/</span>
+      <span class="ml-auto font-mono text-[10px] uppercase tracking-wider text-green">plain markdown · yours</span>
+    </div>
+
+    <ul class="grid gap-x-8 gap-y-2 px-5 py-4 sm:grid-cols-2">
+      {
+        tree.map((t) => (
+          <li class="flex flex-wrap items-baseline gap-x-2.5 font-mono text-[12.5px]">
+            <span class={t.file ? "text-ink-soft" : "text-green"}>{t.name}</span>
+            <span class="text-[11px] text-ink-faint">{t.note}</span>
+          </li>
+        ))
+      }
+    </ul>
+
+    {/* it greps like any folder, because it is one */}
+    <div class="space-y-1 border-t border-line/70 px-5 py-3.5 font-mono text-[11.5px] leading-relaxed">
+      <p><span class="select-none text-green">$</span> <span class="text-ink">grep -r "cutover" vault/</span></p>
+      <p class="text-ink-soft"><span class="text-green/80">projects/access-platform.md:</span>Cutover is July 15, gated on the two-week parallel-run numbers.</p>
+    </div>
+  </div>
+
+  <p class="mt-4 text-center font-mono text-xs text-ink-faint">the readers swap, the folder stays</p>
+</div>

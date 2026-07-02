@@ -5,31 +5,31 @@ description: Folders you browse by hand, and note headers that carry the meaning
 
 import VaultLayoutMap from "../src/components/docs/VaultLayoutMap.astro";
 import FilingDecision from "../src/components/docs/FilingDecision.astro";
-import MeaningTable from "../src/components/docs/MeaningTable.astro";
+import VaultLayoutAnatomy from "../src/components/docs/VaultLayoutAnatomy.astro";
 import TagsFlow from "../src/components/docs/TagsFlow.astro";
 import VaultDataRule from "../src/components/docs/VaultDataRule.astro";
 
-**Folders** are for you to browse, never for search to use. `recall` ignores them, so where you put a note never affects whether you find it. The one carve-out: folder names starting with `_` or `.` are reserved for control files, and both search and `check` skip them entirely, so don't file notes there. That frees the folders to be an honest map of your life instead of a filing system you fight.
+**Folders** are for you to browse, never for search to use. `recall`, the search command, ignores them entirely, so where a note sits never affects whether you find it. The one carve-out: folder names starting with `_` or `.` are reserved for control files, and both search and `check` (the command that audits and tidies the vault) skip them, so don't file notes there. That frees the folders to be an honest map of your life instead of a filing system you fight.
 
 ## The layout
 
-Three kinds of folder, each with a real reason to exist. Entities get one home and everything links to them, domains hold most of your content and you pick which ones, forms are split out by how you use them.
+Three kinds of folder, each with a real reason to exist. Entities get one home each and everything links to them. Life-areas hold most of your content, and you pick the set. Forms are split out by how you use them. Point at any row below and it explains itself.
 
 <VaultLayoutMap />
 
-## How the model decides where a note goes
+## How the model files a note
 
-One call, checked top to bottom. The first match wins.
+The model makes the call itself, checked top to bottom, and the first match wins.
 
 <FilingDecision />
 
 ## What carries the meaning
 
-Three labels do the real work, and keeping them separate is what stops the folders from sprawling.
+The folders are just drawers. The meaning rides in a few short labels at the top of every note, so a note keeps what it means even when it moves. Touch any label below to see what it marks.
 
-<MeaningTable />
+<VaultLayoutAnatomy />
 
-The meaning rides in the header, not the path. A note in a life-area folder also says `domain:` in that header, and for the shipped life-areas (identity, health, finances, work, life) `check` complains if the folder and the field disagree. A life-area folder you add yourself browses and searches like any other, but the domain-match check does not cover it yet. Move the note or export it, and its **meaning** comes along.
+A note in a life-area folder also names its life-area in the header (`domain:`), and for the shipped set (identity, health, finances, work, life) `check` complains when the folder and the field disagree. A life-area you add yourself browses and searches like any other. The folder-versus-field check just does not cover it yet.
 
 ## Tags grow on their own
 

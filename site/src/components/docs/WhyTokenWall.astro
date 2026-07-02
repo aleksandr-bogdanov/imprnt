@@ -1,8 +1,11 @@
 ---
 /**
  * Page-specific (why-imprnt): the two numbers that turned a context problem into
- * a cost problem. Big figure in accent, small caption under. Filled surfaces, no
- * border boxes. Scoped CSS, theme-aware via Starlight tokens, no Tailwind.
+ * a cost problem, plus a window bar that shows what they mean together: 30k of
+ * the 250k context window (12%) already spent by machinery before the first
+ * prompt. Big figures in accent, the bar fill animates in on reveal. Filled
+ * surfaces, no border boxes. Scoped CSS, theme-aware via Starlight tokens, no
+ * Tailwind. No JS or reduced motion renders the bar static and full.
  */
 const STATS = [
   { figure: "30k", unit: "tokens", caption: "gone on the first load, before any real work" },
@@ -10,23 +13,34 @@ const STATS = [
 ];
 ---
 
-<div class="wall">
-  {
-    STATS.map((s) => (
-      <div class="stat">
-        <span class="figure">{s.figure}<span class="unit">{s.unit}</span></span>
-        <span class="caption">{s.caption}</span>
-      </div>
-    ))
-  }
+<div class="tw" data-tw>
+  <div class="wall">
+    {
+      STATS.map((s) => (
+        <div class="stat">
+          <span class="figure">{s.figure}<span class="unit">{s.unit}</span></span>
+          <span class="caption">{s.caption}</span>
+        </div>
+      ))
+    }
+  </div>
+  <div class="bar" role="img" aria-label="A 250k token window with 30k already spent by machinery before the first prompt.">
+    <div class="track"><span class="fill"></span></div>
+    <div class="legend">
+      <span class="lg"><i class="sw accent" aria-hidden="true"></i>machinery, before your first word</span>
+      <span class="lg"><i class="sw" aria-hidden="true"></i>what was left for the actual work</span>
+    </div>
+  </div>
 </div>
 
 <style>
+  .tw {
+    margin: 1.4rem 0;
+  }
   .wall {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.7rem;
-    margin: 1.4rem 0;
   }
   .stat {
     border-radius: 13px;
@@ -58,6 +72,57 @@ const STATS = [
     line-height: 1.4;
     color: var(--sl-color-gray-1);
   }
+
+  .bar {
+    margin-top: 0.7rem;
+  }
+  .track {
+    height: 0.85rem;
+    border-radius: 999px;
+    overflow: hidden;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 55%, var(--sl-color-bg));
+  }
+  .fill {
+    display: block;
+    height: 100%;
+    width: 12%;
+    border-radius: 999px;
+    background: var(--sl-color-text-accent);
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.1rem;
+    margin-top: 0.5rem;
+  }
+  .lg {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    line-height: 1.35;
+    color: var(--sl-color-gray-2);
+  }
+  .sw {
+    width: 0.62rem;
+    height: 0.62rem;
+    border-radius: 3px;
+    flex: none;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 55%, var(--sl-color-bg));
+  }
+  .sw.accent {
+    background: var(--sl-color-text-accent);
+  }
+
+  /* reveal: armed only by JS, so no-JS and reduced-motion render static */
+  .tw.armed .fill {
+    width: 0;
+    transition: width 1.1s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s;
+  }
+  .tw.armed.in .fill {
+    width: 12%;
+  }
+
   @media (max-width: 640px) {
     .wall {
       grid-template-columns: 1fr;
@@ -67,3 +132,23 @@ const STATS = [
     }
   }
 </style>
+
+<script>
+  const reducedTw = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("[data-tw]").forEach((el) => {
+    if (reducedTw || !("IntersectionObserver" in window)) return;
+    el.classList.add("armed");
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            el.classList.add("in");
+            io.disconnect();
+          }
+        }
+      },
+      { threshold: 0.4 },
+    );
+    io.observe(el);
+  });
+</script>

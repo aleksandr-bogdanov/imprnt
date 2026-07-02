@@ -1,0 +1,127 @@
+---
+/**
+ * Page-specific (why-imprnt): the no-memory problem made visible. Three chat
+ * cards carry the exact same briefing, each one ending in a memory wipe, so the
+ * repetition lands before the prose explains it. The third card is "chat 47" to
+ * say this loop never ends. Filled surfaces, no border boxes. Scoped CSS,
+ * theme-aware via Starlight tokens, no Tailwind. Reveal animation is additive:
+ * without JS or with reduced motion the strip renders fully visible.
+ */
+const LINES = ["here is my setup", "these are my constraints", "this is what we decided last week"];
+const CHATS = ["chat 1", "chat 2", "chat 47"];
+---
+
+<div class="am" data-am>
+  <div class="cards">
+    {
+      CHATS.map((c, ci) => (
+        <div class="chat" style={`--d:${ci * 160}ms`}>
+          <span class="ctag">{c}</span>
+          <div class="msgs">
+            {LINES.map((l) => <span class="msg">{l}</span>)}
+          </div>
+          <span class="wipe"><b aria-hidden="true">&#10005;</b> chat ends, memory wiped</span>
+        </div>
+      ))
+    }
+  </div>
+  <p class="cap">The same briefing, typed again at the start of every chat.</p>
+</div>
+
+<style>
+  .am {
+    margin: 1.6rem 0;
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.7rem;
+  }
+  .chat {
+    display: flex;
+    flex-direction: column;
+    border-radius: 13px;
+    padding: 0.85rem 0.95rem 0.8rem;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+  }
+  .ctag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .msgs {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+    margin: 0.6rem 0 0.75rem;
+  }
+  .msg {
+    font-size: 0.78rem;
+    line-height: 1.35;
+    color: var(--sl-color-white);
+    padding: 0.28rem 0.6rem;
+    border-radius: 10px 10px 10px 4px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .wipe {
+    margin-top: auto;
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.05em;
+    color: var(--sl-color-gray-3);
+  }
+  .wipe b {
+    font-weight: 700;
+    color: color-mix(in oklab, var(--sl-color-red, #e5484d) 75%, var(--sl-color-gray-3));
+    margin-right: 0.25rem;
+  }
+  .cap {
+    margin: 0.8rem 0 0;
+    text-align: center;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+
+  /* reveal: armed only by JS, so no-JS and reduced-motion render static */
+  .am.armed .chat {
+    opacity: 0;
+    transform: translateY(12px);
+    transition:
+      opacity 0.55s ease var(--d),
+      transform 0.55s ease var(--d);
+  }
+  .am.armed.in .chat {
+    opacity: 1;
+    transform: none;
+  }
+
+  @media (max-width: 640px) {
+    .cards {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("[data-am]").forEach((el) => {
+    if (reduced || !("IntersectionObserver" in window)) return;
+    el.classList.add("armed");
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            el.classList.add("in");
+            io.disconnect();
+          }
+        }
+      },
+      { threshold: 0.2 },
+    );
+    io.observe(el);
+  });
+</script>

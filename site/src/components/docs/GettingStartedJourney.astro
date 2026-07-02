@@ -1,0 +1,232 @@
+---
+/**
+ * Page-specific (getting-started) visual: the whole path from an empty machine to
+ * a first answer, as one five-stop journey strip. The stops are the fixed
+ * onboarding sequence (install, init, open, file, ask), never an instance list,
+ * so the strip cannot go stale. Grey chips are commands you type in a terminal,
+ * accent chips are things you say in chat. A rail connects the stops. With JS and
+ * motion allowed, the rail draws in and the stops fade up staggered
+ * (IntersectionObserver adds .anim then .on). With reduced motion or no JS the
+ * strip is simply fully visible. Filled chips, no border boxes. Scoped CSS,
+ * theme-aware via Starlight tokens.
+ */
+const STOPS = [
+  { tag: "you type", chip: "npm i -g imprnt", cap: "install the engine", say: false },
+  { tag: "you type", chip: "imprnt init", cap: "make your vault", say: false },
+  { tag: "you type", chip: "imp", cap: "open your assistant", say: false },
+  { tag: "you say", chip: '"save this transcript"', cap: "file your first notes", say: true },
+  { tag: "you say", chip: '"what did we decide?"', cap: "get your first answer", say: true },
+];
+---
+
+<ol
+  class="gsjourney"
+  aria-label="The whole path in five stops: install the engine, make your vault, open your assistant, file your first notes, get your first answer."
+>
+  {
+    STOPS.map((s, i) => (
+      <li class={`stop${s.say ? " say" : ""}`} style={`--i: ${i}`}>
+        <span class="dot" aria-hidden="true">
+          {i + 1}
+        </span>
+        <span class="body">
+          <span class="tag">{s.tag}</span>
+          <code class="chip">{s.chip}</code>
+          <span class="cap">{s.cap}</span>
+        </span>
+      </li>
+    ))
+  }
+</ol>
+
+<style>
+  .gsjourney {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0 0.5rem;
+    list-style: none;
+    margin: 1.6rem 0 1.9rem;
+    padding: 0;
+  }
+  /* The rail: a grey track plus an accent fill, drawn through the dot centers.
+     Absolutely positioned so the grid never has to know about it. */
+  .gsjourney::before,
+  .gsjourney::after {
+    content: "";
+    position: absolute;
+    top: calc(0.9rem - 1px);
+    left: 10%;
+    right: 10%;
+    height: 2px;
+    border-radius: 2px;
+  }
+  .gsjourney::before {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 30%, var(--sl-color-bg));
+  }
+  .gsjourney::after {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 45%, var(--sl-color-bg));
+    transform-origin: left center;
+  }
+  .stop {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    /* Starlight's prose rhythm adds a top margin to list-item siblings, which
+       would push stops 2..5 below the rail. The grid gap owns spacing. */
+    margin: 0;
+    padding: 0;
+  }
+  .dot {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.8rem;
+    height: 1.8rem;
+    border-radius: 999px;
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+    /* Opaque fill (both mix inputs are opaque) so the rail never shows through. */
+    background: color-mix(in oklab, var(--sl-color-gray-3) 26%, var(--sl-color-bg));
+  }
+  .stop.say .dot {
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 18%, var(--sl-color-bg));
+  }
+  .body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.32rem;
+    margin-top: 0.55rem;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .stop.say .tag {
+    color: var(--sl-color-text-accent);
+  }
+  /* Scope to .gsjourney so the chip beats Starlight's global :not(pre)>code
+     styling (the pale tint + faint border it leaks onto a bare <code>), the same
+     fix the sibling flow strip and plugin rows apply. */
+  .gsjourney .chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
+    border: none;
+    border-radius: 7px;
+    padding: 0.24rem 0.55rem;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .stop.say .chip {
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 14%, var(--sl-color-bg));
+    /* Speech may wrap, commands never do. */
+    white-space: normal;
+    line-height: 1.35;
+  }
+  .cap {
+    font-size: 0.8rem;
+    line-height: 1.35;
+    color: var(--sl-color-white);
+  }
+
+  /* Reveal states. The .anim class is only ever added by the script below, and
+     the script only runs when the visitor allows motion, so no-JS and
+     reduced-motion visitors get the fully visible static strip. */
+  .gsjourney.anim::after {
+    transform: scaleX(0);
+  }
+  .gsjourney.anim .stop {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  .gsjourney.anim.on::after {
+    transform: scaleX(1);
+    transition: transform 1s cubic-bezier(0.25, 1, 0.4, 1) 0.15s;
+  }
+  .gsjourney.anim.on .stop {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.55s ease,
+      transform 0.55s ease;
+    transition-delay: calc(var(--i) * 140ms + 80ms);
+  }
+
+  @media (max-width: 800px) {
+    .gsjourney {
+      grid-template-columns: 1fr;
+      gap: 1rem 0;
+    }
+    .gsjourney::before,
+    .gsjourney::after {
+      top: 0.9rem;
+      bottom: 0.9rem;
+      left: calc(0.9rem - 1px);
+      right: auto;
+      width: 2px;
+      height: auto;
+    }
+    .gsjourney::after {
+      transform-origin: center top;
+    }
+    .gsjourney.anim::after {
+      transform: scaleY(0);
+    }
+    .gsjourney.anim.on::after {
+      transform: scaleY(1);
+    }
+    .stop {
+      flex-direction: row;
+      align-items: flex-start;
+      text-align: left;
+      gap: 0.75rem;
+    }
+    .dot {
+      flex: 0 0 auto;
+    }
+    .body {
+      margin-top: 0;
+      align-items: flex-start;
+    }
+    .stop.say .chip {
+      white-space: nowrap;
+    }
+  }
+</style>
+
+<script>
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    for (const root of document.querySelectorAll(".gsjourney")) {
+      root.classList.add("anim");
+      const io = new IntersectionObserver(
+        (entries, obs) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              root.classList.add("on");
+              obs.disconnect();
+            }
+          }
+        },
+        { threshold: 0.2 },
+      );
+      io.observe(root);
+    }
+  }
+</script>

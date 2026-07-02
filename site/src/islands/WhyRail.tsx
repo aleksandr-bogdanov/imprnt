@@ -26,6 +26,8 @@ const BEATS: Beat[] = [
   { id: "beat-tokens", label: "The token bill", gist: "At work, metered, the bloat ate the budget I needed to work." },
   { id: "beat-rule", label: "A colleague's rule", gist: "The model is the peer. The software you write is the servant." },
   { id: "beat-imprnt", label: "imprnt", gist: "Spend the model once to build the tool. Run the tool for free." },
+  { id: "beat-keep", label: "What you keep", gist: "Plain files you can read, fix, and take anywhere." },
+  { id: "beat-promise", label: "The promise", gist: "Ships with almost nothing. Everything is opt-in and removable." },
 ];
 
 const PALETTE = {

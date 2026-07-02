@@ -1,0 +1,156 @@
+---
+/**
+ * Page-specific (getting-started) visual: what a tidy pass does, as three outcome
+ * cards plus the write-scope guarantee. The outcomes are check's three fixed
+ * jobs (rebuild the index, learn new tags, flag what needs a human), never an
+ * instance list. The guarantee strip carries the safety fact in full: it writes
+ * the control files it generates and never edits a note. Cards fade in staggered
+ * on scroll (script gated on motion, so no-JS and reduced-motion visitors get
+ * the static grid). Filled surfaces, no borders. Scoped CSS, theme-aware via
+ * Starlight tokens.
+ */
+const FIXES = [
+  { does: "rebuilds the index", sub: "the map of every note, regenerated fresh" },
+  { does: "learns any new tags", sub: "topics coined while filing join the vocabulary" },
+  { does: "flags what needs you", sub: "notes that link nothing, links that point nowhere" },
+];
+---
+
+<div
+  class="gscheck"
+  role="img"
+  aria-label="A tidy pass rebuilds the index, learns any new tags, and flags notes that link nothing or have a broken link. It may write the control files it generates. It never edits your notes."
+>
+  <div class="fixes">
+    {
+      FIXES.map((f, i) => (
+        <div class="fix" style={`--i: ${i}`}>
+          <span class="does">{f.does}</span>
+          <p class="sub">{f.sub}</p>
+        </div>
+      ))
+    }
+  </div>
+  <div class="scope" style="--i: 3">
+    <div class="cell">
+      <span class="k">may write</span>
+      <span class="v">the control files it generates</span>
+    </div>
+    <div class="cell keep">
+      <span class="k">never edits</span>
+      <span class="v">your notes</span>
+    </div>
+  </div>
+</div>
+
+<style>
+  .gscheck {
+    margin: 1.4rem 0 1.6rem;
+  }
+  .fixes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.7rem;
+  }
+  .fix {
+    border-radius: 13px;
+    padding: 0.9rem 1rem 0.85rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    /* Starlight's prose rhythm adds a top margin to siblings. The grid gap owns
+       spacing so the three cards top-align. */
+    margin-top: 0;
+  }
+  .does {
+    display: block;
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--sl-color-white);
+    margin-bottom: 0.35rem;
+  }
+  .sub {
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+    margin: 0;
+  }
+  .scope {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7rem;
+    margin-top: 0.7rem;
+  }
+  .cell {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.6rem;
+    border-radius: 13px;
+    padding: 0.7rem 1rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+    margin-top: 0;
+  }
+  .cell.keep {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .k {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .cell.keep .k {
+    color: var(--sl-color-text-accent);
+  }
+  .v {
+    font-size: 0.86rem;
+    line-height: 1.4;
+    color: var(--sl-color-white);
+  }
+
+  /* Reveal states, applied only when the script adds .anim (motion allowed). */
+  .gscheck.anim :is(.fix, .scope) {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  .gscheck.anim.on :is(.fix, .scope) {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.55s ease,
+      transform 0.55s ease;
+    transition-delay: calc(var(--i) * 120ms);
+  }
+
+  @media (max-width: 700px) {
+    .fixes {
+      grid-template-columns: 1fr;
+    }
+    .scope {
+      grid-template-columns: 1fr;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+  }
+</style>
+
+<script>
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    for (const root of document.querySelectorAll(".gscheck")) {
+      root.classList.add("anim");
+      const io = new IntersectionObserver(
+        (entries, obs) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              root.classList.add("on");
+              obs.disconnect();
+            }
+          }
+        },
+        { threshold: 0.2 },
+      );
+      io.observe(root);
+    }
+  }
+</script>

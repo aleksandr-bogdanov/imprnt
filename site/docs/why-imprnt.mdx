@@ -3,23 +3,24 @@ title: Why imprnt?
 description: I wanted an assistant that remembered me. Every tool I tried was built around someone else's problems. So I built one that imposes nothing.
 ---
 
+import WhyAmnesia from "../src/components/docs/WhyAmnesia.astro";
 import WhyArcMobile from "../src/components/docs/WhyArcMobile.astro";
 import WhyTokenWall from "../src/components/docs/WhyTokenWall.astro";
 import WhyPeerServant from "../src/components/docs/WhyPeerServant.astro";
 import WhyQuote from "../src/components/docs/WhyQuote.astro";
+import WhyKeepLose from "../src/components/docs/WhyKeepLose.astro";
 
 <span id="beat-bike" class="beat-anchor"></span>
 
-In 2026, I wanted to **buy a bike** to ride to work. A normal person would have walked into a local bike store, pointed at one, and took it home.
-Instead of that I started googling about bikes and ended up knowing about gears, suspension travel and racing bikes types more than anyone
-looking for a bike to commute will ever need. In the end I bought a bike but it took me two weeks of thorough investigation.
+In 2026, I wanted to **buy a bike** to ride to work. A normal person would have walked into the nearest shop, pointed at one, and taken it home. I started researching instead, and two weeks later I knew more about gears, suspension travel, and types of racing bikes than anyone shopping for a commuter will ever need. I did buy a bike in the end. It just took two weeks of homework to get there.
 
 <span id="beat-claude" class="beat-anchor"></span>
 
-If you see yourself in that pattern at least slightly - keep on reading because there's more.
-That's how I do everything. A hobby, a purchase, a decision - I have to understand it inside out before I act. At first it was Google, then it was Claude. And Claude felt like a friend who is very smart and knowledgeable about everything.
+If you recognize even a little of yourself in that story, keep reading. That is how I do everything. A hobby, a purchase, a decision - I have to understand a thing inside out before I act. The research used to run through Google. Then it moved to Claude, and Claude felt like a very smart friend who knows something about everything.
 
-But this friend had no memory. Every chat started from zero. I would re-explain my setup, my constraints, the thing I decided last week, and by the next session all of it was gone. Every time, I was briefing a brilliant stranger who happened to have read the entire internet. It was intelligent all right, it just had **no memory** that lasted past the end of the chat.
+But that friend had **no memory**. Every chat started from zero. I would type out my setup, my constraints, the decision we had made the week before, and by the next session all of it was gone. Every time, I was briefing a brilliant stranger who happened to have read the entire internet.
+
+<WhyAmnesia />
 
 <WhyArcMobile />
 
@@ -27,25 +28,25 @@ But this friend had no memory. Every chat started from zero. I would re-explain 
 
 ## PAI was perfect, for someone else
 
-Then I found PAI, I do not even remember where. It did the one thing I wanted most. It remembered. It carried context across sessions, gave me a structure for my goals and values it called TELOS, and had the depth I had been missing. For a while it was exactly right.
+Then I found PAI, I do not even remember where. It did the one thing I wanted most: it remembered. It carried context across sessions, it gave my goals and values a written structure it called TELOS, and it had the depth I had been missing. For a while it was exactly right.
 
 <span id="beat-v5" class="beat-anchor"></span>
 
-Version 5 is where we parted ways. It grew machinery I never asked for. A Pulse dashboard that ran on its own schedule. A telegram bot wired in permanently when I had no use for one. A whole framework for ideal goals and ideal criteria, a nice idea that was more machine than my life needed. None of it was wrong. It was **built around its author's work**, and he writes about AI for a living. A tool that helps him write all day is the right one for him to build. Mine is a different job.
+Version 5 is where we parted ways. It grew machinery I never asked for: a Pulse dashboard that ran on its own schedule, a Telegram bot wired in permanently when I had no use for one, a whole framework of ideal goals and ideal criteria that was more machine than my life needed. Every piece made sense for its author, who writes about AI for a living. A tool that helps him write all day is exactly the right tool for him to build. Mine is a different job.
 
 <span id="beat-tokens" class="beat-anchor"></span>
 
-Then I took it to work, where there is no flat subscription, only a metered token budget where every token is real money. On the first load, against an almost empty account, the machinery burned tokens before I had typed anything useful.
+Then I took it to work, where there is no flat subscription. Work runs on a metered budget, where every token is real money. On the first load, against an almost empty account, that machinery burned through tokens before I had typed anything useful.
 
 <WhyTokenWall />
 
-The problem had changed shape. The model used to forget too fast. Now the parts I never asked for were eating the budget I needed to work, and I could not pull them out.
+The problem had changed shape. The model used to forget too fast. Now the parts I never asked for were eating the budget I needed for the actual work, and I could not pull them out.
 
 <span id="beat-rule" class="beat-anchor"></span>
 
 ## The rule that fixed it
 
-Around then a colleague reframed it for me. He was ruthless about tokens, and his rule was simple. The model is a **peer** you bring in for judgment, and the software you write is the servant that does the work.
+Around that time a colleague reframed the whole thing for me. He was ruthless about tokens, and his rule was simple: the model is a **peer** you bring in for judgment, and the software you write is the servant that does the work.
 
 <WhyQuote>
 You would not pay a sharp colleague to re-read your whole inbox every morning to find the three emails that matter. You would have them write the filter once. After that the filter runs every morning, for free, **forever**.
@@ -55,7 +56,21 @@ You would not pay a sharp colleague to re-read your whole inbox every morning to
 
 <span id="beat-imprnt" class="beat-anchor"></span>
 
-That was my whole PAI problem in one line. I had been treating a brilliant peer like a servant, paying full price to redo the same mechanical work over and over, so it got slow and expensive. imprnt is that idea flipped around. The model reads a source and files a clean note **once**, with judgment. Plain local code does the searching and the checking a thousand times after, for nothing.
+That was my whole PAI problem in one line. I had been treating a brilliant peer like a servant, paying full price for the same mechanical work over and over, so everything got slow and expensive. imprnt flips that around. The model reads a source and files a clean note **once**, with judgment. Plain local code does the searching and the checking a thousand times after, for free.
+
+<span id="beat-keep" class="beat-anchor"></span>
+
+## What you keep
+
+The other half of the argument shows up the day you want to leave. Most AI memory tools keep what they learn about you in a store built for the machine: your words converted into long lists of numbers, so a model can match them by meaning. The technique works, and it comes with one hard limit. A person cannot read it. A wrong fact about you has no line you can find and fix, and when you move to another tool, those numbers stay behind.
+
+imprnt stores your memory as **plain text notes** in one folder on your computer. You can open any note and read it. A wrong fact is one line in one file, fixed in seconds. And the search is plain arithmetic that runs on your machine, so your memory never depends on someone else's server, and the day you switch assistants the folder comes along.
+
+<WhyKeepLose />
+
+If you want the field walked tool by tool, with credit where another tool fits better, the [comparison](/comparison/) does exactly that.
+
+<span id="beat-promise" class="beat-anchor"></span>
 
 ## What imprnt will never do
 

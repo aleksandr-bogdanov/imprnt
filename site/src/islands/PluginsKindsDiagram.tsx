@@ -10,16 +10,28 @@ import { useEffect, useState } from "react";
  * three kinds sit in a row beneath it, each a large readable card with a caption
  * always visible (no hover needed to read it). The connectors are thick and
  * tinted per kind. On mobile the row restacks vertically so every card stays full
- * size and legible. The band height is constrained so the diagram reads as the
- * hero, not lost whitespace.
+ * size and legible.
  *
- * Inline styles only: this renders inside Starlight docs, which do not load the
- * site's Tailwind. Colors come from Starlight's --sl-* tokens plus a theme-aware
- * palette read from the data-theme attribute.
+ * The interaction IS the lesson: each card carries a live switch. Flip a kind
+ * off and its connector goes dashed, its card dims, and the "edits to core: 0"
+ * counter on the hub gives a little bump without ever changing, because removing
+ * a plugin touches zero core code. Idle pulses travel UP each connector (the
+ * kinds depend on the core, never the reverse). Everything animated is gated
+ * behind prefers-reduced-motion: with it set, switches still flip every state,
+ * nothing moves on its own.
+ *
+ * Inline styles only (plus one scoped <style> block for keyframes): this renders
+ * inside Starlight docs, which do not load the site's Tailwind. Colors come from
+ * Starlight's --sl-* tokens plus a theme-aware palette read from the data-theme
+ * attribute.
  */
 
 const MONO = "var(--sl-font-mono, ui-monospace, monospace)";
 const SANS = "var(--sl-font, system-ui, sans-serif)";
+
+const REDUCED =
+  typeof window !== "undefined" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 type Kind = {
   id: string;
@@ -60,6 +72,16 @@ const KINDS: Kind[] = [
     ),
   },
 ];
+
+// the fan's three connector paths in the 1000x32 viewBox. The card grid is 3
+// equal columns inside max-width 44rem with a 1rem gap, so each card is 14rem
+// wide and its center sits at 7/44, 22/44, 37/44 of the band width = x159,
+// x500, x841. The outer two arcs are exact reflections about x500.
+const PATHS: Record<string, string> = {
+  data: "M500 0 C500 18, 159 14, 159 32",
+  behavior: "M500 0 L500 32",
+  harness: "M500 0 C500 18, 841 14, 841 32",
+};
 
 const PALETTE = {
   dark: {
@@ -144,9 +166,45 @@ function caption(text: string, em: string, color: string) {
 export default function PluginsKindsDiagram() {
   const C = usePalette();
   const narrow = useNarrow();
+  // which kinds the reader has switched off, the last flip (drives the moral
+  // caption), and a counter that re-triggers the hub chip's bump animation
+  const [off, setOff] = useState<Record<string, boolean>>({});
+  const [last, setLast] = useState<{ id: string; on: boolean } | null>(null);
+  const [bump, setBump] = useState(0);
+  const [hovered, setHovered] = useState<string | null>(null);
+
+  const toggle = (id: string) => {
+    const nowOff = !off[id];
+    setOff((o) => ({ ...o, [id]: nowOff }));
+    setLast({ id, on: !nowOff });
+    setBump((b) => b + 1);
+  };
+
+  const lastKind = last ? KINDS.find((k) => k.id === last.id) ?? null : null;
+  const lastColor = lastKind ? (C.kind as Record<string, string>)[lastKind.id] : C.core;
+
+  const moral: ReactNode = (() => {
+    if (!last || !lastKind) {
+      return <>Each kind leans on the core, and the core depends on none of them. Flip a switch to pull one out and watch the counter.</>;
+    }
+    if (!last.on) {
+      return (
+        <>
+          <strong style={{ color: lastColor, fontWeight: 700 }}>{lastKind.label}</strong> is out: its folder and its one wiring line are gone. The counter did not move.
+        </>
+      );
+    }
+    return (
+      <>
+        <strong style={{ color: lastColor, fontWeight: 700 }}>{lastKind.label}</strong> is back. Removing and re-adding it both left the core untouched.
+      </>
+    );
+  })();
 
   return (
     <div
+      role="group"
+      aria-label="The three plugin kinds and the core they depend on"
       style={{
         margin: "1.6rem 0",
         padding: narrow ? "1.4rem 1rem" : "1.7rem 1.5rem",
@@ -161,13 +219,15 @@ export default function PluginsKindsDiagram() {
         gap: narrow ? "1rem" : "0.9rem",
       }}
     >
-      {/* core hub */}
+      {/* core hub, with the live counter that the whole interaction exists to
+          keep at zero */}
       <div
+        className="pkd-rise"
         style={{
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: "0.18rem",
+          gap: "0.3rem",
           padding: narrow ? "0.85rem 1.2rem" : "0.95rem 1.7rem",
           borderRadius: 16,
           background: C.coreBg,
@@ -177,71 +237,89 @@ export default function PluginsKindsDiagram() {
           maxWidth: "30rem",
         }}
       >
-        <span style={{ fontFamily: MONO, fontSize: narrow ? 17 : 19, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+        <span style={{ fontFamily: MONO, fontSize: narrow ? 17 : 19, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", lineHeight: 1 }}>
           core
         </span>
         <span style={{ fontFamily: MONO, fontSize: narrow ? 11.5 : 12.5, fontWeight: 600, opacity: 0.82 }}>
           vault + ingest &middot; recall &middot; check
         </span>
+        <span
+          key={bump}
+          className={bump > 0 && !REDUCED ? "pkd-bump" : undefined}
+          style={{
+            fontFamily: MONO,
+            fontSize: narrow ? 10 : 10.5,
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            padding: "0.2rem 0.6rem",
+            borderRadius: 999,
+            background: "color-mix(in oklab, #000 18%, transparent)",
+            color: C.coreText,
+          }}
+        >
+          edits to core: 0
+        </span>
       </div>
 
-      {/* the caption sits right under the CORE box, so the fan that follows reads
-          as branching from the hub the sentence names into the three cards below. */}
-      <p
-        style={{
-          margin: 0,
-          fontFamily: SANS,
-          fontSize: narrow ? 12.5 : 13,
-          lineHeight: 1.4,
-          color: C.subText,
-          textAlign: "center",
-          maxWidth: "32rem",
-        }}
-      >
-        Each kind depends on the core, and the core depends on none of them.
-      </p>
-
-      {/* connector band: a fan of arrows from the core down into each kind. It sits
-          between the caption and the card row so the three lines land directly on
-          the card tops. All three branches start from the CORE's bottom-center
-          (apex x500 y0) and end at the horizontal center of the card beneath them.
-          The card grid is 3 equal columns inside max-width 44rem with a 1rem gap,
-          so each card is 14rem wide and its center sits at 7/44, 22/44, 37/44 of
-          the band width = x159, x500, x841 of the 1000-unit viewBox. The outer two
-          arcs are exact reflections about x500 (same control offsets, mirrored), so
-          the fan is symmetric; the center line gets a matching gentle S so its
-          apparent length equals the arcs instead of reading shorter as a straight
-          drop. preserveAspectRatio="none" stretches the viewBox to the live width
-          and non-scaling-stroke keeps every line a uniform 3px regardless. The
+      {/* connector band: a fan from the core down into each kind. All three
+          branches start from the CORE's bottom-center (apex x500 y0) and end at
+          the horizontal center of the card beneath them (geometry documented on
+          PATHS). preserveAspectRatio="none" stretches the viewBox to the live
+          width and non-scaling-stroke keeps every line a uniform stroke. The
           negative top/bottom margins pull the apex up to the CORE box and the
-          endpoints down onto the card tops so each line visibly feeds its card. On
-          narrow the cards stack in one column, so the fan is meaningless: drop it
-          and let the stacked order carry the relationship. */}
+          endpoints down onto the card tops. Pulses ride each installed kind's
+          path UPWARD (keyPoints 1 -> 0): the kind reaches into the core's notes,
+          never the reverse. A switched-off kind's line goes dashed and faint and
+          its pulse stops. On narrow the cards stack in one column, so the fan is
+          meaningless: drop it and let the stacked order carry the relationship. */}
       {!narrow && (
         <svg
+          className="pkd-rise"
           width="100%"
           height={32}
           viewBox="0 0 1000 32"
           preserveAspectRatio="none"
           aria-hidden="true"
-          style={{ maxWidth: "44rem", marginTop: "-0.3rem", marginBottom: "-0.85rem" }}
+          style={{ maxWidth: "44rem", marginTop: "-0.3rem", marginBottom: "-0.85rem", animationDelay: "0.1s" }}
         >
-          <path d="M500 0 C500 18, 159 14, 159 32" fill="none" stroke={C.kind.data} strokeWidth="2.4" opacity="0.7" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
-          {/* center BEHAVIOR drop: a clean straight vertical line in its green,
-              same stroke weight as the side arms, replacing the old S-curve that
-              read as a stray hook at the junction */}
-          <path d="M500 0 L500 32" fill="none" stroke={C.kind.behavior} strokeWidth="2.4" opacity="0.7" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
-          <path d="M500 0 C500 18, 841 14, 841 32" fill="none" stroke={C.kind.harness} strokeWidth="2.4" opacity="0.7" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
+          {KINDS.map((k, i) => {
+            const c = (C.kind as Record<string, string>)[k.id];
+            const isOff = !!off[k.id];
+            const isHot = hovered === k.id && !isOff;
+            return (
+              <g key={k.id}>
+                <path
+                  id={`pkdP-${k.id}`}
+                  d={PATHS[k.id]}
+                  fill="none"
+                  stroke={c}
+                  strokeWidth={isHot ? 3.4 : 2.4}
+                  opacity={isOff ? 0.28 : isHot ? 1 : 0.7}
+                  strokeDasharray={isOff ? "5 7" : undefined}
+                  vectorEffect="non-scaling-stroke"
+                  strokeLinecap="round"
+                  style={{ transition: "opacity 0.3s ease, stroke-width 0.2s ease" }}
+                />
+                {!REDUCED && !isOff && (
+                  <circle r="3.2" fill={c} opacity="0">
+                    <animateMotion dur="3s" begin={`${i * 0.9}s`} repeatCount="indefinite" calcMode="linear" keyPoints="1;0" keyTimes="0;1">
+                      <mpath href={`#pkdP-${k.id}`} />
+                    </animateMotion>
+                    <animate attributeName="opacity" values="0;0.9;0.9;0" keyTimes="0;0.18;0.8;1" dur="3s" begin={`${i * 0.9}s`} repeatCount="indefinite" />
+                  </circle>
+                )}
+              </g>
+            );
+          })}
         </svg>
       )}
 
       {/* the three kind cards. align-items:start lets each card be content-tall
           instead of stretching to the tallest sibling, so the bottom padding is
-          identical across the three even though the body text differs in length
-          (a stretched card left a larger empty band under the shorter blurb). The
-          label row and the tag share a fixed top block (the tag's minHeight keeps
-          the body's first line aligned across all three), so the tops still read as
-          one row while the bottom inset stays even. */}
+          identical across the three even though the body text differs in length.
+          The label row and the tag share a fixed top block (the tag's minHeight
+          keeps the body's first line aligned across all three), so the tops still
+          read as one row while the bottom inset stays even. */}
       <div
         style={{
           display: "grid",
@@ -252,8 +330,9 @@ export default function PluginsKindsDiagram() {
           maxWidth: "44rem",
         }}
       >
-        {KINDS.map((k) => {
+        {KINDS.map((k, i) => {
           const c = (C.kind as Record<string, string>)[k.id];
+          const isOff = !!off[k.id];
           // Even out the inset border weight across hues: teal reads heaviest at
           // the same mix, so give it a lower percentage and lift the green/orange
           // so the three strokes land at one visual weight.
@@ -261,6 +340,9 @@ export default function PluginsKindsDiagram() {
           return (
             <div
               key={k.id}
+              className="pkd-rise pkd-card"
+              onMouseEnter={() => setHovered(k.id)}
+              onMouseLeave={() => setHovered((h) => (h === k.id ? null : h))}
               style={{
                 display: "flex",
                 flexDirection: "column",
@@ -271,27 +353,122 @@ export default function PluginsKindsDiagram() {
                 padding: narrow ? "0.95rem 1.05rem" : "1.05rem 1.1rem",
                 borderRadius: 14,
                 background: C.cardBg,
-                boxShadow: `0 8px 26px -16px ${c}, inset 0 0 0 1.5px color-mix(in oklab, ${c} ${borderMix}%, transparent)`,
+                boxShadow: isOff
+                  ? `inset 0 0 0 1.5px color-mix(in oklab, ${c} 14%, transparent)`
+                  : `0 8px 26px -16px ${c}, inset 0 0 0 1.5px color-mix(in oklab, ${c} ${borderMix}%, transparent)`,
+                animationDelay: `${0.16 + i * 0.08}s`,
+                // transform is listed here too (inline style would otherwise
+                // clobber a class transition), the class supplies the hover lift
+                transition: "transform 0.16s ease, box-shadow 0.3s ease",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <span style={{ width: 11, height: 11, flexShrink: 0, borderRadius: 9999, background: c }} />
-                <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: C.onText }}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 11,
+                    height: 11,
+                    flexShrink: 0,
+                    borderRadius: 9999,
+                    background: isOff ? "transparent" : c,
+                    boxShadow: isOff ? `inset 0 0 0 1.5px color-mix(in oklab, ${c} 55%, transparent)` : "none",
+                    transition: "background 0.25s ease, box-shadow 0.25s ease",
+                  }}
+                />
+                <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: C.onText, opacity: isOff ? 0.6 : 1, transition: "opacity 0.25s ease" }}>
                   {k.label}
                 </span>
+                {/* the live switch: flipping it is "imprnt plugin rm" in
+                    miniature, and the hub counter above shrugs */}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={!isOff}
+                  aria-label={`${k.label} kind installed`}
+                  className="pkd-switch"
+                  onClick={() => toggle(k.id)}
+                  style={{
+                    marginLeft: "auto",
+                    position: "relative",
+                    width: 34,
+                    height: 19,
+                    flexShrink: 0,
+                    padding: 0,
+                    border: "none",
+                    borderRadius: 999,
+                    cursor: "pointer",
+                    background: isOff ? `color-mix(in oklab, ${C.subText} 34%, transparent)` : c,
+                    transition: "background 0.2s ease",
+                    color: c,
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      top: 2.5,
+                      left: isOff ? 2.5 : 17.5,
+                      width: 14,
+                      height: 14,
+                      borderRadius: 9999,
+                      background: C.cardBg,
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
+                      transition: "left 0.18s ease",
+                    }}
+                  />
+                </button>
               </div>
               {/* the tagline is a plain-English summary, so set it in the sans
                   body font in a muted body color. monospace + code color made
                   these phrases read as literal commands. the accent color stays
                   on the dot and title only */}
-              <span style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 500, lineHeight: 1.4, minHeight: narrow ? "auto" : "2.4em", display: "flex", alignItems: "flex-start", color: C.subText }}>{k.tag}</span>
-              <p style={{ margin: 0, fontFamily: SANS, fontSize: 13, lineHeight: 1.5, color: C.capText }}>
+              <span style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 500, lineHeight: 1.4, minHeight: narrow ? "auto" : "2.4em", display: "flex", alignItems: "flex-start", color: C.subText, opacity: isOff ? 0.5 : 1, transition: "opacity 0.25s ease" }}>{k.tag}</span>
+              <p style={{ margin: 0, fontFamily: SANS, fontSize: 13, lineHeight: 1.5, color: C.capText, opacity: isOff ? 0.5 : 1, transition: "opacity 0.25s ease" }}>
                 {k.renderCaption ? k.renderCaption(C) : caption(k.caption, k.em, C.onText)}
               </p>
             </div>
           );
         })}
       </div>
+
+      {/* the moral, live-updating as switches flip */}
+      <p
+        aria-live="polite"
+        className="pkd-rise"
+        style={{
+          margin: 0,
+          minHeight: "2.8em",
+          fontFamily: SANS,
+          fontSize: narrow ? 12.5 : 13,
+          lineHeight: 1.4,
+          color: C.subText,
+          textAlign: "center",
+          maxWidth: "32rem",
+          animationDelay: "0.4s",
+        }}
+      >
+        {moral}
+      </p>
+
+      <style>{`
+        @keyframes pkdRise {
+          from { opacity: 0; transform: translateY(14px); }
+          to { opacity: 1; transform: none; }
+        }
+        .pkd-rise { animation: pkdRise 0.6s cubic-bezier(0.22, 0.65, 0.3, 1) backwards; }
+        @keyframes pkdBump {
+          0% { transform: scale(1); }
+          35% { transform: scale(1.18); }
+          100% { transform: scale(1); }
+        }
+        .pkd-bump { animation: pkdBump 0.45s ease-out; }
+        .pkd-card:hover { transform: translateY(-2px); }
+        .pkd-switch:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+        @media (prefers-reduced-motion: reduce) {
+          .pkd-rise, .pkd-bump { animation: none; }
+          .pkd-card, .pkd-card:hover { transform: none; transition: none; }
+        }
+      `}</style>
     </div>
   );
 }
