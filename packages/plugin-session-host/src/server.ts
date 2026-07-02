@@ -9,7 +9,7 @@
 // PAI litmus (see Plans/06): you start it, you can kill it, it auto-injects nothing, every token
 // handout is logged. Localhost bind only — never exposed.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { Page } from "playwright-core";
@@ -29,12 +29,33 @@ function fingerprint(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 12);
 }
 
+// The profile (real session cookies) and audit.log must never reach a git remote — but npm strips
+// .gitignore from every tarball, so an installed copy of this module arrives without the guard the
+// repo's own copy has. Lay it down at runtime, before either file exists. An existing file (any
+// content) is the user's; leave it alone.
+export function ensureGitignore(dir: string) {
+  const path = join(dir, ".gitignore");
+  if (existsSync(path)) return;
+  try {
+    writeFileSync(path, "# Local, private, never committed: the dedicated browser profile (holds your real sessions) and the\n# action log. Written by session-host itself — npm strips .gitignore from tarballs.\nprofile/\naudit.log\n");
+  } catch { /* a read-only dir shouldn't stop the host from serving */ }
+}
+
+// DNS-rebinding fence: the 127.0.0.1 bind is TCP-level only. A hostile page in the user's everyday
+// browser whose DNS was rebound to 127.0.0.1 still reaches this port — but it arrives with its own
+// hostname in the Host header. Only requests addressed to loopback get answered.
+export function loopbackHost(hostHeader: string | undefined): boolean {
+  const host = (hostHeader ?? "").replace(/:\d+$/, "");
+  return host === "127.0.0.1" || host === "localhost";
+}
+
 export async function serve(here: string): Promise<void> {
   // Lazy import so non-browser commands (status) and the CLI itself load without playwright-core
   // present; only serve/login actually need it. Fail with a clear install hint, not a stack trace.
   let chromium;
   try { ({ chromium } = await import("playwright-core")); }
   catch { console.error("session-host: playwright-core is not installed here. Run `npm i playwright-core` in this module's folder (uses your system Chrome, no browser download)."); process.exit(1); }
+  ensureGitignore(here); // before the profile exists, so a later git-init of the vault can't stage it
   const profileDir = join(here, "profile");
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: true,
@@ -85,6 +106,7 @@ export async function serve(here: string): Promise<void> {
         res.writeHead(status, { "content-type": "application/json" });
         res.end(JSON.stringify(body));
       };
+      if (!loopbackHost(req.headers.host)) return send(403, { error: "forbidden host" }); // see loopbackHost
       try {
         if (url.pathname === "/health") return send(200, { ok: true, port: PORT });
         if (url.pathname === "/status") return send(200, { enrolled: await siteStatus() });

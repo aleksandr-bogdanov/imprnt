@@ -8,7 +8,7 @@
 // never types a password — `login` is the one human step.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { serve } from "./server.ts";
+import { ensureGitignore, serve } from "./server.ts";
 import { resolveSite } from "./sites.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -17,7 +17,11 @@ const PORT = Number(process.env.SESSION_HOST_PORT ?? 8787);
 async function cmdLogin(arg: string): Promise<number> {
   const cfg = resolveSite(arg);
   const loginUrl = cfg?.loginUrl ?? (arg.startsWith("http") ? arg : `https://${arg}`);
-  const { chromium } = await import("playwright-core");
+  // Same lazy-import guard as serve(): fail with the install hint, never a raw ERR_MODULE_NOT_FOUND stack.
+  let chromium;
+  try { ({ chromium } = await import("playwright-core")); }
+  catch { console.error("session-host: playwright-core is not installed here. Run `npm i playwright-core` in this module's folder (uses your system Chrome, no browser download)."); return 1; }
+  ensureGitignore(here); // before the profile exists, so a later git-init of the vault can't stage it
   const profileDir = join(here, "profile");
   console.log(`login: opening the dedicated browser at ${loginUrl}`);
   console.log("  (stop `serve` first if it's running — they share one profile)");
@@ -85,4 +89,6 @@ async function main(): Promise<number> {
   }
 }
 
-main().then((code) => { if (cmd !== "serve") process.exit(code); });
+main()
+  .then((code) => { if (cmd !== "serve") process.exit(code); })
+  .catch((e) => { console.error(`session-host: ${e instanceof Error ? e.message : e}`); process.exit(1); });
