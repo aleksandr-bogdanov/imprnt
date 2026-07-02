@@ -31,8 +31,8 @@ Hand over a transcript or a document, and imprnt runs one pass of four steps. On
 
 1. **Copy** (code): the source goes into `raw/` untouched, hashed, with the obvious structure pulled out. Free.
 2. **Understand** (the model, the only paid step): for each thing in the source, pick its type and [folder](/vault-layout/), write a one-line summary, pull the decisions and actions, and tag it with the words you will search for later, even if the source never used them. A dense source fans out into several small notes here.
-3. **File** (code): match names and aliases against the entity folders, merge instead of duplicating, write the note.
-4. **Tidy** (code): `check` rebuilds the index and flags any note that links nothing, matches no entity, or has no tags. It never blocks and never silently drops anything.
+3. **File** (code): look up people by name and alias, flag anything unresolved for review, and write the note without ever overwriting an existing one. Merging a renamed person into their existing note, old name kept as an alias, is the model's call back in the understand step.
+4. **Tidy** (code): `check` rebuilds the index and flags broken links, topic and event notes that link no entity, and any note with no tags. It never blocks and never silently drops anything.
 
 {'"Not sure where this goes? Hand it to the model"'} is fine here. The thing to avoid is throwing everything at the model on every **search** and hoping for magic.
 
@@ -44,7 +44,7 @@ Hand over a transcript or a document, and imprnt runs one pass of four steps. On
 
 A contradiction is the special case. If a new meeting says a date moved, filing updates the note and stamps the old line as **superseded**, so search can tell the live fact from the stale one. Old information is marked, never quietly overwritten.
 
-**Your raw sources are kept forever**, one folder per source under `raw/`. To change how notes are structured, re-run filing over the originals and get the new layout for free. You are never stuck in an old format, and any claim in a note traces back to its **snapshot**.
+**Your raw sources are kept forever**, one immutable snapshot per source under `raw/`. To change how notes are structured, re-run filing over the originals and get the new layout for free. You are never stuck in an old format, and any claim in a note traces back to its **snapshot**.
 
 ## When you read: plain code works
 
@@ -54,7 +54,7 @@ The model only turns your question into search words at the start and reads the 
 
 <HowItWorksEval />
 
-The harness lives in [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/main/eval).
+The harness lives in [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval).
 
 ## The whole thing on one line
 

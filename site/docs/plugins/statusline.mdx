@@ -1,6 +1,6 @@
 ---
 title: Statusline
-description: "A status panel at the bottom of every imp session: model, branch, context, cost, rate limits, clock."
+description: "A status panel at the bottom of every claude-backed imp session: model, branch, context, cost, rate limits, clock."
 ---
 
 import StatuslinePanel from "../../src/components/docs/StatuslinePanel.astro";
@@ -19,7 +19,7 @@ A harness plugin draws four aligned rows. Each row reads left to right as a labe
 
 <StatuslineRows />
 
-Color is a single alarm ramp. Every percentage and the gauge stay calm below 60, turn amber past 60, and go red past 85, so a quiet session is nearly monochrome and any color is news.
+Color is a single alarm ramp. Every percentage and the gauge show green below 60, turn amber past 60, and go red past 85, so a quiet session reads all green and amber is news.
 
 <StatuslineRamp />
 
@@ -31,5 +31,5 @@ On a narrow terminal each row drops segments in a fixed order rather than wrappi
 
 <StatuslineInstall />
 
-This copies the plugin into `plugins/statusline/` and wires it. `imp` forwards the `statusLine` setting to every session it launches, so nothing is written into your Claude settings and plain `claude` stays untouched.
+This copies the plugin into `plugins/statusline/` and wires it. `imp` forwards the `statusLine` setting to every claude session it launches (the gemini backend has no statusline host, so imp skips it there with a warning), so nothing is written into your Claude settings and plain `claude` stays untouched.
 

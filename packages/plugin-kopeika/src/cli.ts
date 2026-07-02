@@ -28,7 +28,7 @@ import { renderDashboard, type ProjectionView } from "./dashboard.ts";
 import { loadProfile, EMPTY_PROFILE, type Profile } from "./profile.ts";
 import { setIdentity } from "./identity.ts";
 import { getConnector, connectorNames } from "./connectors/index.ts";
-import { loadRates, rateToEur, toEur } from "./fx.ts";
+import { backfillEur, loadRates, rateToEur, toEur } from "./fx.ts";
 import {
   loadSavingsConfig,
   savingsConfigured,
@@ -239,9 +239,15 @@ async function cmdImport(args: Args): Promise<number> {
 
   const existing = loadLedger(LEDGER_PATH);
   const { appended, skippedDuplicate, merged } = appendDeduped(existing, candidates);
+  // Rows imported before their FX rate existed carry amount_eur=null; now that
+  // the rates table may have grown, resolve them (deterministic, never guessed).
+  const backfilled = backfillEur(merged, rates);
   writeLedger(LEDGER_PATH, merged);
 
   console.log(`imported ${appended} / skipped-dup ${skippedDuplicate} / skipped-non-completed ${skippedNonCompleted}`);
+  if (backfilled > 0) {
+    console.log(`backfilled amount_eur for ${backfilled} earlier row(s) from data/rates.csv`);
+  }
 
   if (missingRates.size > 0) {
     console.log("");
@@ -251,6 +257,7 @@ async function cmdImport(args: Args): Promise<number> {
     )) {
       console.log(`    ${month}  ${currency}   (add a row to data/rates.csv: ${month},${currency},<rate_to_eur>)`);
     }
+    console.log("    then re-run `kopeika report` — already-imported rows are backfilled once the rate exists.");
   }
 
   return 0;
@@ -555,6 +562,17 @@ async function cmdReport(args: Args): Promise<number> {
     return 0;
   }
 
+  // Rows imported before their FX rate existed carry amount_eur=null and are
+  // excluded from every total. Resolve them against the current rates table
+  // (deterministic; still-missing rates stay null) so adding a rate to
+  // data/rates.csv actually fixes the report without a re-import.
+  const backfilled = backfillEur(ledger, loadRates(RATES_PATH));
+  if (backfilled > 0) {
+    writeLedger(LEDGER_PATH, ledger);
+    console.log(`backfilled amount_eur for ${backfilled} row(s) from data/rates.csv`);
+    console.log("");
+  }
+
   const monthFlag = flagString(args, "month");
   const fromFlag = flagString(args, "from");
   const htmlPath = flagString(args, "html");
@@ -664,12 +682,14 @@ async function cmdReport(args: Args): Promise<number> {
     }
     const now = new Date();
     const nowMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-    // Spend dropdown: 2026 months only (2025 and earlier are not categorized), each
-    // with its grouped spend, plus a "whole year so far" aggregate.
-    const spendMonths = report.months.map((m) => m.month).filter((m) => m >= "2026-01");
+    // Spend dropdown: every report month (respecting --from/--month), each with
+    // its grouped spend, plus a "whole year so far" aggregate for the year of the
+    // latest report month — derived from the data, never a hardcoded year.
+    const spendMonths = report.months.map((m) => m.month);
     const months = spendMonths.map((m) => ({ month: m, groups: buildSpendGroups(ledger, m, tiers) }));
     if (spendMonths.length > 0) {
-      months.push({ month: "2026", groups: buildSpendGroups(ledger, "2026", tiers) });
+      const latestYear = spendMonths[spendMonths.length - 1]!.slice(0, 4);
+      months.push({ month: latestYear, groups: buildSpendGroups(ledger, latestYear, tiers) });
     }
     const selectedMonth = spendMonths.length > 0 ? spendMonths[spendMonths.length - 1]! : focus.month;
     const lang = flagString(args, "lang") === "ru" ? "ru" : "en";

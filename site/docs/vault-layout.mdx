@@ -9,7 +9,7 @@ import MeaningTable from "../src/components/docs/MeaningTable.astro";
 import TagsFlow from "../src/components/docs/TagsFlow.astro";
 import VaultDataRule from "../src/components/docs/VaultDataRule.astro";
 
-**Folders** are for you to browse, never for search to use. `recall` ignores them, so where you put a note never affects whether you find it. That frees the folders to be an honest map of your life instead of a filing system you fight.
+**Folders** are for you to browse, never for search to use. `recall` ignores them, so where you put a note never affects whether you find it. The one carve-out: folder names starting with `_` or `.` are reserved for control files, and both search and `check` skip them entirely, so don't file notes there. That frees the folders to be an honest map of your life instead of a filing system you fight.
 
 ## The layout
 
@@ -29,7 +29,7 @@ Three labels do the real work, and keeping them separate is what stops the folde
 
 <MeaningTable />
 
-The meaning rides in the header, not the path. A note in a life-area folder also says `domain:` in that header, and `check` complains if the folder and the field disagree. Move the note or export it, and its **meaning** comes along.
+The meaning rides in the header, not the path. A note in a life-area folder also says `domain:` in that header, and for the shipped life-areas (identity, health, finances, work, life) `check` complains if the folder and the field disagree. A life-area folder you add yourself browses and searches like any other, but the domain-match check does not cover it yet. Move the note or export it, and its **meaning** comes along.
 
 ## Tags grow on their own
 

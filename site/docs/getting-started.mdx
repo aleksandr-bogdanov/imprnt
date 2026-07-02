@@ -36,7 +36,7 @@ imprnt init
 
 <Steps>
 
-1. Makes the vault folder (`./vault` by default).
+1. Makes the vault folder. It asks where, and Enter takes the default (`~/imprnt`). `imprnt init <path>` skips the question.
 
 2. Writes a `CLAUDE.md` file that teaches your assistant how the vault works.
 
@@ -44,7 +44,7 @@ imprnt init
 
 </Steps>
 
-Want the vault elsewhere? Point one variable at it and everything follows.
+Already have a vault elsewhere (moved by hand, or made on another machine)? Point one variable at it and every command follows. `imprnt init` ignores this variable, so to create a new vault in a custom spot, pass the path to `init` instead.
 
 ```sh title="terminal"
 export IMPRNT_VAULT=~/notes/vault

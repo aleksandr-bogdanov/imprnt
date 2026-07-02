@@ -9,7 +9,7 @@ import RuleBanner from "../src/components/docs/RuleBanner.astro";
 import PluginsWiringTable from "../src/components/docs/PluginsWiringTable.astro";
 import PluginsInstall from "../src/components/docs/PluginsInstall.astro";
 
-The **core** is your notes plus three commands: ingest, recall, and check. Every other behavior is a **plugin** you add when you want it and remove with one line. The core never knows a plugin exists.
+The **core** is your notes plus three commands: ingest, recall, and check. Every other behavior is a **plugin** you add when you want it and remove with one line. The core discovers plugins by folder convention and never depends on one (the only plugin names it carries are a display hint for `imprnt plugin list`).
 
 <RuleBanner />
 

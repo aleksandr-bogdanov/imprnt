@@ -111,7 +111,8 @@ the assistant learns a plugin by being handed its fragment, and forgets it the m
 line.
 
 The same enable list travels: outside the project, the `imp` launcher reads `CLAUDE.local.md`, inlines
-the enabled fragments into the session it spawns (`--append-system-prompt`), and skips that inside the
+the enabled fragments into the session it spawns (`--append-system-prompt` on the claude backend, a
+generated `GEMINI.md` on gemini), and skips that inside the
 project where Claude Code loads them natively. One list, managed in one place, honored everywhere.
 
 ## The rules, in plain English
@@ -180,7 +181,7 @@ line), plus up to two extra files, both discovered by filename convention:
 - **`.claude-plugin/plugin.json`** makes the folder a **native Claude Code plugin**. Hooks
   (`hooks/hooks.json`), skills (`skills/`), and the other native components sit next to it, in
   Anthropic's documented format - imprnt defines no manifest of its own. `imp` passes the folder
-  to every session it launches via `--plugin-dir`, so the components load while the plugin is
+  to every claude session it launches via `--plugin-dir`, so the components load while the plugin is
   enabled and vanish when it isn't.
 - **`imp-settings.json`** carries the settings keys Claude only accepts via config (a `statusLine`
   command, `spinnerVerbs`). `imp` merges every enabled plugin's fragment (wire order, later wins
@@ -193,8 +194,9 @@ What this preserves, on purpose: **stock `claude` stays stock** - the flags exis
 you start by typing `imp`, nothing is ever written into your global Claude config or any
 settings.json - and **add/rm stays perfectly symmetrical** - the hook and the setting live inside
 the `rm`-able folder, so removal undoes everything with no settings entry to forget. Typing `imp`
-is the consent, every time. The honest cost: harness plugins exist only in imp-launched sessions.
-Plain `claude` stays plain even in the lair.
+is the consent, every time. The honest cost: harness plugins exist only in imp-launched claude
+sessions. Plain `claude` stays plain even in the lair, and gemini has no host for them - `imp
+--gemini` skips harness plugins with one warning line.
 
 Build only on the durable native surfaces - skills, hooks, the plugin manifest (the layout every
 major harness converged on). The experimental components (monitors, themes) change shape between
@@ -211,8 +213,8 @@ import is a breaking change and a magnet for "can it also do X?" creep. Copy is 
 can undo. The contract guarantees the **format**, so a shared `@imprnt/frontmatter` reader
 can always be added later as an optional extra without touching this contract.
 
-**Core ↔ plugin contact: exactly three convention-based aggregators.** The core touches plugins
-in only three places, and all are dumb, uniform, and carry zero per-plugin logic - they
+**Core ↔ plugin contact: exactly four convention-based contact points.** The core touches plugins
+in only four places, and all are dumb, uniform, and carry zero per-plugin logic - they
 discover plugins by **filename/dir convention**, never by importing a plugin and never by
 naming a specific one:
 
@@ -232,6 +234,11 @@ naming a specific one:
   carrying `.claude-plugin/plugin.json`, plus one `--settings` merged from every enabled
   `imp-settings.json` (see Harness plugins above). Read-only, convention-discovered, and it
   qualifies under the same fence: aggregation, never write or orchestration.
+- **The module-command dispatcher** - `imprnt <module> <command>` runs
+  `plugins/<module>/<module>.js` by the same filename convention (`imprnt session-host login`,
+  `imprnt kleinanzeigen sync`), stdio inherited, exit code passed through. Zero per-module
+  knowledge in core, and a built-in subcommand always wins. The core executes the plugin's own
+  command verbatim and never parses or interprets what it does.
 
 > **Not Kubernetes-style liveness/readiness.** Those exist to auto-restart live services and
 > route traffic — imprnt has no daemons and no orchestrator (rule 6), so "is it alive?" has
@@ -382,7 +389,9 @@ A watcher for the Kleinanzeigen message box, and the first instance of the **wat
 triage is next): code reads a hostile external inbox, the model only drafts the residue, the send
 button stays human. `sync` mirrors conversations (the one wire edge, offline against `fixtures/`),
 `rate` classifies each with pure regex + arithmetic — zero LLM — into scam / offer / faq / pickup /
-interest / odd, drafting FAQ replies from per-listing `listings/<id>.yaml` fact sheets (an empty field
+interest / odd on the sell side (a non-scam message in a thread where you are the buyer rates
+`reply`: surface it, a human answers), drafting FAQ replies from per-listing `listings/<id>.yaml`
+fact sheets (an empty field
 becomes a `needs_fact`, never a guess). `notify` ships a phone-sized digest via `$WATCHER_NOTIFY_CMD`
 (dumb plumbing, no channel coupling). `send` posts ONE reply per explicit approval and refuses a
 scam-rated conversation without `--force`. The scam blocklist names its tells (paypal, name-mismatch,

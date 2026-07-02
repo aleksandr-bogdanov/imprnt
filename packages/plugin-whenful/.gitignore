@@ -1,0 +1,7 @@
+# Local, private, never committed: real task mirrors, staged vault notes, and the join table
+# (its task↔note rows are your data — links.example.tsv is the committed template).
+mirror/*
+!mirror/.gitkeep
+proposed/*
+!proposed/.gitkeep
+links.tsv

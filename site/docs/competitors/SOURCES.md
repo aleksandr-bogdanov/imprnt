@@ -1,6 +1,6 @@
 # Master sources index
 
-Last refreshed: 2026-06-20.
+Last refreshed: 2026-06-20. ECC added and four dossiers (zep-graphiti, mempalace, iai, cognee) re-checked 2026-07-02.
 
 This is the link index behind every competitor dossier in this folder. The method is primary sources only: each tool's own repo (README, releases, last commit, GitHub API), official docs, pricing page, and official blog or changelog, with a handful of named secondary sources (TechCrunch, YC, arXiv, vendor-vs-vendor rebuttals) where a fact lives only there. Every material claim in a dossier carries a verbatim quote tied to one of these links. Benchmarks are vendor self-reported under each vendor's own harness and are recorded as "the project claims X", never as a settled leaderboard. Recency is treated as a fact: each dossier records the latest release, its date, and the last commit/push, so a stale or dormant project is visible at a glance. Every link below was accessed 2026-06-20.
 
@@ -260,3 +260,28 @@ Status: pivoting - the company announced a decisive shift away from server-side 
 - [How Letta builds production-ready AI agents with Amazon Aurora PostgreSQL (AWS)](https://aws.amazon.com/blogs/database/how-letta-builds-production-ready-ai-agents-with-amazon-aurora-postgresql/) - accessed 2026-06-20
 - [MemGPT: Towards LLMs as Operating Systems (arXiv:2310.08560)](https://arxiv.org/abs/2310.08560) - accessed 2026-06-20
 - [Berkeley AI spinout Letta raises $10M seed (PRNewswire)](https://www.prnewswire.com/news-releases/berkeley-ai-research-lab-spinout-letta-raises-10m-seed-financing-led-by-felicis-to-build-ai-with-memory-302257004.html) - accessed 2026-06-20
+
+---
+
+## ECC (everything-claude-code)
+
+Status: active - repo `affaan-m/ECC` pushed 2026-07-01, latest release v2.0.0 (2026-06-10), MIT, 225,052 stars, effectively one maintainer. A cross-harness config/prompt pack with a hook-based session-memory subsystem, in the research by request rather than as a memory tool. Renamed from the viral `everything-claude-code` (the old API URL 301-redirects to the same repository id).
+
+- [github.com/affaan-m/ECC (repo)](https://github.com/affaan-m/ECC) - accessed 2026-07-02
+- [GitHub API: repo metadata (stars, forks, watchers, issues, license, dates)](https://api.github.com/repos/affaan-m/ECC) - accessed 2026-07-02
+- [GitHub API: everything-claude-code 301 redirect (rename proof)](https://api.github.com/repos/affaan-m/everything-claude-code) - accessed 2026-07-02
+- [README.md (raw, main)](https://raw.githubusercontent.com/affaan-m/ECC/main/README.md) - accessed 2026-07-02
+- [GitHub API: full git tree (4,501 entries)](https://api.github.com/repos/affaan-m/ECC/git/trees/main?recursive=1) - accessed 2026-07-02
+- [hooks/memory-persistence/README.md + hooks.json (raw, main)](https://raw.githubusercontent.com/affaan-m/ECC/main/hooks/memory-persistence/README.md) - accessed 2026-07-02
+- [scripts/hooks/session-end.js (raw, main)](https://raw.githubusercontent.com/affaan-m/ECC/main/scripts/hooks/session-end.js) - accessed 2026-07-02
+- [scripts/hooks/session-start.js (raw, main)](https://raw.githubusercontent.com/affaan-m/ECC/main/scripts/hooks/session-start.js) - accessed 2026-07-02
+- [scripts/lib/llm-summary.js (raw, main)](https://raw.githubusercontent.com/affaan-m/ECC/main/scripts/lib/llm-summary.js) - accessed 2026-07-02
+- [scripts/lib/utils.js (raw, main - storage roots)](https://raw.githubusercontent.com/affaan-m/ECC/main/scripts/lib/utils.js) - accessed 2026-07-02
+- [skills/continuous-learning-v2/SKILL.md (raw, main)](https://raw.githubusercontent.com/affaan-m/ECC/main/skills/continuous-learning-v2/SKILL.md) - accessed 2026-07-02
+- [scripts/lib/state-store/schema.js (raw, main)](https://raw.githubusercontent.com/affaan-m/ECC/main/scripts/lib/state-store/schema.js) - accessed 2026-07-02
+- [package.json (raw, main - ecc-universal)](https://raw.githubusercontent.com/affaan-m/ECC/main/package.json) - accessed 2026-07-02
+- [GitHub API: releases (14, v1.0.0 through v2.0.0)](https://api.github.com/repos/affaan-m/ECC/releases) - accessed 2026-07-02
+- [GitHub API: last 100 commits](https://api.github.com/repos/affaan-m/ECC/commits?per_page=100) - accessed 2026-07-02
+- [ecc.tools (landing page, style note + ECC Pro pricing)](https://ecc.tools) - accessed 2026-07-02
+- [hn.algolia.com search: everything-claude-code / ECC (traction)](https://hn.algolia.com/?q=everything-claude-code) - accessed 2026-07-02
+- Secondary (origin, traction, security): medium.com/@tentenco and medium.com/@joe.njenga writeups, claudehub.fr, zenith.chat (hackathon-winner branding), affaanmustafa.com, DEV.to security audit of the repo and its malware clone - accessed 2026-07-02

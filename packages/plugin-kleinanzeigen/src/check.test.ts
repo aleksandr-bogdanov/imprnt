@@ -43,8 +43,8 @@ function run(pluginDir: string) {
 
 test("sound: fresh mirror, every listing has a fact sheet -> exit 0", () => {
   const { pluginDir } = makeRepo();
-  writeConv(pluginDir, "erik", "3432924231");
-  writeFactSheet(pluginDir, "3432924231");
+  writeConv(pluginDir, "erik", "9000000001");
+  writeFactSheet(pluginDir, "9000000001");
   stampSync(pluginDir, new Date().toISOString());
   const r = run(pluginDir);
   expect(r.exitCode).toBe(0);
@@ -53,8 +53,8 @@ test("sound: fresh mirror, every listing has a fact sheet -> exit 0", () => {
 
 test("flags missing endpoints.json as a NOTE, still exit 0 (offline is legit)", () => {
   const { pluginDir } = makeRepo();
-  writeConv(pluginDir, "erik", "3432924231");
-  writeFactSheet(pluginDir, "3432924231");
+  writeConv(pluginDir, "erik", "9000000001");
+  writeFactSheet(pluginDir, "9000000001");
   stampSync(pluginDir, new Date().toISOString());
   const r = run(pluginDir);
   expect(r.exitCode).toBe(0);
@@ -63,8 +63,8 @@ test("flags missing endpoints.json as a NOTE, still exit 0 (offline is legit)", 
 
 test("stale mirror (>2h) -> exit 1", () => {
   const { pluginDir } = makeRepo();
-  writeConv(pluginDir, "erik", "3432924231");
-  writeFactSheet(pluginDir, "3432924231");
+  writeConv(pluginDir, "erik", "9000000001");
+  writeFactSheet(pluginDir, "9000000001");
   stampSync(pluginDir, new Date(Date.now() - 3 * 3_600_000).toISOString());
   const r = run(pluginDir);
   expect(r.exitCode).not.toBe(0);
@@ -73,8 +73,8 @@ test("stale mirror (>2h) -> exit 1", () => {
 
 test("future .last-sync stamp -> corrupt, exit 1", () => {
   const { pluginDir } = makeRepo();
-  writeConv(pluginDir, "erik", "3432924231");
-  writeFactSheet(pluginDir, "3432924231");
+  writeConv(pluginDir, "erik", "9000000001");
+  writeFactSheet(pluginDir, "9000000001");
   stampSync(pluginDir, new Date(Date.now() + 3 * 3_600_000).toISOString());
   const r = run(pluginDir);
   expect(r.exitCode).not.toBe(0);

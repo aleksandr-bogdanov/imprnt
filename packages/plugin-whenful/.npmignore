@@ -1,0 +1,10 @@
+# Belt-and-suspenders for the publish: real user data must NEVER ship to npm.
+# (package.json `files` already ships only <dir>/.gitkeep for the data dirs; this guards
+#  against that list ever being loosened, and npm `files` + this exclusion are both applied.)
+mirror/*
+!mirror/.gitkeep
+proposed/*
+!proposed/.gitkeep
+links.tsv
+.turbo
+node_modules

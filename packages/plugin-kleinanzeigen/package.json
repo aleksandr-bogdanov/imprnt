@@ -9,7 +9,7 @@
     "check.js",
     "kleinanzeigen.js",
     "endpoints.example.json",
-    "listings",
+    "listings/example.yaml",
     "fixtures",
     "proposed/.gitkeep",
     "mirror/.gitkeep"

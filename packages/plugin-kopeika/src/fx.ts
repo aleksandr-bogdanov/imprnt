@@ -14,6 +14,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { parseCsv } from "./csv.ts";
+import type { Transaction } from "./types.ts";
 
 export interface RateTable {
   /** key = `${month}|${currency}` (currency upper-cased). */
@@ -80,6 +81,27 @@ export function toEur(amount_native: number, currency: string, isoDate: string, 
     return { amount_eur: null, missing: { month, currency: cur } };
   }
   return { amount_eur: round2(amount_native * rate), missing: null };
+}
+
+/**
+ * Backfill amount_eur on rows imported before their FX rate existed. A row whose
+ * (month, currency) now resolves in the table gets amount_native * rate — pure
+ * deterministic arithmetic, the same conversion import would have done. Rows
+ * whose rate is still missing stay null (kopeika never guesses). Mutates the
+ * rows in place and returns how many were filled, so callers know whether the
+ * ledger needs rewriting.
+ */
+export function backfillEur(txs: readonly Transaction[], table: RateTable): number {
+  let filled = 0;
+  for (const tx of txs) {
+    if (tx.amount_eur !== null) continue;
+    const fx = toEur(tx.amount_native, tx.currency, tx.date, table);
+    if (fx.amount_eur !== null) {
+      tx.amount_eur = fx.amount_eur;
+      filled += 1;
+    }
+  }
+  return filled;
 }
 
 /**

@@ -1,101 +1,114 @@
 ---
 title: How it compares
-description: imprnt against the AI-memory field. The one split that matters, a card per bet, a table per tool, and where another tool is the better pick.
+description: Three questions decide which AI-memory tool to trust. Can you read the store, what survives the vendor, and who chooses what is remembered. imprnt against the field, including where another tool wins.
 ---
 
 import SplitPanels from "../src/components/docs/SplitPanels.astro";
-import Bets from "../src/components/docs/Bets.astro";
-import CompareTable from "../src/components/docs/CompareTable.astro";
-import BenchStrip from "../src/components/docs/BenchStrip.astro";
-import WrongTool from "../src/components/docs/WrongTool.astro";
-import ClosestVerdict from "../src/components/docs/ClosestVerdict.astro";
-import FieldVerdicts from "../src/components/docs/FieldVerdicts.astro";
+import TrackRecord from "../src/components/docs/TrackRecord.astro";
 import NoLockIn from "../src/components/docs/NoLockIn.astro";
+import BenchStrip from "../src/components/docs/BenchStrip.astro";
+import ScoreDispute from "../src/components/docs/ScoreDispute.astro";
+import CompareTable from "../src/components/docs/CompareTable.astro";
+import FieldVerdicts from "../src/components/docs/FieldVerdicts.astro";
+import ClosestVerdict from "../src/components/docs/ClosestVerdict.astro";
+import WrongTool from "../src/components/docs/WrongTool.astro";
 
-Most AI-memory tools build a store for the **machine** to read: a vector index you cannot open. imprnt builds plain notes for **you** to read, that the AI also searches. This page shows where that helps and where it does not.
+Every tool on this page makes the same promise: your AI remembers. The taglines will not help you choose, because they all read alike ("never forget", "your second brain", "local-first") while the machinery underneath points in opposite directions.
 
-The field is crowded and mostly well built. The marketing all reads the same ("never forget", "your AI second brain", "local-first"), so the labels will not tell you which to use. What separates these tools is the **architecture** underneath, and it points in opposite directions from one to the next.
+Three questions do the sorting: whether you can open your memory and read it, what you keep if the vendor moves on, and who decides what gets remembered. Each has a plain answer per tool and a consequence you live with. imprnt is one set of answers. Where your answers differ, this page routes you to the tool that fits, by name.
 
-## The one question that splits the field
+## Can you open your memory and read it?
 
-Almost every tool here sorts on a single question: **is the memory built for the machine to read, or for you to read?**
+Most AI-memory tools store what they learn as a vector index: your words converted into long lists of numbers so a model can find text with similar meaning. That is a real technique with real strengths and one hard limit: a person cannot read it. If the store holds a wrong fact about you, there is no line to find and fix.
+
+The other camp keeps memory as notes: plain Markdown text files on your disk, openable and editable like any document. The AI searches the same files you do.
 
 <SplitPanels />
 
-## No lock-in
+The same choice decides the next question in advance, because a store you cannot read is a store you cannot take with you.
 
-Most tools here bind your knowledge to a store you do not control. The few that keep plain files still wrap them in a derived index or a server. imprnt is the one that keeps both the files and the search portable.
+## What do you keep when the vendor moves on?
+
+In March 2026 a notes app called Reor was archived by its owner, after about a year without updates. Its users kept their notes, because the notes were plain Markdown files on their own disks. They lost the search and the map of related notes, because both lived in an index only the app could read.
+
+Direction changes like that are normal in a young field, and you do not have to guess how they go. Here is the record of the last eighteen months across this page's own table, each item taken from the vendor's own repo or announcement:
+
+<TrackRecord />
+
+All of these were defensible business calls. The question to ask a memory tool up front is what you keep when its vendor makes one. The pattern in the ledger: users keep whatever was plain files and lose whatever lived in the tool's own store.
+
+One row points the other way, and it is the strongest evidence on the page because it comes from the other camp. Letta, a memory company, ran a benchmark where plain files scored 74.0%, ahead of both its own specialized memory tools and mem0's best variant at 68.5%. The numbers are vendor-run, and they were published against the vendor's own prior product, which is the rare direction that earns trust. Letta is now rebuilding its flagship around Markdown files tracked in git, the same version-history tool developers use for code.
+
+iai earns a fair mention here. It is local, open source, and upfront about its design, and everything it stores lives in an encrypted database. Apply the same test and the answer is blunt: if iai vanishes, you keep an encrypted blob and a key.
 
 <NoLockIn />
 
-## imprnt's four bets
+## Who decides what gets remembered?
 
-Each is the minority position in the field.
+The field's default is ambient capture: hooks that watch every chat and save memories automatically, so nothing is missed and nothing is chosen. That produces a large pile of auto-logged turns, and finding anything in a pile like that needs matching by meaning rather than by exact words, which is why those tools carry vector indexes.
 
-<Bets />
+imprnt takes the other path. You say "file this" when something is worth keeping, and the AI writes a careful note once: typed, tagged, summarized, linked to the people and things it mentions. The judgment is spent at write time. That yields a small, clean corpus, and a small clean corpus can be searched with BM25, a ranking method search engines have used for decades: plain arithmetic scoring how well a note's words match your question's words. No model runs inside the search, nothing costs per query, and the search works on any computer that has the files.
 
-imprnt's white space is **plain Markdown the AI reads directly, BM25 and grep, no vector DB, no server.** It pays off when BM25 over a well-tagged vault answers the questions you actually ask. It loses when your queries need vector recall over raw, untagged text. The benchmark section below makes that tradeoff concrete.
+Neither choice is free. Ambient capture costs you a readable store, since only a machine can digest everything it saves. Conscious capture costs a moment of attention, and anything you never file cannot be found. Pick by which cost you would rather pay.
 
-## The field at a glance
+## What the scores can and cannot tell you
 
-Facts are pulled from each project's own README and docs (checked 2026-06-18). Benchmark numbers are **self-reported** by the vendor under its own harness, so read them as "the project claims X", never a settled leaderboard. The numbers are contested even among the vendors: Zep published a rebuttal of mem0's headline LoCoMo claim, mem0 fired back disputing Zep's, the clearest public sign these scores are not neutral.
-
-<CompareTable />
-
-Posture on cloud varies. mem0, Zep, and Supermemory are cloud-first with a local mode. Letta, cognee, mempalace, and iai self-host, and Khoj is self-host only after closing its cloud in 2026. Obsidian and Logseq are local apps with optional paid sync. Karpathy's LLM Wiki and imprnt have no hosted mode and no account, because the files are already on your disk.
-
-Logseq shows how fast this moves. Its original version keeps your notes as plain Markdown you can grep and edit by hand. The new default stores them in a local SQLite database and treats Markdown as an export. If owning plain files is the reason you picked a tool, check which version you are on before you rely on that.
-
-## Each tool, against imprnt
-
-The table is the matrix. This is the read on each one: what it is, the single sharpest line away from imprnt, and the case where it wins. Grouped by the camp it sits in.
-
-<FieldVerdicts />
-
-## The closest kin: Karpathy's LLM Wiki
-
-<ClosestVerdict
-  same="The three-layer design: raw sources, an LLM-compiled wiki, a schema."
-  deltaLabel="imprnt adds"
-  delta="A BM25 ranker and a typed entity contract."
-/>
-
-In design, [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) is imprnt's nearest relative. Same three layers: immutable raw sources, an **LLM-compiled** Markdown wiki, and a `CLAUDE.md` schema. Same `index.md` catalog and append-only `log.md`. No embeddings, the LLM reading the index then full pages. The LLM as a **compiler** that reads a source once and writes durable pages. The agent reading files directly, no server. imprnt sits in that lineage.
-
-Where imprnt goes further:
-
-- A deterministic **BM25 ranker** over title, tags, and body, so recall does not lean on the LLM re-reading the whole index, and it holds up past a few hundred notes.
-- A typed **entity contract** (people, orgs, holdings, with aliases and canonical resolution), so the same person never splits into two pages.
-- A shipped **CLI** plus a plugin system, rather than a pattern you assemble by hand.
-
-Karpathy's gist validates the bet. imprnt is the same bet with more structure on top, and a ranker in place of index-reading.
-
-## The closest shipped tool: Basic Memory
-
-<ClosestVerdict
-  same="Markdown is the source of truth, captured on a deliberate write."
-  deltaLabel="it differs on"
-  delta="A derived SQLite index and an MCP server between the AI and the files."
-/>
-
-Among finished products, Basic Memory shares imprnt's floor. It treats Markdown as the source of truth, keeps a derived SQLite index in sync, and captures on a deliberate write. If you want imprnt's "own your files" stance with a conventional MCP-server delivery, it is a real and good choice.
-
-The split is downstream of **storage**. Basic Memory defaults to hybrid vector search and puts a derived database and an MCP server between the AI and the Markdown. imprnt removes that layer and has the AI grep the files with BM25, the model touching only the two ends of a query. Same respect for the file, opposite call on the machinery around it.
-
-## What the benchmark numbers mean for you
+Benchmarks look like the neutral way to decide, so it matters what they measure. The public leaderboard for AI memory is LongMemEval, a test that logs thousands of chat turns and asks whether facts can be found again. It scores the ambient-capture task, and the tools built for that task report strong numbers on it, each measured by the vendor itself.
 
 <BenchStrip />
 
-LongMemEval scores recall over **auto-logged conversation dumps.** A model captures thousands of raw turns, and the test asks whether the right turn can be found again. It measures a real task. If your use is "remember everything from every chat and surface it later," it is the number to trust, and a tool like mempalace or iai is your pick.
+imprnt's figures come from its own small eval: 39 hand-written questions against two curated example vaults, with the questions and the scoring script public in [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/main/eval) so you can run it yourself. The two figures round from 89.7% and 97.4%: the first note returned answers about nine questions in ten, and the top five catch nearly all of them. Read them as an early indication that BM25 over a tagged vault answers the questions people actually ask it. The task differs from LongMemEval's, and scores do not convert between the two.
 
-imprnt is built for a different task: retrieval from a small set of notes you curated, typed, and linked on the way in. The corpus is smaller and cleaner because the judgment happened at **write time**, not in a vector search at read time. Its own eval runs plain-language questions against the curated example vaults and checks where the answer note ranks. The corpus is small and the questions are hand-written, so read the 90% / 97% as an early **indication** that BM25 over a tagged vault answers the questions asked, not a leaderboard entry. The harness and queries live in [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/main/eval) so you can run it yourself.
+There is a second reason to hold scores loosely: the vendors cannot agree on them.
 
-If a big-corpus leaderboard score is what you need before committing, pick a tool that publishes one.
+<ScoreDispute />
+
+Every number above is self-reported, each vendor running its own test setup. A public audit goes further on mempalace, alleging that its headline score is just the score of the stock database component it builds on, and that most of its stars arrived in one week from bot accounts. That is one developer's analysis and stays an allegation, but the safe conclusion holds either way: when the same tool on the same test has three published scores depending on who ran it, the architecture columns, which each vendor documents about itself and nobody disputes, are a sounder basis for your decision than a decimal point.
+
+## The field at a glance
+
+Facts below come from each project's own README, docs, and repo data (checked 2026-06-20, freshness re-checked 2026-07-02).
+
+<CompareTable />
+
+Where the tools run varies too. mem0, Zep, and Supermemory sell a hosted service and keep an open-source local path. Letta and cognee self-host, each with an optional vendor cloud. mempalace and iai run local only. Khoj is self-host only since its cloud closed in April 2026. Obsidian and Logseq are local apps with optional paid sync. Karpathy's wiki, ECC's memory layer, and imprnt have no hosted mode and no account.
+
+The biggest star count on this page belongs to ECC, and it sits in a different category. ECC is a pack of prompts, rules, and configuration for coding-agent harnesses, the programs that run an AI assistant in a terminal, with memory as one bolt-on subsystem among many. That subsystem writes a summary of each coding session and injects the newest one when the next session starts, with a seven-day window and thirty-day retention by default. Nothing searches it: a fact captured 40 days ago has aged out, and reaching it means knowing which session to resume. Credit where due, ECC keeps plain local files, uses no embeddings (the word-to-number conversion a vector index is built from), and states a local-by-default policy.
+
+The 225k stars are real, and engagement runs far behind them: about one watcher (a person subscribed to the repo's updates) per 196 stars, where giants like React sit closer to one per 40, and roughly 42,000 installer downloads total. Its memory answers "what was I doing last session", where a vault answers "what do I know". Both are real jobs, and neither tool does the other's.
+
+## Each tool, against imprnt
+
+One card per tool: what it is, where it parts from imprnt, and the case where it is the better pick. Several cards mention an MCP server, the standard plug that lets an AI assistant call an external tool.
+
+<FieldVerdicts />
+
+## The two closest calls
+
+### Karpathy's LLM Wiki
+
+<ClosestVerdict
+  same="The three-layer design: immutable raw sources, an LLM-compiled Markdown wiki, a schema file."
+  deltaLabel="imprnt adds"
+  delta="A BM25 ranker and a typed entity contract with alias resolution."
+/>
+
+[Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) is imprnt's nearest relative, published as a pattern in April 2026 in a post with a reported 21 million views. Same shape: raw sources kept immutable, an AI-compiled Markdown wiki, an index the model reads first. Karpathy's own note says the design "works surprisingly well at moderate scale" while avoiding embedding infrastructure, and he puts the comfortable range at a few hundred pages. The pattern stops at index-reading, so past that range recall means the model rereading a growing catalog. imprnt is that design shipped as a tool, with a BM25 ranker so search holds up as the vault grows and a typed contract so the same person never splits into two pages.
+
+### Basic Memory
+
+<ClosestVerdict
+  same="Markdown as the source of truth, captured on a deliberate write."
+  deltaLabel="it differs on"
+  delta="A derived database, a server between the AI and the files, and semantic search on by default since March 2026."
+/>
+
+Basic Memory is the closest shipped product, and it treats Markdown files as the truth just as imprnt does. Around the files it makes the opposite calls: a derived database kept in sync, a small server program the AI talks to instead of reading the files directly, and, since March 2026, semantic search on by default, which puts a model inside every search. If you want the owned-files floor with conventional machinery on top, it is a good tool. imprnt exists for the reader who wants the files with nothing between them and the AI.
 
 ## When imprnt is the wrong tool
 
-The cases where another tool is the better pick:
+Answer the three questions differently and you land somewhere else. The honest routes:
 
 <WrongTool />
 
-imprnt is for one person who wants their knowledge to be plain files they own, read, and keep after any tool is gone. If that is what you want, the rest of the field is solving a different problem well. If it is not, one of these is a better fit.
+imprnt is for one person who answers all three the same way: memory they can read, in files no vendor can take away, filed by their own choice. If that describes you, the rest of this page was due diligence. If it does not, the cards above name your tool.

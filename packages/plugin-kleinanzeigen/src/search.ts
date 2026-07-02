@@ -48,7 +48,16 @@ export type IndexEntry = {
   priceHistory: { price: string; at: string }[];
 };
 
-type SearchFetchResult = { ok: boolean; status?: number; listings: SearchRow[]; error?: string };
+// `resultsPage` = the fetched HTML is a GENUINE results page (even one with zero hits), as opposed to
+// a consent interstitial / bot-wall page. It's what lets a caller treat "truly 0 listings" as a valid,
+// snapshot-worthy answer (the rare-item watch case) instead of a refresh failure.
+type SearchFetchResult = { ok: boolean; status?: number; listings: SearchRow[]; resultsPage?: boolean; error?: string };
+
+// A real results page carries the search-results scaffold (the srchrslt container ids) or KA's
+// zero-hits outcome message; a consent or bot-wall page carries neither.
+export function isResultsPage(html: string): boolean {
+  return /srchrslt/i.test(html) || /keine\s+(Anzeigen|Ergebnisse)/i.test(html);
+}
 
 export function slugifyKeyword(kw: string): string {
   return kw.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -149,7 +158,8 @@ export async function fetchSearchHttp(url: string): Promise<SearchFetchResult> {
     });
     if (!res.ok) return { ok: false, status: res.status, listings: [] };
     const html = await res.text();
-    return { ok: true, status: res.status, listings: parseSearchHtml(html) };
+    const listings = parseSearchHtml(html);
+    return { ok: true, status: res.status, listings, resultsPage: listings.length > 0 || isResultsPage(html) };
   } catch (e) {
     return { ok: false, status: 0, listings: [], error: e instanceof Error ? e.message : String(e) };
   } finally {
@@ -205,7 +215,8 @@ async function fetchSearchBrowser(url: string): Promise<SearchFetchResult> {
     await dismissConsent(page);
     try { await page.waitForSelector("[data-adid]", { timeout: 8000 }); } catch { /* render may already be done */ }
     const html = await page.content();
-    return { ok: true, listings: parseSearchHtml(html) };
+    const listings = parseSearchHtml(html);
+    return { ok: true, listings, resultsPage: listings.length > 0 || isResultsPage(html) };
   } catch (e) {
     return { ok: false, listings: [], error: e instanceof Error ? e.message : String(e) };
   } finally {
@@ -468,7 +479,8 @@ export async function cmdSearch(args: string[]): Promise<number> {
     via = "browser";
   } else {
     result = await fetchSearchHttp(url);
-    if (!result.ok || result.listings.length === 0) {
+    // ok + 0 listings + a real results page = a genuinely empty result set, not a wall — no warning.
+    if (!result.ok || (result.listings.length === 0 && !result.resultsPage)) {
       const why = result.ok ? "0 listings (possible consent/bot wall, or a temporary IP-range block)" : `http ${result.status || "error"}${result.error ? " " + result.error : ""}`;
       console.error(`search: direct fetch returned ${why}.`);
       console.error("  NOT auto-launching the headless browser — that automation fingerprint is what trips the IP-range fraud block. Wait the block out (or switch network), and browse in your real browser. Force the bot path only knowingly: --browser");

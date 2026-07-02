@@ -44,6 +44,8 @@ happen again.
 | `zep-graphiti.md` | Zep / Graphiti | Graph memory | active (Zep Community Edition deprecated) |
 | `cognee.md` | cognee | Graph memory | active |
 | `letta-memgpt.md` | Letta / MemGPT | Agent-state runtime | pivoting (to git-backed filesystem memory) |
+| `ecc.md` | ECC (everything-claude-code) | Adjacent: harness config pack | active (one maintainer, added by request 2026-07-02) |
 
-Last full refresh: 2026-06-20. Prior single-file research:
+Last full refresh: 2026-06-20. ECC added and four dossiers (zep-graphiti, mempalace,
+iai, cognee) re-checked 2026-07-02. Prior single-file research:
 `site/research/competitors-2026-06.md` (2026-06-18), now superseded by this folder.

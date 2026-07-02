@@ -1,24 +1,24 @@
 import { test, expect } from "bun:test";
 import {
   serializeConversation, parseConversation, fenceFor,
-  latestCounterpartMessage, lastMessage, turnAwaiting, type Conversation,
+  latestCounterpartMessage, priorCounterpartBodies, lastMessage, turnAwaiting, type Conversation,
 } from "./mirror.ts";
 
 const conv: Conversation = {
-  conv: "david-thiess",
+  conv: "timo-falkner",
   side: "selling",
-  listing: "3432924231",
+  listing: "9000000001",
   ad_title: "FRITZ!Box 6660 Cable",
   ad_status: "active",
-  counterpart: "David Thiess",
+  counterpart: "Timo Falkner",
   state: "open",
   awaiting: "me",
   unread: 1,
-  synthetic: false,
+  synthetic: true,
   messages: [
     { from: "them", at: "2026-06-12T03:46:00Z", body: "Hi Alex, ist das noch verfügbar??" },
     { from: "me", at: "2026-06-12T03:47:00Z", body: "Hi, yes!" },
-    { from: "them", at: "2026-06-12T03:50:00Z", body: "Empfänger: Cara Burrichter\nHaspelstrasse 24" },
+    { from: "them", at: "2026-06-12T03:50:00Z", body: "Empfänger: Mara Weidmann\nMusterstrasse 12" },
   ],
   rating: "scam",
   tells: ["paypal", "name-mismatch"],
@@ -45,13 +45,13 @@ test("a conversation round-trips through serialize -> parse unchanged (me/them +
   expect(back.messages[0].from).toBe("them");
   expect(back.messages[1].from).toBe("me");
   // the multi-line hostile body survives intact inside its fence
-  expect(back.messages[2].body).toBe("Empfänger: Cara Burrichter\nHaspelstrasse 24");
+  expect(back.messages[2].body).toBe("Empfänger: Mara Weidmann\nMusterstrasse 12");
 });
 
 test("the H1 title uses ad_title when present, else `listing N`", () => {
-  expect(serializeConversation(conv)).toContain("# David Thiess — FRITZ!Box 6660 Cable");
+  expect(serializeConversation(conv)).toContain("# Timo Falkner — FRITZ!Box 6660 Cable");
   const noTitle = serializeConversation({ ...conv, ad_title: "" });
-  expect(noTitle).toContain("# David Thiess — listing 3432924231");
+  expect(noTitle).toContain("# Timo Falkner — listing 9000000001");
 });
 
 test("the LEGACY `### buyer|seller` headers still parse, mapping seller->me and buyer->them", () => {
@@ -88,8 +88,13 @@ test("old 3-backtick mirror files still parse (the fence detector reads the open
 
 test("latestCounterpartMessage skips your replies; lastMessage returns the very last", () => {
   expect(latestCounterpartMessage(conv)?.from).toBe("them");
-  expect(latestCounterpartMessage(conv)?.body).toContain("Cara Burrichter");
-  expect(lastMessage(conv)?.body).toContain("Cara Burrichter");
+  expect(latestCounterpartMessage(conv)?.body).toContain("Mara Weidmann");
+  expect(lastMessage(conv)?.body).toContain("Mara Weidmann");
+});
+
+test("priorCounterpartBodies returns every counterpart body before the latest (yours excluded)", () => {
+  expect(priorCounterpartBodies(conv)).toEqual(["Hi Alex, ist das noch verfügbar??"]);
+  expect(priorCounterpartBodies({ ...conv, messages: [] })).toEqual([]);
 });
 
 test("turnAwaiting: last from them -> me; last from me -> them; closed/system-dead -> none", () => {

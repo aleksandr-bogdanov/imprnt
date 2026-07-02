@@ -1,8 +1,8 @@
 # cognee
 
 **One-line:** An open-source AI-memory platform that ingests data in any format and builds a self-hosted, LLM-extracted knowledge graph (plus vector and relational stores) so AI agents get persistent long-term memory across sessions.
-**Status (checked 2026-06-20):** active - latest stable release v1.1.3 shipped 2026-06-18, most recent `main` commit also 2026-06-18, and the company raised a $7.5M seed on 2026-02-19. Quote: "Cognee is the open-source AI memory platform for agents. Give your AI agents persistent long-term memory across sessions with a self-hosted knowledge graph engine." (GitHub repo description, https://github.com/topoteretes/cognee).
-**Latest release:** v1.1.3, 2026-06-18 (a v1.2.0.dev1 pre-release exists, dated 2026-06-19) | **Stars:** ~17.9k | **License:** Apache-2.0 | **Hosting:** both (self-host + Cognee Cloud)
+**Status (checked 2026-07-02):** active - latest stable release v1.2.2 shipped 2026-06-26, the v1.2.x line went stable on 2026-06-21 (v1.2.0 carries breaking env-var renames and tighter security defaults), and the company raised a $7.5M seed on 2026-02-19. Quote: "Cognee is the open-source AI memory platform for agents. Give your AI agents persistent long-term memory across sessions with a self-hosted knowledge graph engine." (GitHub repo description, https://github.com/topoteretes/cognee).
+**Latest release:** v1.2.2, 2026-06-26 | **Stars:** ~17.9k (as of 2026-06-20, not re-read this pass) | **License:** Apache-2.0 | **Hosting:** both (self-host + Cognee Cloud)
 
 ## What it is
 cognee is a memory layer for AI agents. You feed it sources in any format, it runs an LLM pass to extract entities and relationships into a knowledge graph, and your agent later queries that graph (with vector hints and an LLM on the read path) to recall context.
@@ -26,7 +26,9 @@ Note on framing drift: the README has been rebuilt around a four-verb API surfac
 - 2026-06-18 - v1.1.3 released (current stable). The release "focused on making Cognee more robust when used in API (MCP) mode, clarifying documentation, and fixing several integration issues." Source: https://github.com/topoteretes/cognee/releases (accessed 2026-06-20).
 - 2026-06-18 - most recent commit on `main`. Source: https://github.com/topoteretes/cognee/commits/main (accessed 2026-06-20).
 - 2026-06-19 - v1.2.0.dev1 pre-release. Source: https://github.com/topoteretes/cognee/releases (accessed 2026-06-20).
-- Recency verdict: active and actively developed. Stable release and last commit are both two days before the access date. Stars ~17.9k, forks ~1.9k, 7,804 commits on `main`. Source: https://github.com/topoteretes/cognee (accessed 2026-06-20).
+- 2026-06-21 - v1.2.0 and v1.2.1 released stable. v1.2.0 headlines "smarter session distillation and visualization, tighter security defaults, and improved robustness across LLM, storage and vector backends" plus a new Proposals API. Breaking changes: env vars renamed (`LLM_MAX_TOKENS` -> `LLM_MAX_COMPLETION_TOKENS`, `EMBEDDING_MAX_TOKENS` -> `EMBEDDING_MAX_COMPLETION_TOKENS`), public registration disabled by default, and `ENABLE_BACKEND_ACCESS_CONTROL` now enforces API authentication and per-user/dataset isolation. Source: https://github.com/topoteretes/cognee/releases/tag/v1.2.0 (accessed 2026-07-02).
+- 2026-06-26 - v1.2.2 released (current stable): truth-subspace reranking for search, retrieval improvements, LanceDB S3 fixes. Source: https://github.com/topoteretes/cognee/releases (accessed 2026-07-02).
+- Recency verdict: active and actively developed. Three stable releases shipped in the last two weeks of June 2026 (v1.2.0, v1.2.1, v1.2.2). Stars ~17.9k, forks ~1.9k, 7,804 commits on `main` as of the 2026-06-20 pass (not re-read). Source: https://github.com/topoteretes/cognee/releases (accessed 2026-07-02).
 
 ## Where memory lives (storage and architecture)
 cognee uses a three-store hybrid: a graph store, a vector store, and a relational store. The graph is the centerpiece and is built by an LLM extraction pass.
@@ -54,7 +56,7 @@ Defaults (the embedded local mode): graph = Kuzu, vector = LanceDB, relational =
 The graph is LLM-built at ingest. The "cognify" step is what runs the extraction. Source: README and docs, https://raw.githubusercontent.com/topoteretes/cognee/main/README.md (accessed 2026-06-20).
 
 ## Retrieval
-Retrieval is selectable via a `SearchType` enum. The docs now document 15 SearchType modes in the Python enum (the dossier originally counted 14, and FEELING_LUCKY, an automatic-mode-selection type, has since been added). A 16th mode, INSIGHTS, exists but is MCP-only. The docs note, verbatim: "INSIGHTS is MCP-only and is not available through the Python SearchType enum." Source: https://docs.cognee.ai/core-concepts/main-operations/search (accessed 2026-06-20).
+Retrieval is selectable via a `SearchType` enum. The docs now document 15 SearchType modes in the Python enum (the dossier originally counted 14, and FEELING_LUCKY, an automatic-mode-selection type, has since been added). A 16th mode, INSIGHTS, exists but is MCP-only. The docs note, verbatim: "INSIGHTS is MCP-only and is not available through the Python SearchType enum." Source: https://docs.cognee.ai/core-concepts/main-operations/search (accessed 2026-07-02).
 
 The 14 originally enumerated modes are each still present and real, with verbatim descriptions from the search docs:
 1. GRAPH_COMPLETION (default) - "Graph-aware question answering" that "Finds relevant graph triplets using vector hints across indexed fields"
@@ -75,14 +77,14 @@ The 14 originally enumerated modes are each still present and real, with verbati
 The 15th Python-enum mode added since the original read:
 15. FEELING_LUCKY - automatic mode selection (the type that picks a search strategy for you).
 
-Source: https://docs.cognee.ai/core-concepts/main-operations/search (accessed 2026-06-20)
+Source: https://docs.cognee.ai/core-concepts/main-operations/search (accessed 2026-07-02)
 
 The flagship GRAPH_COMPLETION path puts an LLM on the read side and uses vectors only as a seed/hint, then traverses the graph, then generates:
 1. "Vector store - seed nodes and edges are found by embedding similarity across indexed fields"
 2. "Graph store - those seeds are resolved against the knowledge graph so the surrounding triplets (nodes + relationships) come back as structured context"
 3. Merged graph + vector context is "formatted and (unless `only_context=True`) passed to the LLM"
 
-Source: https://docs.cognee.ai/core-concepts/main-operations/search (accessed 2026-06-20)
+Source: https://docs.cognee.ai/core-concepts/main-operations/search (accessed 2026-07-02)
 
 So the default read mode is: embed the query, find seed nodes by vector similarity, expand to surrounding triplets in the graph, then call an LLM to write the answer. An LLM runs on essentially every default query (the read path), unless you pass `only_context=True`. cognee does include BM25-based lexical modes (CHUNKS_LEXICAL, and BM25 inside HYBRID_COMPLETION), but they are opt-in alternatives, not the default.
 
@@ -98,7 +100,7 @@ Source: README, https://raw.githubusercontent.com/topoteretes/cognee/main/README
 
 The pipeline is described as "add + cognify + improve." Capture is conscious in the sense that someone calls `add`/`cognify` (or `remember`) on a source, but the entity/relationship extraction itself is automatic and LLM-driven, not hand-authored. Source: README, https://raw.githubusercontent.com/topoteretes/cognee/main/README.md (accessed 2026-06-20).
 
-Ingestion breadth: the pricing page lists "28+ data sources" in the free tier. Source: https://www.cognee.ai/pricing (accessed 2026-06-20).
+Ingestion breadth: the reworked pricing page no longer carries the old "28+ data sources" count. Data source integrations (Slack, Notion, Google Drive) are now called out as a Standard-tier inclusion. Source: https://www.cognee.ai/pricing (accessed 2026-07-02).
 
 ## How the AI reads it
 Multiple access surfaces:
@@ -114,18 +116,17 @@ The model on the read path is the key architectural fact: the default GRAPH_COMP
 ## Pricing and license
 License: Apache-2.0. Source: https://github.com/topoteretes/cognee (accessed 2026-06-20).
 
-Cloud pricing tiers (verbatim from the pricing page, https://www.cognee.ai/pricing, accessed 2026-06-20):
+Cloud pricing was reworked between 2026-06-20 and 2026-07-02. The old per-document seat tiers (Free / Developer $35/mo / Cloud Team $200/mo / On-Prem custom, with document top-ups) are gone, replaced by usage-based token pricing (from the pricing page, https://www.cognee.ai/pricing, accessed 2026-07-02):
 
 | Tier | Price | Key limits / inclusions |
 |------|-------|--------------------------|
-| Free | Free | "Build and run memory workflows with tasks and pipelines," auto-generate knowledge structures, integrated evaluations, "28+ data sources," community support |
-| Developer | $35/month | 1,000 documents or 1 GB data, everything in Free, 1 user, hosted infrastructure, API endpoints, automated scaling, 10,000 API calls |
-| Cloud (Team) [marked "Popular"] | $200/month | 2,500 documents or 2 GB data, everything in Developer, 10 users, multi-tenant architecture, memory grouping per user/domain, dedicated Slack channel, 10,000 API calls |
-| On-Prem (Enterprise) | Custom | Everything in Cloud plus on-prem/private-cloud deployment, security/data isolation, architecture review, premium support/SLA, AI engineer access, roadmap prioritization |
+| Free | $0/month | "1M tokens included," 1 workspace, unlimited users, unlimited API calls, agentic integrations |
+| Standard | "$2.50/ 1M tokens" plus "$5 per additional workspace" | usage-based token pricing, everything in Free, data source integrations (Slack, Notion, Google Drive), in-app support |
+| Enterprise | Custom | Everything in Standard plus dedicated Slack channel, dedicated support engineer, bring-your-own-cloud deployment, SLA guarantees |
 
-Document top-ups (Developer and Team): "+1,000 docs ($35), +3,000 docs ($100), +15,000 docs ($750)." Source: https://www.cognee.ai/pricing (accessed 2026-06-20).
+The old document top-ups ("+1,000 docs ($35), +3,000 docs ($100), +15,000 docs ($750)") disappeared with the document-based tiers.
 
-The open-source library is free and self-hostable under Apache-2.0. Pricing applies to the managed Cloud and on-prem support tiers.
+The open-source library is free and self-hostable under Apache-2.0. Pricing applies to the managed Cloud and enterprise support tiers.
 
 ## Benchmarks (vendor self-reported)
 All numbers are cognee's own, on a tiny sample. Flag the sample size loudly.
@@ -163,13 +164,14 @@ Caveat to carry forward: n = 24 questions is far too small to be statistically m
 ## Sources
 - [cognee README (main branch, raw)](https://raw.githubusercontent.com/topoteretes/cognee/main/README.md) - accessed 2026-06-20
 - [cognee GitHub repository (description, stars, forks, license, language breakdown)](https://github.com/topoteretes/cognee) - accessed 2026-06-20
-- [cognee GitHub releases](https://github.com/topoteretes/cognee/releases) - accessed 2026-06-20
+- [cognee GitHub releases](https://github.com/topoteretes/cognee/releases) - accessed 2026-07-02
+- [cognee v1.2.0 release notes (breaking changes, security defaults)](https://github.com/topoteretes/cognee/releases/tag/v1.2.0) - accessed 2026-07-02
 - [cognee GitHub commits (main)](https://github.com/topoteretes/cognee/commits/main) - accessed 2026-06-20
 - [cognee-mcp directory (in repo)](https://github.com/topoteretes/cognee/tree/main/cognee-mcp) - accessed 2026-06-20
-- [Search docs - SearchType list and GRAPH_COMPLETION mechanics](https://docs.cognee.ai/core-concepts/main-operations/search) - accessed 2026-06-20
+- [Search docs - SearchType list and GRAPH_COMPLETION mechanics](https://docs.cognee.ai/core-concepts/main-operations/search) - accessed 2026-07-02
 - [Architecture docs - three storage layers](https://docs.cognee.ai/core-concepts/architecture) - accessed 2026-06-20
 - [Installation & Setup (DeepWiki) - default backends](https://deepwiki.com/topoteretes/cognee/1.1-installation-and-setup) - accessed 2026-06-20
-- [Pricing page](https://www.cognee.ai/pricing) - accessed 2026-06-20
+- [Pricing page](https://www.cognee.ai/pricing) - accessed 2026-07-02
 - [Research and evaluation results - benchmark scores](https://www.cognee.ai/research-and-evaluation-results) - accessed 2026-06-20
 - [AI Memory Benchmarking blog (24 HotpotQA, 45 cycles)](https://www.cognee.ai/blog/deep-dives/ai-memory-evals-0825) - accessed 2026-06-20
 - [Seed funding announcement ($7.5M)](https://www.cognee.ai/blog/cognee-news/cognee-raises-seven-million-five-hundred-thousand-dollars-seed) - accessed 2026-06-20
@@ -178,8 +180,8 @@ Caveat to carry forward: n = 24 questions is far too small to be statistically m
 - [PulseMCP - official cognee MCP server listing](https://www.pulsemcp.com/servers/topoteretes-cognee-mcp) - accessed 2026-06-20
 
 ## Confidence and gaps
-- High confidence: status (active), latest stable release (v1.1.3, 2026-06-18), last commit (2026-06-18), license (Apache-2.0), funding ($7.5M seed, 2026-02-19, Pebblebed-led), pricing tiers and prices, benchmark numbers and the 24-question sample size. All confirmed against primary sources fetched live.
-- Search-mode count: the docs now document 15 SearchType modes in the Python enum (the dossier originally counted 14, before FEELING_LUCKY was added), plus a 16th MCP-only mode, INSIGHTS. The 14 originally enumerated modes are each still real and individually confirmed. The earlier "Total SearchTypes: 14" line was a paraphrase that does not appear verbatim on the live docs and has been removed. Confidence on the current count is medium-high (the enum is versioned and may keep growing). Source: https://docs.cognee.ai/core-concepts/main-operations/search (accessed 2026-06-20).
+- High confidence: status (active), latest stable release (v1.2.2, 2026-06-26), the v1.2.0 breaking changes, license (Apache-2.0), funding ($7.5M seed, 2026-02-19, Pebblebed-led), pricing tiers and prices (re-read 2026-07-02 after the rework to token-based pricing), benchmark numbers and the 24-question sample size. All confirmed against primary sources fetched live. Last-commit date and commit/fork counts were last read 2026-06-20 and not re-checked on 2026-07-02.
+- Search-mode count: the docs now document 15 SearchType modes in the Python enum (the dossier originally counted 14, before FEELING_LUCKY was added), plus a 16th MCP-only mode, INSIGHTS. The 14 originally enumerated modes are each still real and individually confirmed. The earlier "Total SearchTypes: 14" line was a paraphrase that does not appear verbatim on the live docs and has been removed. Confidence on the current count is medium-high (the enum is versioned and may keep growing). Source: https://docs.cognee.ai/core-concepts/main-operations/search (accessed 2026-07-02).
 - Star count is approximate. The GitHub repo page reported "17.9k stars" at access time. Prior notes said ~18k. The live read is ~17.9k. Treat as roughly 18k, exact figure floats. Source: https://github.com/topoteretes/cognee (accessed 2026-06-20).
 - Default databases (Kuzu graph / LanceDB vector / SQLite relational): the full supported-backend list is README-verbatim, but the specific "Kuzu is the default graph DB" claim is sourced from the docs/DeepWiki and the cognee-mcp directory rather than a single README sentence. LanceDB + SQLite as local defaults are stated in the MCP/local-mode docs. Confidence high, but the exact default-graph wording is docs-sourced, not README-quoted.
 - Framing change is real but partly marketing: the README now leads with `remember`/`recall`/`forget`/`improve` and a "Claude Code plugin," while the underlying API is still `add`/`cognify`/`search(SearchType)`. I confirmed both layers exist. I did not independently exercise the Claude Code plugin, so its maturity is unverified.

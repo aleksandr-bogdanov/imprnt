@@ -26,9 +26,9 @@ The **vault** is the only place knowledge lives, and nothing about it pushes its
 
 - **`recall`** searches the vault with BM25 and hands back the best hits. The everyday door. See [how it works](/how-it-works/).
 - **`imprnt hot`** prints the short primer in `hot.md` plus anything that needs review. The "where was I" glance.
-- **`imprnt context`** prints the full filing rules. The assistant runs it right before it writes a note, so the heavy rules are paid only by the sessions that write.
+- **`imprnt context`** prints the full filing rules. The assistant runs it right before it writes a note, so outside the vault project the heavy rules are paid only by the sessions that write. A session inside the vault project, like `imp lair`, loads the contract natively from its `CLAUDE.md`.
 
-An `imp` session loads almost nothing on its own: your behavior plugins, plus a **one-line** note saying the vault exists and how to search it. A day of reading costs that one line, never the whole vault.
+An `imp` session loads almost nothing on its own: your behavior plugins, plus a small pointer (~150 tokens) saying the vault exists, how to search it, and to run `imprnt context` before writing. A day of reading costs that pointer, never the whole vault.
 
 <MemoryVaultTable>
 
@@ -36,7 +36,7 @@ An `imp` session loads almost nothing on its own: your behavior plugins, plus a 
 |---------|-----------------|-------------|------------|---------------|
 | `vault/` notes | your knowledge | no | `recall` | you, through the model at filing |
 | `hot.md` | the primer plus needs-review | no | `imprnt hot` | the model, as you work |
-| the vault contract | the filing rules | no | `imprnt context` | imprnt ships it |
+| the vault contract | the filing rules | in the vault project only | `imprnt context` | imprnt ships it |
 | the session pointer | "the vault exists, search it" | yes | injected by `imp` | imprnt |
 | `raw/` | untouched source copies | no | never searched | code, at filing |
 
@@ -59,7 +59,7 @@ The easy mistake is parking searchable knowledge in the store that cannot be sea
 | A fact about a person, policy, or decision | a vault note | no | yes |
 | A number, table, or record | a vault note, in full | no | yes |
 | A primer of where things stand | `hot.md`, via `imprnt hot` | no | no - control file |
-| The filing rules | the vault contract, via `imprnt context` | no | no |
+| The filing rules | the vault contract, via `imprnt context` | in the vault project only | no |
 | A writing style or anti-slop ruleset | a behavior plugin in `CLAUDE.local.md` | yes | no |
 | A standing instruction | the assistant's `CLAUDE.md` or its memory | yes | no |
 | Source transcripts and documents | a `raw/` copy | no | no |

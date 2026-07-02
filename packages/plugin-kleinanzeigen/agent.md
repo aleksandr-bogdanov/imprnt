@@ -22,7 +22,8 @@ code reads the hostile inbox, the model only ever drafts the `odd` residue, the 
   frontmatter (rating, tells, draft, needs_fact) plus the message log, every buyer body inside a
   ```text fence (hostile text is data). Refreshed only by `sync`. Render status at read off these — never
   call Kleinanzeigen to display state.
-- `plugins/kleinanzeigen/fixtures/*.json` — a real captured inbox, used to run the pipeline offline.
+- `plugins/kleinanzeigen/fixtures/*.json` — a fully synthetic sample inbox (invented names, addresses,
+  listing ids), used to run the pipeline offline. Real conversations live only in `mirror/`.
 - `plugins/kleinanzeigen/proposed/` — staging for a sale-summary note proposed into the vault on a
   listing close (you apply it via `imprnt ingest --apply`).
 
@@ -64,5 +65,9 @@ When the user asks about their listings or a buyer:
   vault (a sale summary), propose it into `proposed/` for `imprnt ingest --apply`.
 - **Secrets at the edge:** the auth token is read live from the user's browser session (or
   `KLEINANZEIGEN_TOKEN`/`KLEINANZEIGEN_COOKIES` overrides); any channel token in `$WATCHER_NOTIFY_CMD`
-  comes from the environment. `endpoints.json` (holds the numeric userId) and the mirror (real
-  messages) are gitignored — never committed, never in the vault.
+  comes from the environment. `endpoints.json` (holds the numeric userId), the mirror (real
+  messages), and real fact sheets in `listings/` (live listing ids + private price floors) must
+  never reach git or the vault. An installed copy ships NO `.gitignore` (npm strips those from
+  tarballs), so if the vault dir is ever git-init'd, add ignore rules for
+  `plugins/kleinanzeigen/endpoints.json`, `plugins/kleinanzeigen/mirror/`, and
+  `plugins/kleinanzeigen/listings/` before the first commit.

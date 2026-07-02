@@ -11,12 +11,13 @@ social-engineered. (See `Plans/05-kleinanzeigen-watcher.md` in the repo for the 
 
 ## What it does, on one real day
 
-Sixteen buyer messages on two router listings, one afternoon:
+Fifteen buyer messages on two router listings, one afternoon (replayed here with the synthetic
+fixture personas — invented names, addresses, listing ids):
 
 ```
-Kleinanzeigen — 3432924231: 14 new · 3432924164: 1 new
-⚠ David Thiess [scam: paypal, name-mismatch, instant-full-price] — no draft, do not reply
-Frank Pürschel [offer 70€ (below floor)] — your call
+Kleinanzeigen — 9000000001: 14 new · 9000000002: 1 new
+⚠ Timo Falkner [scam: paypal, name-mismatch, instant-full-price] — no draft, do not reply
+Frank Bergmann [offer 70€ (below floor)] — your call
 Erik [faq] — needs you: confirm artikelnummer
 Nima [faq] — needs you: confirm artikelnummer, cable
 Pavel [faq] — needs you: confirm age
@@ -61,7 +62,8 @@ on the browser staying logged in and the Keychain grant persisting.
 ## Environment variables
 
 - `KLEINANZEIGEN_FIXTURES` — a directory of conversation JSON. When set, `sync` reads from there instead
-  of the network, so the whole pipeline runs offline. The shipped `fixtures/` is a sanitized inbox.
+  of the network, so the whole pipeline runs offline. The shipped `fixtures/` is a fully synthetic
+  sample inbox (invented names, addresses, listing ids).
 - `KLEINANZEIGEN_TOKEN` / `KLEINANZEIGEN_COOKIES` — the auth overrides above.
 - `WATCHER_NOTIFY_CMD` — the channel for `notify`. The digest is piped to this command's stdin. Examples:
   `curl -s -d @- "https://api.telegram.org/bot$TOKEN/sendMessage?chat_id=$CHAT&text="` (Telegram bot),
@@ -69,18 +71,22 @@ on the browser staying logged in and the Keychain grant persisting.
 
 ## Fact sheets
 
-Each listing gets a `listings/<id>.yaml` with the answers buyers ask. A FAQ is answered from these
-WITHOUT the model. An empty field is honest "not confirmed yet" — the rater turns it into a `needs_fact`
-in the digest rather than guessing. Fill it once; every future FAQ on that field answers itself.
+Each listing gets a `listings/<id>.yaml` with the answers buyers ask (start from the shipped
+`listings/example.yaml`). A FAQ is answered from these WITHOUT the model. An empty field is honest
+"not confirmed yet" — the rater turns it into a `needs_fact` in the digest rather than guessing.
+Fill it once; every future FAQ on that field answers itself.
 
 ```yaml
-listing: 3432924231
+listing: 1234567890
 model: FRITZ!Box 6660 Cable
 artikelnummer:            # empty -> "needs you: confirm artikelnummer" until you fill it
 price: 90
 floor: 75                 # an offer below this is flagged, never auto-accepted
 pickup_area: Berlin
 ```
+
+Real fact sheets carry your live listing ids and your private price floors — keep them out of git
+(only `example.yaml` is tracked or shipped).
 
 ## Wiring the live transport (the `probe` step)
 
@@ -94,7 +100,10 @@ node kleinanzeigen.js probe --har ~/Downloads/www.kleinanzeigen.de.har
 node kleinanzeigen.js sync
 ```
 
-`endpoints.json` is gitignored (it holds your numeric userId). The **read path is fully wired**
+`endpoints.json` holds your numeric userId — never commit it. The repo's dev tree gitignores it, but
+an npm-installed copy ships no `.gitignore` (npm strips those from tarballs): if you ever git-init
+the vault, add ignore rules for `endpoints.json`, `mirror/`, and `listings/` yourself. The **read
+path is fully wired**
 (list + per-conversation detail for full bodies). **Send** needs one more capture: `replyPath` in
 `endpoints.json` is null until you capture the POST that fires when you send a message (devtools →
 Network), because guessing a POST shape risks mis-sending. Until then `send` refuses live and you can
@@ -149,7 +158,7 @@ Plus remove the launchd plist if you added one. Removal leaves no trace in the v
 ```sh
 bun install
 bun run build      # src/*.ts -> kleinanzeigen.js + check.js (node banner)
-bun test           # 37 tests, incl. the real-inbox pipeline
+bun test           # incl. the end-to-end fixture-inbox pipeline
 bunx tsc --noEmit  # typecheck
 ```
 
