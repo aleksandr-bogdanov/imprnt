@@ -24,10 +24,10 @@ A **behavior** plugin. It hands the assistant a fixed chunk of text you wire int
 
 ## Install
 
-Wire the rules at one of two **scopes**. Project scope reaches this repo only. User scope reaches every session you run anywhere. The matching remove is the off switch, and the assistant goes back to its default voice.
+Wire the rules at one of two **scopes**. Project scope reaches this repo only. User scope reaches every `imp` session, in any directory, while a plain `claude` session stays untouched (imprnt only shapes sessions it launches). The user-scope add promotes the copy the project add installed, so run the project add first, or pass `--from <dir>` to promote any folder holding the fragment. The matching remove is the off switch, and the assistant goes back to its default voice.
 
 <AntiSlopInstall />
 
 ### Make the rules your own
 
-To run your own register and banned words on top, copy the fragment into the private `_personal/` folder, extend it, and wire that copy instead. `_personal/` is gitignored, so your overlay never ships.
+To run your own register and banned words on top, copy the fragment into the private `_personal/` folder, extend it, and wire that copy instead. The `_` prefix keeps the folder out of `plugin list`, so your overlay never lands in the public gallery. If you ever git-init your vault project, add `plugins/_personal/` to its `.gitignore` so it never ships.

@@ -127,7 +127,7 @@ asking ("add the anti-slop plugin"), each a separate `imprnt-plugin-*` package:
 | `imprnt-plugin-anti-slop` | Rules that keep its prose from reading like AI. |
 | `imprnt-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, shown inline at read. |
 | `imprnt-plugin-kleinanzeigen` | A watcher for your Kleinanzeigen inbox: regex triage of buyer messages, drafts, a phone digest. You press send. |
-| `imprnt-plugin-session-host` | A warm browser holding your logged-in sessions, providing the authed-session capability. You enroll each site once. |
+| `imprnt-plugin-session-host` | A warm browser holding your logged-in sessions, providing the authed-session capability. You enroll each site once. Not yet on npm: install from a repo checkout with `imprnt plugin add session-host --from <dir>`. |
 | `imprnt-plugin-timemachine` | Snapshots your work before each change so you can recover what the agent breaks. |
 | `imprnt-plugin-statusline` | A customizable status line: model, branch, context, cost, rate limits, clock. |
 | `imprnt-plugin-telegram` | Your vault from your phone: text a bot, the answer comes from your notes. |
@@ -164,7 +164,7 @@ assistant that files and recalls for you:
 
 The docs are the website, [imprnt.dev](https://imprnt.dev), built straight from markdown in
 [`site/docs/`](site/docs/) (the single source): getting started, how it works, the model, plugins,
-architecture, design decisions, and contributing. Edit a file there and the site updates on the next
+design decisions, and contributing. Edit a file there and the site updates on the next
 deploy.
 
 - [`CLAUDE.md`](CLAUDE.md), the contract your assistant reads inside the vault: note formats, conventions.
@@ -174,8 +174,8 @@ deploy.
 
 The engine is built with [Bun](https://bun.sh) and [Turborepo](https://turborepo.com) (dev tools
 only, never needed by people who use it through their assistant). Clone, `bun install`,
-`bun run build`, `bun run test`. The architecture and the build-and-release model are in the
-[architecture](https://imprnt.dev/architecture/) and [contributing](https://imprnt.dev/contributing/) docs.
+`bun run build`, `bun run test`. The reasoning behind the design and the build-and-release model are in the
+[design decisions](https://imprnt.dev/design-decisions/) and [contributing](https://imprnt.dev/contributing/) docs.
 
 ## License
 

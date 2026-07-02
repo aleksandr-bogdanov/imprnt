@@ -22,7 +22,7 @@ Spend the model where it pays, filing each item once, and keep it off the path t
 ## BM25, not embeddings
 `recall` ranks with standard **BM25** and no per-query rerank, embeddings, vectors, or protocol over the vault. The mechanics are in [How it works](/how-it-works/). Two calls are specific to this page.
 
-The scaling path stays local at every step: a full scan to about 10k notes, grep-prefilter then BM25 to about 100k, a persistent inverted index above that. Scaling adds a local index, never a vector store or a model.
+`recall` today does one full scan per query, which holds to about 10k notes. Past that the path stays local: grep-prefilter then BM25 to about 100k, a persistent inverted index above that. Scaling adds a local index, never a vector store or a model.
 
 Vector search sounds smarter but costs more, re-indexes on every change, and hides why it matched. BM25 over plain text is free, clear, and good enough once notes are tagged well on the way in.
 
@@ -97,7 +97,7 @@ The whole vault is local and owner-only. There is no sensitivity field, no redac
 <DesignFlipsIf>The vault ever syncs to a shared or hosted store, where being local stops being the whole privacy model and real fencing would have to start.</DesignFlipsIf>
 
 ## imp vs imprnt
-The package ships two commands from one dispatcher, split by **audience**. `imp` is for humans: typed in any directory it opens a Claude session there with imprnt riding along, and `imp lair` opens it inside the vault. `imprnt` is for machinery: agents and scripts call `imprnt recall`, `imprnt check`, and the rest.
+The package ships two commands from one dispatcher, split by **audience**. `imp` is for humans: typed in any directory it opens your assistant's session there with imprnt riding along (Claude by default, `imp --gemini` or `imprnt agent` swaps the backend), and `imp lair` opens it inside the vault. `imprnt` is for machinery: agents and scripts call `imprnt recall`, `imprnt check`, and the rest.
 
 Two earlier models lost. Injecting imprnt into the assistant's global config pays tokens in every session forever, the always-on cost again. A launcher-only model left the vault unreachable from the coding repos where most of the day happens. The resolution is per-keystroke **consent**: typing `imp` instead of `claude` is the entire opt-in. Plain `claude` stays plain, nothing is written into the global config, and each session carries the context because you asked for it by name.
 

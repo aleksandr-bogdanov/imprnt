@@ -34,7 +34,7 @@ A character generalizes to one or many. One ships today (Scribe), and each is it
 
    That copies the package into `plugins/character/` and wires `@plugins/character/agent.md` into `CLAUDE.local.md`, your per-machine on-off file. You can also hand-edit that file and add the line yourself.
 
-2. **Make it yours.** Scribe is a generalized default. Copy it into the private `_personal/` folder, edit the voice, and wire that copy instead. `_personal/` is gitignored, so your private character never ships and never lands in the public gallery.
+2. **Make it yours.** Scribe is a generalized default. Copy it into the private `_personal/` folder, edit the voice, and wire that copy instead. The `_` prefix keeps the folder out of `plugin list`, so your private character never lands in the public gallery. If you ever git-init your vault project, add `plugins/_personal/` to its `.gitignore` so it never ships.
 
 </Steps>
 

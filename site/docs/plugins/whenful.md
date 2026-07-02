@@ -38,4 +38,4 @@ node plugins/whenful/check.js
 imprnt plugin add whenful
 ```
 
-Then add your task-to-note rows to `plugins/whenful/links.tsv` and run a sync. Remove with `imprnt plugin rm whenful`.
+Then add your task-to-note rows to `plugins/whenful/links.tsv` and run a sync. Remove with `imprnt plugin rm whenful` (add `--purge` to also delete `plugins/whenful/`, including your links.tsv and the mirror).
