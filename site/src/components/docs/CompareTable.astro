@@ -3,8 +3,10 @@
  * comparison.mdx ONLY - the field, tool by tool. A real 5-column table on
  * desktop (zebra rows, sticky header, the imprnt row tinted green) that
  * collapses to one card per tool below 880px so all five fields survive on a
- * phone. Every cell's full text is data and is kept verbatim. Scoped CSS only,
- * no Tailwind (docs pages do not load it), theme-aware via --sl tokens.
+ * phone. Every cell's full text is data and is kept verbatim, traced to
+ * docs/competitors/ (checked 2026-06-20, freshness re-checked 2026-07-02).
+ * Scoped CSS only, no Tailwind (docs pages do not load it), theme-aware via
+ * --sl tokens.
  */
 const COLS = ["Tool", "Where memory lives", "Retrieval", "Capture", "AI reads via"];
 
@@ -64,7 +66,7 @@ const ROWS = [
     where: "Its own Postgres plus pgvector DB",
     retrieval: "Embeddings plus neural re-rank",
     capture: "Sync and index your docs",
-    reads: "App, and an MCP client (not a server)",
+    reads: "Its own app: query embedded, recalled, reranked, fed to the chat LLM",
   },
   {
     tool: "mem0",
@@ -99,7 +101,7 @@ const ROWS = [
     where: "Vector DB (ChromaDB default)",
     retrieval: "Embeddings plus boosting plus optional LLM re-rank",
     capture: "Manual and auto hooks",
-    reads: "MCP server (33 tools)",
+    reads: "MCP server (35 tools)",
   },
   {
     tool: "Supermemory",
@@ -114,6 +116,14 @@ const ROWS = [
     retrieval: "Local embeddings (bge-small) plus graph links plus recency, ranked, no LLM in the hot path",
     capture: "Automatic, via Claude Code / Codex hooks",
     reads: "MCP server",
+  },
+  {
+    tool: "ECC",
+    note: "config pack for coding agents - memory is one subsystem",
+    where: "Markdown session summaries plus YAML/JSONL habit files under the home dir, plus a SQLite state store",
+    retrieval: "None. Newest session summary injected at session start (7-day window, 30-day retention)",
+    capture: "Automatic hooks on every session, plus a background model distilling habits",
+    reads: "Harness injection at session start. Mid-session needs explicit commands",
   },
 ];
 ---
