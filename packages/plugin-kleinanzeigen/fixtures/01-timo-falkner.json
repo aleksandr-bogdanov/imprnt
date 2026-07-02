@@ -1,0 +1,11 @@
+{
+  "conv": "timo-falkner",
+  "listing": "9000000001",
+  "counterpart": "Timo Falkner",
+  "synthetic": true,
+  "messages": [
+    { "from": "buyer", "at": "2026-06-12T03:46:00Z", "body": "Hi Alex, ist das noch verfügbar??" },
+    { "from": "seller", "at": "2026-06-12T03:47:00Z", "body": "Hi, yes!" },
+    { "from": "buyer", "at": "2026-06-12T03:50:00Z", "body": "Könnten Sie mir Ihre PayPal-Daten schicken, ich zahle den Preis zusammen mit dem Versand.\nLieferung bitte an:\nEmpfänger: Mara Weidmann\nMusterstrasse 12\nPLZ 12345 Musterstadt" }
+  ]
+}

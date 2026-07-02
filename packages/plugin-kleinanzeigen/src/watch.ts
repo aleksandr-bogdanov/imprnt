@@ -83,7 +83,10 @@ async function refreshSearch(s: SavedSearch): Promise<RefreshResult> {
   const url = searchUrl(s.query, s.location);
   if (!url) return { ok: false, id: s.id, query: s.query, location: s.location, error: "empty keyword" };
   const result = await fetchSearchHttp(url);
-  if (!result.ok || result.listings.length === 0) {
+  // ok + 0 listings on a REAL results page is a genuinely empty result set — snapshot it, so a
+  // rare-item watch gets its (empty) baseline and the first appearance later surfaces as NEW.
+  // Only a wall/interstitial (0 listings, no results scaffold) counts as a refresh failure.
+  if (!result.ok || (result.listings.length === 0 && !result.resultsPage)) {
     return {
       ok: false, id: s.id, query: s.query, location: s.location,
       error: result.ok ? "0 listings (consent/bot wall or IP-range block)" : `http ${result.status || "error"}${result.error ? " " + result.error : ""}`,

@@ -199,6 +199,13 @@ export function latestCounterpartMessage(c: Conversation): Msg | null {
   return null;
 }
 
+// Every counterpart message BEFORE the latest — classify() runs the scam tells over these too, so a
+// benign follow-up can never wash out an earlier scam pitch.
+export function priorCounterpartBodies(c: Conversation): string[] {
+  const them = c.messages.filter((m) => m.from === "them");
+  return them.slice(0, -1).map((m) => m.body);
+}
+
 export function lastMessage(c: Conversation): Msg | null {
   return c.messages.length ? c.messages[c.messages.length - 1] : null;
 }

@@ -3,7 +3,7 @@ import { parseFacts } from "./facts.ts";
 
 test("parses scalars, a block list, numbers, and empty fields", () => {
   const f = parseFacts(`
-listing: 3432924231
+listing: 9000000001
 model: FRITZ!Box 6660 Cable
 artikelnummer:
 includes:
@@ -13,7 +13,7 @@ price: 90
 floor: 75
 pickup_area: Berlin
 `);
-  expect(f.listing).toBe("3432924231");
+  expect(f.listing).toBe("9000000001");
   expect(f.model).toBe("FRITZ!Box 6660 Cable");
   expect(f.artikelnummer).toBe(""); // empty stays empty (becomes needs_fact downstream)
   expect(f.includes).toEqual(["Netzteil", "Anleitung"]);

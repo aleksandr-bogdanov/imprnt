@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { diffSnapshots, filterDiffByBand, inBand, type SnapshotDiff } from "./watch.ts";
-import type { SnapshotListing } from "./search.ts";
+import { isResultsPage, parseSearchHtml, type SnapshotListing } from "./search.ts";
 
 function L(adId: string, priceNum: number | null): SnapshotListing {
   return {
@@ -37,6 +37,30 @@ describe("diffSnapshots — added / price-drop / gone, by adId", () => {
     const d = diffSnapshots(null, next);
     expect(d.added).toHaveLength(3);
     expect(d.gone).toHaveLength(0);
+  });
+
+  test("an EMPTY prev snapshot is a baseline, not a first run: the first appearance is `added`", () => {
+    // The rare-item watch: the query starts at 0 listings (a valid snapshot), then the item shows up.
+    const d = diffSnapshots({ listings: [] }, { listings: [L("deal", 80)] });
+    expect(d.added.map((l) => l.adId)).toEqual(["deal"]);
+  });
+});
+
+describe("isResultsPage — a genuine zero-hit results page vs a consent/bot wall", () => {
+  test("the results scaffold (srchrslt container) reads as a results page even with 0 aditem rows", () => {
+    const html = `<html><body><div id="srchrslt-content"><ul id="srchrslt-adtable"></ul></div></body></html>`;
+    expect(parseSearchHtml(html)).toHaveLength(0);
+    expect(isResultsPage(html)).toBe(true);
+  });
+
+  test("KA's zero-hits outcome message reads as a results page", () => {
+    expect(isResultsPage("<p>Es wurden leider keine Anzeigen gefunden.</p>")).toBe(true);
+  });
+
+  test("a consent/bot-wall interstitial reads as NOT a results page (watch keeps the old snapshot)", () => {
+    const wall = `<html><body><div id="gdpr-banner">Alle akzeptieren</div>Bitte bestätigen Sie, dass Sie kein Roboter sind.</body></html>`;
+    expect(parseSearchHtml(wall)).toHaveLength(0);
+    expect(isResultsPage(wall)).toBe(false);
   });
 });
 
