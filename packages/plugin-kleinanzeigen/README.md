@@ -21,8 +21,8 @@ Frank Bergmann [offer 70€ (below floor)] — your call
 Erik [faq] — needs you: confirm artikelnummer
 Nima [faq] — needs you: confirm artikelnummer, cable
 Pavel [faq] — needs you: confirm age
-Karla [pickup] draft: "Hi, Abholung ist möglich in Berlin. Wann würde es dir passen? ..."
-Chitwan [interest] draft: "Hi, ja, FRITZ!Box 6660 Cable ist noch verfügbar. ..."
+Karla [pickup] draft: "Hi, Abholung ist möglich in Musterstadt. Wann würde es dir passen? ..."
+Chitwan [interest] draft: "Hi, ja, Acme BT-200 Bluetooth-Lautsprecher ist noch verfügbar. ..."
 ...
 ```
 
@@ -78,11 +78,11 @@ Fill it once; every future FAQ on that field answers itself.
 
 ```yaml
 listing: 1234567890
-model: FRITZ!Box 6660 Cable
+model: Acme BT-200 Bluetooth-Lautsprecher
 artikelnummer:            # empty -> "needs you: confirm artikelnummer" until you fill it
-price: 90
-floor: 75                 # an offer below this is flagged, never auto-accepted
-pickup_area: Berlin
+price: 95
+floor: 80                 # an offer below this is flagged, never auto-accepted
+pickup_area: Musterstadt
 ```
 
 Real fact sheets carry your live listing ids and your private price floors — keep them out of git

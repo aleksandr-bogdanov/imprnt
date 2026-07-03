@@ -5,16 +5,16 @@
 # Real fact sheets carry your live listing ids and your private price floors, so they are
 # gitignored — only this template is tracked or shipped.
 listing: 1234567890
-model: FRITZ!Box 6660 Cable
-variant: DOCSIS 3.1, WiFi 6, Retail-Version
+model: Acme BT-200 Bluetooth-Lautsprecher
+variant: Bluetooth 5.3, 20W, tragbar
 artikelnummer:                      # leave empty until confirmed from the label
 includes:
   - Netzteil
 condition: einwandfrei, voll funktionsfähig
 age:                                # unknown — fill if confirmed
-software: FRITZ!OS (aktuelle Version)
+software: Firmware (aktuelle Version)
 cable:                              # unconfirmed whether a cable is included
-price: 90
-floor: 75                           # the lowest you'll take — an offer below this is flagged, never auto-accepted
-pickup_area: Berlin
+price: 95
+floor: 80                           # the lowest you'll take — an offer below this is flagged, never auto-accepted
+pickup_area: Musterstadt
 shipping: Versand möglich gegen Aufpreis

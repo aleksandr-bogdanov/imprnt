@@ -20,38 +20,38 @@ import { guardSend } from "./send.ts";
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURES = join(pkgRoot, "fixtures");
 
-// The two fixture listings' fact sheets, shaped like the real ones: the 6660's artikelnummer/age/cable
-// deliberately EMPTY (drives needs_fact), the 7590 fully confirmed.
-const SHEET_6660 = `listing: 9000000001
-model: FRITZ!Box 6660 Cable
-variant: DOCSIS 3.1, WiFi 6, Retail-Version
+// The two fixture listings' fact sheets, shaped like the real ones: the BT-200's artikelnummer/age/cable
+// deliberately EMPTY (drives needs_fact), the BT-500 fully confirmed.
+const SHEET_BT200 = `listing: 9000000001
+model: Acme BT-200 Bluetooth-Lautsprecher
+variant: Bluetooth 5.3, 20W, tragbar
 artikelnummer:
 includes:
   - Netzteil
 condition: einwandfrei, voll funktionsfähig
 age:
-software: FRITZ!OS (aktuelle Version)
+software: Firmware (aktuelle Version)
 cable:
-price: 90
-floor: 75
-pickup_area: Berlin
+price: 95
+floor: 80
+pickup_area: Musterstadt
 shipping: Versand möglich gegen Aufpreis
 `;
-const SHEET_7590 = `listing: 9000000002
-model: FRITZ!Box 7590
-variant: DSL, ohne AX (kein WiFi 6)
+const SHEET_BT500 = `listing: 9000000002
+model: Acme BT-500 Bluetooth-Lautsprecher
+variant: Bluetooth 5.0, 10W, kompakt
 artikelnummer:
 includes:
   - Netzteil
-  - DSL-Kabel
-  - LAN-Kabel
+  - Ladekabel
+  - Anleitung
 condition: neu, unbenutzt, originalverpackt
 age: neu, nie in Betrieb
-software: FRITZ!OS (Werkszustand)
-cable: DSL- und LAN-Kabel sind dabei
-price: 100
-floor: 85
-pickup_area: Berlin
+software: Firmware (Werkszustand)
+cable: Ladekabel ist dabei
+price: 110
+floor: 95
+pickup_area: Musterstadt
 shipping: Versand möglich gegen Aufpreis
 `;
 
@@ -61,8 +61,8 @@ beforeAll(async () => {
   process.env.KLEINANZEIGEN_FIXTURES = FIXTURES;
   const mirror = mkdtempSync(join(tmpdir(), "ka-mirror-"));
   const LISTINGS = mkdtempSync(join(tmpdir(), "ka-listings-"));
-  writeFileSync(join(LISTINGS, "9000000001.yaml"), SHEET_6660);
-  writeFileSync(join(LISTINGS, "9000000002.yaml"), SHEET_7590);
+  writeFileSync(join(LISTINGS, "9000000001.yaml"), SHEET_BT200);
+  writeFileSync(join(LISTINGS, "9000000002.yaml"), SHEET_BT500);
   const raws = await fetchConversations(pkgRoot); // fixtures env wins
   for (const r of raws) {
     const facts = loadFacts(r.listing, LISTINGS);
@@ -117,17 +117,17 @@ describe("the real inbox, classified", () => {
     }
   });
 
-  test("Frank's 70€ offer is below the 75€ floor", () => {
+  test("Frank's 70€ offer is below the 80€ floor", () => {
     const frank = rated.find((c) => c.conv === "frank-bergmann")!;
     expect(frank.rating).toBe("offer");
     expect(frank.offer_amount).toBe(70);
     expect(frank.below_floor).toBe(true);
   });
 
-  test("pickup conversations get a ready draft naming Berlin", () => {
+  test("pickup conversations get a ready draft naming Musterstadt", () => {
     const patrick = rated.find((c) => c.conv === "patrick")!;
     expect(patrick.rating).toBe("pickup");
-    expect(patrick.draft).toContain("Berlin");
+    expect(patrick.draft).toContain("Musterstadt");
   });
 });
 

@@ -4,32 +4,32 @@ import { parseFacts } from "./facts.ts";
 test("parses scalars, a block list, numbers, and empty fields", () => {
   const f = parseFacts(`
 listing: 9000000001
-model: FRITZ!Box 6660 Cable
+model: Acme BT-200 Bluetooth-Lautsprecher
 artikelnummer:
 includes:
   - Netzteil
   - Anleitung
-price: 90
-floor: 75
-pickup_area: Berlin
+price: 95
+floor: 80
+pickup_area: Musterstadt
 `);
   expect(f.listing).toBe("9000000001");
-  expect(f.model).toBe("FRITZ!Box 6660 Cable");
+  expect(f.model).toBe("Acme BT-200 Bluetooth-Lautsprecher");
   expect(f.artikelnummer).toBe(""); // empty stays empty (becomes needs_fact downstream)
   expect(f.includes).toEqual(["Netzteil", "Anleitung"]);
-  expect(f.price).toBe(90);
-  expect(f.floor).toBe(75);
-  expect(f.pickup_area).toBe("Berlin");
+  expect(f.price).toBe(95);
+  expect(f.floor).toBe(80);
+  expect(f.pickup_area).toBe("Musterstadt");
 });
 
 test("inline list form [a, b] parses too", () => {
-  const f = parseFacts(`includes: [Netzteil, DSL-Kabel, Anleitung]`);
-  expect(f.includes).toEqual(["Netzteil", "DSL-Kabel", "Anleitung"]);
+  const f = parseFacts(`includes: [Netzteil, Ladekabel, Anleitung]`);
+  expect(f.includes).toEqual(["Netzteil", "Ladekabel", "Anleitung"]);
 });
 
 test("trailing comments are stripped, a bad number stays null (never NaN)", () => {
-  const f = parseFacts(`price: 90   # VB\nfloor: notanumber`);
-  expect(f.price).toBe(90);
+  const f = parseFacts(`price: 95   # VB\nfloor: notanumber`);
+  expect(f.price).toBe(95);
   expect(f.floor).toBeNull();
 });
 

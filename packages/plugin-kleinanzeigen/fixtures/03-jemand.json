@@ -4,6 +4,6 @@
   "counterpart": "jemand",
   "synthetic": true,
   "messages": [
-    { "from": "buyer", "at": "2026-06-12T08:44:00Z", "body": "Hallo Welche Artikelnummer hat der Router ? Vg" }
+    { "from": "buyer", "at": "2026-06-12T08:44:00Z", "body": "Hallo Welche Artikelnummer hat das Gerät ? Vg" }
   ]
 }

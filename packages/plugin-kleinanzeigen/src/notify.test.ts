@@ -14,7 +14,7 @@ test("selling digest: only awaiting-you, scams first, drafts and needs-you lines
     c({ conv: "2932z:1:scam", counterpart: "Timo Falkner", rating: "scam", tells: ["paypal", "name-mismatch"] }),
     c({ conv: "2932z:2:offer", counterpart: "Frank", rating: "offer", offer_amount: 70, below_floor: true }),
     c({ conv: "2932z:3:faq", counterpart: "Erik", rating: "faq", needs_fact: ["artikelnummer"], draft: null }),
-    c({ conv: "2932z:4:pick", counterpart: "Patrick", rating: "pickup", draft: "Hi, Abholung ist möglich in Berlin. ..." }),
+    c({ conv: "2932z:4:pick", counterpart: "Patrick", rating: "pickup", draft: "Hi, Abholung ist möglich in Musterstadt. ..." }),
   ];
   const d = composeDigest(convs);
 

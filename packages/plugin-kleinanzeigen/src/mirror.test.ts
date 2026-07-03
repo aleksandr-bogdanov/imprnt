@@ -8,7 +8,7 @@ const conv: Conversation = {
   conv: "timo-falkner",
   side: "selling",
   listing: "9000000001",
-  ad_title: "FRITZ!Box 6660 Cable",
+  ad_title: "Acme BT-200 Bluetooth-Lautsprecher",
   ad_status: "active",
   counterpart: "Timo Falkner",
   state: "open",
@@ -16,7 +16,7 @@ const conv: Conversation = {
   unread: 1,
   synthetic: true,
   messages: [
-    { from: "them", at: "2026-06-12T03:46:00Z", body: "Hi Alex, ist das noch verfügbar??" },
+    { from: "them", at: "2026-06-12T03:46:00Z", body: "Hi Robin, ist das noch verfügbar??" },
     { from: "me", at: "2026-06-12T03:47:00Z", body: "Hi, yes!" },
     { from: "them", at: "2026-06-12T03:50:00Z", body: "Empfänger: Mara Weidmann\nMusterstrasse 12" },
   ],
@@ -34,7 +34,7 @@ test("a conversation round-trips through serialize -> parse unchanged (me/them +
   expect(back.conv).toBe(conv.conv);
   expect(back.side).toBe("selling");
   expect(back.listing).toBe(conv.listing);
-  expect(back.ad_title).toBe("FRITZ!Box 6660 Cable");
+  expect(back.ad_title).toBe("Acme BT-200 Bluetooth-Lautsprecher");
   expect(back.ad_status).toBe("active");
   expect(back.counterpart).toBe(conv.counterpart);
   expect(back.awaiting).toBe("me");
@@ -49,7 +49,7 @@ test("a conversation round-trips through serialize -> parse unchanged (me/them +
 });
 
 test("the H1 title uses ad_title when present, else `listing N`", () => {
-  expect(serializeConversation(conv)).toContain("# Timo Falkner — FRITZ!Box 6660 Cable");
+  expect(serializeConversation(conv)).toContain("# Timo Falkner — Acme BT-200 Bluetooth-Lautsprecher");
   const noTitle = serializeConversation({ ...conv, ad_title: "" });
   expect(noTitle).toContain("# Timo Falkner — listing 9000000001");
 });
@@ -93,7 +93,7 @@ test("latestCounterpartMessage skips your replies; lastMessage returns the very 
 });
 
 test("priorCounterpartBodies returns every counterpart body before the latest (yours excluded)", () => {
-  expect(priorCounterpartBodies(conv)).toEqual(["Hi Alex, ist das noch verfügbar??"]);
+  expect(priorCounterpartBodies(conv)).toEqual(["Hi Robin, ist das noch verfügbar??"]);
   expect(priorCounterpartBodies({ ...conv, messages: [] })).toEqual([]);
 });
 
