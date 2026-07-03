@@ -52,6 +52,9 @@ export const flow = {
         "From your notes: the cutover moved to July 15, gated on the two-week parallel-run numbers. Boris owns it. The earlier June date is superseded.",
     },
   ],
+  terminalLabel: "one chat, three weeks apart",
+  terminalCaption:
+    "You hand over a transcript and imprnt files it into people, projects, and events. Three weeks later you ask in plain words, and the answer comes back from those files, with the old date marked superseded, not dropped.",
   noteLabel: "the file behind that answer",
   noteCaption:
     "This is the real shape of a note. A few labeled lines up top that code can check, prose you can read, and links that wire it to the people and meetings around it. When a fact changes, the old line is struck and stamped, never silently overwritten.",

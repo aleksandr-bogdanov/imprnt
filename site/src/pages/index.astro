@@ -38,7 +38,7 @@ const icons: Record<string, string> = {
         </p>
 
         <div class="mt-8 flex flex-wrap items-center gap-3" data-reveal data-reveal-delay="180">
-          <div class="flex items-center gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3 font-mono text-sm">
+          <div class="flex items-start gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3 font-mono text-sm">
             <span class="select-none text-green">$</span>
             <span class="text-ink">{site.install}</span>
             <CopyButton client:visible value={site.install} label="install command" />
@@ -56,8 +56,7 @@ const icons: Record<string, string> = {
       </div>
 
       <div class="lg:pb-10" data-reveal data-reveal-delay="160">
-        <HeroGraph client:load />
-        <p class="mt-4 text-center font-mono text-[11px] text-ink-faint lg:hidden">{hero.graphHintMobile}</p>
+        <HeroGraph client:load hintMobile={hero.graphHintMobile} />
       </div>
     </div>
   </section>
@@ -104,7 +103,9 @@ const icons: Record<string, string> = {
 
       <div class="mt-12 grid items-start gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-12">
         <div data-reveal data-reveal-delay="120">
+          <p class="mb-3 font-mono text-xs text-green">&#8627; {flow.terminalLabel}</p>
           <Terminal client:visible lines={flow.terminal} />
+          <p class="mt-4 text-sm text-ink-soft">{flow.terminalCaption}</p>
         </div>
         <div data-reveal data-reveal-delay="200">
           <p class="mb-3 font-mono text-xs text-green">&#8627; {flow.noteLabel}</p>
@@ -186,7 +187,7 @@ const icons: Record<string, string> = {
       <p class="mx-auto mt-4 max-w-md text-lg text-ink-soft" data-reveal data-reveal-delay="80">{closing.sub}</p>
 
       <div class="mt-9 flex justify-center" data-reveal data-reveal-delay="140">
-        <div class="flex items-center gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3 font-mono text-sm">
+        <div class="flex items-start gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3 text-left font-mono text-sm">
           <span class="select-none text-green">$</span>
           <span class="text-ink">{closing.install}</span>
           <CopyButton client:visible value={closing.install} label="install command" />
