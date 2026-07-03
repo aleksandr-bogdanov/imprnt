@@ -1,0 +1,41 @@
+---
+title: Timemachine
+description: Snapshots your working tree before each change, so you can recover what the agent breaks.
+---
+
+import TimemachineTimeline from "../../src/components/docs/TimemachineTimeline.astro";
+import TimemachineCapture from "../../src/components/docs/TimemachineCapture.astro";
+
+Before the agent runs any tool that changes files, timemachine **snapshots** your working tree, so anything it deletes or overwrites can come back. Run a session with `--dangerously-skip-permissions` (the mode where the agent acts without asking first) and there is no prompt between the agent and your files. Plain git protects only what you committed: if the agent clobbers an uncommitted change or a file you never added, that work is gone for good. With a snapshot taken first, you get it back.
+
+<TimemachineTimeline />
+
+## How it works
+
+A **harness** plugin, one that dresses up the session itself and never touches your notes. It registers a hook that fires just before any file-changing tool runs (Edit, Write, Bash, and the rest - a **PreToolUse** hook, in Claude Code terms). The hook saves your tree as a commit under `refs/timemachine/`, a side shelf inside your repo's own `.git` storage that sits on no branch, then lets the tool run. It never blocks anything. A safety net, not a gate.
+
+<TimemachineCapture />
+
+## Commands
+
+```sh
+node plugins/timemachine/timemachine.js list                 # snapshots, newest first
+node plugins/timemachine/timemachine.js restore <id> <path>  # bring a file back into the working tree
+node plugins/timemachine/timemachine.js show <id>            # what a snapshot holds
+node plugins/timemachine/timemachine.js status               # count, location, last snapshot time
+node plugins/timemachine/timemachine.js wipe                 # delete every snapshot in this repo
+```
+
+If the agent clobbered something, run `list`, find a recent snapshot, and `restore` the path. **Commit** once the file is back.
+
+## Install
+
+```sh
+imprnt plugin add timemachine
+```
+
+This copies the plugin into `plugins/timemachine/` and wires it as a native Claude Code plugin. `imp` passes the folder to every Claude Code session it launches, so the hook is active without touching your Claude settings. (A gemini session cannot host Claude hooks, so `imp --gemini` skips timemachine with a warning and runs without the safety net.) Remove with `imprnt plugin rm timemachine`, adding `--purge` to delete the folder too. Existing snapshots stay in `.git` until you `wipe` them.
+
+## Limits
+
+It protects files inside a git repo only, so it pairs with keeping your work in git. It is **damage recovery**, not security and not an off-machine backup. And a snapshot preserves the state before each tool rather than stopping the tool: the agent still does the thing, you just get to undo it.

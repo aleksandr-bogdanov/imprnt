@@ -1,0 +1,37 @@
+---
+title: Telegram
+description: Reach your vault from your phone. Text a bot, the answer comes from your notes.
+---
+
+import TelegramPhone from "../../src/components/docs/TelegramPhone.astro";
+
+Reach your vault from your **phone**. A session keeps running on your machine at home with a Telegram bot wired in. You text the bot a question ("what do I know about the access-platform cutover?") or a fact to file ("remember: the dentist moved to the 24th"), the session searches the vault and texts the answer back. Your notes stay on your machine. Only the conversation transits Telegram.
+
+<TelegramPhone />
+
+## How it works
+
+A **bridge** plugin built on Claude Code channels, a research preview that lets a chat app deliver messages into a running session. A long-lived imp session runs inside your vault (`imp lair`) with the channel enabled. A message from your phone arrives as a channel event, and the reply goes back the same way. The plugin wraps the official Telegram channel with the vault-side **behavior rules**: search the vault first, answer in phone-sized replies, never paste a whole note.
+
+## Commands
+
+```sh
+# start the link: run the vault session with the channel, keep the Mac awake
+sh plugins/telegram/link.sh
+```
+
+This runs the session under `caffeinate`, so the machine stays awake while the link is up. Stop with Ctrl-C. It is a command you run when you leave the desk, never a daemon.
+
+## Install
+
+```sh
+imprnt plugin add telegram
+```
+
+That wires in the behavior rules. Then a one-time channel setup, in any Claude Code session: create a bot with [BotFather](https://t.me/BotFather), install the official channel plugin, give it the token, and pair your phone with `/telegram:access`. Set the access policy to **allowlist** so only you can reach the session. Remove with `imprnt plugin rm telegram`.
+
+## Limits
+
+- The session answers only while it is running on an **awake** machine. A message sent while the link is down arrives when you next start it (Telegram holds undelivered bot updates for a limited time, roughly a day). There is no way to cold-start a local session from the phone.
+- Telegram bot chats are **not** end-to-end encrypted. Your questions and the answers pass through Telegram's servers, so keep the bot private and the allowlist on.
+- The official channel (v0.0.6) has a bug that pins a CPU core when two pollers share a token. The plugin ships `fix-cpu-leak.mjs` to re-apply the community fix. Run it after install and after any channel-plugin update.

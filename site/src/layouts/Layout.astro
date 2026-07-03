@@ -43,7 +43,8 @@ const ogImage = Astro.site ? new URL("/og.png", Astro.site).href : "/og.png";
 
     <!-- resolve the theme before paint (no flash). Shares Starlight's
          localStorage key so the docs toggle and the landing toggle stay in sync.
-         No stored choice falls back to dark, the brand's default look. -->
+         No stored choice falls back to dark, the brand's default look. The
+         theme-color meta follows, so mobile browser chrome matches the page. -->
     <script is:inline>
       (() => {
         const stored = localStorage.getItem("starlight-theme");
@@ -56,6 +57,8 @@ const ogImage = Astro.site ? new URL("/og.png", Astro.site).href : "/og.png";
                 : "dark"
               : "dark";
         document.documentElement.dataset.theme = theme;
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute("content", theme === "light" ? "#f6f4ec" : "#0a0b0d");
       })();
     </script>
 
@@ -68,7 +71,7 @@ const ogImage = Astro.site ? new URL("/og.png", Astro.site).href : "/og.png";
   </head>
   <body class="grain">
     <a
-      href="#how"
+      href="#top"
       class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-green focus:px-4 focus:py-2 focus:text-green-ink"
     >
       Skip to content
@@ -81,7 +84,7 @@ const ogImage = Astro.site ? new URL("/og.png", Astro.site).href : "/og.png";
     </div>
 
     <Nav />
-    <main id="top">
+    <main id="top" tabindex="-1" class="focus:outline-none">
       <slot />
     </main>
     <Footer />

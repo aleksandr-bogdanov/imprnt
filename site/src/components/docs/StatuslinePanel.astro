@@ -8,7 +8,9 @@
  * values are verbatim from the source panel: this is data, the card only colors
  * it. No borders, theme-token surface for the page, fixed dark terminal inside.
  */
-const ROWS = [
+type Seg = { t: string; ramp?: string; calm?: boolean; gauge?: boolean; hook?: string };
+type Row = { label: string; segs: Seg[] };
+const ROWS: Row[] = [
   {
     label: "model",
     segs: [
@@ -25,8 +27,8 @@ const ROWS = [
   {
     label: "ctx",
     segs: [
-      { t: "▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱", calm: true, gauge: true },
-      { t: "48%", ramp: "calm" },
+      { t: "▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱", calm: true, gauge: true, hook: "gauge" },
+      { t: "48%", ramp: "calm", hook: "pct" },
       { t: "effort high" },
     ],
   },
@@ -56,7 +58,7 @@ const ROWS = [
           <span class="sl-segs">
             {row.segs.map((seg, i) => (
               <span class={`sl-seg${seg.ramp ? ` ramp-${seg.ramp}` : ""}${seg.calm ? " ramp-calm" : ""}${seg.gauge ? " sl-seg-gauge" : ""}`}>
-                {seg.t}
+                {seg.hook ? <span data-hook={seg.hook}>{seg.t}</span> : seg.t}
                 {i < row.segs.length - 1 && <span class="sl-sep" aria-hidden="true">·</span>}
               </span>
             ))}
@@ -169,3 +171,46 @@ const ROWS = [
     }
   }
 </style>
+
+<script>
+  // Micro-motion: the ctx gauge fills to 48% the first time the panel scrolls
+  // into view, so the meter reads as a live thing. Once, then static. Skipped
+  // under prefers-reduced-motion, and without JS the panel is simply static.
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  for (const panel of document.querySelectorAll<HTMLElement>(".sl-panel")) {
+    const gauge = panel.querySelector<HTMLElement>('[data-hook="gauge"]');
+    const pct = panel.querySelector<HTMLElement>('[data-hook="pct"]');
+    if (!gauge || !pct || reduce || !("IntersectionObserver" in window)) continue;
+    const finalGauge = gauge.textContent ?? "";
+    const finalPct = pct.textContent ?? "";
+    const cells = finalGauge.length;
+    const fill = (finalGauge.match(/▰/g) ?? []).length;
+    const target = parseInt(finalPct, 10);
+    if (!cells || Number.isNaN(target)) continue;
+    new IntersectionObserver(
+      (entries, obs) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        obs.disconnect();
+        const t0 = performance.now();
+        const dur = 900;
+        const tick = (now: number) => {
+          const p = Math.min(1, (now - t0) / dur);
+          if (p >= 1) {
+            gauge.textContent = finalGauge;
+            pct.textContent = finalPct;
+            return;
+          }
+          const ease = 1 - Math.pow(1 - p, 3);
+          const f = Math.round(ease * fill);
+          gauge.textContent = "▰".repeat(f) + "▱".repeat(cells - f);
+          // figure-space pad keeps the row from jittering while the number
+          // grows (terminal-mock scaffolding, same trick the real script uses)
+          pct.textContent = `${String(Math.round(ease * target)).padStart(2, " ")}%`;
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      },
+      { threshold: 0.35 },
+    ).observe(panel);
+  }
+</script>

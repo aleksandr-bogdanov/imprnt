@@ -2,14 +2,18 @@
 /**
  * The one rule, pulled out of prose into a single highlighted banner so the eye
  * lands on it. Borderless: a filled accent surface, the litmus line in large
- * type. Scoped CSS, theme-aware via Starlight tokens (no Tailwind on docs pages).
+ * type. It sits right under the kinds diagram, whose "edits to core: 0" counter
+ * is this rule running live, so the "zero edits" phrase carries the accent.
+ * Scoped CSS, theme-aware via Starlight tokens (no Tailwind on docs pages).
+ * The entrance rise is scroll-gated by a tiny IntersectionObserver and skipped
+ * under reduced motion or without JS.
  */
 ---
 
-<div class="banner">
+<div class="banner reveal">
   <span class="label">the one rule</span>
   <p class="line">
-    You can add or remove <strong>any</strong> plugin with zero edits to core code.
+    You can add or remove any plugin with <strong>zero edits</strong> to core code.
   </p>
   <p class="sub">If a plugin forces a core edit, the plugin is wrong. That is what stops imprnt from growing to know about every add-on, the rot that bloats this kind of system over time.</p>
 </div>
@@ -20,6 +24,17 @@
     padding: 1.3rem 1.5rem;
     border-radius: 16px;
     background: color-mix(in oklab, var(--sl-color-text-accent) 13%, var(--sl-color-bg));
+  }
+  .reveal {
+    opacity: 0;
+    transform: translateY(14px);
+    transition:
+      opacity 0.55s ease,
+      transform 0.55s cubic-bezier(0.22, 0.65, 0.3, 1);
+  }
+  .reveal.in {
+    opacity: 1;
+    transform: none;
   }
   .label {
     display: inline-block;
@@ -48,9 +63,45 @@
     line-height: 1.5;
     color: var(--sl-color-gray-2);
   }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal,
+    .reveal.in {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+  }
+  /* with scripts off the observer never fires, so never hide the content */
+  @media (scripting: none) {
+    .reveal {
+      opacity: 1;
+      transform: none;
+    }
+  }
   @media (max-width: 640px) {
     .line {
       font-size: 1.1rem;
     }
   }
 </style>
+
+<script>
+  // scroll-gated entrance: reveal immediately under reduced motion or when
+  // IntersectionObserver is missing, otherwise rise in on first view
+  const els = document.querySelectorAll(".banner.reveal");
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window)) {
+    for (const el of els) el.classList.add("in");
+  } else {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries)
+          if (e.isIntersecting) {
+            e.target.classList.add("in");
+            io.unobserve(e.target);
+          }
+      },
+      { threshold: 0.15 },
+    );
+    for (const el of els) io.observe(el);
+  }
+</script>

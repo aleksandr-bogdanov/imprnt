@@ -1,0 +1,249 @@
+---
+/**
+ * Page-specific (timemachine): the story of one session as a vertical
+ * timeline. A snapshot dot lands before each tool chip, a Bash step deletes
+ * notes.md, and a restore row pulls the file back out of the last snapshot
+ * that holds it. A measured arc on the left connects that snapshot to the
+ * restore row, so the recovery path is drawn, not narrated. Tool names
+ * (Edit, Write, Bash) and the restore command shape are the real ones from
+ * the doc. All row titles share one mono family. Filled markers, theme
+ * tokens, no border boxes. The arc and the staggered reveal are progressive
+ * enhancement: without JS the timeline is simply visible, without motion
+ * preference nothing animates.
+ */
+type Step = {
+  kind: "snap" | "tool" | "bad" | "restore";
+  title: string;
+  code?: string;
+  note: string;
+  arc?: "from" | "to";
+};
+const STEPS: Step[] = [
+  { kind: "snap", title: "snapshot", note: "your whole tree, saved before anything runs" },
+  { kind: "tool", title: "Edit", note: "the agent changes a file" },
+  { kind: "snap", title: "snapshot", note: "saved again" },
+  { kind: "tool", title: "Write", note: "the agent writes a new file" },
+  { kind: "snap", title: "snapshot", note: "notes.md is safe in this one", arc: "from" },
+  { kind: "bad", title: "Bash", code: "rm notes.md", note: "the file vanishes from your folder" },
+  {
+    kind: "restore",
+    title: "restore",
+    code: "restore <id> notes.md",
+    note: "one command copies the file back into your tree",
+    arc: "to",
+  },
+];
+---
+
+<div
+  class="tmt"
+  role="img"
+  aria-label="Timeline of a session: a snapshot is saved before each tool runs. A Bash command deletes notes.md, and restore copies the file back out of the last snapshot that holds it."
+>
+  <div class="tmt-arc" aria-hidden="true"></div>
+  <div class="tmt-rows">
+    {
+      STEPS.map((s) => (
+        <div class={`tmt-row tmt-${s.kind}`}>
+          <span class="tmt-marker" data-arc={s.arc} aria-hidden="true" />
+          <span class="tmt-body">
+            <span class="tmt-title">{s.title}</span>
+            {s.code && <code class="tmt-code">{s.code}</code>}
+            <span class="tmt-note">{s.note}</span>
+          </span>
+        </div>
+      ))
+    }
+  </div>
+</div>
+
+<style>
+  .tmt {
+    position: relative;
+    margin: 1.4rem 0;
+    padding: 1.05rem 1.1rem 1.05rem 2.1rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 8%, var(--sl-color-bg));
+    box-shadow: 0 1px 3px color-mix(in oklab, #000 18%, transparent);
+  }
+  .tmt-rows {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+  /* the rail: one vertical line behind the markers */
+  .tmt-rows::before {
+    content: "";
+    position: absolute;
+    left: 0.36rem;
+    top: 0.7rem;
+    bottom: 0.7rem;
+    width: 2px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 45%, transparent);
+  }
+  .tmt-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .tmt-marker {
+    position: relative;
+    z-index: 1;
+    flex: 0 0 auto;
+    width: 0.82rem;
+    height: 0.82rem;
+    margin-top: 0.28rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 60%, var(--sl-color-bg));
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--sl-color-gray-3) 8%, var(--sl-color-bg));
+  }
+  .tmt-snap .tmt-marker {
+    background: var(--sl-color-text-accent);
+  }
+  .tmt-bad .tmt-marker {
+    background: #c96a6a;
+  }
+  .tmt-restore .tmt-marker {
+    background: #7fb069;
+  }
+  .tmt-body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.3rem 0.55rem;
+    min-width: 0;
+    padding: 0.32rem 0.6rem;
+    border-radius: 9px;
+  }
+  .tmt-snap .tmt-body {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 8%, var(--sl-color-bg));
+  }
+  .tmt-bad .tmt-body {
+    background: color-mix(in oklab, #c96a6a 13%, var(--sl-color-bg));
+  }
+  .tmt-restore .tmt-body {
+    background: color-mix(in oklab, #7fb069 14%, var(--sl-color-bg));
+  }
+  .tmt-title {
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .tmt-snap .tmt-title {
+    color: var(--sl-color-text-accent);
+  }
+  .tmt-restore .tmt-title {
+    color: #7fb069;
+  }
+  .tmt-code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    padding: 0.06rem 0.42rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-bg) 74%, transparent);
+    color: var(--sl-color-gray-1);
+    overflow-wrap: anywhere;
+  }
+  .tmt-bad .tmt-code {
+    color: #c96a6a;
+    font-weight: 700;
+  }
+  .tmt-note {
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+  /* the recovery arc: measured and placed by the script, hidden until then.
+     It bulges left of the rail and its arms reach back toward the markers. */
+  .tmt-arc {
+    position: absolute;
+    left: 0.45rem;
+    width: 1.55rem;
+    opacity: 0;
+    border: 2px solid #7fb069;
+    border-right: 0;
+    border-radius: 10px 0 0 10px;
+    pointer-events: none;
+  }
+  .tmt-arc::after {
+    content: "";
+    position: absolute;
+    right: -5px;
+    bottom: -4px;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 7px solid #7fb069;
+  }
+  /* staggered reveal, armed by JS only */
+  .tmt-armed .tmt-row {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .tmt-in .tmt-row {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.4s ease,
+      transform 0.4s ease;
+  }
+  .tmt-in .tmt-row:nth-child(2) { transition-delay: 0.08s; }
+  .tmt-in .tmt-row:nth-child(3) { transition-delay: 0.16s; }
+  .tmt-in .tmt-row:nth-child(4) { transition-delay: 0.24s; }
+  .tmt-in .tmt-row:nth-child(5) { transition-delay: 0.32s; }
+  .tmt-in .tmt-row:nth-child(6) { transition-delay: 0.4s; }
+  .tmt-in .tmt-row:nth-child(7) { transition-delay: 0.48s; }
+  .tmt-armed .tmt-arc {
+    transition: opacity 0.5s ease 0.85s;
+  }
+  @media (max-width: 480px) {
+    .tmt {
+      padding-left: 1.8rem;
+      padding-right: 0.8rem;
+    }
+  }
+</style>
+
+<script>
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function placeArc(root: HTMLElement) {
+    const arc = root.querySelector<HTMLElement>(".tmt-arc");
+    const from = root.querySelector<HTMLElement>('[data-arc="from"]');
+    const to = root.querySelector<HTMLElement>('[data-arc="to"]');
+    if (!arc || !from || !to) return;
+    const base = root.getBoundingClientRect();
+    const f = from.getBoundingClientRect();
+    const t = to.getBoundingClientRect();
+    const top = f.top - base.top + f.height / 2;
+    const bottom = t.top - base.top + t.height / 2;
+    arc.style.top = `${top}px`;
+    arc.style.height = `${bottom - top}px`;
+  }
+
+  for (const root of document.querySelectorAll<HTMLElement>(".tmt")) {
+    placeArc(root);
+    window.addEventListener("resize", () => placeArc(root));
+
+    const show = () => {
+      root.classList.add("tmt-in");
+      const arc = root.querySelector<HTMLElement>(".tmt-arc");
+      if (arc) arc.style.opacity = "1";
+    };
+    if (reduce || !("IntersectionObserver" in window)) {
+      show();
+      continue;
+    }
+    root.classList.add("tmt-armed");
+    new IntersectionObserver(
+      (entries, obs) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        obs.disconnect();
+        show();
+      },
+      { threshold: 0.25 },
+    ).observe(root);
+  }
+</script>

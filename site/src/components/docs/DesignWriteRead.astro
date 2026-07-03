@@ -1,0 +1,149 @@
+---
+/**
+ * Page-specific (design-decisions). The frequency axis behind "ration the
+ * model", drawn as two lanes: filing runs once per item and gets the model,
+ * search runs thousands of times a day and runs on plain local code. Dots
+ * carry the frequency at a glance, with a light staggered shimmer where
+ * motion is welcome. Borderless tinted surfaces, scoped CSS, theme-aware via
+ * Starlight tokens, no Tailwind.
+ */
+const READ_DOTS = 18;
+---
+
+<div class="wr">
+  <div class="wr-lane">
+    <div class="wr-meta">
+      <span class="wr-name">Filing a note</span>
+      <span class="wr-freq">once per item</span>
+    </div>
+    <div class="wr-track" aria-hidden="true">
+      <span class="wr-dot wr-dot-model"></span>
+    </div>
+    <span class="wr-actor wr-actor-model">the model</span>
+  </div>
+  <div class="wr-lane">
+    <div class="wr-meta">
+      <span class="wr-name">Searching</span>
+      <span class="wr-freq">thousands of times a day</span>
+    </div>
+    <div class="wr-track" aria-hidden="true">
+      {Array.from({ length: READ_DOTS }).map((_, i) => <span class="wr-dot" style={`--wr-i: ${i};`} />)}
+    </div>
+    <span class="wr-actor">plain local code</span>
+  </div>
+</div>
+
+<style>
+  .wr {
+    display: grid;
+    gap: 0.6rem;
+    margin: 1.3rem 0;
+  }
+  .wr > * {
+    margin-top: 0;
+  }
+  .wr-lane {
+    display: grid;
+    grid-template-columns: 10.5rem 1fr auto;
+    align-items: center;
+    gap: 1rem;
+    border-radius: 12px;
+    padding: 0.85rem 1.1rem;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg));
+  }
+  .wr-lane > * {
+    margin-top: 0;
+  }
+  .wr-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .wr-name {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.92rem;
+    line-height: 1.3;
+    color: var(--sl-color-white);
+  }
+  .wr-freq {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .wr-track {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 14px;
+    overflow: hidden;
+  }
+  .wr-dot {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--sl-color-text-accent);
+    opacity: 0.75;
+  }
+  .wr-dot-model {
+    width: 13px;
+    height: 13px;
+    opacity: 1;
+    box-shadow: 0 0 12px color-mix(in oklab, var(--sl-color-text-accent) 55%, transparent);
+  }
+  .wr-actor {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--sl-color-gray-2);
+    padding: 0.3rem 0.65rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-gray-4) 50%, var(--sl-color-bg));
+  }
+  .wr-actor-model {
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .wr-dot {
+      animation: wr-shimmer 2.8s ease-in-out infinite;
+      animation-delay: calc(var(--wr-i, 0) * 0.12s);
+    }
+    .wr-dot-model {
+      animation: wr-glow 2.8s ease-in-out infinite;
+    }
+  }
+  @keyframes wr-shimmer {
+    0%,
+    30%,
+    100% {
+      opacity: 0.35;
+    }
+    12% {
+      opacity: 1;
+    }
+  }
+  @keyframes wr-glow {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.18);
+    }
+  }
+  @media (max-width: 640px) {
+    .wr-lane {
+      grid-template-columns: 1fr auto;
+      gap: 0.6rem 1rem;
+    }
+    .wr-meta {
+      grid-column: 1 / -1;
+    }
+  }
+</style>

@@ -23,9 +23,9 @@ import { footer, site } from "../lib/content";
               <li>
                 <a
                   href={link.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  class="text-sm text-ink-soft transition-colors hover:text-green"
+                  target={link.external ? "_blank" : undefined}
+                  rel={link.external ? "noreferrer" : undefined}
+                  class="text-sm text-ink-soft transition-colors hover:text-ink"
                 >
                   {link.label}
                 </a>

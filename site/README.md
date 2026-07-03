@@ -32,9 +32,10 @@ Node 18 or newer also works with `npm`.
 
 ## Where the copy lives
 
-All site copy is data in `src/lib/content.ts`, one place to read and one place to scan. The
-anti-slop rules apply to every word: no em-dashes, no semicolons, no banned words, no
-negate-then-affirm. Scan before shipping.
+Site copy is data, one place to read and one place to scan. Shared strings (site name, install
+command, nav, footer) live in `src/lib/content.ts`, which Nav, Footer, and Layout read. Landing
+copy lives in `src/lib/landing.ts`. The anti-slop rules apply to every word: no em-dashes, no
+semicolons, no banned words, no negate-then-affirm. Scan before shipping.
 
 ## Deploy (Railway, config as code)
 

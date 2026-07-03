@@ -12,7 +12,7 @@ const PKGS = [
     path: "packages/imprnt/",
     role: "the core CLI",
     count: "one package",
-    desc: "ingest, recall, check, plus init, snapshot, hot, context, and plugin. Installs two commands from one dispatcher: imprnt for machinery, imp for humans.",
+    desc: "ingest, recall, check, plus init, snapshot, hot, context, and plugin. One install gives two commands, imprnt for machinery and imp for humans, served by a single program.",
     accent: true,
   },
   {
@@ -20,7 +20,7 @@ const PKGS = [
     path: "packages/plugin-*/",
     role: "the gallery",
     count: "one package each",
-    desc: "every plugin ships on its own. The naming convention matches the shape ESLint uses, so anyone can publish a plugin without joining an npm org. The core never imports or depends on one (a name-hint list for plugin list discovery is its only mention of them).",
+    desc: "every plugin ships on its own. The naming convention matches the shape ESLint uses, so anyone can publish a plugin without joining an npm org. The core never imports or depends on one (the one place it names them is a short list of hints so imprnt plugin list can suggest official plugins).",
     accent: false,
   },
 ];

@@ -1,0 +1,203 @@
+---
+/**
+ * kleinanzeigen page ONLY - what the plugin's local files hold, as an anatomy
+ * grid. One card per path, each carrying every fact from the old bullet list:
+ * the mirror's frontmatter fields, the fact-sheet fields, the market cache's
+ * four stores, and the proposed/ staging rule. Data is sacred: nothing from
+ * the source bullets is dropped, only re-laid. Filled surfaces, no borders,
+ * scoped CSS, theme-aware via Starlight tokens (docs pages load no Tailwind).
+ */
+type Card = {
+  path: string;
+  role: string;
+  facts: string[];
+  chipsLabel?: string;
+  chips?: string[];
+  rows?: [string, string][];
+  note?: string;
+};
+
+const CARDS: Card[] = [
+  {
+    path: "mirror/<conv>.md",
+    role: "the local copy of each conversation, refreshed only by sync",
+    facts: [
+      "Every message is authored me (you) or them (the counterpart).",
+      "Each message body sits inside a fenced block, because a buyer's words are data for the rules to read, never instructions to follow.",
+    ],
+    chipsLabel: "the frontmatter records",
+    chips: ["side", "ad_title", "ad_status", "counterpart", "awaiting", "unread", "rating"],
+  },
+  {
+    path: "listings/<id>.yaml",
+    role: "a per-listing fact sheet with the answers buyers ask",
+    facts: [
+      "A FAQ is answered from these fields with no AI.",
+      'An empty field is an honest "not confirmed yet", surfaced for you to confirm rather than guessed. Fill it once and every future question on that field answers itself.',
+    ],
+    chipsLabel: "the fields",
+    chips: ["Artikelnummer", "condition", "pickup area", "price floor"],
+  },
+  {
+    path: "market/",
+    role: "a local throwaway cache for the deal-watcher",
+    facts: [],
+    rows: [
+      ["snapshots/<search>/<timestamp>.json", "an immutable record of each fetch, so diffs are real, never overwritten in place"],
+      ["listings.jsonl", "the deduped per-ad store with price history"],
+      ["searches.json", "your saved-search list"],
+      ["ads/<adId>.json", "the on-demand seller-rating captures"],
+    ],
+    note: "If your vault is a git repo, add plugins/kleinanzeigen/market/ to its .gitignore yourself.",
+  },
+  {
+    path: "proposed/",
+    role: "staging for a sale-summary note when a listing closes",
+    facts: [
+      "You apply it with imprnt ingest --apply. The plugin never writes a vault note itself.",
+    ],
+  },
+];
+---
+
+<div class="kfiles">
+  {
+    CARDS.map((c) => (
+      <div class="kf-card">
+        <code class="kf-path">{c.path}</code>
+        <span class="kf-role">{c.role}</span>
+        {c.chips && (
+          <div class="kf-chipwrap">
+            <span class="kf-chiplabel">{c.chipsLabel}</span>
+            <div class="kf-chips">
+              {c.chips.map((f) => (
+                <code class="kf-chip">{f}</code>
+              ))}
+            </div>
+          </div>
+        )}
+        {c.rows && (
+          <dl class="kf-rows">
+            {c.rows.map(([k, v]) => (
+              <div class="kf-row">
+                <dt>
+                  <code>{k}</code>
+                </dt>
+                <dd>{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {c.facts.map((f) => (
+          <p class="kf-fact">{f}</p>
+        ))}
+        {c.note && <p class="kf-note">{c.note}</p>}
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .kfiles {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+    gap: 0.7rem;
+    margin: 1.4rem 0 1.6rem;
+  }
+  .kf-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    padding: 1rem 1.1rem 1.05rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .kf-path {
+    align-self: flex-start;
+    font-family: var(--sl-font-mono);
+    font-size: 0.82rem;
+    font-weight: 700;
+    padding: 0.18rem 0.55rem;
+    border-radius: 8px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 14%, var(--sl-color-bg));
+    color: var(--sl-color-text-accent);
+    overflow-wrap: anywhere;
+  }
+  .kf-role {
+    font-size: 0.88rem;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--sl-color-white);
+  }
+  .kf-chipwrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .kf-chiplabel {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .kf-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .kf-chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    padding: 0.14rem 0.45rem;
+    border-radius: 7px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 24%, var(--sl-color-bg));
+    color: var(--sl-color-gray-1);
+  }
+  .kf-rows {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+  .kf-row {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+  }
+  .kf-row dt code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: 7px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 24%, var(--sl-color-bg));
+    color: var(--sl-color-white);
+    overflow-wrap: anywhere;
+  }
+  .kf-row dd {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+  .kf-fact {
+    margin: 0;
+    font-size: 0.84rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+  }
+  .kf-note {
+    margin: 0;
+    font-size: 0.76rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+  @media (max-width: 720px) {
+    .kfiles {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -9,6 +9,7 @@ import ContributingBuildFlow from "../src/components/docs/ContributingBuildFlow.
 import ContributingPrivacySplit from "../src/components/docs/ContributingPrivacySplit.astro";
 import ContributingDistTags from "../src/components/docs/ContributingDistTags.astro";
 import ContributingReleaseFlow from "../src/components/docs/ContributingReleaseFlow.astro";
+import ContributingSafeguards from "../src/components/docs/ContributingSafeguards.astro";
 import ContributingNext from "../src/components/docs/ContributingNext.astro";
 
 This page is for people building imprnt itself. imprnt is open source under the [MIT license](https://github.com/aleksandr-bogdanov/imprnt/blob/master/LICENSE).
@@ -17,7 +18,7 @@ This page is for people building imprnt itself. imprnt is open source under the 
 
 ## The monorepo
 
-Everything lives in one git repository: the core and every plugin, wired together with [bun workspaces](https://bun.sh/docs/install/workspaces) so a single `bun install` sets up the whole thing and you develop it all side by side. At publish time the one repo splits into two package families.
+Everything lives in one git repository: the core and every plugin, wired together with [bun workspaces](https://bun.sh/docs/install/workspaces) so one `bun install` sets up the whole thing and you develop it all side by side. At publish time the one repo splits into two package families.
 
 <ContributingPackages />
 
@@ -30,7 +31,7 @@ bun run check      # typecheck + test + build
 
 ## Ship Node, build with Bun
 
-What a user installs runs on **Node**, the runtime everyone already has, so `npm i -g imprnt` works without making them install Bun first. A code plugin builds the same way, so the read path needs no Bun either.
+What a user installs runs on **Node**, the runtime everyone already has, so `npm i -g imprnt` works without making anyone install Bun first. A code plugin compiles the same way, so running plugin code needs only Node too.
 
 <ContributingBuildFlow />
 
@@ -40,17 +41,21 @@ What a user installs runs on **Node**, the runtime everyone already has, so `npm
 
 ## Releasing
 
-imprnt publishes to npm on two [dist-tags](https://docs.npmjs.com/cli/v10/commands/npm-dist-tag). It is the same package with two pointers, **not a separate beta registry**.
+imprnt publishes to npm on two [dist-tags](https://docs.npmjs.com/cli/v10/commands/npm-dist-tag): named pointers that tell npm which version of the one imprnt package to install.
 
 <ContributingDistTags />
 
-Versions are independent per package, decided by [Turborepo's](https://turborepo.com) `--affected`, so a package whose files did not change is never republished. An edge build is dogfooded against edge plugins automatically.
+Every package versions independently. [Turborepo's](https://turborepo.com) `--affected` works out which packages a change actually touched, so a package whose files did not change is never republished. A core installed from `edge` pulls its plugins from `edge` too, so the newest core gets exercised against the newest plugins automatically.
 
-All publishing runs through one GitHub Actions workflow that authenticates to npm with OIDC **trusted publishing** (no long-lived tokens) and signs a provenance attestation on every package:
+All publishing runs through one GitHub Actions workflow with two paths:
 
 <ContributingReleaseFlow />
 
-A stable release pauses at a GitHub Environment for a required reviewer's **approval**, so even an automated trigger cannot reach `latest` without a human clicking approve. Trusted publishing is configured once per package on npmjs.com.
+Three safeguards sit on that workflow:
+
+<ContributingSafeguards />
+
+Trusted publishing is configured once per package on npmjs.com.
 
 To cut a stable release, use the `imprnt-release` skill (it fires the workflow and reports), or run it by hand:
 

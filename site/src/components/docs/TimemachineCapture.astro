@@ -1,0 +1,135 @@
+---
+/**
+ * Page-specific (timemachine): what a snapshot holds, as a two-cell grid
+ * instead of a paragraph. The left cell is what gets captured (exactly the
+ * git add -A set), the right cell is what never does (.gitignore'd files and
+ * secret-shaped names). The footer strip carries the storage facts: local
+ * .git ref, never pushed, newest 200 kept. All patterns are verbatim from
+ * the plugin. Filled surfaces, theme tokens, no border boxes.
+ */
+const NEVER_SHAPES = [".env", "*.pem", "*.key", "*.p12", "*credentials*"];
+---
+
+<div class="tmc">
+  <div class="tmc-grid">
+    <div class="tmc-cell tmc-yes">
+      <span class="tmc-tag">captured</span>
+      <p class="tmc-lead">Exactly what <code>git add -A</code> would stage.</p>
+      <ul>
+        <li>tracked files you changed</li>
+        <li>new files git does not ignore</li>
+      </ul>
+    </div>
+    <div class="tmc-cell tmc-no">
+      <span class="tmc-tag">never captured</span>
+      <p class="tmc-lead">Anything <code>.gitignore</code> hides: your <code>.env</code>, keys, build output.</p>
+      <p class="tmc-sub">Names shaped like secrets are skipped even if you forgot to ignore them:</p>
+      <div class="tmc-chips">
+        {NEVER_SHAPES.map((s) => <code class="tmc-chip">{s}</code>)}
+      </div>
+    </div>
+  </div>
+  <div class="tmc-foot">
+    <span>snapshots live in your repo's <code>.git</code></span>
+    <span>local only, never pushed</span>
+    <span>newest 200 kept, older pruned</span>
+  </div>
+</div>
+
+<style>
+  .tmc {
+    margin: 1.4rem 0;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px color-mix(in oklab, #000 18%, transparent);
+  }
+  .tmc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+  }
+  .tmc-cell {
+    padding: 0.95rem 1.05rem 1.05rem;
+  }
+  .tmc-yes {
+    background: color-mix(in oklab, #7fb069 10%, var(--sl-color-bg));
+  }
+  .tmc-no {
+    background: color-mix(in oklab, #c96a6a 9%, var(--sl-color-bg));
+  }
+  .tmc-tag {
+    display: inline-block;
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+  .tmc-yes .tmc-tag {
+    color: #7fb069;
+  }
+  .tmc-no .tmc-tag {
+    color: #c96a6a;
+  }
+  .tmc-lead {
+    margin: 0 0 0.45rem;
+    font-size: 0.86rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+  .tmc-sub {
+    margin: 0 0 0.5rem;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+  .tmc-cell ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    color: var(--sl-color-gray-1);
+  }
+  .tmc-cell code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.82em;
+    background: color-mix(in oklab, var(--sl-color-bg) 62%, transparent);
+    padding: 0.06rem 0.34rem;
+    border-radius: 6px;
+  }
+  .tmc-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .tmc-chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-bg) 62%, transparent);
+    color: var(--sl-color-gray-1);
+    white-space: nowrap;
+  }
+  .tmc-foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 1.4rem;
+    padding: 0.6rem 1.05rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 16%, var(--sl-color-bg));
+    font-size: 0.74rem;
+    color: var(--sl-color-gray-2);
+  }
+  .tmc-foot code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.9em;
+    background: transparent;
+    padding: 0;
+  }
+  @media (max-width: 620px) {
+    .tmc-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -11,7 +11,7 @@ import PluginsInstall from "../src/components/docs/PluginsInstall.astro";
 
 The **core** is your notes plus three commands: ingest, recall, and check. Everything else is a **plugin** you add when you want it and remove with one line. The core finds plugins by the name of their folder and never depends on one (the only plugin names it carries are a display hint for `imprnt plugin list`).
 
-Every plugin is one of **three kinds**, by how it reaches the assistant. The switches below are live: pull a kind out and watch what happens to the core.
+Every plugin is one of **three kinds**, by how it reaches the assistant. The switches below are live: pull a kind out of its socket and watch what happens to the core.
 
 <PluginsKindsDiagram client:load />
 
@@ -28,3 +28,5 @@ A plugin is a folder with one instruction file, `agent.md`, that tells the assis
 ## Four rules keep the core blind
 
 <Rules />
+
+For the plugins themselves, head to the **Plugins** section in the sidebar: each page there covers one plugin, what it does, and the command that adds it.

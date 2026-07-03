@@ -21,7 +21,7 @@ const PATHS = [
     trigger: "run publish.yml mode=release",
     runs: "latest: affected since release",
     dest: "@latest",
-    note: "gated, then tag + Release",
+    note: "pauses for human approval, then tag + GitHub Release",
   },
 ];
 ---

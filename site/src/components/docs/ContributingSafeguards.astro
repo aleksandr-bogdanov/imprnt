@@ -1,0 +1,97 @@
+---
+/**
+ * contributing.mdx ONLY - the three safeguards on the publish workflow, pulled
+ * out of two dense security paragraphs into a scannable strip: no stored
+ * secrets (OIDC trusted publishing), a signed receipt (provenance attestation),
+ * and the human approval gate before latest. Categories of safeguard, not a
+ * maintained list. No borders, filled surfaces. Scoped CSS, theme-aware via
+ * --sl tokens (docs pages do not load Tailwind).
+ */
+const CELLS = [
+  {
+    k: "no stored secrets",
+    t: "Trusted publishing",
+    d: [
+      "The workflow signs in to npm with OIDC: GitHub proves which repository and workflow is publishing, run by run, so there is no long-lived token to steal.",
+    ],
+  },
+  {
+    k: "signed receipt",
+    t: "Provenance attestation",
+    d: ["Every published package carries a signed public record of the exact commit and workflow that built it."],
+  },
+  {
+    k: "human gate",
+    t: "Required approval",
+    d: [
+      "A stable release pauses at a GitHub Environment until a required reviewer clicks approve. Nothing automated reaches ",
+      { code: "latest" },
+      " on its own.",
+    ],
+  },
+];
+---
+
+<div class="sgrow">
+  {
+    CELLS.map((c) => (
+      <div class="sgcell">
+        <span class="sgk">{c.k}</span>
+        <span class="sgt">{c.t}</span>
+        <p class="sgd">{c.d.map((part) => (typeof part === "string" ? part : <code class="sgcode">{part.code}</code>))}</p>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .sgrow {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    align-items: stretch;
+    gap: 0.8rem;
+    margin: 1.2rem 0 1.1rem;
+  }
+  @media (max-width: 720px) {
+    .sgrow {
+      grid-template-columns: 1fr;
+    }
+  }
+  .sgcell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 1rem 1.1rem 1.05rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .sgk {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .sgt {
+    font-family: var(--sl-font);
+    font-weight: 700;
+    font-size: 0.98rem;
+    line-height: 1.2;
+    color: var(--sl-color-white);
+  }
+  .sgd {
+    margin: 0.15rem 0 0;
+    font-size: 0.84rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+  .sgcode {
+    font-family: var(--sl-font-mono);
+    font-size: 0.92em;
+    color: var(--sl-color-white);
+    background: none;
+    border: none;
+    padding: 0;
+    white-space: nowrap;
+  }
+</style>

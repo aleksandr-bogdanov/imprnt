@@ -1,6 +1,6 @@
 /**
- * Landing copy, as data. One place to read, one place to anti-slop scan.
- * The landing sells. The depth lives in the docs (site/docs/, rendered by Starlight).
+ * Shared site strings, as data. One place to read, one place to anti-slop scan.
+ * Nav, Footer, and Layout read from here. Landing-page copy lives in landing.ts.
  * Product voice: clean, confident, plain.
  */
 
@@ -21,87 +21,13 @@ export const nav = [
   { label: "Docs", href: "/getting-started/" },
 ];
 
-export const hero = {
-  eyebrow: "Open source · MIT · runs on your machine",
-  headlineLead: "Give your assistant a memory you",
-  headlineAccent: "own",
-  subhead:
-    "imprnt keeps what you know in plain markdown on your disk. You talk, your assistant files what matters, and weeks later it answers from your real history.",
-  ctaPrimary: { label: "Get started", href: "/getting-started/" },
-  ctaSecondary: { label: "View source", href: site.repo },
-};
+type FooterLink = { label: string; href: string; external?: boolean };
 
-export const problem = {
-  eyebrow: "The problem",
-  heading: "Your assistant forgets everything between chats.",
-  body: [
-    "Every session starts blank. You re-explain your projects, your people, and the decisions you already made, and whatever the assistant learned dies when the chat closes.",
-    "imprnt keeps the part that lasts in plain files you own. Your assistant reads from your real history every session, and no company can take it away.",
-  ],
-};
-
-export const demo = {
-  eyebrow: "How it feels",
-  heading: "Talk. It files. It recalls.",
-  lead: "Hand over a transcript, a document, or a single fact and ask. The model files structured, linked notes. Weeks later, the answer comes straight from your own vault.",
-  terminal: [
-    { who: "You", text: "Here is my 1:1 with Boris from this morning. [paste the transcript]" },
-    {
-      who: "imp",
-      text:
-        "Filed it. Created people/boris-carter, updated projects/access-platform with the new cutover date, and logged the meeting under events/.",
-    },
-    { who: "gap", text: "(three weeks later)" },
-    { who: "You", text: "What did we decide about the access-platform cutover?" },
-    {
-      who: "imp",
-      text:
-        "From your notes: the cutover moved to July 15, gated on the two-week parallel-run numbers. Boris owns it. The earlier June date is superseded.",
-    },
-  ],
-};
-
-export const different = {
-  eyebrow: "Why it's different",
-  heading: "Nothing runs until you run it.",
-  lead: "You own the files, you run the commands, and the off switch is real.",
-  features: [
-    {
-      title: "No lock-in",
-      body: "Plain markdown you own, on your disk, searched locally with no vendor memory store. Read it, grep it, open it in any editor, and keep it. The vault outlives whatever model you run this year, and the agent on top stays swappable.",
-      icon: "files",
-      href: "/comparison/",
-    },
-    {
-      title: "Cheap, local recall",
-      body: "A lookup is about a hundred tokens of local ranked search. No vector database, no server, and it never goes stale on an edit.",
-      icon: "bolt",
-      href: "/how-it-works/",
-    },
-    {
-      title: "No daemon, no cloud",
-      body: "No always-on hooks, no auto-injected context, no background loop. The model never takes an action you did not approve.",
-      icon: "shield",
-      href: "/how-it-works/",
-    },
-    {
-      title: "Plugins you delete",
-      body: "A tiny core plus opt-in plugins you add by name and remove with one line. Compose the assistant you want.",
-      icon: "blocks",
-      href: "/plugins/",
-    },
-  ],
-};
-
-export const closing = {
-  heading: "Start your vault in two commands.",
-  sub: "Open source, MIT licensed, and yours to read end to end.",
-  install: site.install,
-  ctaPrimary: { label: "Read the docs", href: "/getting-started/" },
-  ctaSecondary: { label: "Star on GitHub", href: site.repo },
-};
-
-export const footer = {
+export const footer: {
+  blurb: string;
+  copyright: string;
+  columns: { title: string; links: FooterLink[] }[];
+} = {
   blurb: "A knowledge vault you own and run locally.",
   copyright: "MIT licensed. © 2026 Aleksandr Bogdanov.",
   columns: [

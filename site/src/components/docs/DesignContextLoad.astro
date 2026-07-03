@@ -1,0 +1,129 @@
+---
+/**
+ * Page-specific (design-decisions). What a session loads up front and what
+ * arrives only on demand: two lanes, one with the small always-on chips
+ * (behavior plugins, the vault pointer), one with the full filing contract
+ * printed by imprnt context only when a session writes. Chip width carries
+ * the size story. Borderless tinted surfaces, scoped CSS, theme-aware,
+ * no Tailwind.
+ */
+---
+
+<div class="dcl">
+  <div class="dcl-lane">
+    <div class="dcl-head">
+      <span class="dcl-tag">every session</span>
+      <span class="dcl-sub">always loaded, small</span>
+    </div>
+    <div class="dcl-items">
+      <span class="dcl-chip">your behavior plugins</span>
+      <span class="dcl-chip dcl-chip-accent">a vault pointer</span>
+    </div>
+    <p class="dcl-note">The pointer says the vault exists, when to search it, and where to write.</p>
+  </div>
+  <div class="dcl-lane dcl-lane-demand">
+    <div class="dcl-head">
+      <span class="dcl-tag">only when you write</span>
+      <span class="dcl-sub">printed on demand</span>
+    </div>
+    <div class="dcl-items">
+      <span class="dcl-block">
+        <code>imprnt context</code>
+        <span class="dcl-block-name">prints the full filing contract</span>
+      </span>
+    </div>
+  </div>
+</div>
+
+<style>
+  .dcl {
+    display: grid;
+    gap: 0.6rem;
+    margin: 1.3rem 0;
+  }
+  .dcl > * {
+    margin-top: 0;
+  }
+  .dcl-lane {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    border-radius: 12px;
+    padding: 0.9rem 1.1rem;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg));
+  }
+  .dcl-lane > * {
+    margin-top: 0;
+  }
+  .dcl-lane-demand {
+    background: color-mix(in oklab, var(--sl-color-gray-4) 40%, var(--sl-color-bg));
+  }
+  .dcl-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+  }
+  .dcl-tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .dcl-lane-demand .dcl-tag {
+    color: var(--sl-color-gray-2);
+  }
+  .dcl-sub {
+    font-family: var(--sl-font-mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .dcl-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .dcl-chip {
+    font-size: 0.78rem;
+    color: var(--sl-color-white);
+    padding: 0.28rem 0.7rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 30%, var(--sl-color-bg));
+  }
+  .dcl-chip-accent {
+    color: var(--sl-color-white);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 22%, var(--sl-color-bg));
+  }
+  .dcl-block {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.7rem;
+    width: 100%;
+    border-radius: 10px;
+    padding: 0.7rem 0.9rem;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 18%, var(--sl-color-bg));
+  }
+  .dcl-block code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    color: var(--sl-color-white);
+    padding: 0.14rem 0.5rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+    white-space: nowrap;
+  }
+  .dcl-block-name {
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-2);
+  }
+  .dcl-note {
+    margin: 0;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-3);
+  }
+</style>

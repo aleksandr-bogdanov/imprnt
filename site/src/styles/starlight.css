@@ -133,3 +133,12 @@
   height: 0;
   scroll-margin-top: 5rem;
 }
+
+/* cross-document page transitions: the docs side of the opt-in that global.css
+   makes for the landing. A soft crossfade between pages in browsers that
+   support it, instant navigation everywhere else and under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition {
+    navigation: auto;
+  }
+}

@@ -1,0 +1,139 @@
+---
+/**
+ * Page-specific (design-decisions). The failure that gave "the data is the
+ * knowledge" its teeth, told as two note skeletons. Left: the rebuild that
+ * kept the summary and left the table behind in raw/, drawn as ghosted rows.
+ * Right: the rule now, summary on top of the full payload, rows solid.
+ * Skeleton bars stand in for content, so the diagram never lists instances.
+ * Borderless tinted surfaces, scoped CSS, theme-aware, no Tailwind.
+ */
+const CELLS = Array.from({ length: 9 });
+---
+
+<div class="ddl">
+  <div class="ddl-card ddl-lose">
+    <span class="ddl-tag">the rebuild that failed</span>
+    <div class="ddl-note" aria-hidden="true">
+      <span class="ddl-label">summary</span>
+      <span class="ddl-sumbar"></span>
+      <span class="ddl-label">the table</span>
+      <div class="ddl-table ddl-ghost">
+        {CELLS.map(() => <span class="ddl-cell" />)}
+      </div>
+      <span class="ddl-gone">left behind in raw/</span>
+    </div>
+    <p class="ddl-cap">Search reads vault notes only, so every row turned invisible.</p>
+  </div>
+  <div class="ddl-card ddl-win">
+    <span class="ddl-tag">the rule now</span>
+    <div class="ddl-note" aria-hidden="true">
+      <span class="ddl-label">summary</span>
+      <span class="ddl-sumbar ddl-sumbar-win"></span>
+      <span class="ddl-label">the table</span>
+      <div class="ddl-table">
+        {CELLS.map(() => <span class="ddl-cell ddl-cell-win" />)}
+      </div>
+    </div>
+    <p class="ddl-cap">The summary sits on top of the data, never in its place.</p>
+  </div>
+</div>
+
+<style>
+  .ddl {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+    gap: 0.7rem;
+    margin: 1.3rem 0;
+  }
+  .ddl > * {
+    margin-top: 0;
+  }
+  .ddl-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    border-radius: 14px;
+    padding: 0.95rem 1.1rem 1rem;
+  }
+  .ddl-lose {
+    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+  }
+  .ddl-win {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .ddl-tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .ddl-win .ddl-tag {
+    color: var(--sl-color-text-accent);
+  }
+  .ddl-note {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    border-radius: 10px;
+    padding: 0.75rem 0.85rem;
+    background: color-mix(in oklab, var(--sl-color-bg) 75%, var(--sl-color-gray-6));
+  }
+  .ddl-label {
+    font-family: var(--sl-font-mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .ddl-sumbar {
+    display: block;
+    height: 9px;
+    width: 88%;
+    border-radius: 5px;
+    background: color-mix(in oklab, var(--sl-color-gray-2) 55%, var(--sl-color-bg));
+  }
+  .ddl-sumbar-win {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 55%, var(--sl-color-bg));
+  }
+  .ddl-table {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .ddl-cell {
+    display: block;
+    height: 9px;
+    border-radius: 5px;
+    background: color-mix(in oklab, var(--sl-color-gray-2) 45%, var(--sl-color-bg));
+  }
+  .ddl-cell-win {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 45%, var(--sl-color-bg));
+  }
+  .ddl-ghost {
+    opacity: 0.32;
+  }
+  .ddl-gone {
+    font-family: var(--sl-font-mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+    opacity: 0.75;
+  }
+  .ddl-cap {
+    margin: auto 0 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+  @media (max-width: 640px) {
+    .ddl {
+      grid-template-columns: 1fr;
+    }
+    .ddl-cap {
+      margin-top: 0;
+    }
+  }
+</style>

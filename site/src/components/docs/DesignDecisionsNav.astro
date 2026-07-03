@@ -3,21 +3,50 @@
  * Page-specific (design-decisions). The intro summary turned into a clickable
  * jump-nav: each call is a borderless card linking to its in-page section, so
  * the top block adds navigation instead of previewing text the reader hits
- * again. Shows the eleven calls as a scannable grid. Scoped CSS, theme-aware
- * via Starlight tokens, no Tailwind.
+ * again. Each card carries the same glyph as its decision card below, so the
+ * nav and the sections read as one system. Shows the eleven calls as a
+ * scannable grid. Scoped CSS, theme-aware via Starlight tokens, no Tailwind.
+ *
+ * The glyph paths are a copy of the set in DesignDecision.astro, the page's
+ * own copy-not-share move: two files, zero imports, merge later if it hurts.
  */
+const GLYPHS: Record<string, string> = {
+  gauge:
+    '<path d="M5.5 15.5a6.5 6.5 0 1 1 13 0"/><path d="M12 15.5l3.4-3.8"/><path d="M4.5 19h15"/>',
+  search:
+    '<circle cx="10.5" cy="10.5" r="5.5"/><path d="M14.7 14.7L19.5 19.5"/>',
+  table:
+    '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10.5h16"/><path d="M10.5 10.5V19"/>',
+  folder:
+    '<path d="M4 8a2 2 0 0 1 2-2h3.6L12 8.4h6a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>',
+  core:
+    '<rect x="8.5" y="8.5" width="7" height="7" rx="1.8"/><circle cx="12" cy="4" r="1.4"/><circle cx="12" cy="20" r="1.4"/><circle cx="4" cy="12" r="1.4"/><circle cx="20" cy="12" r="1.4"/>',
+  copy:
+    '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/>',
+  terminal:
+    '<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7 10l3 2.5L7 15"/><path d="M12.5 15.5H17"/>',
+  test:
+    '<circle cx="12" cy="12" r="8.5"/><path d="M8.3 12.4l2.5 2.5 4.9-5.4"/>',
+  lock:
+    '<rect x="6" y="10.5" width="12" height="9.5" rx="2"/><path d="M9 10.5V8a3 3 0 0 1 6 0v2.5"/>',
+  fork:
+    '<circle cx="6.5" cy="5" r="2"/><circle cx="6.5" cy="19" r="2"/><circle cx="17.5" cy="7.5" r="2"/><path d="M6.5 7v10"/><path d="M17.5 9.5a8 8 0 0 1-8 7.5"/>',
+  page:
+    '<path d="M13.5 4H7.5A1.5 1.5 0 0 0 6 5.5v13A1.5 1.5 0 0 0 7.5 20h9a1.5 1.5 0 0 0 1.5-1.5V8.5z"/><path d="M13.5 4v4.5H18"/>',
+};
+
 const CALLS = [
-  { anchor: "ration-the-model", call: "Ration the model", short: "Spend it on filing, keep it off search" },
-  { anchor: "bm25-not-embeddings", call: "BM25, not embeddings", short: "Plain local math, no vector database" },
-  { anchor: "the-data-is-the-knowledge", call: "The data is the knowledge", short: "A note carries the full source, never a summary" },
-  { anchor: "domain-first-folders", call: "Domain-first folders", short: "Sort by life-area, the way you browse" },
-  { anchor: "the-core-stays-blind", call: "The core stays blind", short: "Add or remove any plugin with zero core edits" },
-  { anchor: "copy-share-no-code", call: "Copy, share no code", short: "Reversible beats pure" },
-  { anchor: "commands-never-a-daemon", call: "Commands, never a daemon", short: "Nothing runs unless you run it" },
-  { anchor: "invariants-are-tests", call: "Invariants are tests", short: "A principle you cannot check rots" },
-  { anchor: "private-by-being-private", call: "Private by being private", short: "Local, owner-only, no redaction machinery" },
-  { anchor: "imp-vs-imprnt", call: "imp vs imprnt", short: "One opt-in per keystroke" },
-  { anchor: "context-is-demand-paged", call: "Context is demand-paged", short: "A reading day costs a pointer, not the contract" },
+  { anchor: "ration-the-model", icon: "gauge", call: "Ration the model", short: "Pay the model at filing, never at search" },
+  { anchor: "bm25-not-embeddings", icon: "search", call: "BM25, not embeddings", short: "Plain local math, no vector database" },
+  { anchor: "the-data-is-the-knowledge", icon: "table", call: "The data is the knowledge", short: "The full payload stays in the note" },
+  { anchor: "domain-first-folders", icon: "folder", call: "Domain-first folders", short: "Sort by life-area, the way you browse" },
+  { anchor: "the-core-stays-blind", icon: "core", call: "The core stays blind", short: "Add or remove any plugin with zero core edits" },
+  { anchor: "copy-share-no-code", icon: "copy", call: "Copy, share no code", short: "Reversible beats pure" },
+  { anchor: "commands-never-a-daemon", icon: "terminal", call: "Commands, never a daemon", short: "Nothing runs unless you run it" },
+  { anchor: "invariants-are-tests", icon: "test", call: "Invariants are tests", short: "A principle you cannot check rots" },
+  { anchor: "private-by-being-private", icon: "lock", call: "Private by being private", short: "Local, owner-only, no redaction machinery" },
+  { anchor: "imp-vs-imprnt", icon: "fork", call: "imp vs imprnt", short: "One opt-in per keystroke" },
+  { anchor: "context-loads-on-demand", icon: "page", call: "Context loads on demand", short: "A reading day costs a pointer, not the contract" },
 ];
 ---
 
@@ -30,8 +59,23 @@ const CALLS = [
           class="dd-nav-card"
           href={`#${c.anchor}`}
         >
-          <span class="dd-nav-call">{c.call}</span>
-          <span class="dd-nav-short">{c.short}</span>
+          <span class="dd-nav-glyph" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              width="17"
+              height="17"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              set:html={GLYPHS[c.icon] ?? GLYPHS.page}
+            />
+          </span>
+          <span class="dd-nav-text">
+            <span class="dd-nav-call">{c.call}</span>
+            <span class="dd-nav-short">{c.short}</span>
+          </span>
         </a>
       ))
     }
@@ -66,9 +110,11 @@ const CALLS = [
   }
   .dd-nav-card {
     position: relative;
-    display: block;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
     border-radius: 12px;
-    padding: 0.85rem 2.1rem 0.85rem 1rem;
+    padding: 0.85rem 2.1rem 0.85rem 0.9rem;
     text-decoration: none;
     background: color-mix(in oklab, var(--sl-color-text-accent) 6%, var(--sl-color-bg));
     transition: background 0.15s ease;
@@ -91,6 +137,23 @@ const CALLS = [
   .dd-nav-card:hover::after {
     opacity: 1;
     transform: translateX(2px);
+  }
+  .dd-nav-glyph {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 9px;
+    margin-top: 0.05rem;
+    color: var(--sl-color-text-accent);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 13%, var(--sl-color-bg));
+  }
+  .dd-nav-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
   .dd-nav-call {
     display: block;

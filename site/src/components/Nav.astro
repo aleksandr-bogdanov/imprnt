@@ -129,28 +129,35 @@ import { nav, site } from "../lib/content";
       }
     });
     panel.querySelectorAll("[data-menu-link]").forEach((a) => a.addEventListener("click", close));
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape" || !panel.hasAttribute("data-open")) return;
+      close();
+      toggle.focus();
+    });
   })();
 
   // theme toggle: flip data-theme, persist under Starlight's key so the docs
   // toggle and this one stay in sync. The icon shown is driven by CSS off the
-  // resolved data-theme, so it is correct on first paint with no flash.
+  // resolved data-theme, so it is correct on first paint with no flash. The
+  // theme-color meta follows, so mobile browser chrome matches the page.
   (() => {
     const root = document.documentElement;
-    const setLabel = () => {
+    const sync = () => {
       const dark = root.dataset.theme !== "light";
       document.querySelectorAll("[data-theme-toggle]").forEach((b) =>
         b.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme"),
       );
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", dark ? "#0a0b0d" : "#f6f4ec");
     };
-    setLabel();
+    sync();
     document.querySelectorAll("[data-theme-toggle]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const next = root.dataset.theme === "light" ? "dark" : "light";
-        root.dataset.theme = next;
+        root.dataset.theme = root.dataset.theme === "light" ? "dark" : "light";
         try {
-          localStorage.setItem("starlight-theme", next);
+          localStorage.setItem("starlight-theme", root.dataset.theme);
         } catch {}
-        setLabel();
+        sync();
       });
     });
   })();

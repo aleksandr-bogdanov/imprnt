@@ -1,18 +1,33 @@
 ---
 /**
- * Page-specific to docs/plugins.mdx. Pairs the "what a plugin depends on" idea
- * with the install commands so the top of the page reads as one connected unit
- * instead of a loose paragraph floating above a bare code block. Reuses the
- * filled-surface, captioned-token visual language of the four rule cards below.
- * Borderless, scoped CSS, theme-aware via Starlight tokens (no Tailwind on docs
- * pages). Commands are verbatim.
+ * Page-specific to docs/plugins.mdx. What a plugin is allowed to touch, drawn
+ * as a two-chip dependency row instead of buried mid-sentence, paired with the
+ * install commands so the top of the page reads as one connected unit. Reuses
+ * the filled-surface visual language of the rule cards below. Borderless,
+ * scoped CSS, theme-aware via Starlight tokens (no Tailwind on docs pages).
+ * Commands are verbatim. The entrance rise is scroll-gated by a tiny
+ * IntersectionObserver and skipped under reduced motion or without JS.
  */
 ---
 
-<div class="install">
-  <p class="lead">
-    A plugin leans on <strong>two things</strong>: your notes (and the way their headers are written) and its own folder. The one bend: a plugin may also ask a small helper another plugin runs on your machine, and it keeps working, just with less, when that helper is gone. Each plugin ships as its own package, <code>imprnt-plugin-&lt;name&gt;</code>.
-  </p>
+<div class="install reveal">
+  <div class="deps">
+    <span class="deps-label">a plugin depends on exactly two things</span>
+    <div class="deps-row">
+      <span class="dep">
+        <span class="dep-name">your notes</span>
+        <span class="dep-sub">plus the way their headers are written</span>
+      </span>
+      <span class="plus" aria-hidden="true">+</span>
+      <span class="dep">
+        <span class="dep-name">its own folder</span>
+        <span class="dep-sub">the only place it ever writes</span>
+      </span>
+    </div>
+    <p class="deps-cap">
+      Nothing else: not imprnt's own code, not another plugin's folder. The one bend: a plugin may also ask a small helper another plugin runs on your machine, and it keeps working, just with less, when that helper is gone. Each plugin ships as its own package, <code>imprnt-plugin-&lt;name&gt;</code>.
+    </p>
+  </div>
   <div class="cmds">
     <span class="cmd-label">install, list, remove</span>
     <pre class="block"><code><span class="row"><span class="c">imprnt plugin list</span><span class="cm"># what is installed</span></span>
@@ -24,25 +39,75 @@
 <style>
   .install {
     display: grid;
-    gap: 0.9rem;
+    gap: 1rem;
     margin: 1.4rem 0;
     padding: 1.15rem 1.3rem;
     border-radius: 15px;
     background: color-mix(in oklab, var(--sl-color-gray-3) 11%, var(--sl-color-bg));
   }
-  .lead {
-    margin: 0;
-    font-size: 0.98rem;
-    line-height: 1.55;
-    color: var(--sl-color-gray-1);
+  .reveal {
+    opacity: 0;
+    transform: translateY(14px);
+    transition:
+      opacity 0.55s ease,
+      transform 0.55s cubic-bezier(0.22, 0.65, 0.3, 1);
   }
-  .lead strong {
-    color: var(--sl-color-white);
-    font-weight: 700;
+  .reveal.in {
+    opacity: 1;
+    transform: none;
   }
-  .lead code {
+  .deps {
+    display: grid;
+    gap: 0.6rem;
+  }
+  .deps-label {
     font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .deps-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.55rem;
+  }
+  .dep {
+    display: grid;
+    align-content: center;
+    gap: 0.12rem;
+    padding: 0.55rem 0.85rem;
+    border-radius: 11px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .dep-name {
+    font-family: var(--sl-font);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .dep-sub {
+    font-size: 0.76rem;
+    line-height: 1.35;
+    color: var(--sl-color-gray-2);
+  }
+  .plus {
+    align-self: center;
+    font-family: var(--sl-font-mono);
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--sl-color-gray-3);
+  }
+  .deps-cap {
+    margin: 0;
     font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+  }
+  .deps-cap code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
     padding: 0.1rem 0.35rem;
     border-radius: 6px;
     background: color-mix(in oklab, var(--sl-color-gray-3) 18%, var(--sl-color-bg));
@@ -92,6 +157,21 @@
     color: var(--sl-color-gray-3);
     white-space: pre;
   }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal,
+    .reveal.in {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+  }
+  /* with scripts off the observer never fires, so never hide the content */
+  @media (scripting: none) {
+    .reveal {
+      opacity: 1;
+      transform: none;
+    }
+  }
   @media (max-width: 640px) {
     /* on a phone the comment would wrap to its own indented line and read as a
        stray fragment, so drop it: the three command names carry themselves */
@@ -101,5 +181,37 @@
     .block .cm {
       display: none;
     }
+    /* stack the two dependency chips full-width and let the plus sit between
+       them as a small centered joint */
+    .deps-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.3rem;
+    }
+    .plus {
+      align-self: center;
+      line-height: 1;
+    }
   }
 </style>
+
+<script>
+  // scroll-gated entrance: reveal immediately under reduced motion or when
+  // IntersectionObserver is missing, otherwise rise in on first view
+  const els = document.querySelectorAll(".install.reveal");
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window)) {
+    for (const el of els) el.classList.add("in");
+  } else {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries)
+          if (e.isIntersecting) {
+            e.target.classList.add("in");
+            io.unobserve(e.target);
+          }
+      },
+      { threshold: 0.15 },
+    );
+    for (const el of els) io.observe(el);
+  }
+</script>

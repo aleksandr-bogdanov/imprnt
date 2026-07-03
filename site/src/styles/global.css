@@ -145,7 +145,7 @@
 
   ::selection {
     background: color-mix(in oklab, var(--color-green) 40%, transparent);
-    color: #fff;
+    color: var(--color-ink);
   }
 
   :focus-visible {
@@ -154,7 +154,7 @@
     border-radius: 6px;
   }
 
-  /* prettier dark scrollbar */
+  /* prettier scrollbar, tokenized so it follows the theme */
   ::-webkit-scrollbar { width: 11px; height: 11px; }
   ::-webkit-scrollbar-track { background: var(--color-bg); }
   ::-webkit-scrollbar-thumb {
@@ -162,7 +162,9 @@
     border-radius: 99px;
     border: 3px solid var(--color-bg);
   }
-  ::-webkit-scrollbar-thumb:hover { background: #2c323a; }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--color-ink) 18%, var(--color-surface-2));
+  }
 }
 
 /* ── reusable component classes ───────────────────────────────────────────── */
@@ -359,6 +361,16 @@ html.reveal-ready [data-reveal].is-in {
 }
 .node-float {
   animation: nodeFloat 6s ease-in-out infinite;
+}
+
+/* cross-document page transitions: a soft crossfade when moving between the
+   landing and the docs. Both documents opt in (here and in starlight.css),
+   zero JS, and browsers without support just navigate normally. Motion-gated,
+   so reduced-motion visitors get instant navigation. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition {
+    navigation: auto;
+  }
 }
 
 /* honour reduced motion everywhere */

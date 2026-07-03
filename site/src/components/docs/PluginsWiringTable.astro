@@ -6,7 +6,9 @@
  * differ (where it wires in, the sessions it reaches, how to remove it). It
  * replaces the prose paragraph that used to repeat the same project-vs-global
  * split. Borderless filled surfaces, scoped CSS, theme-aware via Starlight tokens
- * (no Tailwind on docs pages). All commands are verbatim.
+ * (no Tailwind on docs pages). All commands are verbatim. The two lanes rise in
+ * with a small stagger when scrolled into view (IntersectionObserver, skipped
+ * under reduced motion or without JS).
  */
 const LANES = [
   {
@@ -94,6 +96,37 @@ const LANES = [
     align-items: stretch;
     gap: 0.85rem;
     margin: 1.5rem 0;
+  }
+  /* scroll-gated entrance: lanes hold low and transparent until the script
+     marks the container .seen, then rise with a small left-to-right stagger */
+  .lane {
+    opacity: 0;
+    transform: translateY(14px);
+    transition:
+      opacity 0.55s ease,
+      transform 0.55s cubic-bezier(0.22, 0.65, 0.3, 1);
+  }
+  .wiring.seen .lane {
+    opacity: 1;
+    transform: none;
+  }
+  .wiring.seen .lane:nth-child(2) {
+    transition-delay: 0.1s;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lane,
+    .wiring.seen .lane {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+  }
+  /* with scripts off the observer never fires, so never hide the content */
+  @media (scripting: none) {
+    .lane {
+      opacity: 1;
+      transform: none;
+    }
   }
   .lane {
     display: grid;
@@ -268,3 +301,24 @@ const LANES = [
     }
   }
 </style>
+
+<script>
+  // scroll-gated entrance: reveal immediately under reduced motion or when
+  // IntersectionObserver is missing, otherwise stagger the lanes on first view
+  const roots = document.querySelectorAll(".wiring");
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window)) {
+    for (const el of roots) el.classList.add("seen");
+  } else {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries)
+          if (e.isIntersecting) {
+            e.target.classList.add("seen");
+            io.unobserve(e.target);
+          }
+      },
+      { threshold: 0.12 },
+    );
+    for (const el of roots) io.observe(el);
+  }
+</script>

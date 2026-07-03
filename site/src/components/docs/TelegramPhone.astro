@@ -1,0 +1,336 @@
+---
+/**
+ * Page-specific (telegram): the payoff drawn as geography. A phone (anywhere)
+ * texts a bot, the message passes through a Telegram relay node, and a session
+ * on your machine (home) answers from the vault. The questions in the bubbles
+ * are the doc's own examples, the bot's answer is skeleton bars so no vault
+ * content is invented. The phone is a fixed-dark device mock (same family as
+ * the terminal cards), the home card uses theme tokens. Bubble reveal is
+ * staggered and gated behind prefers-reduced-motion, and without JS everything
+ * is simply visible.
+ */
+---
+
+<div
+  class="tgp"
+  role="img"
+  aria-label="From anywhere, your phone texts the bot a question. The message passes through Telegram's servers to a session running on your machine at home, which answers from your vault. The notes stay home."
+>
+  <div class="tgp-side">
+    <span class="tgp-kicker">anywhere</span>
+    <div class="tgp-phone">
+      <div class="tgp-phone-top">
+        <span class="tgp-avatar" aria-hidden="true"></span>
+        <span class="tgp-bot">your bot</span>
+        <span class="tgp-app">Telegram</span>
+      </div>
+      <div class="tgp-chat">
+        <div class="tgp-bubble tgp-out">what do I know about the access-platform cutover?</div>
+        <div class="tgp-bubble tgp-in">
+          <span class="tgp-bar" style="width: 96%"></span>
+          <span class="tgp-bar" style="width: 78%"></span>
+          <span class="tgp-bar" style="width: 55%"></span>
+          <span class="tgp-from">answered from your vault</span>
+        </div>
+        <div class="tgp-bubble tgp-out">remember: the dentist moved to the 24th</div>
+        <div class="tgp-bubble tgp-in">
+          filed
+          <span class="tgp-from">a new note at home</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tgp-link">
+    <span class="tgp-relay">
+      <span class="tgp-relay-name">Telegram servers</span>
+      <span class="tgp-relay-note">only the conversation travels</span>
+    </span>
+  </div>
+
+  <div class="tgp-side">
+    <span class="tgp-kicker">home</span>
+    <div class="tgp-home">
+      <div class="tgp-session">
+        <span class="tgp-dot" aria-hidden="true"></span>
+        <span class="tgp-session-name">imp session</span>
+        <span class="tgp-session-state">running, machine awake</span>
+      </div>
+      <div class="tgp-vault">
+        <span class="tgp-vault-name">vault/</span>
+        <span class="tgp-note"><span class="tgp-notebar" style="width: 82%"></span></span>
+        <span class="tgp-note"><span class="tgp-notebar" style="width: 64%"></span></span>
+        <span class="tgp-note"><span class="tgp-notebar" style="width: 73%"></span></span>
+        <span class="tgp-vault-note">your notes stay on this machine</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .tgp {
+    display: grid;
+    grid-template-columns: minmax(0, 10fr) minmax(0, 7fr) minmax(0, 10fr);
+    align-items: center;
+    margin: 1.4rem 0;
+    padding: 1.1rem 1rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 8%, var(--sl-color-bg));
+    box-shadow: 0 1px 3px color-mix(in oklab, #000 18%, transparent);
+  }
+  .tgp-side {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .tgp-kicker {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+    text-align: center;
+  }
+  /* the phone: a fixed-dark device mock */
+  .tgp-phone {
+    border-radius: 20px;
+    background: #11131a;
+    padding: 0.55rem 0.55rem 0.7rem;
+    box-shadow: 0 1px 3px color-mix(in oklab, #000 30%, transparent);
+  }
+  .tgp-phone-top {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.35rem 0.5rem;
+  }
+  .tgp-avatar {
+    width: 0.9rem;
+    height: 0.9rem;
+    border-radius: 999px;
+    background: #3d6a9e;
+  }
+  .tgp-bot {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #c3c8d4;
+  }
+  .tgp-app {
+    margin-left: auto;
+    font-family: var(--sl-font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    color: #6b7180;
+  }
+  .tgp-chat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .tgp-bubble {
+    max-width: 88%;
+    padding: 0.42rem 0.6rem;
+    border-radius: 12px;
+    font-size: 0.76rem;
+    line-height: 1.4;
+  }
+  .tgp-out {
+    align-self: flex-end;
+    background: #2f4f79;
+    color: #e3e9f2;
+    border-bottom-right-radius: 4px;
+  }
+  .tgp-in {
+    align-self: flex-start;
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
+    min-width: 58%;
+    background: #232838;
+    color: #c3c8d4;
+    border-bottom-left-radius: 4px;
+  }
+  .tgp-bar {
+    display: block;
+    height: 0.42rem;
+    border-radius: 999px;
+    background: #3a4158;
+  }
+  .tgp-from {
+    font-family: var(--sl-font-mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.06em;
+    color: #6b7180;
+  }
+  /* the relay between the two worlds */
+  .tgp-link {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    min-height: 5rem;
+    padding: 0 0.6rem;
+  }
+  .tgp-link::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    border-top: 2px dashed color-mix(in oklab, var(--sl-color-gray-3) 65%, transparent);
+  }
+  .tgp-relay {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    text-align: center;
+    padding: 0.5rem 0.7rem;
+    border-radius: 11px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 20%, var(--sl-color-bg));
+  }
+  .tgp-relay-name {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--sl-color-gray-1);
+  }
+  .tgp-relay-note {
+    font-size: 0.62rem;
+    line-height: 1.35;
+    color: var(--sl-color-gray-2);
+  }
+  /* home: the machine with the session and the vault */
+  .tgp-home {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    padding: 0.75rem 0.8rem 0.85rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 16%, var(--sl-color-bg));
+  }
+  .tgp-session {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 10px;
+    background: color-mix(in oklab, var(--sl-color-bg) 72%, transparent);
+  }
+  .tgp-dot {
+    width: 0.56rem;
+    height: 0.56rem;
+    border-radius: 999px;
+    background: #7fb069;
+  }
+  .tgp-session-name {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .tgp-session-state {
+    font-size: 0.66rem;
+    color: var(--sl-color-gray-2);
+  }
+  .tgp-vault {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.55rem 0.6rem 0.6rem;
+    border-radius: 10px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
+  }
+  .tgp-vault-name {
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--sl-color-text-accent);
+  }
+  .tgp-note {
+    display: block;
+  }
+  .tgp-notebar {
+    display: block;
+    height: 0.42rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 32%, var(--sl-color-bg));
+  }
+  .tgp-vault-note {
+    font-size: 0.64rem;
+    color: var(--sl-color-gray-2);
+  }
+  /* staggered reveal, armed by JS only */
+  .tgp-armed .tgp-bubble,
+  .tgp-armed .tgp-relay,
+  .tgp-armed .tgp-home {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .tgp-in-view .tgp-bubble,
+  .tgp-in-view .tgp-relay,
+  .tgp-in-view .tgp-home {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.45s ease,
+      transform 0.45s ease;
+  }
+  .tgp-in-view .tgp-relay { transition-delay: 0.1s; }
+  .tgp-in-view .tgp-home { transition-delay: 0.2s; }
+  .tgp-in-view .tgp-bubble:nth-child(2) { transition-delay: 0.35s; }
+  .tgp-in-view .tgp-bubble:nth-child(3) { transition-delay: 0.55s; }
+  .tgp-in-view .tgp-bubble:nth-child(4) { transition-delay: 0.75s; }
+
+  @media (max-width: 660px) {
+    .tgp {
+      grid-template-columns: 1fr;
+      padding: 0.9rem;
+    }
+    .tgp-phone {
+      max-width: 21rem;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .tgp-home {
+      max-width: 21rem;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .tgp-link {
+      min-height: 4.4rem;
+      padding: 0.4rem 0;
+    }
+    .tgp-link::before {
+      left: 50%;
+      right: auto;
+      top: 0;
+      bottom: 0;
+      border-top: 0;
+      border-left: 2px dashed color-mix(in oklab, var(--sl-color-gray-3) 65%, transparent);
+    }
+  }
+</style>
+
+<script>
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  for (const root of document.querySelectorAll<HTMLElement>(".tgp")) {
+    if (reduce || !("IntersectionObserver" in window)) continue;
+    root.classList.add("tgp-armed");
+    new IntersectionObserver(
+      (entries, obs) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        obs.disconnect();
+        root.classList.add("tgp-in-view");
+      },
+      { threshold: 0.25 },
+    ).observe(root);
+  }
+</script>

@@ -3,7 +3,10 @@
  * The four rules that keep plugins composable and the core blind. A compact
  * 4-row grid: each row is a short plain-language summary with the relevant code
  * token as a chip on the right. Borderless filled rows, scoped CSS, theme-aware
- * via Starlight tokens (no Tailwind: docs pages do not load it).
+ * via Starlight tokens (no Tailwind: docs pages do not load it). The rows
+ * cascade in one by one when scrolled into view (IntersectionObserver, an
+ * animation rather than a transition so the hover lift keeps its own fast
+ * timing, skipped under reduced motion or without JS).
  */
 const RULES = [
   {
@@ -44,6 +47,48 @@ const RULES = [
     display: grid;
     gap: 0.44rem;
     margin: 1.4rem 0;
+  }
+  /* scroll-gated cascade: rows hold transparent until the script marks the
+     container .seen, then rise top to bottom. backwards fill keeps a delayed
+     row hidden until its own start */
+  @keyframes ruleIn {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .rule {
+    opacity: 0;
+  }
+  .rules.seen .rule {
+    opacity: 1;
+    animation: ruleIn 0.5s cubic-bezier(0.22, 0.65, 0.3, 1) backwards;
+  }
+  .rules.seen .rule:nth-child(2) {
+    animation-delay: 0.08s;
+  }
+  .rules.seen .rule:nth-child(3) {
+    animation-delay: 0.16s;
+  }
+  .rules.seen .rule:nth-child(4) {
+    animation-delay: 0.24s;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rule,
+    .rules.seen .rule {
+      opacity: 1;
+      animation: none;
+    }
+  }
+  /* with scripts off the observer never fires, so never hide the content */
+  @media (scripting: none) {
+    .rule {
+      opacity: 1;
+    }
   }
   .rule {
     display: grid;
@@ -94,3 +139,24 @@ const RULES = [
     color: var(--sl-color-gray-2);
   }
 </style>
+
+<script>
+  // scroll-gated entrance: reveal immediately under reduced motion or when
+  // IntersectionObserver is missing, otherwise cascade the rows on first view
+  const roots = document.querySelectorAll(".rules");
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window)) {
+    for (const el of roots) el.classList.add("seen");
+  } else {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries)
+          if (e.isIntersecting) {
+            e.target.classList.add("seen");
+            io.unobserve(e.target);
+          }
+      },
+      { threshold: 0.12 },
+    );
+    for (const el of roots) io.observe(el);
+  }
+</script>

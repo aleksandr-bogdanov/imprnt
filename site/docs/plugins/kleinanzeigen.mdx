@@ -1,0 +1,82 @@
+---
+draft: true
+title: Kleinanzeigen watcher
+description: A watcher for your Kleinanzeigen inbox and the marketplace. Fixed rules read the hostile inbox and hunt deals, the assistant drafts the leftovers, and only you press send.
+---
+
+import KleinanzeigenFlow from "../../src/components/docs/KleinanzeigenFlow.astro";
+import KleinanzeigenJobs from "../../src/components/docs/KleinanzeigenJobs.astro";
+import KleinanzeigenGuard from "../../src/components/docs/KleinanzeigenGuard.astro";
+import KleinanzeigenFiles from "../../src/components/docs/KleinanzeigenFiles.astro";
+
+A local watcher for your account on Kleinanzeigen, the big German classifieds marketplace. It mirrors both sides of your message box, the listings you sell and the listings you buy, and sorts every conversation with fixed pattern rules, no AI in the loop. The easy replies arrive pre-drafted. A phone-sized digest tells you what awaits you. It also hunts for you: saved searches re-run on a schedule and report what is new and what dropped in price. You tweak a draft and press send, or you act on a deal. Nothing sends on its own.
+
+<KleinanzeigenFlow />
+
+The gate in the middle is the whole design. Everything left of it only reads: code mirrors your conversations and search results into local files and composes digests from them. Sending is always a separate, explicit command that posts exactly one message, and only you run it. A phone channel can later sit where the gate is, draft against the mirror, take your okay, and call the same `send` or `contact`. Nothing in the send path knows about a channel, so that channel drops in without a rewrite.
+
+## The three jobs
+
+<KleinanzeigenJobs />
+
+## The scam guard
+
+A marketplace inbox is full of scammers and lowballers, which is exactly where you do not want a resident AI agent holding your account.
+
+<KleinanzeigenGuard />
+
+`rate` classifies the latest message from the other side with those fixed rules alone, and the scam detector runs whether you are the seller or the buyer. On the selling side it also builds the canned drafts: a FAQ answer from your fact sheet, a pickup reply, an availability reply, or an offer flagged against your price floor. On the buying side a real seller reply is genuine negotiation, so it carries no canned text. The assistant drafts that one, and you approve it.
+
+On a real afternoon, sixteen messages across two listings sort themselves. A scammer is caught by three named tells. The "what is the Artikelnummer?" questions (the article number Kleinanzeigen assigns each listing) surface the one fact you confirm once, and the genuine buyers get ready-to-send drafts, with no AI spent anywhere.
+
+## What the files hold
+
+Everything lives under `plugins/kleinanzeigen/` and renders from local files.
+
+<KleinanzeigenFiles />
+
+## Commands
+
+You speak in plain language and the assistant runs these underneath. Only six of them ever touch the network (`sync`, `send`, `contact`, `search`, `watch run`, `detail`), and only when you run them. The raw form:
+
+| Command | What it does |
+|---|---|
+| `sync` | Refresh the mirror from your message box, both sides. The one authenticated network read. Offline with `KLEINANZEIGEN_FIXTURES=<dir>`. |
+| `rate` | Classify every conversation with fixed pattern rules, no AI. Sets the rating, the drafts, and whose turn it is. |
+| `notify` | Compose the inbox digest (grouped by side, scams first, only what awaits you) and ship it via `$WATCHER_NOTIFY_CMD`. |
+| `send <conv> "<text>"` | Post ONE reply into an existing conversation. Refuses a scam-rated thread without `--force`. |
+| `contact <adId-or-url> "<msg>"` | Start a NEW conversation on a seller's listing and send ONE message. The text is a required argument, never auto-composed. `--dry-run` prints the full request and hits no network. |
+| `search "<keyword>" [--location berlin] [--sort price] [--min-price N] [--max-price N]` | Hunt the public marketplace. One network read per query, cached for 30 minutes, then all filtering and sorting run locally. `--local` searches the accumulated store with no network at all. |
+| `watch <add\|list\|rm\|run>` | The deal-watcher. `add` saves a search, `run` re-fetches each saved search, diffs it, and ships a NEW / PRICE DROP / GONE digest. |
+| `detail <adId-or-url>` | One public fetch of an ad page, capturing the seller rating, attributes, and description into `market/ads/`. |
+| `probe --har <messagebox.har>` | Run once to derive the live endpoints into `endpoints.json` from a saved capture of your Messages page traffic. Offline, it only reads the file. |
+| `check.js` | Integrity: mirror staleness, missing fact sheets. |
+
+`sync`, `send`, and `contact` read your login token straight from your logged-in browser on this Mac (Arc by default, then Chrome, Brave, Edge), or from the [session host](/plugins/session-host/). The public `search`, `watch run`, and `detail` need no login. No command is a daemon. Schedule `sync`, `rate`, `notify`, and `watch run` if you want them periodic. The send step is always yours.
+
+## Using it
+
+**The sell-side inbox.** Schedule `sync`, `rate`, `notify`. You get a digest of the conversations awaiting your reply, scams flagged and skipped, FAQs answered from your fact sheets, pickups and availability drafted. You confirm a draft and `send`, or fill the one fact a question needs and let it answer itself next time.
+
+**The buy-side loop.** `contact` a seller's listing with your opening message. From then on `sync` mirrors the seller's replies, the digest surfaces them under a "Buying" heading with the seller's latest line, and you draft a reply and `send`. The same scam guard protects you here: a seller steering you to PayPal Friends and Family is caught the same way.
+
+**Hunting a deal.** `search "rx 9070 xt" --location berlin` for a one-off look. For an ongoing hunt, `watch add` the query with a price cap and schedule `watch run`. You get told when something new lists or an existing ad drops below your number, with the link in hand.
+
+**Vetting before you buy.** `detail <adId>` on a listing you like pulls the seller's satisfaction badge, how long they have been active, whether they are private or commercial, and the full ad text, so the agent drafts your `contact` with the seller's standing in view.
+
+## Known quirks
+
+- **A stale browser session blocks `sync`.** The login token is read live from your browser, and Kleinanzeigen rotates it. If `sync` comes back rejected (a 401), reload kleinanzeigen.de in your browser (or start the session host and log in once) and run it again. The public `search`, `watch run`, and `detail` are unaffected, since they need no login.
+- **The invisible browser is never auto-launched.** The public search and detail pages are fetched as plain page downloads of ready-made HTML. A headless browser (one run invisibly by code) carries a fingerprint that trips Kleinanzeigen's fraud block for a whole IP range, so it stays an explicit `--browser` opt-in and the tools stay sparing with live fetches.
+- **`watch` diffs the first results page.** NEW and GONE compare who is on page one against the last run. A fast-moving query can push an ad onto page two and report it as GONE, so saved searches read most cleanly on niche queries where page one is the whole set. A price drop on an ad that stays on page one is always accurate.
+- **A saved search's price band filters the digest only.** The snapshot stores every listing, and the band decides which changes you are told about. So the diff baseline stays consistent, and an interactive `search` reusing the same snapshot still sees the full set.
+- **Dead buy threads drop off the digest.** When a seller declines an inquiry, Kleinanzeigen posts a system line ("Anfrage abgelehnt" or "Anfrage beendet"). The watcher recognizes these and stops surfacing the thread as awaiting your reply.
+- **Phone surfacing is planned.** The reply path already carries the clean seam for a Telegram channel to drop in, so it surfaces a conversation, drafts, and waits for your okay. Today that approve-and-send step is the CLI.
+
+## Install
+
+```sh
+imprnt plugin add kleinanzeigen
+```
+
+Copies the plugin into `plugins/kleinanzeigen/` and wires it. Add per-listing fact sheets under `listings/`. Then capture the endpoints once: log into kleinanzeigen.de, open Messages, save the page's network traffic from your browser's developer tools (Network tab, "Save all as HAR"), and run `probe --har <messagebox.har>` to write `endpoints.json`. From there, run or schedule the commands. Remove with `imprnt plugin rm kleinanzeigen` (add `--purge` to delete the folder too). Removal leaves no trace in the vault.

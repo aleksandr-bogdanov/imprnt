@@ -1,0 +1,162 @@
+---
+/**
+ * Page-specific (design-decisions). The junk-drawer failure next to the
+ * domain-first fix, each vault drawn as one segmented bar. Sorted by type,
+ * a single typeless notes/ bucket swallows nearly half of it (the one real
+ * number in the diagram). Sorted by life-area, content spreads across the
+ * drawers you browse, with one cross-cutting home per entity. Proportions
+ * are illustrative. Borderless tinted surfaces, scoped CSS, theme-aware,
+ * no Tailwind.
+ */
+const DOMAINS = [
+  { name: "health/", w: 27 },
+  { name: "finances/", w: 26 },
+  { name: "work/", w: 25 },
+  { name: "life/", w: 22 },
+];
+const ENTITIES = ["people/", "orgs/", "holdings/"];
+---
+
+<div class="djd">
+  <div class="djd-card djd-lose">
+    <span class="djd-tag">sorted by type, before</span>
+    <div class="djd-bar" aria-hidden="true">
+      <span class="djd-seg djd-seg-junk" style="width: 48%;">
+        <span class="djd-seg-name">notes/</span>
+        <span class="djd-seg-note">nearly half the vault</span>
+      </span>
+      <span class="djd-seg djd-seg-dim" style="width: 16%;"></span>
+      <span class="djd-seg djd-seg-dim" style="width: 13%;"></span>
+      <span class="djd-seg djd-seg-dim" style="width: 12%;"></span>
+      <span class="djd-seg djd-seg-dim" style="width: 11%;"></span>
+    </div>
+    <p class="djd-cap">Most knowledge is reference about some area of life, with no type to file under. It all fell into one typeless bucket.</p>
+  </div>
+  <div class="djd-card djd-win">
+    <span class="djd-tag">sorted by life-area, now</span>
+    <div class="djd-bar" aria-hidden="true">
+      {DOMAINS.map((d) => (
+        <span class="djd-seg djd-seg-domain" style={`width: ${d.w}%;`}>
+          <span class="djd-seg-name">{d.name}</span>
+        </span>
+      ))}
+    </div>
+    <div class="djd-ent" aria-hidden="true">
+      {ENTITIES.map((e) => <span class="djd-chip">{e}</span>)}
+      <span class="djd-ent-note">one home per entity</span>
+    </div>
+    <p class="djd-cap">Notes file where you would browse for them, and every person, organization, and holding keeps one linkable home.</p>
+  </div>
+</div>
+
+<style>
+  .djd {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+    gap: 0.7rem;
+    margin: 1.3rem 0;
+  }
+  .djd > * {
+    margin-top: 0;
+  }
+  .djd-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    border-radius: 14px;
+    padding: 0.95rem 1.1rem 1rem;
+  }
+  .djd-lose {
+    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+  }
+  .djd-win {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .djd-tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .djd-win .djd-tag {
+    color: var(--sl-color-text-accent);
+  }
+  .djd-bar {
+    display: flex;
+    gap: 3px;
+    min-height: 3.1rem;
+  }
+  .djd-seg {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.12rem;
+    border-radius: 8px;
+    padding: 0.3rem 0.45rem;
+    overflow: hidden;
+  }
+  .djd-seg-junk {
+    background: color-mix(in oklab, var(--sl-color-gray-3) 40%, var(--sl-color-bg));
+  }
+  .djd-seg-dim {
+    background: color-mix(in oklab, var(--sl-color-gray-4) 65%, var(--sl-color-bg));
+  }
+  .djd-seg-domain {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 26%, var(--sl-color-bg));
+  }
+  .djd-seg-domain:nth-child(even) {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+  }
+  .djd-seg-name {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    line-height: 1.2;
+    color: var(--sl-color-white);
+    white-space: nowrap;
+  }
+  .djd-seg-note {
+    font-family: var(--sl-font-mono);
+    font-size: 0.55rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1.25;
+    color: var(--sl-color-gray-2);
+  }
+  .djd-ent {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .djd-chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    color: var(--sl-color-white);
+    padding: 0.22rem 0.5rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 20%, var(--sl-color-bg));
+  }
+  .djd-ent-note {
+    font-family: var(--sl-font-mono);
+    font-size: 0.55rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .djd-cap {
+    margin: auto 0 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+  @media (max-width: 640px) {
+    .djd {
+      grid-template-columns: 1fr;
+    }
+    .djd-cap {
+      margin-top: 0;
+    }
+  }
+</style>

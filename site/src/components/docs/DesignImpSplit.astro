@@ -1,0 +1,170 @@
+---
+/**
+ * Page-specific (design-decisions). The two commands one package ships,
+ * split by audience: imp for the human, imprnt for the machinery. One
+ * dispatcher chip forks into two equal cards, each with its command, who
+ * types it, and its signature sub-commands. The fork is a tiny stretched
+ * SVG with non-scaling strokes. Borderless tinted surfaces, scoped CSS,
+ * theme-aware, no Tailwind.
+ */
+---
+
+<div class="dis">
+  <div class="dis-top">
+    <span class="dis-chip">one package, one dispatcher</span>
+  </div>
+  <div class="dis-fork" aria-hidden="true">
+    <svg viewBox="0 0 100 26" preserveAspectRatio="none">
+      <path d="M50 0 V6" vector-effect="non-scaling-stroke"></path>
+      <path d="M50 6 C50 18 25 12 25 26" vector-effect="non-scaling-stroke"></path>
+      <path d="M50 6 C50 18 75 12 75 26" vector-effect="non-scaling-stroke"></path>
+    </svg>
+  </div>
+  <div class="dis-grid">
+    <div class="dis-card">
+      <span class="dis-tag">for you</span>
+      <span class="dis-cmd">imp</span>
+      <p class="dis-desc">Typed in any directory. Opens your assistant's session there with imprnt riding along, Claude by default.</p>
+      <div class="dis-rows">
+        <div class="dis-row">
+          <code>imp lair</code>
+          <span>opens the session inside the vault</span>
+        </div>
+        <div class="dis-row">
+          <code>imp --gemini</code>
+          <span>swaps the backend</span>
+        </div>
+      </div>
+    </div>
+    <div class="dis-card">
+      <span class="dis-tag">for machinery</span>
+      <span class="dis-cmd">imprnt</span>
+      <p class="dis-desc">Called by agents and scripts, the machine-facing half of the package.</p>
+      <div class="dis-rows">
+        <div class="dis-row">
+          <code>imprnt recall</code>
+          <span>search the vault</span>
+        </div>
+        <div class="dis-row">
+          <code>imprnt check</code>
+          <span>audit notes, rebuild the index</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .dis {
+    margin: 1.3rem 0;
+  }
+  .dis > * {
+    margin-top: 0;
+  }
+  .dis-top {
+    display: flex;
+    justify-content: center;
+  }
+  .dis-chip {
+    font-family: var(--sl-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+    padding: 0.32rem 0.75rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 14%, var(--sl-color-bg));
+  }
+  .dis-fork {
+    height: 26px;
+  }
+  .dis-fork svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .dis-fork path {
+    fill: none;
+    stroke: var(--sl-color-text-accent);
+    stroke-width: 1.5;
+    opacity: 0.45;
+  }
+  .dis-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+    gap: 0.7rem;
+  }
+  .dis-grid > * {
+    margin-top: 0;
+  }
+  .dis-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    border-radius: 14px;
+    padding: 1rem 1.1rem;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 8%, var(--sl-color-bg));
+  }
+  .dis-tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .dis-cmd {
+    font-family: var(--sl-font-mono);
+    font-weight: 700;
+    font-size: 1.3rem;
+    line-height: 1.2;
+    color: var(--sl-color-white);
+  }
+  .dis-desc {
+    margin: 0;
+    font-size: 0.84rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+  }
+  .dis-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: auto;
+    padding-top: 0.4rem;
+  }
+  .dis-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.6rem;
+  }
+  .dis-row code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    color: var(--sl-color-white);
+    padding: 0.14rem 0.5rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 15%, var(--sl-color-bg));
+    white-space: nowrap;
+  }
+  .dis-row span {
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-3);
+  }
+  @media (max-width: 640px) {
+    .dis-fork {
+      display: none;
+    }
+    .dis-top {
+      margin-bottom: 0.7rem;
+    }
+    .dis-grid {
+      grid-template-columns: 1fr;
+    }
+    .dis-rows {
+      margin-top: 0.2rem;
+    }
+  }
+</style>

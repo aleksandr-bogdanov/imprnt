@@ -1,29 +1,36 @@
-import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * The three plugin KINDS and the core they all depend on. Page-specific to
  * docs/plugins.mdx. Shows categories, never individual plugins, so adding or
  * removing a plugin never touches this diagram.
  *
- * Layout: the core sits at the top as the hub everything points back to, and the
- * three kinds sit in a row beneath it, each a large readable card with a caption
- * always visible (no hover needed to read it). The connectors are thick and
- * tinted per kind. On mobile the row restacks vertically so every card stays full
- * size and legible.
+ * Layout: the core sits at the top as a powered hub with three sockets on its
+ * bottom edge (one per kind, in the kind's color), and the three kinds sit in
+ * a row beneath it, each a large readable card with its caption always visible
+ * (no hover needed to read it). The connectors fan from the socket cluster
+ * down to the cards, tinted per kind. On mobile the row restacks vertically so
+ * every card stays full size and legible (the fan is dropped, the sockets
+ * stay, and the card order matches the socket order).
  *
  * The interaction IS the lesson: each card carries a live switch. Flip a kind
- * off and its connector goes dashed, its card dims, and the "edits to core: 0"
- * counter on the hub gives a little bump without ever changing, because removing
- * a plugin touches zero core code. Idle pulses travel UP each connector (the
- * kinds depend on the core, never the reverse). Everything animated is gated
- * behind prefers-reduced-motion: with it set, switches still flip every state,
- * nothing moves on its own.
+ * off and its cord goes dashed, its socket empties, its card sinks and dims,
+ * and the hub's two counters diverge: "switches flipped" climbs on every
+ * toggle while "edits to core" bumps and stays at 0, because removing a
+ * plugin touches zero core code. Idle pulses travel UP each connector (the
+ * kinds depend on the core, never the reverse).
  *
- * Inline styles only (plus one scoped <style> block for keyframes): this renders
- * inside Starlight docs, which do not load the site's Tailwind. Colors come from
- * Starlight's --sl-* tokens plus a theme-aware palette read from the data-theme
- * attribute.
+ * Motion is scroll-gated: an IntersectionObserver holds the entrance rise
+ * until the diagram is in view. Everything animated respects
+ * prefers-reduced-motion: with it set, nothing moves on its own and every
+ * switch still flips every state instantly. A no-JS reader still gets the
+ * static rendering via the (scripting: none) media query.
+ *
+ * Inline styles only (plus one scoped <style> block for keyframes): this
+ * renders inside Starlight docs, which do not load the site's Tailwind.
+ * Colors come from Starlight's --sl-* tokens plus a theme-aware palette read
+ * from the data-theme attribute.
  */
 
 const MONO = "var(--sl-font-mono, ui-monospace, monospace)";
@@ -132,6 +139,33 @@ function useNarrow() {
   return narrow;
 }
 
+// holds the entrance animation until the diagram scrolls into view. With
+// reduced motion (or no IntersectionObserver) it reveals immediately, so the
+// gate never hides content from anyone.
+function useRevealed<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (REDUCED || typeof IntersectionObserver === "undefined" || !el) {
+      setSeen(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setSeen(true);
+          io.disconnect();
+        }
+      },
+      { threshold: 0.15 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return { ref, seen };
+}
+
 // a monospace inline-code span for a CLI command (claude, imp), matching how the
 // rest of the docs write the command in backticks
 function cmd(text: string, C: ReturnType<typeof usePalette>) {
@@ -166,11 +200,16 @@ function caption(text: string, em: string, color: string) {
 export default function PluginsKindsDiagram() {
   const C = usePalette();
   const narrow = useNarrow();
+  const { ref, seen } = useRevealed<HTMLDivElement>();
   // which kinds the reader has switched off, the last flip (drives the moral
-  // caption), and a counter that re-triggers the hub chip's bump animation
+  // caption), and the flip counter: it doubles as the "switches flipped"
+  // readout and as the key that re-triggers the hub chips' bump animation
   const [off, setOff] = useState<Record<string, boolean>>({});
   const [last, setLast] = useState<{ id: string; on: boolean } | null>(null);
   const [bump, setBump] = useState(0);
+  // per-kind flip count: keys the toggled kind's socket so only that socket
+  // remounts and replays its pop, while the other two stay untouched
+  const [flips, setFlips] = useState<Record<string, number>>({});
   const [hovered, setHovered] = useState<string | null>(null);
 
   const toggle = (id: string) => {
@@ -178,19 +217,24 @@ export default function PluginsKindsDiagram() {
     setOff((o) => ({ ...o, [id]: nowOff }));
     setLast({ id, on: !nowOff });
     setBump((b) => b + 1);
+    setFlips((f) => ({ ...f, [id]: (f[id] ?? 0) + 1 }));
   };
 
+  const allOff = KINDS.every((k) => off[k.id]);
   const lastKind = last ? KINDS.find((k) => k.id === last.id) ?? null : null;
   const lastColor = lastKind ? (C.kind as Record<string, string>)[lastKind.id] : C.core;
 
   const moral: ReactNode = (() => {
     if (!last || !lastKind) {
-      return <>Each kind leans on the core, and the core depends on none of them. Flip a switch to pull one out and watch the counter.</>;
+      return <>Each kind leans on the core, and the core depends on none of them. Flip a switch to pull one out and watch the counters.</>;
+    }
+    if (allOff) {
+      return <>All three are out and edits to core still reads zero. What is left is the whole core: your notes plus ingest, recall, and check.</>;
     }
     if (!last.on) {
       return (
         <>
-          <strong style={{ color: lastColor, fontWeight: 700 }}>{lastKind.label}</strong> is out: its folder and its one wiring line are gone. The counter did not move.
+          <strong style={{ color: lastColor, fontWeight: 700 }}>{lastKind.label}</strong> is out: its folder and its one wiring line are gone. Edits to core did not move.
         </>
       );
     }
@@ -201,10 +245,24 @@ export default function PluginsKindsDiagram() {
     );
   })();
 
+  // the two hub readouts: the left one climbs on every toggle, the right one
+  // is the whole point of the diagram and never leaves zero
+  const chipStyle: CSSProperties = {
+    fontFamily: MONO,
+    fontSize: narrow ? 10 : 10.5,
+    fontWeight: 700,
+    letterSpacing: "0.08em",
+    padding: "0.2rem 0.6rem",
+    borderRadius: 999,
+    color: C.coreText,
+  };
+
   return (
     <div
+      ref={ref}
       role="group"
       aria-label="The three plugin kinds and the core they depend on"
+      className={seen ? "pkd-root pkd-seen" : "pkd-root"}
       style={{
         margin: "1.6rem 0",
         padding: narrow ? "1.4rem 1rem" : "1.7rem 1.5rem",
@@ -219,16 +277,18 @@ export default function PluginsKindsDiagram() {
         gap: narrow ? "1rem" : "0.9rem",
       }}
     >
-      {/* core hub, with the live counter that the whole interaction exists to
-          keep at zero */}
+      {/* core hub, with the two live counters and the three sockets the kinds
+          plug into. position:relative anchors the socket strip on its bottom
+          edge */}
       <div
-        className="pkd-rise"
+        className="pkd-el"
         style={{
+          position: "relative",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: "0.3rem",
-          padding: narrow ? "0.85rem 1.2rem" : "0.95rem 1.7rem",
+          gap: "0.35rem",
+          padding: narrow ? "0.85rem 1.2rem 1rem" : "0.95rem 1.7rem 1.05rem",
           borderRadius: 16,
           background: C.coreBg,
           color: C.coreText,
@@ -243,38 +303,82 @@ export default function PluginsKindsDiagram() {
         <span style={{ fontFamily: MONO, fontSize: narrow ? 11.5 : 12.5, fontWeight: 600, opacity: 0.82 }}>
           vault + ingest &middot; recall &middot; check
         </span>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0.35rem" }}>
+          <span
+            key={`flips-${bump}`}
+            className={bump > 0 && !REDUCED ? "pkd-bump" : undefined}
+            style={{ ...chipStyle, background: "color-mix(in oklab, #000 10%, transparent)" }}
+          >
+            switches flipped: {bump}
+          </span>
+          <span
+            key={`zero-${bump}`}
+            className={bump > 0 && !REDUCED ? "pkd-bump" : undefined}
+            style={{ ...chipStyle, background: "color-mix(in oklab, #000 18%, transparent)" }}
+          >
+            edits to core: 0
+          </span>
+        </div>
+        {/* the socket strip: one port per kind, straddling the hub's bottom
+            edge. A port is filled while its kind is installed and empties the
+            moment the switch flips off, so the unplug is visible at the hub
+            too, not only on the card */}
         <span
-          key={bump}
-          className={bump > 0 && !REDUCED ? "pkd-bump" : undefined}
+          aria-hidden="true"
           style={{
-            fontFamily: MONO,
-            fontSize: narrow ? 10 : 10.5,
-            fontWeight: 700,
-            letterSpacing: "0.08em",
-            padding: "0.2rem 0.6rem",
-            borderRadius: 999,
-            background: "color-mix(in oklab, #000 18%, transparent)",
-            color: C.coreText,
+            position: "absolute",
+            left: "50%",
+            bottom: 0,
+            transform: "translate(-50%, 50%)",
+            display: "flex",
+            gap: 7,
+            zIndex: 2,
           }}
         >
-          edits to core: 0
+          {KINDS.map((k) => {
+            const c = (C.kind as Record<string, string>)[k.id];
+            const isOff = !!off[k.id];
+            const isHot = hovered === k.id && !isOff;
+            // the socket's key carries its own flip count, so a flip remounts
+            // this socket alone and replays its pop, never the other two
+            const kFlips = flips[k.id] ?? 0;
+            return (
+              <span
+                key={`${k.id}-${kFlips}`}
+                className={kFlips > 0 && !REDUCED ? "pkd-pop" : undefined}
+                style={{
+                  width: 11,
+                  height: 11,
+                  borderRadius: 4,
+                  background: isOff ? "var(--sl-color-bg)" : c,
+                  boxShadow: isOff
+                    ? `inset 0 0 0 1.5px color-mix(in oklab, ${c} 60%, transparent), 0 0 0 2px var(--sl-color-bg)`
+                    : `0 0 0 2px var(--sl-color-bg)${isHot ? `, 0 0 10px ${c}` : ""}`,
+                  transform: isHot && !REDUCED ? "scale(1.2)" : undefined,
+                  transition: "background 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease",
+                }}
+              />
+            );
+          })}
         </span>
       </div>
 
-      {/* connector band: a fan from the core down into each kind. All three
-          branches start from the CORE's bottom-center (apex x500 y0) and end at
-          the horizontal center of the card beneath them (geometry documented on
-          PATHS). preserveAspectRatio="none" stretches the viewBox to the live
-          width and non-scaling-stroke keeps every line a uniform stroke. The
+      {/* connector band: a fan of cords from the socket strip down into each
+          kind. All three branches start from the CORE's bottom-center (apex
+          x500 y0, right under the sockets) and end at the horizontal center of
+          the card beneath them (geometry documented on PATHS).
+          preserveAspectRatio="none" stretches the viewBox to the live width
+          and non-scaling-stroke keeps every line a uniform stroke. The
           negative top/bottom margins pull the apex up to the CORE box and the
           endpoints down onto the card tops. Pulses ride each installed kind's
-          path UPWARD (keyPoints 1 -> 0): the kind reaches into the core's notes,
-          never the reverse. A switched-off kind's line goes dashed and faint and
-          its pulse stops. On narrow the cards stack in one column, so the fan is
-          meaningless: drop it and let the stacked order carry the relationship. */}
+          path UPWARD (keyPoints 1 -> 0): the kind reaches into the core's
+          notes, never the reverse. A switched-off kind's cord goes dashed and
+          faint and its pulse stops. On narrow the cards stack in one column,
+          so the fan is meaningless: drop it and let the stacked order carry
+          the relationship. */}
       {!narrow && (
         <svg
-          className="pkd-rise"
+          className="pkd-el"
           width="100%"
           height={32}
           viewBox="0 0 1000 32"
@@ -340,7 +444,7 @@ export default function PluginsKindsDiagram() {
           return (
             <div
               key={k.id}
-              className="pkd-rise pkd-card"
+              className="pkd-el pkd-card"
               onMouseEnter={() => setHovered(k.id)}
               onMouseLeave={() => setHovered((h) => (h === k.id ? null : h))}
               style={{
@@ -357,9 +461,14 @@ export default function PluginsKindsDiagram() {
                   ? `inset 0 0 0 1.5px color-mix(in oklab, ${c} 14%, transparent)`
                   : `0 8px 26px -16px ${c}, inset 0 0 0 1.5px color-mix(in oklab, ${c} ${borderMix}%, transparent)`,
                 animationDelay: `${0.16 + i * 0.08}s`,
+                // the off-state sink: an unplugged card settles a few px down and
+                // stays there. The inline transform also overrides the hover-lift
+                // class, so a removed card no longer lifts. Skipped entirely under
+                // reduced motion (state still reads from dim + dashed cord).
+                transform: isOff && !REDUCED ? "translateY(4px)" : undefined,
                 // transform is listed here too (inline style would otherwise
                 // clobber a class transition), the class supplies the hover lift
-                transition: "transform 0.16s ease, box-shadow 0.3s ease",
+                transition: "transform 0.25s ease, box-shadow 0.3s ease",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -434,7 +543,7 @@ export default function PluginsKindsDiagram() {
       {/* the moral, live-updating as switches flip */}
       <p
         aria-live="polite"
-        className="pkd-rise"
+        className="pkd-el"
         style={{
           margin: 0,
           minHeight: "2.8em",
@@ -455,18 +564,32 @@ export default function PluginsKindsDiagram() {
           from { opacity: 0; transform: translateY(14px); }
           to { opacity: 1; transform: none; }
         }
-        .pkd-rise { animation: pkdRise 0.6s cubic-bezier(0.22, 0.65, 0.3, 1) backwards; }
+        /* entrance is scroll-gated: elements hold at opacity 0 until the
+           IntersectionObserver marks the root .pkd-seen, then rise in with
+           their inline stagger delays */
+        .pkd-el { opacity: 0; }
+        .pkd-seen .pkd-el { opacity: 1; animation: pkdRise 0.6s cubic-bezier(0.22, 0.65, 0.3, 1) backwards; }
         @keyframes pkdBump {
           0% { transform: scale(1); }
           35% { transform: scale(1.18); }
           100% { transform: scale(1); }
         }
         .pkd-bump { animation: pkdBump 0.45s ease-out; }
+        @keyframes pkdPop {
+          0% { transform: scale(0.55); }
+          60% { transform: scale(1.3); }
+          100% { transform: scale(1); }
+        }
+        .pkd-pop { animation: pkdPop 0.3s ease-out; }
         .pkd-card:hover { transform: translateY(-2px); }
         .pkd-switch:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
         @media (prefers-reduced-motion: reduce) {
-          .pkd-rise, .pkd-bump { animation: none; }
+          .pkd-el, .pkd-bump, .pkd-pop { animation: none !important; opacity: 1 !important; }
           .pkd-card, .pkd-card:hover { transform: none; transition: none; }
+        }
+        /* with scripts off the observer never fires, so never hide the content */
+        @media (scripting: none) {
+          .pkd-el { opacity: 1; }
         }
       `}</style>
     </div>
