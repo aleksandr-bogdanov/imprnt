@@ -4,12 +4,18 @@
 // limits honest), pipes the session JSON on stdin, and shows whatever it prints. The wiring rides
 // imp's --settings; there is nothing to configure in your own settings files.
 //
-// Four rows, on a wide terminal — identity, spend, engine, world:
+// Rows, on a wide terminal — identity, spend, engine, each rate window on its own line, world:
 //
-//   model  Fable 5 · session taxes-deep-dive · dir imprint-vault · git main ↑2 ⊡1
+//   model  Fable 5 · taxes-deep-dive · imprint-vault · main ↑2 ⊡1
 //   cost   $0.42 · elapsed 1h12m · lines +156/-23
 //   ctx    ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱  42% · effort high
-//   limits 5h  24% →18:00 · 7d  41% →Thu · vault 247 notes, 3 review · ☀ 22° · 14:05
+//   5h     ▰▰▰▱▱▱▱▱▱▱▱▱  24%  resets 18:00
+//   7d     ▰▰▰▰▰▱▱▱▱▱▱▱  41%  resets Thu
+//   vault  247 notes, 3 review · ☀ 22° · 14:05
+//
+// The two rate-limit windows each get a full line with a gauge — "how much is left" is the number
+// you actually watch, so it reads at a glance instead of buried in a crammed trailing row. The
+// world row (vault, weather, clock) is clock-only and suppressed when there's nothing else to say.
 //
 // The design rules, learned from the tools that do this well (p10k-lean, catppuccin/tmux):
 //   - The leading label of each row pads to one gutter width, so the panel reads as a table.
@@ -109,8 +115,8 @@ function pct(used: number): string {
 // ▰▰▰▰▱▱▱▱ — a meter face, not just a fill. Filled cells take the color of the zone they sit in
 // (green to 60%, amber to 85%, red past), and EMPTY cells carry a faint tint of the same zone,
 // so the danger bands are visible at any fill level. One SGR per zone change, not per cell.
-function bar(used: number): string {
-  const cells = cols >= 100 ? 24 : 12;
+// `cells` defaults to the full context-bar width; the rate-limit gauges pass a shorter fixed count.
+function bar(used: number, cells: number = cols >= 100 ? 24 : 12): string {
   const filled = Math.min(cells, Math.round((used / 100) * cells));
   let out = "";
   let last = "";
@@ -132,11 +138,12 @@ function hhmm(d: Date): string {
 }
 
 // A reset moment: clock time when it lands today, weekday otherwise (a 7-day window resetting
-// "at 09:00" tells you nothing without the day).
-function reset(epochSeconds: number): string {
+// "at 09:00" tells you nothing without the day). Bare token, no arrow — the caller frames it
+// ("resets 17:20"), so the limits rows read as a sentence instead of a symbol soup.
+function resetAt(epochSeconds: number): string {
   const d = new Date(epochSeconds * 1000);
   const today = new Date().toDateString() === d.toDateString();
-  return `${P.lbl}→${today ? hhmm(d) : d.toLocaleDateString("en-US", { weekday: "short" })}${RESET}`;
+  return today ? hhmm(d) : d.toLocaleDateString("en-US", { weekday: "short" });
 }
 
 // 45000ms -> "45s", 4_320_000 -> "1h12m". Sessions don't run for days; hours is enough.
@@ -163,7 +170,7 @@ function git(args: string[], dir: string): string {
 function gitSegment(dir: string): string {
   const branch = git(["branch", "--show-current"], dir);
   if (!branch) return "";
-  let out = `${P.lbl}git${RESET} ${P.branch}${branch}${RESET}`;
+  let out = `${P.branch}${branch}${RESET}`;
   const counts = git(["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], dir);
   if (counts) {
     const [behind, ahead] = counts.split(/\s+/).map(Number);
@@ -252,7 +259,7 @@ const label = (name: string, value: string) => `${P.lbl}${name}${RESET} ${value}
 if (info.model?.display_name) seg.set("model", label("model", `${P.model}${info.model.display_name}${RESET}`));
 if (info.session_name) seg.set("session", label("session", `${P.session}${info.session_name}${RESET}`));
 if (info.workspace?.current_dir) {
-  seg.set("dir", label("dir", `${P.val}${basename(info.workspace.current_dir)}${RESET}`));
+  seg.set("dir", `${P.val}${basename(info.workspace.current_dir)}${RESET}`);
   const g = gitSegment(info.workspace.current_dir);
   if (g) seg.set("branch", g);
 }
@@ -273,15 +280,19 @@ if (typeof info.cost?.total_duration_ms === "number" && info.cost.total_duration
 if (info.cost?.total_lines_added || info.cost?.total_lines_removed) {
   seg.set("lines", label("lines", `${P.ok}+${info.cost.total_lines_added ?? 0}${RESET}${P.lbl}/${RESET}${P.bad}-${info.cost.total_lines_removed ?? 0}${RESET}`));
 }
+// The two rate-limit windows each get their own row: a compact gauge, the percentage on the
+// shared alarm ramp, and the reset spelled out ("resets 17:20"). The gauge makes "how much is
+// left" a glance, not a number to read. 12 cells fixed so both windows line up under each other.
+const GAUGE = 12;
 const fiveHour = info.rate_limits?.five_hour;
 if (typeof fiveHour?.used_percentage === "number") {
-  const r = fiveHour.resets_at ? ` ${reset(fiveHour.resets_at)}` : "";
-  seg.set("5h", label("limits", `5h ${pct(fiveHour.used_percentage)}${r}`));
+  const r = fiveHour.resets_at ? `  ${P.lbl}resets ${resetAt(fiveHour.resets_at)}${RESET}` : "";
+  seg.set("5h", label("5h", `${bar(fiveHour.used_percentage, GAUGE)} ${pct(fiveHour.used_percentage)}${r}`));
 }
 const sevenDay = info.rate_limits?.seven_day;
 if (typeof sevenDay?.used_percentage === "number") {
-  const r = sevenDay.resets_at ? ` ${reset(sevenDay.resets_at)}` : "";
-  seg.set("7d", `7d ${pct(sevenDay.used_percentage)}${r}`);
+  const r = sevenDay.resets_at ? `  ${P.lbl}resets ${resetAt(sevenDay.resets_at)}${RESET}` : "";
+  seg.set("7d", label("7d", `${bar(sevenDay.used_percentage, GAUGE)} ${pct(sevenDay.used_percentage)}${r}`));
 }
 const vault = vaultSegment();
 if (vault) seg.set("vault", vault);
@@ -289,8 +300,8 @@ const weather = weatherSegment();
 if (weather) seg.set("weather", weather);
 seg.set("clock", `${P.lbl}${hhmm(new Date())}${RESET}`);
 
-// Four rows — identity, spend, engine, world — each with its own drop order for narrow terminals
-// (COLUMNS is set by Claude Code, v2.1.153+): when a row runs too wide, its segments drop
+// Rows — identity, spend, engine, the two rate windows, world — each with its own drop order for
+// narrow terminals (COLUMNS is set by Claude Code, v2.1.153+): when a row runs too wide, its segments drop
 // housekeeping-first, load-bearing last. The leading label of each row pads to one gutter width
 // so the rows align into a table. An empty row doesn't print, and neither does the world row when
 // its only survivor is the clock — a bare time is not a status.
@@ -301,10 +312,12 @@ const ROWS: { keys: string[]; drop: string[] }[] = [
     drop: ["lines", "time", "cost"] },
   { keys: ["ctx", "effort", "thinking"],
     drop: ["thinking", "effort", "ctx"] },
-  { keys: ["5h", "7d", "vault", "weather", "clock"],
-    drop: ["weather", "clock", "vault", "7d", "5h"] },
+  { keys: ["5h"], drop: ["5h"] },
+  { keys: ["7d"], drop: ["7d"] },
+  { keys: ["vault", "weather", "clock"],
+    drop: ["weather", "clock", "vault"] },
 ];
-const GUTTER = 6; // the widest leading label ("limits"); keeps the left edge a straight line
+const GUTTER = 6; // pad every leading label to a shared width so the left edge is a straight line
 const SEP = `${P.sep} · ${RESET}`;
 // eslint-disable-next-line no-control-regex
 const visible = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "").length;

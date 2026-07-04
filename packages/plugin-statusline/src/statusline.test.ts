@@ -41,14 +41,19 @@ function lineFor(stdin: string, env: Record<string, string> = {}): { out: string
 }
 
 test("renders the full panel from a full payload", () => {
+  // A vault is set so the world row has content and the wall clock renders — with no vault and no
+  // weather that row is clock-only and suppressed, which is the realistic-panel case here.
+  const vault = mkdtempSync(join(tmpdir(), "imprnt-sl-fullvault-"));
+  mkdirSync(join(vault, "people"));
+  writeFileSync(join(vault, "people", "sam.md"), "# Sam\n");
   const payload = { ...FULL, workspace: { current_dir: mkdtempSync(join(tmpdir(), "imprnt-sl-")) } };
-  const r = lineFor(JSON.stringify(payload));
+  const r = lineFor(JSON.stringify(payload), { IMPRNT_VAULT: vault });
   expect(r.code).toBe(0);
   expect(r.out).toContain("Opus");
   expect(r.out).toContain("taxes-deep-dive"); // the /rename session name
   expect(r.out).toContain("imprnt-sl-"); // dir basename, no branch segment outside a repo
   const rows = r.out.split("\n");
-  expect(rows.length).toBe(4);
+  expect(rows.length).toBe(6); // identity, cost, ctx, 5h, 7d, world
   // 24-cell gauge: 41.7% -> 10 filled; the % pads to 3 so the row never jitters; the leading
   // label pads to the shared gutter so the rows align.
   expect(rows[2]).toMatch(/^ctx {4}▰{10}▱{14} {2}42%/);
@@ -58,9 +63,10 @@ test("renders the full panel from a full payload", () => {
   expect(r.out).toMatch(/cost\s+\$1\.23/); // gutter-padded leading label
   expect(r.out).toContain("elapsed 1h12m");
   expect(r.out).toContain("lines +156/-23");
-  expect(r.out).toMatch(/limits 5h {2}24% →(\d{2}:\d{2}|\w{3})/); // reset: clock today, weekday otherwise
-  expect(r.out).toMatch(/7d {2}41% →(\d{2}:\d{2}|\w{3})/); // the 7-day window gets a reset too
-  expect(r.out).toMatch(/\d{2}:\d{2}$/); // the wall clock closes the line
+  // each rate window is its own row: a 12-cell gauge, the padded %, and the reset spelled out.
+  expect(r.out).toMatch(/5h\s+[▰▱]{12} {2}24% {2}resets (\d{2}:\d{2}|\w{3})/);
+  expect(r.out).toMatch(/7d\s+[▰▱]{12} {2}41% {2}resets (\d{2}:\d{2}|\w{3})/);
+  expect(r.out).toMatch(/\d{2}:\d{2}$/); // the wall clock closes the world row
 });
 
 test("a far-off reset renders as a weekday, not a meaningless clock time", () => {
@@ -69,7 +75,7 @@ test("a far-off reset renders as a weekday, not a meaningless clock time", () =>
     rate_limits: { seven_day: { used_percentage: 10, resets_at: Math.floor(Date.now() / 1000) + 100 * 86400 } },
   };
   const r = lineFor(JSON.stringify(payload));
-  expect(r.out).toMatch(/7d\s+10% →(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/); // gutter-padded when it leads the row
+  expect(r.out).toMatch(/7d\s+[▰▱]{12} {2}10% {2}resets (Mon|Tue|Wed|Thu|Fri|Sat|Sun)/);
 });
 
 test("inside a git repo the branch renders, with ahead count against its upstream", () => {
@@ -106,7 +112,7 @@ test("a narrow terminal drops housekeeping segments first, per row, never wraps"
   const payload = { ...FULL, workspace: { current_dir: mkdtempSync(join(tmpdir(), "imprnt-sl-")) } };
   const r = lineFor(JSON.stringify(payload), { COLUMNS: "40" });
   const rows = r.out.split("\n");
-  expect(rows.length).toBe(4);
+  expect(rows.length).toBe(5); // identity, cost, ctx, 5h, 7d — the world row is clock-only here, suppressed
   expect(rows[2]).toContain("▰"); // the gauge shrinks to 12 cells but survives
   for (const row of rows) expect(row.length).toBeLessThanOrEqual(40);
   expect(rows[0]).toContain("Opus"); // model survives its row
