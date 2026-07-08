@@ -5,22 +5,29 @@ description: A voice and standards your assistant works in, so it acts like itse
 
 import { Steps } from "@astrojs/starlight/components";
 import CharacterSets from "../../src/components/docs/CharacterSets.astro";
-import CharacterScribe from "../../src/components/docs/CharacterScribe.astro";
+import CharacterCast from "../../src/components/docs/CharacterCast.astro";
 import CharacterTouches from "../../src/components/docs/CharacterTouches.astro";
 
 A **character** file gives your assistant a personality, a voice, and a set of standards, so it works like a specific person instead of generic Claude. It sets three things:
 
 <CharacterSets />
 
-This is the most load-bearing plugin, because the character file is how an assistant's identity survives moving between systems and sessions. The package ships one default you can use as is or make your own.
+This is the most load-bearing plugin, because the character file is how an assistant's identity survives moving between systems and sessions. The package ships a cast of three. Pick the register that fits you - the standards underneath are the same file to file.
 
-<CharacterScribe />
+<CharacterCast />
+
+The default is opinionated on purpose: Wingman jokes and occasionally swears, because a competent friend does. If that is not your taste, switching is one command:
+
+```sh
+imprnt character           # list the cast, see who is wired
+imprnt character doc       # switch
+```
 
 ## How it works
 
 <CharacterTouches />
 
-You can run one character or several. Each is its own file in the folder, and one ships today (Scribe). There is no referee between them: wire in two characters that contradict each other and you reconcile them yourself, which is the price of choosing who is on.
+You can run one character or several. Each is its own file in the folder, and the selector wires exactly one at a time. There is no referee between them: wire in two characters that contradict each other by hand and you reconcile them yourself, which is the price of choosing who is on.
 
 ## Install
 
@@ -32,9 +39,11 @@ You can run one character or several. Each is its own file in the folder, and on
    imprnt plugin add character
    ```
 
-   That copies the package into `plugins/character/` and wires `@plugins/character/agent.md` into `CLAUDE.local.md`, your per-machine on-off file. You can also hand-edit that file and add the line yourself.
+   That copies the package into `plugins/character/` and wires Wingman (`@plugins/character/agent.md`) into `CLAUDE.local.md`, your per-machine on-off file. You can also hand-edit that file and add the line yourself.
 
-2. **Make it yours.** Scribe is a generalized default. Copy it into the private `_personal/` folder, edit the voice, and wire that copy instead. The `_` prefix keeps the folder out of `plugin list`, so your private character never lands in the public gallery. If you ever git-init your vault project, add `plugins/_personal/` to its `.gitignore` so it never ships.
+2. **Pick your register.** `imprnt character` lists the cast, `imprnt character doc` (or `caveman`, or `wingman`) switches. The selector rewires one line and touches nothing else.
+
+3. **Make it yours.** The cast is a starting point. Copy any character into the private `_personal/` folder, edit the voice, and wire that copy instead. The `_` prefix keeps the folder out of `plugin list`, so your private character never lands in the public gallery. If you ever git-init your vault project, add `plugins/_personal/` to its `.gitignore` so it never ships.
 
 </Steps>
 

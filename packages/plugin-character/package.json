@@ -1,10 +1,13 @@
 {
   "name": "imprnt-plugin-character",
   "version": "0.1.0",
-  "description": "imprnt plugin: Scribe, a generalized default digital-assistant character. Copy, personalize, and rename to make it yours.",
+  "description": "imprnt plugin: a cast of digital-assistant characters - Wingman, Doc, Caveman. Pick one, or copy, personalize, and rename to make it yours.",
   "type": "module",
   "files": [
     "agent.md",
+    "doc.md",
+    "caveman.md",
+    "character.js",
     "README.md"
   ],
   "keywords": [

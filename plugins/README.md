@@ -317,13 +317,13 @@ applied to credentials. Any future credential-holding module follows the same sh
   ingest, hands the file off into `raw/` so the note gets a rot-proof provenance link. Clean
   fit for propose-then-approve.
 - **Character (your digital people).** Each *digital person* — the DA, and later a council
-  member, a red-team skeptic — is defined by one character file (the character plugin's `agent.md`,
-  Scribe by default, or a personalized copy in `plugins/_personal/`): its personality, voice,
+  member, a red-team skeptic — is defined by one character file (one of the character plugin's cast files -
+  Wingman by default - or a personalized copy in `plugins/_personal/`): its personality, voice,
   standards, the way it works. You wire a character into the assistant's prompt, and delete the line
   to turn it off. It produces *character text*, not notes — a config-extension plugin (rule 5), a
   different class from the two above, with no referee for conflicts (install two contradictory
   characters and that's on you). The clean parallel: `vault/people/` holds the **real** people you
-  know, and your character plugins hold your **digital** people. Scribe is the shipped default.
+  know, and your character plugins hold your **digital** people. Wingman is the shipped default.
 
 ## Explicitly out of scope for v1 (the C5 stop condition)
 
@@ -415,12 +415,14 @@ it, you can kill it, localhost-only, deterministic-driven, auto-injects nothing,
 audited. `playwright-core` is its one dependency, fenced behind the broker. `profile/` + `audit.log`
 gitignored.
 
-### character — your digital people ✅ shipped default (Scribe)
+### character — your digital people ✅ shipped cast (Wingman, Doc, Caveman)
 
 The DA's character, as a wired-in fragment — the thing that makes the assistant *itself* and not raw
-Claude. The `imprnt-plugin-character` package ships **Scribe** as its `agent.md`, a generalized default
-you copy and personalize. Install = `imprnt plugin add character`; remove = `imprnt plugin rm
-character`. Your own digital person is a personalized copy in `plugins/_personal/`, wired with `imprnt
+Claude. The `imprnt-plugin-character` package ships a cast of three: **Wingman** (`agent.md`, the
+ironic-peer default), **Doc** (`doc.md`, the calm colleague), **Caveman** (`caveman.md`, telegraphic,
+few word all signal). Same standards spine in all three; only the register differs. Install =
+`imprnt plugin add character`; pick = `imprnt character <name>` (the plugin's own selector, rewiring
+only its `@plugins/character/` line); remove = `imprnt plugin rm character`. Your own digital person is a personalized copy in `plugins/_personal/`, wired with `imprnt
 plugin add _personal/<name>.md`. The cast grows over time — a council or a red team is just a *group of
 characters* you convene (not built yet; the word generalizes now so nothing needs renaming when it
 does). Real people live in `vault/people/`; digital people live here.

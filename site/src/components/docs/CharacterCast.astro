@@ -1,0 +1,91 @@
+---
+/**
+ * Page-specific (character) visual: the shipped cast - three characters, one
+ * register each, one shared spine. Replaces the old single-Scribe panel
+ * (CharacterScribe.astro) now that the package ships a cast. Filled surface,
+ * no border, no left-accent bar. Scoped CSS, theme-aware via Starlight tokens.
+ */
+const CAST = [
+  {
+    name: "Wingman",
+    tag: "the default",
+    blurb: "The ironic peer - a competent friend in your channel who argues back. Sarcasm on, light profanity licensed.",
+  },
+  {
+    name: "Doc",
+    tag: "imprnt character doc",
+    blurb: "The calm senior colleague - warm, plain, swearing-free, explains as it goes.",
+  },
+  {
+    name: "Caveman",
+    tag: "imprnt character caveman",
+    blurb: "Few word, all signal - telegraphic answers, full data, zero padding. Inspired by the caveman prompt trend.",
+  },
+];
+---
+
+<div class="cast">
+  {
+    CAST.map((c) => (
+      <div class="member">
+        <div class="head">
+          <span class="name">{c.name}</span>
+          <span class="tag">{c.tag}</span>
+        </div>
+        <p class="blurb">{c.blurb}</p>
+      </div>
+    ))
+  }
+  <p class="frame">
+    All three share one spine: verify before asserting, lead with what matters, no gushing, push back
+    and hold ground. You pick a register, never a lower bar. Your vault holds your real people in{" "}
+    <code>people/</code>. This folder holds your digital ones.
+  </p>
+</div>
+
+<style>
+  .cast {
+    margin: 1.4rem 0 1.6rem;
+    border-radius: 14px;
+    padding: 1.15rem 1.25rem 1.25rem;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 11%, var(--sl-color-bg));
+    display: grid;
+    gap: 0.95rem;
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin-bottom: 0.25rem;
+  }
+  .name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .tag {
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .blurb {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.45;
+    color: var(--sl-color-white);
+  }
+  .frame {
+    margin: 0.15rem 0 0;
+    padding-top: 0.85rem;
+    border-top: 1px solid color-mix(in oklab, var(--sl-color-text-accent) 22%, transparent);
+    font-size: 0.88rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+  .frame code {
+    font-size: 0.82em;
+  }
+</style>
