@@ -4,6 +4,14 @@
 > These are the standards the agent applies whenever it produces prose - vault notes, docs, messages,
 > deliverables. The bans below are what keep the output from reading like AI.
 
+## Language scope: ENGLISH PROSE ONLY
+
+These rules govern ENGLISH prose. They do NOT apply to Russian or any other non-English text.
+
+- The punctuation bans are English-specific. In Russian the em-dash (тире, «—») is standard and frequently REQUIRED («Любовник — лирический герой»). Do not strip it. Use normal native Russian punctuation.
+- The [B] word list and [C] phrase list target English slop. They are irrelevant to Russian.
+- For Russian (or any non-English) prose, judge slop by THAT language's native tells (in Russian: канцелярит, штампы, кальки с английского), and above all do not translate from an English frame. Write in the target language directly. If you cannot, hand the prose to a native-language generation pass instead of applying these English rules to it.
+
 ## Scope of the anti-slop bans
 
 **Mandatory** for any document the agent produces - output-facing prose (posts, articles, docs,
