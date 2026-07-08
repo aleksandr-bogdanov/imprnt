@@ -19,12 +19,18 @@ A **harness** plugin, one that dresses up the session itself and never touches y
 ## Commands
 
 ```sh
-node plugins/timemachine/timemachine.js list                 # snapshots, newest first
-node plugins/timemachine/timemachine.js restore <id> <path>  # bring a file back into the working tree
-node plugins/timemachine/timemachine.js show <id>            # what a snapshot holds
-node plugins/timemachine/timemachine.js status               # count, location, last snapshot time
-node plugins/timemachine/timemachine.js wipe                 # delete every snapshot in this repo
+node plugins/timemachine/timemachine.js list
+node plugins/timemachine/timemachine.js restore <id> <path>
+node plugins/timemachine/timemachine.js show <id>
+node plugins/timemachine/timemachine.js status
+node plugins/timemachine/timemachine.js wipe
 ```
+
+- `list` shows snapshots, newest first
+- `restore <id> <path>` brings a file back into the working tree
+- `show <id>` shows what a snapshot holds
+- `status` shows count, location, last snapshot time
+- `wipe` deletes every snapshot in this repo
 
 If the agent clobbered something, run `list`, find a recent snapshot, and `restore` the path. **Commit** once the file is back.
 
@@ -34,7 +40,15 @@ If the agent clobbered something, run `list`, find a recent snapshot, and `resto
 imprnt plugin add timemachine
 ```
 
-This copies the plugin into `plugins/timemachine/` and wires it as a native Claude Code plugin. `imp` passes the folder to every session it launches, so the hook is active without touching your Claude settings. (Gemini cannot host Claude hooks, so `imp --gemini` skips timemachine with a warning and runs without the safety net.) Remove with `imprnt plugin rm timemachine`, adding `--purge` to delete the folder too. Snapshots stay in `.git` until you `wipe` them.
+This copies the plugin into `plugins/timemachine/` and wires it as a native Claude Code plugin. `imp` passes the folder to every session it launches, so the hook is active without touching your Claude settings. (Gemini cannot host Claude hooks, so `imp --gemini` skips timemachine with a warning and runs without the safety net.)
+
+To remove:
+
+```sh
+imprnt plugin rm timemachine
+```
+
+Adding `--purge` deletes the folder too. Snapshots stay in `.git` until you `wipe` them.
 
 ## Limits
 

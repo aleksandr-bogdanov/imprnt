@@ -31,5 +31,5 @@ On a narrow terminal each row drops segments in a fixed order rather than wrappi
 
 <StatuslineInstall />
 
-This copies the plugin into `plugins/statusline/` and wires it. `imp` forwards the `statusLine` setting to every claude session it launches, so nothing is written into your Claude settings and plain `claude` stays untouched. (The gemini backend has no statusline host, so imp skips it there with a warning.)
+This copies the plugin into `plugins/statusline/` and wires it. `imp` forwards the `statusLine` setting to every claude session it launches, so nothing is written into your Claude settings and plain `claude` stays untouched. (The gemini backend has no statusline host, so imp skips it there with a warning.) Adding `--purge` to the remove command deletes the folder too.
 

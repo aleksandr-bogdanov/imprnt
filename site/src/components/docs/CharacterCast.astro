@@ -14,11 +14,13 @@ const CAST = [
   {
     name: "Doc",
     tag: "imprnt character doc",
+    cmd: true,
     blurb: "The calm senior colleague - warm, plain, swearing-free, explains as it goes.",
   },
   {
     name: "Caveman",
     tag: "imprnt character caveman",
+    cmd: true,
     blurb: "Few word, all signal - telegraphic answers, full data, zero padding. Inspired by the caveman prompt trend.",
   },
 ];
@@ -30,7 +32,7 @@ const CAST = [
       <div class="member">
         <div class="head">
           <span class="name">{c.name}</span>
-          <span class="tag">{c.tag}</span>
+          {c.cmd ? <code class="tag-cmd">{c.tag}</code> : <span class="tag">{c.tag}</span>}
         </div>
         <p class="blurb">{c.blurb}</p>
       </div>
@@ -70,6 +72,15 @@ const CAST = [
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--sl-color-text-accent);
+  }
+  .tag-cmd {
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    line-height: 1.4;
+    padding: 0.1rem 0.45rem;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 18%, var(--sl-color-bg));
+    color: var(--sl-color-white);
   }
   .blurb {
     margin: 0;

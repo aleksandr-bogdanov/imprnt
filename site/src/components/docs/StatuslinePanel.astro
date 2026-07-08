@@ -58,8 +58,8 @@ const ROWS: Row[] = [
           <span class="sl-segs">
             {row.segs.map((seg, i) => (
               <span class={`sl-seg${seg.ramp ? ` ramp-${seg.ramp}` : ""}${seg.calm ? " ramp-calm" : ""}${seg.gauge ? " sl-seg-gauge" : ""}`}>
+                {i > 0 && <span class="sl-sep" aria-hidden="true">·</span>}
                 {seg.hook ? <span data-hook={seg.hook}>{seg.t}</span> : seg.t}
-                {i < row.segs.length - 1 && <span class="sl-sep" aria-hidden="true">·</span>}
               </span>
             ))}
           </span>
@@ -107,6 +107,9 @@ const ROWS: Row[] = [
     line-height: 1.85;
     border-bottom-left-radius: 14px;
     border-bottom-right-radius: 14px;
+    /* Containment safety net: if a segment ever outgrows the card, it scrolls
+       inside the dark body instead of escaping onto the page background. */
+    overflow-x: auto;
   }
   .sl-row {
     display: flex;
@@ -124,11 +127,18 @@ const ROWS: Row[] = [
     color: #c3c8d4;
     overflow-wrap: anywhere;
   }
+  /* The dot lives INSIDE the segment it precedes, so when a row wraps the
+     separator travels with its segment and never dangles at end of line. */
   .sl-sep {
     color: #454b5a;
-    margin: 0 0.1rem 0 0.35rem;
+    margin: 0 0.35rem 0 0.1rem;
   }
+  /* inline-block makes each segment an atomic box: the browser gets a wrap
+     point between segments (the rendered spans have no whitespace between
+     them, so plain inline nowrap spans would fuse into one unbreakable run
+     and push the card past the viewport on a phone). */
   .sl-seg {
+    display: inline-block;
     white-space: nowrap;
     margin-right: 0.35rem;
   }
