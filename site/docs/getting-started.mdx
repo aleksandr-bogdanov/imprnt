@@ -48,7 +48,7 @@ imprnt init
 
 </Steps>
 
-If your vault already lives somewhere else (moved by hand, or made on another machine), point one variable at it and every command follows. `imprnt init` ignores this variable, so to create a new vault in a custom spot, pass the path to `init` instead.
+If your vault already lives somewhere else, point one variable at it and every command follows. To create a new vault at a custom path, pass the path to `init` instead (`init` ignores the variable).
 
 ```sh title="terminal"
 export IMPRNT_VAULT=~/notes/vault
@@ -56,7 +56,7 @@ export IMPRNT_VAULT=~/notes/vault
 
 ## Open it with `imp`
 
-`imp` opens your assistant with imprnt wired in. Type it instead of `claude`, in any folder.
+`imp` opens your assistant with imprnt wired in. Type it instead of `claude`, in any folder. `imp --gemini` opens Gemini CLI the same way.
 
 ```sh title="terminal"
 imp
@@ -117,7 +117,7 @@ You:
 
 <GettingStartedRecallRank />
 
-The scoring is **BM25**, a plain formula that measures how well each note's words match your question. It is ordinary arithmetic running on your machine, with no model in the middle. It searches your real notes only: the `raw/` archive of originals is never searched, so nothing leaks from a snapshot into an answer.
+The scoring is **BM25**, plain arithmetic on your machine with no model in the middle ([how it works](/how-it-works/)). It searches your real notes only, never the `raw/` archive of originals.
 
 ### Tidy up: `check`
 

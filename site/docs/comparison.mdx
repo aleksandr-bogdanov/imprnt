@@ -47,7 +47,7 @@ iai earns a fair mention here. It is local, open source, and upfront about its d
 
 The field's default is ambient capture: hooks that watch every chat and save memories automatically, so nothing is missed and nothing is chosen. That produces a large pile of auto-logged turns, and finding anything in a pile like that needs matching by meaning rather than by exact words, which is why those tools carry vector indexes.
 
-imprnt takes the other path. You say "file this" when something is worth keeping, and the AI writes a careful note once: typed, tagged, summarized, linked to the people and things it mentions. The judgment is spent at write time. That yields a small, clean corpus, and a small clean corpus can be searched with BM25, a ranking method search engines have used for decades: plain arithmetic scoring how well a note's words match your question's words. No model runs inside the search, nothing costs per query, and the search works on any computer that has the files.
+imprnt takes the other path. You say "file this" when something is worth keeping, and the AI writes a careful note once: typed, tagged, summarized, linked to the people and things it mentions. The judgment is spent at write time. That yields a small, clean corpus, searchable with BM25, plain ranking arithmetic with no model inside the search ([how it works](/how-it-works/)). Nothing costs per query, and the search works on any computer that has the files.
 
 Neither choice is free. Ambient capture costs you a readable store, since only a machine can digest everything it saves. Conscious capture costs a moment of attention, and anything you never file cannot be found. Pick by which cost you would rather pay.
 
@@ -63,7 +63,7 @@ There is a second reason to hold scores loosely: the vendors cannot agree on the
 
 <ScoreDispute />
 
-Every number above is self-reported, each vendor running its own test setup. A public audit goes further on mempalace, alleging that its headline score is just the score of the stock database component it builds on, and that most of its stars arrived in one week from bot accounts. That is one developer's analysis and stays an allegation, but the safe conclusion holds either way: when the same tool on the same test has three published scores depending on who ran it, the architecture columns, which each vendor documents about itself and nobody disputes, are a sounder basis for your decision than a decimal point.
+Every number above is self-reported, each vendor running its own test setup. A public audit goes further on mempalace, alleging that its headline score is just the score of the stock database component it builds on, and that most of its stars arrived in one week from bot accounts. That analysis stays an allegation, but the safe conclusion holds either way: when the same tool on the same test has three published scores depending on who ran it, the architecture columns are a sounder basis for your decision than a decimal point.
 
 ## The field at a glance
 
@@ -73,7 +73,7 @@ Facts below come from each project's own README, docs, and repo data (checked 20
 
 Where the tools run varies too. mem0, Zep, and Supermemory sell a hosted service and keep an open-source local path. Letta and cognee self-host, each with an optional vendor cloud. mempalace and iai run local only. Khoj is self-host only since its cloud closed in April 2026. Obsidian and Logseq are local apps with optional paid sync. Karpathy's wiki, ECC's memory layer, and imprnt have no hosted mode and no account.
 
-The biggest star count on this page belongs to ECC, and it sits in a different category. ECC is a pack of prompts, rules, and configuration for coding-agent harnesses, the programs that run an AI assistant in a terminal, with memory as one bolt-on subsystem among many. That subsystem writes a summary of each coding session and injects the newest one when the next session starts, with a seven-day window and thirty-day retention by default. Nothing searches it: a fact captured 40 days ago has aged out, and reaching it means knowing which session to resume. Credit where due, ECC keeps plain local files, uses no embeddings (the word-to-number conversion a vector index is built from), and states a local-by-default policy.
+The biggest star count on this page belongs to ECC, and it sits in a different category. ECC is a pack of prompts, rules, and configuration for coding-agent harnesses, the programs that run an AI assistant in a terminal, with memory as one bolt-on subsystem among many: it writes a summary of each coding session and injects the newest one at the next start, with a seven-day window and thirty-day retention by default. Nothing searches it, so a fact captured 40 days ago has aged out. Credit where due, ECC keeps plain local files, uses no embeddings, and states a local-by-default policy.
 
 The 225k stars are real, and engagement runs far behind them: about one watcher (a person subscribed to the repo's updates) per 196 stars, where giants like React sit closer to one per 40, and roughly 42,000 installer downloads total. Its memory answers "what was I doing last session", where a vault answers "what do I know". Both are real jobs, and neither tool does the other's.
 
