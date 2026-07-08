@@ -31,7 +31,7 @@ export const flow = {
   eyebrow: "How it feels",
   heading: "You talk once. It files notes you can read.",
   lead:
-    "Hand over a transcript, a document, or a single fact. The model sorts it into small linked notes, plain markdown you can open in any editor. Ask weeks later, and the answer comes straight from those files.",
+    "Hand over a transcript, a document, or a single fact. The model sorts it into small linked notes, plain markdown you can open in any editor.",
   steps: [
     { n: "01", title: "You talk", sub: "paste a meeting, a doc, or one fact" },
     { n: "02", title: "It files", sub: "small linked notes land on your disk" },
@@ -54,17 +54,17 @@ export const flow = {
   ],
   terminalLabel: "one chat, three weeks apart",
   terminalCaption:
-    "You hand over a transcript and imprnt files it into people, projects, and events. Three weeks later you ask in plain words, and the answer comes back from those files, with the old date marked superseded, not dropped.",
+    "The transcript lands as people, projects, and events. Three weeks later the answer comes back from those files, with the old date marked superseded.",
   noteLabel: "the file behind that answer",
   noteCaption:
-    "This is the real shape of a note. A few labeled lines up top that code can check, prose you can read, and links that wire it to the people and meetings around it. When a fact changes, the old line is struck and stamped, never silently overwritten.",
+    "The real shape of a note: labeled lines up top that code can check, prose you can read, and links to the people and meetings around it. When a fact changes, the old line is struck and stamped, never silently overwritten.",
 };
 
 export const lockin = {
   eyebrow: "No lock-in",
   heading: "Swap the assistant, keep the memory.",
   lead:
-    "Everything lives in one folder of plain markdown on your disk, searched locally, with no vendor memory store in the middle. The vault outlives whatever model you run this year, and the agent on top stays swappable.",
+    "Everything lives in one folder of plain markdown on your disk, searched locally, with no vendor memory store in the middle. Claude Code and Gemini CLI run it today, and the vault is plain files plus a CLI, so any agent that can run a command can use it.",
   kicker: "Delete imprnt tomorrow and every note still opens, because markdown needs no app.",
   cta: { label: "See how it compares", href: "/comparison/" },
 };
