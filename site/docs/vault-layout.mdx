@@ -9,7 +9,7 @@ import VaultLayoutAnatomy from "../src/components/docs/VaultLayoutAnatomy.astro"
 import TagsFlow from "../src/components/docs/TagsFlow.astro";
 import VaultDataRule from "../src/components/docs/VaultDataRule.astro";
 
-**Folders** are for you to browse, never for search to use. `recall`, the search command, ignores them entirely, so where a note sits never affects whether you find it. The one carve-out: folder names starting with `_` or `.` are reserved for control files, and both search and `check` (the command that audits and tidies the vault) skip them, so don't file notes there. That frees the folders to be an honest map of your life instead of a filing system you fight.
+**Folders** are for you to browse, never for search to use. `recall`, the search command, ignores them entirely, so where a note sits never affects whether you find it. One carve-out: folders starting with `_` or `.` hold control files, and both search and `check` skip them, so don't file notes there. That frees the folders to be an honest map of your life instead of a filing system you fight.
 
 ## The layout
 
@@ -29,7 +29,7 @@ The folders are just drawers. The meaning rides in a few short labels at the top
 
 <VaultLayoutAnatomy />
 
-A note in a life-area folder also names its life-area in the header (`domain:`), and for the shipped set (identity, health, finances, work, life) `check` complains when the folder and the field disagree. A life-area you add yourself browses and searches like any other. The folder-versus-field check just does not cover it yet.
+A note in a life-area folder also names its life-area in the header (`domain:`), and for the shipped set (identity, health, finances, work, life) `check` complains when the folder and the field disagree. A life-area you add yourself browses and searches like any other, the folder-versus-field check just does not cover it yet.
 
 ## Tags grow on their own
 

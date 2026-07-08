@@ -17,7 +17,7 @@ A store does one of two jobs. The trouble starts when one store tries to do both
 
 <MemoryVaultSplit />
 
-**Knowledge** should be searchable and fetched on demand. **Behavior** should be small and applied every time without asking. The two pull in opposite directions: knowledge wants to be big and quiet, behavior tiny and loud. Force them into one bucket and the bucket turns into a junk drawer.
+**Knowledge** should be searchable and fetched on demand. **Behavior** should be small and applied every time without asking. Knowledge wants to be big and quiet, behavior tiny and loud, and forcing them into one bucket turns the bucket into a junk drawer.
 
 A house style or an anti-slop ruleset is a **behavior plugin**: a fixed chunk of text you wire into your assistant with one import line in `CLAUDE.local.md`, your per-machine on-off file. It loads because you added the line, and it leaves when you delete it. See [plugins](/plugins/). The vault holds zero behavior and force-feeds nothing.
 
@@ -27,7 +27,7 @@ The **vault** is the only place knowledge lives: plain files on your disk, reada
 
 <MemoryVaultDoors client:load />
 
-`recall` is the everyday door. It searches the vault with BM25, plain ranking math that scores every note against your keywords, and hands back the best hits ([how it works](/how-it-works/)). `imprnt hot` is the "where was I" glance: the short primer in `hot.md` plus anything that needs review. `imprnt context` prints the full filing rules, and the assistant runs it right before it writes a note, so outside the vault project the heavy rules are paid only by the sessions that write. A session inside the vault project, like `imp lair`, loads the contract natively from its `CLAUDE.md`.
+`recall` is the everyday door. It searches the vault with BM25 ranking and hands back the best hits ([how it works](/how-it-works/)). `imprnt hot` is the "where was I" glance: the short primer in `hot.md` plus anything that needs review. `imprnt context` prints the full filing rules, and the assistant runs it right before it writes a note, so outside the vault project the heavy rules are paid only by the sessions that write. A session inside the vault project, like `imp lair`, loads the contract natively from its `CLAUDE.md`.
 
 An `imp` session loads almost nothing on its own: your behavior plugins, plus a small pointer (~150 tokens) saying the vault exists, how to search it, and to run `imprnt context` before writing. A day of reading costs that pointer, never the whole vault.
 
@@ -75,7 +75,7 @@ imprnt grew out of [PAI](https://github.com/danielmiessler/PAI), which pointed t
 
 Each store loaded differently, and the jobs overlapped. USER and KNOWLEDGE both answered "who am I and what am I working on". The two MEMORY stores sat at opposite ends, one curated and permanent, one a raw timestamped stream. The result: you could rarely say where a fact lived or whether the assistant would see it.
 
-imprnt collapses that into one knowledge store with three on-demand doors, plus the assistant's small always-on behavior layer. One question routes anything you want to keep: knowledge or behavior. Knowledge goes to the vault and is found by search. Behavior goes to the config and loads every time. The longer record of these calls is in [design decisions](/design-decisions/).
+imprnt collapses that into one knowledge store with three on-demand doors, plus the assistant's small always-on behavior layer. One question routes anything you want to keep: knowledge goes to the vault and is found by search, behavior goes to the config and loads every time. The longer record of these calls is in [design decisions](/design-decisions/).
 
 <div class="page-end-trim" aria-hidden="true"></div>
 

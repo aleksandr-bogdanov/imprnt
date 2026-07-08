@@ -16,7 +16,7 @@ import DesignJunkDrawer from "../src/components/docs/DesignJunkDrawer.astro";
 import DesignImpSplit from "../src/components/docs/DesignImpSplit.astro";
 import DesignContextLoad from "../src/components/docs/DesignContextLoad.astro";
 
-The big calls behind imprnt: spend the AI model rarely, search with plain math, keep your data complete, and let nothing run on its own. Most take a lesson from [PAI](https://github.com/danielmiessler/PAI), the personal-AI system imprnt grew out of, and steer the other way. Each card below opens into the reasoning behind one call, and every call keeps its **flips if** line in plain view: the one change that would undo the decision, so you can scan the reversal conditions without opening a single card.
+The big calls behind imprnt: spend the AI model rarely, search with plain math, keep your data complete, and let nothing run on its own. Most take a lesson from [PAI](https://github.com/danielmiessler/PAI), the personal-AI system imprnt grew out of, and steer the other way. Each card opens into the reasoning behind one call, and each keeps its **flips if** line in plain view: the one change that would undo the decision.
 
 <DesignDecisionsNav />
 
@@ -28,7 +28,7 @@ The model is the expensive part, so imprnt spends it where one pass pays off for
 
 <DesignWriteRead />
 
-The decision recorded here is the measuring stick: "the dumbest thing that works" is measured against the model. By that stick, plain ranking math (the BM25 formula, next call down) is the default ranker, never an opt-in.
+The measuring stick recorded here: "the dumbest thing that works" is measured against the model. By that stick, plain ranking math (the BM25 formula, next call down) is the default ranker, never an opt-in.
 
 </DesignDecision>
 
@@ -38,7 +38,7 @@ The decision recorded here is the measuring stick: "the dumbest thing that works
 
 <DesignDecision icon="search" oneLiner="Search ranks with decades-old search-engine arithmetic. No AI touches a query.">
 
-`recall`, the search command, ranks with **BM25**, a formula search engines have used for decades: plain arithmetic over how often your query's words appear in each note, and how rare those words are across the vault. Most AI tools reach for vector search instead, where a model turns every note into a long list of numbers (an embedding) and compares distances. `recall` runs no rerank on a query, no embeddings, no vector store, and no protocol layer over the vault. The mechanics live in [How it works](/how-it-works/). Two calls are specific to this page.
+`recall` ranks with **BM25**, a formula search engines have used for decades: plain arithmetic over how often your query's words appear in each note, and how rare those words are across the vault. Most AI tools reach for vector search instead, where a model turns every note into a long list of numbers (an embedding) and compares distances. `recall` runs no rerank, no embeddings, no vector store, and no protocol layer over the vault. The mechanics live in [How it works](/how-it-works/). Two calls are specific to this page.
 
 Today `recall` reads every note on every query, and that holds to about 10k notes. Past that, the path stays local: a fast text pre-filter in front of the ranking carries it to about 100k, and a word index kept on disk (what search engines call an inverted index) carries it past that. Scaling adds a local index, never a vector store or a model.
 
@@ -86,7 +86,7 @@ Core is the vault plus three commands: `ingest`, `recall`, and `check`. Everythi
 
 <DesignRule label="the one rule, and its test">You can add or remove any plugin with zero edits to the core.</DesignRule>
 
-This is the most important call on the page, and a direct lesson from PAI. A core bloats when the dependency arrows point from core to module: the core imports, branches on, validates, and loads every subsystem, so every new capability grows it. PAI was built that way, and over time its core carried every feature as always-on overhead, paid in tokens and misfires whether you used the feature or not.
+This is the most important call on the page, and a direct lesson from PAI. A core bloats when the dependency arrows point from core to module: the core imports, validates, and loads every subsystem, so every new capability grows it. PAI was built that way, and its core carried every feature as always-on overhead, paid in tokens and misfires whether you used the feature or not.
 
 imprnt points the arrows the other way. A plugin depends on exactly two things, your notes and its own folder, and the core stays blind to both.
 
@@ -103,7 +103,7 @@ imprnt points the arrows the other way. A plugin depends on exactly two things, 
 
 <DesignDecision icon="copy" oneLiner="Plugins copy the dozen lines they need instead of importing them.">
 
-A plugin needs roughly twelve lines of code to read a note's header. Those lines are **copied** into every plugin, and the core publishes no code for plugins to import. The reason is reversibility, because the two ways this can go wrong are nowhere near symmetric:
+A plugin needs roughly twelve lines of code to read a note's header. Those lines are **copied** into every plugin, and the core publishes no code for plugins to import. The reason is reversibility, and the two ways this can go wrong are nowhere near symmetric:
 
 <DesignContrast
   leftLabel="if copying goes wrong"
@@ -124,9 +124,7 @@ Copy is the move you can undo.
 
 <DesignDecision icon="terminal" oneLiner="Nothing runs in the background just by being installed.">
 
-A daemon is a program that runs in the background on its own. imprnt ships none. The core and every plugin ship commands, and scheduling them (through your machine's own scheduler, like cron or launchd, or a watcher you set up) is your opt-in. A data plugin keeps its local copy warm because you scheduled a token-free sync, never because imprnt decided to.
-
-Always-on background machinery is the cost pattern imprnt was built to avoid. A tool that works without you ever thinking about it is also a tool you cannot audit, cannot stop, and do not fully own.
+A daemon is a program that runs in the background on its own. imprnt ships none. The core and every plugin ship commands, and scheduling them through your machine's own scheduler (cron, launchd) is your opt-in. A tool that works without you ever thinking about it is also a tool you cannot audit, cannot stop, and do not fully own.
 
 <DesignPaiFlip
   pai="Background machinery running by default, quietly billing you in tokens and misfires."
@@ -141,7 +139,7 @@ Always-on background machinery is the cost pattern imprnt was built to avoid. A 
 
 <DesignDecision icon="test" oneLiner="A design promise counts only if a check can catch it failing.">
 
-The most expensive lesson, and another one from PAI. A principle written as a value (`be private`, `ration the model`) cannot be checked against reality, so it rots into recitation. PAI carried seventeen principles of that kind. In imprnt, a principle earns its place only as a check that can fail, one that points at a specific breakage it would have caught.
+The most expensive lesson, and another one from PAI, which carried seventeen principles written as values (`be private`, `ration the model`). A value cannot be checked against reality, so it rots into recitation. In imprnt, a principle earns its place only as a check that can fail, one that points at a specific breakage it would have caught.
 
 <DesignContrast
   leftLabel="a test"
@@ -178,7 +176,7 @@ The package ships two commands from one dispatcher, split by audience. `imp` is 
 
 <DesignImpSplit />
 
-Two earlier models lost this fight. Wiring imprnt into the assistant's global config pays tokens in every session forever, the always-on cost again. A launcher-only design left the vault unreachable from the coding repos where most of the day happens. What won is consent per keystroke: typing `imp` instead of `claude` is the entire opt-in. Plain `claude` stays plain, nothing is written into the global config, and each session carries the context because you asked for it by name.
+Two earlier models lost this fight. Wiring imprnt into the assistant's global config pays tokens in every session forever, the always-on cost again. A launcher-only design left the vault unreachable from the coding repos where most of the day happens. What won is consent per keystroke: typing `imp` instead of `claude` is the entire opt-in, and plain `claude` stays plain.
 
 </DesignDecision>
 
@@ -188,7 +186,7 @@ Two earlier models lost this fight. Wiring imprnt into the assistant's global co
 
 <DesignDecision icon="page" oneLiner="A session starts with a small pointer. The full filing rules load only when you write.">
 
-What a session loads up front follows the same frequency axis as everything else. Always loaded: your enabled behavior plugins, plus a small **pointer** that says the vault exists, when to search it, and where to write. The full filing contract, the rulebook for where notes go, never loads up front outside the vault. `imprnt context` prints it on demand, so the rules are paid for only by the sessions that actually write, at the moment they write. A reading day costs a pointer, not the whole contract.
+A session's upfront load follows the same frequency axis as everything else. Always loaded: your enabled behavior plugins, plus a small **pointer** that says the vault exists, when to search it, and where to write. The full filing contract loads on demand through `imprnt context`, so the rules are paid for only by the sessions that actually write, at the moment they write.
 
 <DesignContextLoad />
 
