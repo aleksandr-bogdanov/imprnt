@@ -134,6 +134,14 @@
   scroll-margin-top: 5rem;
 }
 
+/* Starlight's content-spacing owl selector skips `span` as a previous sibling,
+   so the paragraph after a beat anchor loses its top gap. Restore the standard
+   block gap. Headings are excluded: Starlight's own heading rule already gives
+   them their larger 1.5em gap after a span. */
+.sl-markdown-content .beat-anchor + :not(h1, h2, h3, h4, h5, h6) {
+  margin-top: var(--sl-content-gap-y);
+}
+
 /* cross-document page transitions: the docs side of the opt-in that global.css
    makes for the landing. A soft crossfade between pages in browsers that
    support it, instant navigation everywhere else and under reduced motion. */
