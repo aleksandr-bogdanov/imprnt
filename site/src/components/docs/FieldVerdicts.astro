@@ -214,6 +214,8 @@ const CAMPS = [
   .fv-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
+    /* natural card heights - no stretch, so internals never spread to fill */
+    align-items: start;
     gap: 0.8rem;
   }
   @media (max-width: 720px) {
@@ -223,6 +225,9 @@ const CAMPS = [
   }
 
   .fv-card {
+    /* Starlight's owl spacing adds margin-top to every card after the first,
+       which would drop a row's right card below its left. Zero it. */
+    margin-top: 0;
     display: flex;
     flex-direction: column;
     border-radius: 14px;
@@ -260,7 +265,8 @@ const CAMPS = [
     display: flex;
     flex-direction: column;
     gap: 0.55rem;
-    margin-top: auto;
+    /* hug the description above (0 also cancels Starlight's owl margin-top) */
+    margin-top: 0;
     padding-top: 0.7rem;
     border-top: 1px solid var(--sl-color-hairline-shade);
   }

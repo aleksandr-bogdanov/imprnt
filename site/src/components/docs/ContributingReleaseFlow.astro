@@ -31,10 +31,14 @@ const PATHS = [
     PATHS.map((p) => (
       <div class={`rpath ${p.cls}`}>
         <span class="rtrigger"><code>{p.trigger}</code></span>
-        <span class="rarr" aria-hidden="true">&rarr;</span>
-        <span class="rruns">{p.runs}</span>
-        <span class="rarr" aria-hidden="true">&rarr;</span>
-        <span class="rdest"><code>{p.dest}</code></span>
+        <span class="rpair">
+          <span class="rarr" aria-hidden="true">&rarr;</span>
+          <span class="rruns">{p.runs}</span>
+        </span>
+        <span class="rpair">
+          <span class="rarr" aria-hidden="true">&rarr;</span>
+          <span class="rdest"><code>{p.dest}</code></span>
+        </span>
         <span class="rnote">{p.note}</span>
       </div>
     ))
@@ -85,6 +89,21 @@ const PATHS = [
     font-size: 0.86rem;
     line-height: 1.35;
     color: var(--sl-color-gray-1);
+  }
+  /* Each arrow travels with its target as one flex item, so a wrap never leaves
+     an arrow orphaned at a line start or dangling at a line end. Text inside the
+     pair still wraps in its own box. The owl-selector margin-top is zeroed so a
+     pair that wraps does not also get pushed down. */
+  .rpair {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+  .rpath > .rpair,
+  .rpair > .rruns,
+  .rpair > .rdest {
+    margin-top: 0;
   }
   .rarr {
     color: var(--sl-color-gray-3);

@@ -55,6 +55,11 @@ const PKGS = [
       grid-template-columns: 1fr;
     }
   }
+  /* Starlight's owl selector (.sl-markdown-content * + *) adds margin-top to
+     every card after the first, staggering the row. The grid gap is the spacing. */
+  .pkgs > .pcard {
+    margin-top: 0;
+  }
   .pcard {
     display: flex;
     flex-direction: column;

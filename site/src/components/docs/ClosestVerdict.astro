@@ -38,6 +38,9 @@ const { same, delta, deltaLabel } = Astro.props;
     }
   }
   .cv-cell {
+    /* Starlight's .sl-markdown-content owl spacing adds margin-top to the
+       second cell, dropping the right card below the left. Zero it. */
+    margin-top: 0;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;

@@ -54,6 +54,12 @@ const CATEGORIES = [
       grid-template-columns: 1fr;
     }
   }
+  /* Starlight's owl spacing selector (* + *) inside .sl-markdown-content adds
+     margin-top to every card after the first, shifting it 16px down within its
+     grid cell. Zero it so card tops align. */
+  .cats > .cat {
+    margin-top: 0;
+  }
   .cat {
     display: flex;
     flex-direction: column;

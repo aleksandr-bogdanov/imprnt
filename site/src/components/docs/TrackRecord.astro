@@ -16,12 +16,6 @@ const ROWS = [
     keep: "A graph-database dump that needs Graphiti or a custom reader to interpret.",
   },
   {
-    when: "2026",
-    tool: "mem0",
-    what: 'OpenMemory, the local-first memory server it launched in May 2025, "is being sunset" per its own README, pointing users at the self-hosted server instead.',
-    keep: "The local option retires. Its memories sit in a vector store and Postgres that only mem0's own stack reads.",
-  },
-  {
     when: "Mar 2026",
     tool: "Reor",
     what: "Archived by its owner after roughly a year without updates. No successor named.",
@@ -32,6 +26,12 @@ const ROWS = [
     tool: "Khoj",
     what: "Khoj Cloud sunset on April 15. The team moved to two new products, Pipali and Open Paper, and the repo coasts.",
     keep: "The hosted service is gone. Self-hosters keep a server and a Postgres database to run themselves.",
+  },
+  {
+    when: "2026",
+    tool: "mem0",
+    what: 'OpenMemory, the local-first memory server it launched in May 2025, "is being sunset" per its own README, pointing users at the self-hosted server instead.',
+    keep: "The local option retires. Its memories sit in a vector store and Postgres that only mem0's own stack reads.",
   },
   {
     when: "ongoing",

@@ -37,6 +37,11 @@ const FACTS = [
       grid-template-columns: repeat(2, 1fr);
     }
   }
+  /* Starlight's owl selector (.sl-markdown-content * + *) adds margin-top to
+     every cell after the first, staggering the row. The grid gap is the spacing. */
+  .fstrip > .fcell {
+    margin-top: 0;
+  }
   .fcell {
     display: flex;
     flex-direction: column;

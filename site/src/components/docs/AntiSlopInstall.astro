@@ -65,6 +65,12 @@ const SCOPES = [
       grid-template-columns: 1fr;
     }
   }
+  /* Starlight's owl spacing selector (* + *) inside .sl-markdown-content adds
+     margin-top to every column after the first, shifting it 16px down within
+     its grid cell. Zero it so card tops align. */
+  .asi > .asi-col {
+    margin-top: 0;
+  }
   .asi-col {
     display: grid;
     gap: 0.7rem;
