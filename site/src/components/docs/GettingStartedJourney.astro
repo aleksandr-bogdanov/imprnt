@@ -107,6 +107,10 @@ const STOPS = [
     margin-top: 0.55rem;
     min-width: 0;
     max-width: 100%;
+    /* Fill the stop's height (grid rows stretch to the tallest stop), so the
+       caption's auto margin below can pin every caption to one shared baseline
+       even when a speech chip wraps to two lines. */
+    flex: 1;
   }
   .tag {
     font-family: var(--sl-font-mono);
@@ -144,6 +148,9 @@ const STOPS = [
     font-size: 0.8rem;
     line-height: 1.35;
     color: var(--sl-color-white);
+    /* Bottom-anchor the caption inside the stretched body, so all five
+       captions share one baseline regardless of chip height. */
+    margin-top: auto;
   }
 
   /* Reveal states. The .anim class is only ever added by the script below, and
@@ -204,6 +211,9 @@ const STOPS = [
     .body {
       margin-top: 0;
       align-items: flex-start;
+    }
+    .cap {
+      margin-top: 0;
     }
     .stop.say .chip {
       white-space: nowrap;

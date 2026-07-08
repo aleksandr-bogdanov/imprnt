@@ -55,14 +55,14 @@ const KINDS: Kind[] = [
   {
     id: "data",
     label: "Data",
-    tag: "mirror a service, propose notes",
+    tag: "a mirror that proposes notes",
     caption: "Mirrors an outside service into its own folder. A sync you run refreshes it, then it proposes notes you approve.",
     em: "outside service",
   },
   {
     id: "behavior",
     label: "Behavior",
-    tag: "a prompt fragment you wire in",
+    tag: "a prompt fragment, wired in",
     caption: "Feeds the assistant a fixed prompt fragment you wire in. Removing it is deleting one line. The vault never force-feeds it.",
     em: "prompt fragment",
   },
