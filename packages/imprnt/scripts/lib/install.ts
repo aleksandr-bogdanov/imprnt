@@ -18,7 +18,7 @@ import { specError, canonicalSpec } from "./plugins.ts";
 // Official plugin names, for `plugin list` discovery when nothing is installed yet. A hint string,
 // NOT a registry: each maps by convention to the npm package `imprnt-plugin-<name>`. Adding an
 // official plugin is a one-line edit here; core fetches nothing to produce this list.
-export const OFFICIAL = ["anti-slop", "character", "whenful", "timemachine", "statusline", "telegram", "kopeika"];
+export const OFFICIAL = ["anti-slop", "character", "timemachine", "statusline"];
 
 export type Channel = "edge" | "latest";
 

@@ -126,9 +126,14 @@ test("purgePlugin removes an installed dir, refuses _-prefixed, no-ops when abse
   expect(existsSync(join(proj, "plugins", "_personal"))).toBe(true);
 });
 
-test("OFFICIAL lists the gallery names by convention", () => {
-  expect(OFFICIAL).toContain("whenful");
+test("OFFICIAL lists the release gallery names by convention", () => {
   expect(OFFICIAL).toContain("anti-slop");
+  expect(OFFICIAL).toContain("timemachine");
+  // Curated out of the stable release set (beta / not ready): available by
+  // name on npm, never advertised here.
+  expect(OFFICIAL).not.toContain("whenful");
+  expect(OFFICIAL).not.toContain("telegram");
+  expect(OFFICIAL).not.toContain("kleinanzeigen");
 });
 
 test("coreChannel reads edge from an -edge. version, latest otherwise", () => {

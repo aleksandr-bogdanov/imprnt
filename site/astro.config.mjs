@@ -58,13 +58,10 @@ export default defineConfig({
             { label: "Anti-slop", slug: "plugins/anti-slop" },
             { label: "Character", slug: "plugins/character" },
             { label: "Statusline", slug: "plugins/statusline" },
-            { label: "Telegram", slug: "plugins/telegram" },
             { label: "Timemachine", slug: "plugins/timemachine" },
-            { label: "Whenful", slug: "plugins/whenful" },
-            // Two more pages exist as drafts (docs/plugins/kleinanzeigen.mdx,
-            // docs/plugins/session-host.mdx). When their draft: true flips off,
-            // add { label, slug: "plugins/kleinanzeigen" } and
-            // { label, slug: "plugins/session-host" } here.
+            // More pages exist as drafts (docs/plugins/kleinanzeigen.mdx,
+            // session-host.mdx, whenful.mdx, telegram.mdx). When a draft: true
+            // flips off, add its { label, slug: "plugins/<name>" } here.
           ],
         },
         {
