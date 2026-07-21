@@ -11,8 +11,24 @@ if (!OUT) {
   process.exit(1);
 }
 
+// The v1 stable surface: only these five packages are allowed on @latest. The site advertises core
+// plus these four plugins; the draft plugins (kleinanzeigen, kopeika, session-host, telegram, whenful)
+// stay edge-only until they graduate. Edge is intentionally NOT filtered (edge-matrix.mjs keeps
+// publishing every affected package), so drafts still flow to @edge for dogfooding. Add a name here
+// when it graduates to stable.
+const STABLE = new Set([
+  "imprnt",
+  "imprnt-plugin-anti-slop",
+  "imprnt-plugin-character",
+  "imprnt-plugin-statusline",
+  "imprnt-plugin-timemachine",
+]);
+
 const raw = readFileSync(0, "utf8");
-const affected = JSON.parse(raw.slice(raw.indexOf("{"))).packages.items.filter((p) => p.path && p.path.startsWith("packages/"));
+const allAffected = JSON.parse(raw.slice(raw.indexOf("{"))).packages.items.filter((p) => p.path && p.path.startsWith("packages/"));
+const affected = allAffected.filter((p) => STABLE.has(p.name));
+const excluded = allAffected.filter((p) => !STABLE.has(p.name)).map((p) => p.name);
+if (excluded.length) console.error(`release matrix: excluded ${excluded.length} affected non-stable package(s) (edge-only): ${excluded.join(", ")}`);
 
 function bumpPatch(v) {
   const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v || "");
