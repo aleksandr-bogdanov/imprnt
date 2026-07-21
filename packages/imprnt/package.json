@@ -1,6 +1,7 @@
 {
   "name": "imprnt",
   "version": "0.1.1",
+  "stable": true,
   "description": "Deterministic-first, plain-markdown knowledge vault. Code does the bulk transform. The LLM only touches the irreducibly-semantic 20%. Native grep plus BM25 retrieval, zero MCP on the vault.",
   "type": "module",
   "bin": {

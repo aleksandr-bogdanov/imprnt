@@ -11,23 +11,22 @@ if (!OUT) {
   process.exit(1);
 }
 
-// The v1 stable surface: only these five packages are allowed on @latest. The site advertises core
-// plus these four plugins; the draft plugins (kleinanzeigen, kopeika, session-host, telegram, whenful)
-// stay edge-only until they graduate. Edge is intentionally NOT filtered (edge-matrix.mjs keeps
-// publishing every affected package), so drafts still flow to @edge for dogfooding. Add a name here
-// when it graduates to stable.
-const STABLE = new Set([
-  "imprnt",
-  "imprnt-plugin-anti-slop",
-  "imprnt-plugin-character",
-  "imprnt-plugin-statusline",
-  "imprnt-plugin-timemachine",
-]);
+// "Ready for the stable @latest channel" is a per-package property: a package opts in by setting
+// `"stable": true` in its own package.json. Absent or false means edge-only, so the draft plugins keep
+// flowing to @edge for dogfooding (edge-matrix.mjs is unfiltered, only this stable matrix is gated) and
+// a new package can never leak to @latest by accident. A plugin graduates by flipping its own flag.
+function isStable(pkgPath) {
+  try {
+    return JSON.parse(readFileSync(`${pkgPath}/package.json`, "utf8")).stable === true;
+  } catch {
+    return false;
+  }
+}
 
 const raw = readFileSync(0, "utf8");
 const allAffected = JSON.parse(raw.slice(raw.indexOf("{"))).packages.items.filter((p) => p.path && p.path.startsWith("packages/"));
-const affected = allAffected.filter((p) => STABLE.has(p.name));
-const excluded = allAffected.filter((p) => !STABLE.has(p.name)).map((p) => p.name);
+const affected = allAffected.filter((p) => isStable(p.path));
+const excluded = allAffected.filter((p) => !isStable(p.path)).map((p) => p.name);
 if (excluded.length) console.error(`release matrix: excluded ${excluded.length} affected non-stable package(s) (edge-only): ${excluded.join(", ")}`);
 
 function bumpPatch(v) {

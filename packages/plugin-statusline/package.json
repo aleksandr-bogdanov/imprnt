@@ -1,6 +1,7 @@
 {
   "name": "imprnt-plugin-statusline",
   "version": "0.1.0",
+  "stable": true,
   "description": "imprnt plugin: a customizable status line for imp sessions - model, directory, context usage, session cost. Rides imp's --settings, never touches your Claude config.",
   "type": "module",
   "files": [

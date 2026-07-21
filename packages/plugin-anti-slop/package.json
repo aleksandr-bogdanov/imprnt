@@ -1,6 +1,7 @@
 {
   "name": "imprnt-plugin-anti-slop",
   "version": "0.1.0",
+  "stable": true,
   "description": "imprnt plugin: universal anti-AI-slop rules (banned punctuation, words, phrases, rhetorical patterns) for any prose the agent produces.",
   "type": "module",
   "files": [

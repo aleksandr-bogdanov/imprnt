@@ -1,6 +1,7 @@
 {
   "name": "imprnt-plugin-timemachine",
   "version": "0.1.0",
+  "stable": true,
   "description": "imprnt plugin: an opt-in local snapshot safety net. Before any mutating tool runs, it snapshots your git working tree (respecting .gitignore) to a side ref, so the agent cannot lose unrecoverable work. Never blocks, local only.",
   "type": "module",
   "files": [

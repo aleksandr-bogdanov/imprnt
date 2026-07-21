@@ -1,6 +1,7 @@
 {
   "name": "imprnt-plugin-character",
   "version": "0.1.0",
+  "stable": true,
   "description": "imprnt plugin: a cast of digital-assistant characters - Wingman, Doc, Caveman. Pick one, or copy, personalize, and rename to make it yours.",
   "type": "module",
   "files": [
