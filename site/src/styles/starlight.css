@@ -1,49 +1,25 @@
-/* Theme Starlight to match the landing: same font stack, forest-green accent.
-   Dark is the default, so the docs open dark like the brand. The light palette
-   uses Alex's house warm-paper set. Starlight's own theme toggle (now visible)
-   writes the same localStorage key the landing's toggle reads, so the two stay
-   in sync across the custom landing and the docs. */
+/* Theme Starlight to match the landing: same font system (Golos Text + JetBrains
+   Mono), oxblood accent, paper-first. Light (paper) is the default; dark is the
+   override. Starlight's own theme toggle writes the same localStorage key the
+   landing's toggle reads, so the two stay in sync. Spec: vault design-book
+   imprnt.dev chapter. */
+
+@import "./accent.css";
 
 :root,
-:root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --sl-font: "Inter Variable", system-ui, -apple-system, sans-serif;
-  --sl-font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
-
-  /* green accent ramp */
-  --sl-color-accent-low: #11321f;
-  --sl-color-accent: #2f8d5a;
-  --sl-color-accent-high: #a9ecc4;
-
-  --sl-color-white: #f3f1ec;
-  --sl-color-gray-1: #e7e6e0;
-  --sl-color-gray-2: #c0c2bc;
-  --sl-color-gray-3: #969890;
-  --sl-color-gray-4: #565a54;
-  --sl-color-gray-5: #2a2f30;
-  --sl-color-gray-6: #16191d;
-  --sl-color-gray-7: #11141a;
-  --sl-color-black: #0a0b0d;
-
-  --sl-color-bg: #0a0b0d;
-  --sl-color-bg-nav: rgba(10, 11, 13, 0.7);
-  --sl-color-bg-sidebar: #0c0e11;
-  --sl-color-bg-inline-code: #131619;
-  --sl-color-hairline-shade: #1c2127;
-  --sl-color-text-accent: #6fe39f;
-}
-
-/* light: warm paper, deepened green so text holds contrast. Starlight reads
-   --sl-color-white as its highest-contrast ink and --sl-color-black as the page
-   bg, so in light they invert to near-black ink on paper. */
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --sl-color-accent-low: #d7f0e2;
-  --sl-color-accent: #178a4e;
-  --sl-color-accent-high: #0c5c33;
+  --sl-font: "Golos Text Variable", system-ui, -apple-system, sans-serif;
+  --sl-font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 
+  /* accent ramp (paper), resolved from the single source in accent.css */
+  --sl-color-accent-low: color-mix(in oklab, var(--brand-accent) 13%, #f6f4ec);
+  --sl-color-accent: var(--brand-accent);
+  --sl-color-accent-high: var(--brand-accent-strong);
+
+  /* Starlight reads --sl-color-white as highest-contrast ink and --sl-color-black
+     as the page bg; in light they resolve to near-black ink on warm paper. */
   --sl-color-white: #1b1d1a;
   --sl-color-gray-1: #2a2c27;
   --sl-color-gray-2: #45483f;
@@ -55,70 +31,93 @@
   --sl-color-black: #f6f4ec;
 
   --sl-color-bg: #f6f4ec;
-  --sl-color-bg-nav: rgba(246, 244, 236, 0.7);
+  --sl-color-bg-nav: rgba(246, 244, 236, 0.9);
   --sl-color-bg-sidebar: #efece1;
   --sl-color-bg-inline-code: #efe9da;
   --sl-color-hairline-shade: #ddd7c7;
-  --sl-color-text-accent: #0f7a43;
+  --sl-color-text-accent: var(--brand-accent);
 }
 
-/* the heading font, matching the landing's display face */
+/* dark: warm near-black, accent lifted so it holds on the dark ground */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --sl-color-accent-low: color-mix(in oklab, var(--brand-accent-dark) 20%, #141310);
+  --sl-color-accent: var(--brand-accent-dark);
+  --sl-color-accent-high: var(--brand-accent-dark-strong);
+
+  --sl-color-white: #ece9e0;
+  --sl-color-gray-1: #e3e1d8;
+  --sl-color-gray-2: #c2c0b6;
+  --sl-color-gray-3: #a3a094;
+  --sl-color-gray-4: #75736a;
+  --sl-color-gray-5: #2c2a23;
+  --sl-color-gray-6: #1c1a15;
+  --sl-color-gray-7: #191712;
+  --sl-color-black: #141310;
+
+  --sl-color-bg: #141310;
+  --sl-color-bg-nav: rgba(20, 19, 16, 0.9);
+  --sl-color-bg-sidebar: #191712;
+  --sl-color-bg-inline-code: #23201a;
+  --sl-color-hairline-shade: #2c2a23;
+  --sl-color-text-accent: var(--brand-accent-dark);
+}
+
+/* headings + the wordmark use the one grotesk (no separate display face) */
 .sl-markdown-content h1,
 .sl-markdown-content h2,
 .sl-markdown-content h3,
 .sl-markdown-content h4,
 .site-title {
-  font-family: "Space Grotesk Variable", var(--sl-font);
+  font-family: var(--sl-font);
+  font-weight: 700;
   letter-spacing: -0.02em;
 }
 
-/* glassy sticky header to echo the landing nav */
+
+/* solid sticky header (no glass). bg-nav is near-opaque, no backdrop blur. */
 .header {
-  backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: none;
+  border-bottom: 1px solid var(--sl-color-hairline-shade);
 }
 
-/* inline code chips with a faint green tint */
+/* inline code chips: mono is correct (code), neutral surface + accent text */
 .sl-markdown-content :not(pre) > code {
-  background: color-mix(in oklab, #2f8d5a 14%, #131619);
-  border: 1px solid #272c33;
-  color: #a9ecc4;
+  background: var(--sl-color-bg-inline-code);
+  border: 1px solid var(--sl-color-hairline-shade);
+  color: var(--sl-color-text-accent);
 }
 
-/* the brand word, gradient like the landing's accent so every mention of the
-   product reads as the product. injected by rehype-brand at build time. */
+/* the brand word (injected by rehype-brand): weight only, no color. The accent
+   is reserved for links/state/the wordmark dot, not every product mention. */
 .sl-markdown-content .brand-imprnt {
   font-weight: 600;
-  background: linear-gradient(92deg, #80e7a8, #36c7bf);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--sl-color-white);
 }
 
-/* competitor tool names: a neutral chip, so they read as "other products"
-   and stay visually distinct from imprnt's own green command code. */
+/* competitor tool names: a neutral chip, distinct from imprnt's own commands */
 .sl-markdown-content :not(pre) > code.tool-name {
-  background: color-mix(in oklab, #c0c2bc 7%, #131619);
-  border: 1px solid #2a2f30;
-  color: #c0c2bc;
+  background: color-mix(in oklab, var(--sl-color-gray-3) 8%, var(--sl-color-bg-inline-code));
+  border: 1px solid var(--sl-color-gray-5);
+  color: var(--sl-color-gray-2);
   font-weight: 500;
 }
 
-/* light-mode variants of the code chips + brand word, deepened for paper */
-:root[data-theme="light"] .sl-markdown-content :not(pre) > code {
-  background: color-mix(in oklab, #178a4e 10%, #fbf9f2);
-  border-color: #ddd7c7;
-  color: #0c5c33;
+/* asides: a filled surface with the oxblood accent on the title/icon, and NO
+   left accent-rail. The rail is the #1 AI tell, and Starlight's default
+   note=blue / tip=purple are off-palette. All aside types unify to the one
+   accent (this docs set uses note + tip, both informational). */
+.sl-markdown-content .starlight-aside {
+  border: 0;
+  border-inline-start: 0;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg-sidebar));
 }
-:root[data-theme="light"] .sl-markdown-content .brand-imprnt {
-  /* background-image only — the `background` shorthand would reset
-     background-clip back to border-box and render the word as a filled
-     rectangle with invisible text. */
-  background-image: linear-gradient(92deg, #0e9e6a, #0d8f88);
-}
-:root[data-theme="light"] .sl-markdown-content :not(pre) > code.tool-name {
-  background: color-mix(in oklab, #585b51 8%, #fbf9f2);
-  border-color: #ddd7c7;
-  color: #585b51;
+.sl-markdown-content .starlight-aside__title,
+.sl-markdown-content .starlight-aside__icon {
+  color: var(--sl-color-text-accent);
 }
 
 /* a touch more air in the content column */
@@ -135,16 +134,12 @@
 }
 
 /* Starlight's content-spacing owl selector skips `span` as a previous sibling,
-   so the paragraph after a beat anchor loses its top gap. Restore the standard
-   block gap. Headings are excluded: Starlight's own heading rule already gives
-   them their larger 1.5em gap after a span. */
+   so the paragraph after a beat anchor loses its top gap. Restore it. */
 .sl-markdown-content .beat-anchor + :not(h1, h2, h3, h4, h5, h6) {
   margin-top: var(--sl-content-gap-y);
 }
 
-/* cross-document page transitions: the docs side of the opt-in that global.css
-   makes for the landing. A soft crossfade between pages in browsers that
-   support it, instant navigation everywhere else and under reduced motion. */
+/* cross-document page transitions: the docs side of the landing's opt-in. */
 @media (prefers-reduced-motion: no-preference) {
   @view-transition {
     navigation: auto;

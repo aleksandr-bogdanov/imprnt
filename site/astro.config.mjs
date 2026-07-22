@@ -12,6 +12,10 @@ import rehypeBrand from "./src/lib/rehype-brand.mjs";
 const SITE = "https://imprnt.dev";
 const REPO = "https://github.com/aleksandr-bogdanov/imprnt";
 
+// dev-only: load the live accent picker on the docs pages too (the landing loads
+// it from Layout.astro). Self-gates to localhost, so it is inert even if built.
+const DEV = process.env.NODE_ENV !== "production";
+
 // https://astro.build
 export default defineConfig({
   site: SITE,
@@ -26,11 +30,19 @@ export default defineConfig({
       logo: { src: "./public/favicon.svg", alt: "imprnt" },
       favicon: "/favicon.svg",
       customCss: ["./src/styles/starlight.css"],
+      head: [
+        { tag: "link", attrs: { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32.png" } },
+        { tag: "link", attrs: { rel: "icon", type: "image/png", sizes: "16x16", href: "/favicon-16.png" } },
+        { tag: "link", attrs: { rel: "apple-touch-icon", href: "/apple-touch-icon.png" } },
+        // dev-only: the live accent picker (self-gates to localhost too)
+        ...(DEV ? [{ tag: "script", attrs: { src: "/accent-picker.js", defer: true } }] : []),
+      ],
       // The "Why imprnt?" page swaps the right-sidebar TOC for an interactive
       // story rail. Every other page keeps the default (the override falls
       // through). See src/components/overrides/TableOfContents.astro.
       components: {
         TableOfContents: "./src/components/overrides/TableOfContents.astro",
+        SiteTitle: "./src/components/overrides/SiteTitle.astro",
       },
       social: [{ icon: "github", label: "GitHub", href: REPO }],
       disable404Route: true,

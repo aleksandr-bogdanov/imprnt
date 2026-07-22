@@ -1,15 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <defs>
-    <linearGradient id="m" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#80e7a8"/>
-      <stop offset="1" stop-color="#36c7bf"/>
-    </linearGradient>
-  </defs>
-  <rect width="32" height="32" rx="8.5" fill="#0d0f12"/>
-  <g stroke="url(#m)" stroke-width="2" stroke-linecap="round" fill="none">
-    <path d="M9.5 16a6.5 6.5 0 0 1 13 0"/>
-    <path d="M12 16a4 4 0 0 1 8 0" stroke-opacity="0.8"/>
-    <path d="M9.5 16a6.5 6.5 0 0 0 4 6" stroke-opacity="0.55"/>
-  </g>
-  <circle cx="16" cy="16" r="1.4" fill="url(#m)"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1055.6 1055.6" width="32" height="32"><style>.body{fill:#1b1d1a}.mark{fill:#0f9999}.brd{stroke:#c7c1b0}@media(prefers-color-scheme:dark){.body{fill:#ece9e0}.mark{fill:#60baba}.brd{stroke:#3d3b34}}</style><rect x="60.9" y="60.9" width="933.8" height="933.8" rx="205.4" fill="none" class="brd" stroke-width="27.45"/><g transform="translate(186.8,933.8)"><rect x="143.2" y="-812.0" width="395.6" height="232.2" rx="116.1" class="body"/><rect x="277.9" y="-579.8" width="126.2" height="190.8" rx="0.0" class="body"/><rect x="27.3" y="-388.9" width="627.5" height="150.2" rx="48.1" class="body"/><rect x="88.7" y="-190.0" width="504.7" height="190.0" rx="95.0" class="mark"/></g></svg>

@@ -1,0 +1,19 @@
+/* ── the ONE accent, single source of truth ──────────────────────────────────
+   Change these six values and the whole site re-skins: landing chrome, docs
+   chrome, and the diagram islands all resolve their accent through these. Both
+   global.css (landing) and starlight.css (docs) import this file and point their
+   own accent tokens at --brand-accent*. The dev accent picker live-overrides
+   these on :root, so nothing here is load-bearing for experimentation.
+
+   Accent = teal (Alex's pick, 2026-07-22). Light #0f9999, dark #60baba.
+   -ink = text that sits ON the accent. -strong = the hover step.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --brand-accent: #0f9999;
+  --brand-accent-strong: #0b7d7d;
+  --brand-accent-ink: #ffffff;
+
+  --brand-accent-dark: #60baba;
+  --brand-accent-dark-strong: #7ccaca;
+  --brand-accent-dark-ink: #06302f;
+}

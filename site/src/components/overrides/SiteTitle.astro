@@ -1,0 +1,19 @@
+---
+// Custom docs-header wordmark: the full imprnt lockup (stamp mark + "imprnt."),
+// the same pure-vector component the landing nav uses. currentColor follows the
+// title ink; the accent resolves through the Starlight fallback in the token.
+import Lockup from "../Lockup.astro";
+---
+
+<a href="/" aria-label="imprnt" class="site-title sl-flex">
+  <Lockup size={26} />
+</a>
+
+<style>
+  .site-title {
+    align-items: center;
+    color: var(--sl-color-white);
+    text-decoration: none;
+    line-height: 0;
+  }
+</style>

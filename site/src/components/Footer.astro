@@ -1,23 +1,22 @@
 ---
-import Logo from "./Logo.astro";
+import Lockup from "./Lockup.astro";
 import { footer, site } from "../lib/content";
 ---
 
 <footer class="relative border-t border-line bg-bg-soft">
   <div class="shell grid gap-10 py-16 md:grid-cols-[1.4fr_1fr_1fr]">
     <div>
-      <a href="#top" class="flex items-center gap-2.5 font-display text-lg font-semibold">
-        <Logo size={28} />
-        <span>imprnt</span>
+      <a href="#top" aria-label="imprnt" class="flex items-center text-ink">
+        <Lockup size={28} />
       </a>
       <p class="mt-4 max-w-xs text-sm text-ink-soft">{footer.blurb}</p>
-      <p class="mt-6 font-mono text-xs text-ink-faint">{site.principle}</p>
+      <p class="mt-6 text-sm italic text-ink-faint">{site.principle}</p>
     </div>
 
     {
       footer.columns.map((col) => (
         <div>
-          <h2 class="font-mono text-xs uppercase tracking-widest text-ink-faint">{col.title}</h2>
+          <h2 class="text-xs font-semibold uppercase tracking-widest text-ink-faint">{col.title}</h2>
           <ul class="mt-4 space-y-2.5">
             {col.links.map((link) => (
               <li>
@@ -40,9 +39,19 @@ import { footer, site } from "../lib/content";
   <div class="hairline">
     <div class="shell flex flex-col items-center justify-between gap-3 py-6 text-sm text-ink-faint sm:flex-row">
       <p>{footer.copyright}</p>
-      <a href={site.repo} target="_blank" rel="noreferrer" class="font-mono text-xs transition-colors hover:text-ink">
-        github.com/aleksandr-bogdanov/imprnt
-      </a>
+      <div class="flex items-center gap-5">
+        <a
+          href="https://bogdanov.wtf"
+          target="_blank"
+          rel="noreferrer"
+          class="transition-colors hover:text-ink"
+        >
+          built by bogdanov.wtf
+        </a>
+        <a href={site.repo} target="_blank" rel="noreferrer" class="transition-colors hover:text-ink">
+          GitHub
+        </a>
+      </div>
     </div>
   </div>
 </footer>

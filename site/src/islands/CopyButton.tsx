@@ -24,7 +24,7 @@ export default function CopyButton({ value, label }: Props) {
       type="button"
       onClick={copy}
       aria-label={label ? `Copy ${label}` : "Copy to clipboard"}
-      className="group inline-flex items-center gap-2 rounded-lg border border-line bg-surface/60 px-2.5 py-1.5 text-ink-soft transition-colors hover:border-green/50 hover:text-ink"
+      className="group inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-ink-soft transition-colors hover:border-accent hover:text-accent"
     >
       <span className="relative grid h-4 w-4 place-items-center">
         <AnimatePresence mode="wait" initial={false}>
@@ -37,7 +37,7 @@ export default function CopyButton({ value, label }: Props) {
               transition={{ duration: 0.18 }}
               viewBox="0 0 24 24"
               fill="none"
-              className="h-4 w-4 text-green"
+              className="h-4 w-4 text-accent"
             >
               <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
             </motion.svg>

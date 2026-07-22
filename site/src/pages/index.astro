@@ -20,12 +20,8 @@ const icons: Record<string, string> = {
 
 <Layout>
   {/* ─────────────────────────────  HERO  ───────────────────────────── */}
-  <section class="relative overflow-hidden bg-dotgrid pb-24 pt-24 sm:pt-28">
-    <div class="pointer-events-none absolute inset-0 -z-10">
-      <div data-drift class="absolute -left-40 top-0 h-[28rem] w-[28rem] rounded-full bg-green/20 blur-[130px]"></div>
-      <div data-drift class="absolute -right-20 top-40 h-[30rem] w-[30rem] rounded-full bg-teal/15 blur-[150px]"></div>
-      <div class="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-line to-transparent"></div>
-    </div>
+  <section class="relative overflow-hidden pb-24 pt-24 sm:pt-28">
+    <div class="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-px bg-line-soft"></div>
 
     <div class="shell grid items-center gap-x-12 gap-y-16 lg:grid-cols-[1fr_1.05fr]">
       <div>
@@ -38,8 +34,8 @@ const icons: Record<string, string> = {
         </p>
 
         <div class="mt-8 flex flex-wrap items-center gap-3" data-reveal data-reveal-delay="180">
-          <div class="flex items-start gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3 font-mono text-sm">
-            <span class="select-none text-green">$</span>
+          <div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 font-mono text-sm">
+            <span class="select-none text-accent">$</span>
             <span class="text-ink">{site.install}</span>
             <CopyButton client:visible value={site.install} label="install command" />
           </div>
@@ -50,7 +46,7 @@ const icons: Record<string, string> = {
           <MagneticButton client:visible href={hero.ctaSecondary.href} label={hero.ctaSecondary.label} variant="ghost" external />
         </div>
 
-        <p class="mt-10 border-l-2 border-green/50 pl-4 font-mono text-sm text-ink-soft" data-reveal data-reveal-delay="300">
+        <p class="mt-10 max-w-md text-sm italic text-ink-soft" data-reveal data-reveal-delay="300">
           {site.principle}
         </p>
       </div>
@@ -90,8 +86,8 @@ const icons: Record<string, string> = {
       <ol class="mt-12 grid gap-3 sm:grid-cols-3">
         {
           flow.steps.map((s, i) => (
-            <li class="flex items-start gap-3.5 rounded-2xl border border-line bg-surface/50 p-5" data-reveal data-reveal-delay={i * 90}>
-              <span class="font-mono text-sm font-semibold text-green">{s.n}</span>
+            <li class="flex items-start gap-3.5 rounded-2xl border border-line bg-surface p-5" data-reveal data-reveal-delay={i * 90}>
+              <span class="font-mono text-sm font-semibold text-accent">{s.n}</span>
               <div>
                 <p class="font-display font-semibold text-ink">{s.title}</p>
                 <p class="mt-1 text-sm text-ink-soft">{s.sub}</p>
@@ -103,12 +99,12 @@ const icons: Record<string, string> = {
 
       <div class="mt-12 grid items-start gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-12">
         <div data-reveal data-reveal-delay="120">
-          <p class="mb-3 font-mono text-xs text-green">&#8627; {flow.terminalLabel}</p>
-          <Terminal client:visible lines={flow.terminal} />
+          <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">{flow.terminalLabel}</p>
+          <Terminal lines={flow.terminal} />
           <p class="mt-4 text-sm text-ink-soft">{flow.terminalCaption}</p>
         </div>
         <div data-reveal data-reveal-delay="200">
-          <p class="mb-3 font-mono text-xs text-green">&#8627; {flow.noteLabel}</p>
+          <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">{flow.noteLabel}</p>
           <LandingNote />
           <p class="mt-4 text-sm text-ink-soft">{flow.noteCaption}</p>
         </div>
@@ -118,9 +114,6 @@ const icons: Record<string, string> = {
 
   {/* ─────────────────────────────  NO LOCK-IN  ───────────────────────────── */}
   <section class="relative overflow-hidden border-t border-line py-20 sm:py-28">
-    <div class="pointer-events-none absolute inset-0 -z-10">
-      <div data-drift class="absolute -right-24 top-1/3 h-[24rem] w-[24rem] rounded-full bg-teal/10 blur-[140px]"></div>
-    </div>
     <div class="shell">
       <div class="mx-auto max-w-2xl text-center">
         <p class="eyebrow" data-reveal>{lockin.eyebrow}</p>
@@ -155,18 +148,18 @@ const icons: Record<string, string> = {
           different.features.map((f, i) => (
             <a
               href={f.href}
-              class="surface group flex flex-col p-6 transition-all duration-300 hover:-translate-y-1 hover:border-green/40"
+              class="surface group flex flex-col p-6 transition-all duration-300 hover:-translate-y-1 hover:border-accent/45"
               data-reveal
               data-reveal-delay={(i % 3) * 70}
             >
-              <span class="grid h-11 w-11 place-items-center rounded-xl border border-line bg-surface text-green transition-colors group-hover:border-green/50">
+              <span class="grid h-11 w-11 place-items-center rounded-xl border border-line bg-bg-soft text-accent transition-colors group-hover:border-accent/50">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
                   <Fragment set:html={icons[f.icon]} />
                 </svg>
               </span>
-              <h3 class="mt-5 font-display text-lg font-semibold">{f.title}</h3>
+              <h3 class="mt-5 font-display text-lg font-bold">{f.title}</h3>
               <p class="mt-2.5 flex-1 text-[0.95rem] text-ink-soft">{f.body}</p>
-              <span class="mt-4 inline-flex items-center gap-1 font-mono text-xs text-green opacity-0 transition-opacity group-hover:opacity-100">
+              <span class="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-accent opacity-0 transition-opacity group-hover:opacity-100">
                 learn more
                 <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </span>
@@ -179,16 +172,13 @@ const icons: Record<string, string> = {
 
   {/* ─────────────────────────────  CLOSING  ───────────────────────────── */}
   <section class="relative overflow-hidden border-t border-line py-24 sm:py-32">
-    <div class="pointer-events-none absolute inset-0 -z-10">
-      <div data-drift class="absolute left-1/2 top-1/2 h-[26rem] w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-green/15 blur-[140px]"></div>
-    </div>
     <div class="shell-narrow relative text-center">
       <h2 class="text-display font-semibold" data-reveal>{closing.heading}</h2>
       <p class="mx-auto mt-4 max-w-md text-lg text-ink-soft" data-reveal data-reveal-delay="80">{closing.sub}</p>
 
       <div class="mt-9 flex justify-center" data-reveal data-reveal-delay="140">
-        <div class="flex items-start gap-3 rounded-xl border border-line bg-surface/60 px-4 py-3 text-left font-mono text-sm">
-          <span class="select-none text-green">$</span>
+        <div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left font-mono text-sm">
+          <span class="select-none text-accent">$</span>
           <span class="text-ink">{closing.install}</span>
           <CopyButton client:visible value={closing.install} label="install command" />
         </div>

@@ -53,32 +53,32 @@ const CTLS: { id: DoorId; name: string; sub: string }[] = [
 
 const PALETTE = {
   dark: {
-    accent: "#80e7a8",
-    door: { recall: "#5fd49a", hot: "#e6b65f", context: "#45d2ca" } as Record<DoorId, string>,
-    cardBg: "rgba(16,19,23,0.92)",
-    onText: "#eceae4",
-    subText: "#b9bcb3",
-    capText: "#c9ccc3",
-    faint: "#8f948c",
-    line: "rgba(160,167,160,0.38)",
-    barBg: "rgba(236,234,228,0.16)",
-    fileBg: "rgba(236,234,228,0.055)",
-    ring: "rgba(160,167,160,0.26)",
-    badgeText: "#08130d",
+    accent: "var(--sl-color-text-accent)",
+    door: { recall: "#54a389", hot: "#c99a3e", context: "#4f86ab" } as Record<DoorId, string>,
+    cardBg: "rgba(28,26,21,0.92)",
+    onText: "#ece9e0",
+    subText: "#c2c0b6",
+    capText: "#cbc9bf",
+    faint: "#8f8d82",
+    line: "rgba(160,157,148,0.38)",
+    barBg: "rgba(236,233,224,0.16)",
+    fileBg: "rgba(236,233,224,0.055)",
+    ring: "rgba(160,157,148,0.26)",
+    badgeText: "#0e2019",
   },
   light: {
-    accent: "#0e9e6a",
-    door: { recall: "#178a4e", hot: "#c2641e", context: "#0d9488" } as Record<DoorId, string>,
-    cardBg: "#ffffff",
-    onText: "#15171a",
-    subText: "#43463e",
+    accent: "var(--sl-color-text-accent)",
+    door: { recall: "#3f7d6a", hot: "#b07a1e", context: "#2f6690" } as Record<DoorId, string>,
+    cardBg: "#fbf9f2",
+    onText: "#1b1d1a",
+    subText: "#45483f",
     capText: "#3a3d35",
-    faint: "#70746b",
-    line: "rgba(120,123,109,0.5)",
-    barBg: "rgba(21,23,26,0.14)",
-    fileBg: "rgba(21,23,26,0.045)",
-    ring: "rgba(120,123,109,0.32)",
-    badgeText: "#ffffff",
+    faint: "#76796d",
+    line: "rgba(120,120,105,0.5)",
+    barBg: "rgba(27,29,26,0.14)",
+    fileBg: "rgba(27,29,26,0.045)",
+    ring: "rgba(120,120,105,0.32)",
+    badgeText: "#fdf9f2",
   },
 };
 
@@ -259,10 +259,10 @@ export default function MemoryVaultDoors() {
   };
 
   const headStyle: CSSProperties = {
-    fontFamily: MONO,
+    fontFamily: SANS,
     fontSize: 11.5,
     fontWeight: 700,
-    letterSpacing: "0.08em",
+    letterSpacing: "0.07em",
     textTransform: "uppercase",
     color: C.onText,
   };
@@ -293,10 +293,10 @@ export default function MemoryVaultDoors() {
       {/* kicker */}
       <span
         style={{
-          fontFamily: MONO,
+          fontFamily: SANS,
           fontSize: 10.5,
           fontWeight: 600,
-          letterSpacing: "0.14em",
+          letterSpacing: "0.13em",
           textTransform: "uppercase",
           color: C.faint,
         }}
@@ -346,7 +346,7 @@ export default function MemoryVaultDoors() {
                   boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${doorColor} 45%, transparent)`,
                 }}
               >
-                <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: doorColor }}>
+                <span style={{ fontFamily: SANS, fontSize: 9, fontWeight: 700, letterSpacing: "0.11em", textTransform: "uppercase", color: doorColor }}>
                   came back
                 </span>
                 <span style={{ fontFamily: SANS, fontSize: 12, fontWeight: 600, lineHeight: 1.35, color: C.onText }}>
@@ -372,14 +372,14 @@ export default function MemoryVaultDoors() {
 
           {/* the only always-on piece */}
           <div style={{ marginTop: "auto", paddingTop: "0.55rem", borderTop: `1px solid ${C.ring}`, display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-            <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: C.faint }}>
+            <span style={{ fontFamily: SANS, fontSize: 9, fontWeight: 700, letterSpacing: "0.11em", textTransform: "uppercase", color: C.faint }}>
               always loaded
             </span>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
-              <span style={{ fontFamily: MONO, fontSize: 10, padding: "0.16rem 0.5rem", borderRadius: 999, background: `color-mix(in oklab, ${C.onText} 10%, transparent)`, color: C.capText }}>
+              <span style={{ fontFamily: SANS, fontSize: 10.5, fontWeight: 500, padding: "0.16rem 0.5rem", borderRadius: 999, background: `color-mix(in oklab, ${C.onText} 10%, transparent)`, color: C.capText }}>
                 your behavior plugins
               </span>
-              <span style={{ fontFamily: MONO, fontSize: 10, padding: "0.16rem 0.5rem", borderRadius: 999, background: `color-mix(in oklab, ${C.accent} 16%, transparent)`, color: C.onText }}>
+              <span style={{ fontFamily: SANS, fontSize: 10.5, fontWeight: 500, padding: "0.16rem 0.5rem", borderRadius: 999, background: `color-mix(in oklab, ${C.accent} 16%, transparent)`, color: C.onText }}>
                 the pointer &middot; ~150 tokens
               </span>
             </div>

@@ -47,18 +47,18 @@ const tree = [
   {/* the folder that stays */}
   <div class="overflow-hidden rounded-2xl border border-line bg-surface/60">
     <div class="flex flex-wrap items-center gap-2 border-b border-line/70 px-5 py-3">
-      <svg class="h-4 w-4 text-green" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="h-4 w-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
       </svg>
       <span class="font-mono text-sm text-ink">vault/</span>
-      <span class="ml-auto font-mono text-[10px] uppercase tracking-wider text-green">plain markdown · yours</span>
+      <span class="ml-auto font-mono text-[10px] uppercase tracking-wider text-ink-faint">plain markdown · yours</span>
     </div>
 
     <ul class="grid gap-x-8 gap-y-2 px-5 py-4 sm:grid-cols-2">
       {
         tree.map((t) => (
           <li class="flex flex-wrap items-baseline gap-x-2.5 font-mono text-[12.5px]">
-            <span class={t.file ? "text-ink-soft" : "text-green"}>{t.name}</span>
+            <span class={t.file ? "text-ink-soft" : "font-medium text-ink"}>{t.name}</span>
             <span class="text-[11px] text-ink-faint">{t.note}</span>
           </li>
         ))
@@ -67,8 +67,8 @@ const tree = [
 
     {/* it greps like any folder, because it is one */}
     <div class="space-y-1 border-t border-line/70 px-5 py-3.5 font-mono text-[11.5px] leading-relaxed">
-      <p><span class="select-none text-green">$</span> <span class="text-ink">grep -r "cutover" vault/</span></p>
-      <p class="text-ink-soft"><span class="text-green/80">projects/access-platform.md:</span>Cutover is July 15, gated on the two-week parallel-run numbers.</p>
+      <p><span class="select-none text-accent">$</span> <span class="text-ink">grep -r "cutover" vault/</span></p>
+      <p class="text-ink-soft"><span class="text-accent">projects/access-platform.md:</span>Cutover is July 15, gated on the two-week parallel-run numbers.</p>
     </div>
   </div>
 

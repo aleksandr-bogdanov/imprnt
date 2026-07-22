@@ -90,28 +90,30 @@ const PATHS: Record<string, string> = {
   harness: "M500 0 C500 18, 841 14, 841 32",
 };
 
+// the brand accent (core hub, tints) resolves from the CSS token so the accent
+// picker recolours it; the per-kind `kind` hues are categorical DATA and stay.
 const PALETTE = {
   dark: {
-    core: "#80e7a8",
-    kind: { data: "#45d2ca", behavior: "#5fd49a", harness: "#e6b65f" },
-    cardBg: "rgba(16,19,23,0.92)",
-    coreBg: "#80e7a8",
-    coreText: "#08130d",
-    onText: "#eceae4",
-    subText: "#b9bcb3",
-    capText: "#c9ccc3",
-    edge: "rgba(160,167,160,0.32)",
+    core: "var(--sl-color-text-accent)",
+    kind: { data: "#4f86ab", behavior: "#54a389", harness: "#c99a3e" },
+    cardBg: "rgba(28,26,21,0.92)",
+    coreBg: "var(--brand-accent)",
+    coreText: "var(--brand-accent-ink)",
+    onText: "#ece9e0",
+    subText: "#c2c0b6",
+    capText: "#cbc9bf",
+    edge: "rgba(160,157,148,0.32)",
   },
   light: {
-    core: "#0e9e6a",
-    kind: { data: "#0d9488", behavior: "#178a4e", harness: "#c2641e" },
-    cardBg: "#ffffff",
-    coreBg: "#0e9e6a",
-    coreText: "#ffffff",
-    onText: "#15171a",
-    subText: "#43463e",
+    core: "var(--sl-color-text-accent)",
+    kind: { data: "#2f6690", behavior: "#3f7d6a", harness: "#b07a1e" },
+    cardBg: "#fbf9f2",
+    coreBg: "var(--brand-accent)",
+    coreText: "var(--brand-accent-ink)",
+    onText: "#1b1d1a",
+    subText: "#45483f",
     capText: "#3a3d35",
-    edge: "rgba(120,123,109,0.4)",
+    edge: "rgba(120,120,105,0.4)",
   },
 };
 
@@ -248,7 +250,7 @@ export default function PluginsKindsDiagram() {
   // the two hub readouts: the left one climbs on every toggle, the right one
   // is the whole point of the diagram and never leaves zero
   const chipStyle: CSSProperties = {
-    fontFamily: MONO,
+    fontFamily: SANS,
     fontSize: narrow ? 10 : 10.5,
     fontWeight: 700,
     letterSpacing: "0.08em",
@@ -292,15 +294,15 @@ export default function PluginsKindsDiagram() {
           borderRadius: 16,
           background: C.coreBg,
           color: C.coreText,
-          boxShadow: `0 0 38px -8px ${C.core}`,
+          boxShadow: "0 10px 30px -18px rgba(30,15,10,0.5)",
           textAlign: "center",
           maxWidth: "30rem",
         }}
       >
-        <span style={{ fontFamily: MONO, fontSize: narrow ? 17 : 19, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", lineHeight: 1 }}>
+        <span style={{ fontFamily: SANS, fontSize: narrow ? 18 : 20, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1 }}>
           core
         </span>
-        <span style={{ fontFamily: MONO, fontSize: narrow ? 11.5 : 12.5, fontWeight: 600, opacity: 0.82 }}>
+        <span style={{ fontFamily: SANS, fontSize: narrow ? 11.5 : 12.5, fontWeight: 600, opacity: 0.85 }}>
           vault + ingest &middot; recall &middot; check
         </span>
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0.35rem" }}>
@@ -484,7 +486,7 @@ export default function PluginsKindsDiagram() {
                     transition: "background 0.25s ease, box-shadow 0.25s ease",
                   }}
                 />
-                <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: C.onText, opacity: isOff ? 0.6 : 1, transition: "opacity 0.25s ease" }}>
+                <span style={{ fontFamily: SANS, fontSize: 15, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: C.onText, opacity: isOff ? 0.6 : 1, transition: "opacity 0.25s ease" }}>
                   {k.label}
                 </span>
                 {/* the live switch: flipping it is "imprnt plugin rm" in

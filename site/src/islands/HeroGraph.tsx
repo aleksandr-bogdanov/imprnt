@@ -20,13 +20,16 @@ const REDUCED =
 
 type TypeKey = "person" | "org" | "project" | "event" | "mistake" | "principle";
 
+// Muted, archival categorical hues that read on warm paper and on the warm dark.
+// These encode entity type (a real data dimension); the brand accent (oxblood) is
+// reserved for the focused node, so type-colour and state never fight.
 const TYPE: Record<TypeKey, { color: string; label: string }> = {
-  person: { color: "#5fd49a", label: "person" },
-  org: { color: "#45d2ca", label: "org" },
-  project: { color: "#e6b65f", label: "project" },
-  event: { color: "#85a9ff", label: "event" },
-  mistake: { color: "#f3796f", label: "mistake" },
-  principle: { color: "#bd97f5", label: "principle" },
+  person: { color: "#3f7d6a", label: "person" },
+  org: { color: "#2f6690", label: "org" },
+  project: { color: "#b07a1e", label: "project" },
+  event: { color: "#5f6b96", label: "event" },
+  mistake: { color: "#a24b3c", label: "mistake" },
+  principle: { color: "#7a5c9e", label: "principle" },
 };
 
 type Node = {
@@ -109,27 +112,32 @@ function pillWidth(label: string, hub?: boolean) {
 // graph chrome that has to adapt to the theme (the type colours below read on
 // both). Driven off the data-theme attribute the toggle sets, observed live so
 // the graph reflows the instant the theme flips.
+// accent values resolve from the CSS token (--color-accent), so the accent
+// picker / a token change recolours the graph too. Only the theme-fixed neutrals
+// stay hardcoded here.
 const PALETTE = {
   dark: {
-    edgeOn: "rgba(128,231,168,0.55)",
-    edgeOff: "rgba(160,167,160,0.13)",
-    nodeBg: "rgba(16,19,23,0.94)",
-    nodeBorder: "rgba(39,44,51,0.9)",
-    nodeOnText: "#eceae4",
-    nodeOffText: "#71756f",
-    focusText: "#08130d",
-    popupBg: "rgba(12,14,18,0.97)",
+    edgeOn: "color-mix(in oklab, var(--color-accent) 48%, transparent)",
+    edgeOff: "rgba(160,157,148,0.13)",
+    nodeBg: "rgba(28,26,21,0.94)",
+    nodeBorder: "rgba(44,42,35,0.9)",
+    nodeOnText: "#ece9e0",
+    nodeOffText: "#75736a",
+    accent: "var(--color-accent)",
+    accentBg: "color-mix(in oklab, var(--color-accent) 16%, transparent)",
+    popupBg: "rgba(20,19,16,0.98)",
     popupShadow: "0 24px 60px -20px rgba(0,0,0,0.72)",
   },
   light: {
-    edgeOn: "rgba(23,138,78,0.5)",
-    edgeOff: "rgba(120,123,109,0.22)",
+    edgeOn: "color-mix(in oklab, var(--color-accent) 40%, transparent)",
+    edgeOff: "rgba(120,120,105,0.2)",
     nodeBg: "rgba(251,249,242,0.95)",
     nodeBorder: "rgba(221,215,199,0.95)",
     nodeOnText: "#1b1d1a",
     nodeOffText: "#8b8d81",
-    focusText: "#08130d",
-    popupBg: "rgba(251,249,242,0.98)",
+    accent: "var(--color-accent)",
+    accentBg: "color-mix(in oklab, var(--color-accent) 10%, transparent)",
+    popupBg: "rgba(251,249,242,0.99)",
     popupShadow: "0 24px 60px -20px rgba(60,50,30,0.30)",
   },
 };
@@ -156,7 +164,7 @@ function NoteCard({ f, conns, onLink, C }: {
       <div className="mb-2 flex items-center gap-2 border-b border-line pb-2">
         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TYPE[f.type].color }} />
         <span className="truncate font-mono text-[11px] text-ink-soft">{f.path}</span>
-        <span className="ml-auto shrink-0 font-mono text-[10px] uppercase tracking-wider" style={{ color: TYPE[f.type].color }}>{TYPE[f.type].label}</span>
+        <span className="ml-auto shrink-0 text-[10px] font-semibold uppercase tracking-wider" style={{ color: TYPE[f.type].color }}>{TYPE[f.type].label}</span>
       </div>
 
       <p className="font-display text-sm font-semibold text-ink"># {f.title}</p>
@@ -173,7 +181,7 @@ function NoteCard({ f, conns, onLink, C }: {
       </ul>
 
       <div className="mt-2.5 border-t border-line pt-2">
-        <p className="mb-1 font-mono text-[9.5px] uppercase tracking-wider text-ink-faint">linked notes</p>
+        <p className="mb-1 text-[9.5px] font-semibold uppercase tracking-wider text-ink-faint">linked notes</p>
         <ul className="space-y-0.5">
           {conns.slice(0, 5).map((c) => (
             <li key={c.other.id} className="flex items-baseline gap-1.5 text-[11px] leading-snug">
@@ -287,8 +295,6 @@ export default function HeroGraph({ hintMobile }: { hintMobile?: string }) {
       onPointerLeave={() => { if (!dragId.current && !compact) setFocus(null); }}
     >
       <div ref={ref} className="relative h-[20rem] w-full touch-none select-none sm:h-[28rem] lg:h-[33rem]">
-        <div className="pointer-events-none absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full bg-green/15 blur-[90px]" />
-
         {/* edges */}
         <svg className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
           {EDGES.map((e, i) => {
@@ -322,19 +328,19 @@ export default function HeroGraph({ hintMobile }: { hintMobile?: string }) {
               className={`group absolute flex items-center gap-1.5 rounded-full border py-1.5 ${labelled ? "px-2.5" : "px-1.5"} ${compact ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"} ${dragId.current === n.id ? "" : "node-float"}`}
               style={{
                 left: `${p.x}%`, top: `${p.y}%`, transform: "translate(-50%, -50%)",
-                background: isFocus ? t.color : C.nodeBg,
-                borderColor: on ? t.color : C.nodeBorder,
-                color: isFocus ? C.focusText : on ? C.nodeOnText : C.nodeOffText,
+                background: isFocus ? C.accentBg : C.nodeBg,
+                borderColor: isFocus ? C.accent : on ? t.color : C.nodeBorder,
+                color: isFocus || on ? C.nodeOnText : C.nodeOffText,
                 opacity: on ? 1 : 0.4,
-                boxShadow: isFocus ? `0 0 26px -4px ${t.color}` : "none",
+                boxShadow: isFocus ? `0 0 0 1px ${C.accent}` : "none",
                 zIndex: isFocus ? 3 : on ? 2 : 1,
                 transition: "opacity .3s, color .3s, background .3s, border-color .3s, box-shadow .3s",
                 animationDelay: `${(n.x % 5) * 0.4}s`,
               }}
             >
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: isFocus ? C.focusText : t.color }} />
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: t.color }} />
               {labelled && (
-                <span className={`whitespace-nowrap font-mono ${n.hub ? "text-[12px] font-semibold" : "text-[11px]"}`}>{n.label}</span>
+                <span className={`whitespace-nowrap ${n.hub ? "text-[12.5px] font-semibold" : "text-[11.5px] font-medium"}`}>{n.label}</span>
               )}
             </button>
           );
@@ -349,7 +355,7 @@ export default function HeroGraph({ hintMobile }: { hintMobile?: string }) {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             className="absolute z-20 rounded-xl border border-line p-3.5"
-            style={{ ...popupStyle(), background: C.popupBg, boxShadow: C.popupShadow, backdropFilter: "blur(8px)" }}
+            style={{ ...popupStyle(), background: C.popupBg, boxShadow: C.popupShadow }}
           >
             <NoteCard f={f} conns={conns} onLink={setFocus} C={C} />
           </motion.div>
@@ -359,7 +365,7 @@ export default function HeroGraph({ hintMobile }: { hintMobile?: string }) {
       {/* mobile: hint under the cluster, then the note preview drops in below it */}
       {compact && (
         <>
-          {hintMobile && <p className="mt-3 text-center font-mono text-[11px] text-ink-faint">{hintMobile}</p>}
+          {hintMobile && <p className="mt-3 text-center text-[11px] text-ink-faint">{hintMobile}</p>}
           {f && (
             <motion.div
               key={f.id}
@@ -375,7 +381,7 @@ export default function HeroGraph({ hintMobile }: { hintMobile?: string }) {
         </>
       )}
 
-      <p className="absolute -bottom-2 right-1 hidden font-mono text-[10px] text-ink-soft lg:block">a real example vault - hover, drag, or click a link</p>
+      <p className="absolute -bottom-2 right-1 hidden text-[10px] text-ink-soft lg:block">a real example vault - hover, drag, or click a link</p>
     </div>
   );
 }

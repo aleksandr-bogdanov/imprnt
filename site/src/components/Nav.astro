@@ -1,16 +1,15 @@
 ---
-import Logo from "./Logo.astro";
+import Lockup from "./Lockup.astro";
 import { nav, site } from "../lib/content";
 ---
 
 <header
   data-header
-  class="fixed inset-x-0 top-0 z-40 transition-[background-color,border-color,backdrop-filter] duration-300 [&.is-scrolled]:border-line [&.is-scrolled]:bg-bg/70 [&.is-scrolled]:backdrop-blur-xl border-b border-transparent"
+  class="fixed inset-x-0 top-0 z-40 transition-[background-color,border-color] duration-300 [&.is-scrolled]:border-line [&.is-scrolled]:bg-bg border-b border-transparent"
 >
   <nav class="shell flex h-16 items-center justify-between gap-4" aria-label="Primary">
-    <a href="#top" class="flex items-center gap-2.5 font-display text-lg font-semibold tracking-tight">
-      <Logo size={28} />
-      <span>imprnt</span>
+    <a href="#top" aria-label="imprnt" class="flex items-center text-ink">
+      <Lockup size={28} />
     </a>
 
     <ul class="hidden items-center gap-7 md:flex">
@@ -33,7 +32,7 @@ import { nav, site } from "../lib/content";
         type="button"
         data-theme-toggle
         aria-label="Toggle light and dark theme"
-        class="grid h-9 w-9 place-items-center rounded-lg border border-line text-ink-soft transition-colors hover:border-green/55 hover:text-ink"
+        class="grid h-9 w-9 place-items-center rounded-lg border border-line text-ink-soft transition-colors hover:border-accent hover:text-ink"
       >
         <svg class="theme-sun h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
           <circle cx="12" cy="12" r="4"></circle>
@@ -71,7 +70,7 @@ import { nav, site } from "../lib/content";
   <!-- mobile panel -->
   <div
     data-menu-panel
-    class="grid grid-rows-[0fr] overflow-hidden border-line bg-bg/95 backdrop-blur-xl transition-[grid-template-rows] duration-300 ease-out data-[open]:grid-rows-[1fr] data-[open]:border-t md:hidden"
+    class="grid grid-rows-[0fr] overflow-hidden border-line bg-bg transition-[grid-template-rows] duration-300 ease-out data-[open]:grid-rows-[1fr] data-[open]:border-t md:hidden"
   >
     <div class="min-h-0">
       <ul class="shell flex flex-col gap-1 py-4">
@@ -148,7 +147,7 @@ import { nav, site } from "../lib/content";
         b.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme"),
       );
       const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute("content", dark ? "#0a0b0d" : "#f6f4ec");
+      if (meta) meta.setAttribute("content", dark ? "#141310" : "#f6f4ec");
     };
     sync();
     document.querySelectorAll("[data-theme-toggle]").forEach((btn) => {
