@@ -180,3 +180,7 @@ only, never needed by people who use it through their assistant). Clone, `bun in
 ## License
 
 MIT (c) 2026 Aleksandr Bogdanov
+
+---
+
+<img src=".github/mark.svg" height="15" alt=""> built by [bogdanov.wtf](https://bogdanov.wtf)
