@@ -1,21 +1,13 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { site } from "../lib/content";
-import { hero, problem, flow, lockin, different, closing } from "../lib/landing";
+import { hero, how, proof, file, closing } from "../lib/landing";
 
-import HeroGraph from "../islands/HeroGraph.tsx";
 import Terminal from "../islands/Terminal.tsx";
 import CopyButton from "../islands/CopyButton.tsx";
 import MagneticButton from "../islands/MagneticButton.tsx";
-import LandingAmnesia from "../components/landing/LandingAmnesia.astro";
 import LandingNote from "../components/landing/LandingNote.astro";
-import LandingVault from "../components/landing/LandingVault.astro";
-
-const icons: Record<string, string> = {
-  shield: `<path d="M12 3 5 6v5c0 4.5 3 7.6 7 9 4-1.4 7-4.5 7-9V6z"/><path d="m9 12 2 2 4-4"/>`,
-  blocks: `<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><path d="M16.5 14v6M13.5 17h6"/>`,
-  bolt: `<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>`,
-};
+import HowLanes from "../components/landing/HowLanes.astro";
 ---
 
 <Layout>
@@ -23,22 +15,32 @@ const icons: Record<string, string> = {
   <section class="relative overflow-hidden pb-24 pt-24 sm:pt-28">
     <div class="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-px bg-line-soft"></div>
 
-    <div class="shell grid items-center gap-x-12 gap-y-16 lg:grid-cols-[1fr_1.05fr]">
+    <div class="shell grid items-center gap-x-12 gap-y-16 lg:grid-cols-[1.05fr_0.95fr]">
       <div>
         <p class="eyebrow" data-reveal>{hero.eyebrow}</p>
         <h1 class="mt-6 text-hero font-semibold" data-reveal data-reveal-delay="60">
-          {hero.headlineLead}{" "}<span class="text-accent">{hero.headlineAccent}</span>.
+          {hero.headlineLead}<br />
+          <span class="text-accent sm:whitespace-nowrap">{hero.headlineAccent}</span>.
         </h1>
-        <p class="mt-6 max-w-xl text-lg text-ink-soft sm:text-xl" data-reveal data-reveal-delay="120">
+        <p class="mt-6 text-balance font-display text-xl font-semibold text-ink sm:text-2xl" data-reveal data-reveal-delay="100">
+          {hero.motto}
+        </p>
+        <p class="mt-5 max-w-xl text-lg text-ink-soft sm:text-xl" data-reveal data-reveal-delay="140">
           {hero.subhead}
         </p>
 
-        <div class="mt-8 flex flex-wrap items-center gap-3" data-reveal data-reveal-delay="180">
-          <div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 font-mono text-sm">
-            <span class="select-none text-accent">$</span>
-            <span class="text-ink">{site.install}</span>
+        <div class="mt-8" data-reveal data-reveal-delay="180">
+          {/* the prompt marks where the command STARTS, so it top-aligns with
+              the command's first line once the command wraps. The pair is its
+              own flex row so the copy button stays optically centred. */}
+          <div class="flex w-fit items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 font-mono text-sm">
+            <span class="flex min-w-0 items-start gap-3">
+              <span class="shrink-0 select-none text-accent">$</span>
+              <span class="text-ink">{site.install}</span>
+            </span>
             <CopyButton client:visible value={site.install} label="install command" />
           </div>
+          <p class="mt-3 max-w-md text-sm text-ink-soft">{hero.installCaption}</p>
         </div>
 
         <div class="mt-6 flex flex-wrap items-center gap-3" data-reveal data-reveal-delay="240">
@@ -46,126 +48,160 @@ const icons: Record<string, string> = {
           <MagneticButton client:visible href={hero.ctaSecondary.href} label={hero.ctaSecondary.label} variant="ghost" external />
         </div>
 
-        <p class="mt-10 max-w-md text-sm italic text-ink-soft" data-reveal data-reveal-delay="300">
-          {site.principle}
-        </p>
       </div>
 
-      <div class="lg:pb-10" data-reveal data-reveal-delay="160">
-        <HeroGraph client:load hintMobile={hero.graphHintMobile} />
+      <div class="lg:pb-6" data-reveal data-reveal-delay="160">
+        <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">{hero.terminalLabel}</p>
+        <Terminal lines={hero.terminal} />
+        <p class="mt-4 text-sm text-ink-soft">{hero.terminalCaption}</p>
       </div>
     </div>
   </section>
 
-  {/* ─────────────────────────────  PROBLEM  ───────────────────────────── */}
-  <section class="relative border-t border-line py-20 sm:py-28">
-    <div class="shell">
-      <div class="max-w-2xl">
-        <p class="eyebrow" data-reveal>{problem.eyebrow}</p>
-        <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{problem.heading}</h2>
-        <p class="mt-7 text-lg text-ink-soft sm:text-xl" data-reveal data-reveal-delay="120">{problem.intro}</p>
-      </div>
-
-      <div class="mt-12" data-reveal data-reveal-delay="180">
-        <LandingAmnesia />
-      </div>
-
-      <p class="mt-12 max-w-2xl text-lg text-ink-soft sm:text-xl" data-reveal>{problem.flip}</p>
-    </div>
-  </section>
-
-  {/* ─────────────────────────────  FLOW  ───────────────────────────── */}
+  {/* ─────────────────────────────  HOW IT WORKS  ───────────────────────────── */}
   <section id="how" class="relative border-t border-line bg-bg-soft py-20 sm:py-28">
-    <div class="shell">
-      <div class="max-w-2xl">
-        <p class="eyebrow" data-reveal>{flow.eyebrow}</p>
-        <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{flow.heading}</h2>
-        <p class="mt-6 text-lg text-ink-soft" data-reveal data-reveal-delay="120">{flow.lead}</p>
+    {/* Mobile reads in one column, so the two columns go display:contents below
+        lg and every block takes an explicit order: the lanes diagram sits right
+        under the heading as the section's summary, then prose, prose, spec
+        strip, prose, prose, a hairline, and the cost paragraphs plus the link.
+        No run of body prose is longer than two paragraphs. At lg the wrappers
+        are blocks again and order goes inert: the lanes lead the right column,
+        with the spec strip and the cost paragraphs under them. */}
+    <div class="shell grid items-start gap-x-12 gap-y-0 lg:grid-cols-2 lg:gap-y-10">
+      <div class="contents lg:block lg:max-w-2xl">
+        <div class="order-1 max-w-2xl">
+          <p class="eyebrow" data-reveal>{how.eyebrow}</p>
+          <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{how.heading}</h2>
+        </div>
+        {how.paras.map((p, i) => (
+          <p
+            class={`mt-6 max-w-2xl text-lg leading-relaxed text-ink-soft [&_strong]:font-semibold [&_strong]:text-ink ${["order-3", "order-4", "order-6", "order-7"][i]}`}
+            data-reveal
+            data-reveal-delay={120 + i * 40}
+            set:html={p}
+          />
+        ))}
       </div>
 
-      <ol class="mt-12 grid gap-3 sm:grid-cols-3">
+      <div class="contents lg:block lg:max-w-2xl lg:self-center">
+        <div class="order-2 mt-8 max-w-2xl lg:mt-0" data-reveal data-reveal-delay="80">
+          <HowLanes />
+        </div>
+        <div class="order-5 mt-10 mb-4 flex max-w-2xl flex-wrap items-center gap-x-8 gap-y-3 border-y border-line py-5 lg:mb-0" data-reveal>
+          {how.spec.map((s) => (
+            <span class="text-sm font-semibold uppercase tracking-wider text-ink-soft">{s}</span>
+          ))}
+        </div>
+        {how.paras2.map((p, i) => (
+          <p
+            class={`max-w-2xl text-lg leading-relaxed text-ink-soft [&_strong]:font-semibold [&_strong]:text-ink ${
+              [
+                "order-8 mt-10 border-t border-line pt-10 lg:mt-6 lg:border-t-0 lg:pt-0",
+                "order-9 mt-6",
+              ][i]
+            }`}
+            data-reveal
+            data-reveal-delay={i * 40}
+            set:html={p}
+          />
+        ))}
+        <div class="order-10 mt-6 max-w-2xl">
+          <a href={how.link.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline" data-reveal>
+            {how.link.label}
+            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* ─────────────────────────────  PROOF  ───────────────────────────── */}
+  <section id="proof" class="relative border-t border-line py-20 sm:py-28">
+    <div class="shell">
+      <div class="max-w-2xl">
+        <p class="eyebrow" data-reveal>{proof.eyebrow}</p>
+        <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{proof.heading}</h2>
+        <p class="mt-6 text-lg text-ink-soft" data-reveal data-reveal-delay="120">{proof.lead}</p>
+      </div>
+
+      <div class="mt-12 grid gap-y-8 border-y border-line py-8 sm:grid-cols-3 sm:gap-x-10" data-reveal data-reveal-delay="140">
         {
-          flow.steps.map((s, i) => (
-            <li class="flex items-start gap-3.5 rounded-2xl border border-line bg-surface p-5" data-reveal data-reveal-delay={i * 90}>
-              <span class="font-mono text-sm font-semibold text-accent">{s.n}</span>
-              <div>
-                <p class="font-display font-semibold text-ink">{s.title}</p>
-                <p class="mt-1 text-sm text-ink-soft">{s.sub}</p>
-              </div>
-            </li>
+          proof.stats.map((s) => (
+            <div>
+              <p class="font-display text-4xl font-semibold text-ink sm:text-5xl">{s.value}</p>
+              <p class="mt-2 max-w-[16rem] text-sm text-ink-soft">{s.label}</p>
+            </div>
           ))
         }
-      </ol>
+      </div>
 
-      <div class="mt-12 grid items-start gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:gap-12">
-        <div data-reveal data-reveal-delay="120">
-          <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">{flow.terminalLabel}</p>
-          <Terminal lines={flow.terminal} />
-          <p class="mt-4 text-sm text-ink-soft">{flow.terminalCaption}</p>
+      <div class="mt-12 grid items-start gap-x-12 gap-y-10 lg:grid-cols-[1.15fr_0.85fr]">
+        <div class="min-w-0" data-reveal data-reveal-delay="160">
+          <div class="overflow-hidden rounded-2xl border border-line bg-surface">
+            <div class="border-b border-line bg-bg-soft px-4 py-2.5">
+              <span class="font-mono text-xs text-ink-chrome">{proof.recallLabel}</span>
+            </div>
+            <pre class="whitespace-pre-wrap [overflow-wrap:anywhere] p-5 font-mono text-[12.5px] leading-relaxed text-ink-soft"><code><span class="block min-h-[1.625em] pl-[3.5ch] -indent-[3.5ch]"><span class="select-none text-accent">$</span> <span class="text-ink">{proof.recallCommand}</span></span>{proof.recallOutput.map((line) => <span class="block min-h-[1.625em] pl-[3.5ch] -indent-[3.5ch]">{line}</span>)}</code></pre>
+          </div>
+          <p class="mt-4 text-sm text-ink-soft">{proof.recallCaption}</p>
         </div>
-        <div data-reveal data-reveal-delay="200">
-          <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">{flow.noteLabel}</p>
-          <LandingNote />
-          <p class="mt-4 text-sm text-ink-soft">{flow.noteCaption}</p>
-        </div>
-      </div>
-    </div>
-  </section>
 
-  {/* ─────────────────────────────  NO LOCK-IN  ───────────────────────────── */}
-  <section class="relative overflow-hidden border-t border-line py-20 sm:py-28">
-    <div class="shell">
-      <div class="mx-auto max-w-2xl text-center">
-        <p class="eyebrow" data-reveal>{lockin.eyebrow}</p>
-        <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{lockin.heading}</h2>
-        <p class="mt-6 text-lg text-ink-soft" data-reveal data-reveal-delay="120">{lockin.lead}</p>
-      </div>
-
-      <div class="mt-12" data-reveal data-reveal-delay="140">
-        <LandingVault />
-      </div>
-
-      <div class="mx-auto mt-10 max-w-2xl text-center">
-        <p class="text-lg text-ink-soft" data-reveal>{lockin.kicker}</p>
-        <div class="mt-6 flex justify-center" data-reveal data-reveal-delay="80">
-          <MagneticButton client:visible href={lockin.cta.href} label={lockin.cta.label} variant="ghost" arrow />
-        </div>
-      </div>
-    </div>
-  </section>
-
-  {/* ─────────────────────────────  DIFFERENT  ───────────────────────────── */}
-  <section id="different" class="relative border-t border-line bg-bg-soft py-20 sm:py-28">
-    <div class="shell">
-      <div class="max-w-2xl">
-        <p class="eyebrow" data-reveal>{different.eyebrow}</p>
-        <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{different.heading}</h2>
-        <p class="mt-6 text-lg text-ink-soft" data-reveal data-reveal-delay="120">{different.lead}</p>
-      </div>
-
-      <div class="mt-14 grid gap-4 sm:grid-cols-3">
-        {
-          different.features.map((f, i) => (
-            <a
-              href={f.href}
-              class="surface group flex flex-col p-6 transition-all duration-300 hover:-translate-y-1 hover:border-accent/45"
-              data-reveal
-              data-reveal-delay={(i % 3) * 70}
-            >
-              <span class="grid h-11 w-11 place-items-center rounded-xl border border-line bg-bg-soft text-accent transition-colors group-hover:border-accent/50">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
-                  <Fragment set:html={icons[f.icon]} />
-                </svg>
-              </span>
-              <h3 class="mt-5 font-display text-lg font-bold">{f.title}</h3>
-              <p class="mt-2.5 flex-1 text-[0.95rem] text-ink-soft">{f.body}</p>
-              <span class="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-accent opacity-0 transition-opacity group-hover:opacity-100">
-                learn more
-                <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </span>
+        <div class="max-w-xl" data-reveal data-reveal-delay="220">
+          <p class="text-[1.02rem] leading-relaxed text-ink-soft">{proof.letta}</p>
+          <p class="mt-5 text-[1.02rem] leading-relaxed text-ink-soft">{proof.dogfood}</p>
+          <div class="mt-6 flex flex-wrap gap-x-8 gap-y-3">
+            <a href={proof.evalLink.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
+              {proof.evalLink.label}
+              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
-          ))
-        }
+            <a href={proof.compareLink.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
+              {proof.compareLink.label}
+              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* ─────────────────────────────  THE FILE  ───────────────────────────── */}
+  <section id="the-file" class="relative border-t border-line bg-bg-soft py-20 sm:py-28">
+    {/* Same ordering trick as the how section: on mobile the note card follows
+        the second paragraph, where the "every note is a markdown file" claim
+        lands, instead of trailing four paragraphs of prose. The closing
+        paragraph rides in the right column under the card's caption on desktop
+        (otherwise the prose column runs ~220px past the card, against an empty
+        half) and keeps its place as the last thing read on mobile.
+        Even columns, not 0.95/1.05: the display heading needs the wider measure
+        to break at its comma instead of stranding a two-word stub. */}
+    <div class="shell grid items-center gap-x-12 gap-y-0 lg:grid-cols-2 lg:gap-y-12">
+      <div class="contents lg:block lg:max-w-xl">
+        <div class="order-1 max-w-xl">
+          <p class="eyebrow" data-reveal>{file.eyebrow}</p>
+          <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{file.heading}</h2>
+        </div>
+        {file.paras.slice(0, 3).map((p, i) => (
+          <p
+            class={`mt-6 max-w-xl text-lg leading-relaxed text-ink-soft [&_strong]:font-semibold [&_strong]:text-ink ${["order-2", "order-3", "order-5"][i]}`}
+            data-reveal
+            data-reveal-delay={120 + i * 40}
+            set:html={p}
+          />
+        ))}
+      </div>
+
+      <div class="contents lg:block lg:max-w-xl">
+        <div class="order-4 mt-10 mb-4 lg:mt-0 lg:mb-0" data-reveal data-reveal-delay="180">
+          <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">{file.noteLabel}</p>
+          <LandingNote />
+          <p class="mt-4 text-sm text-ink-soft">{file.noteCaption}</p>
+        </div>
+        <p
+          class="order-6 mt-6 max-w-xl text-lg leading-relaxed text-ink-soft lg:mt-8 [&_strong]:font-semibold [&_strong]:text-ink"
+          data-reveal
+          data-reveal-delay="240"
+          set:html={file.paras[3]}
+        />
       </div>
     </div>
   </section>
@@ -178,8 +214,10 @@ const icons: Record<string, string> = {
 
       <div class="mt-9 flex justify-center" data-reveal data-reveal-delay="140">
         <div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left font-mono text-sm">
-          <span class="select-none text-accent">$</span>
-          <span class="text-ink">{closing.install}</span>
+          <span class="flex min-w-0 items-start gap-3">
+            <span class="shrink-0 select-none text-accent">$</span>
+            <span class="text-ink">{closing.install}</span>
+          </span>
           <CopyButton client:visible value={closing.install} label="install command" />
         </div>
       </div>
@@ -188,6 +226,10 @@ const icons: Record<string, string> = {
         <MagneticButton client:visible href={closing.ctaPrimary.href} label={closing.ctaPrimary.label} variant="primary" arrow />
         <MagneticButton client:visible href={closing.ctaSecondary.href} label={closing.ctaSecondary.label} variant="ghost" external />
       </div>
+
+      <p class="mx-auto mt-12 max-w-md text-sm italic text-ink-soft" data-reveal data-reveal-delay="260">
+        {closing.quip}
+      </p>
     </div>
   </section>
 </Layout>

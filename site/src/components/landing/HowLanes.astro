@@ -1,0 +1,118 @@
+---
+/**
+ * Landing (index.astro only): the "How it works" section's visual anchor, and
+ * the one thing that section was missing. It draws the frequency argument the
+ * paragraphs make in prose: the model is spent once per note, plain code
+ * answers every lookup. Every fact here is already stated on the page, so the
+ * diagram restates, never claims.
+ *
+ * Design: a filled surface plus hairlines, a vertical rule splitting the label
+ * gutter from the body, ONE accent carrying the cadence (the fact the diagram
+ * exists for), Golos throughout, mono nowhere. No border rail, no icon, no
+ * gradient. Scoped CSS on the landing tokens so it follows both themes, same
+ * convention as LandingNote.astro. A container query collapses the gutter when
+ * the column it sits in gets narrow, so it stacks on its own width, not the
+ * viewport's.
+ */
+const lanes = [
+  {
+    name: "Write path",
+    cadence: "once per note",
+    actor: "the model",
+    body: "reads the source, decides what it is, writes the summary, picks tags, links people and projects.",
+  },
+  {
+    name: "Read path",
+    cadence: "every lookup",
+    actor: "plain code",
+    // the closing "in it." is bound with a non-breaking space so the row can
+    // never stand "it." alone on a line of its own
+    body: "ranks the folder fresh with BM25, returns a ranked top 15, about a hundred tokens. No model client exists in it.",
+  },
+];
+---
+
+<div class="lanes">
+  {
+    lanes.map((lane) => (
+      <div class="lane">
+        <div class="head">
+          <span class="name">{lane.name}</span>
+          <span class="cadence">{lane.cadence}</span>
+        </div>
+        <p class="body">
+          <span class="actor">{lane.actor}</span> {lane.body}
+        </p>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .lanes {
+    container-type: inline-size;
+    overflow: hidden;
+    border: 1px solid var(--color-line);
+    border-radius: 1rem;
+    background: var(--color-surface);
+    font-family: var(--font-sans);
+  }
+  .lane {
+    display: grid;
+    grid-template-columns: 8.25rem 1fr;
+    gap: 0 1.15rem;
+    padding: 1.05rem 1.2rem;
+  }
+  .lane + .lane {
+    border-top: 1px solid var(--color-line);
+  }
+  .head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    align-self: stretch;
+    padding-right: 1.15rem;
+    border-right: 1px solid var(--color-line);
+  }
+  .name {
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--color-ink);
+  }
+  .cadence {
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--color-accent);
+  }
+  .body {
+    margin: 0;
+    font-size: 0.93rem;
+    line-height: 1.55;
+    color: var(--color-ink-soft);
+  }
+  .actor {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+
+  /* narrow column: the gutter folds into a label row above the sentence */
+  @container (max-width: 27rem) {
+    .lane {
+      grid-template-columns: 1fr;
+      gap: 0.5rem 0;
+      padding: 0.95rem 1.05rem;
+    }
+    .head {
+      flex-direction: row;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding-right: 0;
+      border-right: 0;
+    }
+  }
+</style>

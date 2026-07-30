@@ -15,7 +15,7 @@ export default function Terminal({ lines }: { lines: Line[] }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-surface">
       <div className="border-b border-line bg-bg-soft px-4 py-2.5">
-        <span className="font-mono text-xs text-ink-faint">imp - your vault</span>
+        <span className="font-mono text-xs text-ink-chrome">imp - your vault</span>
       </div>
       <div className="space-y-3 p-5 font-mono text-[13px] leading-relaxed sm:text-sm">
         {lines.map((line, idx) => (

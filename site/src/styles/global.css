@@ -23,6 +23,11 @@
   --color-ink: #1b1d1a;
   --color-ink-soft: #585b51;
   --color-ink-faint: #8b8d81;
+  /* chrome: the label band on a card (a file tab, a pane title) and the
+     frontmatter fence. One step up from faint, so a label naming a thing is
+     never fainter than the thing's own fields (faint reads 2.85:1 on the
+     chrome band, this reads 4.45:1) and still a step under captions. */
+  --color-ink-chrome: #6b6d63;
 
   /* the one accent: resolved from the single source in accent.css */
   --color-accent: var(--brand-accent);
@@ -45,7 +50,7 @@
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 
   /* type scale extras */
-  --text-hero: clamp(2.6rem, 6.4vw, 5.25rem);
+  --text-hero: clamp(2.3rem, 4.6vw, 3.7rem);
   --text-display: clamp(1.9rem, 4.2vw, 3.35rem);
 
   /* radii */
@@ -78,6 +83,8 @@
   --color-ink: #ece9e0;
   --color-ink-soft: #a3a094;
   --color-ink-faint: #75736a;
+  /* the dark twin of the chrome step: 4.58:1 on the dark chrome band */
+  --color-ink-chrome: #838176;
 
   --color-accent: var(--brand-accent-dark);
   --color-accent-strong: var(--brand-accent-dark-strong);
@@ -198,10 +205,17 @@
     text-transform: uppercase;
     color: var(--color-accent);
   }
+  /* the rule belongs to the FIRST line. Centering it against the whole flex
+     line leaves it floating beside line two once the label wraps, so pin it to
+     the top and push it down by the optical centre of one line box (line-height
+     1.65 on 0.75rem => 0.79em), which is exactly where centring put it when the
+     label is a single line. */
   .eyebrow::before {
     content: "";
     width: 1.5rem;
     height: 1px;
+    align-self: flex-start;
+    margin-top: 0.79em;
     background: var(--color-accent);
   }
 

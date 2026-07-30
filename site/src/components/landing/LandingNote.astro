@@ -22,12 +22,12 @@
     </div>
     <div class="body">
       <p class="fence">---</p>
-      <p><span class="k">type:</span> project</p>
-      <p><span class="k">status:</span> active</p>
-      <p><span class="k">owner:</span> "<span class="link">[[people/boris-carter]]</span>"</p>
-      <p><span class="k">updated:</span> 2026-06-11</p>
-      <p><span class="k">tags:</span> [work, access-platform]</p>
-      <p><span class="k">summary:</span> Cutover moved to July 15, gated on the parallel-run numbers.</p>
+      <p class="fm"><span class="k">type:</span> project</p>
+      <p class="fm"><span class="k">status:</span> active</p>
+      <p class="fm"><span class="k">owner:</span> "<span class="link">[[people/boris-carter]]</span>"</p>
+      <p class="fm"><span class="k">updated:</span> 2026-06-11</p>
+      <p class="fm"><span class="k">tags:</span> [work, access-platform]</p>
+      <p class="fm"><span class="k">summary:</span> Cutover moved to July 15, gated on the parallel-run numbers.</p>
       <p class="fence">---</p>
 
       <p class="h1"># Access platform</p>
@@ -57,7 +57,7 @@
     padding: 0.65rem 1.05rem;
     font-family: var(--font-mono);
     font-size: 0.75rem;
-    color: var(--color-ink-faint);
+    color: var(--color-ink-chrome);
     background: var(--color-bg-soft);
     border-bottom: 1px solid var(--color-line);
   }
@@ -77,8 +77,18 @@
   .body p {
     margin: 0;
   }
+  /* the fence is three thin rules of glyph, so at the faint step it optically
+     washes out and the frontmatter looks like it starts on blank space. It
+     carries the chrome step, above the key column, so the block reads fenced. */
   .fence {
-    color: var(--color-ink-faint);
+    color: var(--color-ink-chrome);
+  }
+  /* a wrapped frontmatter value (or the superseded stamp) has to read as a
+     continuation, not as another key, so continuation lines hang in */
+  .fm,
+  .stamp {
+    padding-left: 2ch;
+    text-indent: -2ch;
   }
   .k {
     color: var(--color-ink-faint);

@@ -10,13 +10,13 @@ import { footer, site } from "../lib/content";
         <Lockup size={28} />
       </a>
       <p class="mt-4 max-w-xs text-sm text-ink-soft">{footer.blurb}</p>
-      <p class="mt-6 text-sm italic text-ink-faint">{site.principle}</p>
+      <p class="mt-6 text-sm italic text-ink-soft">{site.principle}</p>
     </div>
 
     {
       footer.columns.map((col) => (
         <div>
-          <h2 class="text-xs font-semibold uppercase tracking-widest text-ink-faint">{col.title}</h2>
+          <h2 class="text-xs font-semibold uppercase tracking-widest text-ink-soft">{col.title}</h2>
           <ul class="mt-4 space-y-2.5">
             {col.links.map((link) => (
               <li>
@@ -37,15 +37,18 @@ import { footer, site } from "../lib/content";
   </div>
 
   <div class="hairline">
-    <div class="shell flex flex-col items-center justify-between gap-3 py-6 text-sm text-ink-faint sm:flex-row">
+    <div class="shell flex flex-col items-center justify-between gap-3 py-6 text-sm text-ink-soft sm:flex-row">
       <p>{footer.copyright}</p>
       <div class="flex items-center gap-5">
         <a
           href="https://bogdanov.wtf"
           target="_blank"
           rel="noreferrer"
-          class="transition-colors hover:text-ink"
+          class="flex items-center gap-2 transition-colors hover:text-ink"
         >
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+            <path d="M1 16.6 H23 M16.2 1 V16.6" stroke="var(--color-accent)" stroke-width="2.8" />
+          </svg>
           built by bogdanov.wtf
         </a>
         <a href={site.repo} target="_blank" rel="noreferrer" class="transition-colors hover:text-ink">
