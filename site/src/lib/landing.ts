@@ -30,7 +30,7 @@ export const hero = {
   // the second says what that buys you later. The old single block welded both
   // plus the runs-anywhere line into one 60-word sentence nobody finished.
   subheadParas: [
-    "Hand it anything: a meeting transcript, an article, a rambling voice note. It pulls the facts out and <strong>sorts them into separate markdown files</strong> on your disk, each one typed, tagged and linked. One note per person, per project, per decision, per event.",
+    "Hand it anything: a meeting transcript, an article, a rambling voice note. It gets <strong>imprinted</strong>: pulled apart into separate markdown files on your disk, each one typed, tagged, and linked to the others. One note per person, per project, per decision, per event.",
     "Ask three weeks later and the answer comes back from those files. <strong>Plain code finds them, and the model reads only the handful it returns.</strong> Works under Claude Code, Gemini CLI, and any agent that can run a shell command.",
   ],
   installCaption: "Paste that line once. After that your assistant runs imprnt for you, so it is the last command you type by hand.",
@@ -85,7 +85,7 @@ export const hero = {
 
 export const how = {
   eyebrow: "How it works",
-  headingLead: "The model writes the note.",
+  headingLead: "The model imprints it.",
   headingRest: "Math finds it later.",
   // The opening is the origin story, not a maxim ("an agent doing the same job
   // twice is a bug" is dead - it opened on a rule nobody had a reason to care
@@ -99,7 +99,7 @@ export const how = {
   paras: [
     "A model can do almost anything, so <strong>almost everything got built on one</strong>. Wrap ChatGPT, call it an AI product, ship it, take the investor money. That worked while tokens were cheap.",
     "Tokens are not cheap now. I put a personal-assistant setup on my work laptop. It burned <strong>30,000 tokens before I typed a word</strong>, because it had loaded every skill and every MCP server up front. I was paying per token, so I started thinking twice before asking anything. <strong>An assistant you are afraid to use is not an assistant.</strong>",
-    "So imprnt splits the job in two. Reading your mess and writing it down takes a model.<br /><strong>Finding the file again does not.</strong>",
+    "So imprnt splits the job in two. Imprinting takes a model.<br /><strong>Finding does not.</strong>",
   ],
   spec: ["no embeddings", "no vector store", "no index to rebuild"],
   paras2: [

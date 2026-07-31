@@ -13,22 +13,27 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
 
 <Layout>
   {/* ─────────────────────────────  HERO  ───────────────────────────── */}
+  {/* Same rule as every other section: the eyebrow owns the top of the section
+      at FULL width, and everything sits under it - the transcript's own label
+      included. That label used to head the right column level with the eyebrow,
+      which read as two competing kickers. It now sits at h1 level, so the two
+      columns start on the same line under one section label. */}
   <section class="relative overflow-hidden pb-24 pt-24 sm:pt-28">
     <div class="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-px bg-line-soft"></div>
 
-    <div class="shell grid gap-x-12 gap-y-16 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
+    <div class="shell">
+      <p class="eyebrow" data-reveal>{hero.eyebrow}</p>
+    </div>
+
+    <div class="shell mt-6 grid gap-x-12 gap-y-16 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
       <div>
-        <p class="eyebrow" data-reveal>{hero.eyebrow}</p>
-        {/* An eyebrow is a kicker on the heading, so it sits tight to it (mt-3).
-            At mt-6 it read as its own stranded line. Same change in every section. */}
-        <h1 class="mt-3 text-hero font-semibold" data-reveal data-reveal-delay="60">
+        <h1 class="text-hero font-semibold" data-reveal data-reveal-delay="60">
           {hero.headlineLead}<br />
           <span class="text-accent sm:whitespace-nowrap">{hero.headlineAccent}</span>.
         </h1>
         {/* the motto is the second half of the hero UNIT, not a separate block:
             it hangs off the headline's last line on a tighter leading than the
-            body that follows, which is what was making the stack read as three
-            unrelated paragraphs. */}
+            body that follows. */}
         <p class="mt-4 text-balance font-display text-xl font-semibold leading-snug text-ink sm:text-2xl" data-reveal data-reveal-delay="100">
           {hero.motto}
         </p>
@@ -59,11 +64,11 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
           <MagneticButton client:visible href={hero.ctaPrimary.href} label={hero.ctaPrimary.label} variant="primary" arrow />
           <MagneticButton client:visible href={hero.ctaSecondary.href} label={hero.ctaSecondary.label} variant="ghost" external />
         </div>
-
       </div>
 
-      <div class="lg:pt-[9px]" data-reveal data-reveal-delay="160">
-        <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">{hero.terminalLabel}</p>
+      {/* pt lands the transcript label's cap line on the h1's cap line (measured) */}
+      <div class="lg:pt-[5px]" data-reveal data-reveal-delay="160">
+        <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-chrome">{hero.terminalLabel}</p>
         <Terminal lines={hero.terminal} />
         <p class="mt-4 text-sm text-ink-soft">{hero.terminalCaption}</p>
       </div>
