@@ -112,7 +112,7 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
 
     {/* band B: the spec strip, full width - the hairline that breaks the prose */}
     <div class="shell mt-14">
-      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 sm:grid-cols-3 sm:gap-x-12" data-reveal>
+      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 sm:grid-cols-3 sm:justify-items-center sm:gap-x-12" data-reveal>
         {how.spec.map((s) => (
           <span class="text-sm font-semibold uppercase tracking-wider text-ink-soft">{s}</span>
         ))}
@@ -151,31 +151,30 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
   </section>
 
   {/* ─────────────────────────────  PROOF  ───────────────────────────── */}
+  {/* One rule across every section, Alex's call: the eyebrow and heading own the
+      top of the section at full width, and EVERYTHING sits under them - including
+      whatever rides in a right-hand column. The old side-by-side head put the
+      claim level with the heading's second line and left the heading stranded. */}
   <section id="proof" class="relative border-t border-line py-20 sm:py-28">
     <div class="shell">
-      {/* heading left, the claim + its caveat right: the lead used to run down
-          the left half against an empty right one. Two columns fill the band
-          and put the 9-in-10 claim on its own line, where it reads as the
-          section's headline number instead of the head of a paragraph. */}
-      <div class="grid items-start gap-x-12 gap-y-6 lg:grid-cols-[0.9fr_1.1fr]">
-        <div>
-          <p class="eyebrow" data-reveal>{proof.eyebrow}</p>
-          <h2 class="mt-3 text-display font-semibold leading-[1.08]" data-reveal data-reveal-delay="60">{proof.heading}</h2>
-        </div>
-        <div class="max-w-2xl lg:mt-11">
-          <p
-            class="text-balance font-display text-2xl font-semibold text-ink [&_strong]:text-accent sm:text-3xl"
-            data-reveal
-            data-reveal-delay="100"
-            set:html={proof.leadTop}
-          />
-          <p
-            class="mt-4 text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink"
-            data-reveal
-            data-reveal-delay="140"
-            set:html={proof.leadBody}
-          />
-        </div>
+      <div class="max-w-5xl">
+        <p class="eyebrow" data-reveal>{proof.eyebrow}</p>
+        <h2 class="mt-3 text-display font-semibold leading-[1.08]" data-reveal data-reveal-delay="60">{proof.heading}</h2>
+      </div>
+
+      <div class="mt-10 max-w-3xl">
+        <p
+          class="text-balance font-display text-2xl font-semibold text-ink [&_strong]:text-accent sm:text-3xl"
+          data-reveal
+          data-reveal-delay="100"
+          set:html={proof.leadTop}
+        />
+        <p
+          class="mt-4 text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink"
+          data-reveal
+          data-reveal-delay="140"
+          set:html={proof.leadBody}
+        />
       </div>
 
       <div class="mt-12 grid gap-y-8 border-y border-line py-8 sm:grid-cols-3 sm:gap-x-10" data-reveal data-reveal-delay="140">
@@ -189,49 +188,52 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
         }
       </div>
 
-      <div class="mt-12 grid items-start gap-x-12 gap-y-10 lg:grid-cols-[1.15fr_0.85fr]">
-        <div class="min-w-0" data-reveal data-reveal-delay="160">
-          <RecallBlock />
-          <p class="mt-4 text-sm text-ink-soft">{proof.recallCaption}</p>
-        </div>
+      {/* the capture runs full width now that Letta's paragraph is gone from
+          beside it: it is the section's evidence, so it gets the whole measure
+          instead of being squeezed into 1.15fr against a thin column */}
+      <div class="mt-12" data-reveal data-reveal-delay="160">
+        <RecallBlock />
+        <p class="mt-4 max-w-2xl text-sm text-ink-soft">{proof.recallCaption}</p>
+      </div>
 
-        <div class="max-w-xl lg:pt-3" data-reveal data-reveal-delay="220">
-          <p class="text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg">{proof.letta}</p>
-          <p class="mt-5 text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg">{proof.dogfood}</p>
-          <div class="mt-6 flex flex-wrap gap-x-8 gap-y-3">
-            <a href={proof.evalLink.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
-              {proof.evalLink.label}
-              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </a>
+      <div class="mt-10 flex flex-col gap-6 border-t border-line pt-8 sm:flex-row sm:items-start sm:justify-between" data-reveal data-reveal-delay="200">
+        <p class="max-w-md text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg">{proof.dogfood}</p>
+        <div class="flex flex-wrap gap-x-8 gap-y-3">
+          <a href={proof.evalLink.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
+            {proof.evalLink.label}
+            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <span class="inline-flex flex-col gap-0.5">
             <a href={proof.compareLink.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
               {proof.compareLink.label}
               <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
-          </div>
+            <span class="text-xs text-ink-faint">{proof.compareLink.note}</span>
+          </span>
         </div>
       </div>
     </div>
   </section>
 
   {/* ─────────────────────────────  THE FILE  ───────────────────────────── */}
+  {/* Same rule as the proof section: eyebrow and heading own the top at full
+      width, the two columns start underneath. Previously the heading rode in
+      the left column, so the note card in the right column sat ABOVE it. */}
   <section id="the-file" class="relative border-t border-line bg-bg-soft py-20 sm:py-28">
-    {/* Same ordering trick as the how section: on mobile the note card follows
-        the second paragraph, where the "every note is a markdown file" claim
-        lands, instead of trailing four paragraphs of prose. The closing
-        paragraph rides in the right column under the card's caption on desktop
-        (otherwise the prose column runs ~220px past the card, against an empty
-        half) and keeps its place as the last thing read on mobile.
-        Even columns, not 0.95/1.05: the display heading needs the wider measure
-        to break at its comma instead of stranding a two-word stub. */}
-    <div class="shell grid items-center gap-x-12 gap-y-0 lg:grid-cols-2 lg:gap-y-12">
+    <div class="shell">
+      <div class="max-w-5xl">
+        <p class="eyebrow" data-reveal>{file.eyebrow}</p>
+        <h2 class="mt-3 text-display font-semibold leading-[1.08]" data-reveal data-reveal-delay="60">{file.heading}</h2>
+      </div>
+    </div>
+
+    {/* mobile keeps the note card second, right after the paragraph that makes
+        the "every note is a markdown file" claim, instead of trailing all four */}
+    <div class="shell mt-12 grid items-start gap-x-12 gap-y-0 lg:grid-cols-2 lg:gap-y-10">
       <div class="contents lg:block lg:max-w-xl">
-        <div class="order-1 max-w-xl">
-          <p class="eyebrow" data-reveal>{file.eyebrow}</p>
-          <h2 class="mt-3 text-display font-semibold" data-reveal data-reveal-delay="60">{file.heading}</h2>
-        </div>
         {file.paras.slice(0, 3).map((p, i) => (
           <p
-            class={`mt-6 max-w-xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${["order-2", "order-3", "order-5"][i]}`}
+            class={`max-w-xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${["order-1", "order-2 mt-6", "order-4 mt-6"][i]}`}
             data-reveal
             data-reveal-delay={120 + i * 40}
             set:html={p}
@@ -240,13 +242,13 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
       </div>
 
       <div class="contents lg:block lg:max-w-xl">
-        <div class="order-4 mt-10 mb-4 lg:mt-0 lg:mb-0" data-reveal data-reveal-delay="180">
-          <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">{file.noteLabel}</p>
+        <div class="order-3 mt-10 mb-2 lg:mt-0 lg:mb-0" data-reveal data-reveal-delay="180">
+          <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-chrome">{file.noteLabel}</p>
           <LandingNote />
           <p class="mt-4 text-sm text-ink-soft">{file.noteCaption}</p>
         </div>
         <p
-          class="order-6 mt-6 max-w-xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg lg:mt-8 [&_strong]:font-semibold [&_strong]:text-ink"
+          class="order-5 mt-8 max-w-xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink"
           data-reveal
           data-reveal-delay="240"
           set:html={file.paras[3]}

@@ -30,13 +30,13 @@ export const hero = {
   // the second says what that buys you later. The old single block welded both
   // plus the runs-anywhere line into one 60-word sentence nobody finished.
   subheadParas: [
-    "Hand it anything: a meeting transcript, an article, a rambling voice note. It splits that into small pieces and <strong>writes each one to its own markdown file</strong> on your disk. One file per person, per project, per decision, per event.",
-    "Ask three weeks later and the answer comes back from those files. <strong>No model reads your vault to find them.</strong> Works under Claude Code, Gemini CLI, and any agent that can run a shell command.",
+    "Hand it anything: a meeting transcript, an article, a rambling voice note. It pulls the facts out and <strong>sorts them into separate markdown files</strong> on your disk, each one typed, tagged and linked. One note per person, per project, per decision, per event.",
+    "Ask three weeks later and the answer comes back from those files. <strong>Plain code finds them, and the model reads only the handful it returns.</strong> Works under Claude Code, Gemini CLI, and any agent that can run a shell command.",
   ],
-  installCaption: "Paste that line once. After that your assistant runs imprnt for you, so it is the last imprnt command you type by hand.",
+  installCaption: "Paste that line once. After that your assistant runs imprnt for you, so it is the last command you type by hand.",
   ctaPrimary: { label: "Get started", href: "/getting-started/" },
   ctaSecondary: { label: "View source", href: site.repo },
-  terminalLabel: "one chat, three weeks apart",
+  terminalLabel: "two chats, three weeks apart",
   // Segmented, not flat strings. The transcript is this section's visual anchor,
   // so the things the product actually produced (the vault paths) and the facts
   // it recovered (the date, the owner, the struck-out old date) are marked up
@@ -80,7 +80,7 @@ export const hero = {
     },
   ],
   terminalCaption:
-    "You write the two prompts. The rest is the assistant's own output. Each path is a real file it created, and the struck-out date is how the vault records a fact that changed.",
+    "Two separate sessions. Nothing carried over between them except the files on disk. The teal paths are notes it wrote, and the struck-out date is a fact that changed, recorded instead of overwritten.",
 };
 
 export const how = {
@@ -97,15 +97,15 @@ export const how = {
   // NEVER open a sentence with "imprnt": the wordmark is lowercase, so a
   // sentence-initial one reads as a typo. Reword so it sits mid-sentence.
   paras: [
-    "A model can do almost anything, so <strong>almost everything got built on one</strong>. Wrap a chat model, call it an AI product, ship it. That worked while tokens were cheap.",
+    "A model can do almost anything, so <strong>almost everything got built on one</strong>. Wrap ChatGPT, call it an AI product, ship it, take the investor money. That worked while tokens were cheap.",
     "Tokens are not cheap now. I put a personal-assistant setup on my work laptop. It burned <strong>30,000 tokens before I typed a word</strong>, because it had loaded every skill and every MCP server up front. I was paying per token, so I started thinking twice before asking anything. <strong>An assistant you are afraid to use is not an assistant.</strong>",
-    "So imprnt splits the job. A model reads your mess and writes it down.<br /><strong>You do not need one to find a file on disk.</strong>",
+    "So imprnt splits the job in two. Reading your mess and writing it down takes a model.<br /><strong>Finding the file again does not.</strong>",
   ],
   spec: ["no embeddings", "no vector store", "no index to rebuild"],
   paras2: [
-    "Keyword search has one famous weakness: you search for a word the note never used. The fix happens at filing time. <strong>The model writes down the other names a thing is called</strong>, so the note about Boris Carter also matches a search for Boris. Rename him and the old name stays on the note.",
-    "Every search after that runs <strong>BM25</strong>. It is a ranking formula from 1994, and Lucene and Elasticsearch still run it today. It counts how often your words appear, weighs <strong>rare words heavier</strong>, and puts a word in the title above the same word buried in the body. Nothing caches, so a note you fixed a minute ago is already findable.",
-    "Every session pays <strong>about 200 tokens</strong> up front. That is one short note: the vault exists, and here are the two commands that read it and write to it. The <strong>full filing contract runs about 7,000 tokens</strong>, and it loads only when a session writes. Everything else is a command, and a command costs nothing until it runs.",
+    "Keyword search has one famous weakness. <strong>You search for a synonym</strong>, a different word than the one the note used, and nothing comes back. The fix happens on write, not on read: the model records the synonyms and the other names a thing goes by, so the note about Boris Carter also matches a search for Boris. Rename him and the old name stays on the note.",
+    "Every search after that runs <strong>BM25</strong>. It is a ranking formula from 1994, and <strong>Lucene and Elasticsearch</strong> still run it today. It counts how often your words appear, weighs rare words heavier, and puts a word in the title above the same word buried in the body. Nothing caches, so a note you fixed a minute ago is already findable.",
+    "Every session pays <strong>about 200 tokens</strong>: one short note saying the vault exists, and naming the two commands that read it and write to it. <strong>A session that only asks questions never pays more than that.</strong> A session that files a note reads the filing rules once, about 7,000 tokens, at the moment it writes. Everything else is a command, and a command costs nothing until it runs.",
     "That is why imprnt is a command line tool and not an MCP server. <strong>An MCP server loads its tool descriptions into every chat by default.</strong> You pay for those before you ask anything.",
   ],
   link: { label: "the full arguments, decision by decision", href: "/design-decisions/" },
@@ -151,12 +151,10 @@ export const proof = {
   recallFooter: "... 5 lower-ranked hit(s) hidden. Raise with --limit if needed. Usually you do not.",
   recallCaption:
     "A real query against the example vault in the repo, output verbatim. The number on the left is the BM25 score. No model was in the ranking loop.",
-  letta:
-    "Letta sells memory tools. Its own benchmark scored plain files at 74.0%, ahead of its own tools and ahead of mem0's best run at 68.5%. Letta is now rebuilding its flagship around markdown in git.",
   dogfood:
     "I run my own vault on this, work and life in the same folder, and I have queried it every day since the first commit.",
-  evalLink: { label: "the questions and the scores", href: "https://github.com/aleksandr-bogdanov/imprnt/tree/main/eval" },
-  compareLink: { label: "how it compares", href: "/comparison/" },
+  evalLink: { label: "the questions and the scores", href: "https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval" },
+  compareLink: { label: "how it compares", note: "a technical read", href: "/comparison/" },
 };
 
 export const file = {
