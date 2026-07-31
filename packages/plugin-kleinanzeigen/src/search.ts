@@ -63,15 +63,39 @@ export function slugifyKeyword(kw: string): string {
   return kw.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-export function searchUrl(keyword: string, location: string): string | null {
+// A location with NO radius is not a filter, it is a sort: KA answers it by expanding nationwide and
+// ordering by distance, so "berlin" silently returns a 540km ad whenever Berlin itself is dry. The `r`
+// suffix is what makes the scope real. Default it, so the honest answer to a dry local market is zero
+// rows rather than a page of far-away ads that read as local.
+export const DEFAULT_RADIUS_KM = 50;
+
+export function searchUrl(keyword: string, location: string, radiusKm: number = DEFAULT_RADIUS_KM): string | null {
   const slug = slugifyKeyword(keyword);
   if (!slug) return null;
   const loc = location ? location.toLowerCase() : "";
   if (!loc) return `https://www.kleinanzeigen.de/s-${slug}/k0`;
+  const r = Number.isFinite(radiusKm) && radiusKm > 0 ? `r${Math.round(radiusKm)}` : "";
   const known = SEARCH_LOCATIONS[loc];
-  if (known) return `https://www.kleinanzeigen.de/${known.path}/${slug}/k0${known.code}`;
-  if (/^l\d+$/.test(loc)) return `https://www.kleinanzeigen.de/s-${slug}/k0${loc}`;
+  if (known) return `https://www.kleinanzeigen.de/${known.path}/${slug}/k0${known.code}${r}`;
+  if (/^l\d+$/.test(loc)) return `https://www.kleinanzeigen.de/s-${slug}/k0${loc}${r}`;
   return `https://www.kleinanzeigen.de/s-${loc}/${slug}/k0`;
+}
+
+// KA renders the distance into the location cell ("38444 Wolfsburg (178 km)") whenever a result sits
+// outside the searched city. Parsing it gives a deterministic guard against an expansion slipping through.
+export function parseDistanceKm(location: string): number | null {
+  const m = (location || "").match(/\((\d+(?:[.,]\d+)?)\s*km\)/i);
+  if (!m) return null;
+  const n = Number(m[1].replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+export function withinRadius<T extends { location: string }>(rows: T[], radiusKm: number): T[] {
+  if (!Number.isFinite(radiusKm) || radiusKm <= 0) return rows;
+  return rows.filter((r) => {
+    const d = parseDistanceKm(r.location);
+    return d === null || d <= radiusKm;
+  });
 }
 
 // Decode HTML entities. &amp; is decoded LAST so an "&amp;#39;" never double-decodes into a stray quote.
@@ -398,11 +422,14 @@ export async function cmdSearch(args: string[]): Promise<number> {
   let localOnly = false;
   let minPrice: number | null = null;
   let maxPrice: number | null = null;
+  let radiusKm: number = DEFAULT_RADIUS_KM;
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--location" || a === "-l") { location = args[++i] ?? ""; continue; }
     if (a.startsWith("--location=")) { location = a.slice("--location=".length); continue; }
+    if (a === "--radius") { radiusKm = Number(args[++i]); continue; }
+    if (a.startsWith("--radius=")) { radiusKm = Number(a.slice("--radius=".length)); continue; }
     if (a === "--limit") { limit = Number(args[++i]) || limit; continue; }
     if (a.startsWith("--limit=")) { limit = Number(a.slice("--limit=".length)) || limit; continue; }
     if (a === "--sort") { sort = (args[++i] ?? "").toLowerCase(); continue; }
@@ -419,22 +446,31 @@ export async function cmdSearch(args: string[]): Promise<number> {
   }
   if (minPrice != null && !Number.isFinite(minPrice)) minPrice = null;
   if (maxPrice != null && !Number.isFinite(maxPrice)) maxPrice = null;
+  if (!Number.isFinite(radiusKm) || radiusKm < 0) radiusKm = DEFAULT_RADIUS_KM;
+  // Radius only means anything relative to a location. Nationwide stays nationwide.
+  const effRadius = location ? radiusKm : 0;
   const keyword = positional.join(" ").trim();
   if (!keyword) {
-    console.error('usage: node kleinanzeigen.js search "<keyword>" [--location berlin] [--limit N] [--sort price] [--min-price N] [--max-price N] [--refresh] [--json] [--browser]');
+    console.error('usage: node kleinanzeigen.js search "<keyword>" [--location berlin] [--radius KM] [--limit N] [--sort price] [--min-price N] [--max-price N] [--refresh] [--json] [--browser]');
     console.error('       node kleinanzeigen.js search --local "<terms>" [--sort price] [--min-price N] [--max-price N] [--limit N] [--json]   (no web call; greps the local market store)');
     return 1;
   }
+  const scope = location ? `${location}${effRadius > 0 ? ` ${effRadius}km` : " nationwide"}` : "DE";
   const render = (rows: DisplayListing[], source: string): void => {
-    let out = applyPriceFilters(rows, minPrice, maxPrice);
+    // The guard runs on EVERY path, including a cached snapshot taken before the radius existed, so a
+    // stale nationwide cache can never render as a local result.
+    const scoped = withinRadius(rows, effRadius);
+    const dropped = rows.length - scoped.length;
+    let out = applyPriceFilters(scoped, minPrice, maxPrice);
     if (sort === "price") out = sortByPrice(out);
     const shown = out.slice(0, limit);
     if (asJson) {
-      console.log(JSON.stringify({ keyword, location: location || "DE", source, count: out.length, listings: shown }, null, 2));
+      console.log(JSON.stringify({ keyword, location: location || "DE", radiusKm: effRadius || null, source, count: out.length, droppedOutsideRadius: dropped, listings: shown }, null, 2));
       return;
     }
     const more = shown.length < out.length ? `, showing ${shown.length}` : "";
-    console.log(`search "${keyword}" [${location || "DE"}] — ${source} — ${out.length} listing(s)${more}`);
+    const cut = dropped > 0 ? `, ${dropped} dropped outside ${effRadius}km` : "";
+    console.log(`search "${keyword}" [${scope}] — ${source} — ${out.length} listing(s)${more}${cut}`);
     for (const it of shown) {
       const price = (it.price || (it.priceNum != null ? `${it.priceNum} €` : "—")).padEnd(12);
       const loc = (it.location || "—").padEnd(24);
@@ -457,7 +493,7 @@ export async function cmdSearch(args: string[]): Promise<number> {
     else render(rows, "local store");
     return 0;
   }
-  const url = searchUrl(keyword, location);
+  const url = searchUrl(keyword, location, effRadius);
   if (!url) {
     console.error("search: keyword is empty after slugify");
     return 1;
@@ -497,7 +533,9 @@ export async function cmdSearch(args: string[]): Promise<number> {
     return 1;
   }
   const fetchedAt = new Date().toISOString();
-  const listings = result.listings.map(toSnapshotListing);
+  // Scope BEFORE the snapshot so the diff baseline (and the digest) only ever holds ads that are
+  // genuinely in range. Price filters stay off the baseline; the radius is part of the query itself.
+  const listings = withinRadius(result.listings, effRadius).map(toSnapshotListing);
   writeSnapshot(id, { query: keyword, location: location || "DE", url, fetchedAt, listings });
   upsertListings(listings, fetchedAt);
   render(listings, via === "browser" ? "live fetch (browser)" : "live fetch");

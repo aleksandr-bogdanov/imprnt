@@ -8,6 +8,7 @@ import CopyButton from "../islands/CopyButton.tsx";
 import MagneticButton from "../islands/MagneticButton.tsx";
 import LandingNote from "../components/landing/LandingNote.astro";
 import HowLanes from "../components/landing/HowLanes.astro";
+import RecallBlock from "../components/landing/RecallBlock.astro";
 ---
 
 <Layout>
@@ -15,19 +16,30 @@ import HowLanes from "../components/landing/HowLanes.astro";
   <section class="relative overflow-hidden pb-24 pt-24 sm:pt-28">
     <div class="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-px bg-line-soft"></div>
 
-    <div class="shell grid items-center gap-x-12 gap-y-16 lg:grid-cols-[1.05fr_0.95fr]">
+    <div class="shell grid gap-x-12 gap-y-16 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
       <div>
         <p class="eyebrow" data-reveal>{hero.eyebrow}</p>
-        <h1 class="mt-6 text-hero font-semibold" data-reveal data-reveal-delay="60">
+        {/* An eyebrow is a kicker on the heading, so it sits tight to it (mt-3).
+            At mt-6 it read as its own stranded line. Same change in every section. */}
+        <h1 class="mt-3 text-hero font-semibold" data-reveal data-reveal-delay="60">
           {hero.headlineLead}<br />
           <span class="text-accent sm:whitespace-nowrap">{hero.headlineAccent}</span>.
         </h1>
-        <p class="mt-6 text-balance font-display text-xl font-semibold text-ink sm:text-2xl" data-reveal data-reveal-delay="100">
+        {/* the motto is the second half of the hero UNIT, not a separate block:
+            it hangs off the headline's last line on a tighter leading than the
+            body that follows, which is what was making the stack read as three
+            unrelated paragraphs. */}
+        <p class="mt-4 text-balance font-display text-xl font-semibold leading-snug text-ink sm:text-2xl" data-reveal data-reveal-delay="100">
           {hero.motto}
         </p>
-        <p class="mt-5 max-w-xl text-lg text-ink-soft sm:text-xl" data-reveal data-reveal-delay="140">
-          {hero.subhead}
-        </p>
+        {hero.subheadParas.map((p, i) => (
+          <p
+            class={`${i === 0 ? "mt-7" : "mt-4"} max-w-xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink`}
+            data-reveal
+            data-reveal-delay={140 + i * 40}
+            set:html={p}
+          />
+        ))}
 
         <div class="mt-8" data-reveal data-reveal-delay="180">
           {/* the prompt marks where the command STARTS, so it top-aligns with
@@ -50,7 +62,7 @@ import HowLanes from "../components/landing/HowLanes.astro";
 
       </div>
 
-      <div class="lg:pb-6" data-reveal data-reveal-delay="160">
+      <div class="lg:pt-[9px]" data-reveal data-reveal-delay="160">
         <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-soft">{hero.terminalLabel}</p>
         <Terminal lines={hero.terminal} />
         <p class="mt-4 text-sm text-ink-soft">{hero.terminalCaption}</p>
@@ -60,52 +72,75 @@ import HowLanes from "../components/landing/HowLanes.astro";
 
   {/* ─────────────────────────────  HOW IT WORKS  ───────────────────────────── */}
   <section id="how" class="relative border-t border-line bg-bg-soft py-20 sm:py-28">
-    {/* Mobile reads in one column, so the two columns go display:contents below
-        lg and every block takes an explicit order: the lanes diagram sits right
-        under the heading as the section's summary, then prose, prose, spec
-        strip, prose, prose, a hairline, and the cost paragraphs plus the link.
-        No run of body prose is longer than two paragraphs. At lg the wrappers
-        are blocks again and order goes inert: the lanes lead the right column,
-        with the spec strip and the cost paragraphs under them. */}
-    <div class="shell grid items-start gap-x-12 gap-y-0 lg:grid-cols-2 lg:gap-y-10">
-      <div class="contents lg:block lg:max-w-2xl">
-        <div class="order-1 max-w-2xl">
-          <p class="eyebrow" data-reveal>{how.eyebrow}</p>
-          <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{how.heading}</h2>
-        </div>
+    {/* Three bands, not one lopsided two-column grid. The old shape ran ALL the
+        prose down the left and everything else down the right, so the left
+        column ended half a screen before the right did - the fault Alex called
+        out. Now: a full-width header, then origin-prose beside the lanes
+        diagram, then a full-width spec strip, then the mechanism and the cost
+        as two even columns. Each band's halves end together.
+
+        Mobile stacks in source order, which already reads right, so the only
+        order override left is the lanes card, which leads on mobile as the
+        section's summary. */}
+    <div class="shell">
+      <div class="max-w-5xl">
+        <p class="eyebrow" data-reveal>{how.eyebrow}</p>
+        {/* the heading breaks at its own full stop, so "The model writes the
+            note." holds one line; text-balance would re-break it mid-clause */}
+        <h2 class="mt-3 text-display font-semibold leading-[1.08] sm:[text-wrap:nowrap]" data-reveal data-reveal-delay="60">
+          {how.headingLead}<br />{how.headingRest}
+        </h2>
+      </div>
+    </div>
+
+    {/* band A: the origin, with the lanes diagram holding the other half */}
+    <div class="shell mt-14 grid items-start gap-x-12 gap-y-0 lg:grid-cols-2 lg:gap-y-10">
+      <div class="contents lg:block">
         {how.paras.map((p, i) => (
           <p
-            class={`mt-6 max-w-2xl text-lg leading-relaxed text-ink-soft [&_strong]:font-semibold [&_strong]:text-ink ${["order-3", "order-4", "order-6", "order-7"][i]}`}
+            class={`max-w-2xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${i === 0 ? "order-2 mt-10 lg:mt-0" : "order-2 mt-6"}`}
             data-reveal
             data-reveal-delay={120 + i * 40}
             set:html={p}
           />
         ))}
       </div>
+      <div class="order-1 max-w-2xl lg:order-none" data-reveal data-reveal-delay="80">
+        <HowLanes />
+      </div>
+    </div>
 
-      <div class="contents lg:block lg:max-w-2xl lg:self-center">
-        <div class="order-2 mt-8 max-w-2xl lg:mt-0" data-reveal data-reveal-delay="80">
-          <HowLanes />
-        </div>
-        <div class="order-5 mt-10 mb-4 flex max-w-2xl flex-wrap items-center gap-x-8 gap-y-3 border-y border-line py-5 lg:mb-0" data-reveal>
-          {how.spec.map((s) => (
-            <span class="text-sm font-semibold uppercase tracking-wider text-ink-soft">{s}</span>
-          ))}
-        </div>
-        {how.paras2.map((p, i) => (
+    {/* band B: the spec strip, full width - the hairline that breaks the prose */}
+    <div class="shell mt-14">
+      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 sm:grid-cols-3 sm:gap-x-12" data-reveal>
+        {how.spec.map((s) => (
+          <span class="text-sm font-semibold uppercase tracking-wider text-ink-soft">{s}</span>
+        ))}
+      </div>
+    </div>
+
+    {/* band C: mechanism left, cost right - two paragraphs each, even columns */}
+    <div class="shell mt-12 grid items-start gap-x-12 gap-y-6 lg:grid-cols-2">
+      <div>
+        {how.paras2.slice(0, 2).map((p, i) => (
           <p
-            class={`max-w-2xl text-lg leading-relaxed text-ink-soft [&_strong]:font-semibold [&_strong]:text-ink ${
-              [
-                "order-8 mt-10 border-t border-line pt-10 lg:mt-6 lg:border-t-0 lg:pt-0",
-                "order-9 mt-6",
-              ][i]
-            }`}
+            class={`max-w-2xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${i === 0 ? "" : "mt-6"}`}
             data-reveal
             data-reveal-delay={i * 40}
             set:html={p}
           />
         ))}
-        <div class="order-10 mt-6 max-w-2xl">
+      </div>
+      <div class="max-lg:mt-8 max-lg:border-t max-lg:border-line max-lg:pt-8">
+        {how.paras2.slice(2).map((p, i) => (
+          <p
+            class={`max-w-2xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${i === 0 ? "" : "mt-6"}`}
+            data-reveal
+            data-reveal-delay={80 + i * 40}
+            set:html={p}
+          />
+        ))}
+        <div class="mt-6 max-w-2xl">
           <a href={how.link.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline" data-reveal>
             {how.link.label}
             <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -118,18 +153,37 @@ import HowLanes from "../components/landing/HowLanes.astro";
   {/* ─────────────────────────────  PROOF  ───────────────────────────── */}
   <section id="proof" class="relative border-t border-line py-20 sm:py-28">
     <div class="shell">
-      <div class="max-w-2xl">
-        <p class="eyebrow" data-reveal>{proof.eyebrow}</p>
-        <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{proof.heading}</h2>
-        <p class="mt-6 text-lg text-ink-soft" data-reveal data-reveal-delay="120">{proof.lead}</p>
+      {/* heading left, the claim + its caveat right: the lead used to run down
+          the left half against an empty right one. Two columns fill the band
+          and put the 9-in-10 claim on its own line, where it reads as the
+          section's headline number instead of the head of a paragraph. */}
+      <div class="grid items-start gap-x-12 gap-y-6 lg:grid-cols-[0.9fr_1.1fr]">
+        <div>
+          <p class="eyebrow" data-reveal>{proof.eyebrow}</p>
+          <h2 class="mt-3 text-display font-semibold leading-[1.08]" data-reveal data-reveal-delay="60">{proof.heading}</h2>
+        </div>
+        <div class="max-w-2xl lg:mt-11">
+          <p
+            class="text-balance font-display text-2xl font-semibold text-ink [&_strong]:text-accent sm:text-3xl"
+            data-reveal
+            data-reveal-delay="100"
+            set:html={proof.leadTop}
+          />
+          <p
+            class="mt-4 text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink"
+            data-reveal
+            data-reveal-delay="140"
+            set:html={proof.leadBody}
+          />
+        </div>
       </div>
 
       <div class="mt-12 grid gap-y-8 border-y border-line py-8 sm:grid-cols-3 sm:gap-x-10" data-reveal data-reveal-delay="140">
         {
           proof.stats.map((s) => (
             <div>
-              <p class="font-display text-4xl font-semibold text-ink sm:text-5xl">{s.value}</p>
-              <p class="mt-2 max-w-[16rem] text-sm text-ink-soft">{s.label}</p>
+              <p class="font-display text-[2.4rem] font-semibold text-ink sm:text-[2.75rem]">{s.value}</p>
+              <p class="mt-2 max-w-[20rem] text-sm text-ink-soft">{s.label}</p>
             </div>
           ))
         }
@@ -137,18 +191,13 @@ import HowLanes from "../components/landing/HowLanes.astro";
 
       <div class="mt-12 grid items-start gap-x-12 gap-y-10 lg:grid-cols-[1.15fr_0.85fr]">
         <div class="min-w-0" data-reveal data-reveal-delay="160">
-          <div class="overflow-hidden rounded-2xl border border-line bg-surface">
-            <div class="border-b border-line bg-bg-soft px-4 py-2.5">
-              <span class="font-mono text-xs text-ink-chrome">{proof.recallLabel}</span>
-            </div>
-            <pre class="whitespace-pre-wrap [overflow-wrap:anywhere] p-5 font-mono text-[12.5px] leading-relaxed text-ink-soft"><code><span class="block min-h-[1.625em] pl-[3.5ch] -indent-[3.5ch]"><span class="select-none text-accent">$</span> <span class="text-ink">{proof.recallCommand}</span></span>{proof.recallOutput.map((line) => <span class="block min-h-[1.625em] pl-[3.5ch] -indent-[3.5ch]">{line}</span>)}</code></pre>
-          </div>
+          <RecallBlock />
           <p class="mt-4 text-sm text-ink-soft">{proof.recallCaption}</p>
         </div>
 
-        <div class="max-w-xl" data-reveal data-reveal-delay="220">
-          <p class="text-[1.02rem] leading-relaxed text-ink-soft">{proof.letta}</p>
-          <p class="mt-5 text-[1.02rem] leading-relaxed text-ink-soft">{proof.dogfood}</p>
+        <div class="max-w-xl lg:pt-3" data-reveal data-reveal-delay="220">
+          <p class="text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg">{proof.letta}</p>
+          <p class="mt-5 text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg">{proof.dogfood}</p>
           <div class="mt-6 flex flex-wrap gap-x-8 gap-y-3">
             <a href={proof.evalLink.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
               {proof.evalLink.label}
@@ -178,11 +227,11 @@ import HowLanes from "../components/landing/HowLanes.astro";
       <div class="contents lg:block lg:max-w-xl">
         <div class="order-1 max-w-xl">
           <p class="eyebrow" data-reveal>{file.eyebrow}</p>
-          <h2 class="mt-6 text-display font-semibold" data-reveal data-reveal-delay="60">{file.heading}</h2>
+          <h2 class="mt-3 text-display font-semibold" data-reveal data-reveal-delay="60">{file.heading}</h2>
         </div>
         {file.paras.slice(0, 3).map((p, i) => (
           <p
-            class={`mt-6 max-w-xl text-lg leading-relaxed text-ink-soft [&_strong]:font-semibold [&_strong]:text-ink ${["order-2", "order-3", "order-5"][i]}`}
+            class={`mt-6 max-w-xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${["order-2", "order-3", "order-5"][i]}`}
             data-reveal
             data-reveal-delay={120 + i * 40}
             set:html={p}
@@ -197,7 +246,7 @@ import HowLanes from "../components/landing/HowLanes.astro";
           <p class="mt-4 text-sm text-ink-soft">{file.noteCaption}</p>
         </div>
         <p
-          class="order-6 mt-6 max-w-xl text-lg leading-relaxed text-ink-soft lg:mt-8 [&_strong]:font-semibold [&_strong]:text-ink"
+          class="order-6 mt-6 max-w-xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg lg:mt-8 [&_strong]:font-semibold [&_strong]:text-ink"
           data-reveal
           data-reveal-delay="240"
           set:html={file.paras[3]}
@@ -227,7 +276,7 @@ import HowLanes from "../components/landing/HowLanes.astro";
         <MagneticButton client:visible href={closing.ctaSecondary.href} label={closing.ctaSecondary.label} variant="ghost" external />
       </div>
 
-      <p class="mx-auto mt-12 max-w-md text-sm italic text-ink-soft" data-reveal data-reveal-delay="260">
+      <p class="mx-auto mt-12 max-w-md text-sm text-ink-faint" data-reveal data-reveal-delay="260">
         {closing.quip}
       </p>
     </div>

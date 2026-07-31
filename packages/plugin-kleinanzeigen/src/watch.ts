@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  MARKET, searchUrl, fetchSearchHttp, searchId, newestSnapshot, toSnapshotListing,
+  MARKET, searchUrl, fetchSearchHttp, searchId, newestSnapshot, toSnapshotListing, withinRadius, DEFAULT_RADIUS_KM,
   writeSnapshot, upsertListings, listSnapFiles, type SnapshotListing,
 } from "./search.ts";
 import { deliver } from "./notify.ts";
@@ -16,6 +16,9 @@ import { deliver } from "./notify.ts";
 export type SavedSearch = {
   id: string; query: string; location: string;
   minPrice: number | null; maxPrice: number | null; addedAt: string;
+  // Absent on searches saved before the radius fix. A located search with no radius is not scoped at
+  // all (KA expands nationwide, distance-sorted), so those default to DEFAULT_RADIUS_KM rather than 0.
+  radiusKm?: number | null;
 };
 type WatchFile = { searches: SavedSearch[] };
 
@@ -79,8 +82,16 @@ export function filterDiffByBand(diff: SnapshotDiff, minPrice: number | null, ma
   return { added: diff.added.filter(keep), dropped: diff.dropped.filter(keep), gone: diff.gone.filter(keep) };
 }
 
+export function effectiveRadius(s: SavedSearch): number {
+  if (!s.location) return 0;
+  const r = s.radiusKm;
+  if (r == null) return DEFAULT_RADIUS_KM;
+  return Number.isFinite(r) && r > 0 ? r : 0;
+}
+
 async function refreshSearch(s: SavedSearch): Promise<RefreshResult> {
-  const url = searchUrl(s.query, s.location);
+  const radius = effectiveRadius(s);
+  const url = searchUrl(s.query, s.location, radius);
   if (!url) return { ok: false, id: s.id, query: s.query, location: s.location, error: "empty keyword" };
   const result = await fetchSearchHttp(url);
   // ok + 0 listings on a REAL results page is a genuinely empty result set — snapshot it, so a
@@ -97,7 +108,7 @@ async function refreshSearch(s: SavedSearch): Promise<RefreshResult> {
   const fetchedAt = new Date().toISOString();
   // Store the FULL, unfiltered result set so this stream stays apples-to-apples with interactive
   // `search` (which also writes unfiltered) — the price band is a digest filter, not a snapshot filter.
-  const listings = result.listings.map(toSnapshotListing);
+  const listings = withinRadius(result.listings, radius).map(toSnapshotListing);
   writeSnapshot(id, { query: s.query, location: s.location || "DE", url, fetchedAt, listings });
   upsertListings(listings, fetchedAt);
   const diff = filterDiffByBand(diffSnapshots(prev, { listings }), s.minPrice ?? null, s.maxPrice ?? null);
@@ -135,10 +146,11 @@ export function composeDealDigest(results: RefreshResult[]): string {
   return lines.join("\n");
 }
 
-export function parseSearchFlags(args: string[]): { location: string; minPrice: number | null; maxPrice: number | null; keyword: string } {
+export function parseSearchFlags(args: string[]): { location: string; minPrice: number | null; maxPrice: number | null; radiusKm: number | null; keyword: string } {
   let location = "";
   let minPrice: number | null = null;
   let maxPrice: number | null = null;
+  let radiusKm: number | null = null;
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -148,20 +160,23 @@ export function parseSearchFlags(args: string[]): { location: string; minPrice: 
     if (a.startsWith("--min-price=")) { minPrice = Number(a.slice("--min-price=".length)); continue; }
     if (a === "--max-price") { maxPrice = Number(args[++i]); continue; }
     if (a.startsWith("--max-price=")) { maxPrice = Number(a.slice("--max-price=".length)); continue; }
+    if (a === "--radius") { radiusKm = Number(args[++i]); continue; }
+    if (a.startsWith("--radius=")) { radiusKm = Number(a.slice("--radius=".length)); continue; }
     positional.push(a);
   }
   if (minPrice != null && !Number.isFinite(minPrice)) minPrice = null;
   if (maxPrice != null && !Number.isFinite(maxPrice)) maxPrice = null;
-  return { location, minPrice, maxPrice, keyword: positional.join(" ").trim() };
+  if (radiusKm != null && (!Number.isFinite(radiusKm) || radiusKm < 0)) radiusKm = null;
+  return { location, minPrice, maxPrice, radiusKm, keyword: positional.join(" ").trim() };
 }
 
 export async function cmdWatch(args: string[]): Promise<number> {
   const sub = args[0];
   const rest = args.slice(1);
   if (sub === "add") {
-    const { location, minPrice, maxPrice, keyword } = parseSearchFlags(rest);
+    const { location, minPrice, maxPrice, radiusKm, keyword } = parseSearchFlags(rest);
     if (!keyword) {
-      console.error('usage: watch add "<query>" [--location berlin] [--min-price N] [--max-price N]');
+      console.error('usage: watch add "<query>" [--location berlin] [--radius KM] [--min-price N] [--max-price N]');
       return 1;
     }
     const id = searchId(location, keyword);
@@ -174,13 +189,15 @@ export async function cmdWatch(args: string[]): Promise<number> {
       }
       existing.minPrice = minPrice;
       existing.maxPrice = maxPrice;
+      if (radiusKm != null) existing.radiusKm = radiusKm;
       writeWatches(w);
       console.log(`watch: updated price band for "${keyword}" [${location || "DE"}] (${id}) — min ${minPrice ?? "—"}, max ${maxPrice ?? "—"}.`);
       return 0;
     }
-    w.searches.push({ id, query: keyword, location: location || "", minPrice, maxPrice, addedAt: new Date().toISOString() });
+    w.searches.push({ id, query: keyword, location: location || "", minPrice, maxPrice, radiusKm, addedAt: new Date().toISOString() });
     writeWatches(w);
-    console.log(`watch: added "${keyword}" [${location || "DE"}] (${id}). ${w.searches.length} saved search(es).`);
+    const scope = location ? `${location} ${radiusKm ?? DEFAULT_RADIUS_KM}km` : "DE";
+    console.log(`watch: added "${keyword}" [${scope}] (${id}). ${w.searches.length} saved search(es).`);
     return 0;
   }
   if (sub === "list") {
@@ -195,7 +212,9 @@ export async function cmdWatch(args: string[]): Promise<number> {
       const newest = files.length ? newestSnapshot(s.id) : null;
       const age = newest && newest.fetchedAt ? `${Math.round((Date.now() - Date.parse(newest.fetchedAt)) / 6e4)}m ago` : "never";
       const price = [s.minPrice != null ? `min ${s.minPrice}` : "", s.maxPrice != null ? `max ${s.maxPrice}` : ""].filter(Boolean).join(", ");
-      console.log(`  ${s.id}  "${s.query}" [${s.location || "DE"}]${price ? ` {${price}}` : ""} — ${files.length} snapshot(s), last ${age}`);
+      const r = effectiveRadius(s);
+      const scope = s.location ? `${s.location} ${r > 0 ? r + "km" : "nationwide"}` : "DE";
+      console.log(`  ${s.id}  "${s.query}" [${scope}]${price ? ` {${price}}` : ""} — ${files.length} snapshot(s), last ${age}`);
     }
     return 0;
   }

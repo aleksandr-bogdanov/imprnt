@@ -1,0 +1,158 @@
+---
+/**
+ * Landing (index.astro only): the recall capture, syntax-marked.
+ *
+ * It used to be one grey <pre>, which buried the two things a reader is meant
+ * to take from it - that every hit is a real file on disk, and that the number
+ * beside it is a score, not a rank. So: the command reads like a shell command
+ * (binary, quoted query, flag), the scores sit in their own tabular column, and
+ * each path splits into a dim folder and an ink filename.
+ *
+ * The strings are a verbatim run against examples/organization. Only the
+ * marking is ours - never retouch the values.
+ *
+ * Design: filled surface + hairlines, ONE accent (the $ marker, the score, the
+ * flag), mono because this IS a terminal capture. No rail, no glow, no second
+ * colour. Scoped CSS on the landing tokens, same convention as HowLanes.
+ */
+import { proof } from "../../lib/landing";
+---
+
+<div class="capture">
+  <div class="bar"><span>{proof.recallLabel}</span></div>
+
+  <div class="body">
+    <p class="cmd">
+      <span class="marker">$</span>
+      {
+        proof.recallCommand.map((seg) => (
+          <>
+            <span class={seg.k}>{seg.v}</span>{" "}
+          </>
+        ))
+      }
+    </p>
+
+    <p class="head">
+      {proof.recallHeader.map((seg) => <span class={seg.k}>{seg.v}</span>)}
+    </p>
+
+    <ol class="hits">
+      {
+        proof.recallHits.map((hit) => (
+          <li>
+            <span class="score">{hit.score}</span>
+            <span class="path">
+              <span class="dir">{hit.dir}</span><span class="file">{hit.file}</span>
+            </span>
+          </li>
+        ))
+      }
+    </ol>
+
+    <p class="foot">{proof.recallFooter}</p>
+  </div>
+</div>
+
+<style>
+  .capture {
+    overflow: hidden;
+    border: 1px solid var(--color-line);
+    border-radius: 1rem;
+    background: var(--color-surface);
+  }
+  .bar {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--color-line);
+    background: var(--color-bg-soft);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--color-ink-chrome);
+  }
+  .body {
+    padding: 1.15rem 1.25rem 1.25rem;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+  }
+  /* the capture is the section's only evidence, so it must never be clipped */
+  @media (max-width: 480px) {
+    .body {
+      font-size: 11.5px;
+    }
+  }
+
+  /* the command line: hanging indent so a wrap sits under the command, not the $ */
+  .cmd {
+    margin: 0;
+    padding-left: 2ch;
+    text-indent: -2ch;
+    overflow-wrap: anywhere;
+  }
+  .marker {
+    user-select: none;
+    color: var(--color-accent);
+  }
+  .cmd .cmd,
+  .cmd .str,
+  .cmd .flag {
+    white-space: nowrap;
+  }
+  .cmd > .cmd {
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+  .str {
+    color: var(--color-ink-soft);
+  }
+  .flag {
+    color: var(--color-accent);
+  }
+
+  .head {
+    margin: 0.9rem 0 0;
+    color: var(--color-ink-soft);
+    overflow-wrap: anywhere;
+  }
+  .head .dim {
+    color: var(--color-ink-faint);
+  }
+
+  /* the hits: a real two-column table, so the scores align on their own axis
+     instead of drifting with the filename lengths */
+  .hits {
+    margin: 0.85rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.28rem 1.15rem;
+  }
+  .hits li {
+    display: contents;
+  }
+  .score {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    text-align: right;
+    color: var(--color-accent);
+  }
+  .path {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .dir {
+    color: var(--color-ink-faint);
+  }
+  .file {
+    color: var(--color-ink);
+  }
+
+  .foot {
+    margin: 1rem 0 0;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--color-line);
+    color: var(--color-ink-faint);
+    overflow-wrap: anywhere;
+  }
+</style>

@@ -19,15 +19,17 @@ const lanes = [
     name: "Write path",
     cadence: "once per note",
     actor: "the model",
-    body: "reads the source, decides what it is, writes the summary, picks tags, links people and projects.",
+    body: "reads the source, splits it into separate notes, writes each summary, picks tags, links people and projects.",
   },
   {
     name: "Read path",
     cadence: "every lookup",
     actor: "plain code",
-    // the closing "in it." is bound with a non-breaking space so the row can
-    // never stand "it." alone on a line of its own
-    body: "ranks the folder fresh with BM25, returns a ranked top 15, about a hundred tokens. No model client exists in it.",
+    // "No model client exists in it" moved out: the section heading, the prose
+    // beside this card, and the recall caption all already carry the no-model
+    // claim, and "model client" is developer jargon on a customer-facing
+    // diagram. The token figure lives in the proof section's stat row.
+    body: "ranks every note with BM25 and returns the top 15, ordered by score.",
   },
 ];
 ---

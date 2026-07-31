@@ -35,6 +35,10 @@
   --color-accent-ink: var(--brand-accent-ink);
   /* soft tint of the accent for a rule/underline (the ~35% guide-mark tint) */
   --color-accent-soft: color-mix(in oklab, var(--color-accent) 32%, transparent);
+  /* the wash behind an accent chip (a vault path in the transcript). A tint,
+     never a fill: the text on it stays --color-accent, so this is one accent
+     doing semantic work, not a second colour. */
+  --color-accent-wash: color-mix(in oklab, var(--color-accent) 11%, transparent);
 
   /* legacy aliases so any utility not yet migrated still resolves to the ONE
      accent instead of a dead color. There is no second accent. */
@@ -51,7 +55,7 @@
 
   /* type scale extras */
   --text-hero: clamp(2.3rem, 4.6vw, 3.7rem);
-  --text-display: clamp(1.9rem, 4.2vw, 3.35rem);
+  --text-display: clamp(1.62rem, 4.2vw, 3.35rem);
 
   /* radii */
   --radius-xl: 1rem;
@@ -90,6 +94,8 @@
   --color-accent-strong: var(--brand-accent-dark-strong);
   --color-accent-ink: var(--brand-accent-dark-ink);
   --color-accent-soft: color-mix(in oklab, var(--color-accent) 30%, transparent);
+  /* the chip wash lifts on near-black, where an 11% tint disappears */
+  --color-accent-wash: color-mix(in oklab, var(--color-accent) 17%, transparent);
 }
 
 /* theme-toggle icon: show the moon in light (tap for dark), the sun in dark.
@@ -136,6 +142,9 @@
     line-height: 1.65;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Golos Text ships upright only. Without this Chrome skews a fake oblique
+       anywhere `italic` appears - the synthetic-weight defect the brand law bans. */
+    font-synthesis-style: none;
     overflow-x: clip;
   }
 
@@ -180,11 +189,22 @@
 /* ── reusable component classes ───────────────────────────────────────────── */
 
 @layer components {
+  /* Body prose: `pretty` lets the browser look ahead a few lines and even out
+     the ragged edge, and it never leaves a one-word last line. Justification
+     was considered and rejected - browsers justify by stretching word spaces
+     with no hyphenation running, so a 30rem column grows white rivers. */
+  p, li {
+    text-wrap: pretty;
+  }
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+
   .shell {
     width: 100%;
     max-width: 76rem;
     margin-inline: auto;
-    padding-inline: clamp(1.5rem, 5vw, 4.5rem);
+    padding-inline: clamp(1.25rem, 5vw, 4.5rem);
   }
   .shell-narrow {
     width: 100%;

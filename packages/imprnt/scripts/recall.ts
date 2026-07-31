@@ -354,8 +354,8 @@ if (!hits.length) { console.log(`no matches for "${query}" in ${vault}`); proces
 
 const shown = hits.slice(0, limit);
 const expanded = queryTerms.map((g) => g.join("|")).join(" ");
-console.log(`recall "${query}" [${expanded}] — ${hits.length} match(es)${hits.length > shown.length ? `, showing top ${shown.length}` : ""}, BM25-ranked:\n`);
+console.log(`recall "${query}" [${expanded}] - ${hits.length} match(es)${hits.length > shown.length ? `, showing top ${shown.length}` : ""}, BM25-ranked:\n`);
 for (const h of shown) console.log(`  [${h.score.toFixed(2)}] ${h.path}`);
 if (hits.length > shown.length) {
-  console.log(`\n  … ${hits.length - shown.length} lower-ranked hit(s) hidden. Raise with --limit if needed; usually you don't.`);
+  console.log(`\n  ... ${hits.length - shown.length} lower-ranked hit(s) hidden. Raise with --limit if needed. Usually you do not.`);
 }

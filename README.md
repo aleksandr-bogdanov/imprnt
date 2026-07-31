@@ -123,14 +123,10 @@ asking ("add the anti-slop plugin"), each a separate `imprnt-plugin-*` package:
 
 | Package | What it gives your assistant |
 |---------|------------------------------|
-| `imprnt-plugin-character` | A voice and standards to write in. "Scribe" is the default you copy and personalize. |
 | `imprnt-plugin-anti-slop` | Rules that keep its prose from reading like AI. |
-| `imprnt-plugin-whenful` | A local mirror of your [Whenful](https://whenful.com) tasks, shown inline at read. |
-| `imprnt-plugin-kleinanzeigen` | A watcher for your Kleinanzeigen inbox: regex triage of buyer messages, drafts, a phone digest. You press send. |
-| `imprnt-plugin-session-host` | A warm browser holding your logged-in sessions, providing the authed-session capability. You enroll each site once. Not yet on npm: install from a repo checkout with `imprnt plugin add session-host --from <dir>`. |
-| `imprnt-plugin-timemachine` | Snapshots your work before each change so you can recover what the agent breaks. |
+| `imprnt-plugin-character` | A voice and standards to write in. "Scribe" is the default you copy and personalize. |
 | `imprnt-plugin-statusline` | A customizable status line: model, branch, context, cost, rate limits, clock. |
-| `imprnt-plugin-telegram` | Your vault from your phone: text a bot, the answer comes from your notes. |
+| `imprnt-plugin-timemachine` | Snapshots your work before each change so you can recover what the agent breaks. |
 
 Adding one copies it into your project and wires it into `CLAUDE.local.md`, the per-machine file
 your assistant loads each session. A fresh setup loads zero plugins until you add them. The full
