@@ -25,9 +25,13 @@ const QUERIES_DIR = join(HERE, "queries");
 const args = process.argv.slice(2);
 let K = 10;
 let show = false;
+const extra: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--k") K = parseInt(args[++i] ?? "10", 10);
   else if (args[i] === "--show") show = true;
+  // Extra flags forwarded verbatim to `recall`, so a read-path change can be checked
+  // against imprnt's OWN task before anyone argues about it from a foreign benchmark.
+  else if (args[i] === "--recall-extra") extra.push(...(args[++i] ?? "").split(/\s+/).filter(Boolean));
 }
 
 // One query row: the question and the set of note paths that answer it (any one in top-k is a hit).
@@ -38,7 +42,7 @@ type Scored = Row & { rank: number; top: string };
 // Run the real recall command and return the ranked note paths, best first. recall prints
 // "  [12.34] people/jonas-rivera.md" lines; we pull the path from each, in order.
 function rankedPaths(query: string, vault: string): string[] {
-  const r = Bun.spawnSync(["bun", RECALL, query, "--vault", vault, "--limit", String(K)], {
+  const r = Bun.spawnSync(["bun", RECALL, query, "--vault", vault, "--limit", String(K), ...extra], {
     cwd: REPO,
     stdout: "pipe",
     stderr: "pipe",

@@ -112,25 +112,25 @@ export const how = {
 };
 
 export const proof = {
-  // The eyebrow said "The proof" and the heading said "The proof ships in the
-  // repo" - the same words twice, and the sentence meant nothing. What it was
-  // reaching for is "go check it", so the heading now says that. "eval" is
-  // gone: it is jargon that assumes the reader already knows the word.
+  // The old lead admitted "I wrote both the questions and the scoring", which is the
+  // worst possible optics: I built a measuring machine and it says my tool is good.
+  // The fix is not softer wording, it is a better source of evidence - LoCoMo is a
+  // public academic benchmark nobody here wrote, and the grading was done by another
+  // vendor's model running a competitor's published grader. The self-made 39-question
+  // eval stays, demoted to what it is: a fast local check, not the proof.
   eyebrow: "Does it work",
   heading: "Check it yourself.",
-  leadTop: "It finds the right note <strong>9 times out of 10</strong>.",
+  leadTop: "<strong>76.3%</strong> on a benchmark we did not write.",
   leadBody:
-    "That number comes from <strong>39 hand-written questions</strong>, run against the two example vaults in the repo. It is a small test, and I wrote both the questions and the scoring. Clone the repo and run it before you believe it.",
+    "That is LoCoMo, a public academic benchmark of 1,540 questions about long multi-session conversations. imprnt ingests each conversation, then answers from the notes it filed. <strong>We did not write the questions, and we did not grade the answers</strong>: the grading ran on OpenAI's gpt-4.1 using a scoring script published by a competitor, unmodified. Clone the repo and run it.",
+  // Every number below is imprnt as it ships today, with Claude Sonnet doing the reading
+  // and writing. The full run, per-question predictions and judge verdicts are in the repo.
   stats: [
-    { value: "89.7%", label: "answered by the first note returned" },
-    { value: "97.4%", label: "caught by the top five" },
+    { value: "76.3%", label: "LoCoMo, 1,540 questions, graded by an outside model" },
+    { value: "89.7%", label: "right note first, on our own 39-question retrieval eval" },
     { value: "~100", label: "tokens per lookup, measured on the example vault" },
   ],
   recallLabel: "examples/organization",
-  // Segmented for the same reason the hero transcript is: this is the product's
-  // real output, so the parts that carry meaning (the score, the folder, the
-  // file) are marked instead of dissolved into one grey block. Verbatim data -
-  // the strings are a real run, only the marking is ours.
   recallCommand: [
     { k: "cmd", v: "imprnt recall" },
     { k: "str", v: '"double charge billing"' },
@@ -153,7 +153,7 @@ export const proof = {
     "A real query against the example vault in the repo, output verbatim. The number on the left is the BM25 score. No model was in the ranking loop.",
   dogfood:
     "I run my own vault on this, work and life in the same folder, and I have queried it every day since the first commit.",
-  evalLink: { label: "the questions and the scores", href: "https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval" },
+  evalLink: { label: "the benchmark run, every question and verdict", href: "https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval" },
   compareLink: { label: "how it compares", note: "a technical read", href: "/comparison/" },
 };
 
