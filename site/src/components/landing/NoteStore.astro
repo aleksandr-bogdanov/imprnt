@@ -1,0 +1,164 @@
+---
+/**
+ * Every note in the example vault, rendered ONCE into an inert <template>, plus the
+ * ~1.5 KB of script that opens them on hover.
+ *
+ * This replaces build-time nesting, which was exponential: expanding links in place
+ * meant every distinct path through the note graph carried its own full copy of every
+ * note it reached, and the example vault's cross-links produced a 168 MB page at
+ * unlimited depth. Emitting each note once makes the cost linear in the number of
+ * notes, and depth becomes free because the runtime just looks the next one up.
+ *
+ * Nothing renders until a pointer lands on a link, so the page still paints as fast as
+ * a static one. The templates are inert: browsers do not lay out or paint template
+ * content.
+ */
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import NoteBody from "./NoteBody.astro";
+
+interface Props {
+  vault: string;
+}
+const { vault } = Astro.props;
+
+/** Every .md in the vault, keyed the way a [[wikilink]] addresses it. */
+function walk(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) out.push(...walk(p));
+    else if (entry.endsWith(".md")) out.push(p);
+  }
+  return out;
+}
+
+const notes = walk(vault).map((abs) => ({
+  key: relative(vault, abs).replace(/\.md$/, ""),
+  text: readFileSync(abs, "utf8"),
+}));
+---
+
+<div class="note-store" hidden aria-hidden="true">
+  {notes.map((n) => <template data-note-src={n.key}><NoteBody text={n.text} vault={vault} /></template>)}
+</div>
+
+<script>
+  // Hover a [[link]] and the note it points at opens beside it. Links inside THAT note
+  // are wired the same way, so depth is unlimited and costs one lookup per level.
+  const store = new Map<string, string>();
+  document.querySelectorAll<HTMLTemplateElement>("template[data-note-src]").forEach((t) => {
+    store.set(t.dataset.noteSrc!, t.innerHTML);
+  });
+
+  const OPEN: HTMLElement[] = [];
+
+  function closeFrom(depth: number) {
+    while (OPEN.length > depth) OPEN.pop()!.remove();
+  }
+
+  /** Is the pointer over this panel, its trigger, or anything deeper? */
+  function keepAlive(el: Node | null): boolean {
+    return OPEN.some((p) => p.contains(el)) || (hostChain.some((h) => h.contains(el)) ?? false);
+  }
+
+  let hostChain: HTMLElement[] = [];
+  let closeTimer: number | undefined;
+
+  function open(host: HTMLElement, depth: number) {
+    const key = host.dataset.note;
+    if (!key || !store.has(key)) return;
+    closeFrom(depth);
+
+    const panel = document.createElement("div");
+    panel.className = "note-panel";
+    panel.innerHTML = `<div class="note-panel-bar">${key}.md</div><div class="note-panel-body">${store.get(key)}</div>`;
+    document.body.appendChild(panel);
+
+    // place it under the trigger, right-aligned, flipped up when it would run off
+    const r = host.getBoundingClientRect();
+    const w = panel.offsetWidth;
+    const h = panel.offsetHeight;
+    let left = r.right - w;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    const below = r.bottom + 6;
+    const top = below + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 6) : below;
+    panel.style.left = `${left + window.scrollX}px`;
+    panel.style.top = `${top + window.scrollY}px`;
+    requestAnimationFrame(() => panel.classList.add("is-open"));
+
+    OPEN[depth] = panel;
+    OPEN.length = depth + 1;
+    hostChain[depth] = host;
+    hostChain.length = depth + 1;
+
+    panel.querySelectorAll<HTMLElement>(".nb-open").forEach((next) => wire(next, depth + 1));
+    panel.addEventListener("pointerenter", () => clearTimeout(closeTimer));
+    panel.addEventListener("pointerleave", scheduleClose);
+  }
+
+  function scheduleClose() {
+    clearTimeout(closeTimer);
+    closeTimer = window.setTimeout(() => {
+      const over = document.querySelectorAll(":hover");
+      const last = over[over.length - 1] ?? null;
+      if (!keepAlive(last)) closeFrom(0);
+    }, 180);
+  }
+
+  function wire(host: HTMLElement, depth: number) {
+    if (host.dataset.wired) return;
+    host.dataset.wired = "1";
+    host.addEventListener("pointerenter", () => {
+      clearTimeout(closeTimer);
+      open(host, depth);
+    });
+    host.addEventListener("pointerleave", scheduleClose);
+    host.addEventListener("focus", () => open(host, depth));
+  }
+
+  document.querySelectorAll<HTMLElement>(".nb-open").forEach((h) => wire(h, 0));
+  window.addEventListener("keydown", (e) => e.key === "Escape" && closeFrom(0));
+  // a scroll invalidates every measured position, so drop the stack rather than let
+  // panels drift away from the words they belong to
+  window.addEventListener("scroll", () => closeFrom(0), { passive: true });
+</script>
+
+<style is:global>
+  .note-panel {
+    position: absolute;
+    z-index: 60;
+    width: max-content;
+    max-width: min(34rem, 82vw);
+    border: 1px solid var(--color-line);
+    border-radius: 0.75rem;
+    background: var(--color-surface);
+    box-shadow: 0 14px 34px -14px rgb(0 0 0 / 0.34);
+    opacity: 0;
+    transform: translateY(-4px);
+    transition:
+      opacity 130ms var(--ease-out-expo),
+      transform 130ms var(--ease-out-expo);
+  }
+  .note-panel.is-open {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .note-panel-bar {
+    border-bottom: 1px solid var(--color-line);
+    border-radius: 0.75rem 0.75rem 0 0;
+    background: var(--color-chrome);
+    padding: 0.5rem 0.85rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--color-ink-chrome);
+  }
+  .note-panel-body {
+    padding: 0.85rem;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .note-panel {
+      transition: none;
+    }
+  }
+</style>

@@ -15,9 +15,8 @@
  * The popover is CSS-only on :hover and :focus-within, so it ships zero JS and is
  * reachable from the keyboard.
  */
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import NoteBody from "./NoteBody.astro";
+import NoteStore from "./NoteStore.astro";
 
 const VAULT = join(process.cwd(), "..", "examples", "organization", "vault");
 
@@ -40,15 +39,7 @@ const hits = [
   { score: "0.09", dir: "people/", file: "tom-decker.md" },
 ];
 
-/** The note, whole. Popovers do not scroll, so what opens is the entire file. */
-function note(dir: string, file: string): string {
-  try {
-    return readFileSync(join(VAULT, dir, file), "utf8");
-  } catch {
-    return "";
-  }
-}
-const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
+const withText = hits;
 ---
 
 <div class="panel">
@@ -77,13 +68,8 @@ const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
             <li>
               <span class="score">{h.score}</span>
               <span class="cell">
-              <span class="path" tabindex="0"><span class="dir">{h.dir}</span><span class="file">{h.file}</span>
-                {h.body && (
-                  <span class="pop">
-                    <span class="pop-bar">{h.dir}{h.file}</span>
-                    <span class="pop-body"><NoteBody text={h.body} vault={VAULT} /></span>
-                  </span>
-                )}
+              <span class="path nb-open" data-note={`${h.dir}${h.file}`.replace(/\.md$/, "")} tabindex="0"><span class="dir">{h.dir}</span><span class="file">{h.file}</span>
+
               </span>
               </span>
             </li>
@@ -93,6 +79,8 @@ const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
     </div>
   </div>
 </div>
+
+<NoteStore vault={VAULT} />
 
 <style>
   .panel {
@@ -208,94 +196,24 @@ const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
     color: var(--color-ink);
   }
 
-  /* the hover: the note's REAL text, read from the repo at build time */
   /* the grid cell fills its column; the hover target inside it does not */
   .cell {
     min-width: 0;
     overflow-wrap: anywhere;
   }
   .path {
-    position: relative;
     display: inline;
     overflow-wrap: anywhere;
     cursor: help;
-    border-bottom: 1px dotted var(--color-line);
     outline: none;
+    border-bottom: 1px dotted var(--color-line);
   }
-  .path:hover .file,
-  .path:focus-visible .file {
+  .path:hover .file {
     color: var(--color-accent);
   }
   .path:focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 3px;
     border-radius: 3px;
-  }
-  .pop {
-    position: absolute;
-    left: 0;
-    top: calc(100% + 0.5rem);
-    z-index: 20;
-    width: max-content;
-    max-width: min(34rem, 82vw);
-    display: block;
-    overflow: visible;
-    border: 1px solid var(--color-line);
-    border-radius: 0.75rem;
-    background: var(--color-surface);
-    box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.28);
-    opacity: 0;
-    visibility: hidden;
-    transform: translateY(-4px);
-    transition: opacity 140ms var(--ease-out-expo), transform 140ms var(--ease-out-expo), visibility 140ms;
-  }
-  .path:hover .pop,
-  .path:focus-visible .pop {
-    opacity: 1;
-    visibility: visible;
-    transform: translateY(0);
-  }
-  /* bridge the gap so the pointer can reach the popover and the links in it */
-  .pop::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: -0.6rem;
-    height: 0.6rem;
-  }
-
-  .pop-bar {
-    display: block;
-    border-radius: 0.75rem 0.75rem 0 0;
-    padding: 0.5rem 0.85rem;
-    border-bottom: 1px solid var(--color-line);
-    background: var(--color-chrome);
-    font-size: 0.7rem;
-    color: var(--color-ink-chrome);
-  }
-  .pop-body {
-    display: block;
-    padding: 0.85rem;
-    color: var(--color-ink-soft);
-  }
-
-  /* the last two hits open upward so the popover never runs off the section */
-  .hits li:nth-last-child(-n + 3) .pop {
-    top: auto;
-    bottom: calc(100% + 0.5rem);
-    transform: translateY(4px);
-  }
-  .hits li:nth-last-child(-n + 3) .path:hover .pop,
-  .hits li:nth-last-child(-n + 3) .path:focus-visible .pop {
-    transform: translateY(0);
-  }
-
-  /* coarse pointers cannot hover: show the popover on tap via :focus-visible only,
-     and never let it exceed the viewport */
-  @media (hover: none) {
-    .pop {
-      width: min(26rem, 88vw);
-    }
   }
 </style>

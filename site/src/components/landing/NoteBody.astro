@@ -1,49 +1,36 @@
 ---
 /**
- * Renders a raw markdown note the way an editor would colour it, and makes every
- * [[wikilink]] inside it hoverable so the note it points at opens too.
+ * Renders a raw markdown note the way an editor colours it, and marks every
+ * [[wikilink]] so the runtime can open the note it points at.
  *
- * Used by every popover on the landing. The colours follow the convention Obsidian and
- * most markdown editors use, mapped onto imprnt's own tokens rather than invented:
+ * It does NOT nest. An earlier version expanded links at build time, which is
+ * exponential: every distinct path through the note graph got its own full copy of
+ * every note it reached, and the example vault's cross-links produced a 168 MB page.
+ * Each note is emitted ONCE by NoteStore.astro now, and popovers are assembled on
+ * hover by its script, so depth is unlimited and the cost is linear.
+ *
+ * Colours follow the convention Obsidian and most markdown editors use, mapped onto
+ * imprnt's own tokens rather than invented:
  *   frontmatter fence + keys   chrome ink, the way a key is always quieter than a value
  *   frontmatter values         body ink
  *   headings                   full ink, semibold
  *   [[wikilinks]]              the accent, because a link IS the accent's job
  *   ~~struck text~~            faint, struck - what the contract does to a stale fact
  *   list markers               faint, so the content sits forward of its bullet
- *
- * Nesting is UNLIMITED: a link inside an opened note opens that note too, as deep as
- * the graph goes. What stops the recursion is not a depth cap but a `seen` chain - a
- * note already open further up the stack renders as plain accent text, so two notes
- * that link to each other cannot loop, and a cycle terminates the moment it closes.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 interface Props {
   text?: string;
   vault?: string;
-  /** Notes already open above this one. A link back into the chain is not followed. */
-  seen?: string[];
 }
-const { text = "", vault = "", seen = [] } = Astro.props;
+const { text = "", vault = "" } = Astro.props;
 
-/** Resolve a [[folder/slug]] to its file, if the vault has it. */
-function resolve(target: string): string | null {
-  if (!vault) return null;
-  const p = join(vault, `${target}.md`);
-  return existsSync(p) ? p : null;
-}
+/** A link only becomes openable if the vault actually has the note. */
+const has = (target: string): boolean => (vault ? existsSync(join(vault, `${target}.md`)) : false);
 
-function read(path: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-type Tok = { k: string; v: string; link?: string | null; target?: string };
+type Tok = { k: string; v: string; target?: string };
 
 /** Split one line into coloured tokens. Deliberately small: this styles a note, it is not a parser. */
 function lineTokens(line: string, inFrontmatter: boolean): Tok[] {
@@ -51,7 +38,6 @@ function lineTokens(line: string, inFrontmatter: boolean): Tok[] {
 
   const out: Tok[] = [];
   let rest = line;
-  let prefix = "";
 
   if (inFrontmatter) {
     const m = rest.match(/^([A-Za-z_][\w-]*:)(.*)$/);
@@ -63,16 +49,14 @@ function lineTokens(line: string, inFrontmatter: boolean): Tok[] {
     return [{ k: "heading", v: rest }];
   } else if (/^\s*[-*]\s/.test(rest)) {
     const m = rest.match(/^(\s*[-*]\s)(.*)$/)!;
-    prefix = m[1];
+    out.push({ k: "bullet", v: m[1] });
     rest = m[2];
-    out.push({ k: "bullet", v: prefix });
   } else if (/^>\s?/.test(rest)) {
     const m = rest.match(/^(>\s?)(.*)$/)!;
     out.push({ k: "quote", v: m[1] });
     rest = m[2];
   }
 
-  // inline: [[links]] and ~~struck~~
   const re = /(\[\[[^\]]+\]\])|(~~[^~]+~~)/g;
   let last = 0;
   let m: RegExpExecArray | null;
@@ -80,8 +64,7 @@ function lineTokens(line: string, inFrontmatter: boolean): Tok[] {
     if (m.index > last) out.push({ k: inFrontmatter ? "val" : "text", v: rest.slice(last, m.index) });
     if (m[1]) {
       const target = m[1].slice(2, -2);
-      // follow the link unless the note it points at is already open above us
-      out.push({ k: "link", v: m[1], link: seen.includes(target) ? null : resolve(target), target });
+      out.push({ k: "link", v: m[1], target: has(target) ? target : undefined });
     } else {
       out.push({ k: "gone", v: m[2] });
     }
@@ -106,17 +89,10 @@ const rows = lines.map((l, i) => {
     rows.map((r) => (
       <span class="nb-line">
         {r.blank
-          ? " "
+          ? " "
           : r.toks.map((t) =>
-              t.k === "link" && t.link ? (
-                <span class="nb-link nb-host" tabindex="0">
-                  {t.v}
-                  <span class="nb-pop">
-                    <span class="nb-pop-body">
-                      <Astro.self text={read(t.link)} vault={vault} seen={[...seen, t.target!]} />
-                    </span>
-                  </span>
-                </span>
+              t.k === "link" && t.target ? (
+                <span class="nb-link nb-open" data-note={t.target} tabindex="0">{t.v}</span>
               ) : (
                 <span class={`nb-${t.k}`}>{t.v}</span>
               ),
@@ -126,7 +102,7 @@ const rows = lines.map((l, i) => {
   }
 </span>
 
-<style>
+<style is:global>
   .nb {
     display: block;
     font-family: var(--font-mono);
@@ -163,54 +139,18 @@ const rows = lines.map((l, i) => {
     color: var(--color-accent);
   }
 
-  /* a link that resolves opens the note it points at, one level deep */
-  .nb-host {
-    position: relative;
-    display: inline;
+  /* a link the vault can resolve is openable; the panel is built at runtime */
+  .nb-open {
     cursor: help;
     outline: none;
     border-bottom: 1px dotted color-mix(in oklab, var(--color-accent) 45%, transparent);
   }
-  .nb-host:focus-visible {
+  .nb-open:hover {
+    border-bottom-style: solid;
+  }
+  .nb-open:focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
     border-radius: 3px;
-  }
-  .nb-pop {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 0.4rem);
-    z-index: 40;
-    display: block;
-    width: max-content;
-    max-width: min(24rem, 70vw);
-    padding: 0.7rem 0.8rem;
-    border: 1px solid var(--color-line);
-    border-radius: 0.6rem;
-    background: var(--color-surface);
-    box-shadow: 0 14px 34px -14px rgb(0 0 0 / 0.34);
-    opacity: 0;
-    visibility: hidden;
-    transition:
-      opacity 130ms var(--ease-out-expo),
-      visibility 130ms;
-  }
-  .nb-host:hover > .nb-pop,
-  .nb-host:focus-visible > .nb-pop {
-    opacity: 1;
-    visibility: visible;
-  }
-  /* bridge the gap so the pointer can reach the popover and the links in it */
-  .nb-pop::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: -0.35rem;
-    height: 0.35rem;
-  }
-
-  .nb-pop-body {
-    display: block;
   }
 </style>
