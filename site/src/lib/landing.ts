@@ -182,13 +182,13 @@ export const proof = {
   heading: "Check it yourself.",
   leadTop: "<strong>64.2%</strong> on LoCoMo. A person scores <strong>87.9%</strong>.",
   leadParas: [
-    "LoCoMo is the benchmark this kind of tool is rated on. <strong>1,540 questions about conversations that ran for months</strong>, written by the paper's authors, not by us.",
+    "LoCoMo is the benchmark this kind of tool is rated on. <strong>1,540 questions about conversations that ran for months</strong>, written by the paper's authors.",
     "It asks the awkward ones on purpose: facts spread across several sessions, questions about when something happened, and <strong>questions with no answer at all</strong>, to catch a system that invents one.",
     "Each conversation is read once and filed. Every answer comes only from the notes, never from the original text.",
   ],
   leadLink: { label: "the LoCoMo paper and dataset", href: "https://arxiv.org/abs/2402.17753" },
   stats: [
-    { value: "64.2%", label: "imprnt, with Claude Sonnet doing the reading and the writing. Every answer comes from the notes." },
+    { value: "64.2%", label: "imprnt, with Claude Sonnet reading and writing. Answers come only from the notes." },
     { value: "87.9%", label: "a person answering the same questions, from the paper" },
     { value: "32.1%", label: "the paper's own AI baseline, on the same questions" },
   ],
