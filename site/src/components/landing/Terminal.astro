@@ -33,9 +33,7 @@ const tone = (who: string) =>
           if (typeof seg === "string") return <Fragment>{seg}</Fragment>;
           const inner =
             seg.k === "path" ? (
-              <span class="-mx-[3px] whitespace-nowrap rounded-[5px] bg-accent-wash px-[5px] py-[1.5px] font-semibold text-accent">
-                {seg.v}
-              </span>
+              <span class="-mx-[3px] whitespace-nowrap rounded-[5px] bg-accent-wash px-[5px] py-[1.5px] font-semibold text-accent">{seg.v}</span>
             ) : seg.k === "key" ? (
               <span class="whitespace-nowrap font-semibold text-ink">{seg.v}</span>
             ) : seg.k === "gone" ? (
@@ -44,12 +42,7 @@ const tone = (who: string) =>
               <span class="text-ink-faint">{seg.v}</span>
             );
           return seg.pop ? (
-            <span class={`pop-host${up ? " pop-up" : ""}`} tabindex="0">
-              {inner}
-              <span class="pop">
-                <span class="pop-body"><NoteBody text={seg.pop} /></span>
-              </span>
-            </span>
+            <span class={`pop-host${up ? " pop-up" : ""}`} tabindex="0">{inner}<span class="pop"><span class="pop-body"><NoteBody text={seg.pop} /></span></span></span>
           ) : (
             inner
           );

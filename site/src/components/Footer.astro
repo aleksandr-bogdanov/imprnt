@@ -4,52 +4,53 @@ import { footer, site } from "../lib/content";
 ---
 
 <footer class="relative border-t border-line bg-bg-soft">
-  {/* The two link columns are `auto`, not `1fr`: sized to their content and
-      pushed to the right margin, so the footer block has a real right edge
-      instead of trailing off into a quarter-width void. Same decision the proof
-      section's stacked links already make one screen up. */}
-  <div class="shell grid gap-x-14 gap-y-10 py-16 md:grid-cols-[1fr_auto_auto]">
-    <div>
+  {/* Compact. The old shape stacked four links per column and jammed both columns
+      against the right margin, leaving a screen-wide void in the middle and a
+      footer taller than some sections of the page. Now the links run as ONE row
+      of two groups on an even four-column grid, so the two lists sit at the
+      thirds instead of hugging the right edge with a screen-wide void in the
+      middle, and the block is about two thirds its old height. */}
+  <div class="shell grid gap-x-10 gap-y-10 py-12 md:grid-cols-4 md:items-start">
+    <div class="md:col-span-2 md:max-w-sm">
       <a href="#top" aria-label="imprnt" class="flex items-center text-ink">
-        <Lockup size={28} />
+        <Lockup size={26} />
       </a>
-      <p class="mt-4 max-w-sm text-sm text-ink-soft">{footer.blurb}</p>
-      {/* the standing principle, not a second blurb sentence: it sits under a
-          hairline at the chrome step, so it reads as the line the house signs
-          off with rather than as more copy. max-w-sm, not xs: at 20rem the
-          measure landed two characters short and broke "do the work" in half. */}
-      <p class="mt-6 max-w-sm border-t border-line pt-5 text-sm text-ink-chrome">{site.principle}</p>
+      <p class="mt-3 text-sm text-ink-soft">{footer.blurb}</p>
+      {/* the standing principle, not a second blurb sentence: at the chrome step
+          it reads as the line the house signs off with rather than as more copy */}
+      <p class="mt-4 text-sm text-ink-chrome">{site.principle}</p>
     </div>
 
-    {
-      footer.columns.map((col) => (
-        <div>
-          {/* the column head is a LABEL, so it takes the chrome step - every
-              other tracked-caps label on this page does. At ink-soft it was the
-              exact weight and colour of the links under it, so the head read as
-              a fifth, shouty link instead of as the name of the column. */}
-          <h2 class="text-xs font-semibold uppercase tracking-widest text-ink-chrome">{col.title}</h2>
-          <ul class="mt-4 space-y-2.5">
-            {col.links.map((link) => (
-              <li>
-                <a
-                  href={link.href}
-                  target={link.external ? "_blank" : undefined}
-                  rel={link.external ? "noreferrer" : undefined}
-                  class="text-sm text-ink-soft transition-colors hover:text-ink"
-                >
-                  {link.label}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))
-    }
+    <div class="contents max-md:flex max-md:flex-wrap max-md:gap-x-14 max-md:gap-y-8">
+      {
+        footer.columns.map((col) => (
+          <div>
+            {/* the column head is a LABEL, so it takes the chrome step - every other
+                tracked-caps label on this page does. At ink-soft it was the exact
+                weight and colour of the links under it. */}
+            <h2 class="text-xs font-semibold uppercase tracking-widest text-ink-chrome">{col.title}</h2>
+            <ul class="mt-3 space-y-2">
+              {col.links.map((link) => (
+                <li>
+                  <a
+                    href={link.href}
+                    target={link.external ? "_blank" : undefined}
+                    rel={link.external ? "noreferrer" : undefined}
+                    class="text-sm text-ink-soft transition-colors hover:text-ink"
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </div>
   </div>
 
   <div class="hairline">
-    <div class="shell flex flex-col items-center justify-between gap-3 py-6 text-sm text-ink-soft sm:flex-row">
+    <div class="shell flex flex-col items-center justify-between gap-3 py-5 text-sm text-ink-soft sm:flex-row">
       <p>{footer.copyright}</p>
       <div class="flex items-center gap-5">
         <a
