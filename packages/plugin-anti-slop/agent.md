@@ -33,6 +33,7 @@ Framework scaffolding (template skeletons, field labels) is exempt everywhere - 
 - Non-breaking space and exotic spaces. Plain space only.
 - Asterisk-bold (`**word**`) inside otherwise plain prose. Skip the emphasis or rewrite so the word lands without bold.
 - Emoji-as-bullet at the start of every line (no leading 📌 ✨ 🚀 etc).
+- **Hard-wrapped prose.** Never break a paragraph at a fixed column (72, 80, 100) by inserting newlines mid-sentence. A paragraph is ONE line in the file and the reader's editor or browser wraps it. Hard wrapping makes every later edit reflow the whole block, ruins diffs (a one-word change rewrites six lines), and reads as machine-formatted rather than written. This applies to markdown, docs, vault notes, commit message BODIES, and any prose file. It does NOT apply to code, code comments, tables, or YAML, where a column limit is a real convention.
 
 ## [B] Forbidden words (any form: -ing, -ed, -s, -ly)
 
