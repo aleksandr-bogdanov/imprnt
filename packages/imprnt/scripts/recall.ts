@@ -49,6 +49,10 @@ let proximity = false;
 // --coverage: BM25 sums per term, so one term repeated can outrank a note that matches
 // three DIFFERENT query terms. This rewards breadth of match. OFF by default.
 let coverage = false;
+// --stem: fold obvious English inflections together so "swimming" matches "swim" and
+// "meetings" matches "meeting". Applied identically at index time and query time, so
+// both sides always agree. OFF by default.
+let stem = false;
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--vault") {
@@ -68,6 +72,8 @@ for (let i = 0; i < args.length; i++) {
     proximity = true;
   } else if (args[i] === "--coverage") {
     coverage = true;
+  } else if (args[i] === "--stem") {
+    stem = true;
   } else if (args[i] === "--passages") {
     const tok = args[++i];
     if (tok === undefined || !/^[0-9]+$/.test(tok)) { console.error("--passages must be a positive integer"); process.exit(1); }
@@ -86,7 +92,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const query = positional.join(" ").trim();
 if (!query) {
-  console.error('usage: imprnt recall "<query>" [--vault DIR] [--limit N] [--gap R] [--passages N] [--proximity] [--coverage]');
+  console.error('usage: imprnt recall "<query>" [--vault DIR] [--limit N] [--gap R] [--passages N] [--proximity] [--coverage] [--stem]');
   process.exit(1);
 }
 
@@ -174,8 +180,32 @@ const STOPWORDS = new Set([
 // curly right single quote ' (U+2019, what macOS/iOS and word processors autoinsert) are removed; each
 // is a single codepoint so NFC composition does not change them, and the strip runs after NFC so order
 // is moot.
-const tokenize = (text: string): string[] =>
-  text.normalize("NFC").toLowerCase().replace(/['’]/gu, "").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+// A deliberately CONSERVATIVE suffix folder (Porter step 1, roughly). It only removes
+// endings that are inflections in almost every case, and it never shortens a word below
+// three letters, because an over-eager stemmer collides unrelated words and that costs
+// more precision than the recall it buys. Latin-script only by construction: the guards
+// test ASCII endings, so a Cyrillic or CJK token falls through unchanged.
+function stemWord(w: string): string {
+  if (w.length <= 3) return w;
+  if (/[a-z]$/.test(w) === false) return w; // digits, non-Latin: leave alone
+  if (w.endsWith("sses")) return w.slice(0, -2);          // classes -> class
+  if (w.endsWith("ies") && w.length > 4) return w.slice(0, -3) + "y"; // policies -> policy
+  if (w.endsWith("ss") || w.endsWith("us") || w.endsWith("is")) { /* keep */ }
+  else if (w.endsWith("s") && !w.endsWith("ous")) w = w.slice(0, -1); // notes -> note
+  if (w.length > 4 && w.endsWith("ing")) {
+    const base = w.slice(0, -3);
+    if (base.length >= 3) w = /([bdfglmnprt])\1$/.test(base) ? base.slice(0, -1) : base; // running -> run
+  } else if (w.length > 3 && w.endsWith("ed")) {
+    const base = w.slice(0, -2);
+    if (base.length >= 3) w = /([bdfglmnprt])\1$/.test(base) ? base.slice(0, -1) : base; // planned -> plan
+  }
+  return w;
+}
+
+const tokenize = (text: string): string[] => {
+  const raw = text.normalize("NFC").toLowerCase().replace(/['’]/gu, "").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return stem ? raw.map(stemWord) : raw;
+};
 
 // A MULTI-token or hyphenated synonym key (`big-query`, `on-call`, `net worth`) is split into pieces
 // by the alnum/Unicode tokenizer, so `big-query` would never reach the `big-query -> bigquery` synonym

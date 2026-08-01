@@ -1006,3 +1006,33 @@ test("the new flags are all off by default", () => {
   expect(r.stdout).not.toContain("second paragraph"); // no passages
   expect(r.stdout).toContain("a.md");
 });
+
+// ── --stem ─────────────────────────────────────────────────────────────────────
+
+test("--stem matches an inflected query against the note's base form and back", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "swim.md"), "---\ntype: note\ntags: []\n---\n\n# Swim\n\nHe likes to swim at dawn.");
+  writeFileSync(join(v, "meet.md"), "---\ntype: note\ntags: []\n---\n\n# Meetings\n\nThe meetings ran long.");
+
+  expect(recall("swimming", v).stdout).toContain("no matches");
+  expect(recall("swimming", v, "--stem").stdout).toContain("swim.md");
+  // and the other direction: base-form query, inflected note
+  expect(recall("meeting", v, "--stem").stdout).toContain("meet.md");
+});
+
+test("--stem does not shorten words below three letters or maul short ones", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "bus.md"), "---\ntype: note\ntags: []\n---\n\n# Bus\n\nthe bus and the gas");
+  const r = recall("bus gas", v, "--stem");
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("bus.md");
+});
+
+test("--stem is off by default", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "swim.md"), "---\ntype: note\ntags: []\n---\n\n# Swim\n\nswim");
+  expect(recall("swimming", v).stdout).toContain("no matches");
+});
