@@ -18,7 +18,7 @@ import { site } from "./content";
 
 /** One run of transcript text. A bare string is plain body; a marked segment is
  *  a vault path, a recovered fact, a superseded value, or muted chrome. */
-export type TermSeg = string | { k: "path" | "key" | "gone" | "faint"; v: string };
+export type TermSeg = string | { k: "path" | "key" | "gone" | "faint"; v: string; pop?: string };
 export type TermLine = { who: string; segs: TermSeg[] };
 
 export const hero = {
@@ -49,18 +49,60 @@ export const hero = {
         "Here is my 1:1 with ",
         { k: "key", v: "Boris" },
         " from this morning. ",
-        { k: "faint", v: "[paste the transcript]" },
+        {
+          k: "faint",
+          v: "[paste the transcript]",
+          pop:
+            "Boris: parallel run is clean on the read path, writes still lag ~40ms p99.\n" +
+            "You: enough to hold the cutover?\n" +
+            "Boris: two more weeks of numbers and I'd sign it off. June 30 is not realistic.\n" +
+            "You: so July 15, gated on the parallel-run numbers?\n" +
+            "Boris: yes. I'll own it. Priya has the dashboards.\n" +
+            "You: anything blocking?\n" +
+            "Boris: no, just time on the clock.",
+        },
       ],
     },
     {
       who: "imp",
       segs: [
         "Filed it. Created ",
-        { k: "path", v: "people/boris-carter" },
+        {
+          k: "path",
+          v: "people/boris-carter",
+          pop:
+            "---\ntype: person\nteam: platform\nrole: staff engineer\n" +
+            'owns: ["[[projects/access-platform]]"]\n' +
+            "tags: [work, access-platform]\n" +
+            "summary: Owns the access-platform cutover. Signs off on the parallel-run numbers.\n---\n\n" +
+            "# Boris Carter\n\nOwns [[projects/access-platform]] end to end.",
+        },
         ", updated ",
-        { k: "path", v: "projects/access-platform" },
+        {
+          k: "path",
+          v: "projects/access-platform",
+          pop:
+            "---\ntype: project\nstatus: active\n" +
+            'owner: "[[people/boris-carter]]"\n' +
+            "updated: 2026-06-11\ntags: [work, access-platform]\n" +
+            "summary: Cutover moved to July 15, gated on the parallel-run numbers.\n---\n\n" +
+            "# Access platform cutover\n\n" +
+            "> superseded by [[events/2026-06-11-boris-1-1]]\n" +
+            "~~Cutover on June 30.~~\n\n" +
+            "Cutover July 15, after two weeks of parallel-run numbers.",
+        },
         " with the new cutover date, and logged the meeting under ",
-        { k: "path", v: "events/" },
+        {
+          k: "path",
+          v: "events/",
+          pop:
+            "---\ntype: event\ndate: 2026-06-11\n" +
+            'participants: ["[[people/boris-carter]]"]\n' +
+            'project: "[[projects/access-platform]]"\nstatus: enriched\n---\n\n' +
+            "# 1:1 with Boris, 11 June\n\n" +
+            "## Decisions\n- Cutover moves to July 15, gated on the two-week parallel run.\n" +
+            "- Boris owns it. Priya owns the dashboards.",
+        },
         ".",
       ],
     },
@@ -74,7 +116,15 @@ export const hero = {
         ", once the two-week parallel run clears. ",
         { k: "key", v: "Boris" },
         " owns it. The earlier ",
-        { k: "gone", v: "June" },
+        {
+          k: "gone",
+          v: "June",
+          pop:
+            "The old line is kept, not deleted:\n\n" +
+            "> superseded by [[events/2026-06-11-boris-1-1]]\n" +
+            "~~Cutover on June 30.~~\n\n" +
+            "So the vault can always show you what it used to say, and what replaced it.",
+        },
         " date is superseded.",
       ],
     },
@@ -105,7 +155,7 @@ export const how = {
   paras2: [
     "Keyword search has one famous weakness. <strong>You search for a synonym and nothing comes back.</strong> We fix it while writing, not while searching. The model records the synonyms and the other names a thing goes by, so the note about <code>Boris Carter</code> also matches a search for <code>Boris</code>. Rename him and the old name stays on the note.",
     "Every search after that runs <strong>BM25</strong>. It is a ranking formula from 1994, and <strong>Lucene and Elasticsearch</strong> still run it today. It counts how often your words appear, weighs rare words heavier, and puts a word in the title above the same word buried in the body. Nothing caches, so a note you edited by hand in Obsidian a minute ago is already findable.",
-    "Every session pays <strong>about 200 tokens</strong>: one short note saying the vault exists, and naming the two commands that read it and write to it. <strong>A session that only asks questions never pays more than that.</strong> A session that files a note reads the filing rules once, about 7,000 tokens, at the moment it writes. Everything else is a command, and a command costs nothing until it runs.",
+    "Every session pays <strong>about 200 tokens</strong>: one short note saying the vault exists and naming its two commands. <strong>A session that only asks questions never pays more.</strong> One that files a note reads the filing rules once, about 7,000 tokens, as it writes.",
     "That is why imprnt is a command line tool and not an MCP server. <strong>An MCP server loads its tool descriptions into every chat by default.</strong> You pay for those before you ask anything.",
   ],
   link: { label: "the full arguments, decision by decision", href: "/design-decisions/" },
