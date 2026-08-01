@@ -71,7 +71,7 @@ Three arms. Same vault, same questions, same grader, same judge. One variable ch
 | A | gpt-4o-mini | shipped | **58.64%** | 56.2 - 61.1% |
 | B | Claude Sonnet | shipped | **76.30%** | 74.2 - 78.4% |
 | C | gpt-4o-mini | upgraded | **58.77%** | 56.3 - 61.2% |
-| — | Letta, as published | gpt-4o-mini | 74.00% | not stated |
+| - | Letta, as published | gpt-4o-mini | 74.00% | not stated |
 
 n = 1,540 per arm. Zero unjudged questions in all three.
 
@@ -151,7 +151,7 @@ Five changes, all pure local arithmetic, all shipping as optional flags that are
 | `--stem` | folds inflections, so "swimming" matches "swim" | nothing in the pipeline did this, so a query and a note could describe the same thing and never match |
 | `--coverage` | rewards matching more *distinct* query terms | BM25 sums per term, so one term repeated could outrank a note matching three different ones |
 | `--proximity` | rewards query terms sitting near each other | BM25 discards word positions entirely: "double charge" adjacent and 200 words apart score identically |
-| `--gap` | cuts the result list where scores fall off a cliff | a fixed top-15 ships noise; in the shipped example the top hit scores 3.73 and the fifth scores 0.09 |
+| `--gap` | cuts the result list where scores fall off a cliff | a fixed top-15 ships noise. In the shipped example the top hit scores 3.73 and the fifth scores 0.09 |
 | `--passages` | returns the best paragraphs of a note, not the whole file | one question handed the model 31,000 characters |
 
 ### How we measured them without spending anything
@@ -160,7 +160,7 @@ Running each candidate through the full answer-and-judge pipeline would have cos
 
 So we measured retrieval directly instead. Replay the queries already recorded from a finished run, against the real `recall` binary, and record two things: whether the gold answer survives into the returned context, and at what rank. No model, no judge, no API calls. About a minute per configuration across all ten conversations.
 
-**We validated the proxy before trusting it.** Questions whose gold answer reached the context were graded correct 83.7% of the time; questions where it did not, 37.5%. A 46-point separation is enough to rank configurations honestly.
+**We validated the proxy before trusting it.** Questions whose gold answer reached the context were graded correct 83.7% of the time. Questions where it did not, 37.5%. A 46-point separation is enough to rank configurations honestly.
 
 ### The sweep
 
@@ -210,7 +210,7 @@ Four of these were in our own harness. Every one produced a plausible number rat
 
 **A metric blind to the thing it was built to detect.** The first version of the retrieval harness measured only recall@15. Coverage and proximity are *ranking* changes, so they scored identically to baseline and read as null results. Adding rank tracking revealed a +26% effect that had been invisible.
 
-**A run that succeeded in nine seconds with no API key.** Launched through a shell that did not load the environment, so every model call failed instantly. It reported completion with a $0 bill. Only the loud-failure fix from the first item exposed it; the original code would have produced a believable low score.
+**A run that succeeded in nine seconds with no API key.** Launched through a shell that did not load the environment, so every model call failed instantly. It reported completion with a $0 bill. Only the loud-failure fix from the first item exposed it. The original code would have produced a believable low score.
 
 The lesson is not that we are careless. It is that in a benchmark pipeline, **a broken run and a bad result look identical unless you build the difference in deliberately.**
 
