@@ -28,7 +28,7 @@ export const footer: {
   copyright: string;
   columns: { title: string; links: FooterLink[] }[];
 } = {
-  blurb: "A knowledge vault you own and run locally.",
+  blurb: "Your AI's memory, boring on purpose.",
   copyright: "MIT licensed. © 2026 Aleksandr Bogdanov.",
   columns: [
     {

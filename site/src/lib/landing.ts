@@ -25,12 +25,12 @@ export const hero = {
   eyebrow: "Open source · MIT",
   headlineLead: "Your AI's memory,",
   headlineAccent: "boring on purpose",
-  motto: "Your notes are plain files. Open them with anything.",
+  motto: "The memory is a folder of markdown files.",
   // Two paragraphs on purpose. The first says what it does to what you give it,
   // the second says what that buys you later. The old single block welded both
   // plus the runs-anywhere line into one 60-word sentence nobody finished.
   subheadParas: [
-    "Hand it anything: a meeting transcript, an article, a rambling voice note. It gets <strong>imprinted</strong>: normalized into separate markdown files on your disk, each one typed, tagged, and linked to the others. One note per person, per project, per decision, per event.",
+    "Hand it anything: a meeting transcript, an article, a rambling voice note. It gets <strong>imprinted</strong>: normalised into separate markdown files on your disk, each one typed, tagged, and linked to the others. One note per person, per project, per decision, per event.",
     "Ask three weeks later and the answer comes back from those files. <strong>Plain code finds them, and the model reads only the handful it returns.</strong> Works today with Claude Code and Gemini CLI.",
   ],
   installCaption: "Paste that line once. After that your assistant runs imprnt for you, so it is the last command you type by hand.",
@@ -103,8 +103,8 @@ export const how = {
   ],
   spec: ["no embeddings", "no vector store", "no index to rebuild"],
   paras2: [
-    "Keyword search has one famous weakness. <strong>You search for a synonym and nothing comes back.</strong> The fix happens on write, not on read: the model records the synonyms and the other names a thing goes by, so the note about Boris Carter also matches a search for Boris. Rename him and the old name stays on the note.",
-    "Every search after that runs <strong>BM25</strong>. It is a ranking formula from 1994, and <strong>Lucene and Elasticsearch</strong> still run it today. It counts how often your words appear, weighs rare words heavier, and puts a word in the title above the same word buried in the body. Nothing caches, so a note you fixed a minute ago is already findable.",
+    "Keyword search has one famous weakness. <strong>You search for a synonym and nothing comes back.</strong> We fix it while writing, not while searching. The model records the synonyms and the other names a thing goes by, so the note about <code>Boris Carter</code> also matches a search for <code>Boris</code>. Rename him and the old name stays on the note.",
+    "Every search after that runs <strong>BM25</strong>. It is a ranking formula from 1994, and <strong>Lucene and Elasticsearch</strong> still run it today. It counts how often your words appear, weighs rare words heavier, and puts a word in the title above the same word buried in the body. Nothing caches, so a note you edited by hand in Obsidian a minute ago is already findable.",
     "Every session pays <strong>about 200 tokens</strong>: one short note saying the vault exists, and naming the two commands that read it and write to it. <strong>A session that only asks questions never pays more than that.</strong> A session that files a note reads the filing rules once, about 7,000 tokens, at the moment it writes. Everything else is a command, and a command costs nothing until it runs.",
     "That is why imprnt is a command line tool and not an MCP server. <strong>An MCP server loads its tool descriptions into every chat by default.</strong> You pay for those before you ask anything.",
   ],
@@ -112,47 +112,29 @@ export const how = {
 };
 
 export const proof = {
-  // REWRITTEN. The previous version fought on gpt-4o-mini, the model a competitor's
-  // 2025 blog post used, and lost. That comparison is real and it is going in the docs,
-  // but it does not belong on a front page in 2026: it asks a reader to care about an
-  // obsolete model, and it descends to someone else's terms. What ships here is the
-  // number for the model people actually run, and enough about the benchmark that a
-  // sceptic can go look it up.
-  //
-  // Deliberately CUT: "graded by an outside model" (means nothing to a reader), and the
-  // 39-question self-eval stat (a test we wrote and then passed, which proves nothing).
+  // Numbers are the paper's OWN metric (token F1, all five categories including the
+  // adversarial ones Letta drops), run through the unmodified snap-research scorer.
+  // That is the only metric the paper's human and model baselines are on, so it is the
+  // only one where showing them beside ours is honest. Our 76.3% figure is a DIFFERENT
+  // metric (Letta's SimpleQA grader, adversarial dropped) and putting it next to 87.9%
+  // would be exactly the mistake this whole exercise exists to catch. That comparison
+  // lives in docs/benchmark-2026-08.md, not here.
   eyebrow: "Does it work",
   heading: "Check it yourself.",
-  leadTop: "<strong>76.3%</strong> on LoCoMo, answering with Claude Sonnet.",
-  leadBody:
-    "LoCoMo is the benchmark this kind of tool is normally rated on. It is 1,540 questions about long conversations that ran across many sessions, published with an academic paper, and it asks the hard ones on purpose: facts spread over several sessions, questions about when something happened, and questions with no answer at all. imprnt reads each conversation once, files it, and then answers only from the notes it filed.",
+  leadTop: "<strong>64.2%</strong> on LoCoMo. A person scores <strong>87.9%</strong>.",
+  leadParas: [
+    "LoCoMo is the benchmark this kind of tool is rated on. <strong>1,540 questions about conversations that ran for months</strong>, written by the paper's authors, not by us.",
+    "It asks the awkward ones on purpose: facts spread across several sessions, questions about when something happened, and <strong>questions with no answer at all</strong>, to catch a system that invents one.",
+    "Each conversation is read once and filed. Every answer comes only from the notes, never from the original text.",
+  ],
   leadLink: { label: "the LoCoMo paper and dataset", href: "https://arxiv.org/abs/2402.17753" },
   stats: [
-    { value: "76.3%", label: "answered correctly, Claude Sonnet reading and writing" },
-    { value: "1,540", label: "questions, none of them written by us" },
-    { value: "~100", label: "tokens per lookup, measured on the example vault" },
+    { value: "64.2%", label: "imprnt, with Claude Sonnet reading and writing" },
+    { value: "87.9%", label: "a person answering the same questions, from the paper" },
+    { value: "32.1%", label: "the paper's own AI baseline, on the same questions" },
   ],
-  recallLabel: "examples/organization",
-  recallCommand: [
-    { k: "cmd", v: "imprnt recall" },
-    { k: "str", v: '"double charge billing"' },
-    { k: "flag", v: "--limit 5" },
-  ],
-  recallHeader: [
-    { k: "plain", v: 'recall "double charge billing" ' },
-    { k: "dim", v: "[double charge billing double charge charge billing]" },
-    { k: "plain", v: " - 10 match(es), showing top 5, BM25-ranked:" },
-  ],
-  recallHits: [
-    { score: "3.73", dir: "mistakes/", file: "2026-05-double-charge-incident.md" },
-    { score: "3.20", dir: "orgs/", file: "bramble-plumbing.md" },
-    { score: "2.50", dir: "projects/", file: "billing-v2.md" },
-    { score: "1.75", dir: "events/", file: "2026-05-18-eng-planning.md" },
-    { score: "0.09", dir: "people/", file: "tom-decker.md" },
-  ],
-  recallFooter: "... 5 lower-ranked hit(s) hidden. Raise with --limit if needed. Usually you do not.",
   recallCaption:
-    "A real query against the example vault in the repo, output verbatim. The number on the left is the BM25 score. No model was in the ranking loop.",
+    "You ask in plain language. The agent runs the search itself. Hover any file to read it.",
   dogfood:
     "I have used imprnt every day for almost half a year, building it and living on it at the same time. Work and life in the same folder.",
   evalLink: { label: "the benchmark run, every question and verdict", href: "https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval" },
@@ -162,14 +144,12 @@ export const proof = {
 export const file = {
   eyebrow: "What lands on disk",
   heading: "Swap the assistant, keep the memory.",
-  // Compacted. The previous version spent 34 words explaining what a markdown file is,
-  // said "an old vault enters the same way everything enters" (which explains nothing),
-  // and used "fsck" and "captures" without objects. Same claims, half the words.
+  // The fourth paragraph is GONE. It dragged in plugins, cron and a "nothing runs in
+  // the background" promise that 1.2 will break itself. The section makes one claim.
   paras: [
-    "Every note is a markdown file. <strong>A small typed header code can check</strong>, then the prose you actually read. Links join them, so a person or a project is a note of its own.",
+    "Every note is a markdown file. <strong>A small typed header that code can check</strong>, then the prose you actually read. The notes are connected through links, so a person or a project is a note of its own.",
     "Your own editor opens the vault, Obsidian included, because it is plain markdown with ordinary wikilinks. <strong>Fix a note by hand and the next search picks it up.</strong> Notes you already have come in the same way: one pass, where the model reads them once and files them.",
-    "Change a fact and the old line is <strong>struck through with the new one stamped beside it</strong>, never quietly overwritten. Ingest stages a conflict for you instead of guessing. A separate check command audits the vault: broken links, untagged notes, a rebuilt index, and it never edits a note itself.",
-    "Nothing runs in the background and nothing files itself. <strong>You decide what gets kept</strong>, which is the real trade: what you never file cannot be found later. Scheduling is your cron's business. Everything past the small core is a plugin you delete in one line.",
+    "Change a fact and the old line is <strong>struck through with the new one stamped beside it</strong>, never silently overwritten. When a new note contradicts one you already have, imprnt holds it back and asks you which is right.",
   ],
   noteLabel: "the file behind the demo answer",
 };
@@ -181,7 +161,7 @@ export const closing = {
   // break, only keeping the phrase whole can. Same device as how.headingLead.
   headingLead: "Start your vault",
   headingTail: "in two commands.",
-  sub: "Open source, MIT licensed, and yours to read end to end.",
+  sub: "Open source, MIT licensed, and yours end to end.",
   install: site.install,
   ctaPrimary: { label: "Read the docs", href: "/getting-started/" },
   ctaSecondary: { label: "Star on GitHub", href: site.repo },

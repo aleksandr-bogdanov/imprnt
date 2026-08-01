@@ -1,0 +1,289 @@
+---
+/**
+ * Landing (index.astro only): what a lookup actually looks like, in two panes.
+ *
+ * The old version showed a bare `imprnt recall ...` command, which contradicted the
+ * product's own pitch - you never type the CLI, your assistant does. So: LEFT is what
+ * you say and what comes back, RIGHT is what the agent ran underneath.
+ *
+ * Every file in the right pane is HOVERABLE and shows its REAL content, read from
+ * examples/organization/vault at build time. Nothing here is mocked. If a note in the
+ * repo changes, this panel changes with it.
+ *
+ * Design: filled surfaces, hairlines, ONE accent (the $ marker, the score column, the
+ * path chips). Mono only inside the console pane, which is a real terminal capture.
+ * The popover is CSS-only on :hover and :focus-within, so it ships zero JS and is
+ * reachable from the keyboard.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const VAULT = join(process.cwd(), "..", "examples", "organization", "vault");
+
+const chat = [
+  { who: "You", text: "What went wrong with the double charge in April?" },
+  {
+    who: "imp",
+    text:
+      "A retry on charge creation had no idempotency key, so some customers were charged twice. It cost trust with Bramble Plumbing and two smaller accounts, and billing-v2 became the quarter's priority because of it.",
+  },
+];
+
+// The hits are a real run of `imprnt recall "double charge billing" --limit 5` against
+// the example vault. Scores verbatim.
+const hits = [
+  { score: "3.73", dir: "mistakes/", file: "2026-05-double-charge-incident.md" },
+  { score: "3.20", dir: "orgs/", file: "bramble-plumbing.md" },
+  { score: "2.50", dir: "projects/", file: "billing-v2.md" },
+  { score: "1.75", dir: "events/", file: "2026-05-18-eng-planning.md" },
+  { score: "0.09", dir: "people/", file: "tom-decker.md" },
+];
+
+/** Read the real note, trimmed to what fits a popover without becoming a wall. */
+function note(dir: string, file: string): string {
+  try {
+    const raw = readFileSync(join(VAULT, dir, file), "utf8");
+    const lines = raw.split("\n");
+    return lines.length > 18 ? lines.slice(0, 18).join("\n") + "\n..." : raw;
+  } catch {
+    return "";
+  }
+}
+const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
+---
+
+<div class="panel">
+  <div class="pane pane-chat">
+    <div class="bar"><span>what you see</span></div>
+    <div class="pane-body">
+      {
+        chat.map((c) => (
+          <p class="line">
+            <span class={c.who === "imp" ? "who who-imp" : "who"}>{c.who}<span class="colon">:</span></span>
+            <span class="said">{c.text}</span>
+          </p>
+        ))
+      }
+    </div>
+  </div>
+
+  <div class="pane pane-console">
+    <div class="bar"><span>what it runs underneath</span></div>
+    <div class="pane-body mono">
+      <p class="cmd"><span class="marker">$</span> <span class="bin">imprnt recall</span> <span class="str">"double charge billing"</span> <span class="flag">--limit 5</span></p>
+      <p class="head">5 of 10 matches, BM25-ranked. No model in this step.</p>
+      <ol class="hits">
+        {
+          withText.map((h) => (
+            <li>
+              <span class="score">{h.score}</span>
+              <span class="path" tabindex="0">
+                <span class="dir">{h.dir}</span><span class="file">{h.file}</span>
+                {h.body && (
+                  <span class="pop">
+                    <span class="pop-bar">{h.dir}{h.file}</span>
+                    <span class="pop-body">{h.body}</span>
+                  </span>
+                )}
+              </span>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+  </div>
+</div>
+
+<style>
+  .panel {
+    display: grid;
+    gap: 1rem;
+    container-type: inline-size;
+  }
+  @media (min-width: 64rem) {
+    .panel {
+      grid-template-columns: 0.95fr 1.05fr;
+      gap: 1.25rem;
+    }
+  }
+  .pane {
+    overflow: visible;
+    border: 1px solid var(--color-line);
+    border-radius: 1rem;
+    background: var(--color-surface);
+    min-width: 0;
+  }
+  .bar {
+    padding: 0.625rem 1rem;
+    border-bottom: 1px solid var(--color-line);
+    background: var(--color-chrome);
+    border-radius: 1rem 1rem 0 0;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-ink-chrome);
+  }
+  .pane-body {
+    padding: 1.15rem 1.25rem 1.25rem;
+  }
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+  }
+
+  /* left pane: a conversation, in the page's own face, not mono */
+  .line {
+    display: flex;
+    gap: 0.75rem;
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.6;
+  }
+  .line + .line {
+    margin-top: 0.85rem;
+  }
+  .who {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .who-imp {
+    color: var(--color-accent);
+  }
+  .colon {
+    color: var(--color-ink-faint);
+  }
+  .said {
+    color: var(--color-ink-soft);
+  }
+
+  /* right pane: the console */
+  .cmd {
+    margin: 0;
+    padding-left: 2ch;
+    text-indent: -2ch;
+    overflow-wrap: anywhere;
+  }
+  .marker {
+    user-select: none;
+    color: var(--color-accent);
+  }
+  .bin {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .str {
+    color: var(--color-ink-soft);
+  }
+  .flag {
+    color: var(--color-accent);
+  }
+  .head {
+    margin: 0.9rem 0 0;
+    color: var(--color-ink-faint);
+  }
+  .hits {
+    margin: 0.85rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.3rem 1.15rem;
+  }
+  .hits li {
+    display: contents;
+  }
+  .score {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    text-align: right;
+    color: var(--color-accent);
+  }
+  .dir {
+    color: var(--color-ink-faint);
+  }
+  .file {
+    color: var(--color-ink);
+  }
+
+  /* the hover: the note's REAL text, read from the repo at build time */
+  .path {
+    position: relative;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    cursor: help;
+    border-bottom: 1px dotted var(--color-line);
+    outline: none;
+  }
+  .path:hover .file,
+  .path:focus-visible .file {
+    color: var(--color-accent);
+  }
+  .path:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 3px;
+    border-radius: 3px;
+  }
+  .pop {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 0.5rem);
+    z-index: 20;
+    width: min(30rem, 84vw);
+    display: block;
+    overflow: hidden;
+    border: 1px solid var(--color-line);
+    border-radius: 0.75rem;
+    background: var(--color-surface);
+    box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.28);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 140ms var(--ease-out-expo), transform 140ms var(--ease-out-expo), visibility 140ms;
+  }
+  .path:hover .pop,
+  .path:focus-visible .pop {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+  .pop-bar {
+    display: block;
+    padding: 0.5rem 0.85rem;
+    border-bottom: 1px solid var(--color-line);
+    background: var(--color-chrome);
+    font-size: 0.7rem;
+    color: var(--color-ink-chrome);
+  }
+  .pop-body {
+    display: block;
+    padding: 0.85rem;
+    max-height: 13rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--color-ink-soft);
+  }
+
+  /* the last two hits open upward so the popover never runs off the section */
+  .hits li:nth-last-child(-n + 3) .pop {
+    top: auto;
+    bottom: calc(100% + 0.5rem);
+    transform: translateY(4px);
+  }
+  .hits li:nth-last-child(-n + 3) .path:hover .pop,
+  .hits li:nth-last-child(-n + 3) .path:focus-visible .pop {
+    transform: translateY(0);
+  }
+
+  /* coarse pointers cannot hover: show the popover on tap via :focus-visible only,
+     and never let it exceed the viewport */
+  @media (hover: none) {
+    .pop {
+      width: min(26rem, 88vw);
+    }
+  }
+</style>
