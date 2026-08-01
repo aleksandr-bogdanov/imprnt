@@ -1,0 +1,212 @@
+---
+/**
+ * Renders a raw markdown note the way an editor would colour it, and makes every
+ * [[wikilink]] inside it hoverable so the note it points at opens too.
+ *
+ * Used by every popover on the landing. The colours follow the convention Obsidian and
+ * most markdown editors use, mapped onto imprnt's own tokens rather than invented:
+ *   frontmatter fence + keys   chrome ink, the way a key is always quieter than a value
+ *   frontmatter values         body ink
+ *   headings                   full ink, semibold
+ *   [[wikilinks]]              the accent, because a link IS the accent's job
+ *   ~~struck text~~            faint, struck - what the contract does to a stale fact
+ *   list markers               faint, so the content sits forward of its bullet
+ *
+ * `depth` stops the nesting: a linked note opens one level deep and its own links
+ * render as plain accent text. Without it, two notes that link to each other would
+ * recurse forever at build time.
+ */
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+
+interface Props {
+  text?: string;
+  vault?: string;
+  depth?: number;
+}
+const { text = "", vault = "", depth = 0 } = Astro.props;
+
+/** Resolve a [[folder/slug]] to its file, if the vault has it. */
+function resolve(target: string): string | null {
+  if (!vault) return null;
+  const p = join(vault, `${target}.md`);
+  return existsSync(p) ? p : null;
+}
+
+function read(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+type Tok = { k: string; v: string; link?: string | null };
+
+/** Split one line into coloured tokens. Deliberately small: this styles a note, it is not a parser. */
+function lineTokens(line: string, inFrontmatter: boolean): Tok[] {
+  if (line.trim() === "---") return [{ k: "fence", v: line }];
+
+  const out: Tok[] = [];
+  let rest = line;
+  let prefix = "";
+
+  if (inFrontmatter) {
+    const m = rest.match(/^([A-Za-z_][\w-]*:)(.*)$/);
+    if (m) {
+      out.push({ k: "key", v: m[1] });
+      rest = m[2];
+    }
+  } else if (/^#{1,6}\s/.test(rest)) {
+    return [{ k: "heading", v: rest }];
+  } else if (/^\s*[-*]\s/.test(rest)) {
+    const m = rest.match(/^(\s*[-*]\s)(.*)$/)!;
+    prefix = m[1];
+    rest = m[2];
+    out.push({ k: "bullet", v: prefix });
+  } else if (/^>\s?/.test(rest)) {
+    const m = rest.match(/^(>\s?)(.*)$/)!;
+    out.push({ k: "quote", v: m[1] });
+    rest = m[2];
+  }
+
+  // inline: [[links]] and ~~struck~~
+  const re = /(\[\[[^\]]+\]\])|(~~[^~]+~~)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(rest))) {
+    if (m.index > last) out.push({ k: inFrontmatter ? "val" : "text", v: rest.slice(last, m.index) });
+    if (m[1]) {
+      const target = m[1].slice(2, -2);
+      out.push({ k: "link", v: m[1], link: depth === 0 ? resolve(target) : null });
+    } else {
+      out.push({ k: "gone", v: m[2] });
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < rest.length) out.push({ k: inFrontmatter ? "val" : "text", v: rest.slice(last) });
+  return out;
+}
+
+const lines = text.replace(/\s+$/, "").split("\n");
+let fmOpen = false;
+const rows = lines.map((l, i) => {
+  const isFence = l.trim() === "---" && (i === 0 || fmOpen);
+  const inFm = fmOpen;
+  if (isFence) fmOpen = !fmOpen;
+  return { toks: lineTokens(l, inFm && !isFence), blank: l.trim() === "" };
+});
+---
+
+<span class="nb">
+  {
+    rows.map((r) => (
+      <span class="nb-line">
+        {r.blank
+          ? " "
+          : r.toks.map((t) =>
+              t.k === "link" && t.link ? (
+                <span class="nb-link nb-host" tabindex="0">
+                  {t.v}
+                  <span class="nb-pop">
+                    <span class="nb-pop-body">
+                      <Astro.self text={read(t.link)} vault={vault} depth={depth + 1} />
+                    </span>
+                  </span>
+                </span>
+              ) : (
+                <span class={`nb-${t.k}`}>{t.v}</span>
+              ),
+            )}
+      </span>
+    ))
+  }
+</span>
+
+<style>
+  .nb {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.62;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .nb-line {
+    display: block;
+  }
+  .nb-fence,
+  .nb-key {
+    color: var(--color-ink-chrome);
+  }
+  .nb-val,
+  .nb-text {
+    color: var(--color-ink-soft);
+  }
+  .nb-heading {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .nb-quote,
+  .nb-bullet {
+    color: var(--color-ink-faint);
+  }
+  .nb-gone {
+    color: var(--color-ink-faint);
+    text-decoration: line-through;
+    text-decoration-thickness: from-font;
+  }
+  .nb-link {
+    color: var(--color-accent);
+  }
+
+  /* a link that resolves opens the note it points at, one level deep */
+  .nb-host {
+    position: relative;
+    cursor: help;
+    outline: none;
+    border-bottom: 1px dotted color-mix(in oklab, var(--color-accent) 45%, transparent);
+  }
+  .nb-host:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+  .nb-pop {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.4rem);
+    z-index: 40;
+    display: block;
+    width: max-content;
+    max-width: min(24rem, 70vw);
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--color-line);
+    border-radius: 0.6rem;
+    background: var(--color-surface);
+    box-shadow: 0 14px 34px -14px rgb(0 0 0 / 0.34);
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 130ms var(--ease-out-expo),
+      visibility 130ms;
+  }
+  .nb-host:hover > .nb-pop,
+  .nb-host:focus-visible > .nb-pop {
+    opacity: 1;
+    visibility: visible;
+  }
+  /* bridge the gap so the pointer can reach the popover and the links in it */
+  .nb-pop::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -0.6rem;
+    height: 0.6rem;
+  }
+
+  .nb-pop-body {
+    display: block;
+  }
+</style>

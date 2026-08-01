@@ -25,7 +25,7 @@ export const hero = {
   eyebrow: "Open source · MIT",
   headlineLead: "Your AI's memory,",
   headlineAccent: "boring on purpose",
-  motto: "The memory is a folder of markdown files.",
+  motto: "Essentially, a folder of markdown files.",
   // Two paragraphs on purpose. The first says what it does to what you give it,
   // the second says what that buys you later. The old single block welded both
   // plus the runs-anywhere line into one 60-word sentence nobody finished.
@@ -53,20 +53,29 @@ export const hero = {
           k: "faint",
           v: "[paste the transcript]",
           pop:
-            "Boris: parallel run is clean on the read path, writes still lag ~40ms p99.\n" +
-            "You: enough to hold the cutover?\n" +
-            "Boris: two more weeks of numbers and I'd sign it off. June 30 is not realistic.\n" +
-            "You: so July 15, gated on the parallel-run numbers?\n" +
-            "Boris: yes. I'll own it. Priya has the dashboards.\n" +
-            "You: anything blocking?\n" +
-            "Boris: no, just time on the clock.",
+            "You: how did the parallel run go over the weekend?\n\n" +
+            "Boris: read path is clean. Two hundred million requests, zero mismatches.\n" +
+            "Writes are the problem, we are still at forty milliseconds p99 against\n" +
+            "twelve on the old stack.\n\n" +
+            "You: is that a blocker or a nice-to-have?\n\n" +
+            "Boris: blocker. Checkout calls it synchronously. At forty we would push\n" +
+            "the whole page over budget and support would feel it inside a day.\n\n" +
+            "You: so June 30 is dead.\n\n" +
+            "Boris: June 30 was always optimistic. I want two more weeks of numbers\n" +
+            "before I sign anything. If the writes come down we cut over mid-July.\n\n" +
+            "You: let us say July 15, gated on the parallel-run numbers. If the p99\n" +
+            "is not under twenty by then we slip again and I will take that to Lena.\n\n" +
+            "Boris: agreed. I will own the cutover. Priya already has the dashboards,\n" +
+            "she is adding a write-latency panel this week.\n\n" +
+            "You: anything you need from me?\n\n" +
+            "Boris: nothing. Just do not let anyone add scope before the fifteenth.",
         },
       ],
     },
     {
       who: "imp",
       segs: [
-        "Filed it. Created ",
+        "Filed it. Wrote three notes: ",
         {
           k: "path",
           v: "people/boris-carter",
@@ -91,10 +100,10 @@ export const hero = {
             "~~Cutover on June 30.~~\n\n" +
             "Cutover July 15, after two weeks of parallel-run numbers.",
         },
-        " with the new cutover date, and logged the meeting under ",
+        " with the new cutover date, and the meeting itself as ",
         {
           k: "path",
-          v: "events/",
+          v: "events/2026-06-11-boris-1-1",
           pop:
             "---\ntype: event\ndate: 2026-06-11\n" +
             'participants: ["[[people/boris-carter]]"]\n' +
@@ -179,14 +188,14 @@ export const proof = {
   ],
   leadLink: { label: "the LoCoMo paper and dataset", href: "https://arxiv.org/abs/2402.17753" },
   stats: [
-    { value: "64.2%", label: "imprnt, with Claude Sonnet reading and writing" },
+    { value: "64.2%", label: "imprnt, with Claude Sonnet doing the reading and the writing. Every answer comes from the notes." },
     { value: "87.9%", label: "a person answering the same questions, from the paper" },
     { value: "32.1%", label: "the paper's own AI baseline, on the same questions" },
   ],
   recallCaption:
     "You ask in plain language. The agent runs the search itself. Hover any file to read it.",
   dogfood:
-    "I have used imprnt every day for almost half a year, building it and living on it at the same time. Work and life in the same folder.",
+    "I have used imprnt every day for almost half a year, building it and living on it at the same time.<br />Work and life in the same folder.",
   evalLink: { label: "the benchmark run, every question and verdict", href: "https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval" },
   compareLink: { label: "how it compares", note: "a technical read", href: "/comparison/" },
 };
@@ -194,11 +203,11 @@ export const proof = {
 export const file = {
   eyebrow: "What lands on disk",
   heading: "Swap the assistant, keep the memory.",
-  // The fourth paragraph is GONE. It dragged in plugins, cron and a "nothing runs in
-  // the background" promise that 1.2 will break itself. The section makes one claim.
+  // Line breaks are deliberate: a sentence that starts a new idea starts a new line,
+  // rather than beginning halfway across the line above it.
   paras: [
-    "Every note is a markdown file. <strong>A small typed header that code can check</strong>, then the prose you actually read. The notes are connected through links, so a person or a project is a note of its own.",
-    "Your own editor opens the vault, Obsidian included, because it is plain markdown with ordinary wikilinks. <strong>Fix a note by hand and the next search picks it up.</strong> Notes you already have come in the same way: one pass, where the model reads them once and files them.",
+    "Every note is a markdown file. <strong>It opens with a small typed header that code can read</strong>, then the prose you actually read.<br />The notes are connected through links, so a person or a project is a note of its own.",
+    "Your own editor can edit the notes, Obsidian included, because a vault is plain markdown with ordinary wikilinks.<br /><strong>Fix a note by hand and the next search picks it up.</strong><br />Notes you already have come in the same way: one pass, where the model reads them once and files them.",
     "Change a fact and the old line is <strong>struck through with the new one stamped beside it</strong>, never silently overwritten. When a new note contradicts one you already have, imprnt holds it back and asks you which is right.",
   ],
   noteLabel: "the file behind the demo answer",

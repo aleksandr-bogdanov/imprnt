@@ -1,0 +1,77 @@
+---
+/**
+ * The hero transcript. Converted from a React island to a plain Astro component: it
+ * never had a client directive, so it was already shipping zero JS, and as an Astro
+ * component it can render note popovers through the same NoteBody highlighter the
+ * lookup panel uses instead of duplicating the token logic.
+ *
+ * Lines are SEGMENTS, so the transcript reads as the product's output rather than a
+ * mono wall: vault paths get a chip, recovered facts go full ink, a superseded value
+ * keeps its strike-through. Any segment carrying `pop` opens what it names.
+ */
+import NoteBody from "./NoteBody.astro";
+import type { TermLine } from "../../lib/landing";
+
+interface Props {
+  lines: TermLine[];
+}
+const { lines } = Astro.props;
+
+const tone = (who: string) =>
+  who === "You" ? "text-ink" : who === "imp" ? "text-accent" : "text-ink-faint";
+---
+
+<div class="overflow-visible rounded-xl border border-line bg-surface">
+  <div class="rounded-t-xl border-b border-line bg-chrome px-4 py-2.5">
+    <span class="font-mono text-xs text-ink-chrome">imp - your vault</span>
+  </div>
+  <div class="space-y-3 p-5 font-mono text-[13px] leading-relaxed sm:text-sm">
+    {
+      lines.map((line, li) => {
+        const up = li >= lines.length - 2;
+        const body = line.segs.map((seg) => {
+          if (typeof seg === "string") return <Fragment>{seg}</Fragment>;
+          const inner =
+            seg.k === "path" ? (
+              <span class="-mx-[3px] whitespace-nowrap rounded-[5px] bg-accent-wash px-[5px] py-[1.5px] font-semibold text-accent">
+                {seg.v}
+              </span>
+            ) : seg.k === "key" ? (
+              <span class="whitespace-nowrap font-semibold text-ink">{seg.v}</span>
+            ) : seg.k === "gone" ? (
+              <span class="text-ink-faint line-through decoration-from-font">{seg.v}</span>
+            ) : (
+              <span class="text-ink-faint">{seg.v}</span>
+            );
+          return seg.pop ? (
+            <span class={`pop-host${up ? " pop-up" : ""}`} tabindex="0">
+              {inner}
+              <span class="pop">
+                <span class="pop-body"><NoteBody text={seg.pop} /></span>
+              </span>
+            </span>
+          ) : (
+            inner
+          );
+        });
+
+        // the elapsed-time marker is a rule with the interval sitting on it, so the
+        // three-week gap reads as a break in the session rather than another message
+        return line.who === "gap" ? (
+          <p class="flex select-none items-center gap-3 py-1 text-ink-faint">
+            <span class="h-px flex-1 bg-line" />
+            <span class="text-[11px] uppercase tracking-wider">{body}</span>
+            <span class="h-px flex-1 bg-line" />
+          </p>
+        ) : (
+          <p class="flex gap-3">
+            <span class={`shrink-0 font-semibold ${tone(line.who)}`}>
+              {line.who}<span class="text-ink-faint">:</span>
+            </span>
+            <span class="text-ink-soft">{body}</span>
+          </p>
+        );
+      })
+    }
+  </div>
+</div>

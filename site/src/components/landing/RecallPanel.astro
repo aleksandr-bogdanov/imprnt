@@ -17,6 +17,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import NoteBody from "./NoteBody.astro";
 
 const VAULT = join(process.cwd(), "..", "examples", "organization", "vault");
 
@@ -39,12 +40,10 @@ const hits = [
   { score: "0.09", dir: "people/", file: "tom-decker.md" },
 ];
 
-/** Read the real note, trimmed to what fits a popover without becoming a wall. */
+/** The note, whole. Popovers do not scroll, so what opens is the entire file. */
 function note(dir: string, file: string): string {
   try {
-    const raw = readFileSync(join(VAULT, dir, file), "utf8");
-    const lines = raw.split("\n");
-    return lines.length > 18 ? lines.slice(0, 18).join("\n") + "\n..." : raw;
+    return readFileSync(join(VAULT, dir, file), "utf8");
   } catch {
     return "";
   }
@@ -82,7 +81,7 @@ const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
                 {h.body && (
                   <span class="pop">
                     <span class="pop-bar">{h.dir}{h.file}</span>
-                    <span class="pop-body">{h.body}</span>
+                    <span class="pop-body"><NoteBody text={h.body} vault={VAULT} /></span>
                   </span>
                 )}
               </span>
@@ -231,9 +230,10 @@ const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
     left: 0;
     top: calc(100% + 0.5rem);
     z-index: 20;
-    width: min(30rem, 84vw);
+    width: max-content;
+    max-width: min(34rem, 82vw);
     display: block;
-    overflow: hidden;
+    overflow: visible;
     border: 1px solid var(--color-line);
     border-radius: 0.75rem;
     background: var(--color-surface);
@@ -249,8 +249,19 @@ const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
     visibility: visible;
     transform: translateY(0);
   }
+  /* bridge the gap so the pointer can reach the popover and the links in it */
+  .pop::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -0.6rem;
+    height: 0.6rem;
+  }
+
   .pop-bar {
     display: block;
+    border-radius: 0.75rem 0.75rem 0 0;
     padding: 0.5rem 0.85rem;
     border-bottom: 1px solid var(--color-line);
     background: var(--color-chrome);
@@ -260,11 +271,6 @@ const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
   .pop-body {
     display: block;
     padding: 0.85rem;
-    max-height: 13rem;
-    overflow: auto;
-    white-space: pre-wrap;
-    font-size: 11.5px;
-    line-height: 1.6;
     color: var(--color-ink-soft);
   }
 
