@@ -59,11 +59,16 @@ const lanes = [
     background: var(--color-surface);
     font-family: var(--font-sans);
   }
+  /* the row's vertical padding lives on the CELLS, not on the lane, so the
+     gutter rule runs the full height of its lane and MEETS the card's top
+     border and the divider below it. Padded on the lane, the rule stopped
+     ~17px short at both ends and read as a floating tick rather than as the
+     divider of a two-lane table. Same treatment as the spec strip. */
   .lane {
     display: grid;
     grid-template-columns: 8.25rem 1fr;
     gap: 0 1.15rem;
-    padding: 1.05rem 1.2rem;
+    padding: 0 1.2rem;
   }
   .lane + .lane {
     border-top: 1px solid var(--color-line);
@@ -75,9 +80,9 @@ const lanes = [
     align-self: stretch;
     /* the label is 0.7rem on 1.2 leading, the sentence beside it 0.93rem on
        1.55, so with both flush to the padding box the label's baseline rides
-       ~6px above the sentence's. The offset puts the two first lines on one
-       baseline; the rule still spans the whole row because it is a border. */
-    padding-top: 0.38rem;
+       ~6px above the sentence's. The extra 0.38rem on top puts the two first
+       lines on one baseline. */
+    padding-block: 1.43rem 1.05rem;
     padding-right: 1.15rem;
     border-right: 1px solid var(--color-line);
   }
@@ -97,6 +102,7 @@ const lanes = [
   }
   .body {
     margin: 0;
+    padding-block: 1.05rem;
     font-size: 0.93rem;
     line-height: 1.55;
     color: var(--color-ink-soft);
@@ -118,8 +124,12 @@ const lanes = [
       align-items: baseline;
       justify-content: space-between;
       gap: 0.75rem;
+      padding-block: 0;
       padding-right: 0;
       border-right: 0;
+    }
+    .body {
+      padding-block: 0;
     }
   }
 </style>

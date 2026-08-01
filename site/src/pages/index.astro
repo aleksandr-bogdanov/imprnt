@@ -9,6 +9,13 @@ import MagneticButton from "../islands/MagneticButton.tsx";
 import LandingNote from "../components/landing/LandingNote.astro";
 import HowLanes from "../components/landing/HowLanes.astro";
 import RecallBlock from "../components/landing/RecallBlock.astro";
+
+// The motto is two sentences. Split it so a narrow screen breaks it at the full
+// stop instead of mid-claim (text-balance was stranding "Every" at line end).
+// If the copy ever becomes one sentence the whole string stays in the head.
+const mottoBreak = hero.motto.indexOf(". ");
+const mottoHead = mottoBreak < 0 ? hero.motto : hero.motto.slice(0, mottoBreak + 1);
+const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
 ---
 
 <Layout>
@@ -33,9 +40,11 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
         </h1>
         {/* the motto is the second half of the hero UNIT, not a separate block:
             it hangs off the headline's last line on a tighter leading than the
-            body that follows. */}
+            body that follows. The second sentence is held whole so a narrow
+            screen breaks the motto at its full stop; text-balance was breaking
+            it after "Every", which stranded the word and split the claim. */}
         <p class="mt-4 text-balance font-display text-xl font-semibold leading-snug text-ink sm:text-2xl" data-reveal data-reveal-delay="100">
-          {hero.motto}
+          {mottoHead} <span class="whitespace-nowrap">{mottoTail}</span>
         </p>
         {hero.subheadParas.map((p, i) => (
           <p
@@ -126,13 +135,25 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
     </div>
 
     {/* band B: the spec strip, full width - the hairline that breaks the prose.
-        The three items land on the band's own edges (first on the text margin,
-        last on the right margin) instead of floating at the centres of equal
-        thirds, which left both ends short of the rules above and below them. */}
+        A real datasheet row, not three words pushed to the edges: equal thirds,
+        every label flush left in its own cell, and a full-height hairline
+        between cells so the space after a short label reads as a cell, not as a
+        void. Pushed to the edges (first on the text margin, last on the right)
+        the three sat ~290px apart with nothing explaining the gap. */}
     <div class="shell mt-12 sm:mt-14">
-      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 sm:grid-cols-3 sm:gap-x-12 sm:[&>*:last-child]:justify-self-end sm:[&>*:nth-child(2)]:justify-self-center" data-reveal>
-        {how.spec.map((s) => (
-          <span class="text-sm font-semibold uppercase tracking-wider text-ink-soft">{s}</span>
+      {/* three across only from md up: at 640-767 a third of the measure is
+          narrower than "no index to rebuild", so the last cell wrapped to two
+          lines while its neighbours held one. Below that it stacks, which is
+          the same list the phone gets. */}
+      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 md:grid-cols-3 md:gap-y-0 md:py-0" data-reveal>
+        {how.spec.map((s, i) => (
+          <span
+            class={`text-sm font-semibold uppercase tracking-wider text-ink-soft md:py-5 ${
+              i === 0 ? "" : "md:border-l md:border-line md:pl-8"
+            }`}
+          >
+            {s}
+          </span>
         ))}
       </div>
     </div>
@@ -234,7 +255,10 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
           </a>
           <a href={proof.compareLink.href} class="group inline-flex items-baseline gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline">
             {proof.compareLink.label}
-            <span class="font-normal text-ink-faint">({proof.compareLink.note})</span>
+            {/* chrome, not faint, for the same reason as the closing quip: it
+                is prose, and ink-faint is reserved for muted chrome inside the
+                code captures (dim folders, struck values, frontmatter keys) */}
+            <span class="font-normal text-ink-chrome">({proof.compareLink.note})</span>
             <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 self-center transition-transform duration-300 ease-out-expo group-hover:translate-x-0.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
         </div>
@@ -324,7 +348,11 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
         <MagneticButton client:visible href={closing.ctaSecondary.href} label={closing.ctaSecondary.label} variant="ghost" external />
       </div>
 
-      <p class="mx-auto mt-14 max-w-md text-balance text-sm text-ink-faint" data-reveal data-reveal-delay="260">
+      {/* chrome, not faint: this is prose the reader is meant to read, and
+          ink-faint measures 3.1:1 on paper and 3.9:1 on the dark ground. The
+          chrome step clears 4.5:1 in both themes and still sits a step under
+          the body, which is all the recession the line needs. */}
+      <p class="mx-auto mt-14 max-w-md text-balance text-sm text-ink-chrome" data-reveal data-reveal-delay="260">
         {closing.quip}
       </p>
     </div>
