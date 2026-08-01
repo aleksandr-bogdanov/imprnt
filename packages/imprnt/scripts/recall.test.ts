@@ -879,3 +879,63 @@ test("a term that appears only in the summary is matchable (the summary is index
   expect(r.stdout).not.toContain("no matches");
   expect(r.stdout).not.toContain("other.md"); // a note without the term still does not match
 });
+
+// ── --gap: cut where the scores fall off a cliff ────────────────────────────────
+// Default-off, so every existing expectation above still describes shipped behaviour.
+
+test("--gap trims hits below the ratio, keeping the ones above the cliff", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // three notes that hit the query hard, one that grazes it once in a long body
+  writeFileSync(join(v, "a.md"), "---\ntype: note\ntags: []\n---\n\n# Kestrel\n\nkestrel kestrel kestrel");
+  writeFileSync(join(v, "b.md"), "---\ntype: note\ntags: []\n---\n\n# Kestrel again\n\nkestrel kestrel");
+  writeFileSync(join(v, "c.md"), "---\ntype: note\ntags: []\n---\n\n# Kestrel once\n\nkestrel");
+  writeFileSync(
+    join(v, "far.md"),
+    "---\ntype: note\ntags: []\n---\n\n# Unrelated\n\n" + "filler ".repeat(400) + "kestrel",
+  );
+
+  const all = recall("kestrel", v);
+  expect(all.code).toBe(0);
+  expect(all.stdout).toContain("far.md");
+
+  const cut = recall("kestrel", v, "--gap", "0.5");
+  expect(cut.code).toBe(0);
+  // the long note's score is a fraction of the others', so the cliff drops it
+  expect(cut.stdout).not.toContain("far.md");
+  expect(cut.stdout).toContain("a.md");
+});
+
+test("--gap never cuts the top hit", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "one.md"), "---\ntype: note\ntags: []\n---\n\n# Only\n\npetrichor");
+  writeFileSync(join(v, "two.md"), "---\ntype: note\ntags: []\n---\n\n# Other\n\n" + "x ".repeat(500) + "petrichor");
+  const r = recall("petrichor", v, "--gap", "0.99");
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("one.md");
+});
+
+test("--gap rejects a non-ratio value", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "a.md"), "---\ntype: note\ntags: []\n---\n\n# A\n\nkestrel");
+  for (const bad of ["1", "0", "abc", "0.5x", "-0.2", "2.0"]) {
+    const r = recallRaw("kestrel", "--vault", v, "--gap", bad);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("--gap must be a ratio");
+  }
+  const missing = recallRaw("kestrel", "--vault", v, "--gap");
+  expect(missing.code).toBe(1);
+});
+
+test("without --gap the result set is unchanged", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "a.md"), "---\ntype: note\ntags: []\n---\n\n# A\n\nkestrel kestrel");
+  writeFileSync(join(v, "b.md"), "---\ntype: note\ntags: []\n---\n\n# B\n\n" + "y ".repeat(400) + "kestrel");
+  const r = recall("kestrel", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("a.md");
+  expect(r.stdout).toContain("b.md");
+});

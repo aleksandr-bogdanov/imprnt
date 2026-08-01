@@ -33,6 +33,11 @@ import { fmList, fmScalar, stripBom, stripCode } from "./lib/moc.ts";
 const args = process.argv.slice(2);
 let vault = process.env.IMPRNT_VAULT ?? process.env.IMPRINT_VAULT ?? "./vault";
 let limit = 15; // tight by default — narrow, don't dump
+// --gap: cut the result set where the scores fall off a cliff, instead of always
+// handing back `limit` hits. A real capture reads 3.73 / 3.20 / 2.50 / 1.75 / 0.09 —
+// the last one is noise the reader pays for. OFF by default (0): the shipped
+// behaviour is unchanged unless you ask for it.
+let gap = 0;
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--vault") {
@@ -48,11 +53,19 @@ for (let i = 0; i < args.length; i++) {
     const n = parseInt(tok, 10);
     if (!Number.isFinite(n) || n <= 0) { console.error("--limit must be a positive integer"); process.exit(1); }
     limit = n;
+  } else if (args[i] === "--gap") {
+    const tok = args[++i];
+    // a ratio in (0,1). 0.25 means "stop at the first hit scoring under a quarter of
+    // the one above it". Rejects trailing garbage the way --limit does.
+    if (tok === undefined || !/^0?\.[0-9]+$/.test(tok)) { console.error("--gap must be a ratio between 0 and 1 (e.g. 0.25)"); process.exit(1); }
+    const g = parseFloat(tok);
+    if (!Number.isFinite(g) || g <= 0 || g >= 1) { console.error("--gap must be a ratio between 0 and 1 (e.g. 0.25)"); process.exit(1); }
+    gap = g;
   } else positional.push(args[i]);
 }
 const query = positional.join(" ").trim();
 if (!query) {
-  console.error('usage: imprnt recall "<query>" [--vault DIR] [--limit N]');
+  console.error('usage: imprnt recall "<query>" [--vault DIR] [--limit N] [--gap R]');
   process.exit(1);
 }
 
@@ -352,7 +365,15 @@ hits.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
 
 if (!hits.length) { console.log(`no matches for "${query}" in ${vault}`); process.exit(0); }
 
-const shown = hits.slice(0, limit);
+// --limit is the ceiling; --gap trims below it at the first cliff in the scores. The
+// first hit is always kept: a cliff needs something above it to fall from.
+let cut = Math.min(limit, hits.length);
+if (gap > 0) {
+  for (let i = 1; i < cut; i++) {
+    if (hits[i].score < gap * hits[i - 1].score) { cut = i; break; }
+  }
+}
+const shown = hits.slice(0, cut);
 const expanded = queryTerms.map((g) => g.join("|")).join(" ");
 console.log(`recall "${query}" [${expanded}] - ${hits.length} match(es)${hits.length > shown.length ? `, showing top ${shown.length}` : ""}, BM25-ranked:\n`);
 for (const h of shown) console.log(`  [${h.score.toFixed(2)}] ${h.path}`);
