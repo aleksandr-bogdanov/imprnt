@@ -15,10 +15,9 @@
  * The popover is CSS-only on :hover and :focus-within, so it ships zero JS and is
  * reachable from the keyboard.
  */
-import { join } from "node:path";
 import NoteStore from "./NoteStore.astro";
 
-const VAULT = join(process.cwd(), "..", "examples", "organization", "vault");
+
 
 const chat = [
   { who: "You", text: "What went wrong with the double charge in April?" },
@@ -80,7 +79,7 @@ const withText = hits;
   </div>
 </div>
 
-<NoteStore vault={VAULT} />
+<NoteStore />
 
 <style>
   .panel {

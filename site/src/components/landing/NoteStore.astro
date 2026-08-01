@@ -13,34 +13,42 @@
  * a static one. The templates are inert: browsers do not lay out or paint template
  * content.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
 import NoteBody from "./NoteBody.astro";
 
-interface Props {
-  vault: string;
-}
-const { vault } = Astro.props;
+// Resolved by the bundler at build time, relative to THIS file, so there is no runtime
+// path to get wrong. An earlier version walked the filesystem from process.cwd(), which
+// worked locally and broke the production build twice: once because Railway's build
+// context is `site/` only (so ../examples did not exist), and once because a bundled
+// chunk's dirname is not the source file's.
+const RAW = import.meta.glob("../../data/example-vault/**/*.md", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
 
-/** Every .md in the vault, keyed the way a [[wikilink]] addresses it. */
-function walk(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry);
-    if (statSync(p).isDirectory()) out.push(...walk(p));
-    else if (entry.endsWith(".md")) out.push(p);
-  }
-  return out;
+const found = Object.keys(RAW).sort();
+// A missing vault used to throw ENOENT deep in the walk, which is unreadable in a
+// build log. An EMPTY one is worse: the page would build clean and every popover would
+// silently do nothing. Both fail here, loudly, with the path that was wrong.
+if (found.length === 0) {
+  throw new Error(
+    "NoteStore: no notes matched src/data/example-vault. That copy is generated - run " +
+      "`bun scripts/sync-example-vault.ts`. An empty store would build clean and leave " +
+      "every popover silently doing nothing.",
+  );
 }
 
-const notes = walk(vault).map((abs) => ({
-  key: relative(vault, abs).replace(/\.md$/, ""),
-  text: readFileSync(abs, "utf8"),
+const noteKeys = found.map((p) => p.replace("../../data/example-vault/", "").replace(/\.md$/, ""));
+
+const notes = found.map((path) => ({
+  // ../../data/example-vault/orgs/bramble-plumbing.md -> orgs/bramble-plumbing
+  key: path.replace("../../data/example-vault/", "").replace(/\.md$/, ""),
+  text: RAW[path],
 }));
 ---
 
 <div class="note-store" hidden aria-hidden="true">
-  {notes.map((n) => <template data-note-src={n.key}><NoteBody text={n.text} vault={vault} /></template>)}
+  {notes.map((n) => <template data-note-src={n.key}><NoteBody text={n.text} keys={noteKeys} /></template>)}
 </div>
 
 <script>

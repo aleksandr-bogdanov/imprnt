@@ -7,9 +7,10 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro build",
+    "build": "bun scripts/sync-example-vault.ts --check && astro build",
     "preview": "astro preview",
-    "check": "astro check"
+    "check": "astro check",
+    "sync:vault": "bun scripts/sync-example-vault.ts"
   },
   "dependencies": {
     "@astrojs/mdx": "^6.0.3",

@@ -18,17 +18,14 @@
  *   ~~struck text~~            faint, struck - what the contract does to a stale fact
  *   list markers               faint, so the content sits forward of its bullet
  */
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-
 interface Props {
   text?: string;
-  vault?: string;
+  /** Every note key the store holds. A link only opens if its target is one of them. */
+  keys?: string[];
 }
-const { text = "", vault = "" } = Astro.props;
+const { text = "", keys = [] } = Astro.props;
 
-/** A link only becomes openable if the vault actually has the note. */
-const has = (target: string): boolean => (vault ? existsSync(join(vault, `${target}.md`)) : false);
+const has = (target: string): boolean => keys.includes(target);
 
 type Tok = { k: string; v: string; target?: string };
 
