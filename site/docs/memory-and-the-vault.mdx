@@ -29,7 +29,7 @@ The **vault** is the only place knowledge lives: plain files on your disk, reada
 
 `recall` is the everyday door. It searches the vault with BM25 ranking and hands back the best hits ([how it works](/how-it-works/)). `imprnt hot` is the "where was I" glance: the short primer in `hot.md` plus anything that needs review. `imprnt context` prints the full filing rules, and the assistant runs it right before it writes a note, so outside the vault project the heavy rules are paid only by the sessions that write. A session inside the vault project, like `imp lair`, loads the contract natively from its `CLAUDE.md`.
 
-An `imp` session loads almost nothing on its own: your behavior plugins, plus a small pointer (~150 tokens) saying the vault exists, how to search it, and to run `imprnt context` before writing. A day of reading costs that pointer, never the whole vault.
+An `imp` session loads almost nothing on its own: your behavior plugins, plus a small pointer (~200 tokens) saying the vault exists, how to search it, and to run `imprnt context` before writing. A day of reading costs that pointer, never the whole vault.
 
 <MemoryVaultTable>
 

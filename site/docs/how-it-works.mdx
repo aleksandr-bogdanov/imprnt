@@ -32,11 +32,11 @@ The rules for where a note lands are in [Vault layout](/vault-layout/). Handing 
 
 <HowItWorksEdits />
 
-**One edit fixes a fact everywhere it appears.** Say you filed a colleague as Carl, an Engineer, and a later meeting reveals he is Boris, a Director. Filing looks him up by **alias**, finds the existing note, corrects that one note, and keeps {'"Carl"'} in the aliases so old references still resolve. Every other note points at him by his permanent file ID, so the single fix shows the right name and role across every meeting and project.
+**One edit fixes a fact everywhere it appears.** Say you filed a colleague as Carl, an Engineer, and a later meeting reveals he is Boris, a Director. Filing looks him up by **alias** and finds the existing note. The model corrects that one note and keeps {'"Carl"'} in the aliases so old references still resolve. Every other note points at him by his permanent file ID, so the single fix shows the right name and role across every meeting and project.
 
-A contradiction is the special case. If a new meeting says a date moved, filing updates the note and stamps the old line as **superseded**, so search can tell the live fact from the stale one. Old information is marked, never quietly overwritten.
+A contradiction is the special case. If a new meeting says a date moved, filing never overwrites. It flags the conflict for review, and the stale line gets stamped **superseded** in the note, so a reader can see which fact won. Old information is marked, never quietly dropped. Old information is marked, never quietly overwritten.
 
-**Your raw sources are kept forever**, one untouched snapshot per source under `raw/`. To change how notes are structured, re-run filing over the originals and get the new layout for free. You are never stuck in an old format, and any claim in a note traces back to its **snapshot**.
+**Your raw sources are kept forever**, one untouched snapshot per source under `raw/`. To change how notes are structured, re-run filing over the originals. You pay the model once more and get the new layout across the whole vault. You are never stuck in an old format, and any claim in a note traces back to its **snapshot**.
 
 ## When you read: plain code works
 
@@ -44,7 +44,7 @@ A contradiction is the special case. If a new meeting says a date moved, filing 
 
 <HowItWorksRanking />
 
-The model only turns your question into search words at the start and reads the few best notes at the end. It never does the **ranking**, and nothing AI-made sits under the search: no embeddings, no vectors (numeric codes a model would have to compute for every note). Because a rare matched word floats to the top on its own, you get a short, sharp list of hits, not a dump of the whole vault. We put a number on how well that holds up.
+The model only turns your question into search words at the start and reads the few best notes at the end. It never does the **ranking**, and nothing AI-made sits under the search: no embeddings, no vectors (numeric codes a model would have to compute for every note). A rare matched word floats to the top on its own, and `recall` hands back only the top 15, so you get a short ranked list instead of a dump of the whole vault. We put a number on how well that holds up.
 
 <HowItWorksEval />
 

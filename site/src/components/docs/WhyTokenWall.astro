@@ -2,14 +2,14 @@
 /**
  * Page-specific (why-imprnt): the two numbers that turned a context problem into
  * a cost problem, plus a window bar that shows what they mean together: 30k of
- * the 250k context window (12%) already spent by machinery before the first
+ * the 200k context window (15%) already spent by machinery before the first
  * prompt. Big figures in accent, the bar fill animates in on reveal. Filled
  * surfaces, no border boxes. Scoped CSS, theme-aware via Starlight tokens, no
  * Tailwind. No JS or reduced motion renders the bar static and full.
  */
 const STATS = [
   { figure: "30k", unit: "tokens", caption: "gone on the first load, before any real work" },
-  { figure: "250k", unit: "window", caption: "then it compacts and starts forgetting" },
+  { figure: "200k", unit: "window", caption: "then it compacts and starts forgetting" },
 ];
 ---
 
@@ -24,7 +24,7 @@ const STATS = [
       ))
     }
   </div>
-  <div class="bar" role="img" aria-label="A 250k token window with 30k already spent by machinery before the first prompt.">
+  <div class="bar" role="img" aria-label="A 200k token window with 30k already spent by machinery before the first prompt.">
     <div class="track"><span class="fill"></span></div>
     <div class="legend">
       <span class="lg"><i class="sw accent" aria-hidden="true"></i>machinery, before your first word</span>

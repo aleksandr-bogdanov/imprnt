@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
  * the click sends a request packet through that door, lights up what answers it
  * inside the vault, and returns a payload chip to the session. The idle state
  * carries the lesson itself: the vault is silent by default, and the only
- * always-on piece is the ~150-token pointer parked in the session.
+ * always-on piece is the ~200-token pointer parked in the session.
  *
  * Inline styles only (Starlight docs do not load the site's Tailwind), plus one
  * scoped <style> block for the keyframes inline styles cannot express. Theme
@@ -380,7 +380,7 @@ export default function MemoryVaultDoors() {
                 your behavior plugins
               </span>
               <span style={{ fontFamily: SANS, fontSize: 10.5, fontWeight: 500, padding: "0.16rem 0.5rem", borderRadius: 999, background: `color-mix(in oklab, ${C.accent} 16%, transparent)`, color: C.onText }}>
-                the pointer &middot; ~150 tokens
+                the pointer &middot; ~200 tokens
               </span>
             </div>
             <p style={{ margin: 0, fontFamily: SANS, fontSize: 10.5, lineHeight: 1.45, color: C.faint }}>

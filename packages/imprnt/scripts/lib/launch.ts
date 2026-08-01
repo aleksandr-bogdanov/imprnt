@@ -46,7 +46,7 @@ export function castFragment(root: string): string {
   return parts.join("\n\n");
 }
 
-// The ~150-token pointer: what exists, when to recall, and the one entry point for writing.
+// The ~200-token pointer: what exists, when to recall, and the one entry point for writing.
 // Lives in templates/ so it ships with the package and stays editable without a code change.
 export function pointerFragment(pkgRoot: string, vaultProject: string): string {
   // assembleSession now computes the pointer for EVERY live-vault launch (so a backend that does not
