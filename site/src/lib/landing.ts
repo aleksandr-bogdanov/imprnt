@@ -158,13 +158,13 @@ export const how = {
   paras: [
     "A model can do almost anything, so <strong>almost everything got built on one</strong>. Wrap ChatGPT, call it an AI product, ship it, take the investor money. That worked while tokens were cheap.",
     "That is not the case anymore. I put a personal-assistant setup on my work laptop. It burned <strong>30,000 tokens before I typed a word</strong>, because it had loaded every skill and every MCP server up front. I was paying per token, so I started thinking twice before asking anything. <strong>An assistant you are afraid to use is not an assistant.</strong>",
-    "So imprnt splits the job in two. Imprinting takes a model.<br /><strong>Finding does not.</strong>",
+    "So imprnt splits the job in two. Imprinting takes a model.<br /><strong>Finding does not need one.</strong>",
   ],
   spec: ["no embeddings", "no vector store", "no index to rebuild"],
   paras2: [
     "Keyword search has one famous weakness. <strong>You search for a synonym and nothing comes back.</strong> We fix it while writing, not while searching. The model records the synonyms and the other names a thing goes by, so the note about <code>Boris Carter</code> also matches a search for <code>Boris</code>. Rename him and the old name stays on the note.",
-    "Every search after that runs <strong>BM25</strong>. It is a ranking formula from 1994, and <strong>Lucene and Elasticsearch</strong> still run it today. It counts how often your words appear, weighs rare words heavier, and puts a word in the title above the same word buried in the body. Nothing caches, so a note you edited by hand in Obsidian a minute ago is already findable.",
-    "Every session pays <strong>about 200 tokens</strong>: one short note saying the vault exists and naming its two commands. <strong>A session that only asks questions never pays more.</strong> One that files a note reads the filing rules once, about 7,000 tokens, as it writes.",
+    "Every search after that runs <strong>BM25</strong>. It is a ranking formula from 1994, and <strong>Lucene and Elasticsearch</strong> still run it today. It counts how often your words appear, weighs rare words heavier, and puts a word in the title above the same word buried in the body. There is no index to refresh, so a note you edited by hand in Obsidian a minute ago is already findable.",
+    "Every session pays <strong>about 200 tokens</strong>: one short note saying the vault exists and naming its two commands. <strong>A session that only asks questions never pays more.</strong> A session that files a note reads the filing rules first, about 7,000 tokens, paid once.",
     "That is why imprnt is a command line tool and not an MCP server. <strong>An MCP server loads its tool descriptions into every chat by default.</strong> You pay for those before you ask anything.",
   ],
   link: { label: "the full arguments, decision by decision", href: "/design-decisions/" },
@@ -193,7 +193,7 @@ export const proof = {
     { value: "32.1%", label: "the paper's own AI baseline, on the same questions" },
   ],
   recallCaption:
-    "You ask in plain language. The agent runs the search itself. Hover any file to read it.",
+    "You ask in plain language and the agent runs the search itself. Hover any file to read it.",
   dogfood:
     "I have used imprnt every day for almost half a year, building it and living on it at the same time.<br />Work and life in the same folder.",
   evalLink: { label: "the benchmark run, every question and verdict", href: "https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval" },
@@ -206,8 +206,8 @@ export const file = {
   // Line breaks are deliberate: a sentence that starts a new idea starts a new line,
   // rather than beginning halfway across the line above it.
   paras: [
-    "Every note is a markdown file. <strong>It opens with a small typed header that code can read</strong>, then the prose you actually read.<br />The notes are connected through links, so a person or a project is a note of its own.",
-    "Your own editor can edit the notes, Obsidian included, because a vault is plain markdown with ordinary wikilinks.<br /><strong>Fix a note by hand and the next search picks it up.</strong><br />Notes you already have come in the same way: one pass, where the model reads them once and files them.",
+    "Every note is a markdown file. <strong>It opens with a small typed header that code can read</strong>, then the prose you actually read.<br />Every person and every project gets a note of its own, and the other notes link to it.",
+    "Your own editor can edit the notes, Obsidian included, because a vault is plain markdown with ordinary wikilinks.<br /><strong>Fix a note by hand and the next search picks it up.</strong><br />Notes you already have come in the same way: the model reads them once and files them.",
     "Change a fact and the old line is <strong>struck through with the new one stamped beside it</strong>, never silently overwritten. When a new note contradicts one you already have, imprnt holds it back and asks you which is right.",
   ],
   noteLabel: "the file behind the demo answer",
@@ -219,7 +219,7 @@ export const closing = {
   // hair WIDER than "Start your vault in" - no max-width can force the better
   // break, only keeping the phrase whole can. Same device as how.headingLead.
   headingLead: "Start your vault",
-  headingTail: "in two commands.",
+  headingTail: "with one pasted line.",
   sub: "Open source, MIT licensed, and yours end to end.",
   install: site.install,
   ctaPrimary: { label: "Read the docs", href: "/getting-started/" },
