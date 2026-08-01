@@ -188,9 +188,9 @@ export const proof = {
   ],
   leadLink: { label: "the LoCoMo paper and dataset", href: "https://arxiv.org/abs/2402.17753" },
   stats: [
-    { value: "64.2%", label: "imprnt, with Claude Sonnet reading and writing. Answers come only from the notes." },
-    { value: "87.9%", label: "a person answering the same questions, from the paper" },
-    { value: "32.1%", label: "the paper's own AI baseline, on the same questions" },
+    { value: "1,540", label: "questions across ten conversations, written by the paper's authors" },
+    { value: "32.1%", label: "what the paper's own AI baseline managed on the same questions" },
+    { value: "0", label: "models involved in finding the notes. That step is plain arithmetic." },
   ],
   recallCaption:
     "You ask in plain language and the agent runs the search itself. Hover any file to read it.",

@@ -141,56 +141,48 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
       </div>
     </div>
 
-    {/* band B: the spec strip, full width - the hairline that breaks the prose.
-        A real datasheet row, not three words pushed to the edges: equal thirds,
-        every label flush left in its own cell, and a full-height hairline
-        between cells so the space after a short label reads as a cell, not as a
-        void. Pushed to the edges (first on the text margin, last on the right)
-        the three sat ~290px apart with nothing explaining the gap. */}
-    <div class="shell mt-12 sm:mt-14">
-      {/* three across only from md up: at 640-767 a third of the measure is
-          narrower than "no index to rebuild", so the last cell wrapped to two
-          lines while its neighbours held one. Below that it stacks, which is
-          the same list the phone gets. */}
-      {/* No cell dividers: the vertical rules turned three claims into a table
-          nobody asked for. Two hairlines top and bottom, each claim centred in
-          its own third. */}
-      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 text-center md:grid-cols-3" data-reveal data-reveal-delay="240">
-        {how.spec.map((s) => (
-          <span class="text-sm font-semibold uppercase tracking-wider text-ink">{s}</span>
-        ))}
-      </div>
-    </div>
+    {/* Bands B and C were: a full-width spec strip, then TWO columns of body prose
+        four paragraphs deep with no artifact anchoring either one. Every other
+        section on the page runs claim-left, evidence-right; this one handed the
+        reader two essays side by side and made them pick. On mobile it was the
+        page's only text tunnel.
 
-    {/* band C: mechanism left, cost right - two paragraphs each, even columns */}
-    <div class="shell mt-12 grid items-start gap-x-12 gap-y-6 sm:mt-14 lg:grid-cols-2">
-      <div>
-        {how.paras2.slice(0, 2).map((p, i) => (
-          <p
-            class={`max-w-2xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${i === 0 ? "" : "mt-6"}`}
-            data-reveal
-            data-reveal-delay={i * 40}
-            set:html={p}
-          />
+        Now it reads in one column, in the order the argument actually goes, and
+        the spec strip sits WHERE IT BELONGS: right after the BM25 paragraph, since
+        "no embeddings, no vector store, no index to rebuild" is a statement about
+        the ranker, not about the section. It also breaks the prose run in half. */}
+    <div class="shell mt-12 sm:mt-14">
+      <div class="max-w-3xl">
+      {how.paras2.slice(0, 2).map((p, i) => (
+        <p
+          class={`${i === 0 ? "" : "mt-6"} text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink [&_code]:rounded-[4px] [&_code]:bg-accent-wash [&_code]:px-[5px] [&_code]:py-[1px] [&_code]:font-mono [&_code]:text-[0.9em] [&_code]:text-accent`}
+          data-reveal
+          data-reveal-delay={i * 40}
+          set:html={p}
+        />
+      ))}
+
+      <div class="mt-10 grid grid-cols-1 gap-y-3 border-y border-line py-5 text-center md:grid-cols-3" data-reveal data-reveal-delay="80">
+        {how.spec.map((sp) => (
+          <span class="text-sm font-semibold uppercase tracking-wider text-ink">{sp}</span>
         ))}
       </div>
-      <div class="max-lg:mt-8 max-lg:border-t max-lg:border-line max-lg:pt-8">
-        {how.paras2.slice(2).map((p, i) => (
-          <p
-            class={`max-w-2xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${i === 0 ? "" : "mt-6"}`}
-            data-reveal
-            data-reveal-delay={80 + i * 40}
-            set:html={p}
-          />
-        ))}
-        <div class="mt-6 max-w-2xl">
-          {/* the section's exit, so it lands last: at delay 0 it arrived on the
-              same beat as the first paragraph of the band it closes */}
-          <a href={how.link.href} class="group inline-flex items-center gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline" data-reveal data-reveal-delay="160">
-            {how.link.label}
-            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 transition-transform duration-300 ease-out-expo group-hover:translate-x-0.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </a>
-        </div>
+
+      {how.paras2.slice(2).map((p, i) => (
+        <p
+          class={`${i === 0 ? "mt-10" : "mt-6"} text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink`}
+          data-reveal
+          data-reveal-delay={120 + i * 40}
+          set:html={p}
+        />
+      ))}
+
+      <div class="mt-6">
+        <a href={how.link.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline" data-reveal>
+          {how.link.label}
+          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+      </div>
       </div>
     </div>
   </section>
@@ -267,20 +259,20 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
           started mid-measure and the second stopped ~80px short of the rule
           above it, which read as an accident. The first link's cap line sits on
           the dogfood paragraph's first baseline. */}
-      <div class="mt-14 flex flex-col gap-6 sm:mt-16 sm:flex-row sm:items-baseline sm:justify-between sm:gap-x-12" data-reveal data-reveal-delay="260">
-        <p class="max-w-md text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg" set:html={proof.dogfood} />
-        <div class="flex flex-col items-start gap-3 sm:items-end">
-          <a href={proof.evalLink.href} class="group inline-flex items-center gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline">
+      {/* The links used to sit flush right opposite the aside, which read as though
+          they were trying to leave the page. They now follow the paragraph they
+          belong to, so the section resolves on its own left edge. */}
+      <div class="mt-14 max-w-2xl sm:mt-16" data-reveal data-reveal-delay="260">
+        <p class="text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg" set:html={proof.dogfood} />
+        <div class="mt-5 flex flex-wrap items-baseline gap-x-8 gap-y-3">
+          <a href={proof.evalLink.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
             {proof.evalLink.label}
-            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 transition-transform duration-300 ease-out-expo group-hover:translate-x-0.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
-          <a href={proof.compareLink.href} class="group inline-flex items-baseline gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline">
+          <a href={proof.compareLink.href} class="inline-flex items-baseline gap-1.5 text-sm font-semibold text-accent hover:underline">
             {proof.compareLink.label}
-            {/* chrome, not faint, for the same reason as the closing quip: it
-                is prose, and ink-faint is reserved for muted chrome inside the
-                code captures (dim folders, struck values, frontmatter keys) */}
             <span class="font-normal text-ink-chrome">({proof.compareLink.note})</span>
-            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 self-center transition-transform duration-300 ease-out-expo group-hover:translate-x-0.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 self-center" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
         </div>
       </div>
