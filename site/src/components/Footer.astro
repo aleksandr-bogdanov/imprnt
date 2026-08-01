@@ -4,19 +4,31 @@ import { footer, site } from "../lib/content";
 ---
 
 <footer class="relative border-t border-line bg-bg-soft">
-  <div class="shell grid gap-10 py-16 md:grid-cols-[1.4fr_1fr_1fr]">
+  {/* The two link columns are `auto`, not `1fr`: sized to their content and
+      pushed to the right margin, so the footer block has a real right edge
+      instead of trailing off into a quarter-width void. Same decision the proof
+      section's stacked links already make one screen up. */}
+  <div class="shell grid gap-x-14 gap-y-10 py-16 md:grid-cols-[1fr_auto_auto]">
     <div>
       <a href="#top" aria-label="imprnt" class="flex items-center text-ink">
         <Lockup size={28} />
       </a>
-      <p class="mt-4 max-w-xs text-sm text-ink-soft">{footer.blurb}</p>
-      <p class="mt-6 text-sm text-ink-chrome">{site.principle}</p>
+      <p class="mt-4 max-w-sm text-sm text-ink-soft">{footer.blurb}</p>
+      {/* the standing principle, not a second blurb sentence: it sits under a
+          hairline at the chrome step, so it reads as the line the house signs
+          off with rather than as more copy. max-w-sm, not xs: at 20rem the
+          measure landed two characters short and broke "do the work" in half. */}
+      <p class="mt-6 max-w-sm border-t border-line pt-5 text-sm text-ink-chrome">{site.principle}</p>
     </div>
 
     {
       footer.columns.map((col) => (
         <div>
-          <h2 class="text-xs font-semibold uppercase tracking-widest text-ink-soft">{col.title}</h2>
+          {/* the column head is a LABEL, so it takes the chrome step - every
+              other tracked-caps label on this page does. At ink-soft it was the
+              exact weight and colour of the links under it, so the head read as
+              a fifth, shouty link instead of as the name of the column. */}
+          <h2 class="text-xs font-semibold uppercase tracking-widest text-ink-chrome">{col.title}</h2>
           <ul class="mt-4 space-y-2.5">
             {col.links.map((link) => (
               <li>

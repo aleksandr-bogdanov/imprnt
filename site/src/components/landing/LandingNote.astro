@@ -42,33 +42,43 @@
 </figure>
 
 <style>
+  /* the exhibit shell, identical across all four captures on this page: 1rem
+     corner, hairline, filled surface, NO shadow. The card used to carry a
+     raw-rgba drop shadow and a 1.1rem corner of its own, which made it the one
+     exhibit shaped differently from its three siblings - and the shadow was a
+     hardcoded warm brown that did nothing on the dark ground. */
   .note {
     overflow: hidden;
-    border-radius: 1.1rem;
+    border-radius: 1rem;
     border: 1px solid var(--color-line);
     background: var(--color-surface);
     color: var(--color-ink);
-    box-shadow: 0 20px 50px -32px rgba(40, 30, 20, 0.35);
   }
   .tab {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.65rem 1.05rem;
+    padding: 0.625rem 1rem;
     font-family: var(--font-mono);
     font-size: 0.75rem;
     color: var(--color-ink-chrome);
-    background: var(--color-bg-soft);
+    /* the chrome PLANE, not bg-soft: this card lands on a bg-soft section, so
+       the old value made the band the exact colour of the page behind it */
+    background: var(--color-chrome);
     border-bottom: 1px solid var(--color-line);
   }
+  /* the file glyph is chrome, so it takes the chrome ink. In the accent it was
+     a decorative use (the accent's semantic jobs are links, the $ marker, the
+     path chips, the scores) and it measured 2.8:1 on the band, under the 3:1
+     floor a meaningful glyph needs. The band now speaks in one voice. */
   .tab svg {
     width: 0.9rem;
     height: 0.9rem;
     flex: 0 0 auto;
-    color: var(--color-accent);
+    color: currentColor;
   }
   .body {
-    padding: 1.05rem 1.2rem 1.2rem;
+    padding: 1.15rem 1.25rem 1.25rem;
     font-family: var(--font-mono);
     font-size: 0.79rem;
     line-height: 1.7;
@@ -115,8 +125,12 @@
   .dead {
     color: var(--color-ink-faint);
   }
+  /* the supersede stamp is a line of the file, not a footnote about it. At
+     0.72rem it was the only run in the card set smaller than the file's own
+     body, which read as a caption the site had added rather than as markdown
+     the contract wrote - and this line is exactly what the paragraph beside
+     the card points at. Same size as the body, one step down in ink. */
   .stamp {
-    font-size: 0.72rem;
     color: var(--color-ink-soft);
   }
 </style>

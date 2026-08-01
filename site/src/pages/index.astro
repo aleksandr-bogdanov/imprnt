@@ -5,7 +5,7 @@ import { hero, how, proof, file, closing } from "../lib/landing";
 
 import Terminal from "../islands/Terminal.tsx";
 import CopyButton from "../islands/CopyButton.tsx";
-import MagneticButton from "../islands/MagneticButton.tsx";
+import Cta from "../components/landing/Cta.astro";
 import LandingNote from "../components/landing/LandingNote.astro";
 import HowLanes from "../components/landing/HowLanes.astro";
 import RecallBlock from "../components/landing/RecallBlock.astro";
@@ -55,7 +55,7 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
           />
         ))}
 
-        <div class="mt-8" data-reveal data-reveal-delay="180">
+        <div class="mt-8" data-reveal data-reveal-delay="220">
           {/* the prompt marks where the command STARTS, so it top-aligns with
               the command's first line once the command wraps. The pair is its
               own flex row so the copy button stays optically centred. */}
@@ -69,14 +69,17 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
           <p class="mt-3 max-w-md text-sm text-ink-soft">{hero.installCaption}</p>
         </div>
 
-        <div class="mt-6 flex flex-wrap items-center gap-3" data-reveal data-reveal-delay="240">
-          <MagneticButton client:visible href={hero.ctaPrimary.href} label={hero.ctaPrimary.label} variant="primary" arrow />
-          <MagneticButton client:visible href={hero.ctaSecondary.href} label={hero.ctaSecondary.label} variant="ghost" external />
+        <div class="mt-6 flex flex-wrap items-center gap-3" data-reveal data-reveal-delay="260">
+          <Cta href={hero.ctaPrimary.href} label={hero.ctaPrimary.label} variant="primary" arrow />
+          <Cta href={hero.ctaSecondary.href} label={hero.ctaSecondary.label} variant="ghost" external />
         </div>
       </div>
 
-      {/* pt lands the transcript label's cap line on the h1's cap line (measured) */}
-      <div class="lg:pt-[5px]" data-reveal data-reveal-delay="160">
+      {/* pt lands the transcript label's cap line on the h1's cap line (measured).
+          Reveal cadence follows the reading path: label, headline, motto, then
+          the transcript (its label sits on the h1's line, so the two columns
+          start together), then the prose, the command, the buttons. */}
+      <div class="lg:pt-[5px]" data-reveal data-reveal-delay="130">
         <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-chrome">{hero.terminalLabel}</p>
         <Terminal lines={hero.terminal} />
         <p class="mt-4 text-sm text-ink-soft">{hero.terminalCaption}</p>
@@ -125,7 +128,11 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
           />
         ))}
       </div>
-      <div class="max-w-2xl" data-reveal data-reveal-delay="80">
+      {/* 200, after the two paragraphs at 120/160. At 80 the diagram AND the
+          verdict line riding under it ("Finding does not.") arrived before the
+          premises they conclude - the section's answer landing ahead of its
+          argument, in one screenful where the order is visible. */}
+      <div class="max-w-2xl" data-reveal data-reveal-delay="200">
         <HowLanes />
         <p
           class="mt-6 text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink"
@@ -145,10 +152,13 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
           narrower than "no index to rebuild", so the last cell wrapped to two
           lines while its neighbours held one. Below that it stacks, which is
           the same list the phone gets. */}
-      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 md:grid-cols-3 md:gap-y-0 md:py-0" data-reveal>
+      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 md:grid-cols-3 md:gap-y-0 md:py-0" data-reveal data-reveal-delay="240">
+        {/* 240: last in the section's first screen, after the diagram at 200.
+            At 0 the strip arrived with the eyebrow whenever a tall viewport put
+            both on screen at once. */}
         {how.spec.map((s, i) => (
           <span
-            class={`text-sm font-semibold uppercase tracking-wider text-ink-soft md:py-5 ${
+            class={`text-sm font-semibold uppercase tracking-wider text-ink md:py-5 ${
               i === 0 ? "" : "md:border-l md:border-line md:pl-8"
             }`}
           >
@@ -180,7 +190,9 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
           />
         ))}
         <div class="mt-6 max-w-2xl">
-          <a href={how.link.href} class="group inline-flex items-center gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline" data-reveal>
+          {/* the section's exit, so it lands last: at delay 0 it arrived on the
+              same beat as the first paragraph of the band it closes */}
+          <a href={how.link.href} class="group inline-flex items-center gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline" data-reveal data-reveal-delay="160">
             {how.link.label}
             <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 transition-transform duration-300 ease-out-expo group-hover:translate-x-0.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
@@ -221,10 +233,10 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
           floated a half-line clear of the rule above it and of its own label.
           Tight leading binds value to label, and the pair sits centred between
           the two rules. */}
-      <div class="mt-12 grid gap-y-8 border-y border-line py-9 sm:mt-14 sm:grid-cols-3 sm:gap-x-10" data-reveal data-reveal-delay="140">
+      <div class="mt-12 grid gap-y-8 border-y border-line py-9 sm:mt-14 sm:grid-cols-3 sm:gap-x-0 sm:py-0" data-reveal data-reveal-delay="180">
         {
-          proof.stats.map((s) => (
-            <div>
+          proof.stats.map((s, i) => (
+            <div class={`sm:py-9 ${i === 0 ? "" : "sm:border-l sm:border-line sm:pl-8"}`}>
               <p class="font-display text-[2.4rem] font-semibold leading-[1.02] tracking-[-0.025em] text-ink sm:text-[2.75rem]">{s.value}</p>
               <p class="mt-3 max-w-[20rem] text-sm text-ink-soft">{s.label}</p>
             </div>
@@ -235,7 +247,7 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
       {/* the capture runs full width now that Letta's paragraph is gone from
           beside it: it is the section's evidence, so it gets the whole measure
           instead of being squeezed into 1.15fr against a thin column */}
-      <div class="mt-12 sm:mt-14" data-reveal data-reveal-delay="160">
+      <div class="mt-12 sm:mt-14" data-reveal data-reveal-delay="220">
         <RecallBlock />
         <p class="mt-4 max-w-2xl text-sm text-ink-soft">{proof.recallCaption}</p>
       </div>
@@ -246,7 +258,7 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
           started mid-measure and the second stopped ~80px short of the rule
           above it, which read as an accident. The first link's cap line sits on
           the dogfood paragraph's first baseline. */}
-      <div class="mt-12 flex flex-col gap-6 border-t border-line pt-8 sm:mt-14 sm:flex-row sm:items-baseline sm:justify-between sm:gap-x-12" data-reveal data-reveal-delay="200">
+      <div class="mt-12 flex flex-col gap-6 border-t border-line pt-8 sm:mt-14 sm:flex-row sm:items-baseline sm:justify-between sm:gap-x-12" data-reveal data-reveal-delay="260">
         <p class="max-w-md text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg">{proof.dogfood}</p>
         <div class="flex flex-col items-start gap-3 sm:items-end">
           <a href={proof.evalLink.href} class="group inline-flex items-center gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline">
@@ -344,8 +356,8 @@ const mottoTail = mottoBreak < 0 ? "" : hero.motto.slice(mottoBreak + 2);
       </div>
 
       <div class="mt-6 flex flex-wrap justify-center gap-3" data-reveal data-reveal-delay="200">
-        <MagneticButton client:visible href={closing.ctaPrimary.href} label={closing.ctaPrimary.label} variant="primary" arrow />
-        <MagneticButton client:visible href={closing.ctaSecondary.href} label={closing.ctaSecondary.label} variant="ghost" external />
+        <Cta href={closing.ctaPrimary.href} label={closing.ctaPrimary.label} variant="primary" arrow />
+        <Cta href={closing.ctaSecondary.href} label={closing.ctaSecondary.label} variant="ghost" external />
       </div>
 
       {/* chrome, not faint: this is prose the reader is meant to read, and

@@ -62,9 +62,11 @@ import { proof } from "../../lib/landing";
     background: var(--color-surface);
   }
   .bar {
-    padding: 0.6rem 1rem;
+    padding: 0.625rem 1rem;
     border-bottom: 1px solid var(--color-line);
-    background: var(--color-bg-soft);
+    /* the chrome plane, so the band reads the same whichever section the
+       capture lands in (see --color-chrome in global.css) */
+    background: var(--color-chrome);
     font-family: var(--font-mono);
     font-size: 0.75rem;
     color: var(--color-ink-chrome);

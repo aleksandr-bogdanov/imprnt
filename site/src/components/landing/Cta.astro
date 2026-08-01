@@ -1,0 +1,48 @@
+---
+/**
+ * Landing (index.astro only): the hero and closing call-to-action buttons.
+ *
+ * This replaces the MagneticButton island. That island set an inline transform
+ * from framer-motion on every frame, which beats any class rule, so the hover
+ * state global.css defines for `.btn-primary` / `.btn-ghost` - a 2px lift plus
+ * the accent-strong fill - never rendered on the page's four most important
+ * controls. What rendered instead was a magnet: measured at 1440, hovering near
+ * the button's corner slid it 21px right and 6px up, so the primary CTA moved
+ * out from under the pointer. A page whose headline is "boring on purpose" does
+ * not have a button that dodges you.
+ *
+ * The nav's "Get started" was already a plain `.btn` anchor with the correct
+ * hover. This makes the landing's CTAs the same control, so there is one button
+ * on the site rather than two implementations of one. The arrow nudge is the
+ * same `group-hover:translate-x-0.5` the section links already use.
+ */
+interface Props {
+  href: string;
+  label: string;
+  variant?: "primary" | "ghost";
+  external?: boolean;
+  arrow?: boolean;
+}
+const { href, label, variant = "primary", external, arrow } = Astro.props;
+---
+
+<a
+  href={href}
+  class={`btn group ${variant === "primary" ? "btn-primary" : "btn-ghost"}`}
+  target={external ? "_blank" : undefined}
+  rel={external ? "noreferrer" : undefined}
+>
+  {label}
+  {
+    arrow && (
+      <svg
+        viewBox="0 0 24 24"
+        class="h-4 w-4 transition-transform duration-300 ease-out-expo group-hover:translate-x-0.5"
+        fill="none"
+        aria-hidden="true"
+      >
+        <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    )
+  }
+</a>

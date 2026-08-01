@@ -24,7 +24,11 @@ export default function CopyButton({ value, label }: Props) {
       type="button"
       onClick={copy}
       aria-label={label ? `Copy ${label}` : "Copy to clipboard"}
-      className="group inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-ink-soft transition-colors hover:border-accent hover:text-accent"
+      // bg-chrome, not bg-surface: the button sits INSIDE a bg-surface command
+      // box, so at the same fill it read as an outline drawn on the box rather
+      // than as a control you can press. Chrome is the one step defined off the
+      // surface in both themes.
+      className="group inline-flex items-center gap-2 rounded-lg border border-line bg-chrome px-2.5 py-1.5 text-ink-soft transition-colors hover:border-accent hover:text-accent"
     >
       <span className="relative grid h-4 w-4 place-items-center">
         <AnimatePresence mode="wait" initial={false}>
@@ -58,7 +62,13 @@ export default function CopyButton({ value, label }: Props) {
           )}
         </AnimatePresence>
       </span>
-      <span className="font-mono text-xs">{copied ? "copied" : "copy"}</span>
+      {/* font-sans: this is a UI label on a control, not part of the command.
+          It inherited the command box's font-mono, which is the one thing the
+          brand reserves for code and terminal captures. Fixed width so the
+          label swap on copy does not resize the button under the cursor. */}
+      <span className="inline-block w-[3.4em] text-left font-sans text-xs font-medium">
+        {copied ? "copied" : "copy"}
+      </span>
     </button>
   );
 }

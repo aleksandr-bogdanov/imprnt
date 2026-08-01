@@ -18,8 +18,9 @@ function tone(who: string) {
 
 export default function Terminal({ lines }: { lines: Line[] }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-surface">
-      <div className="border-b border-line bg-bg-soft px-4 py-2.5">
+    // rounded-xl, not 2xl: all four captures on the landing share one corner
+    <div className="overflow-hidden rounded-xl border border-line bg-surface">
+      <div className="border-b border-line bg-chrome px-4 py-2.5">
         <span className="font-mono text-xs text-ink-chrome">imp - your vault</span>
       </div>
       <div className="space-y-3 p-5 font-mono text-[13px] leading-relaxed sm:text-sm">
@@ -54,9 +55,13 @@ function Row({ who, segs }: { who: string; segs: Seg[] }) {
 
   // the elapsed-time marker is a rule with the interval sitting on it, so the
   // three-week gap reads as a break in the session rather than another message
+  // ink-chrome, not ink-faint: this rule is what makes the section's whole
+  // claim ("two chats, three weeks apart") visible inside the capture, and at
+  // 11px the faint step measured ~3.1:1. Faint stays for what is genuinely
+  // muted here - the pasted-transcript stub and the superseded date.
   if (who === "gap") {
     return (
-      <p className="flex select-none items-center gap-3 py-1 text-ink-faint">
+      <p className="flex select-none items-center gap-3 py-1 text-ink-chrome">
         <span className="h-px flex-1 bg-line" />
         <span className="text-[11px] uppercase tracking-wider">{body}</span>
         <span className="h-px flex-1 bg-line" />

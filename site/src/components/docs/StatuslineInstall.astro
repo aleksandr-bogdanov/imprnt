@@ -2,7 +2,7 @@
 /**
  * Page-specific (statusline): the install command rendered as a dark terminal
  * card that mirrors StatuslinePanel's chrome (same #11131a body, #181b24 chrome,
- * grey dots, left-aligned title, 14px radius) so the two terminals on the page
+ * left-aligned title, 14px radius) so the two terminals on the page
  * read as one design family instead of the light Starlight default. The remove
  * line lives here as a commented command so the install paragraph stays light on
  * inline-code chips. The copy button copies the runnable lines only (no comment).
@@ -25,7 +25,6 @@ const BODY = LINES.map(
 
 <div class="sl-term" role="img" aria-label="Terminal: imprnt plugin add statusline, and imprnt plugin rm statusline to remove.">
   <div class="sl-term-chrome">
-    <span class="sl-term-dot"></span><span class="sl-term-dot"></span><span class="sl-term-dot"></span>
     <span class="sl-term-title">terminal</span>
     <button class="sl-term-copy" type="button" data-copy={COPY} aria-label="Copy commands">copy</button>
   </div>
@@ -48,14 +47,7 @@ const BODY = LINES.map(
     border-top-left-radius: 14px;
     border-top-right-radius: 14px;
   }
-  .sl-term-dot {
-    width: 0.62rem;
-    height: 0.62rem;
-    border-radius: 999px;
-    background: #3a3f4d;
-  }
   .sl-term-title {
-    margin-left: 0.4rem;
     font-family: var(--sl-font);
     font-size: 0.7rem;
     letter-spacing: 0.08em;

@@ -19,15 +19,25 @@
   --color-line: #ddd7c7;
   --color-line-soft: #e7e2d4;
 
+  /* the chrome PLANE: the title band on a card (a filename tab, a pane title).
+     It is derived from the card's own --color-surface, never from a page
+     background, because a card lands on both `bg` and `bg-soft` sections. Set
+     to bg-soft it was the exact colour of every soft section, so the band on a
+     soft section vanished into the page and the card looked like it started at
+     its second row. This value sits a defined step BELOW every light page
+     ground (L* 91.0 against bg 96.1 / bg-soft 93.4 / surface 97.9), so the
+     band reads as chrome wherever the card is dropped. */
+  --color-chrome: #eae5d6;
+
   /* ink on paper */
   --color-ink: #1b1d1a;
   --color-ink-soft: #585b51;
   --color-ink-faint: #8b8d81;
-  /* chrome: the label band on a card (a file tab, a pane title) and the
-     frontmatter fence. One step up from faint, so a label naming a thing is
-     never fainter than the thing's own fields (faint reads 2.85:1 on the
-     chrome band, this reads 4.45:1) and still a step under captions. */
-  --color-ink-chrome: #6b6d63;
+  /* chrome ink: the label ON the chrome band (a file tab, a pane title) and the
+     frontmatter fence. Tuned to the band it names, which is the darkest ground
+     it ever sits on: 4.62:1 there, and 5.3-5.5:1 on the page grounds. Still a
+     step under captions (ink-soft reads 5.50:1 on the same band). */
+  --color-ink-chrome: #65665d;
 
   /* the one accent: resolved from the single source in accent.css */
   --color-accent: var(--brand-accent);
@@ -79,16 +89,28 @@
 
   --color-bg: #141310;
   --color-bg-soft: #191712;
-  --color-surface: #1c1a15;
+  /* the card plane, lifted from #1c1a15. At the old value a card on a bg-soft
+     section carried 1.5 L* of separation from its page (light carries 4.5), so
+     every card in dark read as a hairline outline drawn on the page rather than
+     as an object. The ladder now steps evenly: bg 5.9, bg-soft 7.8, surface
+     10.9, chrome 14.4, line 17.0. */
+  --color-surface: #201d17;
   --color-surface-2: #23201a;
   --color-line: #2c2a23;
   --color-line-soft: #211f19;
+  /* dark chrome plane. Elevation flips direction here, deliberately: below the
+     surface there is only 5 L* of room before the page ground, so a recessed
+     band in dark either collides with bg-soft or with bg. A title bar LIGHTER
+     than its pane is the standard dark-UI read (the same move GitHub's dark
+     file header makes), and it is the only value that separates from bg,
+     bg-soft AND surface at once. */
+  --color-chrome: #28241b;
 
   --color-ink: #ece9e0;
   --color-ink-soft: #a3a094;
   --color-ink-faint: #75736a;
-  /* the dark twin of the chrome step: 4.58:1 on the dark chrome band */
-  --color-ink-chrome: #838176;
+  /* the dark twin, tuned to the dark chrome band: 4.6:1 there, 5+ elsewhere */
+  --color-ink-chrome: #8f8d80;
 
   --color-accent: var(--brand-accent-dark);
   --color-accent-strong: var(--brand-accent-dark-strong);
@@ -253,6 +275,10 @@
     line-height: 1.25;
     padding-block: 0.66rem;
     padding-inline: 1.4rem;
+    /* a pill never breaks its own label. In the mobile menu the primary CTA
+       shared a flex row with the theme toggle and the GitHub button, and at
+       390px "Get started" wrapped to two lines inside the pill. */
+    white-space: nowrap;
     border-radius: 999px;
     border: 1px solid transparent;
     transition: transform 0.25s var(--ease-out-expo),
