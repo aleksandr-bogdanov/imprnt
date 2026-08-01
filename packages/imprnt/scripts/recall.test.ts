@@ -939,3 +939,70 @@ test("without --gap the result set is unchanged", () => {
   expect(r.stdout).toContain("a.md");
   expect(r.stdout).toContain("b.md");
 });
+
+// ── --passages / --proximity / --coverage ──────────────────────────────────────
+// All three are default-off, so every expectation above still describes shipped behaviour.
+
+test("--passages prints the matching paragraphs under the hit", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(
+    join(v, "note.md"),
+    "---\ntype: note\ntags: []\n---\n\n# Trip\n\nUnrelated opening paragraph about weather.\n\n" +
+      "The kestrel was seen at dawn near the ridge.\n\nAnother unrelated closing paragraph.",
+  );
+  const plain = recall("kestrel", v);
+  expect(plain.stdout).not.toContain("seen at dawn");
+
+  const withP = recall("kestrel", v, "--passages", "1");
+  expect(withP.code).toBe(0);
+  expect(withP.stdout).toContain("The kestrel was seen at dawn near the ridge.");
+  expect(withP.stdout).not.toContain("Unrelated opening paragraph");
+});
+
+test("--passages rejects a non-integer", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "a.md"), "---\ntype: note\ntags: []\n---\n\n# A\n\nkestrel");
+  for (const bad of ["0", "-1", "abc", "2x"]) {
+    const r = recallRaw("kestrel", "--vault", v, "--passages", bad);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("--passages must be a positive integer");
+  }
+});
+
+test("--coverage lifts a note matching more distinct query terms over one repeating a single term", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  // "broad" matches both terms once; "narrow" hammers one of them
+  writeFileSync(join(v, "broad.md"), "---\ntype: note\ntags: []\n---\n\n# Broad\n\nkestrel ridge");
+  writeFileSync(join(v, "narrow.md"), "---\ntype: note\ntags: []\n---\n\n# Narrow\n\nkestrel kestrel kestrel kestrel kestrel kestrel");
+  const order = (out: string) => [...out.matchAll(/^\s*\[[\d.]+\]\s+(\S+)$/gm)].map((m) => m[1]);
+  const withC = recall("kestrel ridge", v, "--coverage");
+  expect(withC.code).toBe(0);
+  expect(order(withC.stdout)[0]).toBe("broad.md");
+});
+
+test("--proximity lifts a note where the query terms sit together", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "near.md"), "---\ntype: note\ntags: []\n---\n\n# Near\n\nthe kestrel ridge was quiet");
+  writeFileSync(
+    join(v, "farapart.md"),
+    "---\ntype: note\ntags: []\n---\n\n# Far\n\nkestrel " + "filler ".repeat(120) + "ridge",
+  );
+  const order = (out: string) => [...out.matchAll(/^\s*\[[\d.]+\]\s+(\S+)$/gm)].map((m) => m[1]);
+  const withP = recall("kestrel ridge", v, "--proximity");
+  expect(withP.code).toBe(0);
+  expect(order(withP.stdout)[0]).toBe("near.md");
+});
+
+test("the new flags are all off by default", () => {
+  const v = newVault();
+  writeFileSync(join(v, "_tags.md"), TAGS_MD);
+  writeFileSync(join(v, "a.md"), "---\ntype: note\ntags: []\n---\n\n# A\n\nkestrel ridge\n\nsecond paragraph");
+  const r = recall("kestrel ridge", v);
+  expect(r.code).toBe(0);
+  expect(r.stdout).not.toContain("second paragraph"); // no passages
+  expect(r.stdout).toContain("a.md");
+});

@@ -38,6 +38,17 @@ let limit = 15; // tight by default — narrow, don't dump
 // the last one is noise the reader pays for. OFF by default (0): the shipped
 // behaviour is unchanged unless you ask for it.
 let gap = 0;
+// --passages N: print the N best-matching paragraphs of each hit instead of only its
+// path, so the caller can read the relevant lines rather than opening whole files. OFF
+// by default (0). Same BM25 arithmetic, applied within a note instead of across notes.
+let passages = 0;
+// --proximity: query terms sitting near each other in the body is a relevance signal
+// BM25 throws away entirely ("double charge" adjacent vs 200 words apart score the same).
+// OFF by default.
+let proximity = false;
+// --coverage: BM25 sums per term, so one term repeated can outrank a note that matches
+// three DIFFERENT query terms. This rewards breadth of match. OFF by default.
+let coverage = false;
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--vault") {
@@ -53,6 +64,16 @@ for (let i = 0; i < args.length; i++) {
     const n = parseInt(tok, 10);
     if (!Number.isFinite(n) || n <= 0) { console.error("--limit must be a positive integer"); process.exit(1); }
     limit = n;
+  } else if (args[i] === "--proximity") {
+    proximity = true;
+  } else if (args[i] === "--coverage") {
+    coverage = true;
+  } else if (args[i] === "--passages") {
+    const tok = args[++i];
+    if (tok === undefined || !/^[0-9]+$/.test(tok)) { console.error("--passages must be a positive integer"); process.exit(1); }
+    const n = parseInt(tok, 10);
+    if (!Number.isFinite(n) || n <= 0) { console.error("--passages must be a positive integer"); process.exit(1); }
+    passages = n;
   } else if (args[i] === "--gap") {
     const tok = args[++i];
     // a ratio in (0,1). 0.25 means "stop at the first hit scoring under a quarter of
@@ -65,7 +86,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const query = positional.join(" ").trim();
 if (!query) {
-  console.error('usage: imprnt recall "<query>" [--vault DIR] [--limit N] [--gap R]');
+  console.error('usage: imprnt recall "<query>" [--vault DIR] [--limit N] [--gap R] [--passages N] [--proximity] [--coverage]');
   process.exit(1);
 }
 
@@ -207,6 +228,8 @@ const baseTerms = contentTerms.length ? contentTerms : rawTerms;
 // single-token canonical tokenizes to one token, so the group is unchanged. The Set dedups the literal
 // against a same-spelling canonical token.
 const queryTerms = baseTerms.map((w) => [...new Set([w, ...tokenize(normalize(vocab, w))])]);
+// every surface form the query can match, used to keep positional indexing cheap
+const queryVariantSet = new Set(queryTerms.flat());
 // Add a group per token discovered from a multi-token/hyphenated synonym key. Each canonical token is
 // its own group so it scores additively alongside the literal query terms.
 for (const t of phraseSynonymTokens(query)) {
@@ -258,7 +281,7 @@ const SUMMARY_BOOST = 1; // curated note text, weighted like body — a rare bod
 const BODY_BOOST = 1;
 
 // --- pass 1: read + tokenize every note once; build weighted term frequencies + doc lengths ----------
-type Doc = { path: string; tf: Map<string, number>; len: number };
+type Doc = { path: string; tf: Map<string, number>; len: number; pos?: Map<string, number[]> };
 const docs: Doc[] = [];
 const df = new Map<string, number>(); // document frequency: how many notes contain each term
 
@@ -299,13 +322,26 @@ for (const path of files) {
   add(tokenize(aliases), TITLE_BOOST); // an alias is an identity match — same band as the title
   add(tags.flatMap(tokenize), TAG_BOOST);
   add(tokenize(summary), SUMMARY_BOOST);
-  add(tokenize(body), BODY_BOOST);
+  const bodyTokens = tokenize(body);
+  add(bodyTokens, BODY_BOOST);
+
+  // Positions are recorded ONLY for terms the query actually asks about, so this stays a
+  // handful of small arrays per note rather than a full positional index of the vault.
+  let pos: Map<string, number[]> | undefined;
+  if (proximity) {
+    pos = new Map();
+    for (let bi = 0; bi < bodyTokens.length; bi++) {
+      const t = bodyTokens[bi];
+      if (!queryVariantSet.has(t)) continue;
+      const arr = pos.get(t); if (arr) arr.push(bi); else pos.set(t, [bi]);
+    }
+  }
 
   // Doc length = sum of weighted term counts; BM25 length-normalizes against the corpus average so a
   // long note doesn't dominate purely by repeating a term.
   let len = 0;
   for (const c of tf.values()) len += c;
-  docs.push({ path, tf, len });
+  docs.push({ path, tf, len, pos });
   for (const term of tf.keys()) df.set(term, (df.get(term) ?? 0) + 1);
 }
 
@@ -313,6 +349,11 @@ const N = docs.length || 1;
 const avgdl = docs.reduce((s, d) => s + d.len, 0) / N || 1;
 const K1 = 1.5;
 const B = 0.75;
+// Proximity tuning. The window is a sentence-ish span in tokens; the weight keeps the
+// bonus a tie-breaker between comparable notes rather than a term of its own. Chosen for
+// those reasons, NOT fitted to any benchmark score.
+const PROX_WINDOW = 25;
+const PROX_WEIGHT = 0.35;
 
 // idf via the BM25 probabilistic form. Rare term -> large idf; a term in every note -> ~0. Floored at 0
 // so a near-ubiquitous term can't push a score negative.
@@ -358,7 +399,41 @@ for (const d of docs) {
     }
     if (best > 0) { score += best; scored.add(bestVariant); }
   }
-  if (score > 0) hits.push({ path: relative(vault, d.path), score: Math.round(score * 100) / 100 });
+  if (score > 0) {
+    // COVERAGE: reward matching more DISTINCT query groups. A note hitting three of four
+    // terms is about the query; a note repeating one term is about that term. Scaled so a
+    // full-coverage note is unchanged and a one-of-four note keeps 62.5% of its score -
+    // it still ranks, it just stops outranking broader matches on repetition alone.
+    if (coverage && scoringGroups.length > 1) {
+      score *= 0.5 + 0.5 * (scored.size / scoringGroups.length);
+    }
+    // PROXIMITY: query terms near each other in the body. For every pair of matched terms
+    // take their closest occurrence; a pair inside the window adds a fraction of the
+    // weaker term's idf, decaying linearly to zero at the window edge. Pure arithmetic
+    // over positions already indexed, no model, no second pass over the corpus.
+    if (proximity && d.pos && scored.size > 1) {
+      const present = [...scored].filter((t) => d.pos!.has(t));
+      let bonus = 0;
+      for (let x = 0; x < present.length; x++) {
+        for (let y = x + 1; y < present.length; y++) {
+          const a = d.pos.get(present[x])!, b = d.pos.get(present[y])!;
+          let best = Infinity;
+          // both position lists are ascending, so walk them together
+          for (let ia = 0, ib = 0; ia < a.length && ib < b.length; ) {
+            const dist = Math.abs(a[ia] - b[ib]);
+            if (dist < best) best = dist;
+            if (a[ia] < b[ib]) ia++; else ib++;
+          }
+          if (best < PROX_WINDOW) {
+            const w = Math.min(variantIdf.get(present[x]) ?? 0, variantIdf.get(present[y]) ?? 0);
+            bonus += PROX_WEIGHT * w * (1 - best / PROX_WINDOW);
+          }
+        }
+      }
+      score += bonus;
+    }
+    hits.push({ path: relative(vault, d.path), score: Math.round(score * 100) / 100 });
+  }
 }
 
 hits.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
@@ -376,7 +451,50 @@ if (gap > 0) {
 const shown = hits.slice(0, cut);
 const expanded = queryTerms.map((g) => g.join("|")).join(" ");
 console.log(`recall "${query}" [${expanded}] - ${hits.length} match(es)${hits.length > shown.length ? `, showing top ${shown.length}` : ""}, BM25-ranked:\n`);
-for (const h of shown) console.log(`  [${h.score.toFixed(2)}] ${h.path}`);
+// Score a single paragraph with the same weighted-BM25 arithmetic used across notes, so
+// "the best paragraph" means the same thing as "the best note", one level down.
+function bestPassages(absPath: string, n: number): string[] {
+  let raw = "";
+  try { raw = stripBom(readFileSync(absPath, "utf8")); } catch { return []; }
+  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const body = fmMatch ? raw.slice(fmMatch.index! + fmMatch[0].length) : raw;
+  // A paragraph is a blank-line-delimited block. A markdown table or list stays whole:
+  // splitting a table by line would hand back a row with no header, which the fidelity
+  // rule exists to prevent.
+  const paras = body.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p.length > 0);
+  if (paras.length <= n) return paras;
+  const scoredParas = paras.map((p) => {
+    const tf = new Map<string, number>();
+    for (const t of tokenize(p)) tf.set(t, (tf.get(t) ?? 0) + 1);
+    let plen = 0; for (const c of tf.values()) plen += c;
+    let sc = 0;
+    const used = new Set<string>();
+    for (const group of scoringGroups) {
+      let best = 0, bv = "";
+      for (const v of group) {
+        if (used.has(v)) continue;
+        const x = bm25Term(tf.get(v) ?? 0, plen, variantIdf.get(v) ?? 0);
+        if (x > best) { best = x; bv = v; }
+      }
+      if (best > 0) { sc += best; used.add(bv); }
+    }
+    return { p, sc };
+  });
+  // keep document order among the winners: a reader follows a note top to bottom
+  const keep = new Set(scoredParas.slice().sort((a, b) => b.sc - a.sc).slice(0, n).filter((x) => x.sc > 0).map((x) => x.p));
+  const out = paras.filter((p) => keep.has(p));
+  return out.length ? out : paras.slice(0, n);
+}
+
+for (const h of shown) {
+  console.log(`  [${h.score.toFixed(2)}] ${h.path}`);
+  if (passages > 0) {
+    for (const p of bestPassages(join(vault, h.path), passages)) {
+      for (const line of p.split("\n")) console.log(`      ${line}`);
+      console.log("");
+    }
+  }
+}
 if (hits.length > shown.length) {
   console.log(`\n  ... ${hits.length - shown.length} lower-ranked hit(s) hidden. Raise with --limit if needed. Usually you do not.`);
 }
