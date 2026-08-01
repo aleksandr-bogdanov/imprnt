@@ -12,9 +12,10 @@
  *   ~~struck text~~            faint, struck - what the contract does to a stale fact
  *   list markers               faint, so the content sits forward of its bullet
  *
- * `depth` stops the nesting: a linked note opens one level deep and its own links
- * render as plain accent text. Without it, two notes that link to each other would
- * recurse forever at build time.
+ * Nesting is UNLIMITED: a link inside an opened note opens that note too, as deep as
+ * the graph goes. What stops the recursion is not a depth cap but a `seen` chain - a
+ * note already open further up the stack renders as plain accent text, so two notes
+ * that link to each other cannot loop, and a cycle terminates the moment it closes.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -22,9 +23,10 @@ import { join } from "node:path";
 interface Props {
   text?: string;
   vault?: string;
-  depth?: number;
+  /** Notes already open above this one. A link back into the chain is not followed. */
+  seen?: string[];
 }
-const { text = "", vault = "", depth = 0 } = Astro.props;
+const { text = "", vault = "", seen = [] } = Astro.props;
 
 /** Resolve a [[folder/slug]] to its file, if the vault has it. */
 function resolve(target: string): string | null {
@@ -41,7 +43,7 @@ function read(path: string): string {
   }
 }
 
-type Tok = { k: string; v: string; link?: string | null };
+type Tok = { k: string; v: string; link?: string | null; target?: string };
 
 /** Split one line into coloured tokens. Deliberately small: this styles a note, it is not a parser. */
 function lineTokens(line: string, inFrontmatter: boolean): Tok[] {
@@ -78,7 +80,8 @@ function lineTokens(line: string, inFrontmatter: boolean): Tok[] {
     if (m.index > last) out.push({ k: inFrontmatter ? "val" : "text", v: rest.slice(last, m.index) });
     if (m[1]) {
       const target = m[1].slice(2, -2);
-      out.push({ k: "link", v: m[1], link: depth === 0 ? resolve(target) : null });
+      // follow the link unless the note it points at is already open above us
+      out.push({ k: "link", v: m[1], link: seen.includes(target) ? null : resolve(target), target });
     } else {
       out.push({ k: "gone", v: m[2] });
     }
@@ -110,7 +113,7 @@ const rows = lines.map((l, i) => {
                   {t.v}
                   <span class="nb-pop">
                     <span class="nb-pop-body">
-                      <Astro.self text={read(t.link)} vault={vault} depth={depth + 1} />
+                      <Astro.self text={read(t.link)} vault={vault} seen={[...seen, t.target!]} />
                     </span>
                   </span>
                 </span>
@@ -163,6 +166,7 @@ const rows = lines.map((l, i) => {
   /* a link that resolves opens the note it points at, one level deep */
   .nb-host {
     position: relative;
+    display: inline;
     cursor: help;
     outline: none;
     border-bottom: 1px dotted color-mix(in oklab, var(--color-accent) 45%, transparent);
@@ -202,8 +206,8 @@ const rows = lines.map((l, i) => {
     position: absolute;
     left: 0;
     right: 0;
-    top: -0.6rem;
-    height: 0.6rem;
+    top: -0.35rem;
+    height: 0.35rem;
   }
 
   .nb-pop-body {

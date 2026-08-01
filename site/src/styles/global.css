@@ -229,6 +229,7 @@
      :focus-visible makes it reachable by keyboard. */
   .pop-host {
     position: relative;
+    display: inline;
     outline: none;
     border-bottom: 1px dotted var(--color-line);
     cursor: help;
@@ -283,12 +284,12 @@
     position: absolute;
     left: 0;
     right: 0;
-    top: -0.6rem;
-    height: 0.6rem;
+    top: -0.35rem;
+    height: 0.35rem;
   }
   .pop-up > .pop::before {
     top: auto;
-    bottom: -0.6rem;
+    bottom: -0.35rem;
   }
   .pop-body {
     display: block;

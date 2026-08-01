@@ -76,14 +76,15 @@ const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
           withText.map((h) => (
             <li>
               <span class="score">{h.score}</span>
-              <span class="path" tabindex="0">
-                <span class="dir">{h.dir}</span><span class="file">{h.file}</span>
+              <span class="cell">
+              <span class="path" tabindex="0"><span class="dir">{h.dir}</span><span class="file">{h.file}</span>
                 {h.body && (
                   <span class="pop">
                     <span class="pop-bar">{h.dir}{h.file}</span>
                     <span class="pop-body"><NoteBody text={h.body} vault={VAULT} /></span>
                   </span>
                 )}
+              </span>
               </span>
             </li>
           ))
@@ -208,9 +209,14 @@ const withText = hits.map((h) => ({ ...h, body: note(h.dir, h.file) }));
   }
 
   /* the hover: the note's REAL text, read from the repo at build time */
+  /* the grid cell fills its column; the hover target inside it does not */
+  .cell {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
   .path {
     position: relative;
-    min-width: 0;
+    display: inline;
     overflow-wrap: anywhere;
     cursor: help;
     border-bottom: 1px dotted var(--color-line);
