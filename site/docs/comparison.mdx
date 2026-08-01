@@ -37,7 +37,31 @@ Direction changes like that are normal in a young field, and you do not have to 
 
 All of these were defensible business calls. The question to ask a memory tool up front is what you keep when its vendor makes one. The pattern in the ledger: users keep whatever was plain files and lose whatever lived in the tool's own store.
 
-One row points the other way, and it is the strongest evidence on the page because it comes from the other camp. Letta, a memory company, ran a benchmark where plain files scored 74.0%, ahead of both its own specialized memory tools and mem0's best variant at 68.5%. The numbers are vendor-run, and they were published against the vendor's own prior product, which is the rare direction that earns trust. Letta is now rebuilding its flagship around Markdown files tracked in git, the same version-history tool developers use for code.
+One row points the other way, and it comes from the other camp. Letta, a memory company, published a LoCoMo run where a plain-files approach scored 74.0%, ahead of its own specialized memory tools and of mem0's best variant at 68.5%. Published against a vendor's own prior product is the rare direction that earns trust, and Letta is now rebuilding its flagship around Markdown files tracked in git.
+
+## What we measured ourselves
+
+We ran imprnt on the same benchmark, and the result is not a win.
+
+LoCoMo is a public academic benchmark of 1,540 questions about long multi-session conversations. We scored it with Letta's own published grader, unmodified, and graded the answers with OpenAI's gpt-4.1, the judge model their grader specifies. Both arms below use the identical vault, questions, grader and judge. The only variable is which model does imprnt's reading and writing.
+
+| run | answering model | score | 95% CI |
+|---|---|---|---|
+| imprnt | gpt-4o-mini, the model Letta's run used | **58.6%** | 56.2-61.1% |
+| imprnt | Claude Sonnet | **76.3%** | 74.2-78.4% |
+| Letta, as published | gpt-4o-mini | 74.0% | not stated |
+
+Read the first row before the second. On the same model Letta used, **imprnt loses by about fifteen points**, and the intervals do not overlap. The second row is not a rebuttal to that: a stronger model is worth roughly seventeen points to imprnt, so comparing our Sonnet number to their gpt-4o-mini number would be comparing two different things.
+
+Three things you should know before using any number on this page, ours included:
+
+The judge moves the score more than the design does. Grading one fixed set of imprnt's answers with Claude instead of gpt-4.1 changed the result by **nine points** (68.4% against 77.6%), on identical text, with agreement at 89.5% and the disagreements running fifteen-to-one in one direction. Every published LoCoMo figure in this category sits inside a 68-75% band that is narrower than that.
+
+Letta's 74.0% cannot be reproduced from what they published. Their benchmark code exists and their blog links a specific line of it, but the post states no question count, category set, repeat count, or chunking, and no run configuration or result file is recoverable from the repository.
+
+Our own number has a real limit. The vault built from one LoCoMo conversation is about 62 notes, so returning the top fifteen hands over a quarter of the corpus. That says nothing about how the ranking holds at a thousand notes, which is the case that actually matters.
+
+The harness, every prediction, every judge verdict and the scripts are in the repository. Re-run it before believing any of the above.
 
 iai earns a fair mention here. It is local, open source, and upfront about its design, and everything it stores lives in an encrypted database. Apply the same test and the answer is blunt: if iai vanishes, you keep an encrypted blob and a key.
 
