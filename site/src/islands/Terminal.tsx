@@ -42,7 +42,9 @@ function Mark({ seg }: { seg: Seg }) {
       </span>
     );
   }
-  if (seg.k === "key") return <span className="font-semibold text-ink">{seg.v}</span>;
+  // a recovered fact is the point of the transcript, so it never breaks across
+  // two lines ("July 15" split at the wrap was reading as two facts)
+  if (seg.k === "key") return <span className="whitespace-nowrap font-semibold text-ink">{seg.v}</span>;
   if (seg.k === "gone") return <span className="text-ink-faint line-through decoration-from-font">{seg.v}</span>;
   return <span className="text-ink-faint">{seg.v}</span>;
 }

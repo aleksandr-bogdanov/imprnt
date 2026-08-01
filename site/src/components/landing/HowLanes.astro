@@ -73,6 +73,11 @@ const lanes = [
     flex-direction: column;
     gap: 0.3rem;
     align-self: stretch;
+    /* the label is 0.7rem on 1.2 leading, the sentence beside it 0.93rem on
+       1.55, so with both flush to the padding box the label's baseline rides
+       ~6px above the sentence's. The offset puts the two first lines on one
+       baseline; the rule still spans the whole row because it is a border. */
+    padding-top: 0.38rem;
     padding-right: 1.15rem;
     border-right: 1px solid var(--color-line);
   }

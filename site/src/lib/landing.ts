@@ -172,7 +172,12 @@ export const file = {
 };
 
 export const closing = {
-  heading: "Start your vault in two commands.",
+  // Same words, split only so the line breaks at the phrase. text-wrap:balance
+  // put "in" alone at the end of line one, because "in two commands." is a
+  // hair WIDER than "Start your vault in" - no max-width can force the better
+  // break, only keeping the phrase whole can. Same device as how.headingLead.
+  headingLead: "Start your vault",
+  headingTail: "in two commands.",
   sub: "Open source, MIT licensed, and yours to read end to end.",
   install: site.install,
   ctaPrimary: { label: "Read the docs", href: "/getting-started/" },

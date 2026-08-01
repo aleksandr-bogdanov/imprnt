@@ -25,7 +25,7 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
       <p class="eyebrow" data-reveal>{hero.eyebrow}</p>
     </div>
 
-    <div class="shell mt-6 grid gap-x-12 gap-y-16 lg:grid-cols-[1.05fr_0.95fr] lg:items-start">
+    <div class="shell mt-6 grid gap-x-12 gap-y-16 lg:grid-cols-[1.12fr_0.88fr] lg:items-start">
       <div>
         <h1 class="text-hero font-semibold" data-reveal data-reveal-delay="60">
           {hero.headlineLead}<br />
@@ -84,9 +84,10 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
         diagram, then a full-width spec strip, then the mechanism and the cost
         as two even columns. Each band's halves end together.
 
-        Mobile stacks in source order, which already reads right, so the only
-        order override left is the lanes card, which leads on mobile as the
-        section's summary. */}
+        Mobile stacks in source order, which already reads right: two
+        paragraphs, then the diagram breaking the run, then the verdict line
+        under it - the same reading the desktop columns give. No order
+        overrides left. */}
     <div class="shell">
       <div class="max-w-5xl">
         <p class="eyebrow" data-reveal>{how.eyebrow}</p>
@@ -98,26 +99,38 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
       </div>
     </div>
 
-    {/* band A: the origin, with the lanes diagram holding the other half */}
-    <div class="shell mt-14 grid items-start gap-x-12 gap-y-0 lg:grid-cols-2 lg:gap-y-10">
-      <div class="contents lg:block">
-        {how.paras.map((p, i) => (
+    {/* band A: the origin two paragraphs, with the lanes diagram holding the
+        other half AND the verdict line sitting under it. The verdict is the
+        sentence that names the split the diagram draws, so binding it to the
+        figure is what makes the two halves end on the same line (317 vs 315px
+        measured) instead of the card floating over 170px of dead paper - the
+        tilt Alex called out. */}
+    <div class="shell mt-12 grid items-start gap-x-12 gap-y-10 sm:mt-14 lg:grid-cols-2">
+      <div>
+        {how.paras.slice(0, 2).map((p, i) => (
           <p
-            class={`max-w-2xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${i === 0 ? "order-2 mt-10 lg:mt-0" : "order-2 mt-6"}`}
+            class={`max-w-2xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink ${i === 0 ? "" : "mt-6"}`}
             data-reveal
             data-reveal-delay={120 + i * 40}
             set:html={p}
           />
         ))}
       </div>
-      <div class="order-1 max-w-2xl lg:order-none" data-reveal data-reveal-delay="80">
+      <div class="max-w-2xl" data-reveal data-reveal-delay="80">
         <HowLanes />
+        <p
+          class="mt-6 text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink"
+          set:html={how.paras[2]}
+        />
       </div>
     </div>
 
-    {/* band B: the spec strip, full width - the hairline that breaks the prose */}
-    <div class="shell mt-14">
-      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 sm:grid-cols-3 sm:justify-items-center sm:gap-x-12" data-reveal>
+    {/* band B: the spec strip, full width - the hairline that breaks the prose.
+        The three items land on the band's own edges (first on the text margin,
+        last on the right margin) instead of floating at the centres of equal
+        thirds, which left both ends short of the rules above and below them. */}
+    <div class="shell mt-12 sm:mt-14">
+      <div class="grid grid-cols-1 gap-y-3 border-y border-line py-5 sm:grid-cols-3 sm:gap-x-12 sm:[&>*:last-child]:justify-self-end sm:[&>*:nth-child(2)]:justify-self-center" data-reveal>
         {how.spec.map((s) => (
           <span class="text-sm font-semibold uppercase tracking-wider text-ink-soft">{s}</span>
         ))}
@@ -125,7 +138,7 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
     </div>
 
     {/* band C: mechanism left, cost right - two paragraphs each, even columns */}
-    <div class="shell mt-12 grid items-start gap-x-12 gap-y-6 lg:grid-cols-2">
+    <div class="shell mt-12 grid items-start gap-x-12 gap-y-6 sm:mt-14 lg:grid-cols-2">
       <div>
         {how.paras2.slice(0, 2).map((p, i) => (
           <p
@@ -146,9 +159,9 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
           />
         ))}
         <div class="mt-6 max-w-2xl">
-          <a href={how.link.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline" data-reveal>
+          <a href={how.link.href} class="group inline-flex items-center gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline" data-reveal>
             {how.link.label}
-            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 transition-transform duration-300 ease-out-expo group-hover:translate-x-0.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
         </div>
       </div>
@@ -167,7 +180,7 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
         <h2 class="mt-3 text-display font-semibold leading-[1.08]" data-reveal data-reveal-delay="60">{proof.heading}</h2>
       </div>
 
-      <div class="mt-10 max-w-3xl">
+      <div class="mt-12 max-w-3xl sm:mt-14">
         <p
           class="text-balance font-display text-2xl font-semibold text-ink [&_strong]:text-accent sm:text-3xl"
           data-reveal
@@ -182,12 +195,17 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
         />
       </div>
 
-      <div class="mt-12 grid gap-y-8 border-y border-line py-8 sm:grid-cols-3 sm:gap-x-10" data-reveal data-reveal-delay="140">
+      {/* the numerals carry display leading (1.02), not the body's 1.65: at
+          body leading a 2.75rem figure sits in a 72px line box, so each number
+          floated a half-line clear of the rule above it and of its own label.
+          Tight leading binds value to label, and the pair sits centred between
+          the two rules. */}
+      <div class="mt-12 grid gap-y-8 border-y border-line py-9 sm:mt-14 sm:grid-cols-3 sm:gap-x-10" data-reveal data-reveal-delay="140">
         {
           proof.stats.map((s) => (
             <div>
-              <p class="font-display text-[2.4rem] font-semibold text-ink sm:text-[2.75rem]">{s.value}</p>
-              <p class="mt-2 max-w-[20rem] text-sm text-ink-soft">{s.label}</p>
+              <p class="font-display text-[2.4rem] font-semibold leading-[1.02] tracking-[-0.025em] text-ink sm:text-[2.75rem]">{s.value}</p>
+              <p class="mt-3 max-w-[20rem] text-sm text-ink-soft">{s.label}</p>
             </div>
           ))
         }
@@ -196,25 +214,28 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
       {/* the capture runs full width now that Letta's paragraph is gone from
           beside it: it is the section's evidence, so it gets the whole measure
           instead of being squeezed into 1.15fr against a thin column */}
-      <div class="mt-12" data-reveal data-reveal-delay="160">
+      <div class="mt-12 sm:mt-14" data-reveal data-reveal-delay="160">
         <RecallBlock />
         <p class="mt-4 max-w-2xl text-sm text-ink-soft">{proof.recallCaption}</p>
       </div>
 
-      {/* both links sit on ONE baseline: the "a technical read" note used to hang under
-          the second link and push its label off the first link's line. It is now a
-          same-line aside, so the two accent labels align. */}
-      <div class="mt-10 flex flex-col gap-6 border-t border-line pt-8 sm:flex-row sm:items-baseline sm:justify-between" data-reveal data-reveal-delay="200">
+      {/* the two links stack and end on the right margin, so their arrows make a
+          column and the block has a real edge. Side by side they wrapped inside
+          a full-width flex row and both ends floated: the first link's label
+          started mid-measure and the second stopped ~80px short of the rule
+          above it, which read as an accident. The first link's cap line sits on
+          the dogfood paragraph's first baseline. */}
+      <div class="mt-12 flex flex-col gap-6 border-t border-line pt-8 sm:mt-14 sm:flex-row sm:items-baseline sm:justify-between sm:gap-x-12" data-reveal data-reveal-delay="200">
         <p class="max-w-md text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg">{proof.dogfood}</p>
-        <div class="flex flex-wrap items-baseline gap-x-8 gap-y-3">
-          <a href={proof.evalLink.href} class="inline-flex items-center gap-1.5 text-sm font-semibold text-accent hover:underline">
+        <div class="flex flex-col items-start gap-3 sm:items-end">
+          <a href={proof.evalLink.href} class="group inline-flex items-center gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline">
             {proof.evalLink.label}
-            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 transition-transform duration-300 ease-out-expo group-hover:translate-x-0.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
-          <a href={proof.compareLink.href} class="inline-flex items-baseline gap-1.5 text-sm font-semibold text-accent hover:underline">
+          <a href={proof.compareLink.href} class="group inline-flex items-baseline gap-1.5 text-sm font-semibold text-accent underline-offset-4 hover:underline">
             {proof.compareLink.label}
             <span class="font-normal text-ink-faint">({proof.compareLink.note})</span>
-            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 self-center" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 self-center transition-transform duration-300 ease-out-expo group-hover:translate-x-0.5" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
         </div>
       </div>
@@ -233,9 +254,17 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
       </div>
     </div>
 
-    {/* mobile keeps the note card second, right after the paragraph that makes
-        the "every note is a markdown file" claim, instead of trailing all four */}
-    <div class="shell mt-12 grid items-start gap-x-12 gap-y-0 lg:grid-cols-2 lg:gap-y-10">
+    {/* Three paragraphs against the note card, and the two halves land within
+        20px of each other. The fourth paragraph used to ride under the card,
+        which pushed the right column ~190px past the left and left a hole in
+        the bottom-left corner - the same tilt as the how section, mirrored. It
+        is the section's coda anyway ("the trade for all of this"), so it now
+        closes the section full width under a rule.
+
+        Mobile keeps the note card second, right after the paragraph that makes
+        the "every note is a markdown file" claim, so no run of prose passes two
+        paragraphs before a visual. */}
+    <div class="shell mt-12 grid items-start gap-x-12 gap-y-0 sm:mt-14 lg:grid-cols-2 lg:gap-y-10">
       <div class="contents lg:block lg:max-w-xl">
         {file.paras.slice(0, 3).map((p, i) => (
           <p
@@ -247,14 +276,20 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
         ))}
       </div>
 
-      <div class="contents lg:block lg:max-w-xl">
-        <div class="order-3 mt-10 mb-2 lg:mt-0 lg:mb-0" data-reveal data-reveal-delay="180">
-          <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-chrome">{file.noteLabel}</p>
-          <LandingNote />
-          <p class="mt-4 text-sm text-ink-soft">{file.noteCaption}</p>
-        </div>
+      {/* same nudge as the hero: 5px lands the card label's cap line on the cap
+          line of the paragraph starting the other column */}
+      <div class="order-3 mt-10 mb-4 lg:order-none lg:mb-0 lg:mt-0 lg:max-w-xl lg:pt-[5px]" data-reveal data-reveal-delay="180">
+        <p class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-chrome">{file.noteLabel}</p>
+        <LandingNote />
+        <p class="mt-4 text-sm text-ink-soft">{file.noteCaption}</p>
+      </div>
+    </div>
+
+    {/* the coda: full width under a rule, held to a reading measure */}
+    <div class="shell mt-12 sm:mt-14">
+      <div class="border-t border-line pt-8">
         <p
-          class="order-5 mt-8 max-w-xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink"
+          class="max-w-3xl text-[1.0625rem] leading-relaxed text-ink-soft sm:text-lg [&_strong]:font-semibold [&_strong]:text-ink"
           data-reveal
           data-reveal-delay="240"
           set:html={file.paras[3]}
@@ -266,10 +301,15 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
   {/* ─────────────────────────────  CLOSING  ───────────────────────────── */}
   <section class="relative overflow-hidden border-t border-line py-24 sm:py-32">
     <div class="shell-narrow relative text-center">
-      <h2 class="text-display font-semibold" data-reveal>{closing.heading}</h2>
-      <p class="mx-auto mt-4 max-w-md text-lg text-ink-soft" data-reveal data-reveal-delay="80">{closing.sub}</p>
+      <h2 class="text-display font-semibold" data-reveal>
+        {closing.headingLead} <span class="whitespace-nowrap">{closing.headingTail}</span>
+      </h2>
+      {/* max-w-md cut this one word short and left "to end." alone on line two */}
+      <p class="mx-auto mt-4 max-w-lg text-lg text-ink-soft" data-reveal data-reveal-delay="80">{closing.sub}</p>
 
-      <div class="mt-9 flex justify-center" data-reveal data-reveal-delay="140">
+      {/* the command and the two buttons are one action cluster, so they sit
+          closer to each other (24) than the cluster sits to the sub-line (40) */}
+      <div class="mt-10 flex justify-center" data-reveal data-reveal-delay="140">
         <div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left font-mono text-sm">
           <span class="flex min-w-0 items-start gap-3">
             <span class="shrink-0 select-none text-accent">$</span>
@@ -279,12 +319,12 @@ import RecallBlock from "../components/landing/RecallBlock.astro";
         </div>
       </div>
 
-      <div class="mt-7 flex flex-wrap justify-center gap-3" data-reveal data-reveal-delay="200">
+      <div class="mt-6 flex flex-wrap justify-center gap-3" data-reveal data-reveal-delay="200">
         <MagneticButton client:visible href={closing.ctaPrimary.href} label={closing.ctaPrimary.label} variant="primary" arrow />
         <MagneticButton client:visible href={closing.ctaSecondary.href} label={closing.ctaSecondary.label} variant="ghost" external />
       </div>
 
-      <p class="mx-auto mt-12 max-w-md text-sm text-ink-faint" data-reveal data-reveal-delay="260">
+      <p class="mx-auto mt-14 max-w-md text-balance text-sm text-ink-faint" data-reveal data-reveal-delay="260">
         {closing.quip}
       </p>
     </div>
