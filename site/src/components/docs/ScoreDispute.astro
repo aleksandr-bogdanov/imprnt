@@ -3,7 +3,8 @@
  * comparison.mdx ONLY - makes "self-reported" concrete as one exhibit: three
  * published answers to the single question "what does Zep score on LoCoMo",
  * each from a different party's run, plus a footer on mem0 disagreeing with
- * itself. Facts from docs/competitors/zep-graphiti.md and mem0.md (primary
+ * itself. Recomputed from mem0's committed per-question data, with their own
+ * stated explanation attached. Facts from docs/competitors/zep-graphiti.md and mem0.md (primary
  * sources, dated 2026-06-20). Same three-cell card style as BenchStrip,
  * collapses to one column at 720px. Scoped CSS only, no Tailwind (docs pages
  * do not load it), theme-aware via --sl tokens.
@@ -41,8 +42,10 @@ const CELLS = [
     }
   </div>
   <p class="sd-foot">
-    mem0's own pages disagree with each other too: LoCoMo 91.6 on its README against 92.5 on its
-    research page, and LongMemEval 93.4, 94.4, or 94.8 depending on which mem0 page you read.
+    mem0's README publishes 92.5% on LoCoMo where its own committed per-question results
+    recompute to 91.56%, and 91.8% where they recompute to 82.66%. The commit that set those
+    figures changed only README.md, and mem0's own commit message attributes them to a newer
+    run that is not in the repository.
     No neutral third party has settled any of it.
   </p>
 </div>

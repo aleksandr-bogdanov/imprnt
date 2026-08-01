@@ -36,11 +36,11 @@ The measuring stick recorded here: "the dumbest thing that works" is measured ag
 
 ## BM25, not embeddings
 
-<DesignDecision icon="search" oneLiner="Search ranks with decades-old search-engine arithmetic. No AI touches a query.">
+<DesignDecision icon="search" oneLiner="Search ranks with decades-old search-engine arithmetic. No AI ranks a result.">
 
 `recall` ranks with **BM25**, a formula search engines have used for decades: plain arithmetic over how often your query's words appear in each note, and how rare those words are across the vault. Most AI tools reach for vector search instead, where a model turns every note into a long list of numbers (an embedding) and compares distances. `recall` runs no rerank, no embeddings, no vector store, and no protocol layer over the vault. The mechanics live in [How it works](/how-it-works/). Two calls are specific to this page.
 
-Today `recall` reads every note on every query, and that holds to about 10k notes. Past that, the path stays local: a fast text pre-filter in front of the ranking carries it to about 100k, and a word index kept on disk (what search engines call an inverted index) carries it past that. Scaling adds a local index, never a vector store or a model.
+Today `recall` reads every note on every query. Measured: 157ms on a 308-note vault. Past the point where that stops being comfortable the path stays local: a fast text pre-filter in front of the ranking, then a word index kept on disk (what search engines call an inverted index). Scaling adds a local index, never a vector store or a model.
 
 The other call is the trade itself. Vector search sounds smarter but costs more, re-indexes on every change, and hides why a result matched. BM25 over plain text is free, clear, and good enough once notes are tagged well on the way in.
 

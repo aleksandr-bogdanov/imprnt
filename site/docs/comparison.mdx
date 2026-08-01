@@ -31,7 +31,7 @@ The same choice decides the next question in advance, because a store you cannot
 
 In March 2026 a notes app called Reor was archived by its owner, after about a year without updates. Its users kept their notes, because the notes were plain Markdown files on their own disks. They lost the search and the map of related notes, because both lived in an index only the app could read.
 
-Direction changes like that are normal in a young field, and you do not have to guess how they go. Here is the record of the last eighteen months across this page's own table, each item taken from the vendor's own repo or announcement:
+Direction changes like that are normal in a young field, and you do not have to guess how they go. Here is the record since mid-2025 across this page's own table, each item taken from the vendor's own repo or announcement:
 
 <TrackRecord />
 
@@ -43,7 +43,7 @@ One row points the other way, and it comes from the other camp. Letta, a memory 
 
 We ran imprnt on the same benchmark, and the result is not a win.
 
-LoCoMo is a public academic benchmark of 1,540 questions about long multi-session conversations. We scored it with Letta's own published grader, unmodified, and graded the answers with OpenAI's gpt-4.1, the judge model their grader specifies. Both arms below use the identical vault, questions, grader and judge. The only variable is which model does imprnt's reading and writing.
+LoCoMo is a public academic benchmark of 1,986 questions about long multi-session conversations. Every vendor including us scores the same 1,540 of them, because the adversarial category is dropped by Letta, mem0 and Zep alike. We scored it with Letta's own published grader, unmodified, and graded the answers with OpenAI's gpt-4.1, the judge model their grader specifies. Both arms use identical questions, the same grader and the same judge. The variable is the model, and it does imprnt's writing as well as its reading, so the vaults differ too: gpt-4o-mini wrote about 40 notes per conversation, Sonnet about 78. The gain below is write quality and answer quality together, not the answering step alone.
 
 | run | answering model | score | 95% CI |
 |---|---|---|---|
@@ -51,15 +51,17 @@ LoCoMo is a public academic benchmark of 1,540 questions about long multi-sessio
 | imprnt | Claude Sonnet | **76.3%** | 74.2-78.4% |
 | Letta, as published | gpt-4o-mini | 74.0% | not stated |
 
-Read the first row before the second. On the same model Letta used, **imprnt loses by about fifteen points**, and the intervals do not overlap. The second row is not a rebuttal to that: a stronger model is worth roughly seventeen points to imprnt, so comparing our Sonnet number to their gpt-4o-mini number would be comparing two different things.
+Two harness details, since both favour us. An LLM shapes each question into keywords before the ranker runs, which is imprnt's documented read path but is not what LoCoMo's reference harness does. And one line was added to the answer prompt telling the model to name every item when a question asks for a set. That line was written after reading multi-hop failures. Both are in the committed harness.
+
+Read the first row before the second. On the same model Letta used, **imprnt loses by about fifteen points**, and 74.0% sits well outside our interval. Letta published none of their own. The second row is not a rebuttal to that: a stronger model is worth roughly seventeen points to imprnt, so comparing our Sonnet number to their gpt-4o-mini number would be comparing two different things.
 
 Three things you should know before using any number on this page, ours included:
 
-The judge moves the score more than the design does. Grading one fixed set of imprnt's answers with Claude instead of gpt-4.1 changed the result by **nine points** (68.4% against 77.6%), on identical text, with agreement at 89.5% and the disagreements running fifteen-to-one in one direction. Every published LoCoMo figure in this category sits inside a 68-75% band that is narrower than that.
+The judge moves the score more than the design does. Grading one fixed set of imprnt's answers with Claude instead of gpt-4.1 changed the result by **nine points** (68.4% against 77.6%) on one conversation's 152 answers, on identical text, with agreement at 89.5% and the disagreements running fifteen-to-one in one direction. The three figures this page stands next to, mem0 68.44%, Letta 74.0% and Zep 75.14%, span less than seven points. That is narrower than the swing from changing the judge.
 
-Letta's 74.0% cannot be reproduced from what they published. Their benchmark code exists and their blog links a specific line of it, but the post states no question count, category set, repeat count, or chunking, and no run configuration or result file is recoverable from the repository.
+Letta's 74.0% cannot be reproduced from what they published. Their benchmark code exists and their blog links a specific line of it, but the post states no question count, category set, repeat count, or chunking, and no run configuration or result file is recoverable from the repository, though that repository commits no benchmark's raw results at all, so the absence is not specific to LoCoMo.
 
-Our own number has a real limit. The vault built from one LoCoMo conversation is about 62 notes, so returning the top fifteen hands over a quarter of the corpus. That says nothing about how the ranking holds at a thousand notes, which is the case that actually matters.
+Our own number has a real limit. The vaults built from one LoCoMo conversation run from 8 notes to 55, so returning the top fifteen hands over a third of the corpus, and on the smallest one all of it. That says nothing about how the ranking holds at a thousand notes, which is the case that actually matters.
 
 The harness, every prediction, every judge verdict and the scripts are in the repository. Re-run it before believing any of the above.
 
@@ -87,7 +89,7 @@ There is a second reason to hold scores loosely: the vendors cannot agree on the
 
 <ScoreDispute />
 
-Every number above is self-reported, each vendor running its own test setup. A public audit goes further on mempalace, alleging that its headline score is just the score of the stock database component it builds on, and that most of its stars arrived in one week from bot accounts. That analysis stays an allegation, but the safe conclusion holds either way: when the same tool on the same test has three published scores depending on who ran it, the architecture columns are a sounder basis for your decision than a decimal point.
+Every number above is self-reported, each vendor running its own test setup. When the same tool on the same test has three published scores depending on who ran it, the architecture columns are a sounder basis for your decision than a decimal point.
 
 ## The field at a glance
 

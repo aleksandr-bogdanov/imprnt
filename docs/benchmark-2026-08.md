@@ -12,7 +12,7 @@ We set out to see whether imprnt could beat Letta, a funded memory company, on t
 
 **We lost the fair fight.** Running the same model Letta ran, on their benchmark, with their grader and their judge, imprnt scores 58.6% against their published 74.0%. The confidence intervals do not overlap. This is not a sampling problem and it is not a measurement artefact.
 
-**The scoreboard everyone in this category quotes is softer than any of the numbers on it.** Grading one fixed set of imprnt's answers with a different judge model, changing nothing else, moved the result by nine points. Every published figure in this space sits inside a 68-75% band that is narrower than that.
+**The scoreboard everyone in this category quotes is softer than any of the numbers on it.** Grading one fixed set of imprnt's answers with a different judge model, changing nothing else, moved the result by nine points. The three figures we stand next to, mem0 68.44%, Letta 74.0% and Zep 75.14%, span less than seven points, which is narrower than that.
 
 **Five read-path improvements made retrieval 26% better and answer quality 0.13 points better.** That gap between "the retrieval got better" and "the answers did not" turned out to be the most useful thing we learned, and it is what killed the plan we started the day with.
 
@@ -32,13 +32,13 @@ LoCoMo comes from the paper *Evaluating Very Long-Term Conversational Memory of 
 
 The questions are deliberately awkward. They fall into five categories:
 
-| category | what it asks | count in our run |
+| category | what it asks | count in LoCoMo |
 |---|---|---|
-| single-hop | a fact stated in one place | 638 |
+| single-hop | a fact stated in one place | 841 |
 | multi-hop | a fact you must assemble from several sessions | 282 |
 | temporal | when something happened, or in what order | 321 |
-| open-domain | an inference the conversation supports but never states | 299 |
-| adversarial | questions with no answer, to catch confident invention | 446 |
+| open-domain | an inference the conversation supports but never states | 96 |
+| adversarial | questions with no answer, to catch confident invention | 446 (excluded) |
 
 The benchmark exists because a memory system that only handles single-hop lookups is not doing the hard part.
 
@@ -50,7 +50,7 @@ The benchmark exists because a memory system that only handles single-hop lookup
 
 The pipeline has four stages, and only one of them is imprnt.
 
-**Ingest.** Each conversation is fed to imprnt, which reads it and files it into a vault of markdown notes: people, events, projects, decisions. This is the write path, and it uses a model. One conversation becomes about 62 notes.
+**Ingest.** Each conversation is fed to imprnt, which reads it and files it into a vault of markdown notes: people, events, projects, decisions. This is the write path, and it uses a model. One conversation becomes 8 to 55 notes in the arm-A vaults, and 40 to 90 in arm B, since the writing model decides how finely to split.
 
 **Retrieve.** For each question, `imprnt recall` runs BM25 over the vault and returns the top fifteen notes. No model. This is the part the whole product argument rests on.
 
@@ -64,7 +64,7 @@ The last two stages are where almost all the cost and all the noise live, which 
 
 ## The results
 
-Three arms. Same vault, same questions, same grader, same judge. One variable changes at a time.
+Three arms. Same questions, same grader, same judge. The model does imprnt's writing as well as its reading, so arm B's vaults are larger than arm A's (1,114 note files against 733). The comparison is honest about the model, not about the vault.
 
 | arm | answering model | retrieval | score | 95% CI |
 |---|---|---|---|---|
@@ -83,7 +83,7 @@ That is the number that means something, and it goes first everywhere we publish
 
 ### Arm B: what a better model buys
 
-Swapping the answering model to Claude Sonnet moves imprnt to **76.3%**, a gain of **+17.7 points** from the model alone.
+Swapping the model to Claude Sonnet moves imprnt to **76.3%**, a gain of **+17.7 points**. That is write quality and answer quality together, not the answering step alone: the same model wrote the vault it later read.
 
 That number is not a rebuttal to Arm A and we do not present it as one. Comparing our Sonnet result to their gpt-4o-mini result would be comparing two different things, which is the exact move that makes everyone else's numbers untrustworthy.
 
@@ -134,7 +134,7 @@ We audited the competitive claims before putting any of them on a page, then had
 
 **mem0's README numbers do not match mem0's own committed data.** Recomputed from their per-question result files: 91.56% against a published 92.5%, and 82.66% against a published 91.8%. The commit that set those README values changed one file, `README.md`, sixteen lines, and the previous values had matched the data exactly. mem0 does document a methodology change in the commit message, and that has to be quoted alongside the discrepancy for the claim to be fair.
 
-**Zep's 75.14% recomputes correctly** from their committed per-question grades, to 75.13%. Two of their four published category scores are transposed against their own data.
+**Zep's 75.14% recomputes correctly** from their committed per-question grades, to 75.13%. Two of their four published category scores are transposed against their own data. The same commit fixed the other two, and 75.14% is itself a figure Zep corrected downward after a public issue.
 
 **A claim we tested and dropped.** An audit reported that the LoCoMo judge accepts 62.81% of deliberately-wrong answers, which would have been damning. Checked properly, those "wrong" answers are mostly correct-but-coarser paraphrases: "Single" answered as "Not currently in a relationship". On the temporal subset, 82.8% of accepted answers name the same year as the gold and only 2.0% actually contradict it. The figure that measures acceptance of genuinely wrong answers is **10.61%**, which cuts the opposite way. A separate "43.67% judge-human agreement" figure could not be established at all: it appears only in a README, in an anonymous single-repo account, with no annotations or scoring script committed.
 
@@ -160,7 +160,7 @@ Running each candidate through the full answer-and-judge pipeline would have cos
 
 So we measured retrieval directly instead. Replay the queries already recorded from a finished run, against the real `recall` binary, and record two things: whether the gold answer survives into the returned context, and at what rank. No model, no judge, no API calls. About a minute per configuration across all ten conversations.
 
-**We validated the proxy before trusting it.** Questions whose gold answer reached the context were graded correct 83.7% of the time. Questions where it did not, 37.5%. A 46-point separation is enough to rank configurations honestly.
+**We validated the proxy before trusting it.** Questions whose gold answer reached the context were graded correct 80.4% of the time (514/639). Questions where it did not, 43.2% (389/901). A 37-point separation is enough to rank configurations honestly.
 
 ### The sweep
 
@@ -200,7 +200,7 @@ Checked before recommending them as defaults in v1.1:
 
 ## Five ways a benchmark lies to you
 
-Four of these were in our own harness. Every one produced a plausible number rather than an error, which is exactly why they are dangerous.
+All five were in our own harness. Every one produced a plausible number rather than an error, which is exactly why they are dangerous.
 
 **A failed judge call scored as a wrong answer.** A bare `catch` turned an API failure into "not attempted", which counts as zero. A rate-limited run produced 32.24% and looked like a catastrophic result. Ninety of 152 grading calls had simply died. Fixed: an unjudged question is now excluded from the denominator and shouts about it.
 
@@ -244,10 +244,10 @@ Re-running the full LoCoMo arms needs the dataset and two API keys (one for the 
 
 ## What we still do not know
 
-**Why Letta does better on a weak model.** The hypothesis is that they narrow harder before the model sees anything, and can search again after a miss. That would mean their advantage comes from putting a model *inside* the retrieval loop, which is the thing imprnt's design explicitly refuses. We started reading their source to confirm it and did not finish. One early finding: the current release has no file-search tool at all, which sits oddly with the "filesystem approach" their blog credits for the 74.0%.
+**Why Letta does better on a weak model.** The hypothesis is that they narrow harder before the model sees anything, and can search again after a miss. That would mean their advantage comes from putting a model *inside* the retrieval loop, which is the thing imprnt's design explicitly refuses. We started reading their source to confirm it and did not finish. We did not finish checking what the current release ships as a file-search tool. Nothing above depends on it.
 
 **Whether they hold up on a modern model.** Their published number is on gpt-4o-mini, a 2025 model. Nobody has run Letta on Sonnet. Until someone does, "we score 76.3% with Sonnet" and "they score 74.0% with gpt-4o-mini" are two facts that cannot be put in the same sentence.
 
-**Whether any of this survives a real vault.** Our test vault is about 62 notes, so returning fifteen hands back a quarter of everything. That is the easy case for a retriever. A vault of several thousand notes is the case that actually matters, and none of these numbers speak to it.
+**Whether any of this survives a real vault.** The headline arm's vaults run from 8 notes to 55, so returning fifteen hands back over a third of the corpus, and on the smallest one all of it. That is the easy case for a retriever. A vault of several thousand notes is the case that actually matters, and none of these numbers speak to it.
 
 **Whether LoCoMo is still the right benchmark.** It is from 2024. Newer ones exist, and at least one ships its own local judge, which would remove the single largest source of noise documented above.
