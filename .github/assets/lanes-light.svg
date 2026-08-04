@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="348" viewBox="0 0 800 348" role="img" aria-labelledby="lanesTitle">
+  <title id="lanesTitle">Two lanes: the write path spends the model once per source, the read path answers every lookup with grep and BM25</title>
+  <rect x="0.5" y="0.5" width="799" height="347" rx="10" fill="#fbf9f2" stroke="#ddd7c7"/>
+  <line x1="1" y1="178.5" x2="799" y2="178.5" stroke="#ddd7c7"/>
+  <text x="30" y="44" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" font-weight="700" letter-spacing="0.14em" fill="#0f9999">WRITE PATH</text>
+  <text x="770" y="44" text-anchor="end" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">runs once per source</text>
+  <rect x="30.5" y="60.5" width="219" height="89" rx="7" fill="#f6f4ec" stroke="#ddd7c7"/>
+  <text x="46" y="90" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="14" font-weight="600" fill="#1b1d1a">A source</text>
+  <text x="46" y="113" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">a transcript, a doc, a</text>
+  <text x="46" y="132" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">pasted prose dump</text>
+  <path d="M258 105 H276" stroke="#0f9999" stroke-width="1.5" fill="none"/>
+  <path d="M275.5 100.5 L282 105 L275.5 109.5 Z" fill="#0f9999"/>
+  <rect x="290.5" y="60.5" width="219" height="89" rx="7" fill="#f6f4ec" stroke="#ddd7c7"/>
+  <text x="306" y="90" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="14" font-weight="600" fill="#1b1d1a">The model</text>
+  <text x="306" y="113" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">reads it, types it, tags it,</text>
+  <text x="306" y="132" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">links people and projects</text>
+  <path d="M518 105 H536" stroke="#0f9999" stroke-width="1.5" fill="none"/>
+  <path d="M535.5 100.5 L542 105 L535.5 109.5 Z" fill="#0f9999"/>
+  <rect x="550.5" y="60.5" width="219" height="89" rx="7" fill="#f6f4ec" stroke="#ddd7c7"/>
+  <text x="566" y="90" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="14" font-weight="600" fill="#1b1d1a">A note on disk</text>
+  <text x="566" y="113" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">plain markdown, one file,</text>
+  <text x="566" y="132" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">yours to open anywhere</text>
+  <text x="30" y="212" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" font-weight="700" letter-spacing="0.14em" fill="#0f9999">READ PATH</text>
+  <text x="770" y="212" text-anchor="end" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">runs thousands of times</text>
+  <rect x="30.5" y="228.5" width="219" height="89" rx="7" fill="#f6f4ec" stroke="#ddd7c7"/>
+  <text x="46" y="258" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="14" font-weight="600" fill="#1b1d1a">A question</text>
+  <text x="46" y="281" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">shaped into keywords by</text>
+  <text x="46" y="300" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">the assistant</text>
+  <path d="M258 273 H276" stroke="#0f9999" stroke-width="1.5" fill="none"/>
+  <path d="M275.5 268.5 L282 273 L275.5 277.5 Z" fill="#0f9999"/>
+  <rect x="290.5" y="228.5" width="219" height="89" rx="7" fill="#f6f4ec" stroke="#ddd7c7"/>
+  <text x="306" y="258" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="14" font-weight="600" fill="#1b1d1a">grep + BM25</text>
+  <text x="306" y="281" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">local arithmetic, no model</text>
+  <text x="306" y="300" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">anywhere in the loop</text>
+  <path d="M518 273 H536" stroke="#0f9999" stroke-width="1.5" fill="none"/>
+  <path d="M535.5 268.5 L542 273 L535.5 277.5 Z" fill="#0f9999"/>
+  <rect x="550.5" y="228.5" width="219" height="89" rx="7" fill="#f6f4ec" stroke="#ddd7c7"/>
+  <text x="566" y="258" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="14" font-weight="600" fill="#1b1d1a">Ranked top 15</text>
+  <text x="566" y="281" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">about 100 tokens handed</text>
+  <text x="566" y="300" font-family="-apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#585b51">back to the assistant</text>
+</svg>

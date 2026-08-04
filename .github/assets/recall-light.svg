@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="337" viewBox="0 0 800 337" role="img" aria-labelledby="recallTitle">
+  <title id="recallTitle">imprnt recall: five BM25-ranked notes returned from the example vault, no model in the loop</title>
+  <rect x="0.5" y="0.5" width="799" height="336" rx="10" fill="#fbf9f2" stroke="#ddd7c7"/>
+  <line x1="1" y1="41.5" x2="799" y2="41.5" stroke="#ddd7c7"/>
+  <text x="34" y="26" font-family="ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, monospace" font-size="13" letter-spacing="0.06em" fill="#585b51">examples/organization/vault</text>
+  <g font-family="ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, monospace" font-size="14">
+  <text x="34" y="67" xml:space="preserve" fill="#1b1d1a"><tspan fill="#0f9999">$ </tspan>imprnt recall "double charge billing" --limit 5</text>
+  <text x="34" y="91" xml:space="preserve" fill="#585b51">recall "double charge billing" [double charge billing double charge charge billing]</text>
+  <text x="34" y="115" xml:space="preserve" fill="#585b51">— 10 match(es), showing top 5, BM25-ranked:</text>
+  <text x="34" y="163" xml:space="preserve" fill="#1b1d1a"><tspan fill="#0f9999">  [3.73]</tspan> mistakes/2026-05-double-charge-incident.md</text>
+  <text x="34" y="187" xml:space="preserve" fill="#1b1d1a"><tspan fill="#0f9999">  [3.20]</tspan> orgs/bramble-plumbing.md</text>
+  <text x="34" y="211" xml:space="preserve" fill="#1b1d1a"><tspan fill="#0f9999">  [2.50]</tspan> projects/billing-v2.md</text>
+  <text x="34" y="235" xml:space="preserve" fill="#1b1d1a"><tspan fill="#0f9999">  [1.75]</tspan> events/2026-05-18-eng-planning.md</text>
+  <text x="34" y="259" xml:space="preserve" fill="#1b1d1a"><tspan fill="#0f9999">  [0.09]</tspan> people/tom-decker.md</text>
+  <text x="34" y="307" xml:space="preserve" fill="#585b51">  … 5 lower-ranked hit(s) hidden. Raise with --limit if needed; usually you don't.</text>
+  </g>
+</svg>

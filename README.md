@@ -5,19 +5,19 @@
 [![CI](https://github.com/aleksandr-bogdanov/imprnt/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/aleksandr-bogdanov/imprnt/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
+[![npm](https://img.shields.io/npm/v/imprnt.svg)](https://www.npmjs.com/package/imprnt)
 
 Your assistant starts every chat blank. You re-explain your projects, your people, and your
 decisions every time, and whatever it learns dies with the session. imprnt fixes that. You talk,
 your assistant files what matters into plain text files on your disk, and weeks later it answers
 from your real history. You can read every note with your own eyes, and no company can switch
-them off.
+them off. Sibling to [Whenful](https://whenful.com): Whenful answers *when* do I do my tasks,
+imprnt holds *what* I know.
 
-> "You can think of the model as the brain, the harness as the body, and the tools it uses working
-> in a runtime."
-> - Jensen Huang, NVIDIA (GTC Taipei keynote, June 2026)
+<picture><source media="(prefers-color-scheme: dark)" srcset=".github/assets/recall-dark.svg"><img src=".github/assets/recall-light.svg" alt="imprnt recall: ranked results from a local BM25 search" width="830"></picture>
 
-imprnt is the tool layer Huang is pointing at, holding the part that lasts. Sibling to
-[Whenful](https://whenful.com): Whenful answers *when* do I do my tasks, imprnt holds *what* I know.
+That is the whole read path. Term frequencies and a bit of arithmetic over a folder, with no model
+in the loop.
 
 ## See it work
 
@@ -41,6 +41,8 @@ plain, cheap, local code.
 
 ## Why plain files win
 
+<picture><source media="(prefers-color-scheme: dark)" srcset=".github/assets/lanes-dark.svg"><img src=".github/assets/lanes-light.svg" alt="The write path runs once per source and uses the model. The read path runs thousands of times and uses grep plus BM25." width="830"></picture>
+
 A vector database or a hidden memory feature could hold your knowledge too. Plain files make your
 assistant cheap, honest, and yours:
 
@@ -58,6 +60,44 @@ assistant cheap, honest, and yours:
   meeting, project, and decision that mentions them is right.
 - **Yours, in the strongest sense.** Plain text on your disk. It opens in any editor, graphs in
   [Obsidian](https://obsidian.md), and cannot 404, bloat, or hold your context hostage.
+
+## The numbers, including the one we lose
+
+LoCoMo is the benchmark this category is rated on, 1,540 questions about conversations that ran
+for months. On the same answering model Letta published with, imprnt scores 58.6 against their
+74.0. We lose that comparison by about fifteen points, and the confidence intervals do not
+overlap.
+
+Running it turned up something worth more than the score. Take one fixed set of imprnt's answers,
+change only the LLM judge, and the result moves 9 points: 68.4 with Claude grading, 77.6 with
+gpt-4.1. That single swap is wider than the entire published spread in the category (mem0 68.44,
+Letta 74.0, Zep 75.14). A LoCoMo number without a named judge is close to meaningless, ours
+included.
+
+On the paper's own scorer, token F1 across all five categories, imprnt gets 64.2%. The human
+baseline on the same questions is 87.9%, and the paper's own GPT-4-turbo baseline is 32.1%.
+
+imprnt also ships a retrieval eval over the two example vaults: the right note comes back first
+for 89.7% of questions and appears in the top five for 97.4%, across 39 hand-written questions.
+Small corpus, and we wrote the questions, so run it yourself with `bun run eval`.
+
+Every run, interval, and reproduction step is written up in
+[`docs/benchmark-2026-08.md`](docs/benchmark-2026-08.md). The tool-by-tool read lives at
+[imprnt.dev/comparison](https://imprnt.dev/comparison/).
+
+Prior art, by name: Letta/MemGPT, mem0, and Zep run memory as a service with their own store and
+their own retrieval. Khoj indexes your files with embeddings. Obsidian gives you the plain-file
+vault without an agent contract on top. PAI wires an assistant into a fixed personal structure.
+imprnt keeps both halves: plain markdown you own, and an agent contract that files into it and reads it back with grep and BM25.
+
+## Known limits
+
+BM25 is lexical. It ranks on the words a note actually contains, so imprnt bridges vocabulary at
+ingest: the model assigns tags, proposes aliases, and records synonyms once per note, and every
+later search rides on that one pass. Embeddings pay that cost per query instead. The bridge has
+holes. Ask "what do I do for work" when the note says "freelance designer" and nothing connects
+the two, and you can miss. The vault is single-user by design. That is the trade for a read path
+that is free, local, and identical every time you run it.
 
 ## The robot does the work. You stay the boss.
 
