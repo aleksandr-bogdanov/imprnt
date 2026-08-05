@@ -1,0 +1,28 @@
+[
+  {
+    "_comment": "One statutory line the year must land against. basis: profit|revenue. window: monthly-average (projected year / 12) | calendar-year | all-years-cumulative (every year on the books plus the projection). direction: stay-under | reach-above-eventually. include_offbook: whether forward.json off-book adjustments count into this line. crossing_costs is free text, shown never parsed. The limits below are public statutory numbers, not personal data.",
+    "name": "Familienversicherung",
+    "basis": "profit",
+    "window": "monthly-average",
+    "limit": 545,
+    "direction": "stay-under",
+    "include_offbook": true,
+    "crossing_costs": "~2,950 EUR/yr freiwillige KV"
+  },
+  {
+    "name": "Kleinunternehmer § 19",
+    "basis": "revenue",
+    "window": "calendar-year",
+    "limit": 25000,
+    "direction": "stay-under",
+    "crossing_costs": "VAT on every invoice from the following year"
+  },
+  {
+    "name": "Liebhaberei Totalgewinn",
+    "basis": "profit",
+    "window": "all-years-cumulative",
+    "limit": 0,
+    "direction": "reach-above-eventually",
+    "crossing_costs": "losses disallowed, repayment plus Zinsen"
+  }
+]

@@ -90,6 +90,7 @@ imprnt kopeika import lexoffice-datev <unzipped-dir> --account <name> --owner <o
 imprnt kopeika categorize --who <person>
 imprnt kopeika decide <txid> <category> --who <person> [--note <text>]
 imprnt kopeika report --who <person> [--year YYYY]
+imprnt kopeika project --who <person> [--year YYYY]
 imprnt kopeika status
 imprnt kopeika list --who <person> [--queued]
 ```
@@ -97,6 +98,14 @@ imprnt kopeika list --who <person> [--queued]
 A tax category is never guessed: pins (`decide`) outrank rules, rules fill empty dispositions only,
 and anything unmatched on a dedicated books account queues until you decide it. Per-person identity,
 rules, pins, and assets live under `profiles/<person>/` — see `profiles.example/`.
+
+`project --who` is the threshold projector. It lands the year against each statutory line in
+`profiles/<person>/thresholds.json` (basis profit or revenue, window monthly-average or
+calendar-year or all-years-cumulative, a limit, a direction). Actuals come from the EÜR builder,
+the rest of the year comes from `profiles/<person>/forward.json` (expected income over a month
+range, planned purchases, off-book yearly adjustments that never appear in the ledger). A line
+that lands on the wrong side prints the fix while it is still buyable, and the naive run-rate is
+shown as a labelled cross-check. `status` adds the binding threshold as a one-liner per person.
 
 `report --html <path> --lang <en|ru>` writes the self-contained dashboard. The deep model (raw vs
 clean, stock vs flow, the two axes, net worth, projection) is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

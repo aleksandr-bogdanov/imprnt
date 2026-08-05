@@ -1,0 +1,12 @@
+{
+  "_comment": "The forward book: what the rest of the year is expected to bring, set by the user in conversation and stored as data (SYNTHETIC example values). expected_income: a monthly amount over an inclusive YYYY-MM range, counts into profit AND revenue for the months still ahead. planned_purchases: a one-off cost with the month it must land by, counts into profit only. offbook: a signed yearly amount that never appears in the ledger (e.g. a workroom deduction declared elsewhere) and counts only into thresholds with include_offbook true.",
+  "expected_income": [
+    { "label": "teaching", "monthly_eur": 1000, "from": "2026-09", "to": "2026-12" }
+  ],
+  "planned_purchases": [
+    { "label": "audio interface", "eur": 350, "by": "2026-11" }
+  ],
+  "offbook": [
+    { "label": "Arbeitszimmer", "yearly_eur": -1200 }
+  ]
+}

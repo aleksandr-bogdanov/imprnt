@@ -14,6 +14,8 @@ profiles/
     rules.json            ratified merchant rules for the tax axis
     pins.json             per-transaction decisions — written by `kopeika decide`, outrank rules
     assets.json           Anlagenverzeichnis: gross, business share, useful life in months
+    thresholds.json       statutory lines the year must land against (basis, window, limit)
+    forward.json          the forward book: expected income, planned purchases, off-book yearly adjustments
 ```
 
 Account modes in `profile.json`:

@@ -35,7 +35,8 @@ Everything personal stays inside this plugin folder, gitignored, never in a vaul
   `profiles/<person>/` holds one tax person: `profile.json` (identity, Steuernummer, country pack,
   which ledger accounts feed the books, dedicated vs mixed), `rules.json` (ratified merchant rules),
   `pins.json` (per-transaction decisions, written by `decide`, outrank rules forever), `assets.json`
-  (Anlagenverzeichnis for AfA). Templates in `profiles.example/`.
+  (Anlagenverzeichnis for AfA), `thresholds.json` (the statutory lines the year must land against),
+  `forward.json` (the forward book the threshold projector reads). Templates in `profiles.example/`.
 - `categories.de.json` — SHIPPED DATA, committed: the Germany pack. Category set → Anlage EÜR lines,
   plus the SKR account-code map the DATEV connector uses. Line numbers are per-year form data — edit
   the pack, never code.
@@ -75,7 +76,10 @@ The tax face (same binary, `--who` switches the axis):
   verb (run on the user's say-so) ratifies it. txid prefixes work.
 - `imprnt kopeika report --who <person> [--year YYYY]` — the EÜR: line-mapped totals, Bewirtung
   70/30, AfA, Storno reconciliation, profit.
-- `imprnt kopeika status` — one line per tax profile: book rows, years, pins, rules, queue size.
+- `imprnt kopeika project --who <person> [--year YYYY]` — the threshold projector: actuals plus the
+  forward book landed against each statutory line, with the gap priced while the fix is buyable.
+- `imprnt kopeika status` — one line per tax profile: book rows, years, pins, rules, queue size,
+  plus the binding threshold's landing vs limit when the person keeps thresholds.
 - `imprnt kopeika list --who <person> [--queued]` — book rows with the tax axis shown.
 
 The monthly procedure (export, import, categorize, transfers, review, report) is in README.md.
@@ -88,6 +92,28 @@ FILES the code then runs on. Ask: who (name, slug), Rechtsform (Freiberufler/Gew
 mixed for each), which thresholds bind. Then create `profiles/<slug>/profile.json` (copy
 `profiles.example/person/profile.json`) and an empty `rules.json`. Never invent a Steuernummer or a
 date — read them from the vault or ask.
+
+## The threshold projector (`project --who`)
+
+`project --who <person>` answers "where does the year land" for the statutory lines that matter:
+the Familienversicherung monthly-average profit cap, the Kleinunternehmer § 19 revenue cap, a
+Liebhaberei Totalgewinn line. Actuals come from the same EÜR builder as `report --who`, so the two
+can never disagree. Both inputs are pure data under `profiles/<person>/`:
+
+- `thresholds.json` describes each line: basis (profit or revenue), window (monthly-average,
+  calendar-year, all-years-cumulative), limit, direction (stay-under or reach-above-eventually),
+  whether off-book adjustments count (`include_offbook`), and what crossing costs (free text).
+- `forward.json` is the forward book. The user states the numbers in conversation ("I expect 1,400
+  a month from teaching through December", "I plan to buy an interface for 350 by November") and
+  you write them into the file as data. Never invent a forward number. Off-book adjustments are
+  yearly amounts that never appear in the ledger (an Arbeitszimmer declared elsewhere) and count
+  only into thresholds with `include_offbook: true`.
+
+Run the command and read the table. A stay-under line that lands OVER prints the fix (how much
+more Ausgaben by December brings the landing exactly to the limit) next to what crossing costs.
+The run-rate line at the bottom is deliberately naive (actuals extrapolated, no forward book).
+It exists as a cross-check because the run-rate once said "comfortably under" while the forward
+book already priced the crossing. Trust the landing, not the run-rate.
 
 ## How to answer a money question
 

@@ -75,6 +75,16 @@ import {
   type Person,
 } from "./tax/person.ts";
 import { buildEuer, loadAssets } from "./tax/euer.ts";
+import {
+  applyForward,
+  evaluateThresholds,
+  loadForward,
+  loadThresholds,
+  monthsElapsedInYear,
+  pickBinding,
+  type ThresholdEval,
+  type YearActuals,
+} from "./tax/thresholds.ts";
 import { EXCLUDE_CATEGORY } from "./analytics.ts";
 
 // --- Paths ------------------------------------------------------------------
@@ -703,6 +713,153 @@ async function cmdStatus(_args: Args): Promise<number> {
       `${padEnd(slug, 12)} ${rows.length} book row(s), years ${years.join("/") || "—"}, last ${lastDate}, ` +
         `pins ${person.pins.size}, rules ${person.rules.length}, queue ${queue.length}`,
     );
+    // The binding threshold (tightest headroom / first violated) for the current
+    // year, when the person keeps thresholds.json. Full table: `project --who`.
+    if (rows.length > 0 && loadThresholds(person.dir).length > 0) {
+      const nowMonth = currentMonth();
+      const { evals } = projectThresholds(person, ledger, nowMonth.slice(0, 4), nowMonth);
+      const b = pickBinding(evals);
+      if (b !== null) {
+        const state = b.violated ? (b.threshold.direction === "stay-under" ? "OVER" : "SHORT") : "ok";
+        console.log(
+          `${padEnd("", 12)} ${b.violated ? "⚠ " : ""}binding: ${b.threshold.name} — landing ${fmtLanding(b.landing, b)} vs limit ${fmtLanding(b.threshold.limit, b)} (${state})`,
+        );
+      }
+    }
+  }
+  return 0;
+}
+
+// --- tax: the threshold projector ---------------------------------------------
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Current UTC month as YYYY-MM (the actuals/forward cut for the projector). */
+function currentMonth(): string {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Assemble the projector inputs for one person and year: per-year actuals off
+ * buildEuer (so the projector and the EÜR report can never disagree), the
+ * forward book resolved against the remaining months, and every threshold
+ * evaluated. Shared by `project --who` and the `status` one-liner.
+ */
+function projectThresholds(
+  person: Person,
+  ledger: readonly Transaction[],
+  year: string,
+  nowMonth: string,
+): { evals: ThresholdEval[]; fwd: ReturnType<typeof applyForward>; actuals: YearActuals[]; monthsElapsed: number } {
+  const pack = loadPack(ROOT, person.profile.pack);
+  const assets = loadAssets(person.dir);
+  const bookYears = [
+    ...new Set([...ledger.filter((t) => t.tax_person === person.profile.slug).map((t) => t.date.slice(0, 4)), year]),
+  ].sort();
+  const actuals: YearActuals[] = bookYears.map((y) => {
+    const r = buildEuer(ledger, person.profile.slug, y, pack, assets);
+    return { year: y, profit: r.profit, revenue: r.incomeTotal };
+  });
+  const fwd = applyForward(loadForward(person.dir), year, nowMonth);
+  const monthsElapsed = monthsElapsedInYear(year, nowMonth);
+  const evals = evaluateThresholds({
+    thresholds: loadThresholds(person.dir),
+    actuals,
+    year,
+    forward: fwd,
+    monthsElapsed,
+  });
+  return { evals, fwd, actuals, monthsElapsed };
+}
+
+/** Landing/limit with the window's unit attached (/mo for a monthly average). */
+function fmtLanding(n: number, e: ThresholdEval): string {
+  return fmtMoney(n) + (e.threshold.window === "monthly-average" ? "/mo" : "");
+}
+
+async function cmdTaxProject(who: string, args: Args): Promise<number> {
+  const person = loadPerson(ROOT, who);
+  const thresholds = loadThresholds(person.dir);
+  if (thresholds.length === 0) {
+    console.log(`no thresholds for "${who}" — add profiles/${who}/thresholds.json (see profiles.example/person/).`);
+    return 0;
+  }
+  const yearFlag = flagString(args, "year");
+  if (yearFlag !== undefined && !/^\d{4}$/.test(yearFlag)) {
+    console.error(`--year must be YYYY (got "${yearFlag}")`);
+    return 1;
+  }
+  const ledger = loadLedger(LEDGER_PATH);
+  const bookRows = ledger.filter((t) => t.tax_person === who);
+  if (bookRows.length === 0) {
+    console.log(`no rows on "${who}"'s books yet — import or categorize first.`);
+    return 0;
+  }
+  // Default to the CURRENT year: the projection exists to steer the year still
+  // in progress (the gap priced while the fix is buyable), not to grade a past one.
+  const nowMonth = currentMonth();
+  const year = yearFlag ?? nowMonth.slice(0, 4);
+
+  const { evals, fwd, actuals, monthsElapsed } = projectThresholds(person, ledger, year, nowMonth);
+  const current = actuals.find((a) => a.year === year)!;
+
+  console.log(`threshold projection — ${person.profile.name}, ${year} (as of ${nowMonth})`);
+  console.log("");
+
+  // Actuals + forward, the two ingredients of every landing figure below.
+  const actualsSpan =
+    monthsElapsed === 0 ? "(none yet)" : `${MONTH_NAMES[0]}-${MONTH_NAMES[monthsElapsed - 1]}`;
+  console.log(
+    `actuals ${padEnd(actualsSpan, 9)} income ${fmtMoney(current.revenue)}   expenses ${fmtMoney(current.revenue - current.profit)}   profit ${fmtMoney(current.profit)}`,
+  );
+  const fwdSpan = fwd.fromMonth > fwd.toMonth ? "(none)" : `${MONTH_NAMES[fwd.fromMonth - 1]}-${MONTH_NAMES[fwd.toMonth - 1]}`;
+  const fwdParts = [
+    ...fwd.incomeParts.map((p) => `+${fmtMoney(p.eur)} ${p.label}`),
+    ...fwd.purchaseParts.map((p) => `-${fmtMoney(p.eur)} ${p.label}`),
+    ...fwd.offbookParts.map((p) => `${p.eur >= 0 ? "+" : ""}${fmtMoney(p.eur)} off-book: ${p.label}`),
+  ];
+  console.log(
+    `forward ${padEnd(fwdSpan, 9)} ${fwdParts.length > 0 ? fwdParts.join("   ") : "(empty — nothing expected, nothing planned)"}`,
+  );
+  for (const p of fwd.stalePurchases) {
+    console.log(
+      `⚠ planned purchase "${p.label}" (€${fmtMoney(p.eur)} by ${p.by}) dates an elapsed month — NOT counted (bought already? remove it, or move the date)`,
+    );
+  }
+  console.log("");
+
+  // The landing table: one row per threshold, the fix line under a violated one.
+  const label = (e: ThresholdEval): string => {
+    const unit =
+      e.threshold.window === "monthly-average" ? "/mo" : e.threshold.window === "calendar-year" ? "/yr" : ", all years";
+    return `${e.threshold.name} (${e.threshold.basis}${unit})`;
+  };
+  const labelW = Math.max(...evals.map((e) => label(e).length)) + 2;
+  console.log(`${padEnd("", labelW)} ${padStart("landing", 11)} ${padStart("limit", 11)} ${padStart("gap", 11)}`);
+  for (const e of evals) {
+    const gapStr = (e.gap >= 0 ? "+" : "") + fmtLanding(e.gap, e);
+    console.log(
+      `${padEnd(label(e), labelW)} ${padStart(fmtLanding(e.landing, e), 11)} ${padStart(fmtLanding(e.threshold.limit, e), 11)} ${padStart(gapStr, 11)}   ${e.violated ? (e.threshold.direction === "stay-under" ? "OVER" : "SHORT") : "ok"}`,
+    );
+    if (e.violated && e.fixEur !== null) {
+      const cc = e.threshold.crossingCosts !== "" ? `, or crossing costs: ${e.threshold.crossingCosts}` : "";
+      if (e.threshold.direction === "stay-under") {
+        const lever = e.threshold.basis === "profit" ? "more Ausgaben" : "less Einnahmen";
+        console.log(`  -> ~${fmtMoney(e.fixEur)} ${lever} by ${MONTH_NAMES[11]}${cc}`);
+      } else {
+        console.log(`  -> ~${fmtMoney(e.fixEur)} still missing in total${cc}`);
+      }
+    }
+  }
+
+  // The naive run-rate, printed BECAUSE it is wrong: in July it said
+  // "comfortably under" while the forward book already priced the crossing.
+  if (monthsElapsed > 0) {
+    console.log("");
+    console.log(`run-rate cross-check (actuals ÷ ${monthsElapsed} mo × 12, no forward book — the naive view):`);
+    console.log(
+      `  ${evals.map((e) => `${e.threshold.name} ${e.runRate === null ? "—" : fmtLanding(e.runRate, e)}`).join(" · ")}`,
+    );
   }
   return 0;
 }
@@ -1194,6 +1351,10 @@ function numberFlag(args: Args, name: string): { value: number | undefined; bad:
 }
 
 async function cmdProject(args: Args): Promise<number> {
+  // --who <person> runs the tax-face threshold projector; without it the
+  // household savings projection below stays untouched.
+  const who = flagString(args, "who");
+  if (who !== undefined) return cmdTaxProject(who, args);
   const ledger = loadLedger(LEDGER_PATH);
   if (ledger.length === 0) {
     console.log("ledger is empty — import something first.");
@@ -1355,8 +1516,18 @@ USAGE
       TAX FACE: the EÜR — line-mapped Betriebseinnahmen/-ausgaben, Bewirtung
       70/30, AfA from assets.json, profit, Storno reconciliation.
 
+  kopeika project --who <person> [--year YYYY]
+      TAX FACE: the threshold projector. Actuals (from the EÜR builder) plus the
+      forward book (profiles/<person>/forward.json: expected income, planned
+      purchases, off-book adjustments) landed against each statutory line in
+      profiles/<person>/thresholds.json — landing vs limit vs gap per window
+      (monthly-average / calendar-year / all-years-cumulative), with the fix
+      priced while it is still buyable, plus the naive run-rate as a cross-check.
+      --year YYYY defaults to the current year.
+
   kopeika status
-      TAX FACE: one line per tax profile — book rows, years, pins, rules, queue.
+      TAX FACE: one line per tax profile — book rows, years, pins, rules, queue —
+      plus the binding threshold's landing vs limit when thresholds.json exists.
 
   kopeika list [--who <person> [--queued]]
       With --who: only that person's book rows, tax category shown (📌 = pinned).
@@ -1387,6 +1558,9 @@ TAX FACE (profiles/ = the consolidated PII zone; categories.<cc>.json = shipped 
   profiles/<person>/rules.json   ratified merchant rules (tax axis)
   profiles/<person>/pins.json    per-transaction decisions — outrank rules
   profiles/<person>/assets.json  Anlagenverzeichnis for AfA
+  profiles/<person>/thresholds.json  statutory lines: basis, window, limit, direction
+  profiles/<person>/forward.json     the forward book: expected income, planned
+                                 purchases, off-book yearly adjustments
   categories.de.json             Germany pack: categories -> Anlage EÜR lines, SKR map
 
 NOT IMPLEMENTED (v0 stubs): Google Sheets mirror/push, LLM --suggest categorization.
