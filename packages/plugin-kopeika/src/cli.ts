@@ -400,6 +400,22 @@ async function cmdImportDatev(args: Args): Promise<number> {
 
   const existing = loadLedger(LEDGER_PATH);
   const { appended, skippedDuplicate, merged } = appendDeduped(existing, candidates);
+
+  // A grown pack heals old rows: when a re-import parses the same entry and the
+  // SKR code now maps, an existing row still UNDISPOSED (no pin, no rule, no
+  // import category) adopts the mapping. Decided rows are never touched.
+  const byId = new Map(candidates.map((c) => [c.id, c]));
+  let taxBackfilled = 0;
+  for (const tx of merged) {
+    const cand = byId.get(tx.id);
+    if (!cand) continue;
+    if (tx.tax_category === "" && tx.tax_source === "" && cand.tax_category !== "") {
+      tx.tax_person = cand.tax_person;
+      tx.tax_category = cand.tax_category;
+      tx.tax_source = cand.tax_source;
+      taxBackfilled += 1;
+    }
+  }
   writeLedger(LEDGER_PATH, merged);
 
   const incomeNet = candidates
@@ -410,7 +426,8 @@ async function cmdImportDatev(args: Args): Promise<number> {
     .reduce((s, c) => s - c.amount_eur!, 0);
 
   console.log(
-    `parsed ${files.length} XML file(s) -> ${entries.length} ledger entr(ies); imported ${appended} / skipped-dup ${skippedDuplicate} / archived ${archived} raw file(s)`,
+    `parsed ${files.length} XML file(s) -> ${entries.length} ledger entr(ies); imported ${appended} / skipped-dup ${skippedDuplicate} / archived ${archived} raw file(s)` +
+      (taxBackfilled > 0 ? ` / tax-backfilled ${taxBackfilled} undisposed row(s)` : ""),
   );
   console.log(
     `source totals: income net €${incomeNet.toFixed(2)} · expenses €${expenseNet.toFixed(2)} (books of "${who}", account ${account})`,

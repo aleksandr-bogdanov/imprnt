@@ -34,6 +34,16 @@
       "side": "expense",
       "euer_line": "43"
     },
+    "small_equipment": {
+      "label": "Werkzeuge und Kleingeräte",
+      "side": "expense",
+      "euer_line": "66",
+      "euer_line_label": "übrige Betriebsausgaben"
+    },
+    "asset_purchase": {
+      "label": "Anlagenzugang (aktiviert — wirkt über AfA, keine sofortige Betriebsausgabe)",
+      "side": "neutral"
+    },
     "afa": {
       "label": "AfA auf Anlagevermögen (aus dem Anlagenverzeichnis)",
       "side": "expense",
@@ -107,6 +117,9 @@
     "_comment": "SKR04 account code -> tax category, used by the lexoffice-datev connector. 4184 = steuerfreie Erlöse Kleinunternehmer (z. B. § 19 + § 4 Nr. 21 UStG), 4185 = Erlöse Kleinunternehmer § 19 UStG.",
     "4184": "revenue_ku",
     "4185": "revenue_ku",
+    "650": "asset_purchase",
+    "670": "equipment_gwg",
+    "690": "asset_purchase",
     "5900": "services_bought",
     "6640": "meals_deductible",
     "6644": "meals_nondeductible",
@@ -115,6 +128,8 @@
     "6815": "office",
     "6821": "education",
     "6837": "software",
+    "6845": "small_equipment",
+    "6850": "office",
     "6855": "bank_fees"
   }
 }
