@@ -68,6 +68,20 @@ The tax face (same binary, `--who` switches the axis):
   person's books with tax categories mapped from SKR account codes via the pack; the household
   analytics never see them (category Exclude). Stornos import as negative income rows and net out.
   An unmapped SKR code queues the row — never guessed.
+- `imprnt kopeika import norman-dump <file.json> --account <label> --owner <o> --who <person>
+  [--category-map <rules.json>]` imports a Norman (norman.finance) transaction dump, one JSON array
+  of raw API transaction objects fetched day by day (the API ignores limit and caps at 20 rows).
+  The connector never talks to Norman itself. Rows land on the person's books with tax categories
+  mapped from the Norman category names (Software to software, Equipment to equipment_gwg, Office
+  supplies to office, Meals to meals GROSS so the EÜR builder splits 70/30 itself, Transportation to
+  transport, Education to education, Services to revenue, Capital contribution to
+  capital_contribution, Personal to personal neutral). Zero-amount rows are card authorisation holds
+  and are skipped. A row carrying amortization metadata is an activated asset and books neutral as
+  asset_purchase. The asset itself belongs in `profiles/<person>/assets.json` so the write-off
+  arrives via AfA, never doubled as an expense row. An unknown category queues, never guessed.
+  `--category-map` points at the norman plugin's rules.json when a dump carries category uuids
+  instead of names. Dedup rides on the Norman transaction uuid, so re-importing a fresh dump of the
+  same books is a no-op.
 - `imprnt kopeika categorize --who <person>` — the deterministic tax pass: pins first (never
   overridden), then ratified rules (fill empty dispositions only), then prints the queue of
   undisposed rows on dedicated accounts.

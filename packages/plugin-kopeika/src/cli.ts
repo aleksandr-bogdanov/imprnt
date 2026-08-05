@@ -66,6 +66,7 @@ import {
   type Transaction,
 } from "./types.ts";
 import { parseLexofficeDatev, type DatevFile } from "./connectors/lexoffice-datev.ts";
+import { parseNormanDump } from "./connectors/norman-dump.ts";
 import { loadPack } from "./tax/pack.ts";
 import {
   listPersons,
@@ -189,12 +190,15 @@ async function cmdImport(args: Args): Promise<number> {
   const ownerHint = PROFILE.owners.length > 0 ? PROFILE.owners.join("|") : "owner";
   if (!source || !file) {
     console.error(
-      `usage: kopeika import <${[...connectorNames(), "lexoffice-datev"].join("|")}> <file> --account <name> --owner <${ownerHint}>`,
+      `usage: kopeika import <${[...connectorNames(), "lexoffice-datev", "norman-dump"].join("|")}> <file> --account <name> --owner <${ownerHint}>`,
     );
     return 1;
   }
   if (source === "lexoffice-datev") {
     return cmdImportDatev(args);
+  }
+  if (source === "norman-dump") {
+    return cmdImportNorman(args);
   }
   const connector = getConnector(source);
   if (!connector) {
@@ -474,6 +478,180 @@ async function cmdImportDatev(args: Args): Promise<number> {
     console.log(`⚠ missing FX rates for ${missingRates.size} pair(s) — see data/rates.csv`);
   }
   console.log(`verify: kopeika report --who ${who} --year ${entries[0]?.date.slice(0, 4) ?? ""}`);
+  return 0;
+}
+
+// --- import norman-dump (ONE JSON file of raw Norman transactions) -----------
+/**
+ * Book rows, not bank rows: each Norman transaction lands with the household
+ * category "Exclude" (these rows duplicate bank rows the household ledger
+ * already has) and a full tax disposition from the Norman category. An
+ * unknown category leaves the row undisposed — it queues, never guessed.
+ * A row carrying amortization metadata (an activated asset) books neutral as
+ * asset_purchase; the asset itself belongs in profiles/<who>/assets.json.
+ */
+async function cmdImportNorman(args: Args): Promise<number> {
+  const [, file] = args.positionals;
+  const account = flagString(args, "account");
+  const ownerRaw = flagString(args, "owner");
+  const who = flagString(args, "who") ?? ownerRaw;
+
+  if (!file || !account || !ownerRaw) {
+    console.error(
+      "usage: kopeika import norman-dump <file.json> --account <name> --owner <owner> [--who <person>] [--category-map <rules.json>]",
+    );
+    return 1;
+  }
+  if (!existsSync(file)) {
+    console.error(`file not found: ${file}`);
+    return 1;
+  }
+  if (PROFILE.owners.length > 0 && !PROFILE.owners.includes(ownerRaw)) {
+    console.error(`--owner "${ownerRaw}" is not in your profile owners: ${PROFILE.owners.join(", ")}`);
+    return 1;
+  }
+  const owner: Owner = ownerRaw;
+
+  // The person's profile names the country pack the Norman categories map into.
+  const person = loadPerson(ROOT, who!);
+  const pack = loadPack(ROOT, person.profile.pack);
+
+  // Optional uuid -> key table for dumps that carry category ids, not names:
+  // the norman plugin's rules.json holds {"categories": {"software": "<uuid>", ...}}.
+  let uuidToKey: Map<string, string> | undefined;
+  const mapPath = flagString(args, "category-map");
+  if (mapPath !== undefined) {
+    if (!existsSync(mapPath)) {
+      console.error(`--category-map file not found: ${mapPath}`);
+      return 1;
+    }
+    let mapRaw: Record<string, unknown>;
+    try {
+      mapRaw = JSON.parse(readFileSync(mapPath, "utf8")) as Record<string, unknown>;
+    } catch (e) {
+      console.error(`--category-map ${mapPath} is not valid JSON (${(e as Error).message})`);
+      return 1;
+    }
+    const table = (mapRaw.categories ?? mapRaw) as Record<string, unknown>;
+    uuidToKey = new Map(Object.entries(table).filter(([k]) => !k.startsWith("_")).map(([k, v]) => [String(v), k]));
+  }
+
+  const rawText = readFileSync(file, "utf8");
+  const { rows, skippedZeroAmount } = parseNormanDump(rawText, uuidToKey);
+
+  // Archive the immutable dump under data/raw/norman-dump/.
+  const sourceFile = archiveRaw(DATA_DIR, "norman-dump", file);
+
+  const rates = loadRates(RATES_PATH);
+  const missingRates = new Map<string, { month: string; currency: string }>();
+  const unknownCategories = new Map<string, number>();
+  let assetRows = 0;
+
+  const candidates: Transaction[] = rows.map((r) => {
+    let amountEur: number | null;
+    if (r.currency === "EUR") {
+      amountEur = r.amount;
+    } else {
+      const fx = toEur(r.amount, r.currency, r.date, rates);
+      amountEur = fx.amount_eur;
+      if (fx.missing) missingRates.set(`${fx.missing.month}|${fx.missing.currency}`, fx.missing);
+    }
+    // The connector's mapping is pack data too: a key the pack does not know
+    // (a pack edit, another country) queues instead of importing garbage.
+    const taxCategory = r.taxCategory !== "" && pack.categories.has(r.taxCategory) ? r.taxCategory : "";
+    if (taxCategory === "") {
+      const label = r.normanCategory !== "" ? r.normanCategory : "(uncategorized)";
+      unknownCategories.set(label, (unknownCategories.get(label) ?? 0) + 1);
+    }
+    if (r.activatedAsset) assetRows += 1;
+    const id = transactionId({
+      data_source: "norman-dump",
+      account,
+      date: r.date,
+      merchant_raw: r.merchant,
+      amount_native: r.amount,
+      currency: r.currency,
+      dedupExtra: r.normanId,
+    });
+    return {
+      id,
+      date: r.date,
+      data_source: "norman-dump",
+      account,
+      owner,
+      merchant_raw: r.merchant,
+      merchant_clean: r.merchant,
+      amount_native: r.amount,
+      currency: r.currency,
+      amount_eur: amountEur,
+      category: EXCLUDE_CATEGORY, // book documentation, not household cash flow
+      type: r.amount > 0 ? "income" : "spend",
+      is_transfer: false,
+      transfer_group: "",
+      fee: 0,
+      // Fidelity: the Norman identifiers ride along on the row.
+      note:
+        `${r.normanCategory !== "" ? r.normanCategory : "(uncategorized)"} · ` +
+        `${r.verified ? "VERIFIED" : "unverified"} · norman ${r.normanId}` +
+        (r.activatedAsset ? " · aktiviert (AfA via assets.json)" : ""),
+      source_file: sourceFile,
+      balance: null,
+      tax_person: who!,
+      tax_category: taxCategory,
+      tax_source: taxCategory !== "" ? "import" : "",
+    };
+  });
+
+  const existing = loadLedger(LEDGER_PATH);
+  const { appended, skippedDuplicate, merged } = appendDeduped(existing, candidates);
+
+  // A grown mapping heals old rows: when a re-import parses the same row and
+  // its category now maps, an existing row still UNDISPOSED (no pin, no rule,
+  // no import category) adopts the mapping. Decided rows are never touched.
+  const byId = new Map(candidates.map((c) => [c.id, c]));
+  let taxBackfilled = 0;
+  for (const tx of merged) {
+    const cand = byId.get(tx.id);
+    if (!cand) continue;
+    if (tx.tax_category === "" && tx.tax_source === "" && cand.tax_category !== "") {
+      tx.tax_person = cand.tax_person;
+      tx.tax_category = cand.tax_category;
+      tx.tax_source = cand.tax_source;
+      taxBackfilled += 1;
+    }
+  }
+  writeLedger(LEDGER_PATH, merged);
+
+  const incomeNet = candidates
+    .filter((c) => c.type === "income" && c.amount_eur !== null)
+    .reduce((s, c) => s + c.amount_eur!, 0);
+  const expenseNet = candidates
+    .filter((c) => c.type === "spend" && c.amount_eur !== null)
+    .reduce((s, c) => s - c.amount_eur!, 0);
+
+  console.log(
+    `parsed ${rows.length} transaction(s); imported ${appended} / skipped-dup ${skippedDuplicate} / skipped-zero-amount ${skippedZeroAmount}` +
+      (taxBackfilled > 0 ? ` / tax-backfilled ${taxBackfilled} undisposed row(s)` : ""),
+  );
+  console.log(
+    `source totals: inflows €${incomeNet.toFixed(2)} · outflows €${expenseNet.toFixed(2)} (books of "${who}", account ${account})`,
+  );
+  if (assetRows > 0) {
+    console.log(
+      `${assetRows} activated-asset row(s) booked neutral as asset_purchase — the AfA claim comes from profiles/${who}/assets.json, never from the expense row`,
+    );
+  }
+  if (unknownCategories.size > 0) {
+    console.log("");
+    console.log(`⚠ ${unknownCategories.size} Norman categor(ies) map to nothing — rows queued undisposed:`);
+    for (const [label, n] of unknownCategories) {
+      console.log(`    ${label}  (${n} row(s))  — pass --category-map <rules.json> or \`decide\` each row`);
+    }
+  }
+  if (missingRates.size > 0) {
+    console.log(`⚠ missing FX rates for ${missingRates.size} pair(s) — see data/rates.csv`);
+  }
+  console.log(`verify: kopeika report --who ${who} --year ${rows[0]?.date.slice(0, 4) ?? ""}`);
   return 0;
 }
 
@@ -1748,6 +1926,18 @@ USAGE
       of XMLs). Rows land on <person>'s books (tax axis) with categories mapped
       from the SKR account codes via the country pack; household analytics never
       see them (category Exclude). Unmapped codes queue — never guessed.
+
+  kopeika import norman-dump <file.json> --account <name> --owner <owner> [--who <person>]
+                  [--category-map <rules.json>]
+      TAX FACE: import a Norman (norman.finance) transaction dump — ONE JSON
+      array of raw API transaction objects. Rows land on <person>'s books with
+      tax categories mapped from the Norman categories (meals stays gross, the
+      EÜR builder splits 70/30); household analytics never see them (category
+      Exclude). Zero-amount card-auth holds are skipped. A row with
+      amortization metadata (an activated asset) books neutral as
+      asset_purchase — carry the asset in profiles/<person>/assets.json.
+      Unknown categories queue — never guessed. --category-map resolves
+      category uuids via the norman plugin's rules.json "categories" table.
 
   kopeika categorize --who <person>
       TAX FACE: apply <person>'s pins (profiles/<person>/pins.json — never

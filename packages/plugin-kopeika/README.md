@@ -87,6 +87,7 @@ Bewirtung 70/30, AfA from an Anlagenverzeichnis. Country specifics ship as a dat
 
 ```
 imprnt kopeika import lexoffice-datev <unzipped-dir> --account <name> --owner <o> [--who <person>]
+imprnt kopeika import norman-dump <file.json> --account <name> --owner <o> [--who <person>] [--category-map <rules.json>]
 imprnt kopeika categorize --who <person>
 imprnt kopeika decide <txid> <category> --who <person> [--note <text>]
 imprnt kopeika report --who <person> [--year YYYY]
@@ -95,6 +96,13 @@ imprnt kopeika status
 imprnt kopeika list --who <person> [--queued]
 imprnt kopeika invoice --who <person> --client "<name>" --qty N --unit-price <eur> [--dry-run]
 ```
+
+`import norman-dump` reads a Norman (norman.finance) transaction dump, one JSON array of raw API
+transaction objects. Categories map from the Norman names (Meals stays gross, the EÜR builder does
+the 70/30 split at report time). Zero-amount card authorisation holds are skipped. A row carrying
+amortization metadata is an activated asset and books neutral as `asset_purchase`, with the asset
+itself carried in `profiles/<person>/assets.json` so the write-off arrives via AfA instead of being
+doubled as an expense. Dedup rides on the Norman transaction uuid.
 
 A tax category is never guessed: pins (`decide`) outrank rules, rules fill empty dispositions only,
 and anything unmatched on a dedicated books account queues until you decide it. Per-person identity,
