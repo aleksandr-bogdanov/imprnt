@@ -3,6 +3,9 @@
 # you run the CLI from this dir during development.
 data/
 deploy/
+# The consolidated PII zone (tax profiles, pins, forward book). Only the
+# committed profiles.example/ templates ship — never a real person's folder.
+profiles/
 # Staged vault notes are real personal data too — only the placeholder is tracked.
 proposed/*
 !proposed/.gitkeep

@@ -9,6 +9,8 @@
     "check.js",
     "kopeika.js",
     "profile.example.json",
+    "categories.de.json",
+    "profiles.example",
     "proposed/.gitkeep",
     "docs"
   ],

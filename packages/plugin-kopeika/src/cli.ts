@@ -12,7 +12,7 @@
  *   data/rates.csv       month/currency -> EUR rates
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -65,6 +65,17 @@ import {
   type Owner,
   type Transaction,
 } from "./types.ts";
+import { parseLexofficeDatev, type DatevFile } from "./connectors/lexoffice-datev.ts";
+import { loadPack } from "./tax/pack.ts";
+import {
+  listPersons,
+  loadPerson,
+  savePins,
+  taxRuleMatches,
+  type Person,
+} from "./tax/person.ts";
+import { buildEuer, loadAssets } from "./tax/euer.ts";
+import { EXCLUDE_CATEGORY } from "./analytics.ts";
 
 // --- Paths ------------------------------------------------------------------
 // data/ sits at the plugin root. The built single-file kopeika.js lives there with
@@ -78,7 +89,9 @@ const RULES_PATH = join(DATA_DIR, "rules.csv");
 const RATES_PATH = join(DATA_DIR, "rates.csv");
 const TIERS_PATH = join(DATA_DIR, "tiers.csv");
 const SAVINGS_PATH = join(DATA_DIR, "savings.csv");
-const PROFILE_PATH = join(DATA_DIR, "profile.json");
+// The household profile lives in profiles/ (the consolidated PII zone) since the
+// tax face landed; data/profile.json is the pre-migration location and still reads.
+const PROFILE_PATHS = [join(ROOT, "profiles", "household.json"), join(DATA_DIR, "profile.json")];
 
 // The personal layer (own names/IBANs, net-worth marks, display labels), loaded
 // once in main() from data/profile.json. Empty until then, so nothing personal is
@@ -145,9 +158,12 @@ async function cmdImport(args: Args): Promise<number> {
   const ownerHint = PROFILE.owners.length > 0 ? PROFILE.owners.join("|") : "owner";
   if (!source || !file) {
     console.error(
-      `usage: kopeika import <${connectorNames().join("|")}> <file> --account <name> --owner <${ownerHint}>`,
+      `usage: kopeika import <${[...connectorNames(), "lexoffice-datev"].join("|")}> <file> --account <name> --owner <${ownerHint}>`,
     );
     return 1;
+  }
+  if (source === "lexoffice-datev") {
+    return cmdImportDatev(args);
   }
   const connector = getConnector(source);
   if (!connector) {
@@ -233,6 +249,9 @@ async function cmdImport(args: Args): Promise<number> {
       note: row.note,
       source_file: sourceFile,
       balance: row.balance,
+      tax_person: "",
+      tax_category: "",
+      tax_source: "",
     };
     return tx;
   });
@@ -270,8 +289,413 @@ function countDataRows(text: string): number {
   return parseCsv(text).records.length;
 }
 
+// --- import lexoffice-datev (a DIRECTORY of DATEV Beleg XMLs) ----------------
+/**
+ * Book rows, not bank rows: each DATEV ledger entry lands with the household
+ * category "Exclude" (invisible to the family analytics) and a full tax
+ * disposition from the SKR account code via the person's country pack. An
+ * unmapped SKR code leaves the row undisposed — it queues, never guessed.
+ */
+async function cmdImportDatev(args: Args): Promise<number> {
+  const [, dir] = args.positionals;
+  const account = flagString(args, "account");
+  const ownerRaw = flagString(args, "owner");
+  const who = flagString(args, "who") ?? ownerRaw;
+
+  if (!dir || !account || !ownerRaw) {
+    console.error(
+      "usage: kopeika import lexoffice-datev <unzipped-export-dir> --account <name> --owner <owner> [--who <person>]",
+    );
+    return 1;
+  }
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    console.error(`not a directory: ${dir} — unzip the DATEV Belegbilder export and pass the folder`);
+    return 1;
+  }
+  if (PROFILE.owners.length > 0 && !PROFILE.owners.includes(ownerRaw)) {
+    console.error(`--owner "${ownerRaw}" is not in your profile owners: ${PROFILE.owners.join(", ")}`);
+    return 1;
+  }
+  const owner: Owner = ownerRaw;
+
+  // The person's profile names the country pack that maps SKR codes.
+  const person = loadPerson(ROOT, who!);
+  const pack = loadPack(ROOT, person.profile.pack);
+
+  const xmlNames = readdirSync(dir).filter((n) => n.toLowerCase().endsWith(".xml")).sort();
+  if (xmlNames.length === 0) {
+    console.error(`no .xml files in ${dir}`);
+    return 1;
+  }
+  const files: DatevFile[] = xmlNames.map((name) => ({
+    name,
+    text: readFileSync(join(dir, name), "utf8"),
+  }));
+  const entries = parseLexofficeDatev(files);
+
+  // Archive every XML immutably under data/raw/lexoffice-datev/<export-dir-name>/.
+  const batch = basename(dir.replace(/\/+$/, ""));
+  const rawDir = join(DATA_DIR, "raw", "lexoffice-datev", batch);
+  mkdirSync(rawDir, { recursive: true });
+  let archived = 0;
+  for (const f of files) {
+    const dest = join(rawDir, f.name);
+    if (!existsSync(dest)) {
+      writeFileSync(dest, f.text, "utf8");
+      archived += 1;
+    }
+  }
+
+  const rates = loadRates(RATES_PATH);
+  const missingRates = new Map<string, { month: string; currency: string }>();
+  let unmappedSkr = new Map<string, number>();
+
+  const candidates: Transaction[] = entries.map((e) => {
+    let amountEur: number | null;
+    if (e.currency === "EUR") {
+      amountEur = e.amount;
+    } else {
+      const fx = toEur(e.amount, e.currency, e.date, rates);
+      amountEur = fx.amount_eur;
+      if (fx.missing) missingRates.set(`${fx.missing.month}|${fx.missing.currency}`, fx.missing);
+    }
+    const taxCategory = pack.skr.get(e.accountNo) ?? "";
+    if (taxCategory === "") {
+      unmappedSkr.set(e.accountNo, (unmappedSkr.get(e.accountNo) ?? 0) + 1);
+    }
+    const id = transactionId({
+      data_source: "lexoffice-datev",
+      account,
+      date: e.date,
+      merchant_raw: e.merchant,
+      amount_native: e.amount,
+      currency: e.currency,
+      dedupExtra: e.dedupExtra,
+    });
+    return {
+      id,
+      date: e.date,
+      data_source: "lexoffice-datev",
+      account,
+      owner,
+      merchant_raw: e.merchant,
+      merchant_clean: e.merchant,
+      amount_native: e.amount,
+      currency: e.currency,
+      amount_eur: amountEur,
+      category: EXCLUDE_CATEGORY, // book documentation, not household cash flow
+      type: e.side === "income" ? "income" : "spend",
+      is_transfer: false,
+      transfer_group: "",
+      fee: 0,
+      // Fidelity: the Beleg's own identifiers ride along on the row.
+      note: `${e.invoiceId} · SKR ${e.accountNo} ${e.accountName}${e.information !== "" ? ` · ${e.information}` : ""}`,
+      source_file: e.file,
+      balance: null,
+      tax_person: who!,
+      tax_category: taxCategory,
+      tax_source: taxCategory !== "" ? "import" : "",
+    };
+  });
+
+  const existing = loadLedger(LEDGER_PATH);
+  const { appended, skippedDuplicate, merged } = appendDeduped(existing, candidates);
+  writeLedger(LEDGER_PATH, merged);
+
+  const incomeNet = candidates
+    .filter((c) => c.type === "income" && c.amount_eur !== null)
+    .reduce((s, c) => s + c.amount_eur!, 0);
+  const expenseNet = candidates
+    .filter((c) => c.type === "spend" && c.amount_eur !== null)
+    .reduce((s, c) => s - c.amount_eur!, 0);
+
+  console.log(
+    `parsed ${files.length} XML file(s) -> ${entries.length} ledger entr(ies); imported ${appended} / skipped-dup ${skippedDuplicate} / archived ${archived} raw file(s)`,
+  );
+  console.log(
+    `source totals: income net €${incomeNet.toFixed(2)} · expenses €${expenseNet.toFixed(2)} (books of "${who}", account ${account})`,
+  );
+  if (unmappedSkr.size > 0) {
+    console.log("");
+    console.log(`⚠ ${unmappedSkr.size} SKR code(s) not in the ${person.profile.pack} pack — rows queued undisposed:`);
+    for (const [code, n] of unmappedSkr) {
+      console.log(`    SKR ${code}  (${n} row(s))  — add it to categories.${person.profile.pack}.json or \`decide\` each row`);
+    }
+  }
+  if (missingRates.size > 0) {
+    console.log(`⚠ missing FX rates for ${missingRates.size} pair(s) — see data/rates.csv`);
+  }
+  console.log(`verify: kopeika report --who ${who} --year ${entries[0]?.date.slice(0, 4) ?? ""}`);
+  return 0;
+}
+
+// --- tax: categorize --who ----------------------------------------------------
+/**
+ * The deterministic tax pass: pins first (never overridden), then ratified
+ * rules (fill EMPTY dispositions only), then the queue — undisposed rows on
+ * `dedicated` accounts, listed for explicit `decide`. Nothing is ever guessed.
+ */
+async function cmdTaxCategorize(who: string, _args: Args): Promise<number> {
+  const person = loadPerson(ROOT, who);
+  const pack = loadPack(ROOT, person.profile.pack);
+  const ledger = loadLedger(LEDGER_PATH);
+  if (ledger.length === 0) {
+    console.log("ledger is empty — import something first.");
+    return 0;
+  }
+
+  // Validate rule/pin categories against the pack up front — a typo fails loud.
+  for (const r of person.rules) {
+    if (!pack.categories.has(r.category)) {
+      console.error(`rules.json: rule "${r.pattern}" names unknown category "${r.category}"`);
+      return 1;
+    }
+  }
+  for (const [txid, pin] of person.pins) {
+    if (!pack.categories.has(pin.category)) {
+      console.error(`pins.json: pin ${txid} names unknown category "${pin.category}"`);
+      return 1;
+    }
+  }
+
+  let pinned = 0;
+  let ruled = 0;
+  let conflicts = 0;
+  for (const tx of ledger) {
+    const pin = person.pins.get(tx.id);
+    if (pin) {
+      if (tx.tax_person !== "" && tx.tax_person !== who && tx.tax_source === "pin") {
+        console.error(`⚠ pin conflict: ${tx.id} is pinned on "${tx.tax_person}"'s books — skipped`);
+        conflicts += 1;
+        continue;
+      }
+      if (tx.tax_person !== who || tx.tax_category !== pin.category || tx.tax_source !== "pin") {
+        tx.tax_person = who;
+        tx.tax_category = pin.category;
+        tx.tax_source = "pin";
+        pinned += 1;
+      }
+      continue;
+    }
+    // Rules fill EMPTY dispositions only: never a pin, never an import-carried
+    // category, never another person's row.
+    if (tx.tax_source !== "" || (tx.tax_person !== "" && tx.tax_person !== who)) continue;
+    const rule = person.rules.find((r) => taxRuleMatches(r, tx));
+    if (rule) {
+      tx.tax_person = who;
+      tx.tax_category = rule.category;
+      tx.tax_source = "rule";
+      ruled += 1;
+    }
+  }
+  writeLedger(LEDGER_PATH, ledger);
+
+  const queue = taxQueue(ledger, person);
+  console.log(
+    `tax categorize (${who}): pinned ${pinned}, ruled ${ruled}` + (conflicts > 0 ? `, ${conflicts} conflict(s)` : ""),
+  );
+  if (queue.length === 0) {
+    console.log("queue: empty — every dedicated-account row is disposed.");
+  } else {
+    console.log(`queue: ${queue.length} undisposed row(s) on dedicated account(s) — decide each:`);
+    console.log("");
+    for (const t of queue.slice(0, 30)) {
+      console.log(
+        `  ${t.id}  ${t.date}  ${padStart(fmtEur(t.amount_eur), 10)} EUR  ${padEnd(t.merchant_raw, 30)} ${t.note}`,
+      );
+    }
+    if (queue.length > 30) console.log(`  … and ${queue.length - 30} more (kopeika list --who ${who} --queued)`);
+    console.log("");
+    console.log(`decide with: kopeika decide <txid> <category> --who ${who}`);
+  }
+  return 0;
+}
+
+/** Undisposed rows on the person's dedicated accounts (the explicit-decision queue). */
+function taxQueue(ledger: readonly Transaction[], person: Person): Transaction[] {
+  const dedicated = new Set(
+    Object.entries(person.profile.accounts)
+      .filter(([, mode]) => mode === "dedicated")
+      .map(([acc]) => acc),
+  );
+  return ledger.filter(
+    (t) =>
+      dedicated.has(t.account) &&
+      t.tax_category === "" &&
+      (t.tax_person === "" || t.tax_person === person.profile.slug),
+  );
+}
+
+// --- tax: decide --------------------------------------------------------------
+async function cmdDecide(args: Args): Promise<number> {
+  const [txidRaw, category] = args.positionals;
+  const who = flagString(args, "who");
+  if (!txidRaw || !category || !who) {
+    console.error("usage: kopeika decide <txid> <category> --who <person>   (txid may be a unique prefix)");
+    return 1;
+  }
+  const person = loadPerson(ROOT, who);
+  const pack = loadPack(ROOT, person.profile.pack);
+  if (!pack.categories.has(category)) {
+    console.error(
+      `unknown category "${category}". Known: ${[...pack.categories.keys()].join(", ")}`,
+    );
+    return 1;
+  }
+  const ledger = loadLedger(LEDGER_PATH);
+  const matches = ledger.filter((t) => t.id === txidRaw || t.id.startsWith(txidRaw));
+  if (matches.length === 0) {
+    console.error(`no ledger row with id (or prefix) "${txidRaw}"`);
+    return 1;
+  }
+  if (matches.length > 1) {
+    console.error(`"${txidRaw}" is ambiguous (${matches.length} rows) — use the full id`);
+    return 1;
+  }
+  const tx = matches[0]!;
+  if (tx.tax_source === "pin" && tx.tax_person !== who) {
+    console.error(`row ${tx.id} is pinned on "${tx.tax_person}"'s books — undo there first`);
+    return 1;
+  }
+
+  const noteFlag = flagString(args, "note") ?? "";
+  person.pins.set(tx.id, { category, note: noteFlag });
+  savePins(person.dir, person.pins);
+  tx.tax_person = who;
+  tx.tax_category = category;
+  tx.tax_source = "pin";
+  writeLedger(LEDGER_PATH, ledger);
+
+  console.log(
+    `pinned ${tx.id} -> ${category} (${who})  ${tx.date}  ${fmtEur(tx.amount_eur)} EUR  ${tx.merchant_raw}`,
+  );
+  return 0;
+}
+
+// --- tax: the EÜR report ------------------------------------------------------
+/** Money with cents and thousands separators for tax figures (never rounded). */
+function fmtCents(n: number): string {
+  const sign = n < 0 ? "-" : "";
+  const [int, frac] = Math.abs(n).toFixed(2).split(".");
+  return `${sign}${int!.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${frac}`;
+}
+
+async function cmdTaxReport(who: string, args: Args): Promise<number> {
+  const person = loadPerson(ROOT, who);
+  const pack = loadPack(ROOT, person.profile.pack);
+  const ledger = loadLedger(LEDGER_PATH);
+  const bookRows = ledger.filter((t) => t.tax_person === who);
+  if (bookRows.length === 0) {
+    console.log(`no rows on "${who}"'s books yet — import or categorize first.`);
+    return 0;
+  }
+
+  const yearFlag = flagString(args, "year");
+  if (yearFlag !== undefined && !/^\d{4}$/.test(yearFlag)) {
+    console.error(`--year must be YYYY (got "${yearFlag}")`);
+    return 1;
+  }
+  const year = yearFlag ?? bookRows.map((t) => t.date.slice(0, 4)).sort().pop()!;
+
+  const assets = loadAssets(person.dir);
+  const report = buildEuer(ledger, who, year, pack, assets);
+
+  const idLine = Object.entries(person.profile.identity)
+    .map(([k, v]) => `${k} ${v}`)
+    .join(" · ");
+  console.log(`EÜR ${year} — ${person.profile.name} (§ 4 Abs. 3 EStG, pack ${pack.country} ${pack.packYear})`);
+  if (idLine !== "") console.log(idLine);
+  console.log("");
+
+  console.log("Betriebseinnahmen");
+  for (const c of report.income) {
+    console.log(
+      `  ${padEnd(`[${c.category.euerLine}]`, 6)} ${padEnd(c.category.label, 58)} ${padStart(fmtCents(c.amountEur), 12)}  (${c.rows})`,
+    );
+  }
+  if (report.incomeCorrections !== 0) {
+    console.log(
+      `         darin verrechnet: Storno/Korrekturen ${fmtCents(report.incomeCorrections)} (brutto ${fmtCents(report.incomeGross)})`,
+    );
+  }
+  console.log(`  ${padEnd("", 6)} ${padEnd("Summe Betriebseinnahmen", 58)} ${padStart(fmtCents(report.incomeTotal), 12)}`);
+  console.log("");
+
+  console.log("Betriebsausgaben");
+  for (const c of report.expenses) {
+    const tag = c.category.nondeductible ? "  [nicht abziehbar]" : "";
+    console.log(
+      `  ${padEnd(`[${c.category.euerLine}]`, 6)} ${padEnd(c.category.label, 58)} ${padStart(fmtCents(c.amountEur), 12)}  (${c.rows})${tag}`,
+    );
+  }
+  for (const a of report.afa) {
+    console.log(
+      `  ${padEnd("[36]", 6)} ${padEnd(`AfA: ${a.asset.label} (${a.asset.acquired}, ${Math.round(a.asset.businessShare * 100)}%, ${a.asset.usefulLifeMonths} Mon.)`, 58)} ${padStart(fmtCents(a.claimEur), 12)}`,
+    );
+  }
+  console.log(
+    `  ${padEnd("", 6)} ${padEnd("Summe abziehbare Betriebsausgaben", 58)} ${padStart(fmtCents(report.expenseDeductibleTotal), 12)}`,
+  );
+  if (report.expenseNondeductibleTotal !== 0) {
+    console.log(
+      `  ${padEnd("", 6)} ${padEnd("nachrichtlich: nicht abziehbar (außerhalb des Gewinns)", 58)} ${padStart(fmtCents(report.expenseNondeductibleTotal), 12)}`,
+    );
+  }
+  console.log("");
+  console.log(`Gewinn / Verlust ${year}: €${fmtCents(report.profit)}`);
+
+  if (report.neutral.length > 0) {
+    console.log("");
+    console.log("neutral (auf den Büchern, in keiner Summe):");
+    for (const c of report.neutral) {
+      console.log(`  ${padEnd(c.category.label, 64)} ${padStart(fmtCents(c.amountEur), 12)}  (${c.rows})`);
+    }
+  }
+  if (report.unknownCategories.size > 0) {
+    console.log("");
+    console.log("⚠ rows outside the pack (fix before filing):");
+    for (const [key, agg] of report.unknownCategories) {
+      console.log(`  ${padEnd(key, 24)} ${agg.rows} row(s), €${fmtCents(agg.amountEur)} — \`categorize --who ${who}\` / \`decide\``);
+    }
+  }
+  if (report.missingEurRows > 0) {
+    console.log(`⚠ ${report.missingEurRows} row(s) missing FX — excluded from every figure`);
+  }
+  const queue = taxQueue(ledger, person).filter((t) => t.date.startsWith(year));
+  if (queue.length > 0) {
+    console.log(`⚠ ${queue.length} row(s) queued undisposed for ${year} — run \`kopeika categorize --who ${who}\``);
+  }
+  return 0;
+}
+
+// --- tax: status --------------------------------------------------------------
+async function cmdStatus(_args: Args): Promise<number> {
+  const persons = listPersons(ROOT);
+  if (persons.length === 0) {
+    console.log("no tax profiles under profiles/ — create profiles/<person>/profile.json (see profiles.example/).");
+    return 0;
+  }
+  const ledger = loadLedger(LEDGER_PATH);
+  for (const slug of persons) {
+    const person = loadPerson(ROOT, slug);
+    const rows = ledger.filter((t) => t.tax_person === slug);
+    const queue = taxQueue(ledger, person);
+    const years = [...new Set(rows.map((t) => t.date.slice(0, 4)))].sort();
+    const lastDate = rows.map((t) => t.date).sort().pop() ?? "—";
+    console.log(
+      `${padEnd(slug, 12)} ${rows.length} book row(s), years ${years.join("/") || "—"}, last ${lastDate}, ` +
+        `pins ${person.pins.size}, rules ${person.rules.length}, queue ${queue.length}`,
+    );
+  }
+  return 0;
+}
+
 // --- categorize -------------------------------------------------------------
 async function cmdCategorize(args: Args): Promise<number> {
+  // --who <person> switches to the TAX axis (pins + rules + queue); without it
+  // this is the household pass over data/rules.csv, unchanged.
+  const who = flagString(args, "who");
+  if (who !== undefined) return cmdTaxCategorize(who, args);
   const review = hasFlag(args, "review");
   const ledger = loadLedger(LEDGER_PATH);
   if (ledger.length === 0) {
@@ -439,11 +863,16 @@ async function cmdList(args: Args): Promise<number> {
   const sourceFilter = flagString(args, "source");
   const monthFilter = flagString(args, "month");
   const onlyUncategorized = hasFlag(args, "uncategorized");
+  const whoFilter = flagString(args, "who");
+  const onlyQueued = hasFlag(args, "queued");
 
   let rows = ledger;
   if (sourceFilter) rows = rows.filter((t) => t.data_source === sourceFilter);
   if (monthFilter) rows = rows.filter((t) => t.date.startsWith(monthFilter));
   if (onlyUncategorized) rows = rows.filter((t) => t.category === "");
+  if (whoFilter) {
+    rows = onlyQueued ? taxQueue(rows, loadPerson(ROOT, whoFilter)) : rows.filter((t) => t.tax_person === whoFilter);
+  }
 
   rows = [...rows].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
@@ -462,7 +891,10 @@ async function cmdList(args: Args): Promise<number> {
   for (const t of rows) {
     if (t.amount_eur === null) missingEur += 1;
     else totalEur += t.amount_eur;
-    const cat = t.category === "" ? "(none)" : t.category;
+    // With --who, the tax category is the interesting axis; otherwise household.
+    const cat = whoFilter
+      ? t.tax_category === "" ? "(queued)" : `${t.tax_category}${t.tax_source === "pin" ? " 📌" : ""}`
+      : t.category === "" ? "(none)" : t.category;
     console.log(
       `  ${padEnd(t.date, 10)} ${padEnd(t.account, 13)} ${padStart(fmtNative(t.amount_native), 12)} ${padEnd(t.currency, 4)} ${padStart(fmtEur(t.amount_eur), 11)} ${padEnd(t.type, 9)} ${padEnd(cat, 14)} ${t.merchant_raw}`,
     );
@@ -556,6 +988,9 @@ function printFloorFlex(focus: MonthSummary, report: Report): void {
 }
 
 async function cmdReport(args: Args): Promise<number> {
+  // --who <person> renders that person's EÜR instead of the household report.
+  const who = flagString(args, "who");
+  if (who !== undefined) return cmdTaxReport(who, args);
   const ledger = loadLedger(LEDGER_PATH);
   if (ledger.length === 0) {
     console.log("ledger is empty — import something first.");
@@ -883,6 +1318,33 @@ USAGE
       --from  YYYY-MM   only months >= this one.
       --html  <path>    also write a self-contained HTML dashboard to <path>.
 
+  kopeika import lexoffice-datev <dir> --account <name> --owner <owner> [--who <person>]
+      TAX FACE: import a Lexoffice DATEV Belegbilder export (the UNZIPPED folder
+      of XMLs). Rows land on <person>'s books (tax axis) with categories mapped
+      from the SKR account codes via the country pack; household analytics never
+      see them (category Exclude). Unmapped codes queue — never guessed.
+
+  kopeika categorize --who <person>
+      TAX FACE: apply <person>'s pins (profiles/<person>/pins.json — never
+      overridden) and ratified rules (rules.json — fill empty dispositions
+      only), then list the queue of undisposed rows on dedicated accounts.
+
+  kopeika decide <txid> <category> --who <person> [--note <text>]
+      TAX FACE: pin one row's tax category — the explicit-permission step.
+      Pins outrank rules forever; only another \`decide\` changes a pin.
+      <txid> may be a unique prefix.
+
+  kopeika report --who <person> [--year YYYY]
+      TAX FACE: the EÜR — line-mapped Betriebseinnahmen/-ausgaben, Bewirtung
+      70/30, AfA from assets.json, profit, Storno reconciliation.
+
+  kopeika status
+      TAX FACE: one line per tax profile — book rows, years, pins, rules, queue.
+
+  kopeika list [--who <person> [--queued]]
+      With --who: only that person's book rows, tax category shown (📌 = pinned).
+      With --queued: only the undisposed queue.
+
   kopeika project [--rate <eur/mo>] [--lump-sum <eur>] [--years N]
       Project the savings stock forward. Starting stock = the savings destinations
       in data/savings.csv (account cost basis + in-account pots + manual anchors).
@@ -896,11 +1358,19 @@ USAGE
 
 DATA (all gitignored under data/)
   data/raw/<source>/   immutable original exports
-  data/ledger.csv      clean normalized ledger
+  data/ledger.csv      clean normalized ledger (two axes: household + tax)
   data/rules.csv       pattern,match_type,field,category,type
   data/rates.csv       month,currency,rate_to_eur
   data/tiers.csv       scope,value,tier  (mandatory=floor, else flex)
   data/savings.csv     scope,value,balance_eur  (account|marker|anchor savings)
+
+TAX FACE (profiles/ = the consolidated PII zone; categories.<cc>.json = shipped pack)
+  profiles/household.json        the household profile (was data/profile.json)
+  profiles/<person>/profile.json identity: name, pack, Steuernummer, accounts
+  profiles/<person>/rules.json   ratified merchant rules (tax axis)
+  profiles/<person>/pins.json    per-transaction decisions — outrank rules
+  profiles/<person>/assets.json  Anlagenverzeichnis for AfA
+  categories.de.json             Germany pack: categories -> Anlage EÜR lines, SKR map
 
 NOT IMPLEMENTED (v0 stubs): Google Sheets mirror/push, LLM --suggest categorization.
 No LLM is called at runtime — the core is fully deterministic.`);
@@ -913,7 +1383,8 @@ async function main(): Promise<number> {
 
   // Load the personal layer (own names/IBANs, net-worth marks, display labels) and
   // install the own-account identity the connectors use for transfer detection.
-  PROFILE = loadProfile(PROFILE_PATH);
+  // profiles/household.json (the PII zone) wins; data/profile.json still reads.
+  PROFILE = loadProfile(PROFILE_PATHS.find((p) => existsSync(p)) ?? PROFILE_PATHS[0]!);
   setIdentity(PROFILE.ownNames, PROFILE.ownIbans);
 
   const command = args.positionals.shift();
@@ -936,6 +1407,10 @@ async function main(): Promise<number> {
       return cmdList(args);
     case "report":
       return cmdReport(args);
+    case "decide":
+      return cmdDecide(args);
+    case "status":
+      return cmdStatus(args);
     case "project":
       return cmdProject(args);
     default:

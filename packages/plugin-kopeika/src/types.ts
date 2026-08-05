@@ -36,6 +36,21 @@ export function isOwner(value: string): boolean {
 }
 
 /**
+ * Provenance of a row's tax disposition. Ordering is a hierarchy of authority:
+ * a pin is an explicit per-transaction human decision and is never overridden
+ * by anything; "import" means the source itself carried the category (e.g. a
+ * DATEV export's SKR account code); "rule" is a ratified merchant rule. The
+ * empty string means no disposition yet — such a row on a dedicated books
+ * account is QUEUED, never guessed.
+ */
+export const TAX_SOURCES = ["", "import", "rule", "pin"] as const;
+export type TaxSource = (typeof TAX_SOURCES)[number];
+
+export function isTaxSource(value: string): value is TaxSource {
+  return (TAX_SOURCES as readonly string[]).includes(value);
+}
+
+/**
  * One normalized ledger row.
  *
  * - amount_native: signed in the transaction's own currency (negative = outflow).
@@ -43,6 +58,9 @@ export function isOwner(value: string): boolean {
  *   available — kopeika never guesses a rate.
  * - is_transfer / transfer_group: a candidate hint may be set by a connector,
  *   but the authoritative pairing is done by the `transfers` command.
+ * - tax_person / tax_category / tax_source: the SECOND axis. `category` is the
+ *   household view; the tax fields say whose books the row is on and as what.
+ *   Both axes live on the same row so nothing is ever imported twice.
  */
 export interface Transaction {
   id: string;
@@ -69,6 +87,12 @@ export interface Transaction {
    * point-in-time level, distinct from the signed flow in amount_native.
    */
   balance: number | null;
+  /** Whose tax books this row is on ("" = nobody's — pure household). */
+  tax_person: string;
+  /** Tax category key from the country pack ("" = undisposed). */
+  tax_category: string;
+  /** How the disposition was made. Pins outrank everything. */
+  tax_source: TaxSource;
 }
 
 /**
@@ -124,6 +148,9 @@ export const LEDGER_COLUMNS = [
   "note",
   "source_file",
   "balance",
+  "tax_person",
+  "tax_category",
+  "tax_source",
 ] as const;
 
 export type LedgerColumn = (typeof LEDGER_COLUMNS)[number];

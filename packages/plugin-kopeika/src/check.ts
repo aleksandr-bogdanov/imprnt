@@ -7,7 +7,7 @@
  * no code with the core or the engine: it re-reads the few files it needs itself.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -32,13 +32,25 @@ function git(args: string[]): string | null {
 }
 const dataLs = git(["ls-files", "data"]);
 const deployLs = git(["ls-files", "deploy"]);
+const profilesLs = git(["ls-files", "profiles"]);
 const remoteLs = git(["remote"]);
-if (dataLs === null || deployLs === null || remoteLs === null) {
+if (dataLs === null || deployLs === null || profilesLs === null || remoteLs === null) {
   notes.push("data: could not check git tracking (git unavailable or not a repo)");
 } else {
   const dataTracked = dataLs.length > 0;
   const deployTracked = deployLs.length > 0;
+  const profilesTracked = profilesLs.length > 0;
   const hasRemote = remoteLs.length > 0;
+  if (profilesTracked && hasRemote) {
+    problems.push(
+      "profiles/ is git-tracked in a repo that HAS A REMOTE — the consolidated PII zone (tax " +
+        "identities, Steuernummern, pins, the forward book) could be pushed. Add profiles/ to " +
+        ".gitignore, or remove the remote. Committing profiles/ is only safe in a remoteless " +
+        "local store like the imprnt vault.",
+    );
+  } else if (profilesTracked) {
+    notes.push("profiles: committed (no remote — canonical local store, safe)");
+  }
   if (dataTracked && hasRemote) {
     problems.push(
       "data/ is git-tracked in a repo that HAS A REMOTE — your financial data (ledger, raw bank " +
@@ -61,16 +73,38 @@ if (dataLs === null || deployLs === null || remoteLs === null) {
 }
 
 // Profile: optional (absent = generic mode), but if present it must be valid JSON.
-const profilePath = join(DATA, "profile.json");
-if (existsSync(profilePath)) {
+// profiles/household.json is the post-tax-face home; data/profile.json still counts.
+const profileCandidates = [join(ROOT, "profiles", "household.json"), join(DATA, "profile.json")];
+const profilePath = profileCandidates.find((p) => existsSync(p));
+if (profilePath !== undefined) {
   try {
     JSON.parse(readFileSync(profilePath, "utf8"));
-    notes.push("profile: present");
+    notes.push(`profile: present (${basename(dirname(profilePath))}/${basename(profilePath)})`);
   } catch (e) {
-    problems.push(`data/profile.json is not valid JSON (${(e as Error).message})`);
+    problems.push(`${profilePath} is not valid JSON (${(e as Error).message})`);
   }
 } else {
   notes.push("profile: none (generic mode — no net-worth layer, raw labels)");
+}
+
+// Tax profiles: every JSON in profiles/<person>/ must parse — a broken pins.json
+// would silently strand decisions.
+const profilesDir = join(ROOT, "profiles");
+if (existsSync(profilesDir)) {
+  let persons = 0;
+  for (const entry of readdirSync(profilesDir)) {
+    const dir = join(profilesDir, entry);
+    if (!statSync(dir).isDirectory()) continue;
+    persons += 1;
+    for (const f of readdirSync(dir).filter((n) => n.endsWith(".json"))) {
+      try {
+        JSON.parse(readFileSync(join(dir, f), "utf8"));
+      } catch (e) {
+        problems.push(`profiles/${entry}/${f} is not valid JSON (${(e as Error).message})`);
+      }
+    }
+  }
+  if (persons > 0) notes.push(`tax profiles: ${persons} person(s)`);
 }
 
 // Ledger: optional (a fresh install has none), reported for visibility.

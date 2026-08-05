@@ -13,6 +13,7 @@ import { basename, dirname, extname, join } from "node:path";
 import { parseCsv, writeCsv } from "./csv.ts";
 import {
   isOwner,
+  isTaxSource,
   isTxType,
   LEDGER_COLUMNS,
   type Transaction,
@@ -39,6 +40,9 @@ function txToRow(tx: Transaction): string[] {
     tx.note,
     tx.source_file,
     tx.balance === null ? "" : formatAmount(tx.balance),
+    tx.tax_person,
+    tx.tax_category,
+    tx.tax_source,
   ];
 }
 
@@ -70,6 +74,12 @@ function rowToTx(get: (col: string) => string, rowNum: number): Transaction {
   // balance is a v2 column. A ledger written before it existed has no such field;
   // the header-tolerant getter returns "" there, which reads back as null.
   const balanceRaw = get("balance").trim();
+  // tax_* are v3 columns (the two-axis ledger). Same tolerance: an older ledger
+  // reads them as "" — no person, no category, no source.
+  const taxSourceRaw = get("tax_source").trim();
+  if (!isTaxSource(taxSourceRaw)) {
+    throw new Error(`ledger load: row ${rowNum}: invalid tax_source "${taxSourceRaw}"`);
+  }
 
   return {
     id: get("id").trim(),
@@ -90,6 +100,9 @@ function rowToTx(get: (col: string) => string, rowNum: number): Transaction {
     note: get("note"),
     source_file: get("source_file"),
     balance: balanceRaw === "" ? null : parseAmount(balanceRaw, "balance"),
+    tax_person: get("tax_person").trim(),
+    tax_category: get("tax_category").trim(),
+    tax_source: taxSourceRaw,
   };
 }
 

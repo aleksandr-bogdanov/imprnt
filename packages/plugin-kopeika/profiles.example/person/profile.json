@@ -1,0 +1,15 @@
+{
+  "_comment": "One tax person. `pack` names the shipped country pack (categories.<pack>.json). `identity` is free-form key/value printed on the EÜR header and exports. `accounts` maps ledger account labels to dedicated|mixed (see ../README.md).",
+  "name": "Erika Musterfrau",
+  "pack": "de",
+  "identity": {
+    "Steuernummer": "12/345/67890",
+    "Rechtsform": "Freiberufler",
+    "Kleinunternehmer": "§ 19 UStG",
+    "Tätigkeitsbeginn": "2024-08-16"
+  },
+  "accounts": {
+    "lexoffice-erika": "dedicated",
+    "revolut-joint": "mixed"
+  }
+}

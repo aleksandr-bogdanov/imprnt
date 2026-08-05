@@ -1,0 +1,7 @@
+{
+  "_comment": "Ratified merchant rules for the tax axis. match: substring|regex|exact; field: merchant_raw|note|account; optional `account` scopes a rule to one ledger account. Rules fill EMPTY dispositions only — they never override a pin, an import-carried category, or another person's row. Categories must exist in the country pack.",
+  "rules": [
+    { "pattern": "splice", "match": "substring", "category": "software", "note": "sample subscription, business tooling" },
+    { "pattern": "gema|kupferstich", "match": "regex", "category": "education", "note": "example regex rule" }
+  ]
+}

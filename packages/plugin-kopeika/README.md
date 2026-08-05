@@ -77,6 +77,27 @@ imprnt kopeika report [--month YYYY-MM] [--from YYYY-MM] [--html <path> --lang <
 imprnt kopeika project [--rate <eur/mo>] [--lump-sum <eur>] [--years N]
 ```
 
+### The tax face (`--who` switches the axis)
+
+Every ledger row carries two independent axes: the household category above, and a per-person tax
+disposition (whose books, which tax category, how it was decided). That second axis turns the family
+ledger into per-person small-business bookkeeping — EÜR reports with Anlage EÜR line mapping,
+Bewirtung 70/30, AfA from an Anlagenverzeichnis. Country specifics ship as a data pack
+(`categories.de.json` for Germany); the core hardcodes no country.
+
+```
+imprnt kopeika import lexoffice-datev <unzipped-dir> --account <name> --owner <o> [--who <person>]
+imprnt kopeika categorize --who <person>
+imprnt kopeika decide <txid> <category> --who <person> [--note <text>]
+imprnt kopeika report --who <person> [--year YYYY]
+imprnt kopeika status
+imprnt kopeika list --who <person> [--queued]
+```
+
+A tax category is never guessed: pins (`decide`) outrank rules, rules fill empty dispositions only,
+and anything unmatched on a dedicated books account queues until you decide it. Per-person identity,
+rules, pins, and assets live under `profiles/<person>/` — see `profiles.example/`.
+
 `report --html <path> --lang <en|ru>` writes the self-contained dashboard. The deep model (raw vs
 clean, stock vs flow, the two axes, net worth, projection) is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

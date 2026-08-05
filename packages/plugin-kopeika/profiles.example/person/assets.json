@@ -1,0 +1,11 @@
+[
+  {
+    "_comment": "Anlagenverzeichnis entry. useful_life_months: 1 = full write-off in the acquisition year (the BMF 26.02.2021 one-year Nutzungsdauer for computer hardware, stored as 1 so nothing pro-rates into the next year). 36 = classic 3-year straight line.",
+    "label": "Workstation (example)",
+    "acquired": "2026-08-04",
+    "gross_eur": 1814.05,
+    "business_share": 0.7,
+    "useful_life_months": 1,
+    "note": "Computerhardware, 1-jährige Nutzungsdauer nach BMF-Schreiben 26.02.2021"
+  }
+]

@@ -36,6 +36,9 @@ export function tx(overrides: Partial<Transaction> = {}): Transaction {
     note: "",
     source_file: "export.csv",
     balance: null,
+    tax_person: "",
+    tax_category: "",
+    tax_source: "",
   };
   return { ...base, ...overrides };
 }

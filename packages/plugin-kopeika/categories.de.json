@@ -1,0 +1,120 @@
+{
+  "_comment": "Germany tax data pack. SHIPPED DATA, not code: the category set, the Anlage EÜR line mapping, and the SKR account-code mapping used by the lexoffice-datev connector. Nothing German is hardcoded in the ledger core — another country is another pack. euer_line values are per-year form data (the Anlage EÜR renumbers occasionally); verify against the current year's form before a filing and edit here, never in code.",
+  "country": "DE",
+  "pack_year": 2026,
+  "categories": {
+    "revenue_ku": {
+      "label": "Betriebseinnahmen als umsatzsteuerlicher Kleinunternehmer",
+      "side": "income",
+      "euer_line": "11"
+    },
+    "revenue": {
+      "label": "Betriebseinnahmen (umsatzsteuerpflichtig)",
+      "side": "income",
+      "euer_line": "14"
+    },
+    "goods": {
+      "label": "Waren, Roh- und Hilfsstoffe",
+      "side": "expense",
+      "euer_line": "26"
+    },
+    "services_bought": {
+      "label": "Bezogene Fremdleistungen",
+      "side": "expense",
+      "euer_line": "27"
+    },
+    "software": {
+      "label": "Software, Hosting, Lizenzen (sofort abziehbar)",
+      "side": "expense",
+      "euer_line": "66",
+      "euer_line_label": "übrige Betriebsausgaben"
+    },
+    "equipment_gwg": {
+      "label": "GWG § 6 Abs. 2 EStG (Sofortabschreibung bis 800 € netto)",
+      "side": "expense",
+      "euer_line": "43"
+    },
+    "afa": {
+      "label": "AfA auf Anlagevermögen (aus dem Anlagenverzeichnis)",
+      "side": "expense",
+      "euer_line": "36",
+      "computed_from": "assets"
+    },
+    "office": {
+      "label": "Arbeitsmittel und Bürobedarf",
+      "side": "expense",
+      "euer_line": "66",
+      "euer_line_label": "übrige Betriebsausgaben"
+    },
+    "education": {
+      "label": "Fortbildungskosten",
+      "side": "expense",
+      "euer_line": "66",
+      "euer_line_label": "übrige Betriebsausgaben"
+    },
+    "transport": {
+      "label": "Fahrtkosten (tatsächliche Kosten)",
+      "side": "expense",
+      "euer_line": "60"
+    },
+    "telecom": {
+      "label": "Telefon- und Internetkosten (betrieblicher Anteil)",
+      "side": "expense",
+      "euer_line": "66",
+      "euer_line_label": "übrige Betriebsausgaben"
+    },
+    "bank_fees": {
+      "label": "Nebenkosten des Geldverkehrs",
+      "side": "expense",
+      "euer_line": "66",
+      "euer_line_label": "übrige Betriebsausgaben"
+    },
+    "meals": {
+      "label": "Bewirtungsaufwendungen (brutto, Split 70/30 macht das Tool)",
+      "side": "expense",
+      "split": { "deductible_share": 0.7, "into": ["meals_deductible", "meals_nondeductible"] }
+    },
+    "meals_deductible": {
+      "label": "Bewirtungsaufwendungen, abziehbar (70 %)",
+      "side": "expense",
+      "euer_line": "55"
+    },
+    "meals_nondeductible": {
+      "label": "Bewirtungsaufwendungen, nicht abziehbar (30 %)",
+      "side": "expense",
+      "euer_line": "54",
+      "nondeductible": true
+    },
+    "home_office": {
+      "label": "Häusliches Arbeitszimmer / Homeoffice-Pauschale",
+      "side": "expense",
+      "euer_line": "58"
+    },
+    "capital_contribution": {
+      "label": "Privateinlage (keine Betriebseinnahme)",
+      "side": "neutral"
+    },
+    "private_withdrawal": {
+      "label": "Privatentnahme (keine Betriebsausgabe)",
+      "side": "neutral"
+    },
+    "personal": {
+      "label": "Privat — nicht auf den Büchern",
+      "side": "neutral"
+    }
+  },
+  "skr04": {
+    "_comment": "SKR04 account code -> tax category, used by the lexoffice-datev connector. 4184 = steuerfreie Erlöse Kleinunternehmer (z. B. § 19 + § 4 Nr. 21 UStG), 4185 = Erlöse Kleinunternehmer § 19 UStG.",
+    "4184": "revenue_ku",
+    "4185": "revenue_ku",
+    "5900": "services_bought",
+    "6640": "meals_deductible",
+    "6644": "meals_nondeductible",
+    "6800": "office",
+    "6805": "telecom",
+    "6815": "office",
+    "6821": "education",
+    "6837": "software",
+    "6855": "bank_fees"
+  }
+}
