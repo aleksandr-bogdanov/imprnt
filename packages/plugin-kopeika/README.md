@@ -93,6 +93,7 @@ imprnt kopeika report --who <person> [--year YYYY]
 imprnt kopeika project --who <person> [--year YYYY]
 imprnt kopeika status
 imprnt kopeika list --who <person> [--queued]
+imprnt kopeika invoice --who <person> --client "<name>" --qty N --unit-price <eur> [--dry-run]
 ```
 
 A tax category is never guessed: pins (`decide`) outrank rules, rules fill empty dispositions only,
@@ -106,6 +107,26 @@ the rest of the year comes from `profiles/<person>/forward.json` (expected incom
 range, planned purchases, off-book yearly adjustments that never appear in the ledger). A line
 that lands on the wrong side prints the fix while it is still buyable, and the naive run-rate is
 shown as a labelled cross-check. `status` adds the binding threshold as a one-liner per person.
+
+### Invoices (§ 14 UStG)
+
+`invoice --who <person>` generates an invoice PDF (plus the HTML it was printed from) under
+`profiles/<person>/invoices/`, in the person's own letterhead layout. The letterhead comes from the
+`invoice` object in `profiles/<person>/profile.json` (see `profiles.example/person/profile.json`).
+Payment is a PayPal box with a locally encoded QR code pointing at `<paypal.me>/<total>eur`. There
+is no bank or IBAN line on purpose.
+
+Clients live in `profiles/<person>/clients.json` as name to Kundennr entries. Run
+`invoice --who <person> --sync-clients` once to seed the registry from archived Lexoffice DATEV
+XMLs, so existing clients keep their Lexoffice Kundennr. A new client gets max+1 automatically.
+
+The invoice number is a gapless sequence in `profiles/<person>/invoices/counter.json`
+(`{"prefix":"RE","width":4,"next":42}`). The counter is incremented only after the artifact is
+written, so a failed render never burns a number. `--dry-run` writes `draft-preview.pdf` with a
+DRAFT watermark and consumes nothing. `--from-tx <ledger-txid>` builds the invoice backwards from
+an income row already on the books (amount and date from the row, client matched by the row
+merchant). PDF rendering uses system Chrome headless. Without Chrome the HTML is the final
+artifact and the command says so.
 
 `report --html <path> --lang <en|ru>` writes the self-contained dashboard. The deep model (raw vs
 clean, stock vs flow, the two axes, net worth, projection) is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

@@ -1,0 +1,170 @@
+<!doctype html>
+<!--
+  § 14 UStG invoice template (Kleinunternehmer layout, PayPal-only payment).
+  Placeholders only — every double-braced TOKEN is filled by src/tax/invoice.ts
+  from the person's profile + clients.json. Self-contained: inline CSS, logo as a data
+  URI, QR as inline SVG. Printed to PDF by headless Chrome (A4).
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>{{INVOICE_NO}}</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 210mm; }
+  body {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 10pt;
+    color: #000;
+    padding: 12mm 18mm 0 18mm;
+  }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; }
+  .logo img { max-height: 15mm; max-width: 80mm; }
+  .head-right { text-align: right; }
+  .head-right h1 { font-size: 16pt; font-weight: 400; margin-bottom: 4mm; }
+  .head-fields { border-collapse: collapse; margin-left: auto; }
+  .head-fields td { padding: 0.4mm 0; font-size: 10pt; }
+  .head-fields td.label { text-align: right; padding-right: 8mm; }
+  .head-fields td.value { text-align: right; min-width: 28mm; }
+  .addresses { display: flex; justify-content: space-between; margin-top: 12mm; }
+  .window { font-size: 10pt; }
+  .window .sender-line {
+    font-size: 7.5pt;
+    text-decoration: underline;
+    margin-bottom: 4mm;
+  }
+  .sender-block { text-align: right; font-size: 10pt; line-height: 1.45; }
+  .intro { margin-top: 22mm; line-height: 1.5; }
+  table.positions { width: 100%; border-collapse: collapse; margin-top: 6mm; }
+  table.positions th, table.positions td { border: 1px solid #000; padding: 2mm 2.5mm; }
+  table.positions th { text-align: left; font-size: 10pt; }
+  table.positions th.num, table.positions td.num { text-align: right; }
+  table.positions th.center, table.positions td.center { text-align: center; }
+  table.positions td.desc { font-weight: bold; }
+  table.positions tr.total td { font-weight: bold; border: none; border-top: 1px solid #000; padding-top: 2.5mm; }
+  .footnote { margin-top: 4mm; }
+  .terms { margin-top: 4mm; }
+  .closing { margin-top: 4mm; line-height: 1.5; }
+  .paypal-box {
+    margin-top: 6mm;
+    border: 1px solid #ccc;
+    padding: 3mm 4mm;
+    display: inline-flex;
+    align-items: center;
+    gap: 8mm;
+  }
+  .paypal-box .pp-title { font-weight: bold; }
+  .paypal-box .pp-text { line-height: 1.5; }
+  .paypal-link { margin-top: 1.5mm; font-size: 8pt; color: #999; }
+  .paypal-link a { color: #999; }
+  .footer {
+    position: fixed;
+    bottom: 8mm;
+    left: 18mm;
+    right: 18mm;
+    font-size: 7.5pt;
+    line-height: 1.5;
+  }
+  .footer .cols { display: flex; gap: 24mm; }
+  .footer .page { text-align: center; margin-top: 3mm; }
+  .watermark {
+    position: fixed;
+    top: 45%;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    transform: rotate(-30deg);
+    font-size: 60pt;
+    font-weight: bold;
+    color: rgba(180, 180, 180, 0.35);
+    letter-spacing: 12pt;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+{{WATERMARK_HTML}}
+<div class="header">
+  <div class="logo"><img src="{{LOGO_DATA_URI}}" alt="{{SENDER_NAME}}"></div>
+  <div class="head-right">
+    <h1>Rechnung</h1>
+    <table class="head-fields">
+      <tr><td class="label">Rechnungsnr.:</td><td class="value">{{INVOICE_NO}}</td></tr>
+      <tr><td class="label">Kundennr.:</td><td class="value">{{KUNDENNR}}</td></tr>
+      <tr><td class="label">Datum:</td><td class="value">{{INVOICE_DATE}}</td></tr>
+      <tr><td class="label">Lieferdatum:</td><td class="value">{{DELIVERY_DATE}}</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="addresses">
+  <div class="window">
+    <div class="sender-line">{{SENDER_ONELINE}}</div>
+    <div class="recipient">{{RECIPIENT_HTML}}</div>
+  </div>
+  <div class="sender-block">
+    {{SENDER_NAME}}<br>
+    {{SENDER_ADDRESS_HTML}}
+    Tel.: {{SENDER_PHONE}}<br>
+    {{SENDER_EMAIL}}<br>
+    {{SENDER_WEBSITE}}
+  </div>
+</div>
+
+<p class="intro">{{INTRO_TEXT}}</p>
+
+<table class="positions">
+  <tr>
+    <th class="center">Pos.</th>
+    <th>Bezeichnung</th>
+    <th class="num">Menge</th>
+    <th class="center">Einheit</th>
+    <th class="num">Einzel &euro;</th>
+    <th class="num">Gesamt &euro;</th>
+  </tr>
+  <tr>
+    <td class="center">1</td>
+    <td class="desc">{{SERVICE_LABEL}}</td>
+    <td class="num">{{QTY}}</td>
+    <td class="center">Stück</td>
+    <td class="num">{{UNIT_PRICE}}</td>
+    <td class="num">{{TOTAL}}</td>
+  </tr>
+  <tr class="total">
+    <td colspan="5">Gesamtbetrag*</td>
+    <td class="num">{{TOTAL}}</td>
+  </tr>
+</table>
+
+<p class="footnote">{{VAT_CLAUSE}}</p>
+<p class="terms">Zahlbar sofort, rein netto</p>
+<p class="closing">{{CLOSING_TEXT}}</p>
+
+<div>
+  <div class="paypal-box">
+    <div class="pp-text">
+      <div class="pp-title">Bezahlen per PayPal</div>
+      Ganz bequem Code scannen<br>
+      oder <a href="{{PAYPAL_LINK_URL}}">Link</a> verwenden.
+    </div>
+    <div class="pp-qr">{{PAYPAL_QR_SVG}}</div>
+  </div>
+  <div class="paypal-link"><a href="{{PAYPAL_LINK_URL}}">{{PAYPAL_LINK_URL}}</a></div>
+</div>
+
+<div class="footer">
+  <div class="cols">
+    <div>
+      {{SENDER_NAME}}<br>
+      {{SENDER_ADDRESS_HTML}}
+      Tel.: {{SENDER_PHONE}}<br>
+      {{SENDER_EMAIL}}<br>
+      {{SENDER_WEBSITE}}
+    </div>
+    <div>Steuernummer: {{STEUERNUMMER}}</div>
+  </div>
+  <div class="page">Seite 1/1</div>
+</div>
+</body>
+</html>

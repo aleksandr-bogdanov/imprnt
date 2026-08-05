@@ -11,5 +11,20 @@
   "accounts": {
     "lexoffice-erika": "dedicated",
     "revolut-joint": "mixed"
+  },
+  "invoice": {
+    "_comment": "Letterhead for the § 14 invoice generator (all fields required except studio_display). logo is relative to this profile dir. Payment is PayPal-only: there is no IBAN field on purpose. The gapless number sequence lives in invoices/counter.json, clients in clients.json (seed via `invoice --sync-clients`).",
+    "business_name": "Erika Musterfrau | Beispielstudio",
+    "address": ["Musterstr. 1", "10000 Berlin"],
+    "phone": "0170000000",
+    "email": "erika@example.com",
+    "website": "example.com",
+    "paypal_business": "paypal@example.com",
+    "paypal_me": "https://paypal.me/beispielstudio",
+    "logo": "branding/logo.png",
+    "payment_methods": "paypal-only",
+    "vat_clause": "*Umsatzsteuerfreie Leistungen gemäß §19 UStG.",
+    "service_label": "Gesangsunterricht",
+    "studio_display": "Beispiel Studio"
   }
 }

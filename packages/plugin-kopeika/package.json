@@ -12,6 +12,7 @@
     "categories.de.json",
     "profiles.example",
     "proposed/.gitkeep",
+    "templates",
     "docs"
   ],
   "scripts": {

@@ -12,7 +12,7 @@
  *   data/rates.csv       month/currency -> EUR rates
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -75,6 +75,27 @@ import {
   type Person,
 } from "./tax/person.ts";
 import { buildEuer, loadAssets } from "./tax/euer.ts";
+import {
+  clientsPath,
+  commitCounter,
+  deriveClientsFromDatev,
+  findChrome,
+  findClient,
+  fmtDeMoney,
+  formatInvoiceNumber,
+  htmlToPdf,
+  loadClients,
+  loadCounter,
+  logoDataUri,
+  mergeClients,
+  nextKundennr,
+  parseInvoiceProfile,
+  paypalAmountSegment,
+  renderInvoiceHtml,
+  saveClients,
+  type Client,
+} from "./tax/invoice.ts";
+import { encodeQr, qrToSvg } from "./tax/qr.ts";
 import {
   applyForward,
   evaluateThresholds,
@@ -864,6 +885,232 @@ async function cmdTaxProject(who: string, args: Args): Promise<number> {
   return 0;
 }
 
+// --- tax: the § 14 invoice generator -----------------------------------------
+/** Local calendar date as ISO YYYY-MM-DD (invoices are dated where you live). */
+function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Generate a § 14 UStG invoice in the person's Lexoffice layout. The invoice
+ * number is consumed (counter.json incremented) ONLY after the final artifact
+ * is on disk; --dry-run renders a DRAFT preview and touches nothing.
+ */
+async function cmdInvoice(args: Args): Promise<number> {
+  const who = flagString(args, "who");
+  if (!who) {
+    console.error(
+      'usage: kopeika invoice --who <person> --client "<name>" --qty N --unit-price <eur> [--service <label>] [--date YYYY-MM-DD] [--delivery-date YYYY-MM-DD] [--dry-run]\n' +
+        "       kopeika invoice --who <person> --from-tx <ledger-txid> [--qty N] [--dry-run]\n" +
+        "       kopeika invoice --who <person> --sync-clients",
+    );
+    return 1;
+  }
+  const person = loadPerson(ROOT, who);
+
+  // --sync-clients: seed/refresh the Kundennr registry from the archived DATEV
+  // XMLs (customerName + partyId on every income entry). Existing entries win.
+  if (hasFlag(args, "sync-clients")) {
+    const rawRoot = join(DATA_DIR, "raw", "lexoffice-datev");
+    if (!existsSync(rawRoot)) {
+      console.error(`no archived DATEV exports under ${rawRoot} — run \`kopeika import lexoffice-datev\` first`);
+      return 1;
+    }
+    const files: { name: string; text: string }[] = [];
+    for (const batch of readdirSync(rawRoot).sort()) {
+      const dir = join(rawRoot, batch);
+      if (!statSync(dir).isDirectory()) continue;
+      for (const name of readdirSync(dir).filter((n) => n.toLowerCase().endsWith(".xml")).sort()) {
+        files.push({ name: `${batch}/${name}`, text: readFileSync(join(dir, name), "utf8") });
+      }
+    }
+    const derived = deriveClientsFromDatev(files);
+    const path = clientsPath(person.dir);
+    const clients = loadClients(path);
+    const { added, kept } = mergeClients(clients, derived);
+    saveClients(path, clients);
+    console.log(
+      `sync-clients (${who}): ${derived.size} client(s) across ${files.length} XML(s) — added ${added}, kept ${kept} existing, registry now ${clients.size}`,
+    );
+    return 0;
+  }
+
+  const invoiceProfile = parseInvoiceProfile(person);
+  const dryRun = hasFlag(args, "dry-run");
+  const counter = loadCounter(person.dir);
+  const cPath = clientsPath(person.dir);
+  const clients = loadClients(cPath);
+
+  // --qty: whole lessons only.
+  const qtyRaw = flagString(args, "qty");
+  let qtyFlag: number | undefined;
+  if (qtyRaw !== undefined) {
+    const n = Number(qtyRaw);
+    if (!Number.isInteger(n) || n < 1) {
+      console.error(`--qty must be a positive integer (got "${qtyRaw}")`);
+      return 1;
+    }
+    qtyFlag = n;
+  }
+  for (const name of ["date", "delivery-date"]) {
+    const v = flagString(args, name);
+    if (v !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      console.error(`--${name} must be YYYY-MM-DD (got "${v}")`);
+      return 1;
+    }
+  }
+
+  let clientName: string;
+  let client: Client;
+  let isNewClient = false;
+  let qty: number;
+  let unitPriceEur: number;
+  let totalEur: number;
+  let date: string;
+
+  const fromTx = flagString(args, "from-tx");
+  if (fromTx !== undefined) {
+    // The backwards flow: the money already landed, the invoice documents it.
+    const ledger = loadLedger(LEDGER_PATH);
+    const matches = ledger.filter((t) => t.id === fromTx || t.id.startsWith(fromTx));
+    if (matches.length === 0) {
+      console.error(`no ledger row with id (or prefix) "${fromTx}"`);
+      return 1;
+    }
+    if (matches.length > 1) {
+      console.error(`"${fromTx}" is ambiguous (${matches.length} rows) — use the full id`);
+      return 1;
+    }
+    const row = matches[0]!;
+    if (row.type !== "income") {
+      console.error(`row ${row.id} is not an income row (type "${row.type}") — an invoice documents money in`);
+      return 1;
+    }
+    if (row.amount_eur === null || row.amount_eur <= 0) {
+      console.error(`row ${row.id} has no positive EUR amount (missing FX or a Storno) — cannot invoice it`);
+      return 1;
+    }
+    const found = findClient(clients, row.merchant_raw);
+    if (found === null) {
+      console.error(
+        `row merchant "${row.merchant_raw}" is not in ${cPath} — run \`kopeika invoice --who ${who} --sync-clients\` or add the client by hand`,
+      );
+      return 1;
+    }
+    clientName = found.name;
+    client = found.client;
+    totalEur = row.amount_eur;
+    qty = qtyFlag ?? 1;
+    const totalCents = Math.round(totalEur * 100);
+    if (totalCents % qty !== 0) {
+      console.error(`--qty ${qty} does not split €${fmtDeMoney(totalEur)} into a whole-cent unit price — use a qty that divides it (or --qty 1)`);
+      return 1;
+    }
+    unitPriceEur = totalCents / qty / 100;
+    date = flagString(args, "date") ?? row.date;
+  } else {
+    const clientFlag = flagString(args, "client");
+    if (clientFlag === undefined || clientFlag.trim() === "") {
+      console.error(`--client "<name>" is required (or use --from-tx <ledger-txid>)`);
+      return 1;
+    }
+    if (qtyFlag === undefined) {
+      console.error("--qty <lessons> is required");
+      return 1;
+    }
+    qty = qtyFlag;
+    const unitRaw = flagString(args, "unit-price");
+    if (unitRaw === undefined) {
+      console.error("--unit-price <eur> is required (e.g. --unit-price 62.50)");
+      return 1;
+    }
+    const unit = Number(unitRaw);
+    if (!Number.isFinite(unit) || unit <= 0 || Math.abs(unit * 100 - Math.round(unit * 100)) > 1e-6) {
+      console.error(`--unit-price must be a positive amount with at most two decimals (got "${unitRaw}")`);
+      return 1;
+    }
+    unitPriceEur = Math.round(unit * 100) / 100;
+    totalEur = (qty * Math.round(unit * 100)) / 100;
+    const found = findClient(clients, clientFlag);
+    if (found !== null) {
+      clientName = found.name;
+      client = found.client;
+    } else {
+      // A new client gets the next Kundennr; saved only when a number is consumed.
+      isNewClient = true;
+      clientName = clientFlag.trim();
+      client = { kundennr: nextKundennr(clients), anrede: "", address: [], paypal: "" };
+    }
+    date = flagString(args, "date") ?? localToday();
+  }
+  const deliveryDate = flagString(args, "delivery-date") ?? date;
+
+  const invoiceNo = formatInvoiceNumber(counter);
+  const paypalLinkUrl = `${invoiceProfile.paypalMe}/${paypalAmountSegment(totalEur)}eur`;
+  const html = renderInvoiceHtml({
+    invoiceNo,
+    kundennr: client.kundennr,
+    date,
+    deliveryDate,
+    clientName,
+    clientAnrede: client.anrede,
+    clientAddress: client.address,
+    serviceLabel: flagString(args, "service") ?? invoiceProfile.serviceLabel,
+    qty,
+    unitPriceEur,
+    totalEur,
+    paypalLinkUrl,
+    qrSvg: qrToSvg(encodeQr(paypalLinkUrl), "22mm"),
+    logoDataUri: logoDataUri(person.dir, invoiceProfile.logo),
+    profile: invoiceProfile,
+    steuernummer: person.profile.identity["Steuernummer"] ?? "",
+    draft: dryRun,
+  });
+
+  const invoicesDir = join(person.dir, "invoices");
+  mkdirSync(invoicesDir, { recursive: true });
+  const baseName = dryRun ? "draft-preview" : invoiceNo;
+  const htmlPath = join(invoicesDir, `${baseName}.html`);
+  writeFileSync(htmlPath, html, "utf8");
+
+  const chrome = findChrome();
+  let finalPath = htmlPath;
+  let chromeNote = "";
+  if (chrome === null) {
+    chromeNote = "no Chrome/Chromium found — wrote HTML only; open it in a browser and print to PDF";
+  } else {
+    const pdfPath = join(invoicesDir, `${baseName}.pdf`);
+    const fail = htmlToPdf(chrome, htmlPath, pdfPath);
+    if (fail !== null) {
+      // Nothing consumed: remove the numbered HTML so no half-made artifact
+      // squats on a number the counter never granted.
+      if (!dryRun) unlinkSync(htmlPath);
+      console.error(`invoice: PDF render failed (${fail}) — no number consumed`);
+      return 1;
+    }
+    finalPath = pdfPath;
+  }
+
+  if (!dryRun) {
+    // The gapless commit: the artifact exists, NOW the number is consumed.
+    commitCounter(person.dir, counter);
+    if (isNewClient) {
+      clients.set(clientName, client);
+      saveClients(cPath, clients);
+    }
+  }
+
+  const clientCol = `${clientName} (Kundennr ${client.kundennr}${isNewClient ? " NEW" : ""})`;
+  if (dryRun) {
+    console.log(`draft preview · ${clientCol} · €${fmtDeMoney(totalEur)} · ${finalPath}  (${invoiceNo} NOT consumed)`);
+  } else {
+    console.log(`${invoiceNo} · ${clientCol} · €${fmtDeMoney(totalEur)} · ${finalPath}`);
+  }
+  if (chromeNote !== "") console.log(`⚠ ${chromeNote}`);
+  return 0;
+}
+
 // --- categorize -------------------------------------------------------------
 async function cmdCategorize(args: Args): Promise<number> {
   // --who <person> switches to the TAX axis (pins + rules + queue); without it
@@ -1529,6 +1776,22 @@ USAGE
       TAX FACE: one line per tax profile — book rows, years, pins, rules, queue —
       plus the binding threshold's landing vs limit when thresholds.json exists.
 
+  kopeika invoice --who <person> --client "<name>" --qty N --unit-price <eur>
+                  [--service <label>] [--date YYYY-MM-DD] [--delivery-date YYYY-MM-DD] [--dry-run]
+      TAX FACE: generate a § 14 UStG invoice (Kleinunternehmer layout, PayPal-only,
+      QR code encoded locally) as PDF + HTML under profiles/<person>/invoices/.
+      Letterhead from profile.json's "invoice" object; Kundennr from clients.json
+      (a new client gets max+1). GAPLESS: counter.json is incremented ONLY after
+      the artifact is written. --dry-run renders draft-preview.* with a DRAFT
+      watermark and consumes nothing.
+      --from-tx <txid>   build from an existing income ledger row instead:
+                         total = row amount, date = row date, client matched by
+                         the row's merchant against clients.json. [--qty N] splits
+                         the total into N whole-cent units (default 1).
+      --sync-clients     seed/refresh clients.json from the archived DATEV XMLs
+                         (customerName + partyId) so Kundennummern continue the
+                         Lexoffice range. Existing entries always win.
+
   kopeika list [--who <person> [--queued]]
       With --who: only that person's book rows, tax category shown (📌 = pinned).
       With --queued: only the undisposed queue.
@@ -1561,6 +1824,8 @@ TAX FACE (profiles/ = the consolidated PII zone; categories.<cc>.json = shipped 
   profiles/<person>/thresholds.json  statutory lines: basis, window, limit, direction
   profiles/<person>/forward.json     the forward book: expected income, planned
                                  purchases, off-book yearly adjustments
+  profiles/<person>/clients.json     invoice clients: name -> Kundennr (+ anrede, address)
+  profiles/<person>/invoices/        generated invoices + counter.json (the gapless § 14 sequence)
   categories.de.json             Germany pack: categories -> Anlage EÜR lines, SKR map
 
 NOT IMPLEMENTED (v0 stubs): Google Sheets mirror/push, LLM --suggest categorization.
@@ -1602,6 +1867,8 @@ async function main(): Promise<number> {
       return cmdDecide(args);
     case "status":
       return cmdStatus(args);
+    case "invoice":
+      return cmdInvoice(args);
     case "project":
       return cmdProject(args);
     default:

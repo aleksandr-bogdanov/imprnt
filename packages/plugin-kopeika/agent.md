@@ -81,8 +81,45 @@ The tax face (same binary, `--who` switches the axis):
 - `imprnt kopeika status` — one line per tax profile: book rows, years, pins, rules, queue size,
   plus the binding threshold's landing vs limit when the person keeps thresholds.
 - `imprnt kopeika list --who <person> [--queued]` — book rows with the tax axis shown.
+- `imprnt kopeika invoice --who <person> ...` — generate a § 14 UStG invoice PDF in the person's
+  own layout. Details in the Invoices section below.
 
 The monthly procedure (export, import, categorize, transfers, review, report) is in README.md.
+
+## Invoices (the § 14 generator)
+
+When the user says "invoice for Erika, 4 lessons at 62.50", run the command and report the path:
+
+```
+imprnt kopeika invoice --who <person> --client "Erika Musterfrau" --qty 4 --unit-price 62.50
+```
+
+The output lands as PDF plus HTML under `profiles/<person>/invoices/`, named by the invoice number
+(`RE0042.pdf`). The one-line summary the command prints carries the number, the client, the total
+and the path. Relay exactly that.
+
+How it works, so you can explain it and not break it:
+
+- The letterhead (business name, address, phone, email, PayPal, logo, the § 19 clause) is the
+  `invoice` object in `profiles/<person>/profile.json`. A missing field fails loud. Payment is
+  PayPal-only by the user's ruling. There is no bank or IBAN line and you never add one.
+- `profiles/<person>/clients.json` maps each client name to a stable Kundennr. Seed or refresh it
+  with `imprnt kopeika invoice --who <person> --sync-clients`, which derives every name and number
+  from the archived DATEV XMLs so numbers continue the Lexoffice range. A client the registry does
+  not know gets max+1 and is saved when the invoice is written. `anrede` ("Frau", "Herr") and an
+  optional address are hand-filled fields. Set them when the user tells you, never guess a salutation.
+- `profiles/<person>/invoices/counter.json` is the gapless § 14 sequence. The number is consumed
+  ONLY after the PDF (or final HTML) is on disk. Never edit `next` by hand to skip or reuse a number.
+- For a preview, ALWAYS use `--dry-run`. It renders `draft-preview.pdf` with a DRAFT watermark and
+  consumes nothing. Never generate a numbered invoice as a test.
+- The PayPal box carries a QR code encoded locally, pointing at `<paypal.me>/<total>eur`, the same
+  link printed under the box.
+- The backwards flow: `--from-tx <ledger-txid>` builds the invoice from an income row already on the
+  books. Total = the row amount, date = the row date, client = the row merchant matched against
+  clients.json. `--qty N` splits the total into N whole-cent units. This becomes the default once
+  PayPal rows land in the ledger.
+- PDF rendering shells out to system Chrome headless. Without Chrome the HTML is written and the
+  command says so. That HTML is the final artifact in that case.
 
 ## Onboarding a new tax person (the interview — the one place the LLM is load-bearing)
 

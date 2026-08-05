@@ -1,0 +1,12 @@
+{
+  "_comment": "Invoice clients: name -> stable Kundennr. Seed from archived DATEV XMLs with `kopeika invoice --who <person> --sync-clients` (existing entries always win); a client the registry does not know gets max+1 when an invoice is written. anrede and address are optional hand-filled letterhead fields.",
+  "Greta Beispiel": {
+    "kundennr": "10001",
+    "anrede": "Frau"
+  },
+  "Otto Beispiel": {
+    "kundennr": "10002",
+    "anrede": "Herr",
+    "address": ["Beispielweg 2", "10000 Berlin"]
+  }
+}

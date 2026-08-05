@@ -50,6 +50,11 @@ export interface PersonProfile {
    * books, an undisposed row queues. mixed: only rules/pins claim rows.
    */
   accounts: Record<string, "dedicated" | "mixed">;
+  /**
+   * The raw `invoice` object from profile.json (letterhead, PayPal, logo) —
+   * validated by the invoice face (src/tax/invoice.ts), null when absent.
+   */
+  invoice: Record<string, unknown> | null;
 }
 
 export interface Person {
@@ -103,6 +108,7 @@ export function loadPerson(rootDir: string, slug: string): Person {
     pack: String(rawProfile.pack ?? "de"),
     identity: isRecord(rawProfile.identity) ? asStringRecord(rawProfile.identity) : {},
     accounts,
+    invoice: isRecord(rawProfile.invoice) ? rawProfile.invoice : null,
   };
 
   return {
