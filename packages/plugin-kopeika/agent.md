@@ -88,6 +88,14 @@ The tax face (same binary, `--who` switches the axis):
 - `imprnt kopeika decide <txid> <category> --who <person> [--note <text>]` — pin ONE row. This is
   the explicit-permission step: the model may PROPOSE a category for a queued row, but only this
   verb (run on the user's say-so) ratifies it. txid prefixes work.
+- `imprnt kopeika manual --who <p> --date <d> --amount <eur> --merchant "<t>" --category <c>` —
+  record ONE transaction no bank feed will ever carry: a cash purchase, a private-seller buy.
+  Negative amount is an expense. The row lands PINNED (nothing re-decides it) with household
+  category Exclude, because the cash already left the household at the ATM and booking the
+  purchase there too would count the same money twice. `--dry-run` previews, and re-running the
+  same entry is a no-op. When the user reports a cash buy, look for the ATM withdrawal in the
+  household ledger and cite it in `--note` alongside any Kleinanzeigen thread: withdrawal plus
+  thread IS the Beleg when no paper receipt exists.
 - `imprnt kopeika report --who <person> [--year YYYY]` — the EÜR: line-mapped totals, Bewirtung
   70/30, AfA, Storno reconciliation, profit.
 - `imprnt kopeika project --who <person> [--year YYYY]` — the threshold projector: actuals plus the

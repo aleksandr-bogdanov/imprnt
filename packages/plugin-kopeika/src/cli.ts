@@ -798,6 +798,112 @@ async function cmdDecide(args: Args): Promise<number> {
   return 0;
 }
 
+// --- tax: manual --------------------------------------------------------------
+/**
+ * Record ONE business transaction that no bank feed will ever carry: a cash
+ * purchase, a private-seller buy, a receipt paid by someone else. The Norman
+ * era had the same escape hatch (its dump rows carry source "Manual"), and a
+ * ledger built only from exports cannot otherwise hold a cash Beleg.
+ *
+ * The row lands with household category "Exclude" on purpose: the cash left
+ * the household at the ATM, and that withdrawal is already in the household
+ * ledger. Booking the purchase there too would count the same money twice.
+ *
+ * tax_source is "pin" and the decision is written into pins.json, because a
+ * manual entry IS an explicit per-transaction human decision. Nothing later
+ * re-decides it. The id is content-derived, so re-running the same command is
+ * a dedup no-op rather than a duplicate row.
+ */
+async function cmdManual(args: Args): Promise<number> {
+  const who = flagString(args, "who");
+  const date = flagString(args, "date");
+  const amountRaw = flagString(args, "amount");
+  const merchant = flagString(args, "merchant");
+  const category = flagString(args, "category");
+  if (!who || !date || !amountRaw || !merchant || !category) {
+    console.error(
+      'usage: kopeika manual --who <person> --date YYYY-MM-DD --amount <eur, negative = expense> --merchant "<text>" --category <cat> [--account <label>] [--note "<text>"] [--dry-run]',
+    );
+    return 1;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    console.error(`--date must be YYYY-MM-DD (got "${date}")`);
+    return 1;
+  }
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || amount === 0) {
+    console.error(`--amount must be a non-zero number in EUR (got "${amountRaw}")`);
+    return 1;
+  }
+
+  const person = loadPerson(ROOT, who);
+  const pack = loadPack(ROOT, person.profile.pack);
+  if (!pack.categories.has(category)) {
+    console.error(`unknown category "${category}". Known: ${[...pack.categories.keys()].join(", ")}`);
+    return 1;
+  }
+
+  const account = flagString(args, "account") ?? `manual-${who}`;
+  const note = flagString(args, "note") ?? "";
+  const id = transactionId({
+    data_source: "manual",
+    account,
+    date,
+    merchant_raw: merchant,
+    amount_native: amount,
+    currency: "EUR",
+  });
+
+  const tx: Transaction = {
+    id,
+    date,
+    data_source: "manual",
+    account,
+    owner: who,
+    merchant_raw: merchant,
+    merchant_clean: merchant,
+    amount_native: amount,
+    currency: "EUR",
+    amount_eur: amount,
+    category: EXCLUDE_CATEGORY,
+    type: amount > 0 ? "income" : "spend",
+    is_transfer: false,
+    transfer_group: "",
+    fee: 0,
+    note,
+    source_file: "(manual entry)",
+    balance: null,
+    tax_person: who,
+    tax_category: category,
+    tax_source: "pin",
+  };
+
+  if (hasFlag(args, "dry-run")) {
+    console.log(`dry run — nothing written. The row would be:`);
+    console.log(`  ${id}  ${date}  ${padStart(fmtEur(amount), 10)} EUR  ${merchant}`);
+    console.log(`  books of "${who}" · ${category} (${pack.categories.get(category)!.label}) · account ${account}`);
+    if (note !== "") console.log(`  note: ${note}`);
+    return 0;
+  }
+
+  const ledger = loadLedger(LEDGER_PATH);
+  const { appended, skippedDuplicate, merged } = appendDeduped(ledger, [tx]);
+  if (skippedDuplicate > 0) {
+    console.log(`already recorded (id ${id}) — nothing changed.`);
+    return 0;
+  }
+  writeLedger(LEDGER_PATH, merged);
+  person.pins.set(id, { category, note });
+  savePins(person.dir, person.pins);
+
+  console.log(
+    `recorded ${id} on "${who}"'s books · ${date} · ${fmtEur(amount)} EUR · ${merchant} · ${category}` +
+      (appended === 1 ? "" : " (?)"),
+  );
+  console.log(`pinned in profiles/${who}/pins.json — no rule or re-import can re-decide it.`);
+  return 0;
+}
+
 // --- tax: the EÜR report ------------------------------------------------------
 /** Money with cents and thousands separators for tax figures (never rounded). */
 function fmtCents(n: number): string {
@@ -1949,6 +2055,12 @@ USAGE
       Pins outrank rules forever; only another \`decide\` changes a pin.
       <txid> may be a unique prefix.
 
+  kopeika manual --who <person> --date YYYY-MM-DD --amount <eur> --merchant "<t>" --category <c>
+      TAX FACE: record ONE transaction no bank feed carries (a cash purchase, a
+      private-seller buy). Negative amount = expense. Lands pinned, with
+      household category Exclude so the ATM withdrawal already in the household
+      ledger is not counted twice. --dry-run previews. Re-running is a no-op.
+
   kopeika report --who <person> [--year YYYY]
       TAX FACE: the EÜR — line-mapped Betriebseinnahmen/-ausgaben, Bewirtung
       70/30, AfA from assets.json, profit, Storno reconciliation.
@@ -2055,6 +2167,8 @@ async function main(): Promise<number> {
       return cmdReport(args);
     case "decide":
       return cmdDecide(args);
+    case "manual":
+      return cmdManual(args);
     case "status":
       return cmdStatus(args);
     case "invoice":

@@ -90,6 +90,7 @@ imprnt kopeika import lexoffice-datev <unzipped-dir> --account <name> --owner <o
 imprnt kopeika import norman-dump <file.json> --account <name> --owner <o> [--who <person>] [--category-map <rules.json>]
 imprnt kopeika categorize --who <person>
 imprnt kopeika decide <txid> <category> --who <person> [--note <text>]
+imprnt kopeika manual --who <person> --date <d> --amount <eur> --merchant "<t>" --category <c>
 imprnt kopeika report --who <person> [--year YYYY]
 imprnt kopeika project --who <person> [--year YYYY]
 imprnt kopeika status
