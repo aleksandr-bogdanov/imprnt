@@ -19,11 +19,12 @@
  *     via an optional uuid -> key map (the norman plugin's rules.json
  *     "categories" table, passed with --category-map). An unknown category
  *     leaves the row undisposed and it queues — never guessed.
- *   - a row carrying `categoryMetadata.amortization` is an ACTIVATED ASSET
- *     (Norman's AfA path, e.g. a workstation with usefulLifetime set).
- *     Importing it as an expense would double-count against the AfA claim
- *     from profiles/<who>/assets.json, so it maps to the neutral
- *     `asset_purchase` category and the asset itself belongs in assets.json.
+ *   - a row whose amount exceeds its category's `amortizationThreshold` is an
+ *     ACTIVATED ASSET (Norman's AfA path, e.g. a workstation). Importing it as
+ *     an expense would double-count against the AfA claim from
+ *     profiles/<who>/assets.json, so it maps to the neutral `asset_purchase`
+ *     category and the asset itself belongs in assets.json. See
+ *     isActivatedAsset for why the row's own metadata is NOT the signal.
  *
  * These are BOOK rows duplicating bank rows the household ledger already has:
  * they import with household category "Exclude" so the family analytics never
@@ -134,7 +135,7 @@ export function parseNormanDump(
     }
 
     const { key, display } = resolveCategory(r.category, uuidToKey);
-    const activatedAsset = hasAmortization(r.categoryMetadata);
+    const activatedAsset = isActivatedAsset(amount, r.category);
     // An activated asset must not land as an expense (the AfA claim from
     // assets.json is the deductible path) — it books neutral, visibly.
     const taxCategory = activatedAsset ? "asset_purchase" : key !== "" ? (NORMAN_KEY_TO_PACK.get(key) ?? "") : "";
@@ -144,7 +145,7 @@ export function parseNormanDump(
       date,
       merchant: String(r.description ?? ""),
       amount,
-      currency: String(r.currency ?? "") || "EUR",
+      currency: currencyCode(r.currency),
       taxCategory,
       normanCategory: display,
       activatedAsset,
@@ -180,9 +181,44 @@ function resolveCategory(
   return { key: "", display: s };
 }
 
-/** True when categoryMetadata carries an amortization object (Norman's AfA). */
-function hasAmortization(meta: unknown): boolean {
+/**
+ * ISO code from the dump's currency field. Norman sends an OBJECT
+ * ({ fullName, isoCode }), not a string, so a plain String() yields
+ * "[object Object]" — an unknown currency, which strands every row without an
+ * EUR amount and silently zeroes every total. Accepts a bare string too.
+ */
+function currencyCode(cur: unknown): string {
+  if (typeof cur === "string") return cur || "EUR";
+  if (typeof cur === "object" && cur !== null) {
+    const code = String((cur as Record<string, unknown>).isoCode ?? "");
+    if (code !== "") return code;
+  }
+  return "EUR";
+}
+
+/**
+ * True when Norman capitalized this row rather than expensing it.
+ *
+ * The signal is NOT the row's `categoryMetadata.amortization` block: Norman
+ * stamps that boilerplate (usefulLifetime 36, professionalUsePart 1) onto
+ * every row in an amortization-capable category, so a 5.95 subscription
+ * carries it too. What actually decides is the CATEGORY's
+ * `metadata.amortizationThreshold` (1000 on Equipment, 250 on Software):
+ * above it Norman activates the asset and books AfA, at or below it the row
+ * is an immediate expense. Measured on a real 1,101-row year, this matches
+ * exactly the one manual workstation entry where the boilerplate test
+ * matched 323 rows.
+ *
+ * A capitalized row must reach the EÜR through the Anlagenverzeichnis
+ * (assets.json), never as an expense, or the claim doubles.
+ */
+function isActivatedAsset(amount: number, cat: unknown): boolean {
+  if (typeof cat !== "object" || cat === null) return false;
+  const meta = (cat as Record<string, unknown>).metadata;
   if (typeof meta !== "object" || meta === null) return false;
-  const am = (meta as Record<string, unknown>).amortization;
-  return typeof am === "object" && am !== null;
+  const m = meta as Record<string, unknown>;
+  if (String(m.additionalDataType ?? "") !== "amortization") return false;
+  const threshold = Number(m.amortizationThreshold);
+  if (!Number.isFinite(threshold) || threshold <= 0) return false;
+  return Math.abs(amount) > threshold;
 }

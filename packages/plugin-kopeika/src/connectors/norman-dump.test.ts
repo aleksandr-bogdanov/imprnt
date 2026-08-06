@@ -54,13 +54,16 @@ describe("parseNormanDump", () => {
     expect(skippedZeroAmount).toBe(1);
   });
 
-  test("amortization metadata makes the row a neutral asset_purchase, not an expense", () => {
+  test("crossing the category's threshold makes the row a neutral asset_purchase", () => {
     const { rows } = parseNormanDump(
       JSON.stringify([
         tx({
-          amount: "-700.00",
+          amount: "-1200.00",
           description: "Manual entry: workstation (business share)",
-          category: { name: "Equipment" },
+          category: {
+            name: "Equipment",
+            metadata: { additionalDataType: "amortization", amortizationThreshold: 1000 },
+          },
           categoryMetadata: { amortization: { usefulLifetime: 1 } },
           iban: null,
         }),
@@ -71,7 +74,7 @@ describe("parseNormanDump", () => {
     expect(r.taxCategory).toBe("asset_purchase");
   });
 
-  test("a plain Equipment row without amortization stays equipment_gwg", () => {
+  test("a plain Equipment row under the threshold stays equipment_gwg", () => {
     const { rows } = parseNormanDump(
       JSON.stringify([tx({ category: { name: "Equipment" }, categoryMetadata: {} })]),
     );
@@ -122,5 +125,82 @@ describe("parseNormanDump", () => {
     );
     expect(rows[0]!.amount).toBe(125.4);
     expect(rows[0]!.taxCategory).toBe("revenue");
+  });
+});
+
+// Regression: three bugs the first real 1,101-row import surfaced. Each one
+// imported silently wrong rather than failing, which is why they are pinned.
+describe("parseNormanDump — real-dump shapes", () => {
+  /** The category object as the live API sends it, metadata included. */
+  const liveCategory = (name: string, threshold: number) => ({
+    publicId: "11111111-0000-0000-0000-00000000000a",
+    name,
+    cashflowType: "Expense",
+    metadata: {
+      additionalDataType: "amortization",
+      amortizationThreshold: threshold,
+      suggestedAmortizationPeriod: 36,
+    },
+  });
+  /** Norman stamps this boilerplate on EVERY row of an amortizable category. */
+  const boilerplate = { amortization: { isSuggested: false, usefulLifetime: 36, professionalUsePart: 1 } };
+
+  test("currency is an object, not a string — the code must survive it", () => {
+    const { rows } = parseNormanDump(
+      JSON.stringify([tx({ currency: { fullName: "Euro", isoCode: "EUR" } })]),
+    );
+    // A plain String() here yields "[object Object]", which strands the row
+    // without an FX rate and zeroes every downstream total.
+    expect(rows[0]!.currency).toBe("EUR");
+  });
+
+  test("a small row carrying the amortization boilerplate is a plain expense", () => {
+    const { rows } = parseNormanDump(
+      JSON.stringify([
+        tx({
+          amount: "-5.95",
+          category: liveCategory("Software", 250),
+          categoryMetadata: boilerplate,
+        }),
+      ]),
+    );
+    expect(rows[0]!.activatedAsset).toBe(false);
+    expect(rows[0]!.taxCategory).toBe("software");
+  });
+
+  test("only a row ABOVE its category threshold books as an activated asset", () => {
+    const { rows } = parseNormanDump(
+      JSON.stringify([
+        tx({
+          amount: "-1269.84",
+          description: "PC build (game dev workstation), 70% business",
+          category: liveCategory("Equipment", 1000),
+          categoryMetadata: { amortization: { isSuggested: false, usefulLifetime: 1, professionalUsePart: 1 } },
+        }),
+        tx({
+          publicId: "aaaaaaaa-0000-0000-0000-000000000002",
+          amount: "-239.99",
+          category: liveCategory("Equipment", 1000),
+          categoryMetadata: boilerplate,
+        }),
+      ]),
+    );
+    expect(rows[0]!.activatedAsset).toBe(true);
+    expect(rows[0]!.taxCategory).toBe("asset_purchase");
+    expect(rows[1]!.activatedAsset).toBe(false);
+    expect(rows[1]!.taxCategory).toBe("equipment_gwg");
+  });
+
+  test("a category with no amortization threshold never activates", () => {
+    const { rows } = parseNormanDump(
+      JSON.stringify([
+        tx({
+          amount: "-2000.00",
+          category: { name: "Meals", publicId: "x", metadata: { additionalDataType: "businessMeal" } },
+        }),
+      ]),
+    );
+    expect(rows[0]!.activatedAsset).toBe(false);
+    expect(rows[0]!.taxCategory).toBe("meals");
   });
 });
