@@ -19,16 +19,16 @@
   <div class="rh-row">
     <div class="rh-node" style="--i: 0">
       <span class="rh-tag">watchers</span>
-      <span class="rh-sub">fetch on the schedule you set, diff against the last snapshot, compose a digest</span>
-      <span class="rh-fine">no AI in the fetch loop. Nothing changed means nothing is published</span>
+      <span class="rh-sub">fetch on your schedule, diff against the last snapshot, compose a digest</span>
+      <span class="rh-fine">no AI in the loop. Nothing changed, nothing published</span>
     </div>
 
     <span class="rh-arr" aria-hidden="true" style="--i: 0.5">&rarr;</span>
 
     <div class="rh-node" style="--i: 1">
       <span class="rh-tag">the bus</span>
-      <span class="rh-sub">a local MQTT broker on localhost, carrying small JSON envelopes</span>
-      <span class="rh-fine">queues for agents that are offline. A fallback file catches the digest when the broker is down</span>
+      <span class="rh-sub">a message broker on localhost, carrying small JSON envelopes</span>
+      <span class="rh-fine">queues for offline agents. A file catches the digest if it goes down</span>
     </div>
 
     <span class="rh-arr" aria-hidden="true" style="--i: 1.5">&rarr;</span>
@@ -36,14 +36,14 @@
     <div class="rh-node rh-lair" style="--i: 2">
       <span class="rh-tag accent">the lair</span>
       <span class="rh-sub">one resident session you started, subscribed to the bus</span>
-      <span class="rh-fine">triages what arrives, dispatches the work, forwards what needs a human</span>
+      <span class="rh-fine">triages, dispatches the work, forwards what needs a human</span>
     </div>
 
     <span class="rh-arr" aria-hidden="true" style="--i: 2.5">&rarr;</span>
 
     <div class="rh-node rh-phone" style="--i: 3">
       <span class="rh-tag accent">your phone</span>
-      <span class="rh-sub">the part a human has to answer, and nothing else</span>
+      <span class="rh-sub">only what a human has to answer</span>
     </div>
   </div>
 

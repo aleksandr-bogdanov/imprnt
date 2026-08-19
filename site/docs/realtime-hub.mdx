@@ -16,8 +16,8 @@ The plugin contract is enough to build an **always-on assistant** out of parts y
 A watcher is a plain plugin with no AI anywhere in its fetch loop. It pulls from one source (a marketplace inbox, a deal site, a feed), writes the result to a local snapshot, **diffs it against the last snapshot**, and composes a digest of what moved. Scheduling is yours: a cron line on Linux, a launchd job on a Mac, a systemd timer. The plugin never schedules itself.
 
 ```sh
-# a fetch, a diff, and a digest, every fifteen minutes. Your crontab, your call.
-*/15 * * * * cd ~/vault && node plugins/NAME/NAME.js sync && node plugins/NAME/NAME.js notify
+# your crontab: fetch, diff, digest, every fifteen minutes
+*/15 * * * * cd ~/vault && imprnt NAME sync && imprnt NAME notify
 ```
 
 **The agent-last law is what makes the rest affordable: a run with no changes and no failures publishes nothing at all.** Every message that reaches a resident assistant costs one model turn, so a watcher that reports "still nothing" ninety times a day is a bill and an interruption. Gate the noise where it is cheapest to gate, in the deterministic code, and a scheduled run wakes nobody when nothing happened.
@@ -89,10 +89,10 @@ Everything else is per-note markdown, where two machines editing the same note i
 
 ## Where this stands today
 
-**This is the pattern imprnt's author runs**, with a Raspberry Pi 5 as the always-on box. A Pi 5 carries the broker, the watchers, the git hub, and a resident session without breathing hard. Claude and Codex agents exchanging envelopes across machines is verified live rather than sketched.
+imprnt's author runs this whole pattern, with **a Raspberry Pi 5 as the always-on box**. A Pi 5 carries the broker, the watchers, the git hub, and a resident session without breathing hard. Claude and Codex agents exchanging envelopes across machines is verified live.
 
 Three things to know before you build on it:
 
-- **The pieces ship as worked examples of the plugin contract, not as one-command installs.** Expect to install the broker, write your own timer entries, and start the session yourself. What imprnt gives you is the shape and the guarantee that none of it reaches into the core.
-- **Claude Code channels are a research preview.** The phone leg is the part most likely to change under you. The bus and the vault do not depend on it, so a change there costs you the phone, not the hub.
-- **Nothing here is a daemon imprnt installs.** Read [How plugins work](/plugins/) for the four rules that keep the core blind to all of this, and [Design decisions](/design-decisions/) for why the core stays that small.
+- **The pieces ship as worked examples of the plugin contract.** Expect to install the broker, write your own timer entries, and start the session yourself. What imprnt gives you is the shape, plus the guarantee that none of it reaches into the core.
+- **Claude Code channels are a research preview.** The phone leg is the part most likely to change under you. The bus and the vault work without it, so a change there costs you the phone leg while the hub keeps running.
+- **The core stays blind to every piece of this.** Read [How plugins work](/plugins/) for the four rules that keep it that way, and [Design decisions](/design-decisions/) for why the core is that small.
