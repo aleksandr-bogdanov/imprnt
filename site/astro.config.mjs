@@ -79,6 +79,7 @@ export default defineConfig({
         {
           label: "Going deeper",
           items: [
+            { label: "The realtime hub", slug: "realtime-hub" },
             { label: "Design decisions", slug: "design-decisions" },
             { label: "Contributing", slug: "contributing" },
           ],

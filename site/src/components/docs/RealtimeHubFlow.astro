@@ -1,0 +1,190 @@
+---
+/**
+ * realtime-hub page ONLY - the event path. Watchers fetch on a schedule and
+ * publish only when something changed, a local bus carries the envelope, one
+ * resident session triages it, and the small actionable part reaches the phone.
+ * The strip underneath shows the other sessions sharing the same bus.
+ * Filled surfaces, no borders, scoped CSS, theme-aware via Starlight tokens
+ * (docs pages load no Tailwind). Reveal animation is added by script only when
+ * motion is allowed, so no-JS and reduced-motion visitors get the static
+ * diagram.
+ */
+---
+
+<div
+  class="rhflow"
+  role="img"
+  aria-label="Watchers fetch on a schedule you set, diff the result against the last snapshot, and publish only when something changed. A local message bus, an MQTT broker on localhost, queues each envelope, including for agents that are offline, and a fallback file catches the digest when the broker is down. One resident session you started subscribes to the bus, triages what arrives, and dispatches the work. Your phone gets the part that needs a human. Other sessions share the same bus: a router, specialists with their own working directories, short-lived workers, and agents from another vendor through a bridge."
+>
+  <div class="rh-row">
+    <div class="rh-node" style="--i: 0">
+      <span class="rh-tag">watchers</span>
+      <span class="rh-sub">fetch on the schedule you set, diff against the last snapshot, compose a digest</span>
+      <span class="rh-fine">no AI in the fetch loop. Nothing changed means nothing is published</span>
+    </div>
+
+    <span class="rh-arr" aria-hidden="true" style="--i: 0.5">&rarr;</span>
+
+    <div class="rh-node" style="--i: 1">
+      <span class="rh-tag">the bus</span>
+      <span class="rh-sub">a local MQTT broker on localhost, carrying small JSON envelopes</span>
+      <span class="rh-fine">queues for agents that are offline. A fallback file catches the digest when the broker is down</span>
+    </div>
+
+    <span class="rh-arr" aria-hidden="true" style="--i: 1.5">&rarr;</span>
+
+    <div class="rh-node rh-lair" style="--i: 2">
+      <span class="rh-tag accent">the lair</span>
+      <span class="rh-sub">one resident session you started, subscribed to the bus</span>
+      <span class="rh-fine">triages what arrives, dispatches the work, forwards what needs a human</span>
+    </div>
+
+    <span class="rh-arr" aria-hidden="true" style="--i: 2.5">&rarr;</span>
+
+    <div class="rh-node rh-phone" style="--i: 3">
+      <span class="rh-tag accent">your phone</span>
+      <span class="rh-sub">the part a human has to answer, and nothing else</span>
+    </div>
+  </div>
+
+  <div class="rh-fabric" style="--i: 3.5">
+    <span class="rh-tag">also on the bus</span>
+    <div class="rh-chips">
+      <span class="rh-chip">a router</span>
+      <span class="rh-chip">specialists, each in its own working directory</span>
+      <span class="rh-chip">short-lived workers</span>
+      <span class="rh-chip">another vendor's agent, through a bridge</span>
+    </div>
+  </div>
+</div>
+
+<style>
+  .rhflow {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin: 1.5rem 0 1.4rem;
+  }
+  .rh-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0.35rem;
+  }
+  .rh-node {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.85rem 0.9rem 0.9rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .rh-lair {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
+  }
+  .rh-phone {
+    flex: 0 1 11rem;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 18%, var(--sl-color-bg));
+  }
+  .rh-tag {
+    font-family: var(--sl-font);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .rh-tag.accent {
+    color: var(--sl-color-text-accent);
+  }
+  .rh-sub {
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+  .rh-fine {
+    font-size: 0.7rem;
+    line-height: 1.35;
+    color: var(--sl-color-gray-2);
+  }
+  .rh-arr {
+    align-self: center;
+    flex: 0 0 auto;
+    color: var(--sl-color-gray-1);
+    font-size: 1.2rem;
+    line-height: 1;
+  }
+  .rh-fabric {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.7rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: 14px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .rh-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .rh-chip {
+    font-size: 0.74rem;
+    line-height: 1.3;
+    padding: 0.18rem 0.5rem;
+    border-radius: 8px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 26%, var(--sl-color-bg));
+    color: var(--sl-color-gray-1);
+  }
+
+  /* Reveal states, applied only when the script adds .anim (motion allowed). */
+  .rhflow.anim :is(.rh-node, .rh-arr, .rh-fabric) {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .rhflow.anim.on :is(.rh-node, .rh-arr, .rh-fabric) {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.5s ease,
+      transform 0.5s ease;
+    transition-delay: calc(var(--i, 0) * 150ms);
+  }
+
+  @media (max-width: 760px) {
+    .rh-row {
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .rh-phone {
+      flex: 1 1 auto;
+    }
+    .rh-arr {
+      transform: rotate(90deg);
+    }
+    .rhflow.anim.on .rh-arr {
+      transform: rotate(90deg);
+    }
+  }
+</style>
+
+<script>
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    for (const root of document.querySelectorAll(".rhflow")) {
+      root.classList.add("anim");
+      const io = new IntersectionObserver(
+        (entries, obs) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              root.classList.add("on");
+              obs.disconnect();
+            }
+          }
+        },
+        { threshold: 0.2 },
+      );
+      io.observe(root);
+    }
+  }
+</script>
