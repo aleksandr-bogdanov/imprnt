@@ -1,0 +1,477 @@
+---
+title: Set up a hub
+description: From a spare always-on machine to a resident agent on a message bus, one verified step at a time.
+---
+
+import { Steps, Aside } from "@astrojs/starlight/components";
+
+This is the build guide for the architecture in [The realtime hub](/realtime-hub/). Work through it top to bottom on a machine that stays awake, and you end with a broker, a resident router agent that triages what arrives, watchers that report to it, a second machine on the same bus, and an identity scheme that makes the name on a message mean something.
+
+**Every step ends with a command and the output that says it worked.** Run it before moving on. Most of the ways this fabric breaks look exactly like it working, so a step you skipped verifying is a step you did not do.
+
+## Before you start
+
+You need one machine that is on when you are not. A Raspberry Pi 5 carries the broker, the timers, the git origin and a resident session without breathing hard.
+
+| On the hub | Why |
+|---|---|
+| Linux or macOS | the resident pieces are a service manager and a terminal multiplexer |
+| an imprnt vault | `imprnt init`, see [Getting started](/getting-started/) |
+| Node 22 and git | the CLI and the vault sync |
+| [Bun](https://bun.sh) | work-relay runs TypeScript directly, with no build step |
+| mosquitto and its client tools | the broker, plus `mosquitto_pub` and `mosquitto_sub` for every check below |
+| tmux | keeps the resident session alive after your terminal closes |
+| Claude Code | the resident agent |
+
+Step 5 adds a second machine and needs a private network overlay on both. [Tailscale](https://tailscale.com) is the usual choice. Nothing in this guide opens a public port.
+
+Throughout, `router` is the resident agent's id, `watcher-a` is a watcher, and `agent-a` is an agent that owns one repository. Pick your own names, keep them to letters, digits, hyphens and underscores, and keep each one unique across the bus.
+
+## 1. The broker
+
+The broker is a small program that takes a message from one process and hands it to whoever subscribed. Nothing else in this guide works without it.
+
+<Steps>
+
+1. Install it.
+
+   ```sh title="hub"
+   # Debian, Raspberry Pi OS
+   sudo apt install mosquitto mosquitto-clients
+   # macOS
+   brew install mosquitto
+   ```
+
+2. Write the config. The stock defaults lose queued messages on restart, so the durability lines are the point of this file.
+
+   ```ini title="/etc/mosquitto/conf.d/hub.conf"
+   listener 1883 127.0.0.1
+
+   persistence true
+   persistence_location /var/lib/mosquitto/
+   autosave_interval 30
+
+   # default is "never", so sessions of agents that are gone keep their queues forever
+   persistent_client_expiration 14d
+
+   # default is 1000 per session, past which the broker drops the oldest silently
+   max_queued_messages 5000
+   ```
+
+3. Start it, and have your service manager bring it back after a reboot.
+
+   ```sh title="hub"
+   sudo systemctl enable --now mosquitto    # or: brew services start mosquitto
+   ```
+
+</Steps>
+
+**You know it worked** when a message you publish comes back out of a subscription. Open two terminals:
+
+```sh title="hub, terminal 1"
+mosquitto_sub -h 127.0.0.1 -t 'bus/#' -v
+```
+
+```sh wrap title="hub, terminal 2"
+mosquitto_pub -h 127.0.0.1 -V mqttv5 -q 1 -t bus/agents/router \
+  -m '{"version":1,"action":"message","source":"watcher-a","to":"router","ts":"2026-01-01T09:00:00Z","payload":{"register":"talk","text":"3 new results since the last run"}}'
+```
+
+The first terminal prints the topic and the envelope on one line:
+
+```text wrap
+bus/agents/router {"version":1,"action":"message","source":"watcher-a","to":"router","ts":"2026-01-01T09:00:00Z","payload":{"register":"talk","text":"3 new results since the last run"}}
+```
+
+## 2. The relay
+
+[work-relay](https://github.com/fzerorubigd/work-relay) is an MCP server that puts an assistant session on the bus. It gives the session five tools and turns each inbound envelope into a channel block the model can read.
+
+<Steps>
+
+1. Clone it and install its dependencies. There is no build step.
+
+   ```sh title="hub"
+   git clone https://github.com/fzerorubigd/work-relay.git /path/to/work-relay
+   cd /path/to/work-relay && bun install
+   ```
+
+2. Register it as an MCP server. It has to be **registered persistently**, because Claude Code's channel init reads only the servers it finds in configuration. A server passed at launch with `--mcp-config` gets its tools and never binds a channel, which is a partial setup that looks complete.
+
+   ```sh title="hub, from the router's working directory"
+   claude mcp add work-relay --scope local -- bun run /path/to/work-relay/src/index.ts
+   ```
+
+3. Give it its environment. Put these in the MCP entry's `env` block in `~/.claude.json`, or export them in the launch command from step 3.
+
+   | Variable | Value | Why |
+   |---|---|---|
+   | `WORK_RELAY_AGENT_ID` | `router` | the bus id. Must be unique across the bus |
+   | `WORK_RELAY_BROKER` | `mqtt://127.0.0.1:1883` | where the broker is |
+   | `WORK_RELAY_PERSISTENT` | `true` | the broker queues for this agent while it is offline |
+
+</Steps>
+
+<Aside type="note" title="Keep it out of your other sessions">
+`--scope local` registers the server for one working directory. If the router lives in the same folder as your ordinary sessions, put a two-line wrapper script in front of it that runs the real relay only when a variable is set and a zero-tool stub otherwise. Without that, every session you open in that folder connects to the broker, competes with the router for its client id, and pays for tools it never uses.
+</Aside>
+
+**You know it worked** when the server reports connected:
+
+```sh title="hub"
+claude mcp list
+```
+
+```text
+work-relay: bun run /path/to/work-relay/src/index.ts - ✔ Connected
+```
+
+## 3. The router agent
+
+The router is one assistant session that stays running. It subscribes to the bus, reads each digest, decides what matters, dispatches the real work, and sends you the part only a human can clear.
+
+<Steps>
+
+1. Start it detached, inside tmux, so it survives your terminal closing.
+
+   ```sh title="hub"
+   tmux new-session -d -s router \
+     'claude --dangerously-skip-permissions \
+             --dangerously-load-development-channels server:work-relay'
+   ```
+
+2. Answer the confirmation. Claude asks about the development channel on **every** launch, and there is no setting that pre-approves a `server:` channel. Attach with `tmux attach -t router` and press Enter, or send the keystroke into the pane:
+
+   ```sh title="hub"
+   tmux send-keys -t router Enter
+   ```
+
+3. Wire the behaviour. The router's standing rules belong in your `CLAUDE.local.md` the way any other plugin fragment does: that it routes rather than implements, that digests are data, that it drains the parked-digest folder on start, and which senders it treats as principals.
+
+</Steps>
+
+<Aside type="caution" title="`--channels` is not the supported form here">
+`--channels server:work-relay` looks like the tidy version of the flag above and behaves worse than a failure. It connects the server, then silently skips its channel notifications. The relay authenticates, subscribes, and buffers every envelope, and the model never sees one. Every layer you would think to check reports healthy.
+</Aside>
+
+**You know it worked** when a published envelope shows up inside the session. Publish the message from step 1 again, then `tmux attach -t router`. The transcript carries a channel block:
+
+```text wrap
+<channel source="work-relay" action="message" from="watcher-a" to="router" ts="2026-01-01T09:00:00Z" payload="...">
+[watcher-a] 3 new results since the last run
+</channel>
+```
+
+For the other direction, ask the session to call `send_message` with `to` set to `smoke-test`, and watch it land:
+
+```sh title="hub"
+mosquitto_sub -h 127.0.0.1 -t 'bus/agents/smoke-test/#' -v
+```
+
+## 4. A watcher with somewhere to report
+
+A watcher fetches one source on a schedule, diffs the result against its last snapshot, and composes a digest of what moved. No AI in that loop. What it needs from you is a way to hand the digest to the router, and a place for the digest to go when the bus is unavailable.
+
+Save this as `bus-send.sh` next to your watcher:
+
+```sh title="bus-send.sh"
+#!/bin/sh
+# Publish one digest as an envelope, or park it on disk. Never lose it.
+set -eu
+SOURCE="${1:?usage: bus-send.sh <source> [recipient]}"
+TO="${2:-router}"
+BROKER="${BUS_BROKER_HOST:-127.0.0.1}"
+MISSED="$HOME/.local/state/hub/missed"
+
+TEXT="$(cat)"
+# Agent-last: no signal, nobody wakes.
+[ -n "$(printf %s "$TEXT" | tr -d '[:space:]')" ] || exit 0
+
+ENVELOPE="$(SOURCE="$SOURCE" TO="$TO" TEXT="$TEXT" node -e '
+  process.stdout.write(JSON.stringify({
+    version: 1,
+    action: "message",
+    source: process.env.SOURCE,
+    to: process.env.TO,
+    ts: new Date().toISOString(),
+    payload: { register: "talk", text: process.env.TEXT },
+  }));
+')"
+
+ERR="$(mktemp)"
+mosquitto_pub -h "$BROKER" -V mqttv5 -q 1 -t "bus/agents/$TO" -m "$ENVELOPE" 2>"$ERR" || true
+# mosquitto_pub exits 0 even when the broker refuses the publish, so stderr is
+# the only honest signal. Anything on it means the digest did not land.
+if [ -s "$ERR" ]; then
+  mkdir -p "$MISSED"
+  FILE="$MISSED/$(date -u +%Y%m%dT%H%M%SZ)-$SOURCE.md"
+  { echo "source: $SOURCE"; echo "reason: $(head -1 "$ERR")"; echo; printf '%s\n' "$TEXT"; } > "$FILE"
+  echo "bus-send: parked in $FILE" >&2
+fi
+exit 0
+```
+
+Two behaviours in there carry the guarantees the architecture promises. **Empty input publishes nothing**, so a run where nothing changed wakes nobody and costs no model turn. And a failed publish writes the digest to a file and still exits successfully, so the scheduler sees a clean run and the router picks the digest up from that folder on its next start.
+
+Then schedule it. The plugin never schedules itself.
+
+```sh title="crontab"
+*/15 * * * * cd ~/vault && imprnt NAME sync && imprnt NAME notify | /path/to/bus-send.sh watcher-a
+```
+
+**You know it worked** twice over. With the broker up, publish a digest and watch it arrive on `bus/agents/router`. Then stop the broker and run it again:
+
+```sh title="hub"
+sudo systemctl stop mosquitto
+echo "3 new results" | ./bus-send.sh watcher-a
+```
+
+```text wrap
+bus-send: parked in /home/you/.local/state/hub/missed/20260101T090000Z-watcher-a.md
+```
+
+Exit status is still 0, and the digest is on disk. Start the broker again before continuing.
+
+## 5. A second machine as a spoke
+
+A spoke keeps a copy of the vault and, at most, one agent that owns one repository. It reaches the hub's broker over a private network overlay.
+
+<Steps>
+
+1. Put both machines on the overlay. `tailscale up` on each, same account. Note the hub's address on it.
+
+2. Add a second listener on the hub, next to the localhost one. There is still no public port: the overlay address is reachable only by your own devices.
+
+   ```ini title="/etc/mosquitto/conf.d/hub.conf"
+   listener 1883 127.0.0.1
+   listener 1883 <hub-overlay-address>
+   ```
+
+3. Survive a reboot where the overlay comes up slowly. A broker that starts before the address exists fails to bind and stays down.
+
+   ```ini title="/etc/systemd/system/mosquitto.service.d/wait-for-overlay.conf"
+   [Unit]
+   After=network-online.target
+
+   [Service]
+   Restart=on-failure
+   RestartSec=5
+   ```
+
+4. Point the spoke's relay at the hub. Same install as step 2, with `WORK_RELAY_BROKER=mqtt://<hub-overlay-address>:1883` and its own `WORK_RELAY_AGENT_ID`.
+
+5. Share the vault, hub and spoke, over git. A bare repo on the hub is the origin, every machine keeps a normal clone, and a timer on each side runs `git pull --rebase --autostash` then `git push` every ten minutes. Committed work moves, work in progress stays put. Add one line so the chronological log never conflicts:
+
+   ```
+   # .gitattributes
+   vault/log.md merge=union
+   ```
+
+</Steps>
+
+<Aside type="note" title="A Windows box can be a spoke">
+It joins natively, with no WSL: Bun runs the relay, git holds the repo, and one agent owns it. Two things bite on the way in. Filenames that are legal on Linux and illegal on NTFS, a colon most often, make the clone fail outright. And Windows caps a whole path at 260 characters, which fails with a message naming the longest file rather than the ceiling, so run `git config --global core.longpaths true` before cloning.
+</Aside>
+
+**You know it worked** when a publish crosses the network. Subscribe on the hub:
+
+```sh title="hub"
+mosquitto_sub -h 127.0.0.1 -t 'bus/#' -v
+```
+
+Publish from the spoke:
+
+```sh wrap title="spoke"
+mosquitto_pub -h <hub-overlay-address> -V mqttv5 -q 1 -t bus/agents/router \
+  -m '{"version":1,"action":"message","source":"agent-a","to":"router","ts":"2026-01-01T09:00:00Z","payload":{"register":"talk","text":"spoke online"}}'
+```
+
+## 6. Per-agent identity
+
+Everything above runs on an unauthenticated bus where `source` is a name each publisher writes about itself. That is fine while every publisher is something you wrote. It stops being fine the moment one agent on the bus reads text from outside, because a breach of that reader becomes command authority over every other agent. The reasoning lives on [the architecture page](/realtime-hub/#identity-and-why-source-is-the-brokers-word). This is the build.
+
+<Aside type="caution" title="Check your relay first">
+The topic-identity flags are **not in the published work-relay**. A stock relay subscribes to the bare topic only, so if you turn accounts on against one, every message goes to a topic nothing is listening on and the bus looks healthy while delivering nothing.
+
+```sh title="hub"
+grep -rl WORK_RELAY_IDENTITY_TOPIC /path/to/work-relay/src
+```
+
+No output means stop here. Stay on the unauthenticated bus until your relay build carries the change.
+</Aside>
+
+From here on, **every command in the earlier steps needs credentials too.** The `mosquitto_pub` and `mosquitto_sub` checks above connect anonymously, and an enforcing broker refuses them. Add `-u <id> -P '<its password>'` to each one.
+
+<Steps>
+
+1. One broker account per publisher. **The username must equal the bus id**, because the broker authorizes the topic against the username while the topic carries the id, and a mismatch refuses every publish.
+
+   ```sh title="hub"
+   # -c creates the file, so it belongs on the first account only
+   sudo mosquitto_passwd -c /etc/mosquitto/hub.passwd router
+   sudo mosquitto_passwd    /etc/mosquitto/hub.passwd agent-a
+   sudo mosquitto_passwd    /etc/mosquitto/hub.passwd watcher-a
+   ```
+
+   The daemon starts as root, reads these files, drops to the `mosquitto` user, and re-reads both from there on a reload. So they want group read, and nothing wider. World-readable and the broker warns about it.
+
+   ```sh title="hub"
+   sudo chown root:mosquitto /etc/mosquitto/hub.passwd /etc/mosquitto/hub.acl
+   sudo chmod 640 /etc/mosquitto/hub.passwd /etc/mosquitto/hub.acl
+   ```
+
+2. Write the ACL. Every grant must sit **inside** a `user` block: `topic` lines written before the first `user` line apply to anonymous clients, which is nobody once anonymous access is off.
+
+   ```ini title="/etc/mosquitto/hub.acl"
+   user router
+   topic read  bus/agents/router/#
+   topic read  bus/agents/broadcast/#
+   topic read  bus/agents/groups/#
+   topic write bus/agents/+/from/router
+   topic write bus/agents/groups/+/from/router
+
+   user agent-a
+   topic read  bus/agents/agent-a/#
+   topic read  bus/agents/broadcast/#
+   topic write bus/agents/+/from/agent-a
+
+   # A watcher reports to the router and has no inbox at all.
+   user watcher-a
+   topic write bus/agents/router/from/watcher-a
+   ```
+
+   `topic write bus/agents/+/from/agent-a` is the load-bearing line. The `+` lets the account address any recipient, and the literal tail is what stops it wearing anyone else's name.
+
+3. Turn authentication on, and bind client ids while you are here. Two connections claiming one client id evict each other, so without this line any account can take the router's id and hold it off its own bus.
+
+   ```ini title="/etc/mosquitto/conf.d/hub.conf"
+   listener 1883 127.0.0.1
+   use_username_as_clientid true
+   listener 1883 <hub-overlay-address>
+   use_username_as_clientid true
+
+   allow_anonymous false
+   password_file /etc/mosquitto/hub.passwd
+   acl_file      /etc/mosquitto/hub.acl
+   ```
+
+   Placement matters more than the line does. Put `use_username_as_clientid` immediately after each `listener`. In a file that sorts after every listener it belongs to no listener, and mosquitto answers by opening a **default listener on every interface**, which trades a denial of service for a broker on your public network card.
+
+   One consequence to plan for: **a forced client id means one account holds exactly one connection.** Anything else that borrows an agent's credentials kicks that agent off its own bus. A health check, a monitoring script, or a long-lived subscriber alongside a publisher each need an account of their own, not a copy of somebody else's.
+
+4. Rehearse on a throwaway broker before touching the live one. Copy the merged config, rewrite the listener onto a free port and the file paths onto copies, start mosquitto against it, and run the three checks below. A config the real broker refuses takes the router and every timer down with it.
+
+5. Restart the broker, then migrate the publishers in three moves so the bus keeps running. Subscribers first, with both flags off, because they accept the bare and the suffixed shape either way. Then `WORK_RELAY_IDENTITY_TOPIC=true` and `WORK_RELAY_MQTT_VERSION=5` on one publisher at a time. Then `WORK_RELAY_REQUIRE_VERIFIED_SOURCE=true` once nothing publishes bare.
+
+6. Give every relay its own login. The relay from step 2 connects anonymously, so an enforcing broker locks the router out and the whole fabric goes quiet. Extend that step's environment with `WORK_RELAY_BROKER_USER=<its id>` and `WORK_RELAY_BROKER_PASS`, or put them in a credentials file, which is what a cron-launched publisher needs since cron reads no shell config at all:
+
+   ```sh title="hub"
+   install -m 600 /dev/null ~/.config/work-relay/broker.env
+   ```
+
+   The file must not be readable by group or other. Both the relay and its CLI **fail with an error rather than reading it**, because using it anyway would hand the credential to every account on the machine while appearing to work. One file covers one Unix user, so several agents on one account need one file each, named by `WORK_RELAY_CREDS_FILE`.
+
+7. Bring the plain publishers along. `bus-send.sh` from step 4 connects anonymously to the bare topic, so an enforcing broker refuses it and every digest lands in the parked folder instead. Give it its account and its own topic segment:
+
+   ```sh title="bus-send.sh"
+   mosquitto_pub -h "$BROKER" -V mqttv5 -q 1 \
+     -u "$SOURCE" -P "$PASS" \
+     -t "bus/agents/$TO/from/$SOURCE" -m "$ENVELOPE" 2>"$ERR" || true
+   ```
+
+   Read `$PASS` from a file the watcher's user owns at mode 600, never from a flag in the crontab, because a value passed on a command line is visible in `ps` to every account on the machine.
+
+</Steps>
+
+**You know it worked** when three publishes behave three different ways.
+
+An anonymous client cannot even connect:
+
+```sh
+mosquitto_pub -h 127.0.0.1 -V mqttv5 -q 1 \
+  -t 'bus/agents/router/from/watcher-a' -m x
+```
+
+```text wrap
+Connection error: Not authorized
+Error: A network protocol error occurred when communicating with the broker
+```
+
+The watcher's own account, publishing under its own name, succeeds silently:
+
+```sh
+mosquitto_pub -h 127.0.0.1 -V mqttv5 -q 1 -u watcher-a -P '<its password>' \
+  -t 'bus/agents/router/from/watcher-a' -m x
+```
+
+The same account wearing the router's name is refused:
+
+```sh
+mosquitto_pub -h 127.0.0.1 -V mqttv5 -q 1 -u watcher-a -P '<its password>' \
+  -t 'bus/agents/router/from/router' -m x
+```
+
+```text
+Warning: Publish 1 failed: Not authorized.
+```
+
+Drop `-V mqttv5` from that last one and it prints nothing at all. That is the next section.
+
+## When something is wrong
+
+Every failure below shares one shape: the thing reports healthy and does not work.
+
+### A refused publish looks exactly like a delivered one
+
+Under MQTT 3.1.1 a broker that denies a QoS 1 publish discards it and acknowledges it anyway. The publisher sees success. A wrong ACL therefore looks identical to a working bus, for as long as you care to watch it.
+
+Two habits close it. Publish with `-V mqttv5`, where a refusal comes back as a reason code and prints `Warning: Publish 1 failed: Not authorized.` on stderr. And read stderr rather than the exit status, because **`mosquitto_pub` exits 0 on a refused publish either way**. A health check that trusts the exit code passes forever without testing anything.
+
+### The spoke is connected and deaf
+
+The relay is up, the broker shows the client, the subscription is live, envelopes are being buffered, and the model never mentions any of it. The usual cause is the launch flag: `--channels server:work-relay` connects the server and disables its channel notifications. Use `--dangerously-load-development-channels server:work-relay`.
+
+To tell buffering apart from delivery, ask the session to call `fetch_messages`. Envelopes coming back from that call while nothing appeared in the transcript means the bus is fine and the channel leg is not. Claude's own debug log names it: run with `--debug` and read the newest file under `~/.claude/debug/`, pinning the lookup to the session id rather than the newest timestamp, or you will read the previous run's log and diagnose the wrong session.
+
+### An agent authenticates as the wrong identity, or as nobody
+
+mosquitto reads `conf.d` in filename order and **the last `allow_anonymous` wins**. One stale file written before you turned authentication on will override the file that turns it on, if it happens to sort later. Nothing leaks, because the ACL still denies those clients every topic. The door is open while the config says it is shut.
+
+The broker log settles it. An authenticated client carries its username:
+
+```text
+New client connected from 127.0.0.1:63480 as watcher-a (p5, c1, k60, u'watcher-a').
+```
+
+An anonymous one has no `u'...'` at all, and a generated client id:
+
+```text
+New client connected from 127.0.0.1:63506 as auto-9A34D658-D1CD-0D16-9136-8FF8465F7D07 (p5, c1, k60).
+```
+
+Fix it by making the authentication file sort last, and grep the whole directory for a second `allow_anonymous` before believing any of it. Rehearse against the real merged config, in the real order, rather than an idealised one.
+
+### Two agents share an id and evict each other
+
+A partially-killed agent leaves an orphan holding a client id. The replacement connects, displaces the orphan, the orphan reconnects, and the two trade the connection forever. Verification makes it worse, because a live socket to the broker proves only that some process owns that id, never that the right one does.
+
+Check the process that owns the socket rather than the socket, capture the launcher's process id before you start anything, and refuse to look at the connection until that id has changed. Stopping an agent should kill the process tree, not just the launcher.
+
+### The broker opened a listener you did not ask for
+
+Compare the number of `listener` lines in your merged config with the `Opening ipv4 listen socket` lines in the log. More sockets than listeners means a per-listener option ended up outside every listener block, and `use_username_as_clientid` is the usual one. Move it up under the listener it belongs to.
+
+## Taking it down
+
+Every piece is something you started, so every piece is something you stop.
+
+```sh title="hub"
+tmux kill-session -t router                       # the resident agent
+sudo systemctl disable --now mosquitto            # the broker
+crontab -e                                        # delete the watcher lines
+claude mcp remove work-relay                      # the relay registration
+rm -rf /path/to/work-relay
+sudo rm /etc/mosquitto/conf.d/hub.conf /etc/mosquitto/hub.passwd /etc/mosquitto/hub.acl
+```
+
+The vault is untouched by all of it. Your notes are the same markdown files they were before the hub existed, and `recall` never knew any of this was running.

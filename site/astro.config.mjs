@@ -80,6 +80,7 @@ export default defineConfig({
           label: "Going deeper",
           items: [
             { label: "The realtime hub", slug: "realtime-hub" },
+            { label: "Set up a hub", slug: "hub-setup" },
             { label: "Design decisions", slug: "design-decisions" },
             { label: "Contributing", slug: "contributing" },
           ],

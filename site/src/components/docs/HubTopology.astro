@@ -1,0 +1,203 @@
+---
+/**
+ * realtime-hub page ONLY - the physical shape: which machine holds which piece.
+ * One always-on hub carries the broker, the resident router, the watchers, the
+ * git origin and the human door. Every other machine is a spoke with a vault
+ * clone and at most one owning agent. Every row carries a real fact (a port, a
+ * topic, a bus id, a role name), never a decorative label. Filled surfaces, no
+ * borders, no accent rail, scoped CSS, theme-aware via Starlight tokens (docs
+ * pages load no Tailwind). Reveal is added by script only when motion is
+ * allowed, so no-JS and reduced-motion visitors get the static diagram.
+ */
+const HUB = [
+  { k: "broker", v: "mosquitto", d: "127.0.0.1:1883, plus one listener on the private network for spokes" },
+  { k: "router agent", v: "bus id router", d: "resident session, subscribed to bus/agents/router/#" },
+  { k: "watchers", v: "reporter accounts", d: "publish a digest to the router, read nothing back" },
+  { k: "vault origin", v: "a bare git repo", d: "every machine clones it and pushes committed work" },
+  { k: "human door", v: "one chat channel", d: "your messages arrive stamped as the command register" },
+];
+
+const SPOKES = [
+  { name: "laptop", lines: ["vault clone, pulls and pushes on a timer", "one owning agent, bus id agent-a"] },
+  { name: "desktop", lines: ["vault clone, pulls and pushes on a timer", "one owning agent, bus id agent-b"] },
+];
+---
+
+<div
+  class="hubtop"
+  role="img"
+  aria-label="One always-on hub machine holds five pieces: the mosquitto broker on 127.0.0.1 port 1883 plus a listener on the private network, a resident router agent with bus id router subscribed to bus/agents/router/#, the watchers publishing under reporter accounts that may write to the router and read nothing, a bare git repo as the vault origin, and one chat channel as the human door where your messages arrive stamped as the command register. Every other machine is a spoke reaching the broker over one private network with no public port: a laptop and a desktop, each holding a vault clone that pulls and pushes on a timer and at most one owning agent with its own bus id."
+>
+  <section class="hub" style="--i: 0">
+    <span class="tag accent">the hub, one always-on machine</span>
+    <div class="rows">
+      {
+        HUB.map((r) => (
+          <div class="row">
+            <span class="rk">{r.k}</span>
+            <span class="rv">{r.v}</span>
+            <span class="rd">{r.d}</span>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  <div class="link" style="--i: 1">
+    <span class="linkline" aria-hidden="true"></span>
+    <span class="linktext">one private network, no public port</span>
+    <span class="linkline" aria-hidden="true"></span>
+  </div>
+
+  <div class="spokes">
+    {
+      SPOKES.map((s, i) => (
+        <section class="spoke" style={`--i: ${2 + i * 0.3}`}>
+          <span class="tag">{s.name}, a spoke</span>
+          {s.lines.map((l) => (
+            <span class="sline">{l}</span>
+          ))}
+        </section>
+      ))
+    }
+  </div>
+</div>
+
+<style>
+  .hubtop {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin: 1.5rem 0 1.4rem;
+  }
+  .hub,
+  .spoke {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.9rem 1rem 1rem;
+    border-radius: 14px;
+    /* Starlight's owl selector adds a top margin to every sibling after the
+       first. The flex/grid gap owns spacing here. */
+    margin-top: 0;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .hub {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .tag {
+    font-family: var(--sl-font);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .tag.accent {
+    color: var(--sl-color-text-accent);
+  }
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 8.5rem 10rem 1fr;
+    align-items: baseline;
+    gap: 0.2rem 0.7rem;
+    padding: 0.42rem 0.6rem;
+    border-radius: 9px;
+    background: color-mix(in oklab, var(--sl-color-bg) 62%, transparent);
+  }
+  .rk {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  .rv {
+    font-size: 0.76rem;
+    color: var(--sl-color-text-accent);
+  }
+  .rd {
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+  .link {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.15rem 0.2rem;
+  }
+  .linkline {
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--sl-color-hairline-shade);
+  }
+  .linktext {
+    flex: 0 0 auto;
+    font-family: var(--sl-font);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .spokes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+  }
+  .spokes > .spoke {
+    margin-top: 0;
+  }
+  .sline {
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--sl-color-gray-1);
+  }
+
+  /* Reveal states, applied only when the script adds .anim (motion allowed). */
+  .hubtop.anim :is(.hub, .link, .spoke) {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .hubtop.anim.on :is(.hub, .link, .spoke) {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.5s ease,
+      transform 0.5s ease;
+    transition-delay: calc(var(--i, 0) * 150ms);
+  }
+
+  @media (max-width: 760px) {
+    .row {
+      grid-template-columns: 1fr;
+      gap: 0.1rem;
+    }
+    .spokes {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    for (const root of document.querySelectorAll(".hubtop")) {
+      root.classList.add("anim");
+      const io = new IntersectionObserver(
+        (entries, obs) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              root.classList.add("on");
+              obs.disconnect();
+            }
+          }
+        },
+        { threshold: 0.2 },
+      );
+      io.observe(root);
+    }
+  }
+</script>

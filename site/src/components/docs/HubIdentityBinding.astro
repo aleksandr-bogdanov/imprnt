@@ -1,0 +1,177 @@
+---
+/**
+ * realtime-hub page ONLY - the centrepiece: why `source` ends up being the
+ * broker's word rather than the sender's. Three panes, left to right: the name
+ * the sender writes about itself in the payload (struck through, because the
+ * receiver throws it away), the topic it is actually permitted to publish on
+ * with the identity segment carrying the accent, and the envelope the receiver
+ * delivers. Every string is real - the topic shape, the mosquitto ACL pattern
+ * line, the envelope fields - so the diagram is the reference, not an
+ * illustration of one. Discarded content is marked by strike + muted ink, never
+ * a second hue: the palette has exactly one accent. Filled surfaces, no borders,
+ * no accent rail, scoped CSS, theme-aware via Starlight tokens. Reveal is added
+ * by script only when motion is allowed.
+ *
+ * The code-shaped strings are spans, not <code> elements, on purpose: the docs
+ * theme paints every inline <code> in the accent at a specificity a scoped rule
+ * cannot beat, which would paint all three panes teal and leave the accent
+ * marking nothing. The root is role="img" with a full label, so the inner markup
+ * is not what a screen reader reads anyway.
+ */
+---
+
+<div
+  class="hib"
+  role="img"
+  aria-label="A publisher writes source colon router into its own payload, which is a claim the broker never reads, because a broker authorizes a topic and never a payload. The publisher may only publish on bus/agents/agent-a/from/watcher-a, where the last segment is its own authenticated account name, pinned by the mosquitto ACL line: pattern write bus/agents/plus/from/percent-u. The receiver then takes source from the topic and overwrites what the payload claimed, delivering source watcher-a with source_verified true."
+>
+  <div class="pane claim" style="--i: 0">
+    <span class="tag">what the sender claims</span>
+    <span class="code strike">"source": "router"</span>
+    <span class="fine">A string the publisher writes about itself. The broker never reads a payload, so no rule can check this.</span>
+  </div>
+
+  <span class="arr" aria-hidden="true" style="--i: 0.5">&rarr;</span>
+
+  <div class="pane topic" style="--i: 1">
+    <span class="tag accent">what the broker authorizes</span>
+    <span class="code">bus/agents/agent-a/from/<span class="seg">watcher-a</span></span>
+    <span class="fine">The identity moved into the topic. One ACL line pins that last segment to the account that connected:</span>
+    <span class="code acl">pattern write bus/agents/+/from/%u</span>
+  </div>
+
+  <span class="arr" aria-hidden="true" style="--i: 1.5">&rarr;</span>
+
+  <div class="pane out" style="--i: 2">
+    <span class="tag accent">what the receiver delivers</span>
+    <span class="code">"source": "<span class="seg">watcher-a</span>"</span>
+    <span class="code">"source_verified": true</span>
+    <span class="fine">Read off the topic, written over whatever the payload said. The mismatch is logged and the message still arrives, under the authorized name.</span>
+  </div>
+</div>
+
+<style>
+  .hib {
+    display: flex;
+    align-items: stretch;
+    gap: 0.35rem;
+    margin: 1.5rem 0 1.4rem;
+  }
+  .pane {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.85rem 0.9rem 0.9rem;
+    border-radius: 14px;
+    /* Starlight's owl selector staggers siblings with a top margin. The flex
+       gap owns spacing here. */
+    margin-top: 0;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
+  }
+  .pane.topic {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
+  }
+  .pane.out {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
+  }
+  .tag {
+    font-family: var(--sl-font);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-2);
+  }
+  .tag.accent {
+    color: var(--sl-color-text-accent);
+  }
+  .code {
+    display: block;
+    align-self: flex-start;
+    width: fit-content;
+    max-width: 100%;
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    line-height: 1.45;
+    padding: 0.16rem 0.45rem;
+    border-radius: 7px;
+    background: color-mix(in oklab, var(--sl-color-bg) 66%, transparent);
+    color: var(--sl-color-white);
+    overflow-wrap: anywhere;
+  }
+  .code.acl {
+    font-size: 0.68rem;
+  }
+  /* The claimed name is discarded, so it is struck and muted. No second hue:
+     this palette has exactly one accent. */
+  .code.strike {
+    color: var(--sl-color-gray-3);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+  .seg {
+    color: var(--sl-color-text-accent);
+    font-weight: 700;
+  }
+  .fine {
+    font-size: 0.73rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-1);
+  }
+  .arr {
+    align-self: center;
+    flex: 0 0 auto;
+    color: var(--sl-color-gray-1);
+    font-size: 1.2rem;
+    line-height: 1;
+  }
+
+  /* Reveal states, applied only when the script adds .anim (motion allowed). */
+  .hib.anim :is(.pane, .arr) {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .hib.anim.on :is(.pane, .arr) {
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 0.5s ease,
+      transform 0.5s ease;
+    transition-delay: calc(var(--i, 0) * 150ms);
+  }
+
+  @media (max-width: 760px) {
+    .hib {
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .arr {
+      transform: rotate(90deg);
+    }
+    .hib.anim.on .arr {
+      transform: rotate(90deg);
+    }
+  }
+</style>
+
+<script>
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    for (const root of document.querySelectorAll(".hib")) {
+      root.classList.add("anim");
+      const io = new IntersectionObserver(
+        (entries, obs) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              root.classList.add("on");
+              obs.disconnect();
+            }
+          }
+        },
+        { threshold: 0.2 },
+      );
+      io.observe(root);
+    }
+  }
+</script>

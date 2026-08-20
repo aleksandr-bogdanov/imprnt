@@ -14,7 +14,7 @@
 <div
   class="rhflow"
   role="img"
-  aria-label="Watchers fetch on a schedule you set, diff the result against the last snapshot, and publish only when something changed. A local message bus, an MQTT broker on localhost, queues each envelope, including for agents that are offline, and a fallback file catches the digest when the broker is down. One resident session you started subscribes to the bus, triages what arrives, and dispatches the work. Your phone gets the part that needs a human. Other sessions share the same bus: a router, specialists with their own working directories, short-lived workers, and agents from another vendor through a bridge."
+  aria-label="Watchers fetch on a schedule you set, diff the result against the last snapshot, and publish only when something changed. A local message bus, an MQTT broker on localhost, queues each envelope, including for agents that are offline, and a fallback file catches the digest when the broker is down. One resident router session you started subscribes to the bus, triages what arrives, and dispatches the work. Your phone gets the part that needs a human. Other sessions share the same bus: specialists with their own working directories, short-lived workers, and agents from another vendor through a bridge."
 >
   <div class="rh-row">
     <div class="rh-node" style="--i: 0">
@@ -33,8 +33,8 @@
 
     <span class="rh-arr" aria-hidden="true" style="--i: 1.5">&rarr;</span>
 
-    <div class="rh-node rh-lair" style="--i: 2">
-      <span class="rh-tag accent">the lair</span>
+    <div class="rh-node rh-router" style="--i: 2">
+      <span class="rh-tag accent">the router</span>
       <span class="rh-sub">one resident session you started, subscribed to the bus</span>
       <span class="rh-fine">triages, dispatches the work, forwards what needs a human</span>
     </div>
@@ -50,7 +50,6 @@
   <div class="rh-fabric" style="--i: 3.5">
     <span class="rh-tag">also on the bus</span>
     <div class="rh-chips">
-      <span class="rh-chip">a router</span>
       <span class="rh-chip">specialists, each in its own working directory</span>
       <span class="rh-chip">short-lived workers</span>
       <span class="rh-chip">another vendor's agent, through a bridge</span>
@@ -80,7 +79,7 @@
     border-radius: 14px;
     background: color-mix(in oklab, var(--sl-color-gray-3) 12%, var(--sl-color-bg));
   }
-  .rh-lair {
+  .rh-router {
     background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
   }
   .rh-phone {
