@@ -24,6 +24,7 @@ import { join, relative, dirname } from "node:path";
 import { homedir } from "node:os";
 import { projectRoot } from "./lib/roots.ts";
 import { generateIndex, collectNotes, frontmatter, stripQuotes, stripCode, fmList } from "./lib/moc.ts";
+import { loadFolders } from "./lib/folders.ts";
 import { loadTags, normalize, appendTags } from "./lib/tags.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
@@ -40,12 +41,23 @@ for (let i = 0; i < args.length; i++) {
 }
 if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`imprnt init\` first`); process.exit(1); }
 
+// Folder roles come from the VAULT now, not from this file. A vault with a folder the shipped
+// defaults never heard of used to get every note in it flagged forever, because `folder` is the
+// first path segment: the folder was neither an entity (exempt) nor a domain (checked), so its
+// notes landed in _needs-review with nothing the owner could do. Permanent noise in the one file
+// that means "look here" is worse than no check. No _folders.md = the shipped defaults, which are
+// byte-for-byte the sets this file used to hardcode.
+const roles = loadFolders(vault);
 // Entity folders are link TARGETS — they may legitimately have few outgoing links, so they're exempt
 // from the disconnected-note check. Everything else (domains + forms) should connect to the graph.
-const ENTITY_FOLDERS = new Set(["people", "orgs", "holdings"]);
+const ENTITY_FOLDERS = roles.entities;
 // projects/ is self-describing by type (type:project mirrors the folder), like events/mistakes, so it
 // carries no domain: field and is exempt from the domain-match check. It is NOT in DOMAIN_FOLDERS.
-const DOMAIN_FOLDERS = new Set(["identity", "health", "finances", "work", "life"]);
+const DOMAIN_FOLDERS = roles.domains;
+// A MOUNT is a self-contained tree maintained elsewhere - a shared repo checked out inside vault/,
+// an imported corpus. Its notes are complete on their own and are not part of THIS vault's entity
+// graph, so demanding they link one asks them to reach across the boundary they exist to respect.
+const MOUNT_FOLDERS = roles.mounts;
 const LINK = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g;
 
 const notes = collectNotes(vault);
@@ -124,8 +136,9 @@ for (const n of notes) {
   }
   // A domain/form note is disconnected unless at least ONE of its wikilinks resolves to an entity
   // note (people/orgs/holdings). A link to another domain/form note, or to raw/..., does not count.
-  // Entity folders are exempt — an entity need not link an entity.
-  if (!ENTITY_FOLDERS.has(n.folder) && !links.some(linksEntity)) {
+  // Entity folders are exempt — an entity need not link an entity. Mounts are exempt for a
+  // different reason: the tree is complete on its own and its graph lives on the other side.
+  if (!ENTITY_FOLDERS.has(n.folder) && !MOUNT_FOLDERS.has(n.folder) && !links.some(linksEntity)) {
     disconnected.push(`  ${n.slug}`);
     review.push(`- [ ] disconnected note [[${n.slug}]] — links no entity`);
   }
@@ -373,7 +386,16 @@ function syncNeedsReview(lines: string[]): "written" | "cleared" | "none" {
 // --- report ---------------------------------------------------------------
 const cap = (xs: string[], n = 25) => xs.slice(0, n).concat(xs.length > n ? [`  … +${xs.length - n} more`] : []);
 
-console.log(`imprnt check — ${notes.length} notes in ${vault}\n`);
+console.log(`imprnt check — ${notes.length} notes in ${vault}`);
+// Say when a vault has overridden the folder roles. A silent override is a check whose rules you
+// cannot see from its output, and the first question about any surprising result is "which rules
+// did it actually run".
+if (roles.declared) {
+  const parts = [`entities: ${[...ENTITY_FOLDERS].join(" ") || "(none)"}`, `domains: ${[...DOMAIN_FOLDERS].join(" ") || "(none)"}`];
+  if (MOUNT_FOLDERS.size) parts.push(`mounts: ${[...MOUNT_FOLDERS].join(" ")}`);
+  console.log(`folder roles from _folders.md — ${parts.join(", ")}`);
+}
+console.log("");
 
 if (orphans.length) { console.log(`⚠ orphan links (${orphans.length}) — target note missing:`); console.log(cap(orphans).join("\n"), "\n"); }
 else console.log("✓ no orphan links");
