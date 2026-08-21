@@ -139,7 +139,7 @@ function controlSlot(dst: string): Slot {
 
 // Delegated scripts parse process.argv.slice(2) themselves. Strip the subcommand token
 // so `cli.ts ingest <file>` looks like `ingest.ts <file>` to the delegate.
-if (["ingest", "recall", "snapshot", "check"].includes(cmd)) process.argv.splice(2, 1);
+if (["ingest", "recall", "snapshot", "check", "vault"].includes(cmd)) process.argv.splice(2, 1);
 
 switch (cmd) {
   case "ingest":
@@ -153,6 +153,11 @@ switch (cmd) {
     break;
   case "check":
     await import("./check.ts");
+    break;
+  // The vault as its own object, independent of anything that reads it: list, archive, restore.
+  // Deliberately NOT `init` — creating is init's job — and deliberately no delete.
+  case "vault":
+    await import("./vault.ts");
     break;
   case "hot": {
     const vault = vaultArg();
@@ -656,6 +661,7 @@ engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt global add <name> [--from D]      enable a behavior module (e.g. anti-slop) in EVERY imp session (imp injects it; ~/.claude/CLAUDE.md is never touched); bare name promotes a project plugin
   imprnt global rm <name> [--purge]        disable a global module; --purge deletes the global copy
   imprnt global list                       show globally-enabled modules
+  imprnt vault list|archive|restore        the vault as its own object — outlives any agent
   imprnt <module> <command> [...]          run an installed module's command (e.g. \`imprnt session-host login\`, \`imprnt kleinanzeigen sync\`) — no \`node\` paths
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
