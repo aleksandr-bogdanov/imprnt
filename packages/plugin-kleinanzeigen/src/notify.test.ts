@@ -2,6 +2,13 @@ import { test, expect } from "bun:test";
 import { composeDigest } from "./notify.ts";
 import type { Conversation } from "./mirror.ts";
 
+// NOTE (quarantine): these expectations gained guillemets when the untrusted-text fence was
+// ported into the source. Every fenced value below - a counterpart name, an ad title, a
+// message body - is written by a stranger on a public marketplace and goes into an agent's
+// context. The marks are the signal that it is DATA. If a future change makes these
+// assertions fail by REMOVING the marks, the security control has been dropped, not a
+// formatting preference.
+
 function c(over: Partial<Conversation>): Conversation {
   return {
     conv: "x", side: "selling", listing: "9000000001", ad_title: "", ad_status: "",
@@ -23,11 +30,11 @@ test("selling digest: only awaiting-you, scams first, drafts and needs-you lines
   const lines = d.split("\n");
   // header, blank, "Selling:", then the four conversation lines (scam first)
   expect(lines[3]).toContain("2932z:1:scam");
-  expect(lines[3]).toContain("(Timo Falkner)");
+  expect(lines[3]).toContain("(«Timo Falkner»)");
   expect(lines[3]).toContain("scam: paypal, name-mismatch");
-  expect(d).toContain("2932z:2:offer (Frank) [offer 70€ (below floor)]");
-  expect(d).toContain("2932z:3:faq (Erik) [faq] — needs you: confirm artikelnummer");
-  expect(d).toContain('2932z:4:pick (Patrick) [pickup] draft: "Hi, Abholung');
+  expect(d).toContain("2932z:2:offer («Frank») [offer 70€ (below floor)]");
+  expect(d).toContain("2932z:3:faq («Erik») [faq] — needs you: confirm artikelnummer");
+  expect(d).toContain('2932z:4:pick («Patrick») [pickup] draft: "Hi, Abholung');
 });
 
 test("buying digest: a seller reply surfaces as your-turn with an 80-char snippet, ·unread when unread>0", () => {
@@ -41,8 +48,9 @@ test("buying digest: a seller reply surfaces as your-turn with an 80-char snippe
   const d = composeDigest([buy]);
   expect(d).toContain("1 awaiting you (0 selling, 1 buying)");
   expect(d).toContain("Buying:");
-  expect(d).toContain("b1 (Seller Sam) RTX 5070 Ti [buying] seller replied — your turn:");
-  expect(d).toContain('"yes, 200€, come by Saturday"');
+  expect(d).toContain("b1 («Seller Sam») «RTX 5070 Ti» [buying] seller replied — your turn:");
+  // Fenced, not double-quoted: a stranger's message body is the most hostile field here.
+  expect(d).toContain("«yes, 200€, come by Saturday»");
   expect(d).toContain("·unread");
 });
 
@@ -51,7 +59,7 @@ test("buying scam: the seller-phishing-the-buyer line gets the scam variant", ()
     conv: "b2", side: "buying", counterpart: "Phisher", ad_title: "GPU", rating: "scam", tells: ["payment-link"],
     messages: [{ from: "them", at: "t", body: "zahl bitte über diesen link bit.ly/x" }],
   });
-  expect(composeDigest([scamBuy])).toContain("⚠ b2 (Phisher) GPU [scam: payment-link] — do not reply");
+  expect(composeDigest([scamBuy])).toContain("⚠ b2 («Phisher») «GPU» [scam: payment-link] — do not reply");
 });
 
 test("only awaiting==me survives: awaiting-them, closed, and awaiting-none all drop out", () => {

@@ -6,6 +6,7 @@
 // Change detection (new / price-drop / gone) is pure local arithmetic over the search rows — no per-ad
 // detail fetch in the bulk path.
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { udata } from "./untrusted.ts";
 import { join } from "node:path";
 import {
   MARKET, searchUrl, fetchSearchHttp, searchId, newestSnapshot, toSnapshotListing, withinRadius, DEFAULT_RADIUS_KM,
@@ -117,7 +118,9 @@ async function refreshSearch(s: SavedSearch): Promise<RefreshResult> {
 
 function dealLine(l: SnapshotListing): string {
   const price = l.price || (l.priceNum != null ? `${l.priceNum} €` : "—");
-  return `${price} · ${l.title} #${l.adId}${l.url ? ` ${l.url}` : ""}`;
+  // The ad title is written by a stranger, and this digest goes straight into an
+  // agent's context every 15 minutes.
+  return `${price} · ${udata(l.title, 90)} #${l.adId}${l.url ? ` ${l.url}` : ""}`;
 }
 
 export function composeDealDigest(results: RefreshResult[]): string {
