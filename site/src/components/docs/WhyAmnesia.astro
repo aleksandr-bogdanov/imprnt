@@ -43,6 +43,11 @@ const CHATS = ["chat 1", "chat 2", "chat 47"];
     border-radius: 13px;
     padding: 0.85rem 0.95rem 0.8rem;
     background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+    /* Starlight's global sibling spacing (* + * gets margin-top) reaches into
+       this grid: cards 2 and 3 follow a sibling, card 1 does not, so two cards
+       sat 16px lower and 16px shorter than the first. Kill it here so all
+       three share the row height. */
+    margin-top: 0;
   }
   .ctag {
     font-family: var(--sl-font);
