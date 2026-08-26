@@ -1,12 +1,34 @@
 # Letta / MemGPT
 
-**One-line:** A platform for stateful AI agents with self-improving memory, born from the MemGPT research project at UC Berkeley, now pivoting its flagship from a server-side memory database to "Letta Code," a model-agnostic terminal agent harness whose memory lives in git-backed filesystem "context repositories."
+**One-line:** A platform for stateful AI agents with self-improving memory, born from the MemGPT research project at UC Berkeley, whose flagship "Letta Code" completed the pivot from a server-side memory database to a model-agnostic agent harness with git-backed filesystem memory (MemFS), and now ships as a consumer personal agent with messaging channels, schedules, and a desktop app.
 
-**Status (checked 2026-06-20):** pivoting - the company announced a decisive shift away from server-side memory tools toward client-side filesystem memory. From the official "Letta's next phase" post (MAR 16, 2026): "Legacy server memory tools like core_memory_replace will be removed in favor of straightforward filesystem operations" and "Memory moves from specialized memory tools that edit memory in a database to generalized computer use tools like bash that operate over memory projected into git-backed files." Source: https://www.letta.com/blog/our-next-phase
+**Status (checked 2026-08-26):** pivot complete - Letta Code shipped as a standalone repo and a consumer-facing personal agent with messaging channels, schedules, and a desktop app. Letta now sits in two camps at once: the Agent-state runtime it always was, and the Personal-agent runtime camp alongside OpenClaw and Hermes Agent. Proof and quotes in the update section below. The 2026-06-20 status read "pivoting": the company had announced a decisive shift away from server-side memory tools toward client-side filesystem memory. From the official "Letta's next phase" post (MAR 16, 2026): "Legacy server memory tools like core_memory_replace will be removed in favor of straightforward filesystem operations" and "Memory moves from specialized memory tools that edit memory in a database to generalized computer use tools like bash that operate over memory projected into git-backed files." Source: https://www.letta.com/blog/our-next-phase
 
-**Latest release:** v0.16.8, May 14, 2026 | **Stars:** ~23.4k | **License:** Apache-2.0 | **Hosting:** both (self-host + Letta Cloud)
+**Latest release:** letta-code v0.31.1, Aug 26, 2026 (standalone repo, 3,125 stars). The parent letta-ai/letta repo last released v0.16.8, May 14, 2026 | **Stars:** 24,452 (letta) + 3,125 (letta-code), per the GitHub API 2026-08-26 | **License:** Apache-2.0 (both repos) | **Hosting:** both (self-host + Letta Cloud)
 
-> Note on the release date: GitHub's releases UI showed "14 May" with no year, under a "© 2026 GitHub" footer. GitHub omits the year only for the current year, so "14 May" resolves to 2026. This is corroborated by v0.16.7 being dated March 31, 2026 (see timeline below). The auto-summarizer initially guessed 2025 from the relative date, which is incorrect.
+> Note on the release date (2026-06-20 check, kept for the record): GitHub's releases UI showed "14 May" with no year, under a "© 2026 GitHub" footer. GitHub omits the year only for the current year, so "14 May" resolves to 2026. This is corroborated by v0.16.7 being dated March 31, 2026 (see timeline below). The auto-summarizer initially guessed 2025 from the relative date, which is incorrect. The 2026-08-26 API check confirms v0.16.8 published 2026-05-14T17:14:24Z.
+
+## Update 2026-08-26: the consumer turn
+
+Everything below this section is the 2026-06-20 record, left as written. What changed in the two months since:
+
+**The flagship moved to its own repo and it ships daily.** Development now happens in letta-ai/letta-code (created 2025-10-25 per the GitHub API, 3,125 stars, Apache-2.0). Its latest release, v0.31.1, was published 2026-08-26T19:56:04Z, the access date, with v0.31.0 and v0.30.32 in the preceding two days. The parent letta-ai/letta repo grew to 24,452 stars but has not cut a release since v0.16.8 (May 14, 2026). The repo describes itself as "Stateful agents that are like people, with memory, identity, and the ability to learn and adapt," and the README opens: "Letta Code is a stateful agent harness for creating agents that are more like people than tools."
+
+- https://github.com/letta-ai/letta-code (API data + README, accessed 2026-08-26)
+
+**It is now a consumer personal agent, and that puts Letta in a second camp.** The coding-agent harness grew the full personal-assistant surface:
+
+- Channels. "Channels let your Letta agent receive and respond to messages from external platforms like Telegram, Slack, Discord, WhatsApp, and Signal." (https://docs.letta.com/letta-code/channels/, accessed 2026-08-26)
+- Schedules. "Schedule one-time or recurring prompts for Letta agents" and "Your agent can also schedule tasks itself. Simply ask it in chat." (https://docs.letta.com/configuration/schedules, accessed 2026-08-26). The README adds: "Configure heartbeats and crons, and let agents work across time with self-managed schedules."
+- A desktop app for macOS, Windows, and Linux. "The Letta app is your personal command center for your stateful agents. Everything about an agent is visible in one place: you can chat with it, and view and edit its memory, schedules, channels, and skills." (https://docs.letta.com/platform/desktop-app, accessed 2026-08-26)
+
+This is the OpenClaw / Hermes Agent shape: one persistent agent, reachable over messaging platforms, running on its own schedule, self-maintaining its memory. Letta therefore belongs to BOTH camps in this folder now: it remains the Agent-state runtime reference (API, SDKs, managed multi-agent state), and it is also a Personal-agent runtime. Confirming the consolidation: the separate LettaBot repo (327 stars) is archived with the description "Archived - has been replaced by Letta Code channels/schedules!" (https://github.com/letta-ai/lettabot, API, accessed 2026-08-26).
+
+**Memory landed where the March pivot pointed.** The memory docs now state it plainly: "Letta agents use MemFS, a git-backed memory filesystem that they can inspect and edit." Capture stays automatic and continuous: "Your agent updates memory when it learns something durable," and the sleep-time process got a consumer name, Dreaming: "Dreaming uses background subagents to review recent conversations, consolidate useful lessons, and update memory without interrupting your active work." The user can inject a fact explicitly with `/remember` ("always use pnpm in this repo") and the agent files it into MemFS itself.
+
+- https://docs.letta.com/letta-code/memory (accessed 2026-08-26)
+
+The sharp reading, stated as such: Letta is the closest thing on the page to a competitor converging on imprnt, and it is converging from both directions at once. On storage it arrived at imprnt's answer against its own prior product: a memory company built on Postgres and pgvector measured plain files beating its own vector tools, published the number, and rebuilt its flagship on Markdown in git. On product it arrived at the personal-agent camp's answer: a resident assistant with channels, schedules, and a desktop app. A funded company with this team keeps moving, and the direction of every move so far has been toward imprnt's ground. What it has not adopted is the part imprnt treats as the point: a human deciding what gets remembered (Letta's capture stays continuous and agent-authored, with Dreaming as background consolidation), a typed schema code can check (MemFS is a freeform tree, no entities, no aliases, no integrity pass), and a deterministic ranker (recall is the agent reading its own files, model in the loop each time). If Letta ever adds a conscious-capture mode and a checked contract over MemFS, the architectural difference reduces to who ships a ranker. That sentence is the honest distance between the two projects as of this check, and it is shorter than it was in June.
 
 ## What it is
 
@@ -148,6 +170,8 @@ Where they still differ:
 - Durability / lock-in: imprnt files outlive the tool. Letta Code's context repositories are git-backed markdown, so they survive too, but cloud sync, sleep-time, skills, and the Letta Auto gateway are runtime features that vanish if you stop running Letta. The data is portable. The behavior is not.
 - Typed contract: imprnt has a typed entity schema (people/orgs/holdings with aliases, frontmatter contract). Letta's memory is freeform markdown files in a tree with an always-loaded `system/` directory, no typed-entity resolution layer.
 
+Added 2026-08-26: the comparison now runs on a second axis. With channels, schedules, and the desktop app, Letta sells a resident personal agent, so the contrast with imprnt is the same one drawn in the OpenClaw and Hermes dossiers: an always-on assistant that owns its memory versus a vault the human owns and the agent visits. Letta's `/remember` is the closest thing to imprnt's "harvest this," but the destination differs: `/remember` hands the fact to the agent to file into its own MemFS, while imprnt files into a typed, checked, greppable vault that stays useful with no agent running. Dreaming (background subagents rewriting memory) is exactly the always-on machinery imprnt's two-robot-commands rule exists to refuse.
+
 ## When it wins over imprnt
 
 - You want an autonomous coding agent that maintains and improves its own memory with no human curation. Letta Code's whole pitch is self-improving memory plus sleep-time consolidation. imprnt deliberately keeps capture conscious.
@@ -155,6 +179,7 @@ Where they still differ:
 - You want git-versioned memory with automatic commits and informative messages produced by the agent itself, plus cloud sync and full version history. imprnt leaves versioning to your own git usage.
 - You want vector/semantic recall over large conversation histories out of the box (legacy path). imprnt intentionally has no embeddings.
 - You want the agent to actively search and reason over memory each turn rather than a cheap deterministic ranker. That is Letta's model by design.
+- Added 2026-08-26: you want one persistent assistant reachable from Telegram, Slack, Discord, WhatsApp, or Signal, running scheduled and self-scheduled tasks, with a desktop app to inspect its memory, channels, and skills. imprnt is a knowledge store the agent in your terminal consults, and it ships none of that surface on purpose.
 
 ## Sources
 
@@ -171,6 +196,12 @@ Where they still differ:
 - [How Letta builds production-ready AI agents with Amazon Aurora PostgreSQL (AWS)](https://aws.amazon.com/blogs/database/how-letta-builds-production-ready-ai-agents-with-amazon-aurora-postgresql/) - accessed 2026-06-20
 - [MemGPT: Towards LLMs as Operating Systems (arXiv:2310.08560)](https://arxiv.org/abs/2310.08560) - accessed 2026-06-20
 - [Berkeley AI spinout Letta raises $10M seed (PRNewswire)](https://www.prnewswire.com/news-releases/berkeley-ai-research-lab-spinout-letta-raises-10m-seed-financing-led-by-felicis-to-build-ai-with-memory-302257004.html) - accessed 2026-06-20
+- [letta-code GitHub repository + README](https://github.com/letta-ai/letta-code) - accessed 2026-08-26 (API: 3,125 stars, Apache-2.0, created 2025-10-25, v0.31.1 published 2026-08-26)
+- [LettaBot GitHub repository (archived)](https://github.com/letta-ai/lettabot) - accessed 2026-08-26 (API: 327 stars, archived: true)
+- [Channels docs](https://docs.letta.com/letta-code/channels/) - accessed 2026-08-26
+- [Schedules docs](https://docs.letta.com/configuration/schedules) - accessed 2026-08-26
+- [Desktop app docs](https://docs.letta.com/platform/desktop-app) - accessed 2026-08-26
+- [Letta Code memory docs (MemFS, Dreaming, /remember)](https://docs.letta.com/letta-code/memory) - accessed 2026-08-26
 
 ## Confidence and gaps
 
@@ -181,3 +212,5 @@ Where they still differ:
 - Deprecation timeline specifics ("templates and filesystem deprecated by mid-April 2026"): summarized from the "next phase" post by the fetch model. The broad direction (legacy server memory tools removed in favor of filesystem ops) is directly quoted and solid, but the exact per-feature dates are lower confidence and were not independently re-quoted.
 - v0.16.7 changelog details (32k -> 128k default context, LET-7991): came via a search-result summary of the GitHub releases page rather than a direct quote of the release body. The deprecation quotes ("Block limits are no longer enforced", "Git-backed memory frontmatter no longer emits `limit`") are from the fetched release content.
 - LoCoMo numbers are vendor self-reported on one benchmark. Directionally credible (published against their own product) but not independently reproduced here.
+- 2026-08-26 check: all GitHub numbers (stars, release tags, publish timestamps, LettaBot archival) came straight from the GitHub API, high confidence. Two scout claims needed correction on re-verification: the channels doc says "your Letta agent" (the scout wrote "your Letta Code agent") and lists five platforms including Signal, and the desktop-app quote lives at docs.letta.com/platform/desktop-app, with schedules at docs.letta.com/configuration/schedules (the scout implied both sat under /letta-code/). Substance of both claims held.
+- The docs never use the word "proactive" for schedules in the pages fetched. The verbatim basis is "Schedule one-time or recurring prompts" plus "Your agent can also schedule tasks itself" plus the README's "heartbeats and crons... self-managed schedules." The proactive-runs framing is a fair reading, marked here as such.

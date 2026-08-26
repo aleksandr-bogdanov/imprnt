@@ -1,0 +1,29 @@
+# Competitor-dossier freshness — monthly, plus on any PR that touches the
+# dossier folder. Report-only: freshness.mjs diffs each dossier's claimed
+# numbers (watched.tsv) against the GitHub API and fails when a dossier has
+# gone stale or a big new entrant appears, so the folder can never silently
+# drift the way it did between 2026-06-20 and 2026-08-26 (OpenClaw, ~388k
+# stars, was found on LinkedIn instead of here). A failure means "re-check
+# the named dossiers in a session", never an automated edit.
+name: freshness
+
+on:
+  schedule:
+    - cron: "17 6 1 * *"
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+    paths: ["site/docs/competitors/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    name: dossiers vs reality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - run: node site/docs/competitors/freshness.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
