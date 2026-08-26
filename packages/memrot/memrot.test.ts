@@ -131,7 +131,7 @@ describe("stale", () => {
   test("past-due lines flagged in durable files, ignored in dated logs", () => {
     const r = run(
       ws({
-        "MEMORY.md": "# m\n\n- insurance: renew by 2026-05-31\n- rent paid until 2026-01-01\n",
+        "MEMORY.md": "# m\n\n- insurance: renew by 2026-05-31\n- visa: deadline 2026-07-01\n",
         "memory/2026-05-01-0900.md": "# S\n\nrenew by 2026-05-31 discussed\n",
       }),
     );
@@ -139,6 +139,20 @@ describe("stale", () => {
     expect(stale.every((f: any) => f.file === "MEMORY.md")).toBe(true);
     expect(stale.length).toBe(2);
     expect(stale[0].message).toContain("88 days");
+  });
+
+  test("narrative prose about past dates is a record, not an overdue task", () => {
+    const r = run(
+      ws({
+        "MEMORY.md":
+          "# m\n\n" +
+          "- The decision, made by Alex on 2026-07-15, executed 2026-07-29.\n" +
+          "- Alex sent a follow-up 2026-08-06, still waiting.\n" +
+          "- rent paid until 2026-01-01, then the new contract started\n" +
+          "- weight was 88 kg by 2026-08-09\n",
+      }),
+    );
+    expect(of(r, "stale").length).toBe(0);
   });
 
   test("aging active directives and future observed dates", () => {
@@ -261,7 +275,7 @@ describe("other workspace shapes", () => {
       ws({
         "AGENTS.md": "# a\n",
         "USER.md": "# u\n\n- City: Hamburg\n",
-        "memory/MEMORY.md": "# Long-term Memory\n\n- City: Leipzig\n- Passport renewal must be booked until 2026-06-15\n",
+        "memory/MEMORY.md": "# Long-term Memory\n\n- City: Leipzig\n- Passport renewal: deadline 2026-06-15, still unbooked\n",
       }),
     );
     expect(of(r, "conflicts").length).toBe(1);
@@ -296,6 +310,86 @@ describe("other workspace shapes", () => {
     expect(links[0].message).not.toContain("moved?");
     // and nested SKILL.md files are not orphans — they load by name
     expect(of(r, "orphans").length).toBe(0);
+  });
+});
+
+describe("real-corpus calibration", () => {
+  test("a namespace of dead links that lives beside the scanned root is one FYI, not N problems", () => {
+    const parent = ws({
+      "vault/a.md": "# a\n\n[[raw/x/one]] [[raw/x/two]] [[raw/y/three]]\n",
+      "vault/b.md": "# b\n\n[[raw/z/four]]\n",
+      "raw/x/one.md": "# snapshot\n",
+    });
+    const r = runChecks(join(parent, "vault"), { today: TODAY });
+    const links = of(r, "links");
+    expect(links.length).toBe(1);
+    expect(links[0].severity).toBe("info");
+    expect(links[0].message).toContain('"raw/"');
+    expect(links[0].message).toContain("4 links");
+  });
+
+  test("dead links on dated record lines are historical, aggregated as FYI", () => {
+    const r = run(
+      ws({
+        "log.md": "# log\n\n- 2026-03-01 renamed the note, was [[old-name]]\n- 2026-03-02 more about [[old-name]]\n",
+        "MEMORY.md": "# m\n\n- see [[really-missing]]\n",
+      }),
+    );
+    const problems = of(r, "links").filter((f: any) => f.severity === "problem");
+    const infos = of(r, "links").filter((f: any) => f.severity === "info");
+    expect(problems.length).toBe(1);
+    expect(problems[0].message).toContain("really-missing");
+    expect(infos.length).toBe(1);
+    expect(infos[0].message).toContain("historical");
+  });
+
+  test("due-markers under a dated heading or with punctuation before the date stay silent", () => {
+    const r = run(
+      ws({
+        "orgs/landlord.md":
+          "# dw\n\n### 2026-04-10 - Mass letter\n\n- Deadline: 2026-04-24\n\n## Open\n\n- Deadline: 2026-04-30\n",
+        "MEMORY.md": "# m\n\nA fee will arrive when due; the 2026-07-23 email is not that. The reminder letter, photographed 2026-08-06.\n",
+      }),
+    );
+    const stale = of(r, "stale");
+    expect(stale.length).toBe(1);
+    expect(stale[0].file).toBe("orgs/landlord.md");
+    expect(stale[0].line).toBe(9);
+  });
+
+  test("a single NUL byte is reported as corruption while the rest is still checked", () => {
+    const r = run(
+      ws({
+        "MEMORY.md": "# m\n\nbroken \u0000 byte here\n\n[[gone-note]]\n",
+      }),
+    );
+    const nul = of(r, "hygiene").filter((f: any) => f.message.includes("NUL"));
+    expect(nul.length).toBe(1);
+    expect(nul[0].severity).toBe("problem");
+    expect(of(r, "links").length).toBe(1);
+  });
+});
+
+describe("store boundary", () => {
+  test("a repo root with a vault inside redirects to the vault", async () => {
+    const { sniffStore } = await import("./memrot.js");
+    const root = ws({
+      "package.json": "{}",
+      "src/index.ts": "//",
+      "vault/index.md": "# map\n",
+      "vault/log.md": "# log\n",
+      "vault/notes/a.md": "# a\n",
+    });
+    const s = sniffStore(root);
+    expect(s.dir).toBe(join(root, "vault"));
+  });
+
+  test("a bare code repo is refused; a plain folder of notes is not", async () => {
+    const { sniffStore } = await import("./memrot.js");
+    const repo = ws({ "package.json": "{}", "README.md": "# r\n" });
+    expect(sniffStore(repo).refuse).toBeTruthy();
+    const notes = ws({ "a.md": "# a\n", "b.md": "# b\n" });
+    expect(sniffStore(notes).dir).toBe(notes);
   });
 });
 

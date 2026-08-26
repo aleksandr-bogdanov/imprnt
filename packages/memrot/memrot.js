@@ -159,8 +159,20 @@ const NOISE_KEYS = new Set([
   "context", "goal", "result", "output", "input", "see", "see also", "related", "links",
 ]);
 
+// Forward-looking markers only. Bare "by"/"until"/"follow-up" matched narrative records
+// ("the decision made by Alex on 2026-07-15", "sent a follow-up 2026-08-06") on every real
+// corpus tried — prose about the past is the common case, so the keyword list stays strict
+// even though it costs recall ("must be booked until <date>" is no longer caught).
+// No sentence punctuation may sit between keyword and date: "a fee is due; the 2026-07-23
+// email" and "reminder letter, photographed 2026-08-06" are prose about the past, while a
+// live marker keeps keyword and date in one breath ("due ~2026-08-24", "Deadline: 2026-04-24").
 const DUE_RE =
-  /\b(due|deadline|expires?|expiry|renew(?:al|s)?|review by|re-?check|remind(?:er)?|follow[- ]?up|valid until|until|by)\b[^.\n]{0,60}?\b((?:19|20)\d{2}-\d{2}-\d{2})\b/i;
+  /\b(due|deadline|expires|expiry|renew(?:al|s)?(?: by)?|review by|re-?check by|remind(?:er)?|valid until)\b[^.;,\n]{0,40}?\b((?:19|20)\d{2}-\d{2}-\d{2})\b/i;
+
+// A line that opens with a date is a dated record — a log entry, a decision note. What it
+// says happened; what it links to is what existed then. Never treat it as pending state.
+const DATED_LINE_RE = /^\s*(?:[-*>]\s*)?\(?((?:19|20)\d{2}-\d{2}-\d{2}|\d{2}\.\d{2}\.(?:19|20)\d{2})\b/;
+const HEADING_DATE_RE = /^#{1,6}\s.*\b((?:19|20)\d{2}-\d{2}-\d{2}|\d{2}\.\d{2}\.(?:19|20)\d{2})\b/;
 
 const OBSERVED_RE = /<!--\s*observed:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}|YYYY-MM-DD)\s*\|\s*status:\s*(\w+)\s*-->/g;
 
@@ -191,9 +203,17 @@ export function runChecks(root, opts = {}) {
     } catch {
       continue;
     }
-    if (raw.includes("\u0000")) {
-      add("hygiene", "warn", f.rel, 1, "contains NUL bytes — not a text file?");
+    const nuls = raw.split("\u0000").length - 1;
+    if (nuls > 4) {
+      add("hygiene", "warn", f.rel, 1, `contains ${nuls} NUL bytes — not a text file?`);
       continue;
+    }
+    if (nuls > 0) {
+      // A stray NUL in an otherwise-clean text file is corruption (a torn write, a bad
+      // byte), not binary data — report it precisely and keep checking the rest.
+      const line = raw.slice(0, raw.indexOf("\u0000")).split("\n").length;
+      add("hygiene", "problem", f.rel, line, `${nuls} NUL byte${nuls > 1 ? "s" : ""} in a text file — corruption (a torn write or bad disk byte)`);
+      raw = raw.split("\u0000").join(" ");
     }
     const masked = maskFrontmatter(maskCode(raw));
     docs.set(f.rel, { raw, masked, lines: raw.split("\n"), maskedLines: masked.split("\n"), size: f.size });
@@ -235,15 +255,23 @@ export function runChecks(root, opts = {}) {
     if (!t) return { kind: "ok", rel: null }; // pure anchor
     const candidates = [t, t + ".md"];
     const bases = [path.posix.dirname(fromRel), ""];
+    let escaped = null;
     for (const base of bases) {
       for (const c of candidates) {
         const norm = path.posix.normalize(path.posix.join(base === "." ? "" : base, c));
-        if (norm.startsWith("..")) continue;
+        if (norm.startsWith("..")) {
+          // The link deliberately reaches outside the scanned folder. We can still
+          // check existence on disk (read-only), just not index what's over there.
+          if (existsSync(path.join(root, ...norm.split("/")))) return { kind: "outside-ok" };
+          escaped = norm;
+          continue;
+        }
         if (fileSet.has(norm)) return { kind: "ok", rel: norm };
         const ci = lowerMap.get(norm.toLowerCase());
         if (ci) return { kind: "case", rel: ci[0], wanted: norm };
       }
     }
+    if (escaped) return { kind: "outside-missing", path: escaped };
     // wikilinks resolve by unique basename anywhere in the tree (the Obsidian rule).
     // The linking file itself is never a candidate, and a basename shared by many files
     // (SKILL.md, README.md) suggests nothing — a "moved?" hint must be unambiguous.
@@ -257,6 +285,7 @@ export function runChecks(root, opts = {}) {
   const WIKILINK_RE = /!?\[\[([^\]\n|#]*)(?:#[^\]\n|]*)?(?:\|[^\]\n]*)?\]\]/g;
   const MDLINK_RE = /!?\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 
+  const deadLinks = []; // classified after the sweep: a whole namespace of them is a different story
   for (const [rel, doc] of docs) {
     doc.maskedLines.forEach((line, i) => {
       for (const m of line.matchAll(WIKILINK_RE)) {
@@ -266,8 +295,10 @@ export function runChecks(root, opts = {}) {
         if (r.kind === "ok" && r.rel) inbound.set(r.rel, (inbound.get(r.rel) ?? 0) + 1);
         else if (r.kind === "case")
           add("links", "problem", rel, i + 1, `[[${target}]] matches only by case — actual file is ${r.rel} (breaks on case-sensitive disks)`);
+        else if (r.kind === "outside-missing")
+          add("links", "problem", rel, i + 1, `[[${target}]] points outside the scanned folder at a file that doesn't exist`);
         else if (r.kind === "dead")
-          add("links", "problem", rel, i + 1, `[[${target}]] points at a file that doesn't exist`);
+          deadLinks.push({ rel, line: i + 1, target, display: `[[${target}]]`, dated: DATED_LINE_RE.test(line) });
       }
       for (const m of line.matchAll(MDLINK_RE)) {
         const url = m[1];
@@ -279,10 +310,60 @@ export function runChecks(root, opts = {}) {
           add("links", "problem", rel, i + 1, `(${url}) matches only by case — actual file is ${r.rel} (breaks on case-sensitive disks)`);
         else if (r.kind === "moved")
           add("links", "problem", rel, i + 1, `(${url}) is dead — a file with that name now lives at ${r.rel} (moved?)`);
+        else if (r.kind === "outside-missing")
+          add("links", "problem", rel, i + 1, `(${url}) points outside the scanned folder at a file that doesn't exist`);
         else if (r.kind === "dead")
-          add("links", "problem", rel, i + 1, `(${url}) points at a file that doesn't exist`);
+          deadLinks.push({ rel, line: i + 1, target: url, display: `(${url})`, dated: DATED_LINE_RE.test(line) });
       }
     });
+  }
+
+  // A pile of dead links all starting with the same path segment that exists NOWHERE in
+  // the scanned tree is not a pile of typos — it's a namespace that lives somewhere else
+  // by design (imprnt vaults link [[raw/...]] snapshots kept beside the vault). Report
+  // the class once instead of crying wolf N times; per-link reports stay for real typos.
+  const byNamespace = new Map();
+  for (const d of deadLinks) {
+    const seg = d.target.includes("/") ? d.target.split("/")[0].trim() : null;
+    const key = seg && seg !== "." && seg !== ".." ? seg : "";
+    if (!byNamespace.has(key)) byNamespace.set(key, []);
+    byNamespace.get(key).push(d);
+  }
+  for (const [seg, group] of byNamespace) {
+    const segExistsInside =
+      seg !== "" && (existsSync(path.join(root, seg)) || [...fileSet].some((r) => r.startsWith(seg + "/")));
+    if (seg !== "" && !segExistsInside && group.length >= 3) {
+      const sibling = existsSync(path.join(root, "..", seg));
+      add(
+        "links",
+        sibling ? "info" : "warn",
+        group[0].rel,
+        group[0].line,
+        sibling
+          ? `${group.length} links point into "${seg}/", which sits next to the scanned folder, not inside it — an external namespace by design, not checkable from here`
+          : `${group.length} links point into "${seg}/", which exists neither in nor next to the scanned folder — either an external namespace or a deleted tree`,
+      );
+      continue;
+    }
+    // A dead link on a date-opened line is a historical reference: the entry records what
+    // existed when it was written, and the target has since moved or been renamed. That is
+    // worth knowing, not worth 50 alarms — aggregate per file.
+    const datedDead = group.filter((d) => d.dated);
+    for (const d of group.filter((d) => !d.dated))
+      add("links", "problem", d.rel, d.line, `${d.display} points at a file that doesn't exist`);
+    const byFile = new Map();
+    for (const d of datedDead) {
+      if (!byFile.has(d.rel)) byFile.set(d.rel, []);
+      byFile.get(d.rel).push(d);
+    }
+    for (const [file, ds] of byFile)
+      add(
+        "links",
+        "info",
+        file,
+        ds[0].line,
+        `${ds.length} dead link${ds.length > 1 ? "s" : ""} on dated record lines (${[...new Set(ds.map((d) => d.display))].slice(0, 3).join(", ")}${ds.length > 3 ? ", …" : ""}) — historical entries; the targets were likely renamed since`,
+      );
   }
 
   // --- orphans: markdown nothing links to, that no runtime convention loads either.
@@ -292,6 +373,7 @@ export function runChecks(root, opts = {}) {
     if (isDatedLog(rel)) continue; // date-loaded / log-structured
     if (WELL_KNOWN_ROOT.has(path.posix.basename(rel).toLowerCase())) continue; // runtime-loaded by convention at any depth
     if (/(^|\/)skills\//i.test(rel) && /^skill\.md$/i.test(path.posix.basename(rel))) continue; // skill bundles are loaded by name, at any nesting
+    if (path.posix.basename(rel).startsWith("_")) continue; // _tags.md, _needs-review.md, ... control files by convention, read by tools not links
     orphanRels.push(rel);
   }
   // When most of a tree has no inbound links, linking just isn't how it's organized —
@@ -374,8 +456,12 @@ export function runChecks(root, opts = {}) {
   const lineIndex = new Map(); // normalized line -> Map(rel -> firstLineNo)
   for (const [rel, doc] of docs) {
     const seenHere = new Map(); // norm -> first line no
-    doc.maskedLines.forEach((line, i) => {
-      const t = line.trim();
+    doc.maskedLines.forEach((maskedLine, i) => {
+      // Compare the RAW line (masking blanks inline code, and two entries differing only
+      // inside backticks — `path-a` vs `path-b` — would falsely collapse into one),
+      // but still skip lines that live inside fenced blocks (fully blanked by the mask).
+      if (maskedLine.trim() === "" ) return;
+      const t = (doc.lines[i] ?? "").trim();
       if (t.length < 50 || t.startsWith("#")) return;
       const norm = t.toLowerCase().replace(/\s+/g, " ");
       if (seenHere.has(norm)) {
@@ -394,7 +480,7 @@ export function runChecks(root, opts = {}) {
   for (const [, m] of repeated) {
     const where = [...m.entries()];
     const [firstFile, firstLine] = where[0];
-    const text = docs.get(firstFile).maskedLines[firstLine - 1].trim();
+    const text = docs.get(firstFile).lines[firstLine - 1].trim();
     add(
       "duplicates",
       "info",
@@ -407,8 +493,10 @@ export function runChecks(root, opts = {}) {
   // --- stale dates
   for (const [rel, doc] of docs) {
     const dated = isDatedLog(rel);
+    let sectionIsDatedRecord = false; // a section whose heading carries a date records an event
     doc.maskedLines.forEach((line, i) => {
-      if (!dated) {
+      if (/^#{1,6}\s/.test(line)) sectionIsDatedRecord = HEADING_DATE_RE.test(line);
+      if (!dated && !sectionIsDatedRecord && !DATED_LINE_RE.test(line)) {
         const m = line.match(DUE_RE);
         if (m) {
           const days = isoDaysAgo(m[2], today);
@@ -561,6 +649,77 @@ export function runChecks(root, opts = {}) {
   return { findings, stats };
 }
 
+// ---------------------------------------------------------------- store boundary
+
+// A memory checker must know what the store IS before it judges it. Pointed at a code
+// repo or a docs site, every check turns into noise about files that were never memory.
+// So: recognize a store by shape, redirect to one found a level down, and refuse to
+// guess otherwise (--force scans the literal directory regardless).
+
+const REPO_MARKERS = [
+  "package.json", "pnpm-workspace.yaml", "pyproject.toml", "setup.py", "go.mod",
+  "Cargo.toml", "tsconfig.json", "pom.xml", "Gemfile", "composer.json",
+];
+
+/** Does this directory itself look like a markdown memory store? Returns a label or null. */
+export function storeShape(dir) {
+  const has = (...p) => existsSync(path.join(dir, ...p));
+  if (has("AGENTS.md") && (has("SOUL.md") || has("memory"))) return "agent workspace (OpenClaw/nanobot-style)";
+  if (has("memories", "MEMORY.md") || has("memories", "USER.md")) return "agent home (Hermes-style)";
+  if (has("index.md") && (has("log.md") || has("_tags.md"))) return "note vault (imprnt-style)";
+  // .obsidian is deliberately NOT a shape here: people open a whole repo in Obsidian so
+  // links into sibling folders resolve, which marks the repo root, not the store.
+  // sniffStore treats it as a fallback only when nothing better sits one level down.
+  return null;
+}
+
+/**
+ * Decide what to scan for a requested directory.
+ * Returns { dir, note } to proceed, or { refuse: "<message>" }.
+ */
+export function sniffStore(requested) {
+  const shape = storeShape(requested);
+  if (shape) return { dir: requested, note: `recognized: ${shape}` };
+
+  // look one level down for exactly one recognizable store
+  let entries = [];
+  try {
+    entries = readdirSync(requested, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith(".") && !SKIP_DIRS.has(e.name))
+      .map((e) => e.name);
+  } catch { /* unreadable — fall through */ }
+  const found = entries
+    .map((name) => ({ name, shape: storeShape(path.join(requested, name)) }))
+    .filter((c) => c.shape);
+  if (found.length === 1) {
+    return {
+      dir: path.join(requested, found[0].name),
+      note: `this folder isn't a memory store itself, but ${found[0].name}/ is (${found[0].shape}) — scanning that instead (use --force to scan everything here)`,
+    };
+  }
+  if (found.length > 1) {
+    return {
+      refuse:
+        `several memory stores found under here: ${found.map((c) => c.name + "/").join(", ")}\n` +
+        `point memrot at one of them directly.`,
+    };
+  }
+
+  if (existsSync(path.join(requested, ".obsidian"))) return { dir: requested, note: "recognized: Obsidian vault" };
+
+  const isRepo = REPO_MARKERS.some((m) => existsSync(path.join(requested, m)));
+  if (isRepo) {
+    return {
+      refuse:
+        "this looks like a code repository, not a memory store — scanning it would report on source\n" +
+        "and docs as if they were memory. Point memrot at the memory folder itself\n" +
+        "(an agent workspace, a note vault), or pass --force to scan this directory anyway.",
+    };
+  }
+  // an unrecognized plain folder of notes is fine — that's the generic case
+  return { dir: requested, note: null };
+}
+
 // ---------------------------------------------------------------- report
 
 const CHECK_TITLES = {
@@ -629,16 +788,19 @@ function main() {
   const args = process.argv.slice(2);
   let dir = null;
   let json = false;
+  let force = false;
   let staleDays = 180;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--json") json = true;
+    else if (a === "--force") force = true;
     else if (a === "--stale-days") staleDays = Number(args[++i]) || 180;
     else if (a === "--help" || a === "-h") {
       console.log(
-        "usage: memrot [dir] [--json] [--stale-days N]\n\n" +
+        "usage: memrot [dir] [--json] [--force] [--stale-days N]\n\n" +
           "Read-only checkup for a folder of markdown agent memory.\n" +
-          "dir defaults to ~/.openclaw/workspace when it exists, else the current directory.",
+          "dir defaults to ~/.openclaw/workspace when it exists, else the current directory.\n" +
+          "--force scans the given directory even when it doesn't look like a memory store.",
       );
       return 0;
     } else if (!a.startsWith("-") && !dir) dir = a;
@@ -656,7 +818,18 @@ function main() {
     console.error(`not a directory: ${dir}`);
     return 2;
   }
+  let note = null;
+  if (!force) {
+    const sniff = sniffStore(dir);
+    if (sniff.refuse) {
+      console.error(sniff.refuse);
+      return 2;
+    }
+    if (sniff.dir !== dir && !json) note = sniff.note;
+    dir = sniff.dir;
+  }
   const result = runChecks(dir, { staleDays });
+  if (note) console.log(`note: ${note}\n`);
   if (json) console.log(JSON.stringify(result, null, 2));
   else console.log(render(result, { color: process.stdout.isTTY }));
   return result.stats.problems > 0 ? 1 : 0;

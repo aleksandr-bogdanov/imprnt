@@ -41,16 +41,28 @@ on disk.
 Findings come in three buckets: **broken now**, **worth a look**, and **FYI**. Every line
 is `file:line` plus a plain-language reason. `--json` if you'd rather feed it to something.
 
+## It knows what a store is — and refuses to guess
+
+Pointed at a code repository, memrot refuses rather than reporting on source and docs as
+if they were memory (`--force` overrides). Pointed at a repo that *contains* a store
+(a `vault/`, a workspace), it finds the store and scans that. And it knows the difference
+between rot and history: a dead link on a dated log line is a historical reference, prose
+about a past date is a record, a whole namespace of links pointing beside the scanned
+folder is architecture — each of those is one calm FYI line, not a wall of alarms.
+Calibrated on real, months-old stores until a healthy one produces a near-empty report.
+
 ## What it deliberately is not
 
 - It never writes, moves, or deletes anything. It's a report, not a repair.
 - No network, no embeddings, no index, no LLM. Pure local file reads and arithmetic.
 - No semantic judgment: it flags that two lines *disagree*, not which one is true.
+- Precision over recall: a phrasing like "must be booked until \<date\>" is deliberately
+  not matched, because the keywords loose enough to catch it drown real findings in noise.
 
 ## Usage
 
 ```
-memrot [dir] [--json] [--stale-days N]
+memrot [dir] [--json] [--force] [--stale-days N]
 ```
 
 `dir` defaults to `~/.openclaw/workspace` when it exists, else the current directory.
