@@ -8,12 +8,13 @@
 // Two-sided: the digest shows only what's awaiting YOU (state !== closed && awaiting === "me"), split
 // into a Selling group (per-rating template lines) and a Buying group (the seller replied, your turn).
 import { spawnSync } from "node:child_process";
+import { udata } from "./untrusted.ts";
 import { latestCounterpartMessage, type Conversation } from "./mirror.ts";
 
 // One sell-side line: lead with the conv id (the verifiable anchor and the exact `send <conv>` arg),
 // the counterpart name rides along as a hint, then the rating verdict / draft / needs-you tail.
 function sellLine(c: Conversation): string {
-  const who = c.counterpart ? ` (${c.counterpart})` : "";
+  const who = c.counterpart ? ` (${udata(c.counterpart, 40)})` : "";
   const id = c.conv;
   const tag = c.rating ?? "odd";
   if (tag === "scam") return `⚠ ${id}${who} [scam: ${(c.tells ?? []).join(", ")}] — no draft, do not reply`;
@@ -30,11 +31,12 @@ function sellLine(c: Conversation): string {
 // One buy-side line: there's no template to send (you write buy-side replies yourself), so just surface
 // that the seller replied, the ad it's about, and an 80-char snippet of their latest message.
 function buyLine(c: Conversation): string {
-  const who = c.counterpart ? ` (${c.counterpart})` : "";
-  const what = c.ad_title ? ` ${c.ad_title}` : ` ad ${c.listing}`;
+  const who = c.counterpart ? ` (${udata(c.counterpart, 40)})` : "";
+  const what = c.ad_title ? ` ${udata(c.ad_title, 60)}` : ` ad ${c.listing}`;
   if (c.rating === "scam") return `⚠ ${c.conv}${who}${what} [scam: ${(c.tells ?? []).join(", ")}] — do not reply`;
   const them = latestCounterpartMessage(c);
-  const snip = them ? ` "${them.body.replace(/\s+/g, " ").slice(0, 80)}"` : "";
+  // Their actual message. The most obviously hostile field in the plugin.
+  const snip = them ? ` ${udata(them.body, 80)}` : "";
   return `${c.conv}${who}${what} [buying] seller replied — your turn:${snip}`;
 }
 

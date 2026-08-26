@@ -1,0 +1,89 @@
+---
+title: The agent fleet
+description: How a handful of resident agents stays healthy without a platform - desired state, a reconcile loop, crash-loop backoff, and an events ledger, borrowed from Kubernetes at household scale.
+---
+
+import FleetReconcile from "../src/components/docs/FleetReconcile.astro";
+
+[The realtime hub](/realtime-hub/) ends with several sessions sharing one bus: a router, specialists parked in their own repos, workers that come and go. That is a fleet, and a fleet has state that drifts. A session dies overnight. A reboot forgets to bring an agent back. A chat channel outlives the agent behind it and swallows messages in silence. **The fix is lifted from Kubernetes: one file holds the desired state, and a loop converges reality to it.** Everything on this page runs live on the author's always-on box, and every mechanism was proven by killing things on purpose.
+
+The incident that forced the design is worth knowing, because every rule below traces back to it. An agent was registered, its session was dead, and nothing noticed. **Its channel stayed up, the broker accepted every message addressed to it, and delivered them to nobody** - for a day and a half, with everything reporting green. A human typing into that channel saw no error, no bounce, just an assistant that seemed to ignore them. The failure was silent at every layer because each layer only checked itself.
+
+## Desired state, and one loop that converges to it
+
+The fleet's source of truth is a **registry**: one JSON file, one entry per agent, holding its name, working directory, model, and status. Everything else that exists because of an agent - its service unit, its terminal session, its chat channel - is a **projection** of that file. None of them has a life of its own, and nothing edits them directly.
+
+<FleetReconcile />
+
+The loop is **level-based, the way a Kubernetes controller is**: on every pass it reads actual state and fixes the difference between that and the registry. A registered agent with no service unit gets one enabled. A registered agent with no live session gets restarted. A channel whose registry entry is gone gets archived. The property this buys is the one event-driven systems cannot have: **a missed event can never leave permanent drift**, because the next pass sees the same difference and fixes it then.
+
+Events still matter for latency, and they get to matter without a second code path. A timer runs the reconciler on a fixed cadence, and anything urgent - a message arriving for an agent whose session is down - just **runs the same reconciler early**, behind a cooldown. When that heal works, the person who typed the message is told in the channel they typed in: the agent had no session, it was started, send that again. When it fails, they are told that too. The silent-swallow failure is structurally gone, because the delivery path itself checks liveness before publishing into the void.
+
+Two reconcilers can now collide - the timer's pass and a heal firing together - so the loop takes a lock. The lock is a `mkdir` with the owner's pid written inside, per checkout, stealable only when the owner is provably dead or the lock has gone untouched for ten minutes, with an atomic rename as the steal arbiter so two stealers cannot both win. The first design used `flock`, and died in review for a reason worth repeating: **a file descriptor held under `flock` is inherited by every child, and one of the children is the tmux server, which never exits.** The lock would have been held by a daemon forever, and the safety net would have reported success while reconciling nothing.
+
+## The channel lifecycle: archive, never delete
+
+Every agent gets a chat channel named after it, created by the bridge when the registry entry appears. The interesting question is the other end: what happens to the channel when the agent goes away. The answer follows from binding **the channel's lifetime to the registry entry rather than to the session**.
+
+An explicit `stop` removes the registry entry, so the next pass moves the channel into an **archive category - history intact, nothing deleted, ever**. A crash removes nothing, so a crashed agent keeps its channel while the loop restarts its session. This encodes "archive only on deliberate shutdown" without tracking where the shutdown came from: removing the entry is the statement of intent, and there is no flag, no provenance field, no second mechanism.
+
+Respawning the same name later **reclaims the archived channel instead of creating a fresh one** - same channel id, full history, moved back out of the category. A conversation with an agent survives any number of stop and respawn cycles:
+
+```text
+21:36:57 | #fleettest archived (fleettest was stopped). History kept, nothing deleted.
+21:38:56 | #fleettest came back out of archive for fleettest.
+```
+
+Ownership is what makes archiving safe to automate. The bridge stamps every channel it manages with a **marker in the channel topic**, and the sweep archives only marked channels whose registry entry is gone. Mission control and the bus tap are excluded by name on top of that. A channel someone made by hand carries no marker, so it is **foreign state: reported once, then left alone**. The reconciler never adopts it, never spawns for it, and never deletes it - in a system where humans also act by hand, unknown state gets surfaced to a human rather than "cleaned up" by a robot that cannot know what it found. The report itself says exactly that:
+
+```text
+21:42:56 | #foreigntest is not a fleet channel. Nothing will spawn for it and nothing will touch it.
+```
+
+## Spec, status, and crash-loop backoff
+
+A naive reconciler has a failure mode worse than drift: an agent that dies instantly on every launch - bad directory, expired credentials, broken tooling - gets restarted every pass, forever. Each restart boots a real model session, so the loop that was supposed to keep the fleet healthy becomes a machine for burning money in fifteen-minute intervals.
+
+The answer is two more Kubernetes steals. First, **each registry entry splits into spec and status**: the spec half is what a human wants (name, directory, model), the status half is what the reconciler observed (restart count, consecutive failures, last restart, state), written only by the reconciler. Second, the status drives **crash-loop backoff**: three consecutive failed restarts flip the agent to `crash-loop`, and the loop stops restarting it. This is the live state machine, driven by killing a scratch agent's session four times:
+
+```text
+agent-ctl: fleettest was registered with no session - starting it   (attempt 1 of 3)
+agent-ctl: fleettest was registered with no session - starting it   (attempt 2 of 3)
+agent-ctl: fleettest was registered with no session - starting it   (attempt 3 of 3)
+agent-ctl: fleettest failed to stay up three times running - marked crash-loop,
+           no more automatic restarts.
+
+status: { "restarts": 3, "consecutiveFailures": 3, "state": "crash-loop" }
+```
+
+A crash-looping agent is held, and a human is told once, in mission control, with the reset in the message. The reset is deliberately the most ordinary command in the system: **respawning the agent clears its status**, because a human typing spawn is the statement "I fixed the cause, try again". Any pass that finds the agent alive resets the failure counter, so a flaky agent that recovers on its own walks back to healthy without ceremony.
+
+One measured detail makes the whole state machine honest. "Alive" originally meant "the terminal session exists", and that is a lie: when the model process inside dies, the session keeps living as a **corpse - a bare shell wrapped in a healthy-looking window**. Every liveness check in the fleet now reads what is actually running in the session's panes, and a bare shell counts as dead. Without this, the backoff counts nothing, the healer heals nothing, and the corpse sits in the fleet listing looking fine indefinitely.
+
+## The events ledger
+
+`kubectl get events` is the thing an operator actually reads when a pod misbehaves, and the fleet has its equivalent: an **append-only JSONL ledger of every state change the machinery performed**. Spawns, stops, restarts with their attempt numbers, crash-loop entries, channels archived and reclaimed, foreign state noticed - one line each, with a timestamp and which component acted:
+
+```json
+{"ts":"2026-08-23T21:40:18Z","actor":"agent-ctl","event":"restart","agent":"fleettest","detail":"attempt 1 of 3"}
+{"ts":"2026-08-23T21:40:40Z","actor":"agent-ctl","event":"crash-loop","agent":"fleettest","detail":"3 failed restarts"}
+{"ts":"2026-08-23T21:44:57Z","actor":"bridge","event":"archived","agent":"fleettest","channel":"fleettest"}
+```
+
+This is the same discipline the [watchers](/realtime-hub/#the-watchers-schedule-them-and-they-stay-silent) apply to suppressed notifications, pointed at the fleet: **automation that acts silently is indistinguishable from automation that is broken**, so every action lands in a file you can read after the fact. Without the ledger, "a quiet week" and "the reconciler stopped running" look identical from the outside.
+
+The ledger also feeds the human channel, through a filter. The bridge tails it and forwards only the **noteworthy** events - a crash-loop, an archive, foreign state - into mission control, one line each, starting from the end of the file on restart so history is never replayed at you. Routine restarts and adoptions stay in the file. The agent-last law from the hub page applies to the fleet's own plumbing: a state change a human can act on produces one line, everything else stays out of the chat.
+
+## What was left on the shelf
+
+Kubernetes is built for thousands of pods run by strangers, and most of it answers problems a household fleet does not have. **Namespaces, labels and selectors, leader election, autoscaling - all deliberately not taken.** At a handful of agents on one box they are pure ceremony, machinery paid for every session whether used or not, which is the exact cost pattern imprnt exists to avoid.
+
+One rejection is worth spelling out because it looks like an oversight and is a choice. Kubernetes distinguishes liveness from **readiness** - process runs, versus process is actually able to serve. The fleet's equivalent would be pinging each agent over the bus and expecting a reply, and it would work. It costs a model turn per probe per agent, needs the agent's cooperation, and turns health checking into resident AI machinery. The fleet takes the cheap deterministic half (a live process in the pane) and skips the expensive half, accepting that a hung-but-alive model session is caught by a human noticing, and consciously so.
+
+## The sharp edges, for anyone building the same
+
+Three findings from the adversarial reviews and the live run, kept here because each one would bite any re-implementation:
+
+- **tmux targets are fuzzy by default.** `-t agent-music` happily matches `agent-music-lab` (exact match, then prefix, then fnmatch), which turns "kill the corpse session" into "kill a different agent". The exact form is `=name:` - and the trailing colon is load-bearing, because for pane-taking commands a bare `=name` still resolves fuzzily.
+- **`systemd` oneshot units lie about restarts.** With `RemainAfterExit=yes`, a unit whose session died still reports active, so `start` is a no-op. Every path that revives an agent must `restart`, and this class of bug arrived twice through two different doors before the pattern was named.
+- **A refused write beats a helpful one.** The registry writer originally "recovered" from a corrupt file by rebuilding what it could see, which deletes every other agent and, in this architecture, archives their channels. It now refuses loudly and touches nothing. When the file that holds desired state cannot be read, the only safe desire is none.

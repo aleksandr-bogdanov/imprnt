@@ -1295,3 +1295,70 @@ test("the sweep honors CLAUDE_CONFIG_DIR over HOME/.claude", () => {
   expect(out).not.toContain("ignored.md");
   expect(proc.exitCode).not.toBe(0);
 });
+
+// --- declared folder roles (vault/_folders.md) -------------------------------------------------
+// The failure these exist to prevent: a shared tree checked out inside vault/ - a household seam,
+// an imported corpus - is neither an entity folder nor a domain folder, so every note in it was
+// reported disconnected forever with nothing the owner could do about it.
+
+test("a mount folder's notes are NOT reported disconnected", () => {
+  const dir = makeVault();
+  mkdirSync(join(dir, "household", "life"), { recursive: true });
+  mkdirSync(join(dir, "household", "orgs"), { recursive: true });
+  writeFileSync(join(dir, "_folders.md"), "# folders\n\n## Mounts\nhousehold\n");
+  note(dir, "household/life/riding.md", "domain: household\ntags: [horses]", "# Riding\n\nPermit from [[household/orgs/forsten]].");
+  note(dir, "household/orgs/forsten.md", "type: org\ntags: [horses]", "# Forsten\n\nIssues the permit.");
+  const r = runCheck(dir);
+  expect(r.out).toContain("every domain/form note links the graph");
+  expect(r.out).not.toContain("riding");
+  expect(r.code).toBe(0);
+});
+
+test("WITHOUT the declaration those same notes ARE reported - the regression this guards", () => {
+  const dir = makeVault();
+  mkdirSync(join(dir, "household", "life"), { recursive: true });
+  note(dir, "household/life/riding.md", "domain: household\ntags: [horses]", "# Riding\n\nJust prose.");
+  const r = runCheck(dir);
+  expect(r.out).toContain("disconnected notes");
+  expect(r.code).not.toBe(0);
+});
+
+test("a mount is exempt from the domain-match check too", () => {
+  const dir = makeVault();
+  mkdirSync(join(dir, "household", "life"), { recursive: true });
+  writeFileSync(join(dir, "_folders.md"), "## Mounts\nhousehold\n");
+  // domain: life inside a mount would be a mismatch if the mount were treated as a domain folder.
+  note(dir, "household/life/x.md", "domain: life\ntags: [x]", "# X\n\nprose");
+  const r = runCheck(dir);
+  expect(r.out).toContain("every domain note's folder matches its domain: field");
+});
+
+test("a vault can declare its own domain, and that domain is then CHECKED", () => {
+  const dir = makeVault();
+  mkdirSync(join(dir, "clients"), { recursive: true });
+  writeFileSync(join(dir, "_folders.md"), "## Domains\nidentity, health, finances, work, life, clients\n");
+  note(dir, "clients/acme.md", "domain: work\ntags: [work]", "# Acme\n\nSee [[people/anna]].");
+  note(dir, "people/anna.md", "type: person\ntags: [x]", "# Anna");
+  const r = runCheck(dir);
+  // Declared as a domain, so the folder-vs-field invariant applies to it exactly as to a shipped one.
+  expect(r.out).toContain("domain mismatches");
+  expect(r.out).toContain("acme");
+});
+
+test("check says which folder roles it ran with when they are declared", () => {
+  const dir = makeVault();
+  writeFileSync(join(dir, "_folders.md"), "## Mounts\nhousehold\n");
+  expect(runCheck(dir).out).toContain("folder roles from _folders.md");
+});
+
+test("a vault with no _folders.md says nothing about folder roles", () => {
+  expect(runCheck(makeVault()).out).not.toContain("folder roles from");
+});
+
+test("_folders.md is a control file, never counted as a note", () => {
+  const dir = makeVault();
+  const before = runCheck(dir).out.match(/check — (\d+) notes/)?.[1];
+  writeFileSync(join(dir, "_folders.md"), "## Mounts\nhousehold\n");
+  const after = runCheck(dir).out.match(/check — (\d+) notes/)?.[1];
+  expect(after).toBe(before);
+});

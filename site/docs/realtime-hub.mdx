@@ -50,6 +50,8 @@ This is the other half of the agent-last law. A resident session bills a model t
 
 Once the bus exists, more sessions join it. Each gets its own agent id, its own tmux window, and its own working directory, so they never fight over files. A useful shape is one generalist router, a couple of specialists parked in the repos they own, and short-lived workers spawned for a single job that leave when it is done.
 
+Resident sessions also need a lifecycle: something has to notice a dead one, restart it without restart-storming, and decide what happens to its channel when it stops for good. That grew its own machinery, borrowed from Kubernetes and small enough for one box - [The agent fleet](/fleet/) covers it.
+
 ### Three media, and one trust rule
 
 Three things move between agents, and each has its own road. Mixing them is how a multi-agent setup turns into an unreadable chat log.

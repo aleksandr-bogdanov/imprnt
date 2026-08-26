@@ -1,6 +1,6 @@
 ---
 title: Why imprnt?
-description: I wanted an assistant that remembered me. Every tool I tried was built around someone else's problems. So I built one that imposes nothing.
+description: You can afford a personal assistant now - a real one, that knows your life and runs its boring parts. This is the story of why I built mine.
 ---
 
 import WhyAmnesia from "../src/components/docs/WhyAmnesia.astro";
@@ -12,13 +12,15 @@ import WhyKeepLose from "../src/components/docs/WhyKeepLose.astro";
 
 <span id="beat-bike" class="beat-anchor"></span>
 
-In 2026, I wanted to **buy a bike** to ride to work. A normal person would have walked into the nearest shop, pointed at one, and taken it home. I started researching instead, and two weeks later I knew more about gears, suspension travel, and types of racing bikes than anyone shopping for a commuter will ever need. I did buy a bike in the end. It just took two weeks of homework to get there.
+I am the guy who spends **two weeks buying a bike for a fifteen-minute commute**. Any bike would do, and I know it. But I crave the conscious decision, and that craving turns every purchase into an investigation nightmare. Week one goes to the internet: trail bikes, racing bikes, tire types - knowledge no commuter has ever needed. Week two goes to offline stores and test rides. Then I buy a bike way out of my initial budget, and it fits my commute so perfectly you could call it the perfect decision. If you don't count the money and the two weeks of my life. The 100 euro bike from the second-hand store around the corner would have done the trick easily.
+
+It was like that for ages, with everything, and I know a lot of people who think alike. **Information became accessible, and mediocre stopped being acceptable.** Even when it costs money. Even when it costs time.
+
+The good news: it's 2026, and **you can afford a personal assistant**. A real one, that knows your life and offloads the boring part of being you - the keeping track of everything and not forgetting anything, which people in 2026 are generally not very good at. I built mine. This page is the story of why it looks the way it does.
 
 <span id="beat-claude" class="beat-anchor"></span>
 
-If you recognize even a little of yourself in that story, keep reading. That is how I do everything. A hobby, a purchase, a decision - I have to understand a thing inside out before I act. The research used to run through Google. Then it moved to Claude, and Claude felt like a very smart friend who knows something about everything.
-
-But that friend had **no memory**. Every chat started from zero. I would type out my setup, my constraints, the decision we had made the week before, and by the next session all of it was gone. Every time, I was briefing a brilliant stranger who happened to have read the entire internet.
+It started with Claude. The research that used to run through Google moved into chat, and Claude felt like a very smart friend who knows something about everything. But that friend had **no memory**. Every chat started from zero. I would type out my setup, my constraints, the decision we had made the week before, and by the next session all of it was gone. Every time, I was briefing a brilliant stranger who happened to have read the entire internet.
 
 <WhyAmnesia />
 
@@ -36,17 +38,17 @@ Version 5 is where we parted ways. It grew machinery I never asked for: a Pulse 
 
 <span id="beat-tokens" class="beat-anchor"></span>
 
-Then I took it to work, where there is no flat subscription. Work runs on a metered budget, where every token is real money. On the first load, against an almost empty account, that machinery burned through tokens before I had typed anything useful.
+Then I took it to work, where there is no flat subscription. Tokens used to be almost free for me - a monthly plan I could hardly imagine depleting. Work runs on the metered API, where every question suddenly had a price tag, and I caught myself **counting every token**: being careful with questions, not asking things I could have figured out otherwise. I had become afraid of my own assistant.
 
 <WhyTokenWall />
 
-The problem had changed shape. The model used to forget too fast. Now the parts I never asked for were eating the budget I needed for the actual work, and I could not pull them out.
+**An assistant you are afraid to use is not an assistant.** And the setup I was running made it worse. On every fresh chat, the machinery I never asked for ate a third of the context window before I had typed a word, and the actual work got the leftovers.
 
 <span id="beat-rule" class="beat-anchor"></span>
 
 ## The rule that fixed it
 
-Around that time a colleague reframed the whole thing for me. He was ruthless about tokens, and his rule was simple: the model is a **peer** you bring in for judgment, and the software you write is the servant that does the work.
+Around that time my colleague [Forud Ghafouri](https://github.com/fzerorubigd) shared how he works with AI agents, and he named the trap I was sitting in - the one most people fall into when they start with AI. They **treat it like magic** that knows everything and should therefore do everything. His rule went the other way: the model is a **peer** you bring in for judgment, and the software you write is the servant that does the work. You would not ask a smart colleague to do things that require no intellect whatsoever. Yet this is exactly what people do to their agents. **A machine able to launch spaceships ended up reading spam letters.**
 
 <WhyQuote>
 You would not pay a sharp colleague to re-read your whole inbox every morning to find the three emails that matter. You would have them write the filter once. After that the filter runs every morning, for free, **forever**.
@@ -56,7 +58,9 @@ You would not pay a sharp colleague to re-read your whole inbox every morning to
 
 <span id="beat-imprnt" class="beat-anchor"></span>
 
-That was my whole PAI problem in one line. I had been treating a brilliant peer like a servant, paying full price for the same mechanical work over and over, so everything got slow and expensive. imprnt flips that around. The model reads a source and files a clean note **once**, with judgment. Plain local code does the searching and the checking a thousand times after, for free.
+That was my whole PAI problem in one line. I had been treating a brilliant peer like a servant, paying full price for the same mechanical work over and over, so everything got slow and expensive. imprnt flips that around. The model reads a source and files a clean note **once**, with judgment. Plain local code does the searching and the checking a thousand times after, for free. Token consumption went down dramatically and results went up dramatically, because I started using the model properly and it responded in kind.
+
+This is the setup that filed my German taxes, and my case was far from a textbook one. Around a week to get my head around the basic concept of taxation, all the bureaucracy filed, tax return received, **thousands saved on tax advisors**. And taxes are just one folder. The same housekeeping runs my documents, my purchases, my hobbies, and everything I figure out **stays solved** instead of evaporating with the browser tabs, the way the bike research did.
 
 <span id="beat-keep" class="beat-anchor"></span>
 
@@ -75,5 +79,7 @@ If you want the field walked tool by tool, with credit where another tool fits b
 ## What imprnt will never do
 
 There is one rule I will not break, because breaking it is exactly what pushed me out of PAI. imprnt will never be shaped around only my problems, and it will never hand you a tool you did not ask for. The default setup ships with almost nothing. Your plain Claude stays plain. Everything is **opt-in**, and anything you add you can remove with a single command. You take what serves you and leave the rest.
+
+The over-researcher in me, obsessing about optimising life, is alive and well - he just got a platform to run on efficiently. **The next obsession costs an evening, not two weeks.** The bike decision these days, ironically, would take about fifteen minutes.
 
 If that is the assistant you have been wanting, [start here](/getting-started/), or browse the [plugins](/plugins/) and add only the ones you need.

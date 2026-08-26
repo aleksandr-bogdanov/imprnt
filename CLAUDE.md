@@ -94,7 +94,20 @@ vault/
 
 **holdings/ vs reference: the cut is CHANGING STATE, not the word "tool."** Anything you follow over time is a holding: a premium, a dose, a balance, a status, a renewal. A paid subscription with a cost/renewal (a transit pass) is a holding even if you'd call it a "service." Static stuff with no state to track is **not** a holding: a free CLI, your dotfiles, tech-stack preferences are pure reference → file them in their domain (`work/`, `health/`). This cut is what keeps `holdings/` a real tracked-entity type instead of drifting back into a `things/` junk drawer.
 
-**Domains are user-defined.** One person's set is `identity/ health/ finances/ work/ life/`. A consultant's would add `clients/`, a researcher's `topics/`. imprnt ships the mechanism + sensible defaults, not a fixed domain set. `type:` in frontmatter (below) records *what each note is* even when it sits in a domain folder, so nothing is lost by filing topically.
+**Domains are user-defined, and the vault declares them.** One person's set is `identity/ health/ finances/ work/ life/`. A consultant's would add `clients/`, a researcher's `topics/`. imprnt ships the mechanism + sensible defaults, not a fixed domain set — `vault/_folders.md` is where a vault says which of its folders hold **entities**, which hold **domains**, which hold **forms**, and which hold a **mount**. No file means the shipped defaults, so nothing changes until you want it to.
+
+```markdown
+## Entities
+people, orgs, holdings
+
+## Domains
+identity, health, finances, work, life, clients
+
+## Mounts
+household
+```
+
+A **mount** is the fourth role and the one the defaults have no name for: a folder holding a tree that is complete on its own and maintained elsewhere — a shared repo checked out inside `vault/`, an imported corpus. Its notes are not part of this vault's entity graph, so `check` does not ask them to link one. Without that, every note under a folder the defaults never heard of is reported disconnected forever with nothing the owner can do, and permanent noise in `_needs-review.md` is worse than no check at all. An absent section keeps its default; an empty one is a deliberate "none". `type:` in frontmatter (below) records *what each note is* even when it sits in a domain folder, so nothing is lost by filing topically.
 
 ## Frontmatter contract
 

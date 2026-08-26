@@ -1,8 +1,9 @@
 ---
 /**
  * Page-specific (why-imprnt): the static journey arc, shown inline ONLY on narrow
- * screens. On wide screens (>=72rem) the interactive WhyRail takes over in the
- * right sidebar, so this inline copy hides to avoid showing the arc twice.
+ * screens. On wide screens (>=66rem, the site's lowered rail breakpoint in
+ * starlight.css) the interactive WhyRail takes over in the right sidebar, so
+ * this inline copy hides to avoid showing the arc twice.
  */
 import WhyArc from "./WhyArc.astro";
 ---
@@ -10,7 +11,7 @@ import WhyArc from "./WhyArc.astro";
 <div class="m-arc"><WhyArc /></div>
 
 <style>
-  @media (min-width: 72rem) {
+  @media (min-width: 66rem) {
     .m-arc {
       display: none;
     }

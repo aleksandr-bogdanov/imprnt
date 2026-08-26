@@ -125,6 +125,70 @@
   --sl-content-width: 48rem;
 }
 
+/* ---- the three-pane layout survives a not-so-wide window ----
+   Starlight hardcodes 72rem (1152px) as the width where the right sidebar
+   appears. An Arc window on a laptop sits a few pixels under that, so the
+   story rail / TOC collapsed into the inline mobile fallback exactly for the
+   people most likely to be reading. Two moves, both site-wide:
+   1) the left nav runs 20% narrower (15rem instead of 18.75rem),
+   2) the desktop layout engages at 66rem instead of 72rem, with the rail
+      clamped so it goes narrow before it gives up.
+   The rules below mirror Starlight's own (TwoColumnContent, PageSidebar,
+   util.css, props.css), which all live in @layer starlight.core - these are
+   unlayered on purpose, so they win from 66rem up. */
+:root {
+  --sl-sidebar-width: 15rem;
+}
+
+@media (min-width: 66rem) {
+  :root {
+    --sl-content-pad-x: 1.5rem;
+    --sl-mobile-toc-height: 0rem;
+  }
+  /* util.css lg: variants, engaged 6rem earlier */
+  .lg\:sl-hidden {
+    display: none;
+  }
+  .lg\:sl-flex {
+    display: flex;
+  }
+  .lg\:sl-block {
+    display: block;
+  }
+  /* TwoColumnContent: the rail column. Clamped instead of Starlight's raw
+     formula, which goes NEGATIVE-leaning at narrow widths - the rail thins to
+     12rem before anything breaks, and never bloats past 20rem. */
+  .right-sidebar-container {
+    order: 2;
+    position: relative;
+    flex: 0 0 auto;
+    width: clamp(
+      12rem,
+      calc(var(--sl-sidebar-width) + (100% - var(--sl-content-width) - var(--sl-sidebar-width)) / 2),
+      20rem
+    );
+  }
+  .right-sidebar {
+    position: fixed;
+    top: 0;
+    border-inline-start: 1px solid var(--sl-color-hairline);
+    padding-top: var(--sl-nav-height);
+    width: 100%;
+    height: 100vh;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .main-pane {
+    order: 1;
+    flex: 1;
+    min-width: 0;
+    width: auto;
+  }
+  [data-has-sidebar][data-has-toc] .main-pane {
+    --sl-content-margin-inline: auto 0;
+  }
+}
+
 /* Invisible scroll targets for the why-imprnt story rail. Zero-height markers in
    the flow, offset so a click lands the beat below the sticky header. */
 .beat-anchor {
