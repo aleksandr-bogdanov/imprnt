@@ -36,14 +36,14 @@ const ROWS = [
   {
     when: "2026",
     tool: "mem0",
-    what: 'OpenMemory, the local-first memory server it launched in May 2025, "is being sunset" per its own README, pointing users at the self-hosted server instead.',
-    keep: "The local option retires. Its memories sit in a vector store and Postgres that only mem0's own stack reads.",
+    what: 'OpenMemory, the local-first memory server it launched in May 2025, was sunset: first "is being sunset" per its own README, and by August 2026 its directory is gone from the repo entirely.',
+    keep: "The local option retired. Its memories sit in a vector store and Postgres that only mem0's own stack reads.",
   },
   {
-    when: "ongoing",
+    when: "Apr 2026",
     tool: "Logseq",
-    what: 'Mid-move from plain files to a SQLite database that makes Markdown an export. The beta README warns "data loss is possible". The newest stable release is dated 2025-12-01.',
-    keep: "File-version users keep plain Markdown, for as long as they stay on the old version.",
+    what: 'Split into two products: the SQLite database version keeps the Logseq name and shipped 2.0 in July as "an early beta", while the plain-files version became maintenance-mode "Logseq OG". The README still warns "data loss is possible".',
+    keep: 'OG users keep plain Markdown with "no forced migration", on a version that now gets security fixes rather than new features.',
   },
   {
     when: "Mar 2026",

@@ -22,8 +22,8 @@ const rows = readFileSync(join(HERE, "watched.tsv"), "utf8")
   .split("\n")
   .filter((l) => l.trim() && !l.startsWith("#"))
   .map((l) => {
-    const [file, repo, stars, release, checked] = l.split("\t").map((s) => s.trim());
-    return { file, repo, stars: Number(stars), release, checked };
+    const [file, repo, stars, release, checked, expect] = l.split("\t").map((s) => s.trim());
+    return { file, repo, stars: Number(stars), release, checked, expect };
   });
 
 const api = async (path) => {
@@ -63,6 +63,12 @@ for (const r of rows) {
       `latest ${latest ? `${latest.tag_name} ${latest.published_at.slice(0, 10)}` : "no releases"} ` +
       `(claimed ${r.release}), pushed ${pushedDays}d ago`,
   );
+  // A dossier that already RECORDS the repo as archived (expect=archived) must not flag
+  // forever - permanent noise is worse than no check. Un-archiving still flags: that is news.
+  if (r.expect === "archived") {
+    if (!meta.archived) flag(`${r.file}: ${r.repo} was UN-archived - the dossier's archived verdict is stale`);
+    continue;
+  }
   if (meta.archived) flag(`${r.file}: ${r.repo} is ARCHIVED`);
   if (meta.full_name.toLowerCase() !== r.repo.toLowerCase())
     flag(`${r.file}: renamed ${r.repo} -> ${meta.full_name}`);

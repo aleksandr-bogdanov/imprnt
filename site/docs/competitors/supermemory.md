@@ -2,9 +2,11 @@
 
 **One-line:** A cloud-first, open-source (MIT) memory and context engine for AI - an embeddings-based hybrid RAG + fact-memory + user-profile API, with a free self-host local binary (`./.supermemory`, `localhost:6767`) that stores into an embedded graph engine rather than user-readable files.
 
-**Status (checked 2026-06-20):** active - GitHub `pushed_at` is `2026-06-19T22:12:46Z` and the latest release shipped 2026-06-13, so the project is under active daily development. Repo description: "Memory and context engine + app that is extremely fast, scalable, and can be run fully locally. The Memory API for the AI era." [GitHub API](https://api.github.com/repos/supermemoryai/supermemory)
+**Status (checked 2026-08-27):** active - GitHub `pushed_at` is `2026-08-26T20:50:21Z` and the latest release shipped 2026-08-17, so the project is under active daily development. Repo description: "Memory and context engine + app that is extremely fast, scalable, and can be run fully locally. The Memory API for the AI era." [GitHub API](https://api.github.com/repos/supermemoryai/supermemory) - accessed 2026-08-27
 
-**Latest release:** `server-v0.0.3` ("supermemory-server 0.0.3"), published `2026-06-13T00:59:16Z` | **Stars:** 27,209 | **License:** MIT (Copyright (c) 2025 supermemory) | **Hosting:** both (cloud-first hosted platform + free self-host local binary)
+**Latest release:** `server-v0.0.8`, published `2026-08-17T18:39:22Z` | **Stars:** 29,087 | **License:** MIT (Copyright (c) 2025 supermemory) | **Hosting:** both (cloud-first hosted platform + self-host local binary, see the re-check note on the new 10,000-document self-host cap)
+
+**Re-check 2026-08-27:** stars 27,209 -> 29,087, server release 0.0.3 -> 0.0.8 ([releases](https://github.com/supermemoryai/supermemory/releases), accessed 2026-08-27). One claim moved: the server-v0.0.7 release notes (2026-08-15) introduce "**supermemory lite** — self-hosted is licensed up to 10,000 documents (read the license at git.new/memory); the cap is enforced at the API and shown at boot", which qualifies the unlimited free-self-host framing below. The repo LICENSE file is still plain MIT, the self-hosting docs still say the binary "is free, open source", and git.new/memory redirects to the repo itself (all accessed 2026-08-27), so the cap is currently sourced only to the release notes. Also since: pluggable embeddings (v0.0.5) and a v0.0.8 emergency fix for a 0.0.7 migration that "silently wiped search vectors".
 
 ## What it is
 

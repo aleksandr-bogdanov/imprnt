@@ -38,10 +38,10 @@ const CAMPS = [
       },
       {
         tool: "Logseq",
-        note: "mid-pivot to SQLite",
-        what: "A local-first block outliner. The original keeps Markdown or org files, and the DB version now in beta makes a local SQLite database canonical.",
+        note: "pivoted to SQLite, 2.0 beta",
+        what: "A local-first block outliner, split in two since April 2026. The DB version (local SQLite canonical) keeps the Logseq name and shipped 2.0 as a beta. The Markdown/org file version continues as maintenance-mode Logseq OG.",
         split:
-          "Its file version shares imprnt's floor and carries no vectors either, but recall is Datalog queries and a graph you run by hand. The DB version is walking away from the plain-files property imprnt is built on.",
+          "Its file version shares imprnt's floor and carries no vectors either, but recall is Datalog queries and a graph you run by hand. The main line has walked away from the plain-files property imprnt is built on, and the file version now gets security fixes rather than features.",
         wins: "Outliner workflows: daily notes, block references, and queries you drive yourself.",
       },
     ],
@@ -83,14 +83,14 @@ const CAMPS = [
       },
       {
         tool: "iai",
-        what: "An encrypted-SQLite memory (AES-256, three tiers) over MCP, with local embeddings and fully automatic capture from Claude Code and Codex hooks.",
+        what: "An encrypted-SQLite memory (AES-256, three tiers, own Rust engine) over MCP, with local embeddings plus a fused BM25 lane and fully automatic capture hooks for Claude Code, Codex, Cursor, and more.",
         split:
           "It captures everything verbatim from every turn into an encrypted binary tied to its daemon. imprnt files only what you choose, into human-readable Markdown that outlives the tool.",
         wins: "Never-miss automatic capture and high benchmark recall, behind an encryption layer, with no filing decisions.",
       },
       {
         tool: "Supermemory",
-        what: "Cloud-first infrastructure with a real self-host binary: a vector-graph engine that auto-extracts facts, builds user profiles, and auto-forgets.",
+        what: "Cloud-first infrastructure with a real self-host binary (since v0.0.7 licensed up to 10,000 documents, per its release notes): a vector-graph engine that auto-extracts facts, builds user profiles, and auto-forgets.",
         split:
           "Cloud-first, multi-modal, API-served, with a model in the read loop and auto-forgetting on. imprnt has no API surface and no cloud at all.",
         wins: "A multi-modal, multi-user memory backend that auto-extracts and auto-forgets at scale.",

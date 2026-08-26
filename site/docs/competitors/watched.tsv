@@ -1,27 +1,29 @@
 # Each dossier's claimed numbers, machine-readable, diffed against the GitHub API
 # by freshness.mjs. Columns: file, repo (owner/name, "-" = not a GitHub repo, skipped),
-# stars_claimed, release_claimed, checked (the dossier's access date).
+# stars_claimed, release_claimed, checked, and an optional expect column ("archived" =
+# the dossier already records the archival, so only an UN-archive flags).
+
 # Update a row when its dossier is re-checked. letta has two rows: platform + flagship.
-basic-memory.md	basicmachines-co/basic-memory	3265	v0.22.1	2026-06-20
-cognee.md	topoteretes/cognee	17900	v1.2.2	2026-07-02
+basic-memory.md	basicmachines-co/basic-memory	3768	v0.23.2	2026-08-27
+cognee.md	topoteretes/cognee	30279	v1.5.3	2026-08-27
 cowagent.md	zhayujie/CowAgent	46692	2.1.7	2026-08-26
-ecc.md	affaan-m/ECC	225052	v2.0.0	2026-07-02
+ecc.md	affaan-m/ECC	243489	v2.1.0	2026-08-27
 hermes-agent.md	NousResearch/hermes-agent	236848	v2026.8.19	2026-08-26
-iai.md	CodeAbra/iai-personal-memory-engine	325	v1.2.1	2026-07-02
+iai.md	CodeAbra/iai-personal-memory-engine	805	v3.0.8	2026-08-27
 ironclaw.md	nearai/ironclaw	12607	ironclaw-v1.3.0	2026-08-26
 karpathy-llm-wiki.md	-	-	-	2026-06-20
 khoj.md	khoj-ai/khoj	35200	2.0.0-beta.28	2026-06-20
 letta-memgpt.md	letta-ai/letta	24452	0.16.8	2026-08-26
 letta-memgpt.md	letta-ai/letta-code	3125	v0.31.1	2026-08-26
-logseq.md	logseq/logseq	43466	0.10.15	2026-06-20
-mem0.md	mem0ai/mem0	58900	v2.0.7	2026-06-20
-mempalace.md	MemPalace/mempalace	56900	v3.5.0	2026-07-02
+logseq.md	logseq/logseq	44643	2.0.1	2026-08-27
+mem0.md	mem0ai/mem0	64113	mem0-strands-v0.1.0	2026-08-27
+mempalace.md	MemPalace/mempalace	58664	v3.8.0	2026-08-27
 nanobot.md	HKUDS/nanobot	47425	v0.3.0	2026-08-26
 nanoclaw.md	nanocoai/nanoclaw	30627	v2.3.0	2026-08-26
 obsidian.md	-	-	-	2026-06-20
 openclaw.md	openclaw/openclaw	388000	2026.8.1-beta.3	2026-08-26
 qwenpaw.md	agentscope-ai/QwenPaw	34502	v2.1.0	2026-08-26
-reor.md	reorproject/reor	8563	v-0.2.32	2026-06-20
-supermemory.md	supermemoryai/supermemory	27209	server-v0.0.3	2026-06-20
-zep-graphiti.md	getzep/graphiti	28283	v0.29.2	2026-07-02
+reor.md	reorproject/reor	8568	v-0.2.32	2026-08-27	archived
+supermemory.md	supermemoryai/supermemory	29087	server-v0.0.8	2026-08-27
+zep-graphiti.md	getzep/graphiti	30321	v0.29.3	2026-08-27
 zeroclaw.md	zeroclaw-labs/zeroclaw	32661	v0.8.4	2026-08-26

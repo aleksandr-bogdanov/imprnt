@@ -2,9 +2,9 @@
 
 **One-line:** A private, local, desktop AI note-taking app that auto-embeds every note into an internal vector database to power semantic search, automatic related-note linking, and RAG Q&A over your own markdown.
 
-**Status (checked 2026-06-20):** archived - the GitHub repo carries the banner "This repository was archived by the owner on Mar 7, 2026. It is now read-only." (confirmed via the GitHub API field `archived: true`). The last code push was 2025-05-13 and the last release was 2025-04-05, so the project was already dormant for roughly a year before it was formally archived. It is effectively dead, with no named successor.
+**Status (checked 2026-06-20, re-checked 2026-08-27):** archived - the GitHub repo carries the banner "This repository was archived by the owner on Mar 7, 2026. It is now read-only." (confirmed via the GitHub API field `archived: true`). The last code push was 2025-05-13 and the last release was 2025-04-05, so the project was already dormant for roughly a year before it was formally archived. It is effectively dead, with no named successor. Re-check 2026-08-27: unchanged - API still reports `archived: true`, `pushed_at: 2025-05-13T21:28:59Z` (about 470 days of silence), stars 8,568. Source: [GitHub API](https://api.github.com/repos/reorproject/reor) - accessed 2026-08-27.
 
-**Latest release:** v-0.2.32, 2025-04-05 | **Stars:** 8,563 | **License:** AGPL-3.0 | **Hosting:** self-host (local desktop app, no cloud backend)
+**Latest release:** v-0.2.32, 2025-04-05 | **Stars:** 8,568 (2026-08-27; 8,563 at the 2026-06-20 check) | **License:** AGPL-3.0 | **Hosting:** self-host (local desktop app, no cloud backend)
 
 ## What it is
 

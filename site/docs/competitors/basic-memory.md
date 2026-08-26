@@ -2,9 +2,11 @@
 
 **One-line:** A local-first, open-source AI memory system that stores knowledge as plain Markdown files on disk, derives a SQLite index over them (full-text plus a vector store), and puts an MCP server between the AI and the files so assistants read and write notes through tools like `write_note`, `search_notes`, `read_note`, and `build_context`.
 
-**Status (checked 2026-06-20):** active - repo `basicmachines-co/basic-memory` pushed 2026-06-14, latest release v0.22.1 published 2026-06-13, not archived. GitHub API `archived: false`, `pushed_at: 2026-06-14T22:25:17Z` ([api.github.com/repos/basicmachines-co/basic-memory](https://api.github.com/repos/basicmachines-co/basic-memory), accessed 2026-06-20).
+**Status (checked 2026-08-27):** active - repo `basicmachines-co/basic-memory` pushed 2026-08-25, latest release v0.23.2 published 2026-08-25, not archived. GitHub API `archived: false`, `pushed_at: 2026-08-25T20:43:52Z` ([api.github.com/repos/basicmachines-co/basic-memory](https://api.github.com/repos/basicmachines-co/basic-memory), accessed 2026-08-27).
 
-**Latest release:** v0.22.1, 2026-06-13 | **Stars:** 3,265 | **License:** AGPL-3.0 | **Hosting:** both (free self-host, paid cloud)
+**Latest release:** v0.23.2, 2026-08-25 | **Stars:** 3,768 | **License:** AGPL-3.0 | **Hosting:** both (free self-host, paid cloud)
+
+**Re-check 2026-08-27:** stars 3,265 -> 3,768, release v0.22.1 -> v0.23.2 (releases page accessed 2026-08-27). v0.23.x is fix and MCP/CI work ("fix(core): repair FTS half of hybrid search for natural-language queries", v0.23.0 release body). The semantic-on-by-default claim still holds, now living in `config_models.py` after a config split: `semantic_search_enabled` uses `default_factory=_default_semantic_search_enabled` (on when fastembed + sqlite_vec exist, "included by default") and `default_search_type` "defaults to 'hybrid' if semantic search is enabled" ([raw config_models.py](https://raw.githubusercontent.com/basicmachines-co/basic-memory/main/src/basic_memory/config_models.py), accessed 2026-08-27). New since: an opt-in reranker (`reranker_enabled`, fastembed or litellm) and a Milvus vector-index option. Verdict unchanged.
 
 ## What it is
 

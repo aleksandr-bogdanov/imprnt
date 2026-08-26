@@ -2,9 +2,11 @@
 
 **One-line:** mem0 is an open-source plus hosted "universal memory layer for AI Agents" that extracts facts from conversation turns with an LLM, stores them across a managed vector store (plus optional graph and key-value history), and serves them back through SDKs, a REST API, an MCP server, and a cloud platform.
 
-**Status (checked 2026-06-20):** active - very actively developed. The GitHub repo description reads "Universal memory layer for AI Agents", the latest core SDK releases (Python v2.0.7, Node v3.0.9) are dated June 17 2026, the most recent commit on `main` is dated June 19 2026, and the company raised a $24M Series A announced October 28 2025. The OpenMemory sub-component, by contrast, is being sunset (see the OpenMemory subsection).
+**Status (checked 2026-08-27):** active - very actively developed. The GitHub repo description reads "Universal memory layer for AI Agents", the latest core SDK release (Python v2.0.19) is dated August 24 2026, the repo was pushed August 26 2026, and the company raised a $24M Series A announced October 28 2025. The OpenMemory sub-component's sunset is now complete: the `openmemory/` directory has been removed from the repo (see the OpenMemory subsection and the re-check note).
 
-**Latest release:** Mem0 Python SDK v2.0.7, June 17 2026 (Node SDK v3.0.9 same day) | **Stars:** 58.9k | **License:** Apache-2.0 (open-source SDK). The hosted platform is proprietary/commercial | **Hosting:** both (self-host the OSS SDK or use the cloud platform at app.mem0.ai)
+**Latest release:** Mem0 Python SDK v2.0.19, August 24 2026 (repo's newest tag is `mem0-strands-v0.1.0`, same day, one of a batch of plugin/SDK tags) | **Stars:** 64,113 | **License:** Apache-2.0 (open-source SDK). The hosted platform is proprietary/commercial | **Hosting:** both (self-host the OSS SDK or use the cloud platform at app.mem0.ai)
+
+**Re-check 2026-08-27:** stars 58.9k -> 64,113, Python SDK v2.0.7 -> v2.0.19 ([api.github.com/repos/mem0ai/mem0](https://api.github.com/repos/mem0ai/mem0) and releases, accessed 2026-08-27). The OpenMemory sunset has completed: the repo root no longer contains an `openmemory/` directory and the old README path ([raw openmemory/README.md](https://raw.githubusercontent.com/mem0ai/mem0/main/openmemory/README.md)) returns 404 (both accessed 2026-08-27), so "being sunset" below is now "sunset, code removed". The local-first path that remains is the Mem0 self-hosted server (`server/` directory, still present). The OpenMemory section below is kept as history.
 
 ## What it is
 

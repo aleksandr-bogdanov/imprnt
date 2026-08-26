@@ -47,8 +47,8 @@ const ROWS = [
   },
   {
     tool: "Logseq",
-    note: "file version canonical, a SQLite DB version is replacing it",
-    where: "Plain Markdown/org files (original). The new DB version makes a local SQLite store canonical, Markdown an export",
+    note: "DB version is now the main product (2.0 beta), file version is maintenance-mode Logseq OG",
+    where: "Plain Markdown/org files (Logseq OG). The DB version, now the main line, makes a local SQLite store canonical, Markdown an export",
     retrieval: "Human-driven: block refs, links, Datalog queries, graph. No AI by default",
     capture: "Conscious: you outline blocks and links as you write",
     reads: "Its own app and query engine. AI only via a sidecar plugin",
@@ -74,7 +74,7 @@ const ROWS = [
     where: "Managed multi-store: vector (~20 backends) plus optional graph",
     retrieval: "Hybrid: semantic plus BM25 plus entity matching, fused",
     capture: "Auto-extract from turns",
-    reads: "API or OpenMemory MCP",
+    reads: "API or MCP server (OpenMemory retired Aug 2026)",
   },
   {
     tool: "Letta / MemGPT",
@@ -114,9 +114,9 @@ const ROWS = [
   },
   {
     tool: "iai",
-    where: 'Encrypted SQLite ("Hippo", AES-256), 3 tiers',
-    retrieval: "Local embeddings (bge-small) plus graph links plus recency, ranked, no LLM in the hot path",
-    capture: "Automatic, via Claude Code / Codex hooks",
+    where: 'Encrypted SQLite ("Hippo", own Rust engine, AES-256), 3 tiers',
+    retrieval: "Local embeddings (bge-small) plus graph links plus recency, with a BM25 lexical lane fused in, no LLM in the hot path",
+    capture: "Automatic, via hooks (Claude Code, Codex, Cursor, and more)",
     reads: "MCP server",
   },
   {

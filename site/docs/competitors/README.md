@@ -34,8 +34,8 @@ happen again.
 | `karpathy-llm-wiki.md` | Karpathy's LLM Wiki | Plain files you own | active (as a pattern, virally adopted) |
 | `basic-memory.md` | Basic Memory | Plain files you own | active |
 | `obsidian.md` | Obsidian | Plain files you own | active |
-| `logseq.md` | Logseq | Plain files you own | pivoting (and partly stalled) toward SQLite DB version |
-| `reor.md` | Reor | Vector engines | archived Mar 7 2026, no successor |
+| `logseq.md` | Logseq | Plain files you own | pivoted: DB version is the main product (2.0.1 beta 2026-07-13), file version split off as maintenance-mode "Logseq OG" (re-checked 2026-08-27) |
+| `reor.md` | Reor | Vector engines | archived Mar 7 2026, no successor (re-confirmed 2026-08-27) |
 | `khoj.md` | Khoj (+ Pipali, Open Paper) | Vector engines | pivoting, hosted service sunset Apr 15 2026, self-host only |
 | `mem0.md` | mem0 (+ OpenMemory) | Vector engines | active (OpenMemory being sunset) |
 | `mempalace.md` | mempalace | Vector engines | active (star-count inflation alleged) |
@@ -69,5 +69,7 @@ newer than the check date, 90-day silence, archived/renamed repos, and big new
 entrants), wired into CI as `.github/workflows/freshness.yml` (monthly + on PRs
 touching this folder). Report-only, exit 1 on flags, never edits a dossier. Its first
 live run flagged 13 real staleness items across the June/July dossiers, so a refresh
-session is due. Prior single-file research: `site/research/competitors-2026-06.md`
+session is due. From that list, cognee and iai were re-checked 2026-08-27 (dated
+update sections in both dossiers, both camps hold: cognee stays Graph memory at
+30.3k stars, iai stays Vector engine at v3.0.8). Prior single-file research: `site/research/competitors-2026-06.md`
 (2026-06-18), now superseded by this folder.

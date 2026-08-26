@@ -2,9 +2,11 @@
 
 **One-line:** A local-first, MIT-licensed AI memory system that stores conversation history verbatim in a "memory palace" of wings/rooms/drawers, retrieves it with ChromaDB vectors plus a keyword-and-temporal hybrid ranker, and exposes it to coding agents over an MCP server with 35 tools.
 
-**Status (checked 2026-07-02):** active - shipping fast. Latest release v3.5.0 dated 23 Jun 2026 and the repo tagline reads "The best-benchmarked open-source AI memory system. And it's free." Reputation caveat: a public audit alleges tens of thousands of purchased GitHub stars (see Confidence and gaps). Source: [github.com/MemPalace/mempalace](https://github.com/MemPalace/mempalace), [releases](https://github.com/MemPalace/mempalace/releases).
+**Status (checked 2026-08-27):** active - shipping fast. Latest release v3.8.0 dated 23 Aug 2026, repo pushed 2026-08-26. Reputation caveat: a public audit alleges tens of thousands of purchased GitHub stars (see Confidence and gaps). Source: [github.com/MemPalace/mempalace](https://github.com/MemPalace/mempalace), [releases](https://github.com/MemPalace/mempalace/releases), [api.github.com/repos/MemPalace/mempalace](https://api.github.com/repos/MemPalace/mempalace) - accessed 2026-08-27.
 
-**Latest release:** v3.5.0, 23 Jun 2026 | **Stars:** ~56,900 (reported on the repo page, inflation alleged) | **License:** MIT | **Hosting:** self-host (local-first). A hosted "MemPalace Cloud" domain exists but is not part of the open-source repo and is unverified
+**Latest release:** v3.8.0, 23 Aug 2026 | **Stars:** 58,664 (GitHub API figure, inflation alleged) | **License:** MIT | **Hosting:** self-host (local-first). A hosted "MemPalace Cloud" domain exists but is not part of the open-source repo and is unverified
+
+**Re-check 2026-08-27:** stars ~56,900 -> 58,664, release v3.5.0 -> v3.8.0 ([releases](https://github.com/MemPalace/mempalace/releases), accessed 2026-08-27). Three feature releases since: v3.6.0 (secure remote `mempalace serve` with TLS and bearer tokens, an opt-in Milvus backend, atomic knowledge-graph supersession, and "The MCP surface now comprises **36 tools**", so the 35-tool figure below is stale), v3.7.0 (agent logstream coordination over the MCP HTTP hub, OpenAI-compatible embeddings), v3.8.0 (large-palace performance). The star-inflation allegation stands as recorded, with no new primary source either way. Verdict unchanged.
 
 ## What it is
 
