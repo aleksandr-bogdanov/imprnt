@@ -1,0 +1,39 @@
+{
+  "name": "memrot",
+  "version": "0.1.0",
+  "description": "Read-only checkup for markdown agent memory. Points at a workspace (OpenClaw, nanobot, an Obsidian vault, any folder of .md notes) and reports what has rotted: dead links, duplicated records, past-due markers, facts that disagree, merge-conflict debris. No writes, no network, no deps.",
+  "type": "module",
+  "bin": {
+    "memrot": "memrot.js"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "node --check memrot.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "author": "Aleksandr Bogdanov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aleksandr-bogdanov/imprnt.git",
+    "directory": "packages/memrot"
+  },
+  "keywords": [
+    "markdown",
+    "agent-memory",
+    "lint",
+    "openclaw",
+    "knowledge-base",
+    "second-brain",
+    "link-checker"
+  ],
+  "files": [
+    "memrot.js",
+    "README.md"
+  ],
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
+}
