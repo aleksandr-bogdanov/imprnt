@@ -125,18 +125,18 @@ const CAMPS = [
     tools: [
       {
         tool: "Letta / MemGPT",
-        note: "pivoting to git-backed context repos",
-        what: "A stateful agent runtime with OS-style tiered memory in Postgres and pgvector, the agent self-editing its own memory, served over an API.",
+        note: "pivoted to git-backed Markdown, now also a personal agent",
+        what: "The MemGPT company, mid-convergence: its flagship now keeps memory as MemFS, a git-backed Markdown tree the agent edits with bash, and since August 2026 it ships the assistant itself with channels, schedules, and a desktop app.",
         split:
-          "A Postgres-backed server reached through a REST API, the agent auto-editing memory blocks mid-run. Its own best published benchmark came from a filesystem variant beating its tool-based memory, and its pivot heads toward files.",
-        wins: "An always-on agent that autonomously remembers across long sessions, if you will run a server.",
+          "The closest converging competitor on the page: it arrived at plain Markdown against its own vector product, and at the resident-assistant shape. Still agent-authored capture with background dreaming, a freeform tree with no typed contract or integrity check, and the model in the read loop on every recall.",
+        wins: "An always-on agent that autonomously remembers across long sessions, now reachable from Telegram or a desktop app.",
       },
     ],
   },
   {
     name: "Personal-agent runtimes",
     blurb:
-      "The assistant is the product and memory is one subsystem: agent-authored files plus a search index, reached through chat channels. The field's two biggest repos.",
+      "The assistant is the product and memory is one subsystem: agent-authored files plus a search index, reached through chat channels. Eight members including the field's biggest repos, and most of them default to lexical search.",
     tools: [
       {
         tool: "Hermes Agent",
@@ -153,6 +153,49 @@ const CAMPS = [
         split:
           "The store is plain files, the read path is not. A default install embeds every memory write through OpenAI's API, and recall is vector plus keyword. Capture is ambient (dailies, pre-compaction flushes, dream sweeps), producing the pile a semantic index exists to cope with.",
         wins: "An assistant that acts - email, browser, shell, cron - and answers on WhatsApp, with a skills marketplace behind it.",
+      },
+      {
+        tool: "nanobot",
+        note: "47k stars, by the lab behind LightRAG",
+        what: "HKUDS's ultra-lightweight self-hosted personal agent in readable Python. Durable memory is plain Markdown files a scheduled Dream pass edits surgically, over an append-only JSONL history, all git-versioned with rollback commands.",
+        split: "The closest floor in the field: plain files, no vectors, no index, grep as the documented search. But nothing ranks. MEMORY.md rides whole in every prompt, so knowledge must stay prompt-sized and Dream decides what to forget. imprnt's BM25 exists so the vault never has to fit in context.",
+        wins: "A self-hosted assistant on Telegram or a WebUI with cron, subagents, and memory that maintains itself, in a codebase small enough to read end to end.",
+      },
+      {
+        tool: "CowAgent",
+        note: "46.7k stars, four years old, agent since Feb 2026",
+        what: "The renamed chatgpt-on-wechat: a China-first agent harness (WeChat, Feishu, DingTalk, QQ, plus Telegram, Slack, Discord) whose memory is agent-written Markdown in ~/cow, indexed into SQLite hybrid search and distilled nightly by an LLM Deep Dream pass.",
+        split:
+          "Its knowledge base mirrors imprnt's vault shape - a Markdown wiki with index.md, log.md, and entity pages - but the agent curates it, a nightly model pass overwrites MEMORY.md, and default recall weights API embeddings 0.7 over BM25's 0.3. imprnt keeps capture human-triggered, contradictions marked instead of rewritten, and the ranker pure arithmetic.",
+        wins: "An assistant on WeChat, Feishu, or DingTalk that acts (terminal, browser, scheduler, skills) and remembers on its own, with a visual memory console.",
+      },
+      {
+        tool: "QwenPaw",
+        note: "Alibaba-backed, ex-CoPaw, ~34.5k stars",
+        what: "Alibaba's AgentScope personal assistant: seven chat channels from one instance, its own 2B/4B/9B local models needing no API key, and a durable memory layer (ReMe) of user-editable Markdown with frontmatter and wikilinks, searched by BM25 with embeddings off by default.",
+        split: "The closest any runtime comes to imprnt's floor: linked plain files, lexical-first search, no embedding key needed. The memory is still agent-authored, continuously digested by a dream cron with no typed entity contract, and the opt-in path to embeddings and a reranker is one config away and growing release by release.",
+        wins: "An always-on assistant on DingTalk, WeChat, or Telegram that runs fully local with zero API spend and maintains its own memory at zero effort.",
+      },
+      {
+        tool: "ZeroClaw",
+        note: "keyword-only retrieval is the shipped default",
+        what: "A Rust single-binary personal-agent runtime (~32.7k stars): 30+ chat channels, hardware GPIO, supervised autonomy, and a pluggable memory that defaults to SQLite FTS5 with BM25 scoring and no embedding provider configured.",
+        split: "Closest of the runtimes to imprnt's read path: the default install ranks memory by BM25 with zero API calls and zero vectors. The store is the divergence: auto-saved conversation rows in a database the agent queries by tool call, kept clean by hygiene passes, where imprnt keeps human-curated typed Markdown notes that are themselves the searched artifact.",
+        wins: "An assistant that acts - shell, browser, email, cron, even GPIO pins - across Discord, Telegram, Matrix and ~27 more channels, on hardware as small as a Pi, with memory that costs zero effort.",
+      },
+      {
+        tool: "NanoClaw",
+        note: "30.6k stars in seven months",
+        what: "The security-minded minimal answer to OpenClaw: one process on the Claude Agent SDK, agents in isolated containers across 13 chat channels, memory as plain Markdown concept files (OKF: typed frontmatter, tags, links), no database and no embedding store.",
+        split: "The field's closest convergence on imprnt's memory design, down to type: person frontmatter, but recall is the agent grepping and walking its own hand-kept indexes, and nothing checks the store. imprnt ranks with deterministic BM25 and audits the vault with code.",
+        wins: "An always-on assistant that acts across your chat apps in a codebase small enough to audit, with container isolation and memory that costs zero effort.",
+      },
+      {
+        tool: "IronClaw",
+        note: "NEAR AI, 12.6k stars, DB-first",
+        what: "NEAR AI's Rust reimplementation of the OpenClaw idea: a hardened gateway whose memory is rows in an embedded libSQL database shaped as a virtual path workspace, searched by deterministic FTS5 plus optional vectors fused with RRF.",
+        split: "The camp's anti-imprnt on storage: paths that look like Markdown files but are rows in an embedded database, with the camp's best-written agent editorial policy on top. Delete the runtime and no note opens. imprnt's notes are ordinary files first and a corpus second.",
+        wins: "A security-hardened always-on assistant in Rust with deterministic ranking and a corporate steward, if you accept the database.",
       },
     ],
   },

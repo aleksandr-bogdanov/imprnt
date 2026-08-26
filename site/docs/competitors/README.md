@@ -43,14 +43,31 @@ happen again.
 | `supermemory.md` | Supermemory | Vector engines | active |
 | `zep-graphiti.md` | Zep / Graphiti | Graph memory | active (Zep Community Edition deprecated) |
 | `cognee.md` | cognee | Graph memory | active |
-| `letta-memgpt.md` | Letta / MemGPT | Agent-state runtime | pivoting (to git-backed filesystem memory) |
+| `letta-memgpt.md` | Letta / MemGPT | Agent-state runtime + Personal-agent runtime | pivot landed (MemFS), now ships the assistant (re-checked 2026-08-26) |
 | `ecc.md` | ECC (everything-claude-code) | Adjacent: harness config pack | active (one maintainer, added by request 2026-07-02) |
 | `hermes-agent.md` | Hermes Agent (Nous Research) | Personal-agent runtime | active, hyperactive cadence (checked 2026-08-26) |
 | `openclaw.md` | OpenClaw | Personal-agent runtime | active, foundation-stewarded (checked 2026-08-26) |
+| `nanobot.md` | nanobot (HKUDS) | Personal-agent runtime | active (checked 2026-08-26) |
+| `cowagent.md` | CowAgent (ex-chatgpt-on-wechat) | Personal-agent runtime | active, hyperactive cadence (checked 2026-08-26) |
+| `qwenpaw.md` | QwenPaw (Alibaba AgentScope, ex-CoPaw) | Personal-agent runtime | active, hyperactive cadence (checked 2026-08-26) |
+| `zeroclaw.md` | ZeroClaw | Personal-agent runtime | active, hyperactive cadence (checked 2026-08-26) |
+| `nanoclaw.md` | NanoClaw (NanoCo) | Personal-agent runtime | active, venture-backed (checked 2026-08-26) |
+| `ironclaw.md` | IronClaw (NEAR AI) | Personal-agent runtime | active, corporate-stewarded (checked 2026-08-26) |
 
-Last full refresh: 2026-06-20. ECC added and four dossiers (zep-graphiti, mempalace,
-iai, cognee) re-checked 2026-07-02. Hermes Agent and OpenClaw added 2026-08-26,
-forming the fifth camp (Personal-agent runtimes), applied to the comparison page
-the same day on Alex's go. A refresh-cadence mechanism is proposed in
-`PROPOSAL-refresh-cadence.md`. Prior single-file research:
-`site/research/competitors-2026-06.md` (2026-06-18), now superseded by this folder.
+Watched but not dossiered (from the 2026-08-26 camp sweep): Poke (poke.com,
+commercial, closed source, memory architecture undocumented), AIRI (48k stars,
+companion/character product, memory is not the pitch), MimiClaw (ESP32 hardware
+novelty). Khoj re-checked in the sweep: no personal-agent runtime shipped, its
+existing row stands.
+
+Last full refresh: 2026-06-20. ECC added and four dossiers re-checked 2026-07-02.
+The Personal-agent runtimes camp added 2026-08-26 (Hermes Agent + OpenClaw, then a
+six-project sweep the same day on Alex's go), all applied to the comparison page.
+Freshness is now MECHANIZED: `watched.tsv` holds each dossier's claimed numbers and
+`freshness.mjs` diffs them against the GitHub API (flags star drift over 25%, releases
+newer than the check date, 90-day silence, archived/renamed repos, and big new
+entrants), wired into CI as `.github/workflows/freshness.yml` (monthly + on PRs
+touching this folder). Report-only, exit 1 on flags, never edits a dossier. Its first
+live run flagged 13 real staleness items across the June/July dossiers, so a refresh
+session is due. Prior single-file research: `site/research/competitors-2026-06.md`
+(2026-06-18), now superseded by this folder.
