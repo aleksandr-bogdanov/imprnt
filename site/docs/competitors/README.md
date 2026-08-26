@@ -45,7 +45,11 @@ happen again.
 | `cognee.md` | cognee | Graph memory | active |
 | `letta-memgpt.md` | Letta / MemGPT | Agent-state runtime | pivoting (to git-backed filesystem memory) |
 | `ecc.md` | ECC (everything-claude-code) | Adjacent: harness config pack | active (one maintainer, added by request 2026-07-02) |
+| `hermes-agent.md` | Hermes Agent (Nous Research) | Personal-agent runtime (proposed, see PROPOSAL file) | active, hyperactive cadence (checked 2026-08-26) |
+| `openclaw.md` | OpenClaw | Personal-agent runtime (proposed, see PROPOSAL file) | active, foundation-stewarded (checked 2026-08-26) |
 
 Last full refresh: 2026-06-20. ECC added and four dossiers (zep-graphiti, mempalace,
-iai, cognee) re-checked 2026-07-02. Prior single-file research:
-`site/research/competitors-2026-06.md` (2026-06-18), now superseded by this folder.
+iai, cognee) re-checked 2026-07-02. Hermes Agent and OpenClaw added 2026-08-26 with a
+proposed new camp, pending review: `PROPOSAL-personal-agent-runtime.md`. Prior
+single-file research: `site/research/competitors-2026-06.md` (2026-06-18), now
+superseded by this folder.
