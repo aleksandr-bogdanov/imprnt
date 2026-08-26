@@ -4,7 +4,8 @@
  * desktop (zebra rows, sticky header, the imprnt row tinted green) that
  * collapses to one card per tool below 880px so all five fields survive on a
  * phone. Every cell's full text is data and is kept verbatim, traced to
- * docs/competitors/ (checked 2026-06-20, freshness re-checked 2026-07-02).
+ * docs/competitors/ (checked 2026-06-20, freshness re-checked 2026-07-02;
+ * Hermes Agent and OpenClaw rows added 2026-08-26).
  * Scoped CSS only, no Tailwind (docs pages do not load it), theme-aware via
  * --sl tokens.
  */
@@ -124,6 +125,22 @@ const ROWS = [
     retrieval: "None. Newest session summary injected at session start (7-day window, 30-day retention)",
     capture: "Automatic hooks on every session, plus a background model distilling habits",
     reads: "Harness injection at session start. Mid-session needs explicit commands",
+  },
+  {
+    tool: "Hermes Agent",
+    note: "personal agent, memory is a built-in feature",
+    where: "Two capped Markdown files (~3.5KB total) plus SQLite session history",
+    retrieval: "FTS5 full-text over raw session messages, no vectors documented",
+    capture: "Agent self-curates on periodic nudges, approval gate off by default",
+    reads: "Capped files injected whole at session start, session_search for history",
+  },
+  {
+    tool: "OpenClaw",
+    note: "personal assistant runtime, foundation-stewarded",
+    where: "Plain Markdown workspace plus a derived SQLite index",
+    retrieval: "Hybrid vector plus keyword in SQLite, OpenAI embeddings by default",
+    capture: "Agent-written: dailies, silent pre-compaction flush, dream sweeps",
+    reads: "Local gateway agent, memory_search tool, core files always in context",
   },
 ];
 ---

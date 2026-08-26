@@ -134,6 +134,29 @@ const CAMPS = [
     ],
   },
   {
+    name: "Personal-agent runtimes",
+    blurb:
+      "The assistant is the product and memory is one subsystem: agent-authored files plus a search index, reached through chat channels. The field's two biggest repos.",
+    tools: [
+      {
+        tool: "Hermes Agent",
+        note: "236k stars in six months",
+        what: "Nous Research's self-hosted personal agent. Durable memory is two hard-capped files (~3.5KB total) injected whole each session, and cross-session recall is FTS5 full-text search over raw SQLite session history.",
+        split:
+          "Same lexical-retrieval bet, opposite curation bet. The agent curates its own memory under a hard cap, and a fact that misses the cut survives only as transcript. imprnt keeps an unbounded human-curated vault where the notes themselves are what gets searched.",
+        wins: "One always-on assistant across 21 chat channels, with cron, agent-authored skills, and memory that costs you zero effort.",
+      },
+      {
+        tool: "OpenClaw",
+        note: "foundation-stewarded since Feb 2026",
+        what: "The 2026 wave's flagship personal assistant (~388k stars): a local gateway to ~30 chat channels whose memory is agent-written Markdown indexed into SQLite hybrid search.",
+        split:
+          "The store is plain files, the read path is not. A default install embeds every memory write through OpenAI's API, and recall is vector plus keyword. Capture is ambient (dailies, pre-compaction flushes, dream sweeps), producing the pile a semantic index exists to cope with.",
+        wins: "An assistant that acts - email, browser, shell, cron - and answers on WhatsApp, with a skills marketplace behind it.",
+      },
+    ],
+  },
+  {
     name: "A different shelf: the config pack",
     blurb:
       "A catalog of prompts, rules, and configs for coding agents, with memory as one bolt-on subsystem, measured on the same axes.",
