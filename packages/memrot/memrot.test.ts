@@ -255,6 +255,50 @@ describe("hygiene", () => {
   });
 });
 
+describe("other workspace shapes", () => {
+  test("nanobot: nested memory/MEMORY.md is durable — conflicts with root USER.md are caught, and it is no orphan", () => {
+    const r = run(
+      ws({
+        "AGENTS.md": "# a\n",
+        "USER.md": "# u\n\n- City: Hamburg\n",
+        "memory/MEMORY.md": "# Long-term Memory\n\n- City: Leipzig\n- Passport renewal must be booked until 2026-06-15\n",
+      }),
+    );
+    expect(of(r, "conflicts").length).toBe(1);
+    expect(of(r, "conflicts")[0].message).toContain("city");
+    expect(of(r, "stale").some((f: any) => f.file === "memory/MEMORY.md")).toBe(true);
+    expect(of(r, "orphans").length).toBe(0);
+  });
+
+  test("hermes: same entry twice in a durable file is flagged; dailies are left alone", () => {
+    const line = "- Project atlas: client is Berenberg, kickoff was 2026-05-12, weekly sync Thursdays";
+    const r = run(
+      ws({
+        "memories/MEMORY.md": `${line}\n- something else entirely, unrelated and long enough\n${line}\n`,
+        "memory/2026-08-01-0900.md": `# S\n\n${line}\n${line}\n`,
+      }),
+    );
+    const dups = of(r, "duplicates").filter((f: any) => f.message.includes("twice in this file"));
+    expect(dups.length).toBe(1);
+    expect(dups[0].file).toBe("memories/MEMORY.md");
+  });
+
+  test("moved? suggestion never points at the linking file and stays silent when ambiguous", () => {
+    const r = run(
+      ws({
+        "skills/a/deep/SKILL.md": "# a\n\n[b](../missing/SKILL.md)\n",
+        "skills/b/deep/SKILL.md": "# b\n",
+        "skills/c/deep/SKILL.md": "# c\n",
+      }),
+    );
+    const links = of(r, "links");
+    expect(links.length).toBe(1);
+    expect(links[0].message).not.toContain("moved?");
+    // and nested SKILL.md files are not orphans — they load by name
+    expect(of(r, "orphans").length).toBe(0);
+  });
+});
+
 describe("plumbing", () => {
   test("maskCode blanks fences and inline code but keeps line count", () => {
     const src = "a\n```js\n[[link]]\n```\nb `[[inline]]` c\n";

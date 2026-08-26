@@ -136,8 +136,19 @@ const WELL_KNOWN_ROOT = new Set(
 
 const DATED_FILE_RE = /(^|\/)(19|20)\d{2}-\d{2}-\d{2}[^/]*\.md$/i;
 
+// A dated log records a moment; past dates and one-off phrasing are its nature, not rot.
+// Only date-named files count — nanobot keeps its durable memory/MEMORY.md *inside* memory/,
+// so a blanket directory exemption would silently skip the most-read file in that layout.
 function isDatedLog(rel) {
-  return DATED_FILE_RE.test(rel) || rel.startsWith("memory/") || rel.startsWith("memories/");
+  return DATED_FILE_RE.test(rel);
+}
+
+// Durable = the files an agent rereads as standing truth: anything non-dated at the root,
+// plus well-known filenames at any depth (memory/MEMORY.md in nanobot, memories/USER.md in Hermes).
+function isDurable(rel) {
+  if (isDatedLog(rel)) return false;
+  if (!rel.includes("/")) return true;
+  return WELL_KNOWN_ROOT.has(path.posix.basename(rel).toLowerCase());
 }
 
 const NOISE_KEYS = new Set([
@@ -233,11 +244,13 @@ export function runChecks(root, opts = {}) {
         if (ci) return { kind: "case", rel: ci[0], wanted: norm };
       }
     }
-    // wikilinks resolve by unique basename anywhere in the tree (the Obsidian rule)
+    // wikilinks resolve by unique basename anywhere in the tree (the Obsidian rule).
+    // The linking file itself is never a candidate, and a basename shared by many files
+    // (SKILL.md, README.md) suggests nothing — a "moved?" hint must be unambiguous.
     const base = path.posix.basename(t.toLowerCase()).replace(/\.md$/, "");
-    const hits = baseMap.get(base);
-    if (hits && wiki) return { kind: "ok", rel: hits[0] };
-    if (hits) return { kind: "moved", rel: hits[0] };
+    const hits = (baseMap.get(base) ?? []).filter((r) => r !== fromRel);
+    if (hits.length && wiki) return { kind: "ok", rel: hits[0] };
+    if (hits.length === 1) return { kind: "moved", rel: hits[0] };
     return { kind: "dead" };
   };
 
@@ -277,8 +290,8 @@ export function runChecks(root, opts = {}) {
   for (const [rel] of docs) {
     if (inbound.get(rel)) continue;
     if (isDatedLog(rel)) continue; // date-loaded / log-structured
-    if (!rel.includes("/") && WELL_KNOWN_ROOT.has(rel.toLowerCase())) continue;
-    if (/(^|\/)skills\/[^/]+\/[^/]+$/i.test(rel)) continue; // skill bundles are loaded by name
+    if (WELL_KNOWN_ROOT.has(path.posix.basename(rel).toLowerCase())) continue; // runtime-loaded by convention at any depth
+    if (/(^|\/)skills\//i.test(rel) && /^skill\.md$/i.test(path.posix.basename(rel))) continue; // skill bundles are loaded by name, at any nesting
     orphanRels.push(rel);
   }
   // When most of a tree has no inbound links, linking just isn't how it's organized —
@@ -355,13 +368,20 @@ export function runChecks(root, opts = {}) {
     }
   }
 
-  // --- the same long line copied across many files
+  // --- the same long line copied across many files, or twice within one durable file
+  // (write-time dedup in some runtimes only stops exact re-adds; hand edits and imports
+  // still land the same entry twice, and the copies then drift independently)
   const lineIndex = new Map(); // normalized line -> Map(rel -> firstLineNo)
   for (const [rel, doc] of docs) {
+    const seenHere = new Map(); // norm -> first line no
     doc.maskedLines.forEach((line, i) => {
       const t = line.trim();
       if (t.length < 50 || t.startsWith("#")) return;
       const norm = t.toLowerCase().replace(/\s+/g, " ");
+      if (seenHere.has(norm)) {
+        if (isDurable(rel))
+          add("duplicates", "warn", rel, i + 1, `same entry twice in this file (also line ${seenHere.get(norm)}): "${t.slice(0, 90)}${t.length > 90 ? "…" : ""}"`);
+      } else seenHere.set(norm, i + 1);
       if (!lineIndex.has(norm)) lineIndex.set(norm, new Map());
       const m = lineIndex.get(norm);
       if (!m.has(rel)) m.set(rel, i + 1);
@@ -411,7 +431,7 @@ export function runChecks(root, opts = {}) {
         add("stale", "info", rel, lineNo, `directive marked active but last observed ${days} days ago (${m[1]}) — still true?`);
     }
     // relative time words in durable root files rot the moment the session ends
-    if (!rel.includes("/") && /^(memory|user)\.md$/i.test(rel)) {
+    if (isDurable(rel) && /^(memory|user)\.md$/i.test(path.posix.basename(rel))) {
       doc.maskedLines.forEach((line, i) => {
         const m = line.match(/\b(yesterday|tomorrow|next week|last week|next month|last month|this week|this weekend)\b/i);
         if (m)
@@ -421,7 +441,7 @@ export function runChecks(root, opts = {}) {
   }
 
   // --- contradictions: same key, different values, across durable root files
-  const rootDurable = [...docs.keys()].filter((rel) => !rel.includes("/") && !isDatedLog(rel));
+  const rootDurable = [...docs.keys()].filter(isDurable);
   const kv = new Map(); // key -> [{file, line, value}]
   for (const rel of rootDurable) {
     const doc = docs.get(rel);
