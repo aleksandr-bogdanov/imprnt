@@ -59,8 +59,25 @@ export function isResultsPage(html: string): boolean {
   return /srchrslt/i.test(html) || /keine\s+(Anzeigen|Ergebnisse)/i.test(html);
 }
 
+// German queries carry umlauts, and KA's own URL slugs transliterate them
+// (kuehlschrank, not k-hlschrank). Stripping them to "-" builds a URL that
+// resolves and renders but matches nothing, so the search answers zero listings
+// and reads exactly like an empty market. Measured live 2026-08-31: "kühlschrank"
+// returned 0 and "kuehlschrank" returned 27, on a board that is entirely German.
+// Nothing flags this - a first-ever snapshot of zero has no baseline to fail
+// against - so it stayed invisible until three new searches came back empty at once.
+export function deumlaut(s: string): string {
+  return s
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 export function slugifyKeyword(kw: string): string {
-  return kw.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return deumlaut(kw.toLowerCase().trim()).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 // A location with NO radius is not a filter, it is a sort: KA answers it by expanding nationwide and
