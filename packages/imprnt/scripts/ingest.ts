@@ -25,6 +25,8 @@ import { basename, extname, join, relative } from "node:path";
 import { loadManifest, saveManifest } from "./lib/manifest.ts";
 import { personResolved, flagNeedsReview } from "./lib/resolve.ts";
 import { projectRoot } from "./lib/roots.ts";
+import { loadFolders } from "./lib/folders.ts";
+import { mountAcceptsFolder, mountFolderRoster, setFrontmatterKey } from "./lib/seam.ts";
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
@@ -132,18 +134,22 @@ const TYPE_FOLDER: Record<string, string> = {
   person: "people", org: "orgs", holding: "holdings",
   project: "projects", event: "events", mistake: "mistakes",
 };
-// projects/ is a FORM folder, self-describing by `type: project` (it files via TYPE_FOLDER, not here),
-// so it carries NO `domain:` and is exempt from the domain-match check. It must NOT be a valid domain:
-// a `type: note, domain: projects` would otherwise file into the form folder where check's domain audit
-// then exempts it - a silent contract leak. Must agree with check.ts's DOMAIN_FOLDERS (the twin set).
-const DOMAIN_FOLDERS = new Set(["identity", "health", "finances", "work", "life"]);
-
-function targetFolder(type: string, domain: string): string | null {
+// The valid domains come from the VAULT (vault/_folders.md via lib/folders.ts), not from a set frozen
+// in this file. The contract always promised "domains are user-defined"; hardcoding them here meant a
+// vault that declared `clients` as a domain had `imprnt check` accept a note there while `ingest
+// --apply` refused to file one, which is the same set disagreeing with itself. No _folders.md gives
+// the shipped defaults, byte-for-byte the set this file used to hold, so nothing changes by default.
+// The twin-set note still applies, now to the DECLARATION rather than to a constant: projects/ is a
+// FORM folder, self-describing by `type: project` (it files via TYPE_FOLDER, not here), so it carries
+// NO `domain:` and must not be declared a domain - a `type: note, domain: projects` would file into
+// the form folder where check's domain audit then exempts it, a silent contract leak. check.ts reads
+// the same declaration through the same loader, so the two can no longer drift.
+function targetFolder(type: string, domain: string, domains: Set<string>): string | null {
   // Own-property lookup only: a type like `toString` must not resolve through the prototype chain
   // into a function and crash filing downstream - an unknown type maps to no folder, cleanly.
   if (Object.hasOwn(TYPE_FOLDER, type)) return TYPE_FOLDER[type];
   if (type === "principle" || type === "note") {
-    return DOMAIN_FOLDERS.has(domain) ? domain : null; // a domain note MUST name a valid domain
+    return domains.has(domain) ? domain : null; // a domain note MUST name a valid domain
   }
   return null;
 }
@@ -168,12 +174,41 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   const domain = fmScalar(fm, "domain");
   if (!type) { console.error(`  ✗ ${staged}: no \`type:\` in frontmatter — can't file a note with no type`); return "error"; }
 
-  const folder = targetFolder(type, domain);
-  if (!folder) {
-    console.error(`  ✗ ${staged}: type \`${type}\`${domain ? ` / domain \`${domain}\`` : ""} maps to no vault folder`);
-    console.error(`     entities: person|org|holding · forms: event|mistake · project · a principle/note needs a valid domain:`);
+  const roles = loadFolders(vault);
+  // A staged note may target a MOUNT — the shared tree checked out inside vault/ — by naming it:
+  //   type: note   mount: household   domain: finances   ->  vault/household/finances/<slug>.md
+  // The mount only PREFIXES the ordinary filing decision, so a `type: person` files into the mount's
+  // own people/ for free, and the note keeps the `domain:` the mount's own roles want to see. That is
+  // the reason the mount is named in its own field rather than smuggled into `domain:` as a path: the
+  // filed bytes have to be valid under the mount's roles with nobody editing them afterwards.
+  const mount = fmScalar(fm, "mount").trim().normalize("NFC").toLowerCase();
+  if (mount && !roles.mounts.has(mount)) {
+    console.error(`  ✗ ${staged}: \`mount: ${mount}\` is not declared — add it under \`## Mounts\` in ${join(vault, "_folders.md")}`);
     return "error";
   }
+  if (mount && !existsSync(join(vault, mount))) {
+    console.error(`  ✗ ${staged}: the \`${mount}\` mount is declared but not checked out at ${join(vault, mount)} — nothing to file into`);
+    return "error";
+  }
+  // Inside a mount the roles are the MOUNT's own (its _folders.md), scoped to it. An undeclared mount
+  // falls back to the shipped defaults, exactly as an undeclared vault does.
+  const scope = mount ? loadFolders(join(vault, mount)) : roles;
+  const inner = targetFolder(type, domain, scope.domains);
+  if (!inner) {
+    console.error(`  ✗ ${staged}: type \`${type}\`${domain ? ` / domain \`${domain}\`` : ""} maps to no vault folder${mount ? ` under the \`${mount}\` mount` : ""}`);
+    console.error(`     entities: person|org|holding · forms: event|mistake · project · a principle/note needs a valid domain: (${[...scope.domains].join(" ") || "none declared"})`);
+    return "error";
+  }
+  // The folder must also be one the mount's declaration knows about. The predicate lives in seam.ts
+  // and `vault move` asks it too, so the two writers can never disagree about where a note may land.
+  // It passes an UNDECLARED mount by construction: there is nothing to violate in a set nobody wrote
+  // down, and refusing there would make the shared defaults unusable in the exact case they exist for.
+  if (mount && !mountAcceptsFolder(inner, scope)) {
+    console.error(`  ✗ ${staged}: \`${inner}\` is not a folder the \`${mount}\` mount declares in its own _folders.md`);
+    console.error(`     ${mountFolderRoster(mount, scope)}`);
+    return "error";
+  }
+  const folder = mount ? `${mount}/${inner}` : inner;
 
   const title = text.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
   const slug = deriveSlug([fmScalar(fm, "slug"), title, basename(staged, ".md")]);
@@ -197,6 +232,14 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   // injected link must point at the snapshot that actually exists, never at a fresh name the reuse
   // branch then declines to write.
   const stagedSource = fmScalar(fm, "source");
+  // A MOUNT note never gets a source: into THIS vault's raw/. The snapshot would sit in one person's
+  // private tree and the link is dead the moment anyone else opens the note - `imprnt check` flags
+  // precisely that as seam-dead-source, so injecting one here would file a note our own check
+  // condemns. A mount note with no source of its own is therefore filed with none and no snapshot is
+  // written: the filed note IS the staged bytes verbatim, so nothing is lost, and provenance goes in
+  // the body as prose (the seam's own rule). A mount note that brings its own source - a
+  // `[[<mount>/_raw/...]]` link into the mount's evidence locker - keeps it untouched.
+  const noSnapshot = !!mount && !stagedSource;
   const manifest = loadManifest(vault);
   const priorSnapshot = Object.values(manifest).find((e) => e.hash === hash && e.raw && existsSync(e.raw))?.raw;
   const rawDir = join(vault, "..", "raw", "proposed");
@@ -211,6 +254,9 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   if (stagedSource) {
     rawEntry = linkSlug(stagedSource);
     sourceTarget = rawEntry;
+  } else if (noSnapshot) {
+    rawEntry = "";      // no manifest row: nothing was snapshotted, so there is nothing to cover
+    sourceTarget = "";  // and nothing to inject
   } else if (priorSnapshot) {
     rawPath = priorSnapshot;
     rawEntry = rawPath;
@@ -220,7 +266,14 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
     rawEntry = rawPath;
     sourceTarget = `raw/proposed/${slug}-${hash}`;
   }
-  const finalText = stagedSource ? text : injectSource(text, sourceTarget);
+  // `mount:` is a ROUTING key, spent the moment the note is filed: it told this function which tree to
+  // write into, and the path now says that permanently. Leaving it in the filed bytes bakes a key the
+  // frontmatter contract never defined into the SHARED tree, where the other person reads it and every
+  // later reader has to guess whether it still means anything. `vault move` drops `domain:` at the same
+  // boundary for the same reason. Stripped BEFORE fileHash, so a re-apply of the same staged note
+  // hashes to the bytes actually on disk and stays a clean no-op instead of reporting a contradiction.
+  const routed = stagedSource || noSnapshot ? text : injectSource(text, sourceTarget);
+  const finalText = mount ? setFrontmatterKey(routed, "mount", null) : routed;
   // Idempotency keys on what we actually FILE (the note may now carry an injected source:), so a
   // re-apply of the same staged note still hashes to the same filed bytes and stays a clean no-op.
   const fileHash = createHash("sha256").update(finalText).digest("hex").slice(0, 16);
@@ -248,15 +301,19 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   // filenames are two filings sharing one snapshot, and a bare `apply:sha256:<hash>` key would let
   // the second filing silently overwrite the first one's provenance row.
   const manifestKey = `apply:sha256:${hash}:${noteRel}`;
-  if (!stagedSource && !priorSnapshot) {
+  if (!stagedSource && !priorSnapshot && !noSnapshot) {
     mkdirSync(rawDir, { recursive: true });
     // Snapshot the ORIGINAL staged bytes verbatim - the injected source: lives only in the filed note.
     if (!existsSync(rawPath)) writeFileSync(rawPath, text);
   }
   // Record provenance BEFORE filing the note (atomic-ish ordering): if the note write fails, the
-  // manifest still tracks the snapshot, instead of stranding a raw file nothing references.
-  manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawEntry };
-  saveManifest(vault, manifest);
+  // manifest still tracks the snapshot, instead of stranding a raw file nothing references. The
+  // mount-with-no-source case records nothing: a row with an empty `raw` would be a coverage entry
+  // pointing at no snapshot, which check would then report uncovered forever.
+  if (!noSnapshot) {
+    manifest[manifestKey] = { hash, note: notePath, ingested: new Date().toISOString(), raw: rawEntry };
+    saveManifest(vault, manifest);
+  }
 
   // File the note (mechanical — type/domain already decided).
   mkdirSync(join(vault, folder), { recursive: true });
@@ -289,6 +346,7 @@ function applyStaged(staged: string, vault: string): "filed" | "noop" | "conflic
   // No raw/proposed snapshot is written when the note brought its own source: - report that source as the
   // provenance instead, so the line never prints an undefined path.
   if (stagedSource) console.log(`     source -> ${rawEntry}  (note's own source: kept - no redundant snapshot)`);
+  else if (noSnapshot) console.log(`     no snapshot - a ${mount}/ note carries no source: into this vault's private raw/ (record the provenance in the body as prose)`);
   else console.log(`     snapshot -> ${rawPath}${priorSnapshot ? "  (reused — identical bytes already snapshotted)" : ""}`);
   console.log(`     staged copy removed: ${staged}`);
   if (unresolved) console.log(`     ⚠ ${unresolved} unresolved person link(s) -> needs-review`);

@@ -1362,3 +1362,197 @@ test("_folders.md is a control file, never counted as a note", () => {
   const after = runCheck(dir).out.match(/check — (\d+) notes/)?.[1];
   expect(after).toBe(before);
 });
+
+// --- the seam: a mount's own roles, and the findings that keep a shared note whole ----------------
+// The mount is the shared tree checked out inside vault/. Everything below asks one question: is a
+// note in there complete INSIDE the mount, so it still reads for the other person who has only that
+// tree? Findings land HERE, in the reading vault's own _needs-review.md, which is the only side that
+// can see what a private link points at - and it keeps a private slug out of the shared tree.
+
+// A vault with a `shared/` mount that declares its own roles.
+function makeMountVault(mountRoles: string | null = "## Entities\npeople, orgs\n\n## Domains\nfinances, life\n"): string {
+  const dir = makeVault();
+  for (const f of ["finances", "people", "orgs", "life"]) mkdirSync(join(dir, "shared", f), { recursive: true });
+  writeFileSync(join(dir, "_folders.md"), "## Mounts\nshared\n");
+  if (mountRoles !== null) writeFileSync(join(dir, "shared", "_folders.md"), mountRoles);
+  return dir;
+}
+
+test("a mount's own _folders.md scopes the domain-match check to the mount", () => {
+  const dir = makeMountVault();
+  // shared/_folders.md declares `finances` a domain, so a note in shared/finances/ must say so.
+  note(dir, "shared/finances/rent.md", "type: note\ntags: [rent]", "# Rent\n\nsee [[shared/orgs/acme]]");
+  note(dir, "shared/orgs/acme.md", "type: org\ntags: [rent]", "# Acme");
+  const r = runCheck(dir);
+  expect(r.out).toContain("domain mismatches");
+  expect(r.out).toContain("in shared/finances/ but domain: (missing)");
+  expect(r.code).not.toBe(0);
+});
+
+test("the mount-scoped domain check passes when the field matches the folder inside the mount", () => {
+  const dir = makeMountVault();
+  note(dir, "shared/finances/rent.md", "type: note\ndomain: finances\ntags: [rent]", "# Rent\n\nsee [[shared/orgs/acme]]");
+  note(dir, "shared/orgs/acme.md", "type: org\ntags: [rent]", "# Acme");
+  const r = runCheck(dir);
+  expect(r.out).toContain("every domain note's folder matches its domain: field");
+  expect(r.code).toBe(0);
+});
+
+test("a mount that declares NOTHING is exempt from the ROLE checks - no upgrade invents a rule nobody wrote", () => {
+  const dir = makeMountVault(null);
+  note(dir, "shared/finances/rent.md", "type: note\ntags: [rent]", "# Rent\n\njust prose");
+  const r = runCheck(dir);
+  expect(r.out).toContain("every domain note's folder matches its domain: field");
+  expect(r.out).toContain("every domain/form note links the graph");
+  expect(r.code).toBe(0);
+});
+
+test("the seam findings fire on an UNDECLARED mount too - they watch the boundary, which exists either way", () => {
+  // The exemption above is about roles: a folder-versus-field rule needs a declaration to compare
+  // against. A leaking link and a dead source are broken for the person on the other side whether or
+  // not anyone wrote a _folders.md, so both are reported.
+  const dir = makeMountVault(null);
+  note(dir, "people/sam.md", "type: person\ntags: [x]", "# Sam");
+  note(dir, "shared/finances/rent.md", "type: note\nsource: \"[[raw/lease]]\"\ntags: [rent]", "# Rent\n\nsigned with [[people/sam]]");
+  const r = runCheck(dir);
+  expect(r.out).toContain("seam-leak");
+  expect(r.out).toContain("shared/finances/rent  →  [[people/sam]]");
+  expect(r.out).toContain("seam-dead-source");
+  expect(r.code).not.toBe(0);
+});
+
+test("seam-leak is one finding per note and target, however many times the note names it", () => {
+  // The real vault reported one defect as two findings: the note carried the same link twice. One
+  // broken link with one fix must read as one line, or _needs-review.md inflates against itself.
+  const dir = makeMountVault();
+  note(dir, "people/sam.md", "type: person\ntags: [x]", "# Sam");
+  note(dir, "shared/finances/rent.md", "type: note\ndomain: finances\ntags: [rent]",
+    "# Rent\n\nsigned with [[people/sam]], countersigned by [[people/sam]], see [[people/sam|him]]");
+  const r = runCheck(dir);
+  expect(r.out).toContain("seam-leak (1)");
+  expect(openNeedsReview(dir).filter((l) => l.includes("seam-leak")).length).toBe(1);
+});
+
+test("move-fork: a `vault move` that never finished is reported, with both copies named", () => {
+  // The crash window between the destination write and the source delete. `vault move` records the
+  // move in log.md before it deletes anything precisely so this state is discoverable; without the
+  // marker the vault holds two silent copies of one fact and nothing says so.
+  const dir = makeMountVault();
+  note(dir, "finances/rent.md", "type: note\ndomain: finances\ntags: [rent]", "# Rent\n\nsee [[orgs/acme]]");
+  note(dir, "shared/finances/rent.md", "type: note\ndomain: finances\ntags: [rent]", "# Rent\n\nsee [[shared/orgs/acme]]");
+  note(dir, "orgs/acme.md", "type: org\ntags: [rent]", "# Acme");
+  note(dir, "shared/orgs/acme.md", "type: org\ntags: [rent]", "# Acme");
+  writeFileSync(join(dir, "log.md"),
+    "---\ntype: log\ntags: [\"log\"]\n---\n\n# Log\n\n- 2026-09-01 moving [[finances/rent]] → [[shared/finances/rent]] — sharing into shared/ {move-in-progress}\n");
+  const r = runCheck(dir);
+  expect(r.out).toContain("move-fork (1)");
+  expect(r.out).toContain("finances/rent  →  shared/finances/rent  (both on disk)");
+  expect(r.code).not.toBe(0);
+  expect(openNeedsReview(dir).join("\n")).toContain("both copies are on disk");
+});
+
+test("a finished move leaves no move-fork, and a twin in the mount is never mistaken for one", () => {
+  // people/sam beside shared/people/sam is the twin `vault move` asks the operator to create before a
+  // note can cross. A basename collision must never read as a fork, or the encouraged state is flagged
+  // forever - which is why the finding keys on the log marker instead.
+  const dir = makeMountVault();
+  note(dir, "people/sam.md", "type: person\ntags: [x]", "# Sam");
+  note(dir, "shared/people/sam.md", "type: person\ntags: [x]", "# Sam");
+  note(dir, "shared/finances/rent.md", "type: note\ndomain: finances\ntags: [rent]", "# Rent\n\nsigned with [[shared/people/sam]]");
+  writeFileSync(join(dir, "log.md"),
+    "---\ntype: log\ntags: [\"log\"]\n---\n\n# Log\n\n- 2026-09-01 moved [[finances/rent]] → [[shared/finances/rent]] — shared into shared/\n");
+  const r = runCheck(dir);
+  expect(r.out).not.toContain("move-fork");
+  expect(r.code).toBe(0);
+});
+
+test("check says which roles a mount declared, so a surprising finding can be traced to a rule", () => {
+  const dir = makeMountVault();
+  expect(runCheck(dir).out).toContain("shared/_folders.md — entities: people orgs, domains: finances life");
+});
+
+test("seam-leak: a mount note linking a note that resolves only in THIS vault", () => {
+  const dir = makeMountVault();
+  note(dir, "people/sam.md", "type: person\ntags: [x]", "# Sam");
+  note(dir, "shared/finances/rent.md", "type: note\ndomain: finances\ntags: [rent]", "# Rent\n\nsigned with [[people/sam]]");
+  const r = runCheck(dir);
+  expect(r.out).toContain("seam-leak");
+  expect(r.out).toContain("shared/finances/rent  →  [[people/sam]]");
+  expect(r.code).not.toBe(0);
+  // Reported on the reader's side, phrased so it is actionable there.
+  expect(openNeedsReview(dir).join("\n")).toContain("broken for everyone else reading shared/");
+});
+
+test("a link that resolves INSIDE the mount is not a leak", () => {
+  const dir = makeMountVault();
+  note(dir, "shared/people/sam.md", "type: person\ntags: [x]", "# Sam");
+  note(dir, "shared/finances/rent.md", "type: note\ndomain: finances\ntags: [rent]", "# Rent\n\nsigned with [[shared/people/sam]]");
+  const r = runCheck(dir);
+  expect(r.out).toContain("no seam leaks");
+  expect(r.code).toBe(0);
+});
+
+test("an unresolvable link in a mount note stays an orphan and is never double-reported as a leak", () => {
+  const dir = makeMountVault();
+  note(dir, "shared/finances/rent.md", "type: note\ndomain: finances\ntags: [rent]", "# Rent\n\nsee [[shared/people/ghost]]");
+  const r = runCheck(dir);
+  expect(r.out).toContain("orphan links");
+  expect(r.out).toContain("no seam leaks");
+});
+
+test("a vault with no mount is never told about a seam it does not have", () => {
+  expect(runCheck(makeVault()).out).not.toContain("seam");
+});
+
+test("seam-dead-source: a mount note pointing at this vault's private raw/", () => {
+  const dir = makeMountVault();
+  note(dir, "shared/finances/rent.md", "type: note\ndomain: finances\ntags: [rent]\nsource: \"[[raw/lease/scan]]\"", "# Rent\n\nsee [[shared/orgs/acme]]");
+  note(dir, "shared/orgs/acme.md", "type: org\ntags: [rent]", "# Acme");
+  const r = runCheck(dir);
+  expect(r.out).toContain("seam-dead-source");
+  expect(r.out).toContain("shared/finances/rent");
+  expect(r.code).not.toBe(0);
+  expect(openNeedsReview(dir).join("\n")).toContain("shared/_raw/");
+});
+
+test("the mount's OWN _raw/ locker is a valid source and never an orphan", () => {
+  // Underscore-prefixed, so the walk skips it exactly as it skips the top-level raw/ - and a link
+  // into it is evidence, not a graph edge.
+  const dir = makeMountVault();
+  mkdirSync(join(dir, "shared", "_raw", "lease"), { recursive: true });
+  writeFileSync(join(dir, "shared", "_raw", "lease", "scan.md"), "the lease\n");
+  note(dir, "shared/finances/rent.md", "type: note\ndomain: finances\ntags: [rent]\nsource: \"[[shared/_raw/lease/scan]]\"", "# Rent\n\nsee [[shared/orgs/acme]]");
+  note(dir, "shared/orgs/acme.md", "type: org\ntags: [rent]", "# Acme");
+  const r = runCheck(dir);
+  expect(r.out).toContain("no orphan links");
+  expect(r.out).not.toContain("seam-dead-source");
+  expect(r.out).toContain("no seam leaks");
+  expect(r.code).toBe(0);
+});
+
+test("a source: into the parent raw/ from a PRIVATE note is untouched by the seam check", () => {
+  const dir = makeMountVault();
+  note(dir, "finances/rent.md", "type: note\ndomain: finances\ntags: [rent]\nsource: \"[[raw/lease/scan]]\"", "# Rent\n\nsee [[people/sam]]");
+  note(dir, "people/sam.md", "type: person\ntags: [x]", "# Sam");
+  expect(runCheck(dir).out).not.toContain("seam-dead-source");
+});
+
+test("conflict markers in a note are flagged into needs-review", () => {
+  const dir = makeVault();
+  note(dir, "people/sam.md", "type: person\ntags: [x]", "# Sam");
+  note(dir, "life/plan.md", "domain: life\ntags: [x]", "# Plan\n\nsee [[people/sam]]\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/master");
+  const r = runCheck(dir);
+  expect(r.out).toContain("conflict markers");
+  expect(r.out).toContain("life/plan");
+  expect(r.code).not.toBe(0);
+  expect(openNeedsReview(dir).join("\n")).toContain("conflict markers in [[life/plan]]");
+});
+
+test("a clean vault says nothing about conflict markers", () => {
+  const dir = makeVault();
+  note(dir, "people/sam.md", "type: person\ntags: [x]", "# Sam");
+  note(dir, "life/plan.md", "domain: life\ntags: [x]", "# Plan\n\nsee [[people/sam]]");
+  const r = runCheck(dir);
+  expect(r.out).not.toContain("conflict markers");
+  expect(r.code).toBe(0);
+});

@@ -2,12 +2,16 @@
 // imprnt check [--vault DIR]
 //
 // The integrity "robot" — an EXPLICIT command you run, never a background hook. Deterministic, no LLM.
-// Five checks + one regenerate, all pure reads (the corpus, plus a read-only peek at the host memory):
+// Nine checks + one regenerate, all pure reads (the corpus, plus a read-only peek at the host memory):
 //   1. orphan [[links]]      — a wikilink whose target note doesn't exist
 //   2. disconnected notes    — a domain/form note that links no entity at all (graph island)
 //   3. untagged notes        — a note with no tags (findable by body/title only — the tag axis is empty)
 //   4. uncovered snapshots   — a raw/ source no vault note points back to (the migration to-do ledger)
 //   5. host auto-memory      — a non-empty Claude MEMORY.md store in ANY project (a second always-on store recall can't see)
+//   6. seam-leak             — a mount note whose link resolves only through THIS vault's private folders
+//   7. seam-dead-source      — a mount note pointing at this vault's private raw/ (dead across the seam)
+//   8. conflict markers      — a note holding a `<<<<<<<` line git left behind
+//   9. move-fork             — a `vault move` that never finished, so one note may exist twice
 //   + regenerate index.md from every note's `summary` (deterministic map-of-content)
 //
 // check PRINTS its findings (the agent reads them) and mirrors them into vault/_needs-review.md
@@ -23,8 +27,9 @@ import { spawnSync } from "node:child_process";
 import { join, relative, dirname } from "node:path";
 import { homedir } from "node:os";
 import { projectRoot } from "./lib/roots.ts";
-import { generateIndex, collectNotes, frontmatter, stripQuotes, stripCode, fmList } from "./lib/moc.ts";
-import { loadFolders } from "./lib/folders.ts";
+import { generateIndex, collectNotes, frontmatter, stripQuotes } from "./lib/moc.ts";
+import { loadFolders, type FolderRoles } from "./lib/folders.ts";
+import { corpusOf, resolveSlugs, mountOf, innerFolder, graphLinks, isSeamLeak, deadSourceTargets, hasConflictMarkers, sourceTargets, unfinishedMoves } from "./lib/seam.ts";
 import { loadTags, normalize, appendTags } from "./lib/tags.ts";
 import { loadManifest } from "./lib/manifest.ts";
 
@@ -58,36 +63,39 @@ const DOMAIN_FOLDERS = roles.domains;
 // an imported corpus. Its notes are complete on their own and are not part of THIS vault's entity
 // graph, so demanding they link one asks them to reach across the boundary they exist to respect.
 const MOUNT_FOLDERS = roles.mounts;
-const LINK = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g;
+
+// A mount carries its OWN _folders.md, and check applies those roles SCOPED TO THE MOUNT: a note in
+// household/finances/ is checked against the mount's declaration, not this vault's. Loaded lazily,
+// once per mount.
+//
+// A mount that declares NOTHING is exempt from the ROLE checks only - the folder-versus-field ones,
+// which need a declaration to compare against. That is the promise folders.ts was written on: an
+// upgrade never hands an existing vault a finding about rules nobody wrote down. The SEAM findings
+// below (seam-leak, seam-dead-source, conflict-markers) fire on every mount, declared or not: they
+// read the boundary itself, which exists the moment a folder is named a mount.
+const mountRoleCache = new Map<string, FolderRoles>();
+function mountRoles(mount: string): FolderRoles {
+  let r = mountRoleCache.get(mount);
+  if (!r) { r = loadFolders(join(vault, mount)); mountRoleCache.set(mount, r); }
+  return r;
+}
 
 const notes = collectNotes(vault);
-const allSlugs = new Set(notes.map((n) => n.slug));
-const folderOf = new Map<string, string>(notes.map((n) => [n.slug, n.folder]));
-const byBasename = new Map<string, string[]>();
-for (const n of notes) {
-  const base = n.slug.includes("/") ? n.slug.slice(n.slug.lastIndexOf("/") + 1) : n.slug;
-  (byBasename.get(base) ?? byBasename.set(base, []).get(base)!).push(n.slug);
-}
-
 // Resolution is against the collected EXACT-CASE slug set only, no existsSync fallback. existsSync
 // is case-insensitive on APFS, so a case-wrong [[People/Anna]] would pass here yet fail the
-// entity-link check (contradictory diagnostics), and Linux would disagree with macOS. raw/ links are
-// filtered out before this runs, so the "[[raw/...]] is never an orphan" contract is untouched.
-function resolves(target: string): boolean {
-  const t = target.trim().replace(/^\.\//, "").replace(/\.md$/, "");
-  if (!t) return false;
-  if (t.includes("/")) return allSlugs.has(t);
-  return byBasename.has(t); // bare slug — resolvable if any folder holds it
-}
+// entity-link check (contradictory diagnostics), and Linux would disagree with macOS. Evidence links
+// (raw/, and a mount's own _raw/) are filtered out before this runs, so the "never an orphan"
+// contract for a snapshot link is untouched. The corpus + resolver live in lib/seam.ts because
+// `vault move` asks the SAME questions before a note crosses that check asks after.
+const corpus = corpusOf(notes);
+const folderOf = new Map<string, string>(notes.map((n) => [n.slug, n.folder]));
+const resolves = (target: string): boolean => resolveSlugs(target, corpus).length > 0;
 
 // The folder(s) a link target resolves to. A slug link maps to its one note's folder; a bare slug
 // can match several folders, so we return every folder that holds a note of that basename. A target
 // that exists on disk but isn't a collected note (e.g. a deep path) yields no folder. Deterministic.
 function targetFolders(target: string): string[] {
-  const t = target.trim().replace(/^\.\//, "").replace(/\.md$/, "");
-  if (!t) return [];
-  if (t.includes("/")) { const f = folderOf.get(t); return f ? [f] : []; }
-  return (byBasename.get(t) ?? []).map((s) => folderOf.get(s)).filter((f): f is string => !!f);
+  return resolveSlugs(target, corpus).map((s) => folderOf.get(s)).filter((f): f is string => !!f);
 }
 
 // True if a link target resolves to a note in an entity folder (people/orgs/holdings).
@@ -100,6 +108,15 @@ const orphans: string[] = [];
 const disconnected: string[] = [];
 const domainIssues: string[] = [];
 const untagged: string[] = [];
+// The seam findings. Both are about a MOUNT note, and both are reported HERE, in the vault doing the
+// checking - the reader's side. That is deliberate on two counts: the reader is the one who can act
+// (the link resolves in their private tree, so only they can see what it points at), and _needs-review.md
+// sits in the private vault, never in the shared tree, so naming a private slug in a finding never
+// writes that slug where the other person can read it.
+const seamLeaks: string[] = [];
+const seamDeadSources: string[] = [];
+const conflicted: string[] = [];
+const moveForks: string[] = [];
 // `- [ ]` lines mirrored into _needs-review.md's check-owned section (same style ingest writes).
 const review: string[] = [];
 const referencedRaw = new Set<string>();
@@ -129,7 +146,7 @@ for (const n of notes) {
   // and the disconnected/entity-link check, keeping the two consistent.
   // `raw/...` links are intentional provenance into the evidence locker (the `source:` field), which
   // sits OUTSIDE the searchable vault — never count them as orphans, nor as graph links.
-  const links = [...stripCode(raw).matchAll(LINK)].map((m) => m[1].trim()).filter((l) => !l.startsWith("raw/"));
+  const links = graphLinks(raw, MOUNT_FOLDERS);
   for (const l of links) if (!resolves(l)) {
     orphans.push(`  ${n.slug}  →  [[${l}]]`);
     review.push(`- [ ] orphan link [[${l}]] — from [[${n.slug}]], target note missing`);
@@ -168,14 +185,75 @@ for (const n of notes) {
     review.push(`- [ ] domain mismatch [[${n.slug}]] — in ${n.folder}/ but domain: ${domain || "(missing)"}`);
   }
 
-  // coverage: every raw path a note points back to (source: "[[raw/...]]" wikilink, or sources:[])
-  const src = fm.match(/^source:\s*["']?(.+?)["']?\s*$/im)?.[1]?.trim().replace(/^\[\[/, "").replace(/\]\]$/, "");
-  if (src) referencedRaw.add(src.replace(/^\.\//, ""));
-  // Parse the plural sources: list with moc's canonical fmList so BOTH list forms credit coverage:
-  // inline `sources: [a, b]` AND the block form (a bare `sources:` then `- item` lines, what Obsidian's
-  // properties UI writes). The old hand-rolled inline-only regex silently skipped the block form. fmList
-  // returns each item verbatim, so unwrap the [[...]] wikilink the same way the singular source: above does.
-  for (const s of fmList(fm, "sources")) referencedRaw.add(s.replace(/^\[\[/, "").replace(/\]\]$/, "").replace(/^\.\//, ""));
+  // --- the seam: a note living inside a MOUNT -------------------------------------------------
+  // Everything below asks one question in three ways: is this note complete INSIDE the mount? It has
+  // to be, because the other person's vault holds the mount and nothing else of yours.
+  const mount = mountOf(n.slug, MOUNT_FOLDERS);
+  if (mount) {
+    const mr = mountRoles(mount);
+    const inner = innerFolder(n.slug, mount);
+    // Mount-scoped domain match: the same folder-vs-field invariant this vault applies to its own
+    // life-areas, applied INSIDE the mount against the mount's own declaration. This is a ROLE check,
+    // so it runs only when the mount declares roles — there is nothing to violate in a set nobody
+    // wrote down, and an upgrade must not invent one. The three seam findings below are a different
+    // kind and run either way.
+    if (mr.declared && mr.domains.has(inner) && domain !== inner) {
+      domainIssues.push(`  ${n.slug}  — in ${mount}/${inner}/ but domain: ${domain || "(missing)"}`);
+      review.push(`- [ ] domain mismatch [[${n.slug}]] — in ${mount}/${inner}/ but domain: ${domain || "(missing)"} (${mount}/_folders.md declares ${inner} a domain)`);
+    }
+    // seam-leak: the link works HERE and dangles for everyone else who has this mount. ONE finding per
+    // (note, target): a note that names the same entity three times is one defect with one fix, and
+    // reporting it three times makes _needs-review.md read like three separate broken links.
+    for (const l of new Set(links)) if (isSeamLeak(l, mount, corpus)) {
+      seamLeaks.push(`  ${n.slug}  →  [[${l}]]`);
+      review.push(`- [ ] seam-leak [[${n.slug}]] → [[${l}]] — resolves only in this vault, so the note is broken for everyone else reading ${mount}/; re-point it at a ${mount}/ note or drop the link`);
+    }
+    // seam-dead-source: the snapshot sits in YOUR private raw/, so the link is dead the moment
+    // anyone else opens the note. The mount has its own locker for exactly this.
+    for (const t of deadSourceTargets(fm)) {
+      seamDeadSources.push(`  ${n.slug}  —  source: [[${t}]]`);
+      review.push(`- [ ] seam-dead-source [[${n.slug}]] — source: "[[${t}]]" points into this vault's private raw/, dead across the seam; move the evidence to ${mount}/_raw/ or record the provenance in prose`);
+    }
+  }
+
+  // conflict markers: git abandoned a rebase mid-note and left both versions in the file. Nothing
+  // downstream reads a note like this correctly, so it is worth its own line rather than a mention.
+  if (hasConflictMarkers(raw)) {
+    conflicted.push(`  ${n.slug}`);
+    review.push(`- [ ] conflict markers in [[${n.slug}]] — an unresolved \`<<<<<<<\` merge conflict is sitting in the note`);
+  }
+
+  // coverage: every raw path a note points back to, singular `source:` and the `sources:` list alike,
+  // read through seam.ts's sourceTargets. That is the SAME parse `seam-dead-source` and `vault move`
+  // use, so a note whose provenance one of them can see is never invisible to the other - a second
+  // regex here is how the coverage ledger and the seam checks drift into disagreeing about the same
+  // field. It covers both list forms (inline `sources: [a, b]` and the block form Obsidian's
+  // properties UI writes), unwraps the [[...]], and drops a `./` prefix or `.md` suffix, which is what
+  // the coverage comparison below normalizes to anyway.
+  for (const t of sourceTargets(fm)) referencedRaw.add(t);
+}
+
+// --- move-fork: a seam crossing that never finished -------------------------
+// `imprnt vault move` writes the destination, records the move as in progress in log.md, deletes the
+// source, then finalises the record. A crash in that window leaves the note in TWO places - the exact
+// fork the seam exists to prevent - and the only thing that can say so afterwards is the marker the
+// move left behind. So check reads it back. log.md is a control file, never a note, so this is its own
+// small read rather than part of the corpus loop.
+//
+// Keyed on the MARKER, never on a name collision: `household/people/sam` sitting beside a private
+// `people/sam` is the twin the move's own refusal asks the operator to create ("file the entity inside
+// the mount first, a stub is enough"), so flagging a shared basename would condemn the encouraged case
+// forever.
+const logPath = join(vault, "log.md");
+if (existsSync(logPath)) {
+  for (const mv of unfinishedMoves(readFileSync(logPath, "utf8"))) {
+    const both = existsSync(join(vault, `${mv.from}.md`)) && existsSync(join(vault, `${mv.to}.md`));
+    const hint = both
+      ? `both copies are on disk — read the two, keep [[${mv.to}]], delete ${mv.from}.md`
+      : `the source is already gone, so the move finished — clear the marker line from log.md`;
+    moveForks.push(`  ${mv.from}  →  ${mv.to}${both ? "  (both on disk)" : ""}`);
+    review.push(`- [ ] move-fork [[${mv.from}]] → [[${mv.to}]] — a \`vault move\` never finished; ${hint}`);
+  }
 }
 
 // --- tag vocabulary sync + dedup audit ------------------------------------
@@ -394,6 +472,12 @@ if (roles.declared) {
   const parts = [`entities: ${[...ENTITY_FOLDERS].join(" ") || "(none)"}`, `domains: ${[...DOMAIN_FOLDERS].join(" ") || "(none)"}`];
   if (MOUNT_FOLDERS.size) parts.push(`mounts: ${[...MOUNT_FOLDERS].join(" ")}`);
   console.log(`folder roles from _folders.md — ${parts.join(", ")}`);
+  // A mount that declares its own roles is checked by THOSE, scoped to the mount. Same reason as
+  // above: the first question about a surprising finding is which rules produced it.
+  for (const m of MOUNT_FOLDERS) {
+    const mr = mountRoles(m);
+    if (mr.declared) console.log(`  ${m}/_folders.md — entities: ${[...mr.entities].join(" ") || "(none)"}, domains: ${[...mr.domains].join(" ") || "(none)"}`);
+  }
 }
 console.log("");
 
@@ -408,6 +492,18 @@ else console.log("✓ every domain note's folder matches its domain: field");
 
 if (untagged.length) { console.log(`⚠ untagged notes (${untagged.length}) — no tags, findable by body/title only:`); console.log(cap(untagged).join("\n"), "\n"); }
 else console.log("✓ every note carries at least one tag");
+
+// The seam sections print only when a mount exists — a vault with no mount should not be told about a
+// boundary it does not have.
+if (MOUNT_FOLDERS.size) {
+  if (seamLeaks.length) { console.log(`⚠ seam-leak (${seamLeaks.length}) — a mount note's link resolves only in THIS vault:`); console.log(cap(seamLeaks).join("\n"), "\n"); }
+  else console.log("✓ no seam leaks — every mount note's links resolve inside its mount");
+  if (seamDeadSources.length) { console.log(`⚠ seam-dead-source (${seamDeadSources.length}) — a mount note points at this vault's private raw/:`); console.log(cap(seamDeadSources).join("\n"), "\n"); }
+}
+
+if (conflicted.length) { console.log(`⚠ conflict markers (${conflicted.length}) — an unresolved \`<<<<<<<\` merge conflict is in the note:`); console.log(cap(conflicted).join("\n"), "\n"); }
+
+if (moveForks.length) { console.log(`⚠ move-fork (${moveForks.length}) — a \`vault move\` never finished, so one note may exist twice:`); console.log(cap(moveForks).join("\n"), "\n"); }
 
 if (hasTagsFile) {
   if (addedTags.length) console.log(`↑ synced ${addedTags.length} new tag(s) into _tags.md: ${addedTags.join(", ")}`);
@@ -434,7 +530,8 @@ const synced = syncNeedsReview(review);
 if (synced === "written") console.log(`↻ ${review.length} finding(s) → _needs-review.md (run \`imprnt hot\` to see them)`);
 else if (synced === "cleared") console.log("↻ cleared resolved findings from _needs-review.md");
 
-const issues = orphans.length + disconnected.length + domainIssues.length + untagged.length + uncovered.length + dupPairs.length + strayCount;
+const issues = orphans.length + disconnected.length + domainIssues.length + untagged.length + uncovered.length + dupPairs.length + strayCount
+  + seamLeaks.length + seamDeadSources.length + conflicted.length + moveForks.length;
 console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
 // check still PRINTS everything and never blocks or mutates a note — only the exit CODE reflects health,
 // so `imprnt check` is usable in CI and `&&` chains. Core issues alone make the process exit non-zero.

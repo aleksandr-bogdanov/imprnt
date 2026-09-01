@@ -1131,3 +1131,144 @@ test("--apply on a directory errors cleanly, not a raw EISDIR stack", () => {
   expect(r.err.toLowerCase()).toContain("directory");
   expect(r.err).not.toContain("EISDIR");
 });
+
+// --- the declared folder roles: ingest and check read the SAME set ---------------------------------
+// The contract always promised "domains are user-defined". While the set was frozen in ingest.ts, a
+// vault that declared `clients` a domain had check accept a note there and --apply refuse to file one:
+// one set disagreeing with itself. Both sides now read vault/_folders.md through lib/folders.ts.
+
+function stage(vault: string, name: string, content: string): string {
+  const proposed = join(vault, "..", "plugins", "p", "proposed");
+  mkdirSync(proposed, { recursive: true });
+  const staged = join(proposed, name);
+  writeFileSync(staged, content);
+  return staged;
+}
+
+test("--apply files into a domain the VAULT declares, which the shipped set never heard of", () => {
+  const { vault } = setup();
+  mkdirSync(join(vault, "clients"), { recursive: true });
+  writeFileSync(join(vault, "_folders.md"), "## Domains\nidentity, health, finances, work, life, clients\n");
+  const staged = stage(vault, "acme.md", "---\ntype: note\nkind: reference\ndomain: clients\ntags: [x]\n---\n\n# Acme\n\nbody\n");
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  expect(existsSync(join(vault, "clients", "acme.md"))).toBe(true);
+});
+
+test("--apply still refuses a domain nobody declared, and names the set it read", () => {
+  const { vault } = setup();
+  writeFileSync(join(vault, "_folders.md"), "## Domains\nidentity, health\n");
+  const staged = stage(vault, "acme.md", "---\ntype: note\ndomain: work\ntags: [x]\n---\n\n# Acme\n\nbody\n");
+  const r = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("maps to no vault folder");
+  expect(r.err).toContain("identity health");
+  expect(existsSync(join(vault, "work", "acme.md"))).toBe(false);
+});
+
+test("a vault with no _folders.md files exactly as it always did", () => {
+  const { vault } = setup();
+  const staged = stage(vault, "tax.md", "---\ntype: note\nkind: reference\ndomain: finances\ntags: [x]\n---\n\n# Tax\n\nbody\n");
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  expect(existsSync(join(vault, "finances", "tax.md"))).toBe(true);
+  const staged2 = stage(vault, "acme.md", "---\ntype: note\ndomain: clients\ntags: [x]\n---\n\n# Acme\n\nbody\n");
+  expect(run(["ingest", "--apply", staged2, "--vault", vault]).code).toBe(1);
+});
+
+// --- filing INTO a mount --------------------------------------------------------------------------
+// `mount:` prefixes the ordinary filing decision rather than replacing it, so `type: person` lands in
+// the mount's own people/ for free and the note keeps the `domain:` the mount's roles want to see.
+
+function withMount(vault: string, roles: string | null = "## Entities\npeople, orgs\n\n## Domains\nfinances, life\n"): void {
+  for (const f of ["finances", "people"]) mkdirSync(join(vault, "shared", f), { recursive: true });
+  writeFileSync(join(vault, "_folders.md"), "## Mounts\nshared\n");
+  if (roles !== null) writeFileSync(join(vault, "shared", "_folders.md"), roles);
+}
+
+test("--apply files a staged note into <mount>/<folder> under the mount's own roles", () => {
+  const { vault } = setup();
+  withMount(vault);
+  const staged = stage(vault, "rent.md", "---\ntype: note\nkind: reference\nmount: shared\ndomain: finances\ntags: [rent]\n---\n\n# Rent\n\nbody\n");
+  const r = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r.code).toBe(0);
+  const filed = join(vault, "shared", "finances", "rent.md");
+  expect(existsSync(filed)).toBe(true);
+  // No source: into this vault's private raw/ - that link is dead across the seam, and check would
+  // flag the note ingest just filed. The filed bytes are the staged bytes.
+  const text = readFileSync(filed, "utf8");
+  expect(text).not.toContain("source:");
+  expect(text).toContain("domain: finances");
+  expect(r.out).toContain("no snapshot");
+  expect(existsSync(join(vault, "..", "raw", "proposed"))).toBe(false);
+});
+
+test("a mount note files by TYPE too, into the mount's own entity folder", () => {
+  const { vault } = setup();
+  withMount(vault);
+  const staged = stage(vault, "sam.md", "---\ntype: person\nmount: shared\ntags: [x]\n---\n\n# Sam\n\nbio\n");
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  expect(existsSync(join(vault, "shared", "people", "sam.md"))).toBe(true);
+});
+
+test("--apply refuses a domain the MOUNT does not declare, even when the vault does", () => {
+  const { vault } = setup();
+  withMount(vault, "## Domains\nlife\n");
+  const staged = stage(vault, "rent.md", "---\ntype: note\nmount: shared\ndomain: finances\ntags: [rent]\n---\n\n# Rent\n\nbody\n");
+  const r = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("maps to no vault folder under the `shared` mount");
+  expect(existsSync(join(vault, "shared", "finances", "rent.md"))).toBe(false);
+});
+
+test("--apply refuses a mount nobody declared", () => {
+  const { vault } = setup();
+  const staged = stage(vault, "rent.md", "---\ntype: note\nmount: shared\ndomain: finances\ntags: [rent]\n---\n\n# Rent\n\nbody\n");
+  const r = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("is not declared");
+});
+
+test("--apply refuses a declared mount that is not checked out - it would make a plain dir where a repo goes", () => {
+  const { vault } = setup();
+  writeFileSync(join(vault, "_folders.md"), "## Mounts\nshared\n");
+  const staged = stage(vault, "rent.md", "---\ntype: note\nmount: shared\ndomain: finances\ntags: [rent]\n---\n\n# Rent\n\nbody\n");
+  const r = run(["ingest", "--apply", staged, "--vault", vault]);
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("not checked out");
+  expect(existsSync(join(vault, "shared"))).toBe(false);
+});
+
+test("the filed note carries no `mount:` - the routing key is spent once the path says where it went", () => {
+  // The same hygiene `vault move` applies when it drops `domain:` at this boundary. A key the
+  // frontmatter contract never defined, baked into the SHARED tree, leaves the other person guessing
+  // whether it still means anything.
+  const { vault } = setup();
+  withMount(vault);
+  const staged = stage(vault, "rent.md", "---\ntype: note\nkind: reference\nmount: shared\ndomain: finances\ntags: [rent]\n---\n\n# Rent\n\nbody\n");
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  const text = readFileSync(join(vault, "shared", "finances", "rent.md"), "utf8");
+  expect(text).not.toContain("mount:");
+  expect(text).toContain("domain: finances");
+  expect(text).toContain("# Rent");
+});
+
+test("re-applying the same mount note is still a clean no-op after the mount: key is stripped", () => {
+  // The strip happens BEFORE the idempotency hash, so the second apply compares the bytes actually on
+  // disk. Getting that order wrong turns every re-apply into a reported contradiction.
+  const { vault } = setup();
+  withMount(vault);
+  const body = "---\ntype: note\nkind: reference\nmount: shared\ndomain: finances\ntags: [rent]\n---\n\n# Rent\n\nbody\n";
+  expect(run(["ingest", "--apply", stage(vault, "rent.md", body), "--vault", vault]).code).toBe(0);
+  const again = run(["ingest", "--apply", stage(vault, "rent.md", body), "--vault", vault]);
+  expect(again.code).toBe(0);
+  expect(again.out).toContain("no-op");
+});
+
+test("a mount note that brings its own _raw/ source keeps it verbatim", () => {
+  const { vault } = setup();
+  withMount(vault);
+  const staged = stage(vault, "rent.md", "---\ntype: note\nmount: shared\ndomain: finances\ntags: [rent]\nsource: \"[[shared/_raw/lease/scan]]\"\n---\n\n# Rent\n\nbody\n");
+  expect(run(["ingest", "--apply", staged, "--vault", vault]).code).toBe(0);
+  const text = readFileSync(join(vault, "shared", "finances", "rent.md"), "utf8");
+  expect(text).toContain("source: \"[[shared/_raw/lease/scan]]\"");
+  expect(text.match(/^source:/gm)?.length).toBe(1);
+});

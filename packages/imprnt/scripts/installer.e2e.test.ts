@@ -20,8 +20,24 @@ let prefix: string; // npm --prefix target: bin/ + lib/node_modules land here
 let home: string; // fenced HOME + XDG_CONFIG_HOME, so registration never touches the real one
 let tarball: string;
 
+// The env every child in this file gets: the operator's shell MINUS every pointer that would steer
+// the CLI at real data. This is not hygiene, it is the whole premise of the file. `imprnt check`
+// resolves its vault from IMPRNT_VAULT (and the legacy IMPRINT_VAULT spelling) BEFORE it looks at
+// the registry, so a bare `{ ...process.env }` pointed the e2e's inner check at the developer's own
+// vault - reading it and REWRITING its control files (index.md, _tags.md, _needs-review.md) on every
+// run, then failing on that vault's health instead of the scaffold under test. CLAUDE_CONFIG_DIR and
+// IMPRNT_HOST_MEMORY_DIR go the same way: they steer the host-memory sweep out of the fenced HOME
+// and back at the real ~/.claude, which is the other way a clean-machine assertion reads real state.
+// A clean machine has none of these set, and that machine is exactly what this suite claims to prove.
+const STEERING = /^(IMPRI?NT_(VAULT|ROOT|HOST_MEMORY_DIR)|CLAUDE_CONFIG_DIR)$/i;
+function fencedEnv(extra: Record<string, string> = {}): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !STEERING.test(k)) env[k] = v;
+  return { ...env, ...extra };
+}
+
 function sh(cmd: string, args: string[], cwd: string) {
-  const r = spawnSync(cmd, args, { cwd, encoding: "utf8" });
+  const r = spawnSync(cmd, args, { cwd, encoding: "utf8", env: fencedEnv() });
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed:\n${r.stdout}\n${r.stderr}`);
   return r.stdout;
 }
@@ -32,7 +48,7 @@ function imprnt(args: string[], cwd: string) {
   return spawnSync(join(prefix, "bin", "imprnt"), args, {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config") },
+    env: fencedEnv({ HOME: home, XDG_CONFIG_HOME: join(home, ".config") }),
   });
 }
 
@@ -66,6 +82,28 @@ test("the tarball ships the runtime and only the runtime", () => {
   // What must never ship: source, tests, this file.
   expect(listing).not.toContain("package/scripts/");
   expect(listing).not.toContain(".test.");
+});
+
+test("the child env is fenced: no shell variable can steer the installed CLI at real data", () => {
+  const saved = { ...process.env };
+  try {
+    process.env.IMPRNT_VAULT = "/real/vault";
+    process.env.IMPRINT_VAULT = "/real/vault"; // the legacy spelling the CLI still honours
+    process.env.CLAUDE_CONFIG_DIR = "/real/.claude";
+    process.env.IMPRNT_HOST_MEMORY_DIR = "/real/memory";
+    process.env.IMPRNT_E2E_KEEPME = "kept";
+    const env = fencedEnv({ HOME: "/tmp/fenced" });
+    for (const k of ["IMPRNT_VAULT", "IMPRINT_VAULT", "CLAUDE_CONFIG_DIR", "IMPRNT_HOST_MEMORY_DIR"])
+      expect(env[k]).toBeUndefined();
+    // Only the steering vars go: PATH and the rest of the shell still reach the child, or npm and
+    // node would not resolve at all.
+    expect(env.IMPRNT_E2E_KEEPME).toBe("kept");
+    expect(env.HOME).toBe("/tmp/fenced");
+    expect(env.PATH).toBe(process.env.PATH ?? "");
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
 });
 
 test("first run: init in an empty dir scaffolds a working vault", () => {

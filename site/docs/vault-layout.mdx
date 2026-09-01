@@ -29,7 +29,13 @@ The folders are just drawers. The meaning rides in a few short labels at the top
 
 <VaultLayoutAnatomy />
 
-A note in a life-area folder also names its life-area in the header (`domain:`), and for the shipped set (identity, health, finances, work, life) `check` complains when the folder and the field disagree. A life-area you add yourself browses and searches like any other, the folder-versus-field check just does not cover it yet.
+A note in a life-area folder also names its life-area in the header (`domain:`), and `check` complains when the folder and the field disagree. That covers the shipped set (identity, health, finances, work, life) and any life-area you add yourself, once you name it under `## Domains` in `vault/_folders.md`.
+
+## A folder you share
+
+Some things belong to more than one person: the flat, the bills, the dates you both need. A **mount** is a folder inside `vault/` holding a tree that is kept somewhere else, usually a small shared repo two people each check out at the same path. Name it under `## Mounts` in `vault/_folders.md` and `check` stops asking its notes to link into your graph, because their graph lives on the other side. A mount can carry its own `_folders.md`, and then its folders are checked by its own rules, and it keeps its own snapshots in `<mount>/_raw/`.
+
+Sharing a note is moving it. `imprnt vault move life/flat household/life` puts the note in the shared folder, deletes the private copy, rewrites every link that pointed at it, and prints who can read it now. There is no copy verb, on purpose: two copies of one fact drift apart, and the one in the shared folder is the one the other person reads. The move refuses a note whose `source:` points into your private `raw/`, and one whose links to people or organizations have no answer inside the mount, because both are dead ends for everyone but you. Afterwards `check` watches the same boundary and reports it to you, the only person who can see what the link meant: `seam-leak` for a shared note whose link resolves only in your vault, `seam-dead-source` for one still pointing at your private snapshots.
 
 ## Tags grow on their own
 
