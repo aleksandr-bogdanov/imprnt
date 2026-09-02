@@ -72,7 +72,7 @@ export default defineConfig({
             { label: "Statusline", slug: "plugins/statusline" },
             { label: "Timemachine", slug: "plugins/timemachine" },
             // More pages exist as drafts (docs/plugins/kleinanzeigen.mdx,
-            // session-host.mdx, whenful.mdx, telegram.mdx). When a draft: true
+            // session-host.mdx, telegram.mdx). When a draft: true
             // flips off, add its { label, slug: "plugins/<name>" } here.
           ],
         },

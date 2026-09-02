@@ -67,7 +67,7 @@ copies its files into your project's `plugins/<name>/`, then wires it:
 ```sh
 imprnt plugin list                  # installed plugins (on/off) + official ones available to add
 imprnt plugin add anti-slop         # fetch imprnt-plugin-anti-slop, copy in, wire @plugins/anti-slop/agent.md
-imprnt plugin add whenful --from packages/plugin-whenful   # install from a local dir (pre-publish/dev)
+imprnt plugin add kopeika --from packages/plugin-kopeika   # install from a local dir (pre-publish/dev)
 imprnt plugin rm anti-slop          # unwire; add --purge to also delete plugins/anti-slop/
 ```
 
@@ -129,7 +129,7 @@ project where Claude Code loads them natively. One list, managed in one place, h
    and one reader — its own plugin; `vault/` has exactly one writer.)
 
 3. **Each plugin owns its own folder and its own labels.** Any labels it adds to a note's
-   header carry the plugin's name as a prefix (`whenful.synced`, `documents.expires`), and a
+   header carry the plugin's name as a prefix (`kopeika.synced`, `documents.expires`), and a
    plugin only ever reads *its own* labels — never another plugin's, never the core's
    private ones. So two plugins can't trip over each other, and there's no central registry
    needed to keep them apart. The core ignores any label it doesn't recognize.
@@ -244,7 +244,7 @@ naming a specific one:
 > route traffic — imprnt has no daemons and no orchestrator (rule 6), so "is it alive?" has
 > no meaning here. The only real health question is "is this plugin's data *sound*?" — which
 > is exactly what `check` already answers. A plugin's `check.js` can *say* what's wrong in
-> its stdout ("mirror is 3 days stale — run `whenful sync`"); the core just forwards that
+> its stdout ("mirror is 3 days stale — run `kleinanzeigen sync`"); the core just forwards that
 > text. Rich message from the plugin, dumb pass/fail read by the core.
 
 ## The MCP boundary
@@ -305,13 +305,8 @@ password); the machine only reads the token the site is already refreshing. That
 session-host is user-started, localhost-bound, and never resident — "explicit beats automatic"
 applied to credentials. Any future credential-holding module follows the same shape.
 
-## The three plugins this contract unblocks
+## The plugins this contract unblocks
 
-- **Whenful (tasks).** Keeps a live mirror of your tasks in `whenful/` (its own folder, never
-  searched), syncs when you run `whenful sync` (a command, never a daemon), and occasionally
-  graduates a *summary* into a real note via proposal. It reads `whenful.*` labels off your
-  notes; it never scribbles into them. High-frequency task state stays in the mirror — it
-  does **not** propose one note per task.
 - **Documents (file librarian).** Watches your files; on a new one, proposes a note about it
   for you to approve. Tracks files deterministically (hash/manifest) in its own folder; on
   ingest, hands the file off into `raw/` so the note gets a rot-proof provenance link. Clean
@@ -321,7 +316,7 @@ applied to credentials. Any future credential-holding module follows the same sh
   Wingman by default - or a personalized copy in `plugins/_personal/`): its personality, voice,
   standards, the way it works. You wire a character into the assistant's prompt, and delete the line
   to turn it off. It produces *character text*, not notes — a config-extension plugin (rule 5), a
-  different class from the two above, with no referee for conflicts (install two contradictory
+  different class from the one above, with no referee for conflicts (install two contradictory
   characters and that's on you). The clean parallel: `vault/people/` holds the **real** people you
   know, and your character plugins hold your **digital** people. Wingman is the shipped default.
 
@@ -371,17 +366,6 @@ preview - during it, only Anthropic-allowlisted channels can register). Bot toke
 `/telegram:configure` or `TELEGRAM_BOT_TOKEN` (rule 9). Honest caveats in its README: the machine
 must be awake, and bot chats are not end-to-end encrypted - the vault stays home, the
 conversation transits Telegram.
-
-### whenful — task mirror ✅ built (live sync wired)
-
-The first plugin to exercise the whole contract end-to-end: an `agent.md` fragment, a
-`links.tsv` join table, a local `mirror/` cache rendered at read, a `proposed/` staging
-folder, and its own built `check.js` the `check --all` aggregator finds. `sync` is now live —
-for each linked task it GETs `{WHENFUL_API|https://whenful.com}/api/v1/tasks/{id}` with a Bearer
-device token from `$WHENFUL_TOKEN` (env-only, never on disk or in an error message) and rewrites
-that task's `mirror/<id>.md` from the real `TaskResponse`. `WHENFUL_FIXTURES=<dir>` runs the whole
-pipeline offline with zero network. A run where every fetch failed does not stamp `.last-sync`, so
-`check` keeps surfacing a dead token.
 
 ### kleinanzeigen — marketplace inbox watcher ✅ built (the first watcher-class plugin)
 

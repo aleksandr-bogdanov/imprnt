@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 // finance data. None of it may ever reach an npm tarball: package.json `files` ships only the
 // .gitkeep placeholder, and .npmignore guards against that list ever being loosened. These tests pin
 // both layers, packing a copy of the package with a planted "real" note so nothing in the repo is
-// touched (the same pattern as plugin-whenful's packaging test).
+// touched (the packaging-test pattern the plugin packages share).
 const pkgDir = join(fileURLToPath(import.meta.url), "..", "..");
 
 test("package.json files[] ships only the .gitkeep placeholder for proposed/", () => {

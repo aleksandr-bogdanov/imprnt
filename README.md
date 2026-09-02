@@ -47,9 +47,10 @@ A vector database or a hidden memory feature could hold your knowledge too. Plai
 assistant cheap, honest, and yours:
 
 - **Reads cost almost nothing.** Your assistant finds a note by running a local ranked search
-  (BM25) over a folder, about 100 tokens. The same lookup through a vector database or an MCP
-  server costs orders of magnitude more and goes stale every time a note changes. Cheap reads mean
-  your assistant can lean on your whole history, every session.
+  (BM25) over a folder, about 100 tokens, on any machine that has the files, with no server
+  running and no index to rebuild. A vector store pays an embedding pass every time a note
+  changes and leaves your knowledge readable only by its own stack. Cheap, dependency-free
+  reads mean your assistant can lean on your whole history, every session.
 - **The model works once, where it counts.** Reading a messy transcript and deciding what it means
   is worth the model, and it happens once per source. Searching happens thousands of times, so it
   stays plain local code. Frequency draws the line.

@@ -129,8 +129,9 @@ test("purgePlugin removes an installed dir, refuses _-prefixed, no-ops when abse
 test("OFFICIAL lists the release gallery names by convention", () => {
   expect(OFFICIAL).toContain("anti-slop");
   expect(OFFICIAL).toContain("timemachine");
-  // Curated out of the stable release set (beta / not ready): available by
-  // name on npm, never advertised here.
+  // Never advertised here: telegram and kleinanzeigen are curated out of the
+  // stable set (beta / not ready), and whenful is removed outright (killed
+  // 2026-08-28, git history is the archive) - this line guards its return.
   expect(OFFICIAL).not.toContain("whenful");
   expect(OFFICIAL).not.toContain("telegram");
   expect(OFFICIAL).not.toContain("kleinanzeigen");
@@ -258,12 +259,12 @@ test("purgePlugin refuses a non-_ plugin's file-form spec (purge is dir-only)", 
 });
 
 test("purgePlugin still deletes a real gallery dir (the happy path is unbroken)", () => {
-  const src = mkPluginSrc("whenful");
+  const src = mkPluginSrc("gallery");
   const proj = tmpProject();
-  installPlugin(proj, "whenful", { from: src });
-  expect(existsSync(join(proj, "plugins", "whenful"))).toBe(true);
-  expect(purgePlugin(proj, "whenful")).toBe(true);
-  expect(existsSync(join(proj, "plugins", "whenful"))).toBe(false);
+  installPlugin(proj, "gallery", { from: src });
+  expect(existsSync(join(proj, "plugins", "gallery"))).toBe(true);
+  expect(purgePlugin(proj, "gallery")).toBe(true);
+  expect(existsSync(join(proj, "plugins", "gallery"))).toBe(false);
 });
 
 // --- npm pack failures carry npm's real reason ---
