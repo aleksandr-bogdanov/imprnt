@@ -924,3 +924,21 @@ test("imprnt <module> with neither .js nor .mjs falls through to the usage text 
   expect(r.stdout).toContain("engine (same subcommands under");
   expect(r.code).toBe(1);
 });
+
+// --- the docs state the same rule the code runs ---
+// Every line in the two contract files that names a plugin script by convention (plugins/*/check.js,
+// <module>.js, <verb>.js) must also name .mjs, or the doc drifts back to the .js-only rule the
+// dispatcher and check --all no longer enforce. The README is hard-wrapped, so the clause may sit on
+// the continuation line. Lines naming a specific plugin's own built check.js are not conventions and
+// are left alone.
+test("CLAUDE.md and plugins/README.md name .mjs wherever they state the .js convention", () => {
+  const repoRoot = join(realRoot, "..", "..");
+  const convention = /plugins\/\*\/check\.js|<module>\.js|<verb>\.js/;
+  for (const rel of ["CLAUDE.md", join("plugins", "README.md")]) {
+    const lines = readFileSync(join(repoRoot, rel), "utf8").split("\n");
+    const stale = lines
+      .map((l, i) => [i + 1, l] as const)
+      .filter(([, l], i) => convention.test(l) && !(l + "\n" + (lines[i + 1] ?? "")).includes(".mjs"));
+    expect(stale.map(([n, l]) => `${rel}:${n}: ${l.trim()}`)).toEqual([]);
+  }
+});

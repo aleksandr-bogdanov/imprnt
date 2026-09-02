@@ -38,7 +38,7 @@ If adding a plugin forces you to touch the core, the plugin is wrong — not the
     REMOTE       ┌───────────────────┐         ┌───────────────────────┐
     SERVICE ◄───►│  plugin commands  │         │  AGENT (Claude)       │
     (the only    │  sync / check /   │         │  knows the plugin     │
-     wire, and   │  <verb>.js        │         │  via agent.md ONLY    │
+     wire, and   │  <verb>.js / .mjs │         │  via agent.md ONLY    │
      only sync   └────────┬──────────┘         └──────────┬────────────┘
      touches it)          │ writes own folder only        │ reads at answer time,
                           ▼                               │ never the wire
