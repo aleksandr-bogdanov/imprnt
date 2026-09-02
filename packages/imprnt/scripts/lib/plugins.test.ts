@@ -10,6 +10,7 @@ import {
   addPlugin,
   rmPlugin,
   importTargets,
+  pluginScript,
 } from "./plugins.ts";
 
 // A throwaway repo root with a plugins/ tree. We never touch the real CLAUDE.local.md: every
@@ -543,4 +544,26 @@ test("addPlugin onto a read-only CLAUDE.local.md returns a clean error instead o
   chmodSync(p, 0o644);
   expect(res.added).toBe(false);
   expect(res.error).toMatch(/EACCES|permission denied/);
+});
+
+// --- pluginScript: the one resolver behind check --all and the module dispatcher ---
+
+test("pluginScript finds <base>.js, then <base>.mjs, and null when neither exists", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "cjs", { "check.js": "" });
+  mkPlugin(root, "esm", { "check.mjs": "", "esm.mjs": "" });
+  mkPlugin(root, "bare", { "agent.md": "x" });
+  expect(pluginScript(join(root, "plugins", "cjs"), "check")).toEqual({ path: join(root, "plugins", "cjs", "check.js") });
+  expect(pluginScript(join(root, "plugins", "esm"), "check")).toEqual({ path: join(root, "plugins", "esm", "check.mjs") });
+  expect(pluginScript(join(root, "plugins", "esm"), "esm")).toEqual({ path: join(root, "plugins", "esm", "esm.mjs") });
+  expect(pluginScript(join(root, "plugins", "bare"), "check")).toBeNull();
+  expect(pluginScript(join(root, "plugins", "bare"), "bare")).toBeNull();
+  expect(pluginScript(join(root, "plugins", "missing"), "check")).toBeNull();
+});
+
+test("pluginScript prefers .js when both extensions exist and names the shadowed twin", () => {
+  const root = tmpRoot();
+  mkPlugin(root, "both", { "check.js": "", "check.mjs": "" });
+  const dir = join(root, "plugins", "both");
+  expect(pluginScript(dir, "check")).toEqual({ path: join(dir, "check.js"), shadowed: join(dir, "check.mjs") });
 });

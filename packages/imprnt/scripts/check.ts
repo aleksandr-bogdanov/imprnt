@@ -24,9 +24,10 @@
 // _needs-review.md section.
 import { readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join, relative, dirname } from "node:path";
+import { join, relative, basename } from "node:path";
 import { homedir } from "node:os";
 import { projectRoot } from "./lib/roots.ts";
+import { pluginScript } from "./lib/plugins.ts";
 import { generateIndex, collectNotes, frontmatter, stripQuotes } from "./lib/moc.ts";
 import { loadFolders, type FolderRoles } from "./lib/folders.ts";
 import { corpusOf, resolveSlugs, mountOf, innerFolder, graphLinks, isSeamLeak, deadSourceTargets, hasConflictMarkers, sourceTargets, unfinishedMoves } from "./lib/seam.ts";
@@ -42,7 +43,7 @@ for (let i = 0; i < args.length; i++) {
     if (v === undefined) { console.error("--vault requires a directory argument"); process.exit(1); }
     vault = v;
   }
-  else if (args[i] === "--all") all = true; // also run each plugins/*/check.js (convention discovery)
+  else if (args[i] === "--all") all = true; // also run each plugins/*/check.js or check.mjs (convention discovery)
 }
 if (!existsSync(vault)) { console.error(`no vault at ${vault} — run \`imprnt init\` first`); process.exit(1); }
 
@@ -541,39 +542,42 @@ console.log(issues ? `\n${issues} thing(s) to look at above.` : `\nclean.`);
 // The ONE core↔plugin contact for integrity (the other is `ingest --apply`). Both discover by
 // convention, never by import, never by naming a plugin. The FENCE that keeps this from becoming a
 // "plugin API": core may provide read-only AGGREGATION here, never write/orchestration. Concretely we
-// glob plugins/*/check.js, run each as its own `node` subprocess, READ THE EXIT CODE ONLY (0 = sound,
+// glob plugins/*/check.js (or check.mjs), run each as its own `node` subprocess, READ THE EXIT CODE ONLY (0 = sound,
 // non-zero = issue), and forward the plugin's stdout/stderr VERBATIM — we never parse what it prints.
 // Core `check` exits non-zero when it has issues (bug-1 fix); --all exits non-zero when the core has
 // issues OR any plugin failed (the max of both).
 if (all) {
   // Glob the user's PROJECT plugins/, where `plugin add` copies installed plugins (not the package).
   const pluginsDir = join(projectRoot(), "plugins");
-  const checks: string[] = [];
+  const checks: { path: string; shadowed?: string }[] = [];
   if (existsSync(pluginsDir)) {
     for (const entry of readdirSync(pluginsDir)) {
       // Tolerate per-entry: a broken symlink (or any unstat-able entry) must not kill the whole
       // aggregation - skip the dead entry and run the remaining plugin checks.
       let isDir = false;
       try { isDir = statSync(join(pluginsDir, entry)).isDirectory(); } catch { continue; }
-      const p = join(pluginsDir, entry, "check.js");
-      if (isDir && existsSync(p)) checks.push(p);
+      if (!isDir) continue;
+      // check.js, or check.mjs for a plugin shipping ESM. A dir with both runs the .js and says so.
+      const script = pluginScript(join(pluginsDir, entry), "check");
+      if (script) checks.push(script);
     }
   }
-  checks.sort();
+  checks.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
   console.log(`\n— plugins (${checks.length}) —`);
-  if (checks.length === 0) console.log("  (no plugins/*/check.js found)");
+  if (checks.length === 0) console.log("  (no plugins/*/check.js or check.mjs found)");
 
   let failed = 0;
-  for (const checkPath of checks) {
-    const name = relative(pluginsDir, dirname(checkPath)).split("\\").join("/");
-    // Run the plugin's built check.js with node, stdio inherited so its output streams through
+  for (const { path: checkPath, shadowed } of checks) {
+    const rel = relative(pluginsDir, checkPath).split("\\").join("/");
+    if (shadowed) console.log(`  plugins/${rel} wins over ${basename(shadowed)} (both present)`);
+    // Run the plugin's built check script with node, stdio inherited so its output streams through
     // verbatim. We read ONLY the exit code (process.execPath = the node binary running us).
     const proc = spawnSync(process.execPath, [checkPath], { stdio: "inherit" });
     const code = proc.status ?? 1;
     const ok = code === 0;
     if (!ok) failed++;
-    console.log(`  ${ok ? "✓" : "✗"} plugins/${name}/check.js → exit ${code}`);
+    console.log(`  ${ok ? "✓" : "✗"} plugins/${rel} → exit ${code}`);
   }
 
   if (failed) console.log(`\n${failed} plugin check(s) failed.`);

@@ -877,3 +877,50 @@ test("global add with a bad name exits 1 and writes nothing", async () => {
   expect(existsSync(join(root, "claude-config", "CLAUDE.md"))).toBe(false);
   expect(existsSync(join(root, "claude-config", "imprnt", "global.json"))).toBe(false);
 });
+
+// --- module dispatch: `imprnt <module> <args>` runs plugins/<module>/<module>.js or .mjs ---
+// The dispatcher discovers by filename, the same convention check --all uses. IMPRNT_ROOT pins
+// pluginRoot() to the tmp repo, so the fake gallery is the only plugins/ the child can see. The
+// stub echoes its args and exits with a chosen code, which is how we see stdio inherited and the
+// exit code passed through untouched.
+function stubModule(root: string, name: string, file: string, exitCode: number): void {
+  const dir = join(root, "plugins", name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, file), `console.log("MODULE_" + ${JSON.stringify(file)} + " " + process.argv.slice(2).join(" "));\nprocess.exit(${exitCode});\n`);
+}
+
+test("imprnt <module> runs plugins/<module>/<module>.js with the args and passes the exit code through", async () => {
+  const root = tmpRepo();
+  stubModule(root, "cjsmod", "cjsmod.js", 3);
+  const r = await runCli(root, ["cjsmod", "status", "--flag"], { IMPRNT_ROOT: root });
+  expect(r.stdout).toContain("MODULE_cjsmod.js status --flag");
+  expect(r.code).toBe(3);
+});
+
+test("imprnt <module> runs plugins/<module>/<module>.mjs when the plugin ships ESM", async () => {
+  const root = tmpRepo();
+  stubModule(root, "esmmod", "esmmod.mjs", 0);
+  const r = await runCli(root, ["esmmod", "status"], { IMPRNT_ROOT: root });
+  expect(r.stdout).toContain("MODULE_esmmod.mjs status");
+  expect(r.stdout).not.toContain("engine (same subcommands under"); // the usage text never printed
+  expect(r.code).toBe(0);
+});
+
+test("imprnt <module> with both .js and .mjs runs the .js once and says so on stderr", async () => {
+  const root = tmpRepo();
+  stubModule(root, "bothmod", "bothmod.js", 0);
+  stubModule(root, "bothmod", "bothmod.mjs", 1);
+  const r = await runCli(root, ["bothmod", "go"], { IMPRNT_ROOT: root });
+  expect(r.stdout).toContain("MODULE_bothmod.js go");
+  expect(r.stdout).not.toContain("MODULE_bothmod.mjs");
+  expect(r.stderr).toContain("plugins/bothmod/bothmod.js wins over bothmod.mjs (both present)");
+  expect(r.code).toBe(0);
+});
+
+test("imprnt <module> with neither .js nor .mjs falls through to the usage text and exits 1", async () => {
+  const root = tmpRepo(); // plugins/demo carries only demo.ts, never a built script
+  const r = await runCli(root, ["demo", "status"], { IMPRNT_ROOT: root });
+  expect(r.stdout).not.toContain("MODULE_");
+  expect(r.stdout).toContain("engine (same subcommands under");
+  expect(r.code).toBe(1);
+});

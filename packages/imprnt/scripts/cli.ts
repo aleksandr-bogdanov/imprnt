@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { openNeedsReview } from "./lib/resolve.ts";
-import { listPluginDirs, isEnabled, addPlugin, rmPlugin, specError } from "./lib/plugins.ts";
+import { listPluginDirs, isEnabled, addPlugin, rmPlugin, specError, pluginScript } from "./lib/plugins.ts";
 import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install.ts";
 import { addGlobalModule, rmGlobalModule, listGlobalModules, installedGlobalDirs } from "./lib/global.ts";
 import { projectRoot } from "./lib/roots.ts";
@@ -609,15 +609,17 @@ switch (cmd) {
     const isHelp = cmd === "help" || cmd === "--help" || cmd === "-h";
     const bare = cmd === undefined;
 
-    // Generic MODULE command: `imprnt <module> <args>` runs plugins/<module>/<module>.js by
+    // Generic MODULE command: `imprnt <module> <args>` runs plugins/<module>/<module>.js (or .mjs) by
     // convention — so a module's commands are clean (`imprnt session-host login`, `imprnt
     // kleinanzeigen sync`) instead of `node plugins/.../x.js`. Zero per-module knowledge: discovered
-    // by filename, the same convention `check --all` uses to glob check.js. A built-in subcommand
+    // by filename, the same convention `check --all` uses to glob check.js or check.mjs. A built-in subcommand
     // always wins (this is the default arm, reached only when cmd matched no case above).
     if (cmd && !isHelp && !bare && !cmd.startsWith("-")) {
-      const modScript = join(pluginRoot(), "plugins", cmd, `${cmd}.js`);
-      if (existsSync(modScript)) {
-        const proc = spawnSync(process.execPath, [modScript, ...rest], { stdio: "inherit" });
+      // <module>.js, or <module>.mjs for a plugin shipping ESM. Both present runs the .js and says so.
+      const mod = pluginScript(join(pluginRoot(), "plugins", cmd), cmd);
+      if (mod) {
+        if (mod.shadowed) console.error(`imprnt: plugins/${cmd}/${basename(mod.path)} wins over ${basename(mod.shadowed)} (both present)`);
+        const proc = spawnSync(process.execPath, [mod.path, ...rest], { stdio: "inherit" });
         process.exit(proc.status ?? 1);
       }
     }
@@ -652,7 +654,7 @@ engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt agent [claude|gemini]             show or set the per-machine default agent backend for imp
   imprnt yolo [on|off]                      show or set the per-machine skip-permissions default for imp
   imprnt model [alias|id|off]               show or set the per-machine default model for the current default agent (gemini aliases: pro, flash, pro25, lite, ...)
-  imprnt check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.js
+  imprnt check [--all] [--vault D]         integrity (orphan links, disconnected notes, uncovered snapshots) + regenerate index.md; --all also runs each plugins/*/check.js or check.mjs
   imprnt ingest --apply <file> [--vault D] file a pre-enriched staged note from a plugin into the vault (snapshot + resolve); --apply-all globs plugins/*/proposed/
   imprnt hot [--vault D]                   needs-review + the session primer
   imprnt plugin list                       show installed plugins (on/off) + official ones available to add

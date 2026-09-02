@@ -567,11 +567,23 @@ function makeRepoCopy(): string {
 }
 
 // Drop a plugins/<name>/check.js (plain JS, the built artifact the aggregator globs + runs with
-// process.execPath) that prints `msg` to stdout and exits with `exitCode`.
-function stubPlugin(copy: string, name: string, msg: string, exitCode: number): void {
+// process.execPath) that prints `msg` to stdout and exits with `exitCode`. `file` swaps the
+// filename for the ESM variant the aggregator also accepts (check.mjs).
+function stubPlugin(copy: string, name: string, msg: string, exitCode: number, file = "check.js"): void {
   const d = join(copy, "plugins", name);
   mkdirSync(d, { recursive: true });
-  writeFileSync(join(d, "check.js"), `console.log(${JSON.stringify(msg)});\nprocess.exit(${exitCode});\n`);
+  writeFileSync(join(d, file), `console.log(${JSON.stringify(msg)});\nprocess.exit(${exitCode});\n`);
+}
+
+// The spawn every --all test shares: the copied cli.ts against a clean temp vault, with the host
+// auto-memory sweep pinned OFF (a path that never exists) so no test reads the machine's real
+// ~/.claude/projects state.
+function runAll(copy: string): { out: string; code: number | null } {
+  const vault = makeCleanVault();
+  const proc = Bun.spawnSync(["bun", join(copy, "scripts", "cli.ts"), "check", "--all", "--vault", vault], {
+    env: { ...process.env, IMPRNT_ROOT: copy, IMPRNT_HOST_MEMORY_DIR: join(vault, ".no-host-memory") },
+  });
+  return { out: proc.stdout.toString() + proc.stderr.toString(), code: proc.exitCode };
 }
 
 // A clean temp vault (NOT the real repo vault) for the copied repo's core check to run against.
@@ -644,6 +656,94 @@ test("--all tolerates a broken symlink under plugins/ and still runs the remaini
     expect(out).toContain("plugins/ok/check.js → exit 0");
     expect(out).toContain("all plugin checks passed.");
     expect(proc.exitCode).toBe(0);
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
+});
+
+// --- check.mjs: a plugin shipping ESM is discovered by the same glob --------------
+// The contract names check.js. A plugin built as ESM ships check.mjs, and the aggregator must
+// find it the same way: run with node, exit code only, stdout verbatim.
+
+test("--all discovers and runs plugins/*/check.mjs exactly like check.js", () => {
+  const copy = makeRepoCopy();
+  try {
+    stubPlugin(copy, "esm", "PLUGIN_ESM_OUTPUT", 0, "check.mjs");
+    stubPlugin(copy, "cjs", "PLUGIN_CJS_OUTPUT", 1);
+    const { out, code } = runAll(copy);
+    expect(out).toContain("plugins (2)");
+    expect(out).toContain("PLUGIN_ESM_OUTPUT");
+    expect(out).toContain("plugins/esm/check.mjs → exit 0");
+    expect(out).toContain("PLUGIN_CJS_OUTPUT");
+    expect(out).toContain("plugins/cjs/check.js → exit 1");
+    expect(out).toContain("1 plugin check(s) failed.");
+    expect(code).not.toBe(0);
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
+});
+
+test("--all runs check.mjs failures into the aggregate exit code", () => {
+  const copy = makeRepoCopy();
+  try {
+    stubPlugin(copy, "esm", "PLUGIN_ESM_BOOM", 1, "check.mjs");
+    const { out, code } = runAll(copy);
+    expect(out).toContain("clean.");
+    expect(out).toContain("PLUGIN_ESM_BOOM");
+    expect(out).toContain("plugins/esm/check.mjs → exit 1");
+    expect(code).not.toBe(0);
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
+});
+
+test("--all with both check.js and check.mjs runs the .js once and says so", () => {
+  const copy = makeRepoCopy();
+  try {
+    stubPlugin(copy, "both", "PLUGIN_JS_RAN", 0, "check.js");
+    stubPlugin(copy, "both", "PLUGIN_MJS_RAN", 1, "check.mjs");
+    const { out, code } = runAll(copy);
+    expect(out).toContain("plugins (1)");
+    expect(out).toContain("plugins/both/check.js wins over check.mjs (both present)");
+    expect(out).toContain("PLUGIN_JS_RAN");
+    expect(out).not.toContain("PLUGIN_MJS_RAN");
+    expect(out).toContain("plugins/both/check.js → exit 0");
+    expect(out).toContain("all plugin checks passed.");
+    expect(code).toBe(0);
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
+});
+
+test("--all skips a plugin dir with neither check.js nor check.mjs", () => {
+  const copy = makeRepoCopy();
+  try {
+    const bare = join(copy, "plugins", "bare");
+    mkdirSync(bare, { recursive: true });
+    writeFileSync(join(bare, "agent.md"), "# bare\n");
+    writeFileSync(join(bare, "check.ts"), "process.exit(1);\n"); // source, never the built artifact
+    stubPlugin(copy, "ok", "PLUGIN_OK_OUTPUT", 0);
+    const { out, code } = runAll(copy);
+    expect(out).toContain("plugins (1)");
+    expect(out).not.toContain("plugins/bare");
+    expect(out).toContain("plugins/ok/check.js → exit 0");
+    expect(out).toContain("all plugin checks passed.");
+    expect(code).toBe(0);
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
+});
+
+test("--all with no plugin scripts at all reports none found and exits 0 on a clean core", () => {
+  const copy = makeRepoCopy();
+  try {
+    const bare = join(copy, "plugins", "bare");
+    mkdirSync(bare, { recursive: true });
+    writeFileSync(join(bare, "agent.md"), "# bare\n");
+    const { out, code } = runAll(copy);
+    expect(out).toContain("plugins (0)");
+    expect(out).toContain("(no plugins/*/check.js or check.mjs found)");
+    expect(code).toBe(0);
   } finally {
     rmSync(copy, { recursive: true, force: true });
   }

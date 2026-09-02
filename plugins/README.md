@@ -49,7 +49,7 @@ If adding a plugin forces you to touch the core, the plugin is wrong — not the
                 └────────┬─────────────────────────────────────┘
                          │ imprnt ingest --apply   (you approve)
                          ▼
-                ┌──────────────┐    imprnt check --all globs plugins/*/check.js,
+                ┌──────────────┐    imprnt check --all globs plugins/*/check.js (or .mjs),
                 │    vault/    │◄── reads EXIT CODES only - core never imports,
                 └──────────────┘    never names, never parses a plugin
 ```
@@ -219,7 +219,7 @@ discover plugins by **filename/dir convention**, never by importing a plugin and
 naming a specific one:
 
 - **`imprnt check --all`** runs the core check, then globs `plugins/*/check.js` (the plugin's built
-  artifact), runs each with `node` as a subprocess, and **reads the exit code only** (0 = sound,
+  artifact, or `check.mjs`, with `.js` winning when both exist), runs each with `node` as a subprocess, and **reads the exit code only** (0 = sound,
   non-zero = something's off), forwarding the plugin's own stdout verbatim. It never parses or
   interprets what a plugin says. The principled fence (what makes "one helper" safe rather than
   arbitrary): **the core may provide read-only *aggregation* helpers, never write/orchestration
@@ -235,7 +235,7 @@ naming a specific one:
   `imp-settings.json` (see Harness plugins above). Read-only, convention-discovered, and it
   qualifies under the same fence: aggregation, never write or orchestration.
 - **The module-command dispatcher** - `imprnt <module> <command>` runs
-  `plugins/<module>/<module>.js` by the same filename convention (`imprnt session-host login`,
+  `plugins/<module>/<module>.js` or `<module>.mjs` by the same filename convention (`imprnt session-host login`,
   `imprnt kleinanzeigen sync`), stdio inherited, exit code passed through. Zero per-module
   knowledge in core, and a built-in subcommand always wins. The core executes the plugin's own
   command verbatim and never parses or interprets what it does.

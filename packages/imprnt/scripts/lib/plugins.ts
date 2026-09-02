@@ -271,3 +271,16 @@ export function rmPlugin(root: string, spec: string): number {
   if (removed) writeFileSync(p, kept.join(lineEnding(content)));
   return removed;
 }
+
+// The built script a convention-based contact point runs: `<dir>/<base>.js`, or `<dir>/<base>.mjs`
+// when a plugin ships ESM under that extension. Both `check --all` (base "check") and the module
+// dispatcher (base = the module name) resolve through here, so the two never disagree. When both
+// files exist the `.js` wins, and the caller announces that so a stale twin is not run silently.
+// Returns null when neither exists, which every caller treats as "not a plugin script, skip".
+export function pluginScript(dir: string, base: string): { path: string; shadowed?: string } | null {
+  const js = join(dir, `${base}.js`);
+  const mjs = join(dir, `${base}.mjs`);
+  if (existsSync(js)) return existsSync(mjs) ? { path: js, shadowed: mjs } : { path: js };
+  if (existsSync(mjs)) return { path: mjs };
+  return null;
+}
