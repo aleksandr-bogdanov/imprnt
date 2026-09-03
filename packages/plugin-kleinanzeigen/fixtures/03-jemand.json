@@ -1,9 +1,0 @@
-{
-  "conv": "jemand",
-  "listing": "9000000001",
-  "counterpart": "jemand",
-  "synthetic": true,
-  "messages": [
-    { "from": "buyer", "at": "2026-06-12T08:44:00Z", "body": "Hallo Welche Artikelnummer hat das Gerät ? Vg" }
-  ]
-}

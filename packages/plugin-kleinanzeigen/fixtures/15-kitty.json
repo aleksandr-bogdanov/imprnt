@@ -1,9 +1,0 @@
-{
-  "conv": "kitty",
-  "listing": "9000000002",
-  "counterpart": "Kitty",
-  "synthetic": true,
-  "messages": [
-    { "from": "buyer", "at": "2026-06-12T12:30:00Z", "body": "Hallo Robin, ich habe Interesse an dem Lautsprecher. Wohne ganz in der Nähe und könnte vorbeikommen." }
-  ]
-}

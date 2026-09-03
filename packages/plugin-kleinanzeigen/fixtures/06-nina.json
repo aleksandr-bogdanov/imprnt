@@ -1,9 +1,0 @@
-{
-  "conv": "nina",
-  "listing": "9000000001",
-  "counterpart": "Nina",
-  "synthetic": true,
-  "messages": [
-    { "from": "buyer", "at": "2026-06-12T11:07:00Z", "body": "Hallo, hat es die Artikelnummer 20002910?" }
-  ]
-}

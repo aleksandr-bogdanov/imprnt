@@ -1,4 +1,0 @@
-# Local, private, never committed: the dedicated browser profile (holds your real sessions) and the
-# action log. The credential surface stays on your machine.
-profile/
-audit.log

@@ -610,8 +610,8 @@ switch (cmd) {
     const bare = cmd === undefined;
 
     // Generic MODULE command: `imprnt <module> <args>` runs plugins/<module>/<module>.js (or .mjs) by
-    // convention — so a module's commands are clean (`imprnt session-host login`, `imprnt
-    // kleinanzeigen sync`) instead of `node plugins/.../x.js`. Zero per-module knowledge: discovered
+    // convention — so a module's commands are clean (`imprnt kopeika sync`) instead of
+    // `node plugins/.../x.js`. Zero per-module knowledge: discovered
     // by filename, the same convention `check --all` uses to glob check.js or check.mjs. A built-in subcommand
     // always wins (this is the default arm, reached only when cmd matched no case above).
     if (cmd && !isHelp && !bare && !cmd.startsWith("-")) {
@@ -664,7 +664,7 @@ engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt global rm <name> [--purge]        disable a global module; --purge deletes the global copy
   imprnt global list                       show globally-enabled modules
   imprnt vault list|archive|restore        the vault as its own object — outlives any agent
-  imprnt <module> <command> [...]          run an installed module's command (e.g. \`imprnt session-host login\`, \`imprnt kleinanzeigen sync\`) — no \`node\` paths
+  imprnt <module> <command> [...]          run an installed module's command (e.g. \`imprnt kopeika sync\`) — no \`node\` paths
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
 the vault is plain markdown. an agent greps it directly — no MCP, no DB.`);

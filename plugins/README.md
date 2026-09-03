@@ -235,8 +235,8 @@ naming a specific one:
   `imp-settings.json` (see Harness plugins above). Read-only, convention-discovered, and it
   qualifies under the same fence: aggregation, never write or orchestration.
 - **The module-command dispatcher** - `imprnt <module> <command>` runs
-  `plugins/<module>/<module>.js` or `<module>.mjs` by the same filename convention (`imprnt session-host login`,
-  `imprnt kleinanzeigen sync`), stdio inherited, exit code passed through. Zero per-module
+  `plugins/<module>/<module>.js` or `<module>.mjs` by the same filename convention (`imprnt kopeika sync`),
+  stdio inherited, exit code passed through. Zero per-module
   knowledge in core, and a built-in subcommand always wins. The core executes the plugin's own
   command verbatim and never parses or interprets what it does.
 
@@ -244,7 +244,7 @@ naming a specific one:
 > route traffic — imprnt has no daemons and no orchestrator (rule 6), so "is it alive?" has
 > no meaning here. The only real health question is "is this plugin's data *sound*?" — which
 > is exactly what `check` already answers. A plugin's `check.js` can *say* what's wrong in
-> its stdout ("mirror is 3 days stale — run `kleinanzeigen sync`"); the core just forwards that
+> its stdout ("mirror is 3 days stale — run `<module> sync`"); the core just forwards that
 > text. Rich message from the plugin, dumb pass/fail read by the core.
 
 ## The MCP boundary
@@ -266,9 +266,11 @@ that reads the cache, never the wire.
 
 "Share nothing" was the original rule: no plugin reads another plugin's folder, imports its code,
 or depends on it. One real need bends it — a **capability** one module *provides* and another
-*consumes*. The first instance is the **session-host**: a warm browser holding your logged-in
-sessions, brokering a fresh auth token over a localhost socket so the kleinanzeigen watcher (and
-later, mail) can reach a site without each one reverse-engineering that site's login.
+*consumes*. The shape that motivated it: a warm browser holding your logged-in sessions,
+brokering a fresh auth token over a localhost socket so a watcher (a marketplace inbox, later
+mail) can reach a site without each one reverse-engineering that site's login. The pair that
+proved it lived in this gallery until 2026-09-03 and is private now (git history is the archive).
+The contract it proved stays.
 
 The relaxation is bounded so it can't become the old core-bloat:
 
@@ -302,7 +304,7 @@ clean, non-automation-flagged browser you log into **by hand once**, then a read
 warm, already-authenticated session. Never copy a profile (that both looks like theft to the
 fingerprinter and is its own credential-handling risk). The human does the one irreducible step (the
 password); the machine only reads the token the site is already refreshing. That's why the
-session-host is user-started, localhost-bound, and never resident — "explicit beats automatic"
+such a module is user-started, localhost-bound, and never resident — "explicit beats automatic"
 applied to credentials. Any future credential-holding module follows the same shape.
 
 ## The plugins this contract unblocks
@@ -367,37 +369,6 @@ preview - during it, only Anthropic-allowlisted channels can register). Bot toke
 must be awake, and bot chats are not end-to-end encrypted - the vault stays home, the
 conversation transits Telegram.
 
-### kleinanzeigen — marketplace inbox watcher ✅ built (the first watcher-class plugin)
-
-A watcher for the Kleinanzeigen message box, and the first instance of the **watcher class** (mail
-triage is next): code reads a hostile external inbox, the model only drafts the residue, the send
-button stays human. `sync` mirrors conversations (the one wire edge, offline against `fixtures/`),
-`rate` classifies each with pure regex + arithmetic — zero LLM — into scam / offer / faq / pickup /
-interest / odd on the sell side (a non-scam message in a thread where you are the buyer rates
-`reply`: surface it, a human answers), drafting FAQ replies from per-listing `listings/<id>.yaml`
-fact sheets (an empty field
-becomes a `needs_fact`, never a guess). `notify` ships a phone-sized digest via `$WATCHER_NOTIFY_CMD`
-(dumb plumbing, no channel coupling). `send` posts ONE reply per explicit approval and refuses a
-scam-rated conversation without `--force`. The scam blocklist names its tells (paypal, name-mismatch,
-instant-full-price, payment-link, external-contact, abroad-story, courier-story) so an attacker-written
-message is classified, never obeyed. Live endpoints are gated behind `endpoints.json` (written by
-`probe`, run once logged in); until then it runs fully on fixtures. Its `check.js` flags mirror
-staleness and missing fact sheets via `imprnt check --all`.
-
-### session-host — the authed-session capability ✅ built (the first capability module)
-
-A warm, user-started browser that holds the user's logged-in sessions (separate from their daily
-browser) and provides the **authed-session** capability: consumers ask its localhost broker
-(`/session/token?site=`) for a fresh login token, read from a live session the site keeps refreshing
-itself. It's how the kleinanzeigen watcher gets reliable auth without per-site token reverse-
-engineering, and how mail/channels will. `serve` runs the warm Playwright (system Chrome, no download)
-context + broker; `login <url>` is the one-time manual sign-in; `status` shows enrollment. The first
-module that PROVIDES a capability others CONSUME — proving the contract evolution (drop "share nothing";
-modules declare provides/consumes; removing a provider degrades a consumer gracefully, never breaks it:
-the watcher with no host falls back to a direct browser read). The litmus, against the pitfalls PAI showed: you start
-it, you can kill it, localhost-only, deterministic-driven, auto-injects nothing, every token handout
-audited. `playwright-core` is its one dependency, fenced behind the broker. `profile/` + `audit.log`
-gitignored.
 
 ### character — your digital people ✅ shipped cast (Wingman, Doc, Caveman)
 

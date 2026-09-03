@@ -1,9 +1,0 @@
-{
-  "conv": "patrick",
-  "listing": "9000000001",
-  "counterpart": "Patrick",
-  "synthetic": true,
-  "messages": [
-    { "from": "buyer", "at": "2026-06-12T19:14:00Z", "body": "Hallo Robin, ist es möglich heute noch abzuholen? Grüße" }
-  ]
-}

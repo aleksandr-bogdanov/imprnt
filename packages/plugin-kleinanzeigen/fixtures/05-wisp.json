@@ -1,9 +1,0 @@
-{
-  "conv": "wisp",
-  "listing": "9000000001",
-  "counterpart": "WiSp",
-  "synthetic": true,
-  "messages": [
-    { "from": "buyer", "at": "2026-06-12T09:54:00Z", "body": "Hallo. Ist es die 2000 2910?" }
-  ]
-}
