@@ -29,28 +29,9 @@
       "name": "imprnt-plugin-character",
       "version": "0.1.0",
     },
-    "packages/plugin-kleinanzeigen": {
-      "name": "imprnt-plugin-kleinanzeigen",
-      "version": "0.1.0",
-      "devDependencies": {
-        "@types/bun": "^1.3.14",
-        "typescript": "^5.7.2",
-      },
-    },
     "packages/plugin-kopeika": {
       "name": "imprnt-plugin-kopeika",
       "version": "0.1.0",
-      "devDependencies": {
-        "@types/bun": "^1.3.14",
-        "typescript": "^5.7.2",
-      },
-    },
-    "packages/plugin-session-host": {
-      "name": "imprnt-plugin-session-host",
-      "version": "0.1.0",
-      "dependencies": {
-        "playwright-core": "^1.49.0",
-      },
       "devDependencies": {
         "@types/bun": "^1.3.14",
         "typescript": "^5.7.2",
@@ -102,19 +83,13 @@
 
     "imprnt-plugin-character": ["imprnt-plugin-character@workspace:packages/plugin-character"],
 
-    "imprnt-plugin-kleinanzeigen": ["imprnt-plugin-kleinanzeigen@workspace:packages/plugin-kleinanzeigen"],
-
     "imprnt-plugin-kopeika": ["imprnt-plugin-kopeika@workspace:packages/plugin-kopeika"],
-
-    "imprnt-plugin-session-host": ["imprnt-plugin-session-host@workspace:packages/plugin-session-host"],
 
     "imprnt-plugin-statusline": ["imprnt-plugin-statusline@workspace:packages/plugin-statusline"],
 
     "imprnt-plugin-telegram": ["imprnt-plugin-telegram@workspace:packages/plugin-telegram"],
 
     "imprnt-plugin-timemachine": ["imprnt-plugin-timemachine@workspace:packages/plugin-timemachine"],
-
-    "playwright-core": ["playwright-core@1.60.0", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA=="],
 
     "turbo": ["turbo@2.9.16", "", { "optionalDependencies": { "@turbo/darwin-64": "2.9.16", "@turbo/darwin-arm64": "2.9.16", "@turbo/linux-64": "2.9.16", "@turbo/linux-arm64": "2.9.16", "@turbo/windows-64": "2.9.16", "@turbo/windows-arm64": "2.9.16" }, "bin": { "turbo": "bin/turbo" } }, "sha512-NqgRQy6j6dPYcdSdv0q1g9QsZg7SWg87RERM8otw/1AtKU2yTFVClOM7cbwKzOonZr/Ek1blTBucw64L9H0Bwg=="],
 

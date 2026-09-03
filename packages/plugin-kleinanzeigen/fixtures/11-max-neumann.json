@@ -1,9 +1,0 @@
-{
-  "conv": "max-neumann",
-  "listing": "9000000001",
-  "counterpart": "Max Neumann",
-  "synthetic": true,
-  "messages": [
-    { "from": "buyer", "at": "2026-06-12T10:53:00Z", "body": "Hey, bin an dem Lautsprecher interessiert! Wenn du Zeit hast kann ich ihn gleich abholen." }
-  ]
-}

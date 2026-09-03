@@ -1,9 +1,0 @@
-{
-  "conv": "pavel",
-  "listing": "9000000001",
-  "counterpart": "Pavel",
-  "synthetic": true,
-  "messages": [
-    { "from": "buyer", "at": "2026-06-12T16:16:00Z", "body": "Hallo Robin, wie alt ist das Gerät, beziehungsweise welche Software ist installiert? Gruß" }
-  ]
-}
