@@ -268,10 +268,9 @@ that reads the cache, never the wire.
 or depends on it. One real need bends it — a **capability** one module *provides* and another
 *consumes*. The shape that motivated it: a warm browser holding your logged-in sessions,
 brokering a fresh auth token over a localhost socket so a watcher (a marketplace inbox, later
-mail) can reach a site without each one reverse-engineering that site's login. That pair shipped
-here as `session-host` and `kleinanzeigen`, and both left the gallery on 2026-09-03: the watchers
-are private and live in their owner's vault now (git history is the archive). The contract they
-proved stays.
+mail) can reach a site without each one reverse-engineering that site's login. The pair that
+proved it lived in this gallery until 2026-09-03 and is private now (git history is the archive).
+The contract it proved stays.
 
 The relaxation is bounded so it can't become the old core-bloat:
 
