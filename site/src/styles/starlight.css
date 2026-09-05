@@ -86,6 +86,16 @@
   border-bottom: 1px solid var(--sl-color-hairline-shade);
 }
 
+/* terminal code blocks: a flat chrome band with the title at the left, the
+   same shape as the landing's transcript panel. No traffic-light dots. */
+.expressive-code .frame.is-terminal .header {
+  justify-content: flex-start;
+  padding-inline: var(--ec-uiPadInl);
+}
+.expressive-code .frame.is-terminal .header::before {
+  display: none;
+}
+
 /* inline code chips: mono is correct (code), neutral surface + accent text */
 .sl-markdown-content :not(pre) > code {
   background: var(--sl-color-bg-inline-code);

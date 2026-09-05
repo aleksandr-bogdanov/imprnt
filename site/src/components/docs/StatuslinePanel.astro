@@ -6,7 +6,8 @@
  * segments carry the real alarm-ramp color (green below 60, amber past 60, red
  * past 85) so the reader sees the behavior the prose describes. All example
  * values are verbatim from the source panel: this is data, the card only colors
- * it. No borders, theme-token surface for the page, fixed dark terminal inside.
+ * it. No borders, a flat chrome band with a title and no dots, and the fixed
+ * dark inside is the site's warm dark in both themes.
  */
 type Seg = { t: string; ramp?: string; calm?: boolean; gauge?: boolean; hook?: string };
 type Row = { label: string; segs: Seg[] };
@@ -47,7 +48,6 @@ const ROWS: Row[] = [
 
 <div class="sl-panel" role="img" aria-label="Example imp status panel, four rows: model, cost, context, limits.">
   <div class="sl-chrome">
-    <span class="sl-dot"></span><span class="sl-dot"></span><span class="sl-dot"></span>
     <span class="sl-title">imp session</span>
   </div>
   <div class="sl-rows">
@@ -73,8 +73,7 @@ const ROWS: Row[] = [
   .sl-panel {
     margin: 1.4rem 0;
     border-radius: 14px;
-    background: #11131a;
-    box-shadow: 0 1px 3px color-mix(in oklab, #000 30%, transparent);
+    background: #141310;
   }
   /* No overflow:hidden on the panel, so a row can never be silently clipped.
      The chrome rounds its own top corners and the rows round the bottom. */
@@ -83,22 +82,15 @@ const ROWS: Row[] = [
     align-items: center;
     gap: 0.4rem;
     padding: 0.5rem 0.85rem;
-    background: #181b24;
+    background: #1c1a15;
     border-top-left-radius: 14px;
     border-top-right-radius: 14px;
   }
-  .sl-dot {
-    width: 0.62rem;
-    height: 0.62rem;
-    border-radius: 999px;
-    background: #3a3f4d;
-  }
   .sl-title {
-    margin-left: 0.4rem;
     font-family: var(--sl-font);
     font-size: 0.7rem;
     letter-spacing: 0.08em;
-    color: #6b7180;
+    color: #a3a094;
   }
   .sl-rows {
     padding: 0.55rem 1rem 0.95rem;
@@ -118,19 +110,19 @@ const ROWS: Row[] = [
   }
   .sl-label {
     flex: 0 0 3.4rem;
-    color: #6b7180;
+    color: #a3a094;
     text-align: left;
   }
   .sl-segs {
     flex: 1 1 auto;
     min-width: 0;
-    color: #c3c8d4;
+    color: #d3d0c6;
     overflow-wrap: anywhere;
   }
   /* The dot lives INSIDE the segment it precedes, so when a row wraps the
      separator travels with its segment and never dangles at end of line. */
   .sl-sep {
-    color: #454b5a;
+    color: #4a473f;
     margin: 0 0.35rem 0 0.1rem;
   }
   /* inline-block makes each segment an atomic box: the browser gets a wrap
