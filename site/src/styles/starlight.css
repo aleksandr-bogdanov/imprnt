@@ -68,6 +68,12 @@
   --sl-color-text-accent: var(--brand-accent-dark);
 }
 
+/* Golos ships upright only. Without this the browser skews a fake oblique
+   wherever italic appears, the same defect class as synthetic bold. */
+body {
+  font-synthesis-style: none;
+}
+
 /* headings + the wordmark use the one grotesk (no separate display face) */
 .sl-markdown-content h1,
 .sl-markdown-content h2,
