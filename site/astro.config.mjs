@@ -43,6 +43,8 @@ export default defineConfig({
       components: {
         TableOfContents: "./src/components/overrides/TableOfContents.astro",
         SiteTitle: "./src/components/overrides/SiteTitle.astro",
+        ThemeProvider: "./src/components/overrides/ThemeProvider.astro",
+        ThemeSelect: "./src/components/overrides/ThemeSelect.astro",
       },
       social: [{ icon: "github", label: "GitHub", href: REPO }],
       sidebar: [

@@ -46,6 +46,7 @@ const ogImage = Astro.site ? new URL("/og.png", Astro.site).href : "/og.png";
     <!-- resolve the theme before paint (no flash). Shares Starlight's
          localStorage key so the docs toggle and the landing toggle stay in sync.
          No stored choice falls back to LIGHT (paper), the brand's default look.
+         An explicit "auto" pick on the docs is stored as "" and follows the OS.
          The theme-color meta follows, so mobile browser chrome matches the page. -->
     <script is:inline>
       (() => {
@@ -53,7 +54,7 @@ const ogImage = Astro.site ? new URL("/og.png", Astro.site).href : "/og.png";
         const theme =
           stored === "light" || stored === "dark"
             ? stored
-            : stored === "auto"
+            : stored === ""
               ? window.matchMedia("(prefers-color-scheme: dark)").matches
                 ? "dark"
                 : "light"
