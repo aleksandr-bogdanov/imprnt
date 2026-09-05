@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The imprnt website. A static Astro site, deployed to Cloudflare Pages.",
+  "description": "The imprnt website. A static Astro site, built with Bun and served by Caddy.",
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",

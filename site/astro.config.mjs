@@ -98,7 +98,7 @@ export default defineConfig({
     mdx(),
     sitemap(),
   ],
-  // The brand pass runs on every Markdown doc: gradient "imprnt", tool-name chips.
+  // The brand pass runs on every Markdown doc: the bold "imprnt" word, tool-name chips.
   markdown: {
     rehypePlugins: [rehypeBrand],
   },
