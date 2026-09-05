@@ -180,7 +180,7 @@ export default function WhyRail() {
                   {i + 1}
                 </span>
                 <span style={{ paddingTop: 1, minWidth: 0 }}>
-                  <span style={{ display: "block", fontSize: 13.5, fontWeight: on ? 700 : 500, color: on ? C.accent : C.onText, lineHeight: 1.3 }}>
+                  <span style={{ display: "block", fontSize: 13.5, fontWeight: on ? 700 : 500, color: C.onText, lineHeight: 1.3 }}>
                     {b.label}
                   </span>
                   {on && (

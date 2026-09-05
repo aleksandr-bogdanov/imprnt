@@ -96,11 +96,13 @@
   display: none;
 }
 
-/* inline code chips: mono is correct (code), neutral surface + accent text */
+/* inline code chips: mono is correct (code), neutral surface, ink text. The
+   accent on paper sits under 3:1 at chip sizes, and the chip surface already
+   marks the code. */
 .sl-markdown-content :not(pre) > code {
   background: var(--sl-color-bg-inline-code);
   border: 1px solid var(--sl-color-hairline-shade);
-  color: var(--sl-color-text-accent);
+  color: var(--sl-color-white);
 }
 
 /* the brand word (injected by rehype-brand): weight only, no color. The accent
@@ -118,10 +120,11 @@
   font-weight: 500;
 }
 
-/* asides: a filled surface with the one accent on the title/icon, and NO
-   left accent-rail. The rail is the #1 AI tell, and Starlight's default
-   note=blue / tip=purple are off-palette. All aside types unify to the one
-   accent (this docs set uses note + tip, both informational). */
+/* asides: a filled surface tinted with the one accent, the icon in the accent,
+   the title in ink (the accent fails 4.5:1 at title size), and NO left
+   accent-rail. The rail is the #1 AI tell, and Starlight's default note=blue /
+   tip=purple are off-palette. All aside types unify to the one accent (this
+   docs set uses note + tip, both informational). */
 .sl-markdown-content .starlight-aside {
   border: 0;
   border-inline-start: 0;
@@ -129,7 +132,9 @@
   padding: 1rem 1.25rem;
   background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg-sidebar));
 }
-.sl-markdown-content .starlight-aside__title,
+.sl-markdown-content .starlight-aside__title {
+  color: var(--sl-color-white);
+}
 .sl-markdown-content .starlight-aside__icon {
   color: var(--sl-color-text-accent);
 }

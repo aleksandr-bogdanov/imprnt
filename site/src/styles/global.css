@@ -314,7 +314,9 @@
     padding-inline: clamp(1.5rem, 5vw, 4.5rem);
   }
 
-  /* eyebrow: a label, so SANS (never mono), tracked caps, in the accent */
+  /* eyebrow: a label, so SANS (never mono), tracked caps, at the chrome step.
+     The accent sits at 3:1 on paper at this size, and a label is not one of
+     the accent's jobs. The rule before it takes the same colour. */
   .eyebrow {
     display: inline-flex;
     align-items: center;
@@ -324,7 +326,7 @@
     font-weight: 600;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: var(--color-accent);
+    color: var(--color-ink-chrome);
   }
   /* the rule belongs to the FIRST line. Centering it against the whole flex
      line leaves it floating beside line two once the label wraps, so pin it to
@@ -337,7 +339,7 @@
     height: 1px;
     align-self: flex-start;
     margin-top: 0.79em;
-    background: var(--color-accent);
+    background: currentColor;
   }
 
   /* buttons: labels vertically centred. Flex-centre the line box, and give it a

@@ -8,7 +8,8 @@
  * expands its detail inline instead. Folder TYPES are categories plus the
  * shipped defaults, matching the vault contract, so this never goes stale.
  * Scoped CSS, theme-aware via Starlight --sl tokens (two extra hues carry the
- * life-areas and forms groups, with a light-theme override). Root carries
+ * life-areas and forms groups on the dots and row tints only, never on text,
+ * with a light-theme override). Root carries
  * `not-content` so Starlight's markdown margins keep out. Scroll reveal is
  * gated behind prefers-reduced-motion and only arms once JS is running.
  */
@@ -304,10 +305,7 @@ const DEFAULT = "people";
     letter-spacing: 0.09em;
     text-transform: uppercase;
   }
-  .g-ctrl .glabel { color: var(--c-ctrl); }
-  .g-ent .glabel { color: var(--c-ent); }
-  .g-dom .glabel { color: var(--c-dom); }
-  .g-form .glabel { color: var(--c-form); }
+  .glabel { color: var(--sl-color-gray-3); }
   .gwhy {
     font-size: 0.72rem;
     line-height: 1.35;
@@ -369,17 +367,14 @@ const DEFAULT = "people";
     padding: 0 0.4rem;
     border: 1px dashed color-mix(in oklab, var(--c-dom) 50%, transparent);
     border-radius: 6px;
-    color: color-mix(in oklab, var(--c-dom) 80%, var(--sl-color-gray-1));
+    color: var(--sl-color-gray-1);
     font-weight: 500;
   }
   .g-ent button.on { background: color-mix(in oklab, var(--c-ent) 14%, transparent); }
   .g-dom button.on { background: color-mix(in oklab, var(--c-dom) 14%, transparent); }
   .g-form button.on { background: color-mix(in oklab, var(--c-form) 14%, transparent); }
   .g-ctrl button.on { background: color-mix(in oklab, var(--c-ctrl) 14%, transparent); }
-  .g-ent button.on .nname { color: var(--c-ent); }
-  .g-dom button.on .nname { color: var(--c-dom); }
-  .g-form button.on .nname { color: var(--c-form); }
-  .g-ctrl button.on .nname { color: var(--sl-color-white); }
+  button.on .nname { color: var(--sl-color-white); }
 
   /* mobile expand hint: a plus that turns into a cross */
   .tgl {
@@ -408,10 +403,7 @@ const DEFAULT = "people";
     text-transform: uppercase;
     margin-bottom: 0.45rem;
   }
-  .d-ctrl .kicker { color: var(--c-ctrl); }
-  .d-ent .kicker { color: var(--c-ent); }
-  .d-dom .kicker { color: var(--c-dom); }
-  .d-form .kicker { color: var(--c-form); }
+  .kicker { color: var(--sl-color-gray-3); }
   .dname {
     display: block;
     font-family: var(--sl-font-mono);
