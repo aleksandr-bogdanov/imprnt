@@ -26,7 +26,7 @@ export default defineConfig({
     // doc pages at their own slugs.
     starlight({
       title: "imprnt",
-      description: "A knowledge vault you own and run locally.",
+      description: "Your AI's memory, boring on purpose. Essentially, a folder of markdown files.",
       logo: { src: "./public/favicon.svg", alt: "imprnt" },
       favicon: "/favicon.svg",
       customCss: ["./src/styles/starlight.css"],
@@ -34,6 +34,10 @@ export default defineConfig({
         { tag: "link", attrs: { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32.png" } },
         { tag: "link", attrs: { rel: "icon", type: "image/png", sizes: "16x16", href: "/favicon-16.png" } },
         { tag: "link", attrs: { rel: "apple-touch-icon", href: "/apple-touch-icon.png" } },
+        // the share card: Starlight emits og:title and og:description per page
+        // but no image, so a pasted docs link got a bare card
+        { tag: "meta", attrs: { property: "og:image", content: `${SITE}/og.png` } },
+        { tag: "meta", attrs: { name: "twitter:image", content: `${SITE}/og.png` } },
         // dev-only: the live accent picker (self-gates to localhost too)
         ...(DEV ? [{ tag: "script", attrs: { src: "/accent-picker.js", defer: true } }] : []),
       ],
@@ -43,9 +47,11 @@ export default defineConfig({
       components: {
         TableOfContents: "./src/components/overrides/TableOfContents.astro",
         SiteTitle: "./src/components/overrides/SiteTitle.astro",
+        ThemeProvider: "./src/components/overrides/ThemeProvider.astro",
+        ThemeSelect: "./src/components/overrides/ThemeSelect.astro",
+        Footer: "./src/components/overrides/Footer.astro",
       },
       social: [{ icon: "github", label: "GitHub", href: REPO }],
-      disable404Route: true,
       sidebar: [
         {
           label: "Start here",
@@ -92,7 +98,7 @@ export default defineConfig({
     mdx(),
     sitemap(),
   ],
-  // The brand pass runs on every Markdown doc: gradient "imprnt", tool-name chips.
+  // The brand pass runs on every Markdown doc: the bold "imprnt" word, tool-name chips.
   markdown: {
     rehypePlugins: [rehypeBrand],
   },

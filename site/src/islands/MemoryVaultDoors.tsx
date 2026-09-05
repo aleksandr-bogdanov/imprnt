@@ -12,11 +12,11 @@ import { useEffect, useRef, useState } from "react";
  * always-on piece is the ~200-token pointer parked in the session.
  *
  * Inline styles only (Starlight docs do not load the site's Tailwind), plus one
- * scoped <style> block for the keyframes inline styles cannot express. Theme
- * comes from the data-theme MutationObserver pattern, with hues shared with the
- * plugins-page diagram. Reduced motion: clicks still switch every state, the
- * packets never fly. Categories only (note types, control files), never
- * individual notes, so nothing here goes stale.
+ * scoped <style> block for the keyframes. Every colour is a Starlight token,
+ * so the theme follows data-theme with no script. Filled surfaces, hairlines,
+ * one accent carrying the active state, no borders. Reduced motion: clicks
+ * still switch every state, the packets never fly. Categories only (note
+ * types, control files), never individual notes, so nothing here goes stale.
  */
 
 const MONO = "var(--sl-font-mono, ui-monospace, monospace)";
@@ -51,50 +51,24 @@ const CTLS: { id: DoorId; name: string; sub: string }[] = [
   { id: "context", name: "CLAUDE.md", sub: "the contract: the filing rules" },
 ];
 
-const PALETTE = {
-  dark: {
-    accent: "var(--sl-color-text-accent)",
-    door: { recall: "#54a389", hot: "#c99a3e", context: "#4f86ab" } as Record<DoorId, string>,
-    cardBg: "rgba(28,26,21,0.92)",
-    onText: "#ece9e0",
-    subText: "#c2c0b6",
-    capText: "#cbc9bf",
-    faint: "#8f8d82",
-    line: "rgba(160,157,148,0.38)",
-    barBg: "rgba(236,233,224,0.16)",
-    fileBg: "rgba(236,233,224,0.055)",
-    ring: "rgba(160,157,148,0.26)",
-    badgeText: "#0e2019",
-  },
-  light: {
-    accent: "var(--sl-color-text-accent)",
-    door: { recall: "#3f7d6a", hot: "#b07a1e", context: "#2f6690" } as Record<DoorId, string>,
-    cardBg: "#fbf9f2",
-    onText: "#1b1d1a",
-    subText: "#45483f",
-    capText: "#3a3d35",
-    faint: "#76796d",
-    line: "rgba(120,120,105,0.5)",
-    barBg: "rgba(27,29,26,0.14)",
-    fileBg: "rgba(27,29,26,0.045)",
-    ring: "rgba(120,120,105,0.32)",
-    badgeText: "#fdf9f2",
-  },
+// Starlight tokens. gray-1 and gray-2 are the readable steps, gray-3 is the
+// caption floor (4.5:1 on paper), nothing lighter carries text.
+const T = {
+  accent: "var(--sl-color-text-accent)",
+  accentInk: "var(--brand-accent-ink)",
+  ink: "var(--sl-color-white)",
+  text: "var(--sl-color-gray-1)",
+  sub: "var(--sl-color-gray-2)",
+  cap: "var(--sl-color-gray-3)",
+  bg: "var(--sl-color-bg)",
+  band: "color-mix(in oklab, var(--sl-color-gray-3) 15%, var(--sl-color-bg))",
+  card: "color-mix(in oklab, var(--sl-color-bg) 55%, transparent)",
+  row: "color-mix(in oklab, var(--sl-color-gray-3) 12%, transparent)",
+  bar: "color-mix(in oklab, var(--sl-color-gray-3) 30%, transparent)",
+  line: "color-mix(in oklab, var(--sl-color-gray-2) 32%, transparent)",
+  lit: "color-mix(in oklab, var(--sl-color-text-accent) 24%, var(--sl-color-bg))",
+  tint: "color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg))",
 };
-
-function usePalette() {
-  const [light, setLight] = useState(false);
-  useEffect(() => {
-    const read = () => setLight(document.documentElement.dataset.theme === "light");
-    read();
-    const obs = new MutationObserver(read);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => obs.disconnect();
-  }, []);
-  return light ? PALETTE.light : PALETTE.dark;
-}
-
-type C = ReturnType<typeof usePalette>;
 
 function useNarrow() {
   const [narrow, setNarrow] = useState(false);
@@ -109,16 +83,17 @@ function useNarrow() {
 }
 
 // a monospace inline-command span, matching how the docs write commands
-function cmd(text: string, C: C, color?: string) {
+function cmd(text: string) {
   return (
     <code
       style={{
         fontFamily: MONO,
         fontSize: "0.94em",
         padding: "0.05em 0.32em",
+        border: 0,
         borderRadius: 5,
-        background: `color-mix(in oklab, ${color ?? C.onText} 13%, transparent)`,
-        color: color ?? C.onText,
+        background: T.row,
+        color: T.ink,
         whiteSpace: "nowrap",
       }}
     >
@@ -128,7 +103,7 @@ function cmd(text: string, C: C, color?: string) {
 }
 
 // the request/response packet that travels along a connector stub
-function Dot({ mode, delay, color }: { mode: "go" | "back"; delay: number; color: string }) {
+function Dot({ mode, delay }: { mode: "go" | "back"; delay: number }) {
   return (
     <span
       aria-hidden="true"
@@ -139,8 +114,7 @@ function Dot({ mode, delay, color }: { mode: "go" | "back"; delay: number; color
         width: 7,
         height: 7,
         borderRadius: 9999,
-        background: color,
-        boxShadow: `0 0 8px ${color}`,
+        background: T.accent,
         animation: `${mode === "go" ? "mvdGo" : "mvdBack"} 340ms ${mode === "go" ? "ease-in" : "ease-out"} ${delay}ms both`,
       }}
     />
@@ -148,7 +122,7 @@ function Dot({ mode, delay, color }: { mode: "go" | "back"; delay: number; color
 }
 
 // a short connector line between a card edge and a door
-function Stub({ on, color, C, children }: { on: boolean; color: string; C: C; children?: ReactNode }) {
+function Stub({ on, children }: { on: boolean; children?: ReactNode }) {
   return (
     <span
       aria-hidden="true"
@@ -158,7 +132,7 @@ function Stub({ on, color, C, children }: { on: boolean; color: string; C: C; ch
         height: 2,
         flexShrink: 0,
         borderRadius: 2,
-        background: on ? `color-mix(in oklab, ${color} 60%, transparent)` : C.line,
+        background: on ? T.accent : T.line,
         transition: "background 0.25s ease",
       }}
     >
@@ -188,7 +162,6 @@ function FileGlyph({ color }: { color: string }) {
 }
 
 export default function MemoryVaultDoors() {
-  const C = usePalette();
   const narrow = useNarrow();
   const [active, setActive] = useState<DoorId | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -218,39 +191,25 @@ export default function MemoryVaultDoors() {
   const arrived = active !== null && (phase === "back" || phase === "done");
   const returned = active !== null && phase === "done";
   const door = DOORS.find((d) => d.id === active) ?? null;
-  const doorColor = door ? C.door[door.id] : C.accent;
 
   const caption = (() => {
     if (active && (phase === "go" || phase === "back")) {
       if (active === "recall") return <>searching the vault with BM25...</>;
-      if (active === "hot") return <>reading {cmd("hot.md", C, C.door.hot)}...</>;
+      if (active === "hot") return <>reading {cmd("hot.md")}...</>;
       return <>printing the filing rules...</>;
     }
     if (returned && active === "recall")
-      return (
-        <>
-          {cmd("recall", C, C.door.recall)} ran BM25, plain ranking math, and returned only the best hits. Everything else stayed on disk.
-        </>
-      );
+      return <>{cmd("recall")} ran BM25, plain ranking math, and returned only the best hits. Everything else stayed on disk.</>;
     if (returned && active === "hot")
-      return (
-        <>
-          {cmd("imprnt hot", C, C.door.hot)} returned the short primer in {cmd("hot.md", C, C.door.hot)} plus anything waiting for review.
-        </>
-      );
+      return <>{cmd("imprnt hot")} returned the short primer in {cmd("hot.md")} plus anything waiting for review.</>;
     if (returned && active === "context")
-      return (
-        <>
-          {cmd("imprnt context", C, C.door.context)} returned the full filing rules, run right before the assistant writes a note.
-        </>
-      );
+      return <>{cmd("imprnt context")} returned the full filing rules, run right before the assistant writes a note.</>;
     return <>Nothing crosses on its own. Open a door and watch the one thing it brings back.</>;
   })();
 
   const cardStyle: CSSProperties = {
-    background: C.cardBg,
-    borderRadius: 14,
-    boxShadow: `inset 0 0 0 1px ${C.ring}`,
+    background: T.card,
+    borderRadius: 12,
     padding: narrow ? "0.85rem 0.9rem" : "0.9rem 0.95rem",
     display: "flex",
     flexDirection: "column",
@@ -264,26 +223,36 @@ export default function MemoryVaultDoors() {
     fontWeight: 700,
     letterSpacing: "0.07em",
     textTransform: "uppercase",
-    color: C.onText,
+    color: T.ink,
   };
 
   const subStyle: CSSProperties = {
     fontFamily: SANS,
-    fontSize: 11,
+    fontSize: 11.5,
     lineHeight: 1.4,
-    color: C.faint,
+    color: T.sub,
     marginTop: 2,
+  };
+
+  const labelStyle: CSSProperties = {
+    fontFamily: SANS,
+    fontSize: 10.5,
+    fontWeight: 700,
+    letterSpacing: "0.1em",
+    textTransform: "uppercase",
+    color: T.cap,
   };
 
   return (
     <div
+      className="not-content"
       role="group"
       aria-label="The vault's three on-demand doors"
       style={{
         margin: "1.6rem 0",
         padding: narrow ? "1.15rem 0.9rem 1rem" : "1.5rem 1.4rem 1.15rem",
-        borderRadius: 18,
-        background: `radial-gradient(120% 70% at 50% 0%, color-mix(in oklab, ${C.accent} 8%, transparent), transparent 62%), radial-gradient(140% 60% at 50% 118%, color-mix(in oklab, ${C.accent} 5%, transparent), transparent 70%)`,
+        borderRadius: 16,
+        background: T.band,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -291,18 +260,7 @@ export default function MemoryVaultDoors() {
       }}
     >
       {/* kicker */}
-      <span
-        style={{
-          fontFamily: SANS,
-          fontSize: 10.5,
-          fontWeight: 600,
-          letterSpacing: "0.13em",
-          textTransform: "uppercase",
-          color: C.faint,
-        }}
-      >
-        three doors, all on demand
-      </span>
+      <span style={{ ...labelStyle, fontWeight: 600, letterSpacing: "0.13em" }}>three doors, all on demand</span>
 
       {/* session | doors | vault */}
       <div
@@ -324,14 +282,13 @@ export default function MemoryVaultDoors() {
 
           {/* abstract chat: your line right-aligned, the assistant's replies left */}
           <div aria-hidden="true" style={{ display: "flex", flexDirection: "column", gap: 6, padding: "2px 0" }}>
-            <span style={{ alignSelf: "flex-end", width: "58%", height: 7, borderRadius: 4, background: `color-mix(in oklab, ${C.accent} 42%, transparent)` }} />
-            <span style={{ width: "76%", height: 7, borderRadius: 4, background: C.barBg }} />
-            <span style={{ width: "44%", height: 7, borderRadius: 4, background: C.barBg }} />
+            <span style={{ alignSelf: "flex-end", width: "58%", height: 7, borderRadius: 4, background: T.bar }} />
+            <span style={{ width: "76%", height: 7, borderRadius: 4, background: T.bar }} />
+            <span style={{ width: "44%", height: 7, borderRadius: 4, background: T.bar }} />
           </div>
 
-          {/* what the open door brought back */}
-          {/* flex-grow so the slot centers itself in whatever height the taller
-              vault card hands the session card, instead of leaving a dead band */}
+          {/* what the open door brought back. flex-grow centres the slot in
+              whatever height the taller vault card hands the session card */}
           <div aria-live="polite" style={{ minHeight: "2.9rem", flex: "1 0 auto", display: "flex", flexDirection: "column", justifyContent: "center" }}>
             {returned && door ? (
               <div
@@ -341,28 +298,23 @@ export default function MemoryVaultDoors() {
                   flexDirection: "column",
                   gap: 2,
                   padding: "0.42rem 0.6rem",
-                  borderRadius: 10,
-                  background: `color-mix(in oklab, ${doorColor} 15%, transparent)`,
-                  boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${doorColor} 45%, transparent)`,
+                  borderRadius: 9,
+                  background: T.lit,
                 }}
               >
-                <span style={{ fontFamily: SANS, fontSize: 9, fontWeight: 700, letterSpacing: "0.11em", textTransform: "uppercase", color: doorColor }}>
-                  came back
-                </span>
-                <span style={{ fontFamily: SANS, fontSize: 12, fontWeight: 600, lineHeight: 1.35, color: C.onText }}>
-                  {door.brings}
-                </span>
+                <span style={labelStyle}>came back</span>
+                <span style={{ fontFamily: SANS, fontSize: 12, fontWeight: 600, lineHeight: 1.35, color: T.ink }}>{door.brings}</span>
               </div>
             ) : (
               <div
                 style={{
                   padding: "0.45rem 0.6rem",
-                  borderRadius: 10,
-                  border: `1px dashed ${C.line}`,
+                  borderRadius: 9,
+                  background: T.row,
                   fontFamily: SANS,
-                  fontSize: 11,
+                  fontSize: 11.5,
                   lineHeight: 1.4,
-                  color: C.faint,
+                  color: T.sub,
                 }}
               >
                 nothing from the vault in context
@@ -371,20 +323,18 @@ export default function MemoryVaultDoors() {
           </div>
 
           {/* the only always-on piece */}
-          <div style={{ marginTop: "auto", paddingTop: "0.55rem", borderTop: `1px solid ${C.ring}`, display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-            <span style={{ fontFamily: SANS, fontSize: 9, fontWeight: 700, letterSpacing: "0.11em", textTransform: "uppercase", color: C.faint }}>
-              always loaded
-            </span>
+          <div style={{ marginTop: "auto", paddingTop: "0.55rem", borderTop: `1px solid ${T.line}`, display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+            <span style={labelStyle}>always loaded</span>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
-              <span style={{ fontFamily: SANS, fontSize: 10.5, fontWeight: 500, padding: "0.16rem 0.5rem", borderRadius: 999, background: `color-mix(in oklab, ${C.onText} 10%, transparent)`, color: C.capText }}>
+              <span style={{ fontFamily: SANS, fontSize: 10.5, fontWeight: 500, padding: "0.16rem 0.5rem", borderRadius: 999, background: T.row, color: T.text }}>
                 your behavior plugins
               </span>
-              <span style={{ fontFamily: SANS, fontSize: 10.5, fontWeight: 500, padding: "0.16rem 0.5rem", borderRadius: 999, background: `color-mix(in oklab, ${C.accent} 16%, transparent)`, color: C.onText }}>
+              <span style={{ fontFamily: SANS, fontSize: 10.5, fontWeight: 500, padding: "0.16rem 0.5rem", borderRadius: 999, background: T.tint, color: T.ink }}>
                 the pointer &middot; ~200 tokens
               </span>
             </div>
-            <p style={{ margin: 0, fontFamily: SANS, fontSize: 10.5, lineHeight: 1.45, color: C.faint }}>
-              the pointer: the vault exists, how to search it, run {cmd("imprnt context", C)} before writing
+            <p style={{ margin: 0, fontFamily: SANS, fontSize: 11, lineHeight: 1.45, color: T.sub }}>
+              the pointer: the vault exists, how to search it, run {cmd("imprnt context")} before writing
             </p>
           </div>
         </section>
@@ -400,14 +350,14 @@ export default function MemoryVaultDoors() {
           }}
         >
           {DOORS.map((d) => {
-            const c = C.door[d.id];
             const isActive = active === d.id;
+            const on = isActive && phase !== "idle";
             return (
               <div key={d.id} style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
                 {!narrow && (
-                  <Stub on={isActive && phase !== "idle"} color={c} C={C}>
-                    {isActive && phase === "go" && <Dot key={`gl${run}`} mode="go" delay={0} color={c} />}
-                    {isActive && phase === "back" && <Dot key={`bl${run}`} mode="back" delay={340} color={c} />}
+                  <Stub on={on}>
+                    {isActive && phase === "go" && <Dot key={`gl${run}`} mode="go" delay={0} />}
+                    {isActive && phase === "back" && <Dot key={`bl${run}`} mode="back" delay={340} />}
                   </Stub>
                 )}
                 <button
@@ -422,26 +372,23 @@ export default function MemoryVaultDoors() {
                     gap: 2,
                     width: narrow ? "100%" : "11.5rem",
                     padding: "0.5rem 0.9rem 0.55rem",
-                    borderRadius: "16px 16px 11px 11px",
+                    borderRadius: "14px 14px 10px 10px",
                     border: "none",
                     cursor: "pointer",
-                    background: isActive ? `color-mix(in oklab, ${c} 16%, ${C.cardBg})` : C.cardBg,
-                    boxShadow: isActive
-                      ? `inset 0 0 0 1.5px color-mix(in oklab, ${c} 65%, transparent), 0 6px 22px -12px ${c}`
-                      : `inset 0 0 0 1px ${C.ring}`,
-                    color: C.onText,
+                    background: isActive ? T.lit : T.card,
+                    color: T.ink,
                   }}
                 >
                   <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                    <DoorGlyph color={c} />
+                    <DoorGlyph color={isActive ? T.accent : T.sub} />
                     <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700 }}>{d.cmd}</span>
                   </span>
-                  <span style={{ fontFamily: SANS, fontSize: 10.5, color: C.subText }}>{d.role}</span>
+                  <span style={{ fontFamily: SANS, fontSize: 11, color: T.sub }}>{d.role}</span>
                 </button>
                 {!narrow && (
-                  <Stub on={isActive && phase !== "idle"} color={c} C={C}>
-                    {isActive && phase === "go" && <Dot key={`gr${run}`} mode="go" delay={340} color={c} />}
-                    {isActive && phase === "back" && <Dot key={`br${run}`} mode="back" delay={0} color={c} />}
+                  <Stub on={on}>
+                    {isActive && phase === "go" && <Dot key={`gr${run}`} mode="go" delay={340} />}
+                    {isActive && phase === "back" && <Dot key={`br${run}`} mode="back" delay={0} />}
                   </Stub>
                 )}
               </div>
@@ -468,16 +415,15 @@ export default function MemoryVaultDoors() {
                     alignItems: "center",
                     gap: "0.45rem",
                     padding: "0.34rem 0.55rem",
-                    borderRadius: 9,
-                    background: C.fileBg,
-                    boxShadow: isHit ? `inset 0 0 0 1.5px color-mix(in oklab, ${C.door.recall} 70%, transparent)` : "none",
+                    borderRadius: 8,
+                    background: isHit ? T.lit : T.row,
                     opacity: dimmed ? 0.5 : 1,
-                    transition: "box-shadow 0.25s ease, opacity 0.25s ease",
+                    transition: "background 0.25s ease, opacity 0.25s ease",
                   }}
                 >
-                  <FileGlyph color={C.faint} />
-                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.capText, flexShrink: 0 }}>{f.type}</span>
-                  <span aria-hidden="true" style={{ width: f.bar, maxWidth: "5rem", height: 5, borderRadius: 3, background: C.barBg }} />
+                  <FileGlyph color={T.cap} />
+                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: T.text, flexShrink: 0 }}>{f.type}</span>
+                  <span aria-hidden="true" style={{ width: f.bar, maxWidth: "5rem", height: 5, borderRadius: 3, background: T.bar }} />
                   {isHit && (
                     <span
                       style={{
@@ -486,8 +432,8 @@ export default function MemoryVaultDoors() {
                         height: 15,
                         flexShrink: 0,
                         borderRadius: 9999,
-                        background: C.door.recall,
-                        color: C.badgeText,
+                        background: T.accent,
+                        color: T.accentInk,
                         fontFamily: MONO,
                         fontSize: 9.5,
                         fontWeight: 700,
@@ -504,11 +450,10 @@ export default function MemoryVaultDoors() {
             })}
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.32rem", marginTop: "auto", paddingTop: "0.45rem", borderTop: `1px solid ${C.ring}` }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.32rem", marginTop: "auto", paddingTop: "0.45rem", borderTop: `1px solid ${T.line}` }}>
             {CTLS.map((ctl) => {
               const lit = arrived && active === ctl.id;
               const dimmed = arrived && active !== ctl.id;
-              const cc = C.door[ctl.id];
               return (
                 <div
                   key={ctl.name}
@@ -519,15 +464,14 @@ export default function MemoryVaultDoors() {
                     columnGap: "0.45rem",
                     rowGap: 0,
                     padding: "0.3rem 0.55rem",
-                    borderRadius: 9,
-                    background: lit ? `color-mix(in oklab, ${cc} 14%, transparent)` : C.fileBg,
-                    boxShadow: lit ? `inset 0 0 0 1.5px color-mix(in oklab, ${cc} 60%, transparent)` : "none",
+                    borderRadius: 8,
+                    background: lit ? T.lit : T.row,
                     opacity: dimmed ? 0.55 : 1,
-                    transition: "box-shadow 0.25s ease, opacity 0.25s ease, background 0.25s ease",
+                    transition: "opacity 0.25s ease, background 0.25s ease",
                   }}
                 >
-                  <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: lit ? cc : C.capText }}>{ctl.name}</span>
-                  <span style={{ fontFamily: SANS, fontSize: 10, color: C.faint }}>{ctl.sub}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: T.ink }}>{ctl.name}</span>
+                  <span style={{ fontFamily: SANS, fontSize: 10.5, color: T.sub }}>{ctl.sub}</span>
                 </div>
               );
             })}
@@ -546,7 +490,7 @@ export default function MemoryVaultDoors() {
           fontFamily: SANS,
           fontSize: narrow ? 12 : 12.5,
           lineHeight: 1.5,
-          color: C.subText,
+          color: T.sub,
         }}
       >
         {caption}
@@ -568,9 +512,10 @@ export default function MemoryVaultDoors() {
           to { opacity: 1; transform: none; }
         }
         .mvd-chip { animation: mvdChipIn 260ms ease-out both; }
-        .mvd-door { transition: transform 0.16s ease, box-shadow 0.25s ease, background 0.25s ease; }
+        .mvd-door { transition: transform 0.16s ease, background 0.25s ease; }
         .mvd-door:hover { transform: translateY(-1px); }
         .mvd-door:active { transform: translateY(0); }
+        .mvd-door:focus-visible { outline: 2px solid var(--sl-color-text-accent); outline-offset: 2px; }
         @media (prefers-reduced-motion: reduce) {
           .mvd-door, .mvd-door:hover, .mvd-door:active { transform: none; transition: none; }
           .mvd-chip { animation: none; }

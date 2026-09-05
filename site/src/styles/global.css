@@ -4,7 +4,7 @@
 /* ───────────────────────────────────────────────────────────────────────────
    imprnt design system
    Paper-first. One humanist grotesk (Golos Text) for headings and body, mono
-   (JetBrains Mono) for code and the terminal only. ONE accent = oxblood, doing
+   (JetBrains Mono) for code and the terminal only. ONE accent = teal, doing
    semantic work only (links, the wordmark dot, state), never decoration. Tokens
    live here; Tailwind v4 turns each --color-* into a utility (bg-bg, text-ink,
    text-accent, border-line, ...). Spec: vault design-book imprnt.dev chapter.
@@ -77,8 +77,8 @@
 }
 
 /* ── dark theme ─────────────────────────────────────────────────────────────
-   Warm near-black (#141310), NOT the old cold #0a0b0d. The accent lifts to
-   coral (#cf6257) so it stays legible on near-black. data-theme is set before
+   Warm near-black (#141310). The accent lifts (accent.css, the dark triple)
+   so it stays legible on near-black. data-theme is set before
    paint by the inline script in Layout.astro and kept in sync with the Starlight
    docs toggle (same localStorage key). Paper is the default, so this is the
    override, not the base.
@@ -314,7 +314,9 @@
     padding-inline: clamp(1.5rem, 5vw, 4.5rem);
   }
 
-  /* eyebrow: a label, so SANS (never mono), tracked caps, in the accent */
+  /* eyebrow: a label, so SANS (never mono), tracked caps, at the chrome step.
+     The accent sits at 3:1 on paper at this size, and a label is not one of
+     the accent's jobs. The rule before it takes the same colour. */
   .eyebrow {
     display: inline-flex;
     align-items: center;
@@ -324,7 +326,7 @@
     font-weight: 600;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: var(--color-accent);
+    color: var(--color-ink-chrome);
   }
   /* the rule belongs to the FIRST line. Centering it against the whole flex
      line leaves it floating beside line two once the label wraps, so pin it to
@@ -337,7 +339,7 @@
     height: 1px;
     align-self: flex-start;
     margin-top: 0.79em;
-    background: var(--color-accent);
+    background: currentColor;
   }
 
   /* buttons: labels vertically centred. Flex-centre the line box, and give it a

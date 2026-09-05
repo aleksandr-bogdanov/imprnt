@@ -1,7 +1,7 @@
 ---
 /**
  * Page-specific (statusline): the install command rendered as a dark terminal
- * card that mirrors StatuslinePanel's chrome (same #11131a body, #181b24 chrome,
+ * card that mirrors StatuslinePanel's chrome (same warm dark body and chrome,
  * left-aligned title, 14px radius) so the two terminals on the page
  * read as one design family instead of the light Starlight default. The remove
  * line lives here as a commented command so the install paragraph stays light on
@@ -35,15 +35,14 @@ const BODY = LINES.map(
   .sl-term {
     margin: 1.4rem 0;
     border-radius: 14px;
-    background: #11131a;
-    box-shadow: 0 1px 3px color-mix(in oklab, #000 30%, transparent);
+    background: #141310;
   }
   .sl-term-chrome {
     display: flex;
     align-items: center;
     gap: 0.4rem;
     padding: 0.5rem 0.85rem;
-    background: #181b24;
+    background: #1c1a15;
     border-top-left-radius: 14px;
     border-top-right-radius: 14px;
   }
@@ -51,15 +50,15 @@ const BODY = LINES.map(
     font-family: var(--sl-font);
     font-size: 0.7rem;
     letter-spacing: 0.08em;
-    color: #6b7180;
+    color: #a3a094;
   }
   .sl-term-copy {
     margin-left: auto;
     padding: 0.18rem 0.55rem;
     border: 0;
     border-radius: 7px;
-    background: #262b37;
-    color: #c3c8d4;
+    background: #2c2a23;
+    color: #d3d0c6;
     font-family: var(--sl-font);
     font-size: 0.66rem;
     letter-spacing: 0.06em;
@@ -67,8 +66,8 @@ const BODY = LINES.map(
     transition: background 0.15s ease, color 0.15s ease;
   }
   .sl-term-copy:hover {
-    background: #313847;
-    color: #e6e9f0;
+    background: #3a372e;
+    color: #ece9e0;
   }
   .sl-term-copy.copied {
     background: #2f5e3a;
@@ -89,17 +88,17 @@ const BODY = LINES.map(
     background: transparent;
     padding: 0;
     border: 0;
-    color: #c3c8d4;
+    color: #d3d0c6;
     white-space: pre;
   }
   .sl-term-line {
     display: block;
   }
   .sl-term-cmd {
-    color: #c3c8d4;
+    color: #d3d0c6;
   }
   .sl-term-comment {
-    color: #6b7180;
+    color: #a3a094;
   }
 </style>
 

@@ -136,8 +136,8 @@ const STEPS = [
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--sl-color-bg);
-    background: var(--sl-color-text-accent);
+    color: var(--sl-color-white);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 24%, var(--sl-color-bg));
     padding: 0.08rem 0.35rem;
     border-radius: 5px;
   }
@@ -161,7 +161,7 @@ const STEPS = [
     font-family: var(--sl-font-mono);
     font-size: 0.74rem;
     font-weight: 600;
-    color: var(--sl-color-text-accent);
+    color: var(--sl-color-white);
     padding: 0.1rem 0.45rem;
     border-radius: 6px;
     background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));

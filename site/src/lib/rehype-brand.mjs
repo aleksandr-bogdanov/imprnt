@@ -1,6 +1,6 @@
-// Build-time brand pass for the docs. Every standalone "imprnt" becomes a
-// gradient brand word, and every competitor tool name becomes a neutral code
-// chip, so each page carries one consistent visual language without anyone
+// Build-time brand pass for the docs. Every standalone "imprnt" becomes the
+// brand word (bold ink, styled in starlight.css), and every competitor tool
+// name becomes a neutral code chip, so each page carries one consistent visual language without anyone
 // hand-wrapping every mention. Runs on the rendered HTML (hast).
 //
 // What it skips: links, code, and pre (never restyle a hyperlink or code).

@@ -1,9 +1,13 @@
 /* Theme Starlight to match the landing: same font system (Golos Text + JetBrains
-   Mono), oxblood accent, paper-first. Light (paper) is the default; dark is the
-   override. Starlight's own theme toggle writes the same localStorage key the
+   Mono), one teal accent, paper-first. Light (paper) is the default and dark is
+   the override. Starlight's own theme toggle writes the same localStorage key the
    landing's toggle reads, so the two stay in sync. Spec: vault design-book
    imprnt.dev chapter. */
 
+/* The faces themselves. Layout.astro imports these for the landing; the docs
+   pages never pass through that layout, so they load here or not at all. */
+@import "@fontsource-variable/golos-text";
+@import "@fontsource-variable/jetbrains-mono";
 @import "./accent.css";
 
 :root,
@@ -64,6 +68,12 @@
   --sl-color-text-accent: var(--brand-accent-dark);
 }
 
+/* Golos ships upright only. Without this the browser skews a fake oblique
+   wherever italic appears, the same defect class as synthetic bold. */
+body {
+  font-synthesis-style: none;
+}
+
 /* headings + the wordmark use the one grotesk (no separate display face) */
 .sl-markdown-content h1,
 .sl-markdown-content h2,
@@ -82,11 +92,23 @@
   border-bottom: 1px solid var(--sl-color-hairline-shade);
 }
 
-/* inline code chips: mono is correct (code), neutral surface + accent text */
+/* terminal code blocks: a flat chrome band with the title at the left, the
+   same shape as the landing's transcript panel. No traffic-light dots. */
+.expressive-code .frame.is-terminal .header {
+  justify-content: flex-start;
+  padding-inline: var(--ec-uiPadInl);
+}
+.expressive-code .frame.is-terminal .header::before {
+  display: none;
+}
+
+/* inline code chips: mono is correct (code), neutral surface, ink text. The
+   accent on paper sits under 3:1 at chip sizes, and the chip surface already
+   marks the code. */
 .sl-markdown-content :not(pre) > code {
   background: var(--sl-color-bg-inline-code);
   border: 1px solid var(--sl-color-hairline-shade);
-  color: var(--sl-color-text-accent);
+  color: var(--sl-color-white);
 }
 
 /* the brand word (injected by rehype-brand): weight only, no color. The accent
@@ -104,10 +126,11 @@
   font-weight: 500;
 }
 
-/* asides: a filled surface with the oxblood accent on the title/icon, and NO
-   left accent-rail. The rail is the #1 AI tell, and Starlight's default
-   note=blue / tip=purple are off-palette. All aside types unify to the one
-   accent (this docs set uses note + tip, both informational). */
+/* asides: a filled surface tinted with the one accent, the icon in the accent,
+   the title in ink (the accent fails 4.5:1 at title size), and NO left
+   accent-rail. The rail is the #1 AI tell, and Starlight's default note=blue /
+   tip=purple are off-palette. All aside types unify to the one accent (this
+   docs set uses note + tip, both informational). */
 .sl-markdown-content .starlight-aside {
   border: 0;
   border-inline-start: 0;
@@ -115,7 +138,9 @@
   padding: 1rem 1.25rem;
   background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg-sidebar));
 }
-.sl-markdown-content .starlight-aside__title,
+.sl-markdown-content .starlight-aside__title {
+  color: var(--sl-color-white);
+}
 .sl-markdown-content .starlight-aside__icon {
   color: var(--sl-color-text-accent);
 }

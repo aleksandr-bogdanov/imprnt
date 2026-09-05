@@ -120,7 +120,7 @@ const STOPS = [
     color: var(--sl-color-gray-2);
   }
   .stop.say .tag {
-    color: var(--sl-color-text-accent);
+    color: var(--sl-color-white);
   }
   /* Scope to .gsjourney so the chip beats Starlight's global :not(pre)>code
      styling (the pale tint + faint border it leaks onto a bare <code>), the same
@@ -138,7 +138,7 @@ const STOPS = [
     max-width: 100%;
   }
   .stop.say .chip {
-    color: var(--sl-color-text-accent);
+    color: var(--sl-color-white);
     background: color-mix(in oklab, var(--sl-color-text-accent) 14%, var(--sl-color-bg));
     /* Speech may wrap, commands never do. */
     white-space: normal;

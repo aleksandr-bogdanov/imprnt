@@ -48,7 +48,7 @@ const withText = hits;
       {
         chat.map((c) => (
           <p class="line">
-            <span class={c.who === "imp" ? "who who-imp" : "who"}>{c.who}<span class="colon">:</span></span>
+            <span class="who">{c.who}<span class="colon">:</span></span>
             <span class="said">{c.text}</span>
           </p>
         ))
@@ -136,11 +136,8 @@ const withText = hits;
     font-weight: 600;
     color: var(--color-ink);
   }
-  .who-imp {
-    color: var(--color-accent);
-  }
   .colon {
-    color: var(--color-ink-faint);
+    color: var(--color-ink-chrome);
   }
   .said {
     color: var(--color-ink-soft);
@@ -165,11 +162,11 @@ const withText = hits;
     color: var(--color-ink-soft);
   }
   .flag {
-    color: var(--color-accent);
+    color: var(--color-ink-soft);
   }
   .head {
     margin: 0.9rem 0 0;
-    color: var(--color-ink-faint);
+    color: var(--color-ink-chrome);
   }
   .hits {
     margin: 0.85rem 0 0;
@@ -186,10 +183,10 @@ const withText = hits;
     font-variant-numeric: tabular-nums;
     font-weight: 600;
     text-align: right;
-    color: var(--color-accent);
+    color: var(--color-ink);
   }
   .dir {
-    color: var(--color-ink-faint);
+    color: var(--color-ink-chrome);
   }
   .file {
     color: var(--color-ink);

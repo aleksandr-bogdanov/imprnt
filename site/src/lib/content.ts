@@ -6,9 +6,9 @@
 
 export const site = {
   name: "imprnt",
-  tagline: "A knowledge vault you own and run locally.",
+  tagline: "Your AI's memory, boring on purpose.",
   description:
-    "imprnt is a local-first, plain-markdown knowledge vault for your AI assistant. The LLM builds the tools, the tools do the work.",
+    "Essentially, a folder of markdown files. A local, plain-markdown memory for your AI assistant: the model files a note once, plain code finds it later.",
   repo: "https://github.com/aleksandr-bogdanov/imprnt",
   install: "npm i -g imprnt && imprnt init",
   principle: "The LLM builds the tools. The tools do the work.",
