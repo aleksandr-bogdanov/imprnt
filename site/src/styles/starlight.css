@@ -1,9 +1,13 @@
 /* Theme Starlight to match the landing: same font system (Golos Text + JetBrains
-   Mono), oxblood accent, paper-first. Light (paper) is the default; dark is the
-   override. Starlight's own theme toggle writes the same localStorage key the
+   Mono), one teal accent, paper-first. Light (paper) is the default and dark is
+   the override. Starlight's own theme toggle writes the same localStorage key the
    landing's toggle reads, so the two stay in sync. Spec: vault design-book
    imprnt.dev chapter. */
 
+/* The faces themselves. Layout.astro imports these for the landing; the docs
+   pages never pass through that layout, so they load here or not at all. */
+@import "@fontsource-variable/golos-text";
+@import "@fontsource-variable/jetbrains-mono";
 @import "./accent.css";
 
 :root,
@@ -104,7 +108,7 @@
   font-weight: 500;
 }
 
-/* asides: a filled surface with the oxblood accent on the title/icon, and NO
+/* asides: a filled surface with the one accent on the title/icon, and NO
    left accent-rail. The rail is the #1 AI tell, and Starlight's default
    note=blue / tip=purple are off-palette. All aside types unify to the one
    accent (this docs set uses note + tip, both informational). */
