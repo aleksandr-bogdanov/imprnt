@@ -45,6 +45,7 @@ export default defineConfig({
         SiteTitle: "./src/components/overrides/SiteTitle.astro",
         ThemeProvider: "./src/components/overrides/ThemeProvider.astro",
         ThemeSelect: "./src/components/overrides/ThemeSelect.astro",
+        Footer: "./src/components/overrides/Footer.astro",
       },
       social: [{ icon: "github", label: "GitHub", href: REPO }],
       sidebar: [
