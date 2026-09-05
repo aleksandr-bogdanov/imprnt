@@ -45,7 +45,6 @@ export default defineConfig({
         SiteTitle: "./src/components/overrides/SiteTitle.astro",
       },
       social: [{ icon: "github", label: "GitHub", href: REPO }],
-      disable404Route: true,
       sidebar: [
         {
           label: "Start here",
