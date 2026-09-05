@@ -3,7 +3,7 @@ title: How plugins work
 description: A tiny core plus add-ons you switch on by name. How they compose, and how they wire into Claude.
 ---
 
-import PluginsKindsDiagram from "../src/islands/PluginsKindsDiagram.tsx";
+import PluginsKinds from "../src/components/docs/PluginsKinds.astro";
 import Rules from "../src/components/docs/Rules.astro";
 import RuleBanner from "../src/components/docs/RuleBanner.astro";
 import PluginsWiringTable from "../src/components/docs/PluginsWiringTable.astro";
@@ -11,9 +11,9 @@ import PluginsInstall from "../src/components/docs/PluginsInstall.astro";
 
 The **core** is your notes plus three commands: ingest, recall, and check. Everything else is a **plugin** you add when you want it and remove with one line. The core finds plugins by the name of their folder and never depends on one (the only plugin names it carries are a display hint for `imprnt plugin list`).
 
-Every plugin is one of **three kinds**, by how it reaches the assistant. The switches below are live: pull a kind out of its socket and watch what happens to the core.
+Every plugin is one of **three kinds**, by how it reaches the assistant. Pull any of them out and the core does not change.
 
-<PluginsKindsDiagram client:load />
+<PluginsKinds />
 
 <RuleBanner />
 

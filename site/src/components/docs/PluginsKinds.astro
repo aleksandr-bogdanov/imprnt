@@ -1,0 +1,215 @@
+---
+/**
+ * Page-specific (plugins): the three plugin KINDS and the core they all depend
+ * on. Categories only, never individual plugins, so adding or removing a
+ * plugin never touches this diagram. The core sits on top, the kinds hang off
+ * it on hairline connectors, and the closing line carries the invariant:
+ * removing a kind edits zero core code. Filled surfaces, one accent on the
+ * core only, no borders. Scoped CSS on Starlight tokens.
+ */
+
+const KINDS = [
+  {
+    id: "data",
+    label: "Data",
+    tag: "a mirror that proposes notes",
+    body: ["Mirrors an ", "outside service", " into its own folder. A sync you run refreshes it, then it proposes notes you approve."],
+  },
+  {
+    id: "behavior",
+    label: "Behavior",
+    tag: "a prompt fragment, wired in",
+    body: ["Feeds the assistant a fixed ", "prompt fragment", " you wire in. Removing it is deleting one line. The vault never force-feeds it."],
+  },
+  {
+    id: "harness",
+    label: "Harness",
+    tag: "change the session runtime",
+    body: ["Changes the ", "session runtime", ", like a hook or the status line. Plain `claude` stays plain. Only `imp` sessions see it."],
+  },
+];
+
+// the fan in a 1000x32 box: three equal columns under a 44rem band, so the
+// card centres sit at x159, x500, x841. The outer arcs mirror about x500.
+const PATHS = [
+  "M500 0 C500 18, 159 14, 159 32",
+  "M500 0 L500 32",
+  "M500 0 C500 18, 841 14, 841 32",
+];
+
+// inline `code` spans in the body text
+const chunk = (s: string) =>
+  s.split(/(`[^`]+`)/).map((part) =>
+    part.startsWith("`") ? { code: part.slice(1, -1) } : { text: part },
+  );
+---
+
+<div class="pk not-content" role="group" aria-label="The three plugin kinds and the core they depend on">
+  <div class="core">
+    <span class="corename">core</span>
+    <span class="coresub">vault + ingest &middot; recall &middot; check</span>
+    <span class="corenote">depends on none of the kinds below</span>
+  </div>
+
+  <svg class="fan" viewBox="0 0 1000 32" preserveAspectRatio="none" aria-hidden="true">
+    {PATHS.map((d) => <path d={d} />)}
+  </svg>
+
+  <div class="kinds">
+    {
+      KINDS.map((k) => (
+        <div class="kind">
+          <span class="kname">{k.label}</span>
+          <span class="ktag">{k.tag}</span>
+          <p class="kbody">
+            {k.body.map((b, i) =>
+              i === 1 ? (
+                <strong>{b}</strong>
+              ) : (
+                chunk(b).map((c) => ("code" in c ? <code>{c.code}</code> : c.text))
+              ),
+            )}
+          </p>
+        </div>
+      ))
+    }
+  </div>
+
+  <p class="moral">
+    Each kind leans on the core, and the core depends on none of them. Pull any kind out, its folder and its one
+    wiring line go, and the core changes by zero lines.
+  </p>
+</div>
+
+<style>
+  .pk {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 1.6rem 0;
+    padding: 1.5rem 1.4rem 1.3rem;
+    border-radius: 16px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 15%, var(--sl-color-bg));
+  }
+  .core {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.8rem 1.6rem 0.9rem;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--sl-color-text-accent) 24%, var(--sl-color-bg));
+    text-align: center;
+  }
+  .corename {
+    font-family: var(--sl-font);
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1.1;
+    color: var(--sl-color-white);
+  }
+  .coresub {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--sl-color-gray-1);
+  }
+  .corenote {
+    font-size: 0.74rem;
+    color: var(--sl-color-gray-2);
+  }
+
+  .fan {
+    width: 100%;
+    max-width: 44rem;
+    height: 32px;
+    margin-top: -0.35rem;
+    margin-bottom: -0.4rem;
+  }
+  .fan path {
+    fill: none;
+    stroke: color-mix(in oklab, var(--sl-color-gray-2) 40%, transparent);
+    stroke-width: 2px;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .kinds {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    align-items: start;
+    gap: 0.6rem;
+    width: 100%;
+    max-width: 44rem;
+  }
+  .kind {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.85rem 0.95rem 0.95rem;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--sl-color-bg) 55%, transparent);
+  }
+  .kname {
+    font-family: var(--sl-font);
+    font-size: 0.92rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1.2;
+    color: var(--sl-color-white);
+  }
+  .ktag {
+    min-height: 2.4em;
+    font-size: 0.78rem;
+    font-weight: 500;
+    line-height: 1.35;
+    color: var(--sl-color-gray-2);
+  }
+  .kbody {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--sl-color-gray-1);
+  }
+  .kbody strong {
+    font-weight: 700;
+    color: var(--sl-color-white);
+  }
+  /* outranks Starlight's inline-code rule, which paints chips in the accent */
+  .pk .kbody code {
+    font-family: var(--sl-font-mono);
+    font-size: 0.92em;
+    padding: 0.04em 0.3em;
+    border: 0;
+    border-radius: 5px;
+    background: color-mix(in oklab, var(--sl-color-gray-3) 18%, transparent);
+    color: var(--sl-color-white);
+  }
+
+  .moral {
+    margin: 0;
+    max-width: 34rem;
+    text-align: center;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+
+  @media (max-width: 640px) {
+    .pk {
+      padding: 1.2rem 0.9rem 1.1rem;
+    }
+    .fan {
+      display: none;
+    }
+    .kinds {
+      grid-template-columns: 1fr;
+    }
+    .ktag {
+      min-height: auto;
+    }
+  }
+</style>
