@@ -46,6 +46,14 @@ A contradiction is the special case. If a new meeting says a date moved, filing 
 
 The model only turns your question into search words at the start and reads the few best notes at the end. It never does the **ranking**, and nothing AI-made sits under the search: no embeddings, no vectors (numeric codes a model would have to compute for every note). A rare matched word floats to the top on its own, and `recall` hands back only the top 15, so you get a short ranked list instead of a dump of the whole vault. We put a number on how well that holds up.
 
+**Three things sit on top of BM25, and all three are on by default.** BM25 alone has three blind spots, and each is fixed by more arithmetic rather than by a model:
+
+- **Stemming** folds English inflections, so a note about *swimming* answers a search for *swim*, and *policies* answers *policy*. Without it a query and a note can describe the same thing in different tenses and never meet. Any word not ending in a Latin letter is left alone, so Russian, Greek and CJK text is untouched.
+- **Coverage** rewards matching more *distinct* words from your query. BM25 adds up its score per word, so a note repeating one of your words could outrank a note that matched three different ones.
+- **Proximity** rewards your words appearing near each other. BM25 discards word positions entirely, so *double charge* side by side and *double charge* two hundred words apart score identically.
+
+Together they lift retrieval — the right note in first position — from 19.7% to 24.9% on the LoCoMo benchmark, at no measurable cost: 157 ms before, 134 ms after, on a real 308-note vault. Turn any of them off with `--no-stem`, `--no-coverage` or `--no-proximity`.
+
 <HowItWorksEval />
 
 The [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval) folder holds the test harness.
