@@ -44,15 +44,17 @@ let gap = 0;
 let passages = 0;
 // --proximity: query terms sitting near each other in the body is a relevance signal
 // BM25 throws away entirely ("double charge" adjacent vs 200 words apart score the same).
-// OFF by default.
-let proximity = false;
+// ON by default since v1.1: `--no-proximity` turns it off.
+let proximity = true;
 // --coverage: BM25 sums per term, so one term repeated can outrank a note that matches
-// three DIFFERENT query terms. This rewards breadth of match. OFF by default.
-let coverage = false;
+// three DIFFERENT query terms. This rewards breadth of match.
+// ON by default since v1.1: `--no-coverage` turns it off.
+let coverage = true;
 // --stem: fold obvious English inflections together so "swimming" matches "swim" and
 // "meetings" matches "meeting". Applied identically at index time and query time, so
-// both sides always agree. OFF by default.
-let stem = false;
+// both sides always agree. Skips any token not ending in an ASCII letter, so Cyrillic and
+// CJK pass through unchanged. ON by default since v1.1: `--no-stem` turns it off.
+let stem = true;
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--vault") {
@@ -70,10 +72,16 @@ for (let i = 0; i < args.length; i++) {
     limit = n;
   } else if (args[i] === "--proximity") {
     proximity = true;
+  } else if (args[i] === "--no-proximity") {
+    proximity = false;
   } else if (args[i] === "--coverage") {
     coverage = true;
+  } else if (args[i] === "--no-coverage") {
+    coverage = false;
   } else if (args[i] === "--stem") {
     stem = true;
+  } else if (args[i] === "--no-stem") {
+    stem = false;
   } else if (args[i] === "--passages") {
     const tok = args[++i];
     if (tok === undefined || !/^[0-9]+$/.test(tok)) { console.error("--passages must be a positive integer"); process.exit(1); }

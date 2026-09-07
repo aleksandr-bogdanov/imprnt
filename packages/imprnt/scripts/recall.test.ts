@@ -1015,10 +1015,10 @@ test("--stem matches an inflected query against the note's base form and back", 
   writeFileSync(join(v, "swim.md"), "---\ntype: note\ntags: []\n---\n\n# Swim\n\nHe likes to swim at dawn.");
   writeFileSync(join(v, "meet.md"), "---\ntype: note\ntags: []\n---\n\n# Meetings\n\nThe meetings ran long.");
 
-  expect(recall("swimming", v).stdout).toContain("no matches");
-  expect(recall("swimming", v, "--stem").stdout).toContain("swim.md");
+  expect(recall("swimming", v, "--no-stem").stdout).toContain("no matches");
+  expect(recall("swimming", v).stdout).toContain("swim.md");
   // and the other direction: base-form query, inflected note
-  expect(recall("meeting", v, "--stem").stdout).toContain("meet.md");
+  expect(recall("meeting", v).stdout).toContain("meet.md");
 });
 
 test("--stem does not shorten words below three letters or maul short ones", () => {
@@ -1030,9 +1030,12 @@ test("--stem does not shorten words below three letters or maul short ones", () 
   expect(r.stdout).toContain("bus.md");
 });
 
-test("--stem is off by default", () => {
+// v1.1 turned stem, coverage and proximity on. The off switches are what keeps a
+// default reversible, so they are the thing worth a test.
+test("--no-stem turns stemming off", () => {
   const v = newVault();
   writeFileSync(join(v, "_tags.md"), TAGS_MD);
   writeFileSync(join(v, "swim.md"), "---\ntype: note\ntags: []\n---\n\n# Swim\n\nswim");
-  expect(recall("swimming", v).stdout).toContain("no matches");
+  expect(recall("swimming", v).stdout).toContain("swim.md");
+  expect(recall("swimming", v, "--no-stem").stdout).toContain("no matches");
 });
