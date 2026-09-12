@@ -25,6 +25,7 @@ import {
   type Report,
 } from "./analytics.ts";
 import { renderDashboard, type ProjectionView } from "./dashboard.ts";
+import { renderRowsHtml } from "./rows.ts";
 import { loadProfile, EMPTY_PROFILE, type Profile } from "./profile.ts";
 import { setIdentity } from "./identity.ts";
 import { getConnector, connectorNames } from "./connectors/index.ts";
@@ -1703,6 +1704,42 @@ function printFloorFlex(focus: MonthSummary, report: Report): void {
   }
 }
 
+/**
+ * kopeika rows --html <path> [--lang en|ru] [--from YYYY-MM-DD]
+ * The raw-table view of the ledger: every row with its account, amount, category,
+ * tier, tax disposition and note, filterable salary-to-salary. Default from = Jan 1
+ * of the current year.
+ */
+async function cmdRows(args: Args): Promise<number> {
+  const htmlPath = flagString(args, "html");
+  if (!htmlPath) {
+    console.error("usage: kopeika rows --html <path> [--lang en|ru] [--from YYYY-MM-DD]");
+    return 1;
+  }
+  const langRaw = flagString(args, "lang") ?? "en";
+  if (langRaw !== "en" && langRaw !== "ru") {
+    console.error(`--lang must be en|ru (got "${langRaw}")`);
+    return 1;
+  }
+  const from = flagString(args, "from") ?? `${new Date().getFullYear()}-01-01`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    console.error(`--from must be YYYY-MM-DD (got "${from}")`);
+    return 1;
+  }
+  const ledger = loadLedger(LEDGER_PATH);
+  const html = renderRowsHtml(ledger, {
+    lang: langRaw,
+    from,
+    accountLabels: PROFILE.accountLabels,
+    tiers: loadTiers(TIERS_PATH),
+    salaryCategory: "Salary",
+  });
+  mkdirSync(dirname(htmlPath), { recursive: true });
+  writeFileSync(htmlPath, html, "utf8");
+  console.log(`✓ wrote rows view (${html.length} bytes) → ${htmlPath}`);
+  return 0;
+}
+
 async function cmdReport(args: Args): Promise<number> {
   // --who <person> renders that person's EÜR instead of the household report.
   const who = flagString(args, "who");
@@ -2007,6 +2044,9 @@ function printHelp(): void {
   console.log(`kopeika — deterministic local-first bookkeeping
 
 USAGE
+  kopeika rows --html <path> [--lang en|ru] [--from YYYY-MM-DD]
+      The raw table: every row with account, amount, category, tier, books, note;
+      filters cut salary-to-salary. The dashboard's second page.
   kopeika import <${connectorNames().join("|")}> <file> --account <name> --owner <owner>
       Archive the raw export, parse, normalize, FX-convert, dedup, append to ledger.
       Prints: imported / skipped-dup / skipped-non-completed, plus any missing FX rates.
@@ -2176,6 +2216,8 @@ async function main(): Promise<number> {
       return cmdList(args);
     case "report":
       return cmdReport(args);
+    case "rows":
+      return cmdRows(args);
     case "decide":
       return cmdDecide(args);
     case "manual":
