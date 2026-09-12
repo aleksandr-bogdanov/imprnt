@@ -66,7 +66,7 @@ export function renderRowsHtml(txs: readonly Transaction[], o: RowsOptions): str
 <style>
 :root{--display:"Playfair Display",Georgia,"Times New Roman",serif;--mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;--paper:#f6f4ec;--surface:#fbf9f2;--line:#ddd7c7;--ink:#1b1d1a;--soft:#585b51;--faint:#8b8d81;--accent:#0f9999;--neg:#a33a2f;--pos:#2f7d4f}
 @media(prefers-color-scheme:dark){:root{--paper:#141310;--surface:#1c1a15;--line:#2c2a23;--ink:#ece9e0;--soft:#a3a094;--faint:#75736a;--accent:#60baba;--neg:#e0705f;--pos:#6cc08b}}
-*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.45 "Golos Text",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;padding:0 16px 40px}
+*{box-sizing:border-box}body{margin:0 auto;max-width:1120px;background:var(--paper);color:var(--ink);font:14px/1.45 "Golos Text",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;padding:0 40px 40px}html{background:var(--paper)}@media(max-width:700px){body{padding:0 16px 40px}}
 header{position:sticky;top:0;background:var(--paper);padding:12px 0 10px;border-bottom:1px solid var(--line);z-index:2}
 .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.bar label{display:flex;flex-direction:column;font-size:11px;color:var(--faint)}
 select,input{font:inherit;padding:5px 7px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);min-width:120px}
@@ -99,7 +99,7 @@ const ROWS=${JSON.stringify(rows)};const L=${JSON.stringify({ mandatory: t.manda
 const CATS=${JSON.stringify(categories.filter((c) => c !== "—"))};const TAX=${JSON.stringify(o.taxCategories)};const PERSONS=${JSON.stringify(o.persons)};
 let EDIT=false;let CH={};try{CH=JSON.parse(localStorage.getItem('kopeika-rows-changes')||'{}')}catch(e){CH={}}
 function saveCh(){try{localStorage.setItem('kopeika-rows-changes',JSON.stringify(CH))}catch(e){}document.getElementById('chgN').textContent=Object.keys(CH).length;renderCh()}
-function renderCh(){const lines=Object.values(CH).map(c=>'row '+c.id+' | '+c.d+' '+c.a+' | '+c.m+' | '+c.e+' | category: '+(c.c0||'—')+' -> '+(c.c1||'—')+' | books: '+(c.b0||'none')+' -> '+(c.b1||'none')+' | scope: '+(c.scope==='merchant'?'merchant':'row'));document.getElementById('chgText').value=lines.join('\n')}
+function renderCh(){const lines=Object.values(CH).map(c=>'row '+c.id+' | '+c.d+' '+c.a+' | '+c.m+' | '+c.e+' | category: '+(c.c0||'—')+' -> '+(c.c1||'—')+' | books: '+(c.b0||'none')+' -> '+(c.b1||'none')+' | scope: '+(c.scope==='merchant'?'merchant':'row'));document.getElementById('chgText').value=lines.join(String.fromCharCode(10))}
 function change(r,field,val){const c=CH[r.id]||{id:r.id,d:r.d,a:r.a,m:r.m,e:r.e,c0:r.c,c1:r.c,b0:(r.p?r.p+'/'+r.x:''),b1:(r.p?r.p+'/'+r.x:''),scope:'row'};if(field==='c')c.c1=val;else if(field==='b')c.b1=val;else if(field==='scope')c.scope=val;if(c.c1===c.c0&&c.b1===c.b0)delete CH[r.id];else CH[r.id]=c;saveCh();apply()}
 const $=(id)=>document.getElementById(id);let sortK='d',sortDir=-1;
 function fmt(n){return n==null?'':n.toLocaleString('${o.lang === "ru" ? "ru-RU" : "en-GB"}',{minimumFractionDigits:2,maximumFractionDigits:2})}
