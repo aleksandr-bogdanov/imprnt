@@ -51,6 +51,11 @@ export interface TaxPin {
   note: string;
 }
 
+export interface TaxAccount {
+  mode: "dedicated" | "mixed";
+  from: string;
+}
+
 export interface PersonProfile {
   slug: string;
   /** Display name for report headers. */
@@ -62,8 +67,11 @@ export interface PersonProfile {
   /**
    * Accounts feeding this person's books. dedicated: every row belongs on the
    * books, an undisposed row queues. mixed: only rules/pins claim rows.
+   * `from` (YYYY-MM-DD, inclusive, "" = always) is the day a feed takes over the
+   * books: rows before it never queue, so a bank feed can start where a migrated
+   * export (Norman, Lexoffice) stops without re-deciding the overlap.
    */
-  accounts: Record<string, "dedicated" | "mixed">;
+  accounts: Record<string, TaxAccount>;
   /**
    * The raw `invoice` object from profile.json (letterhead, PayPal, logo) —
    * validated by the invoice face (src/tax/invoice.ts), null when absent.
@@ -110,13 +118,19 @@ export function loadPerson(rootDir: string, slug: string): Person {
     );
   }
   const rawProfile = readJson(profilePath);
-  const accounts: Record<string, "dedicated" | "mixed"> = {};
-  for (const [acc, mode] of Object.entries((rawProfile.accounts ?? {}) as Record<string, unknown>)) {
-    const m = String(mode);
+  const accounts: Record<string, TaxAccount> = {};
+  for (const [acc, spec] of Object.entries((rawProfile.accounts ?? {}) as Record<string, unknown>)) {
+    // "dedicated" | "mixed", or { "mode": ..., "from": "YYYY-MM-DD" }.
+    const obj = isRecord(spec) ? spec : { mode: spec };
+    const m = String(obj.mode ?? "");
     if (m !== "dedicated" && m !== "mixed") {
       throw new Error(`${profilePath}: account "${acc}" mode must be dedicated|mixed (got "${m}")`);
     }
-    accounts[acc] = m;
+    const from = String(obj.from ?? "");
+    if (from !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      throw new Error(`${profilePath}: account "${acc}": "from" must be YYYY-MM-DD (got "${from}")`);
+    }
+    accounts[acc] = { mode: m, from };
   }
   const profile: PersonProfile = {
     slug,

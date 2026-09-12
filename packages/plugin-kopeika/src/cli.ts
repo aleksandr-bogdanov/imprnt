@@ -740,14 +740,15 @@ async function cmdTaxCategorize(who: string, _args: Args): Promise<number> {
 
 /** Undisposed rows on the person's dedicated accounts (the explicit-decision queue). */
 function taxQueue(ledger: readonly Transaction[], person: Person): Transaction[] {
-  const dedicated = new Set(
+  const dedicated = new Map(
     Object.entries(person.profile.accounts)
-      .filter(([, mode]) => mode === "dedicated")
-      .map(([acc]) => acc),
+      .filter(([, a]) => a.mode === "dedicated")
+      .map(([acc, a]) => [acc, a.from] as const),
   );
   return ledger.filter(
     (t) =>
       dedicated.has(t.account) &&
+      t.date >= (dedicated.get(t.account) ?? "") &&
       t.tax_category === "" &&
       (t.tax_person === "" || t.tax_person === person.profile.slug),
   );
