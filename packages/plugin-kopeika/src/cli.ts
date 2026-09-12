@@ -24,7 +24,7 @@ import {
   type MonthSummary,
   type Report,
 } from "./analytics.ts";
-import { renderDashboard, type ProjectionView } from "./dashboard.ts";
+import { renderDashboard, type Levers, type ProjectionView } from "./dashboard.ts";
 import { renderRowsHtml } from "./rows.ts";
 import { loadProfile, EMPTY_PROFILE, type Profile } from "./profile.ts";
 import { setIdentity } from "./identity.ts";
@@ -121,6 +121,7 @@ const DATA_DIR = join(ROOT, "data");
 const LEDGER_PATH = join(DATA_DIR, "ledger.csv");
 const RULES_PATH = join(DATA_DIR, "rules.csv");
 const RATES_PATH = join(DATA_DIR, "rates.csv");
+const LEVERS_PATH = join(DATA_DIR, "levers.json");
 const TIERS_PATH = join(DATA_DIR, "tiers.csv");
 const SAVINGS_PATH = join(DATA_DIR, "savings.csv");
 // The household profile lives in profiles/ (the consolidated PII zone) since the
@@ -1740,6 +1741,18 @@ async function cmdRows(args: Args): Promise<number> {
   return 0;
 }
 
+/** data/levers.json, the household's playbook shown on the dashboard, or null when absent/invalid. */
+function loadLevers(path: string): Levers | null {
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return parsed !== null && typeof parsed === "object" && Array.isArray((parsed as { phases?: unknown }).phases) ? (parsed as Levers) : null;
+  } catch {
+    console.error(`⚠ ${path} is not valid JSON — levers section skipped.`);
+    return null;
+  }
+}
+
 async function cmdReport(args: Args): Promise<number> {
   // --who <person> renders that person's EÜR instead of the household report.
   const who = flagString(args, "who");
@@ -1891,6 +1904,7 @@ async function cmdReport(args: Args): Promise<number> {
       series,
       months,
       selectedMonth,
+      levers: loadLevers(LEVERS_PATH),
       display: {
         footer: PROFILE.footer,
         accountLabels: PROFILE.accountLabels,
