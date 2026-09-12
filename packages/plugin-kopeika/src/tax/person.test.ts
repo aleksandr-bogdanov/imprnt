@@ -21,6 +21,8 @@ describe("taxRuleMatches", () => {
     expect(taxRuleMatches(rule({}), tx({}), clients)).toBe(true);
     expect(taxRuleMatches(rule({}), tx({ merchant_raw: "  EKATERINA   Grinchenko " }), clients)).toBe(true);
     expect(taxRuleMatches(rule({}), tx({ merchant_raw: "Maria Kirichenko" }), clients)).toBe(false);
+    expect(taxRuleMatches(rule({}), tx({ merchant_raw: "Transfer from TATIANA KLIGMAN" }), clients)).toBe(true);
+    expect(taxRuleMatches(rule({}), tx({ merchant_raw: "Payment from TATIANA KLIGMAN" }), clients)).toBe(true);
     expect(taxRuleMatches(rule({}), tx({}), undefined)).toBe(false);
   });
   test("from is an inclusive lower bound on the row date", () => {

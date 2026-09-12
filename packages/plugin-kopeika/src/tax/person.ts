@@ -222,9 +222,17 @@ export function taxRuleMatches(rule: TaxRule, tx: Transaction, clientNames?: Set
   }
 }
 
-/** Lower-case, single-spaced: the equality a payer name is tested under. */
+/**
+ * Lower-case, single-spaced, and stripped of a bank's "Transfer from" / "Payment from"
+ * prefix: the equality a payer name is tested under. Revolut writes a student's
+ * transfer as "Transfer from MARIIA LOGVANEVA", PayPal writes the bare name.
+ */
 export function normClientName(s: string): string {
-  return s.toLowerCase().replace(/\s+/g, " ").trim();
+  return s
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(transfer|payment|topup|top-up) from /, "");
 }
 
 /** The names in clients.json (the invoice registry), normalized. Empty when the file is absent. */

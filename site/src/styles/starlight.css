@@ -234,3 +234,30 @@ body {
     navigation: auto;
   }
 }
+
+/* ---- ultrawide: the three panes stay together ----
+   Starlight pins the left nav to the viewport's left edge and the TOC rail to
+   the right edge, with the content column floating in the middle. On a
+   34-inch or wider screen that is two strips of chrome a metre apart and a
+   narrow column lost between them. From 110rem up the whole shell is capped
+   and centred, so the nav, the content and the rail sit next to each other
+   the way they do on a laptop, and the paper margins grow instead. The
+   header's inner row is capped to the same shell so the wordmark lines up
+   with the nav below it. Unlayered on purpose, so it wins over
+   @layer starlight.core. */
+@media (min-width: 110rem) {
+  :root {
+    --imp-shell: 104rem;
+    --imp-shell-gutter: max(0px, calc((100vw - var(--imp-shell)) / 2));
+  }
+  .page {
+    max-width: var(--imp-shell);
+    margin-inline: auto;
+  }
+  .sidebar-pane {
+    inset-inline-start: var(--imp-shell-gutter);
+  }
+  header.header {
+    padding-inline: calc(var(--imp-shell-gutter) + var(--sl-nav-pad-x));
+  }
+}

@@ -33,6 +33,16 @@ const GLYPHS: Record<string, string> = {
     '<circle cx="6.5" cy="5" r="2"/><circle cx="6.5" cy="19" r="2"/><circle cx="17.5" cy="7.5" r="2"/><path d="M6.5 7v10"/><path d="M17.5 9.5a8 8 0 0 1-8 7.5"/>',
   page:
     '<path d="M13.5 4H7.5A1.5 1.5 0 0 0 6 5.5v13A1.5 1.5 0 0 0 7.5 20h9a1.5 1.5 0 0 0 1.5-1.5V8.5z"/><path d="M13.5 4v4.5H18"/>',
+  model:
+    '<rect x="3.5" y="8" width="17" height="8" rx="4"/><circle cx="15.5" cy="12" r="2.4"/>',
+  disk:
+    '<ellipse cx="12" cy="6.5" rx="7" ry="2.5"/><path d="M5 6.5v11c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-11"/><path d="M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/>',
+  gate:
+    '<path d="M12 3.5l7 2.8v5.2c0 4.3-3 7.6-7 9-4-1.4-7-4.7-7-9V6.3z"/><path d="M9 12l2.2 2.2L15.2 10"/>',
+  tenants:
+    '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="16.5" cy="9.5" r="2.4"/><path d="M15.5 14.5a4.5 4.5 0 0 1 5 4.5"/>',
+  chat:
+    '<path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H10l-4.5 3.5V15.5h-1a2 2 0 0 1-2-2z"/>',
 };
 
 const CALLS = [
@@ -42,11 +52,16 @@ const CALLS = [
   { anchor: "domain-first-folders", icon: "folder", call: "Domain-first folders", short: "Sort by life-area, the way you browse" },
   { anchor: "the-core-stays-blind", icon: "core", call: "The core stays blind", short: "Add or remove any plugin with zero core edits" },
   { anchor: "copy-share-no-code", icon: "copy", call: "Copy, share no code", short: "Reversible beats pure" },
-  { anchor: "commands-never-a-daemon", icon: "terminal", call: "Commands, never a daemon", short: "Nothing runs unless you run it" },
+  { anchor: "nothing-runs-unless-you-start-it", icon: "terminal", call: "Nothing runs unless you start it", short: "Resident only by your hand, never by install" },
   { anchor: "invariants-are-tests", icon: "test", call: "Invariants are tests", short: "A principle you cannot check rots" },
   { anchor: "private-by-being-private", icon: "lock", call: "Private by being private", short: "Local, owner-only, no redaction machinery" },
   { anchor: "imp-vs-imprnt", icon: "fork", call: "imp vs imprnt", short: "One opt-in per keystroke" },
   { anchor: "context-loads-on-demand", icon: "page", call: "Context loads on demand", short: "A reading day costs a pointer, not the contract" },
+  { anchor: "the-model-is-a-setting", icon: "model", call: "The model is a setting", short: "Which model, and who bills, is a per-agent field" },
+  { anchor: "disk-before-the-platform", icon: "disk", call: "Disk before the platform", short: "Written down before anyone is told" },
+  { anchor: "gates-at-the-tool-boundary", icon: "gate", call: "Gates at the tool boundary", short: "Nothing leaves without a person's word, in code" },
+  { anchor: "multi-tenant-one-shared-zone", icon: "tenants", call: "Multi-tenant, one shared zone", short: "Each person their own everything, one shared mount" },
+  { anchor: "the-conversation-outlives-the-session", icon: "chat", call: "The conversation outlives the session", short: "The loop holds no memory, so it can be swapped" },
 ];
 ---
 
@@ -100,9 +115,8 @@ const CALLS = [
     grid-template-columns: repeat(2, 1fr);
     gap: 0.7rem;
   }
-  /* eleven calls leave one half-width slot at the bottom-left and a clean gap
-     to its right. A uniform card reads tidier than stretching the last one to
-     full width with short left-aligned text. */
+  /* sixteen calls fill the two-column grid evenly. If the count goes odd
+     again, a uniform card reads tidier than stretching the last one. */
   @media (max-width: 720px) {
     .dd-nav-grid {
       grid-template-columns: 1fr;

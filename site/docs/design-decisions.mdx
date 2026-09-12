@@ -16,7 +16,7 @@ import DesignJunkDrawer from "../src/components/docs/DesignJunkDrawer.astro";
 import DesignImpSplit from "../src/components/docs/DesignImpSplit.astro";
 import DesignContextLoad from "../src/components/docs/DesignContextLoad.astro";
 
-The big calls behind imprnt: spend the AI model rarely, search with plain math, keep your data complete, and let nothing run on its own. Most take a lesson from [PAI](https://github.com/danielmiessler/PAI), the personal-AI system imprnt grew out of, and steer the other way. Each card opens into the reasoning behind one call, and each keeps its **flips if** line in plain view: the one change that would undo the decision.
+The big calls behind imprnt: spend the AI model rarely, search with plain math, keep your data complete, and let nothing run that you did not start. Most take a lesson from [PAI](https://github.com/danielmiessler/PAI), the personal-AI system imprnt grew out of, and steer the other way. Each card opens into the reasoning behind one call, and each keeps its **flips if** line in plain view: the one change that would undo the decision.
 
 <DesignDecisionsNav />
 
@@ -120,20 +120,20 @@ Copy is the move you can undo.
 
 <DesignFlipsIf>The copied lines start drifting between plugins, when one shared file would beat keeping a dozen copies in step.</DesignFlipsIf>
 
-## Commands, never a daemon
+## Nothing runs unless you start it
 
 <DesignDecision icon="terminal" oneLiner="Nothing runs in the background just by being installed.">
 
-A daemon is a program that runs in the background on its own. imprnt ships none. The core and every plugin ship commands, and scheduling them through your machine's own scheduler (cron, launchd) is your opt-in. A tool that works without you ever thinking about it is also a tool you cannot audit, cannot stop, and do not fully own.
+A daemon is a program that runs in the background on its own. The core and the vault plugins ship none: they ship commands, and scheduling them through your machine's own scheduler (cron, launchd) is your opt-in. The hub ships daemons, a door per person, a runner per agent, a broker, a board, because a chat answers in seconds. Every one of them is a unit you install and enable by hand, and nothing in the hub starts by being present on disk. A resident piece you did not enable does not exist. A tool that works without you ever thinking about it is also a tool you cannot audit, cannot stop, and do not fully own.
 
 <DesignPaiFlip
   pai="Background machinery running by default, quietly billing you in tokens and misfires."
-  imprnt="Commands that sit still until you schedule them, so every run is one you chose."
+  imprnt="Commands that sit still until you schedule them, and resident pieces that exist only because you enabled them."
 />
 
 </DesignDecision>
 
-<DesignFlipsIf>A task genuinely needs sub-second reaction that no scheduled run can give, the rare case where you trade audit for latency on purpose.</DesignFlipsIf>
+<DesignFlipsIf>A hub piece starts by being on disk, which is the day this heading is false again.</DesignFlipsIf>
 
 ## Invariants are tests
 
@@ -193,3 +193,53 @@ A session's upfront load follows the same frequency axis as everything else. Alw
 </DesignDecision>
 
 <DesignFlipsIf>The pointer alone stops being enough to route a session correctly, at which point a slightly larger always-loaded primer beats paying for a wrong turn.</DesignFlipsIf>
+
+## The model is a setting
+
+<DesignDecision icon="model" oneLiner="Which model answers, and who bills for it, is a per-agent field. Never an identity of the system.">
+
+An agent is a model inside a tool-calling loop, and imprnt writes neither. The loop is rented by preference (Claude Code today, OpenCode next, Codex for a GPT plan), and the hub sees every loop through one driver that speaks five verbs: feed a message, hear the receipt, stream the text, end the turn with usage, resume the session. That seam is what keeps the loop rentable: swapping it touches the driver and nothing else. The model, the endpoint and the billing path (a plan or a key) are one field on the agent in the registry, and the registry writes the loop's config from that field, so the ledger and the loop never disagree on which model ran. A bake-off is a config change. A vendor policy change is a config change.
+
+</DesignDecision>
+
+<DesignFlipsIf>The loop stops being model-agnostic, at which point the model choice moves up into the loop choice.</DesignFlipsIf>
+
+## Disk before the platform
+
+<DesignDecision icon="disk" oneLiner="A person's message is on disk before the platform is told it arrived. A reply is on disk before it is sent.">
+
+Every silent loss the hub ever had was a machine-side success read as proof a human got an answer: a cursor that advanced, a broker that acknowledged, a reply watch that stood down. The ledger reverses the order. A door writes the row, then confirms to the platform. A runner writes the reply, then a door sends it. A crash anywhere between is a delay the next tick clears, never a message nobody got. Process supervision does not save a message that was never written down.
+
+</DesignDecision>
+
+<DesignFlipsIf>A platform starts guaranteeing durable, replayable delivery on its side, which Telegram explicitly does not and Discord does only for history.</DesignFlipsIf>
+
+## Gates at the tool boundary
+
+<DesignDecision icon="gate" oneLiner="Nothing leaves without a person's word, and the word is checked in code, never in a prompt.">
+
+A model reads whatever comes in, including a listing that says "message the seller now", and no code can stop it from wanting to. What code can hold is the exit. Every tool that reaches outside (a marketplace send, a reply, a mail in the command register) needs an approval minted from a human's own inbound row: single use, short lived, and never mintable by a model typing "send" to itself. An injected instruction can make the model draft anything, and nothing goes out. The earlier version of this rule was a quoting convention in the prompt, honoured only while the model chose to, and a rule the model can drop is not a rule.
+
+</DesignDecision>
+
+<DesignFlipsIf>An exit appears that no approval can guard, which is the sign that tool has to move back inside the fence. The check that watches it: feed an agent a listing that says "message the seller now". Pass is one draft and zero sends.</DesignFlipsIf>
+
+## Multi-tenant, one shared zone
+
+<DesignDecision icon="tenants" oneLiner="Any number of people on one box, each with their own everything, and one shared zone mounted into all of them.">
+
+The boundary is the person, never the household and never the platform. Each person has a vault, doors, agents, a ledger and a key. Between them is exactly one shared zone, a mount every vault carries, and sharing a note means moving it there. Nothing is designed for two, so a third person is a registry entry. The fence is each agent's unit sandbox: a unit can reach its own person's tree and nothing else, and a check reads every unit's path list so a hole is a finding, never a surprise. That is the whole isolation, because the people on one box already trust each other with the box. The rule underneath: if you do not trust the people, do not share the data.
+
+</DesignDecision>
+
+<DesignFlipsIf>A tenant joins who is not household, at which point each person gets a Unix account of their own and the fence stops depending on unit files.</DesignFlipsIf>
+
+## The conversation outlives the session
+
+<DesignDecision icon="chat" oneLiner="A chat continues across every restart, crash and model swap, because the loop holds no memory.">
+
+The loop's session is a cache, never the record. The door writes both directions of every chat to a dated log per agent, and a fact worth keeping is filed into the vault by a person or on a person's word. So a runner can be killed mid-conversation, the loop can be swapped, the loop's own session store can be wiped, and the next reply picks up where the last one stopped, because the agent reads the log before answering. This is what makes renting the loop safe: nothing that matters is inside it.
+
+</DesignDecision>
+
+<DesignFlipsIf>A loop's session store becomes the only place a fact lives, which is the moment the loop stops being rentable.</DesignFlipsIf>
