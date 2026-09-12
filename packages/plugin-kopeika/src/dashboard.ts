@@ -166,7 +166,7 @@ var STRINGS = {
 function t(key) {
   return STRINGS[key]?.[LANG] ?? STRINGS[key]?.en ?? String(key);
 }
-var CATEGORY_RU = {
+export var CATEGORY_RU = {
   Rent: "Аренда",
   "Rent & utilities": "Аренда и ЖКХ",
   Subscriptions: "Подписки",

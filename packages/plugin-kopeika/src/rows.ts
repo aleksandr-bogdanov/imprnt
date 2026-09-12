@@ -8,6 +8,7 @@
 import { isAnalyticsExcluded, EXCLUDE_CATEGORY, SAVINGS_CATEGORY } from "./analytics.ts";
 import { tierOf, type Tiers } from "./tiers.ts";
 import type { Transaction } from "./types.ts";
+import { CATEGORY_RU } from "./dashboard.ts";
 
 export interface RowsOptions {
   lang: "en" | "ru";
@@ -57,6 +58,7 @@ export function renderRowsHtml(txs: readonly Transaction[], o: RowsOptions): str
   const periods = salaryDates.map((d, i) => ({ from: d, to: salaryDates[i + 1] ? prevDay(salaryDates[i + 1]!) : "" })).reverse();
   const accounts = [...new Set(rows.map((r) => r.a))].sort();
   const categories = [...new Set(rows.map((r) => r.c || "—"))].sort();
+  const catName = (c: string): string => (o.lang === "ru" ? (CATEGORY_RU as Record<string, string>)[c] ?? c : c);
   const months = [...new Set(rows.map((r) => r.d.slice(0, 7)))].sort().reverse();
 
   return `<!DOCTYPE html><html lang="${o.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t.title}</title>
@@ -86,7 +88,7 @@ a{color:var(--accent)}.top{display:flex;justify-content:space-between;align-item
 <label>${t.period}<select id="period"><option value="">${t.all}</option>${periods.map((p) => `<option value="${p.from}|${p.to}">${t.from} ${fmtD(p.from)} ${t.to} ${p.to ? fmtD(p.to) : t.today}</option>`).join("")}</select></label>
 <label>${t.month}<select id="month"><option value="">${t.all}</option>${months.map((m) => `<option>${m}</option>`).join("")}</select></label>
 <label>${t.account}<select id="account"><option value="">${t.all}</option>${accounts.map((a) => `<option>${esc(a)}</option>`).join("")}</select></label>
-<label>${t.category}<select id="category"><option value="">${t.all}</option>${categories.map((c) => `<option>${esc(c)}</option>`).join("")}</select></label>
+<label>${t.category}<select id="category"><option value="">${t.all}</option>${categories.map((c) => `<option value="${esc(c)}">${esc(catName(c))}</option>`).join("")}</select></label>
 <label>${t.kind}<select id="kind"><option value="counted">${t.counted}</option><option value="">${t.all}</option><option value="internal">${t.internal}</option><option value="savings">${t.savings}</option><option value="excluded">${t.excluded}</option></select></label>
 <label>${t.search}<input id="q" type="search" placeholder="…"></label>
 <label>&nbsp;<span><button id="editBtn" type="button">${t.edit}</button> <button id="chgBtn" type="button">${t.changes} <b id="chgN">0</b></button></span></label>
@@ -96,7 +98,7 @@ a{color:var(--accent)}.top{display:flex;justify-content:space-between;align-item
 <table><thead><tr><th data-k="d">${t.date}</th><th class="acc" data-k="a">${t.account}</th><th data-k="m">${t.merchant}</th><th data-k="e" style="text-align:right">${t.amount}</th><th data-k="c">${t.category}</th><th data-k="t">${t.tier}</th><th data-k="p">${t.books}</th><th class="nt" data-k="nt">${t.note}</th></tr></thead><tbody id="tb"></tbody></table>
 <script>
 const ROWS=${JSON.stringify(rows)};const L=${JSON.stringify({ mandatory: t.mandatory, optional: t.optional, none: t.none, newCat: t.newCat, scopeRow: t.scopeRow, scopeMerchant: t.scopeMerchant })};
-const CATS=${JSON.stringify(categories.filter((c) => c !== "—"))};const TAX=${JSON.stringify(o.taxCategories)};const PERSONS=${JSON.stringify(o.persons)};
+const CATS=${JSON.stringify(categories.filter((c) => c !== "—"))};const CN=${JSON.stringify(Object.fromEntries(categories.filter((c) => c !== "—").map((c) => [c, catName(c)])))};const cn=(c)=>CN[c]||c||'—';const TAX=${JSON.stringify(o.taxCategories)};const PERSONS=${JSON.stringify(o.persons)};
 let EDIT=false;let CH={};try{CH=JSON.parse(localStorage.getItem('kopeika-rows-changes')||'{}')}catch(e){CH={}}
 function saveCh(){try{localStorage.setItem('kopeika-rows-changes',JSON.stringify(CH))}catch(e){}document.getElementById('chgN').textContent=Object.keys(CH).length;renderCh()}
 function renderCh(){const lines=Object.values(CH).map(c=>'row '+c.id+' | '+c.d+' '+c.a+' | '+c.m+' | '+c.e+' | category: '+(c.c0||'—')+' -> '+(c.c1||'—')+' | books: '+(c.b0||'none')+' -> '+(c.b1||'none')+' | scope: '+(c.scope==='merchant'?'merchant':'row'));document.getElementById('chgText').value=lines.join(String.fromCharCode(10))}
@@ -110,8 +112,8 @@ rs.sort((a,b)=>{const x=a[sortK],y=b[sortK];return (x==null?-1:y==null?1:x<y?-1:
 let sp=0,inc=0,mand=0;for(const r of rs){if(r.k!=='counted'||r.e==null)continue;if(r.e<0){sp-=r.e;if(r.t==='mandatory')mand-=r.e}else inc+=r.e}
 $('tSpend').textContent=fmt(sp);$('tInc').textContent=fmt(inc);$('tMand').textContent=fmt(mand);$('tOpt').textContent=fmt(sp-mand);$('tN').textContent=rs.length;
 $('tb').innerHTML=rs.map(r=>{const ch=CH[r.id];const cat=ch?ch.c1:r.c;const bk=ch?ch.b1:(r.p?r.p+'/'+r.x:'');
-let catCell=esc(cat||'—'),bkCell=bk?esc(bk.replace('/',' · ')):'';
-if(EDIT){catCell='<select data-id="'+r.id+'" data-f="c">'+['<option value="">—</option>'].concat(CATS.map(c=>'<option'+(c===cat?' selected':'')+'>'+esc(c)+'</option>')).join('')+'<option value="__new">'+L.newCat+'</option></select>';
+let catCell=esc(cn(cat)),bkCell=bk?esc(bk.replace('/',' · ')):'';
+if(EDIT){catCell='<select data-id="'+r.id+'" data-f="c">'+['<option value="">—</option>'].concat(CATS.map(c=>'<option value="'+esc(c)+'"'+(c===cat?' selected':'')+'>'+esc(cn(c))+'</option>')).join('')+'<option value="__new">'+L.newCat+'</option></select>';
 const opts=['<option value="">'+L.none+'</option>'];PERSONS.forEach(p=>TAX.forEach(x=>{const v=p+'/'+x;opts.push('<option value="'+v+'"'+(v===bk?' selected':'')+'>'+esc(v)+'</option>')}));
 bkCell='<select data-id="'+r.id+'" data-f="b">'+opts.join('')+'</select>'+(ch?' <select data-id="'+r.id+'" data-f="scope"><option value="row"'+(ch.scope==='row'?' selected':'')+'>'+L.scopeRow+'</option><option value="merchant"'+(ch.scope==='merchant'?' selected':'')+'>'+L.scopeMerchant+'</option></select>':'')}
 return '<tr class="'+r.k+(ch?' chg':'')+'"><td>'+r.d.slice(5)+'</td><td class="acc">'+esc(r.a)+'</td><td>'+esc(r.m)+(r.n?' <span class="chip">'+esc(r.n)+'</span>':'')+'</td><td class="num '+(r.e<0?'neg':'pos')+'">'+fmt(r.e)+'</td><td class="ed">'+catCell+'</td><td>'+(r.t?'<span class="chip'+(r.t==='mandatory'?' m':'')+'">'+L[r.t]+'</span>':'')+'</td><td class="ed">'+bkCell+'</td><td class="nt" title="'+esc(r.nt)+'">'+esc(r.nt)+'</td></tr>'}).join('');
