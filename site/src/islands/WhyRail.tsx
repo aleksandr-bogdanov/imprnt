@@ -18,14 +18,14 @@ const DOT = 22;
 type Beat = { id: string; label: string; gist: string };
 
 const BEATS: Beat[] = [
-  { id: "beat-bike", label: "The bike", gist: "I cannot buy anything without understanding it inside out first." },
-  { id: "beat-claude", label: "Ask Claude", gist: "Brilliant answers, no memory. Every chat met a stranger." },
-  { id: "beat-pai", label: "PAI, for someone else", gist: "It remembered me, then grew machinery I never asked for." },
-  { id: "beat-tokens", label: "The token bill", gist: "At work, metered, the bloat ate the budget I needed to work." },
-  { id: "beat-rule", label: "The rule that fixed it", gist: "The model is the peer. The code you write is the servant." },
-  { id: "beat-bible", label: "The bible", gist: "Eight lines to the assistant, and the start of imprnt." },
-  { id: "beat-keep", label: "Your memory is plain text", gist: "Notes you can read, fix, and take anywhere." },
-  { id: "beat-promise", label: "My promise to you", gist: "Ships with almost nothing. Everything is opt-in and removable." },
+  { id: "beat-bike", label: "The bike", gist: "I spend two weeks buying a bike for a fifteen-minute commute." },
+  { id: "beat-claude", label: "It started with Claude", gist: "Every new chat I briefed a brilliant stranger from zero." },
+  { id: "beat-pai", label: "PAI, for someone else", gist: "PAI remembered me, then became more machine than my life needed." },
+  { id: "beat-tokens", label: "The token bill", gist: "I had become afraid of my own assistant." },
+  { id: "beat-rule", label: "The rule", gist: "A machine able to launch spaceships ended up reading spam letters." },
+  { id: "beat-bible", label: "The bible", gist: "Eight rules, so the model thinks once and searching is free." },
+  { id: "beat-keep", label: "Memory is plain text", gist: "Open any note, fix one line, and take the folder anywhere." },
+  { id: "beat-promise", label: "My promise to you", gist: "What you don't need, it doesn't keep, and everything's opt-in." },
 ];
 
 const PALETTE = {
