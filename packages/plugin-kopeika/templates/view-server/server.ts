@@ -32,11 +32,42 @@ function authed(req: Request): boolean {
   return want.length === got.length && timingSafeEqual(want, got);
 }
 function loginPage(failed = false): Response {
-  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>kopeika</title><link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
-<style>body{font:16px "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#f6f4ec;color:#1b1d1a;display:grid;place-items:center;min-height:100vh;margin:0}
-form{background:#fbf9f2;border:1px solid #ddd7c7;padding:28px;border-radius:8px;width:min(320px,90vw)}input{width:100%;box-sizing:border-box;padding:10px;margin:8px 0 14px;border:1px solid #ddd7c7;border-radius:6px;font:inherit}
-button{width:100%;padding:10px;border:0;border-radius:6px;background:#1b1d1a;color:#f6f4ec;font:inherit}p.err{color:#a33;margin:0 0 8px}</style>
-<form method="post" action="/login" autocomplete="on"><label>kopeika<input type="password" name="password" autocomplete="current-password" autofocus></label>${failed ? '<p class="err">wrong password</p>' : ""}<button>open</button></form>`;
+  // The production login page as served on 2026-09-12 (system font stack, green card),
+  // with the error line shown only after a failed attempt. The name field is kept for
+  // password-manager autofill and is not checked: one shared password.
+  const html = `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kopeika</title>
+<style>
+  :root { --green:#2F6F4E; --ink:#3A3A36; --soft:#7A776F; --border:#ECE6DA; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:#FAF8F4; color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .card { background:#fff; border:1px solid var(--border); border-radius:18px; padding:36px 32px;
+    width:340px; box-shadow:0 10px 30px rgba(58,58,54,0.08); }
+  h1 { color:var(--green); font-size:24px; margin:0 0 4px; }
+  p.sub { color:var(--soft); font-size:14px; margin:0 0 22px; }
+  label { display:block; font-size:13px; font-weight:600; color:var(--soft); margin:14px 0 6px; }
+  input { width:100%; padding:11px 13px; font-size:15px; border:1px solid var(--border);
+    border-radius:10px; background:#FAF8F4; outline:none; }
+  input:focus { border-color:var(--green); background:#fff; }
+  button { width:100%; margin-top:22px; padding:12px; font-size:15px; font-weight:600; color:#fff;
+    background:var(--green); border:none; border-radius:10px; cursor:pointer; }
+  .err { color:#B4452F; font-size:13px; margin-top:14px; display:${failed ? "block" : "none"}; }
+</style></head>
+<body>
+  <form class="card" method="post" action="/login">
+    <h1>Where We Are</h1>
+    <p class="sub">Alex &amp; Anna's savings</p>
+    <label for="username">Name</label>
+    <input id="username" name="username" type="text" autocomplete="username" value="anna" />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" autofocus required />
+    <button type="submit">Open</button>
+    <div class="err">That password did not match. Try again.</div>
+  </form>
+</body></html>`;
   return new Response(html, { status: failed ? 401 : 200, headers: { "content-type": "text/html; charset=utf-8" } });
 }
 function page(lang: string): Response {
