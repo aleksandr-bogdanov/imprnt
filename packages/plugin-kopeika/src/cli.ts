@@ -50,6 +50,7 @@ import {
   firstMatch,
   loadRules,
   summarizeUnknowns,
+  retypeUnpairedTransfer,
 } from "./rules.ts";
 import {
   detectRecurring,
@@ -107,7 +108,7 @@ import {
   type ThresholdEval,
   type YearActuals,
 } from "./tax/thresholds.ts";
-import { EXCLUDE_CATEGORY } from "./analytics.ts";
+import { EXCLUDE_CATEGORY, SAVINGS_CATEGORY } from "./analytics.ts";
 
 // --- Paths ------------------------------------------------------------------
 // data/ sits at the plugin root. The built single-file kopeika.js lives there with
@@ -1437,14 +1438,23 @@ async function cmdCategorize(args: Args): Promise<number> {
 
   let categorized = 0;
   let retyped = 0;
+  const keepAsTransfer = new Set([EXCLUDE_CATEGORY, SAVINGS_CATEGORY]);
   for (const tx of ledger) {
-    if (tx.category !== "") continue; // only touch uncategorized rows
     const rule = firstMatch(rules, tx);
     if (!rule) continue;
-    tx.category = rule.category;
-    categorized += 1;
-    if (rule.type !== null && rule.type !== tx.type) {
-      tx.type = rule.type;
+    if (tx.category === "") {
+      tx.category = rule.category;
+      categorized += 1;
+      if (rule.type !== null && rule.type !== tx.type) {
+        tx.type = rule.type;
+        retyped += 1;
+      }
+    }
+    // A bill paid by bank transfer is spend, not a transfer (see retypeUnpairedTransfer).
+    // Runs on already-categorized rows too, so an earlier import is repaired, not only the next one.
+    const bySign = retypeUnpairedTransfer(tx, rule, keepAsTransfer);
+    if (bySign !== null) {
+      tx.type = bySign;
       retyped += 1;
     }
   }

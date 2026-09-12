@@ -1,3 +1,4 @@
+import type { TxType } from "./types.ts";
 /**
  * Ratified categorization rules.
  *
@@ -166,4 +167,24 @@ export function summarizeUnknowns(txs: readonly Transaction[]): UnknownMerchant[
     byMerchant.set(key, entry);
   }
   return [...byMerchant.values()].sort((a, b) => b.totalEur - a.totalEur);
+}
+
+/**
+ * A bill paid by bank transfer arrives typed "transfer" by the connector (N26 Debit
+ * Transfer, Revolut "To GEHAG"), and the report excludes every transfer-typed row.
+ * So a rule that files such a row under a real category (rent, insurance, a doctor)
+ * would silently drop it from spend. When the matched rule names a real category and
+ * sets no type of its own, an UNPAIRED transfer-typed row is retyped by its sign.
+ * A paired leg (is_transfer) and the Exclude / Savings categories stay transfers.
+ */
+export function retypeUnpairedTransfer(
+  tx: { type: TxType; is_transfer: boolean; category: string; amount_eur: number | null },
+  rule: { type: TxType | null; category: string },
+  excludedCategories: ReadonlySet<string>,
+): TxType | null {
+  if (rule.type !== null) return null;
+  if (tx.type !== "transfer" || tx.is_transfer) return null;
+  if (rule.category !== tx.category || excludedCategories.has(rule.category)) return null;
+  if (tx.amount_eur === null) return null;
+  return tx.amount_eur < 0 ? "spend" : "income";
 }

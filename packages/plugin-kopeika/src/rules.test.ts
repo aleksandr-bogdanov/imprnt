@@ -1,3 +1,4 @@
+import { retypeUnpairedTransfer } from "./rules.ts";
 import { describe, expect, test } from "bun:test";
 import {
   loadRules,
@@ -182,5 +183,22 @@ describe("summarizeUnknowns", () => {
     expect(out[0]!.missingEurCount).toBe(1);
     expect(out[0]!.totalEur).toBe(20);
     expect(out[0]!.count).toBe(2);
+  });
+});
+
+describe("retypeUnpairedTransfer", () => {
+  const ex = new Set(["Exclude", "Savings"]);
+  const base = { type: "transfer" as const, is_transfer: false, category: "Rent & utilities", amount_eur: -951.28 };
+  test("rent paid by bank transfer becomes spend", () => {
+    expect(retypeUnpairedTransfer(base, { type: null, category: "Rent & utilities" }, ex)).toBe("spend");
+  });
+  test("a refund arriving by transfer becomes income", () => {
+    expect(retypeUnpairedTransfer({ ...base, amount_eur: 190 }, { type: null, category: "Rent & utilities" }, ex)).toBe("income");
+  });
+  test("paired legs, explicit rule types, Exclude and Savings stay as they are", () => {
+    expect(retypeUnpairedTransfer({ ...base, is_transfer: true }, { type: null, category: "Rent & utilities" }, ex)).toBeNull();
+    expect(retypeUnpairedTransfer(base, { type: "transfer", category: "Rent & utilities" }, ex)).toBeNull();
+    expect(retypeUnpairedTransfer({ ...base, category: "Exclude" }, { type: null, category: "Exclude" }, ex)).toBeNull();
+    expect(retypeUnpairedTransfer({ ...base, type: "spend" }, { type: null, category: "Rent & utilities" }, ex)).toBeNull();
   });
 });
