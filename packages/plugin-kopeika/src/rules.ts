@@ -1,4 +1,3 @@
-import type { TxType } from "./types.ts";
 /**
  * Ratified categorization rules.
  *
