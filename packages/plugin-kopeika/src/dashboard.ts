@@ -76,6 +76,7 @@ var PALETTE = {
 };
 var HOUSE_CAP_EUR = 2000;
 var SLIDER_DEFAULT_EUR = 1500;
+var SLIDER_DEFAULT_CASH = 1500;
 var SLIDER_DEFAULT_RUB = 20000;
 var CATEGORY_COLORS = {
   "Rent & utilities": "#3d7fb2",
@@ -135,7 +136,8 @@ var STRINGS = {
   total: { en: "Total", ru: "Всего" },
   tapToggle: { en: "tap to toggle", ru: "нажмите, чтобы скрыть или вернуть" },
   monthly: { en: "Monthly savings", ru: "Откладываем в месяц" },
-  eurMonthly: { en: "In euros", ru: "В евро" },
+  eurMonthly: { en: "Euros on cards", ru: "Евро на картах" },
+  cashMonthly: { en: "Euros in cash", ru: "Евро наличными" },
   rubMonthly: { en: "In roubles", ru: "В рублях" },
   whereItGoes: { en: "Where it goes", ru: "Куда уходят деньги" },
   spendKicker: { en: "Spending", ru: "Траты" },
@@ -298,7 +300,7 @@ function seriesMeta(key, fallbackLabel) {
   if (k === "alfa-deposit")
     return { label: "RUB", short: "RUB", color: "#8a63b8", cap: null, cur: "rub", off: true };
   if (k === "cash")
-    return { label: ru ? "Наличные" : "Cash", short: ru ? "Нал" : "Cash", color: "#5a8f3c", cap: null, cur: null };
+    return { label: ru ? "Наличные" : "Cash", short: ru ? "Нал" : "Cash", color: "#5a8f3c", cap: null, cur: "cash" };
   if (k === "property")
     return { label: ru ? "Недвижимость" : "Real estate", short: ru ? "Недвижимость" : "Real estate", color: "#9B6A43", cap: null, cur: null };
   if (k === "bcs")
@@ -312,6 +314,7 @@ function savingsSection(p, series, nowMonth) {
   const maxEur = 5000;
   const maxRub = 1e5;
   const initEur = Math.min(SLIDER_DEFAULT_EUR, maxEur);
+  const initCash = Math.min(SLIDER_DEFAULT_CASH, maxEur);
   const initRub = Math.min(SLIDER_DEFAULT_RUB, maxRub);
   const firstMonth = series.months.length > 0 ? series.months[0] : nowMonth;
   const firstParts = splitMonth(firstMonth) ?? { year: 2020, monthIndex: 0 };
@@ -342,7 +345,7 @@ function savingsSection(p, series, nowMonth) {
   const houseCap = houseSeries?.cap ?? HOUSE_CAP_EUR;
   const chips = chartSeries.map((s) => `<button type="button" class="sv-chip ${s.key === "total" ? "sv-chip-tot" : "sv-chip-sec"}${s.off ? " off" : ""}" data-key="${esc(s.key)}" style="--c:${s.color}">` + `<span class="sv-dot"></span><span class="sv-cname">${esc(s.label)}</span> <strong>${esc(eur(s.start))}</strong></button>`).join("");
   const eurPerRub = showRub && rubAt > 0 ? 1 / rubAt : 0.0105;
-  const initEff = initEur + initRub * eurPerRub;
+  const initEff = initEur + initCash + initRub * eurPerRub;
   // The headline "now" starts from the VISIBLE lines only: every chip that is off by
   // default (real estate, RUB, CNY) is subtracted, the same sum the chart's JS keeps live.
   const initVisStart = chartSeries.filter((s) => s.key !== "total" && !s.off).reduce((sum, s) => sum + s.start, 0);
@@ -407,6 +410,13 @@ function savingsSection(p, series, nowMonth) {
         </div>
         <div class="sv-slider">
           <div class="sv-control-row">
+            <span class="sv-rate-label">${esc(t("cashMonthly"))}</span>
+            <span class="sv-rate"><span id="svRateCashLabel">${esc(eur(initCash))}</span>/${LANG === "ru" ? "мес" : "mo"}</span>
+          </div>
+          <input type="range" id="svRateCash" min="0" max="${maxEur}" step="25" value="${initCash}" aria-label="${esc(t("cashMonthly"))}" />
+        </div>
+        <div class="sv-slider">
+          <div class="sv-control-row">
             <span class="sv-rate-label">${esc(t("rubMonthly"))}</span>
             <span class="sv-rate sv-rate-rub"><span id="svRateRubLabel">${esc(rub(initRub))}</span>/${LANG === "ru" ? "мес" : "mo"}</span>
           </div>
@@ -421,7 +431,7 @@ function savingsScript(dataJson) {
 var D=JSON.parse(${JSON.stringify(dataJson)});
 var SH=D.mShort;
 var svg=document.getElementById('svChart'),tip=document.getElementById('svTip');
-var eurS=document.getElementById('svRateEur'),rubS=document.getElementById('svRateRub');
+var eurS=document.getElementById('svRateEur'),cashS=document.getElementById('svRateCash'),rubS=document.getElementById('svRateRub');
 var W=1040,H=480,PL=24,PR=82,PT=28,PB=38,pw=W-PL-PR,ph=H-PT-PB,narrow=false;
 function layout(){
   var r=svg.getBoundingClientRect();
@@ -442,8 +452,11 @@ function lbl(i){var t=D.fy*12+D.fm+Math.round(i);return SH[((t%12)+12)%12]+" '"+
 function xAt(i){return PL+pw*(i-vS)/((vE-vS)||1);}
 function yAt(v){return PT+ph*(1-(v-dMin)/((dMax-dMin)||1));}
 function projVal(s,k,rE,rEff){ if(s.nw)return (s.base!=null?s.base:s.start)*Math.pow(1+(s.apr||0),k/12)-(s.debt||0);
-  if(s.cur==='rub')return s.start+((rEff-rE)/RUBN)*k;
-  return s.start+rE*k; }
+  if(s.cur==='rub')return s.start+((rEff-rE-rC)/RUBN)*k;
+  if(s.cur==='cash')return s.start+rC*k;
+  if(s.cur==='eur')return s.start+rE*k;
+  return s.start; }
+var rC=0;
 function clampV(){ var sp=vE-vS; sp=Math.max(4,Math.min(D.nowI+126,sp));
   if(vS<-4){vE=-4+sp;vS=-4;} if(vE>D.nowI+120){vS=D.nowI+120-sp;vE=D.nowI+120;} }
 function hx(c){return [parseInt(c.slice(1,3),16),parseInt(c.slice(3,5),16),parseInt(c.slice(5,7),16)];}
@@ -454,8 +467,8 @@ function line(a,color,dash,w,op){ if(a.length<1)return '';
   var p=a.map(function(d){return xAt(d[0]).toFixed(1)+','+yAt(d[1]).toFixed(1);}).join(' ');
   return '<polyline points="'+p+'" fill="none" stroke="'+color+'" stroke-width="'+(w||2.6)+'" stroke-linejoin="round" stroke-linecap="round" stroke-opacity="'+(op==null?1:op)+'"'+(dash?' stroke-dasharray="'+dash+'"':'')+'/>'; }
 function draw(){
-  var rE=Number(eurS.value), rR=Number(rubS.value), rEff=rE+rR*D.eurPerRub;
-  var colE=valColor(rE), colR=valColor(rR*(5000/(D.maxRub||100000)));
+  var rE=Number(eurS.value), rR=Number(rubS.value); rC=Number(cashS.value); var rEff=rE+rC+rR*D.eurPerRub;
+  var colE=valColor(rE), colC=valColor(rC), colR=valColor(rR*(5000/(D.maxRub||100000)));
   // Total is computed from the VISIBLE component lines, so toggling a chip (e.g.
   // real estate) moves the headline number too — hide property and you see the liquid pile.
   var comps=[]; D.series.forEach(function(s){ if(s.key!=='total') comps.push(s); });
@@ -567,6 +580,7 @@ svg.addEventListener('touchend',function(){hideTip();});
 document.querySelectorAll('.sv-chip').forEach(function(b){ b.addEventListener('click',function(){
   var k=b.getAttribute('data-key'); vis[k]=!vis[k]; b.classList.toggle('off',!vis[k]); draw(); }); });
 eurS.addEventListener('input',draw);
+cashS.addEventListener('input',draw);
 rubS.addEventListener('input',draw);
 var raf=0;
 function relayout(){ if(raf)cancelAnimationFrame(raf); raf=requestAnimationFrame(function(){layout();draw();}); }
@@ -924,7 +938,7 @@ function buildCss() {
     .sv-tip-m { display:block; opacity:.72; font-size:11px; }
     .sv-tip-v { display:block; font-weight:700; font-size:14.5px; font-variant-numeric:tabular-nums; }
     .sv-rate-head { margin-top:26px; font-family:var(--sans); font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.14em; color:var(--ink-faint); }
-    .sv-controls { margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:18px 32px; }
+    .sv-controls { margin-top:14px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:18px 28px; }
     .sv-slider { min-width:0; }
     .sv-control-row { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; gap:10px; }
     .sv-rate-label { font-family:var(--sans); font-size:11.5px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-soft); }
