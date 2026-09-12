@@ -22,7 +22,7 @@
 import { parseCsv } from "../csv.ts";
 import type { ParsedRow, TxType } from "../types.ts";
 
-const REQUIRED_HEADERS = ["Action", "Time", "Total", "Currency (Total)"] as const;
+const REQUIRED_HEADERS = ["Action",  "Total", "Currency (Total)"] as const;
 
 function mapAction(action: string): TxType {
   const a = action.toLowerCase();
@@ -34,6 +34,9 @@ function mapAction(action: string): TxType {
 
 export function parseTrading212(text: string): ParsedRow[] {
   const { header, records } = parseCsv(text);
+  if (!header.includes("Time") && !header.includes("Time (UTC)")) {
+    throw new Error(`parseTrading212: missing expected column "Time" (or "Time (UTC)"). Header was: [${header.join(", ")}]`);
+  }
   for (const required of REQUIRED_HEADERS) {
     if (!header.includes(required)) {
       throw new Error(
@@ -44,8 +47,12 @@ export function parseTrading212(text: string): ParsedRow[] {
 
   const rows: ParsedRow[] = [];
 
+  // The 2026 export renamed "Time" to "Time (UTC)" and suffixed the timestamp with +00:00;
+  // the date is still the first ten characters and the ID column still carries dedup.
+  const timeColumn = header.includes("Time") ? "Time" : "Time (UTC)";
+
   for (const rec of records) {
-    const time = rec.get("Time").trim();
+    const time = rec.get(timeColumn).trim();
     if (time === "") continue; // no timestamp -> cannot date/dedup; skip defensively
     const date = time.slice(0, 10);
 

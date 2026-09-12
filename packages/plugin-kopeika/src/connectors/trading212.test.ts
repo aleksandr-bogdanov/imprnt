@@ -133,3 +133,14 @@ describe("parseTrading212", () => {
     );
   });
 });
+
+describe("parseTrading212 2026 header", () => {
+  test("reads Time (UTC) with a +00:00 suffix", () => {
+    const csv =
+      "Action,Time (UTC),ISIN,Ticker,Name,Notes,ID,No. of shares,Price / share,Currency (Price / share),Exchange rate,Result,Currency (Result),Total,Currency (Total),Withholding tax,Currency (Withholding tax),Currency conversion fee,Currency (Currency conversion fee)\n" +
+      'Market buy,2026-01-02 08:00:32+00:00,IE00BD8KRH84,GSPX,"iShares Core S&P 500 (Dist)",,EOF44250213554,0.22,11.59,GBP,0.87,,,3.00,"EUR",,,,\n';
+    const rows = parseTrading212(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ date: "2026-01-02", amount_native: 3, currency: "EUR", dedupExtra: "EOF44250213554" });
+  });
+});
