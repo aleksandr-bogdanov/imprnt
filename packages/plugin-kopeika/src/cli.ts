@@ -26,6 +26,7 @@ import {
 } from "./analytics.ts";
 import { renderDashboard, type Levers, type ProjectionView } from "./dashboard.ts";
 import { renderRowsHtml } from "./rows.ts";
+import { renderRetagHtml } from "./retag.ts";
 import { loadProfile, EMPTY_PROFILE, type Profile } from "./profile.ts";
 import { setIdentity } from "./identity.ts";
 import { getConnector, connectorNames } from "./connectors/index.ts";
@@ -1763,6 +1764,41 @@ async function cmdRows(args: Args): Promise<number> {
   return 0;
 }
 
+/**
+ * kopeika retag --html <path> [--lang en|ru] [--from YYYY-MM-DD]
+ * The retag page: one period of counted spend, grouped mandatory/optional then by
+ * category, with a category dropdown, a mandatory tick and a note per row. Changes
+ * stay in the browser and are copied out for the agent (no apply command).
+ */
+async function cmdRetag(args: Args): Promise<number> {
+  const htmlPath = flagString(args, "html");
+  if (!htmlPath) {
+    console.error("usage: kopeika retag --html <path> [--lang en|ru] [--from YYYY-MM-DD]");
+    return 1;
+  }
+  const langRaw = flagString(args, "lang") ?? "en";
+  if (langRaw !== "en" && langRaw !== "ru") {
+    console.error(`--lang must be en|ru (got "${langRaw}")`);
+    return 1;
+  }
+  const from = flagString(args, "from") ?? `${new Date().getFullYear()}-01-01`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    console.error(`--from must be YYYY-MM-DD (got "${from}")`);
+    return 1;
+  }
+  const html = renderRetagHtml(loadLedger(LEDGER_PATH), {
+    lang: langRaw,
+    from,
+    accountLabels: PROFILE.accountLabels,
+    tiers: loadTiers(TIERS_PATH, loadPins(PINS_PATH)),
+    salaryCategory: "Salary",
+  });
+  mkdirSync(dirname(htmlPath), { recursive: true });
+  writeFileSync(htmlPath, html, "utf8");
+  console.log(`✓ wrote retag page (${html.length} bytes) → ${htmlPath}`);
+  return 0;
+}
+
 /** data/levers.json, the household's playbook shown on the dashboard, or null when absent/invalid. */
 function loadLevers(path: string): Levers | null {
   if (!existsSync(path)) return null;
@@ -2084,6 +2120,10 @@ USAGE
   kopeika rows --html <path> [--lang en|ru] [--from YYYY-MM-DD]
       The raw table: every row with account, amount, category, tier, books, note;
       filters cut salary-to-salary. The dashboard's second page.
+  kopeika retag --html <path> [--lang en|ru] [--from YYYY-MM-DD]
+      The retag page: one period of counted spend grouped mandatory/optional then by
+      category, a category dropdown + mandatory tick + note per row; changes are
+      copied out for the agent, nothing writes from the browser.
   kopeika import <${connectorNames().join("|")}> <file> --account <name> --owner <owner>
       Archive the raw export, parse, normalize, FX-convert, dedup, append to ledger.
       Prints: imported / skipped-dup / skipped-non-completed, plus any missing FX rates.
@@ -2255,6 +2295,8 @@ async function main(): Promise<number> {
       return cmdReport(args);
     case "rows":
       return cmdRows(args);
+    case "retag":
+      return cmdRetag(args);
     case "decide":
       return cmdDecide(args);
     case "manual":

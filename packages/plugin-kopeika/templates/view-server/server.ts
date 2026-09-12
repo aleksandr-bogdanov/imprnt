@@ -2,7 +2,7 @@
 // password managers autofill). One shared password, verified against an argon2 hash
 // (PUBLISH_PASSWORD_HASH, made with Bun.password.hash), then a signed httpOnly cookie
 // (HMAC-SHA256 of an expiry with PUBLISH_SECRET, 30 days). Bilingual: ru default, en via
-// the toggle, remembered in a `lang` cookie. Static files only: public/{en,ru}.html.
+// the toggle, remembered in a `lang` cookie. Static files only: public/{en,ru}.html, plus rows-* at /rows and retag-* at /retag.
 // Rebuilt 2026-09-12 from the description in vault/work/kopeika-hosting-decision.md after
 // the original bundle was lost with the standalone repo.
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -94,10 +94,10 @@ Bun.serve({
       const lang = url.searchParams.get("set") === "en" ? "en" : "ru";
       return new Response(null, { status: 303, headers: { location: "/", "set-cookie": `lang=${lang}; Path=/; Max-Age=${365 * DAY}; SameSite=Lax` } });
     }
-    if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/rows") {
+    if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/rows" || url.pathname === "/retag") {
       const q = url.searchParams.get("lang");
       const lang = q === "en" || q === "ru" ? q : cookie(req, "lang") === "en" ? "en" : "ru";
-      return page(url.pathname === "/rows" ? `rows-${lang}` : lang);
+      return page(url.pathname === "/rows" ? `rows-${lang}` : url.pathname === "/retag" ? `retag-${lang}` : lang);
     }
     return new Response("not found", { status: 404 });
   },

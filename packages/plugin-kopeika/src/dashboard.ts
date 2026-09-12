@@ -720,6 +720,7 @@ function controls() {
   const other = LANG === "ru" ? "en" : "ru";
   return `
       <div class="controls">
+        <a class="ctl" href="/retag">${LANG === "ru" ? "разметка" : "retag"}</a>
         <a class="ctl lang ${LANG === "en" ? "on" : ""}" href="/?lang=en">EN</a>
         <a class="ctl lang ${LANG === "ru" ? "on" : ""}" href="/?lang=ru" data-other="${other}">RU</a>
         <button type="button" class="ctl theme" id="themeBtn" aria-label="${esc(t("theme"))}"><span class="theme-ic">\uD83C\uDF19</span></button>
