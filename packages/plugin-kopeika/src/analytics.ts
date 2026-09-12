@@ -303,7 +303,7 @@ export function buildReport(
       // Tier reads the resolved category (incl. "Uncategorized"/"Bank fees") and
       // the raw merchant — recurrence plays no part here; obligation does.
       if (splitTiers) {
-        const tier = tierOf(tiers!, category, tx.merchant_raw);
+        const tier = tierOf(tiers!, category, tx.merchant_raw, tx.id);
         if (tier === "mandatory") {
           acc.floor += abs;
           overallFloor += abs;
@@ -377,10 +377,13 @@ export function latestCompleteMonth(report: Report, now: Date = new Date()): str
 
 /** One spend transaction, the leaf of the grouped view. */
 export interface SpendTxn {
+  id: string;
   date: string;
   merchant: string;
   eur: number; // positive magnitude
   account: string;
+  /** Resolved tier for this row (category default or a pin override). */
+  tier: "mandatory" | "optional";
 }
 
 /** A category within a tier: its total and the transactions that make it up. */
@@ -428,8 +431,8 @@ export function buildSpendGroups(
     if (tx.amount_eur === null || tx.amount_eur >= 0) continue; // spend only
     const abs = -tx.amount_eur;
     const category = spendCategoryOf(tx);
-    const tier: SpendTier =
-      splitTiers && tierOf(tiers!, category, tx.merchant_raw) === "mandatory" ? "mandatory" : "non-mandatory";
+    const rowTier = splitTiers ? tierOf(tiers!, category, tx.merchant_raw, tx.id) : "optional";
+    const tier: SpendTier = rowTier === "mandatory" ? "mandatory" : "non-mandatory";
 
     const cats = byTier.get(tier)!;
     let group = cats.get(category);
@@ -439,7 +442,7 @@ export function buildSpendGroups(
     }
     group.total += abs;
     group.count += 1;
-    group.txns.push({ date: tx.date, merchant: tx.merchant_raw, eur: round2(abs), account: tx.account });
+    group.txns.push({ id: tx.id, date: tx.date, merchant: tx.merchant_raw, eur: round2(abs), account: tx.account, tier: rowTier });
   }
 
   const tierOrder: SpendTier[] = ["mandatory", "non-mandatory"];

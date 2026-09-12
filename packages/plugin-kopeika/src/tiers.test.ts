@@ -55,9 +55,11 @@ describe("tiersConfigured", () => {
 });
 
 describe("loadTiers", () => {
-  test("missing file -> empty (unconfigured) tiers", () => {
-    const t = loadTiers("/no/such/tiers.csv");
-    expect(tiersConfigured(t)).toBe(false);
+  test("missing file -> the hard-coded category defaults, no merchant overrides", () => {
+    const t = loadTiers("/nonexistent/tiers.csv");
+    expect(t.mandatoryCategories.has("housing")).toBe(true);
+    expect(t.mandatoryCategories.has("eating-out")).toBe(false);
+    expect(t.mandatoryMerchants).toEqual([]);
   });
 
   test("loads category + merchant mandatory rows, lower-cased", () => {

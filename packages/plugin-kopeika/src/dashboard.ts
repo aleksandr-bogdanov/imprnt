@@ -13,6 +13,7 @@
 import type { MonthSummary, Report, SpendTierGroup } from "./analytics.ts";
 import type { SavingsSeriesData, StockComponent } from "./savings.ts";
 import type { Bilingual, MerchantInfoEntry } from "./profile.ts";
+import { CATEGORIES, categoryLabel, pickableCategories } from "./categories.ts";
 
 /** The levers playbook (data/levers.json): phases of bilingual items shown as "our plan". */
 export interface Levers {
@@ -115,6 +116,8 @@ var CATEGORY_COLORS = {
 };
 var CATEGORY_FALLBACK = ["#3d7fb2", "#cd6a38", "#3f9668", "#c55a8b", "#b8892e", "#8a63b8", "#b5503f", "#00958a", "#6a6fbf", "#ab6330"];
 function categoryColor(cat) {
+  const def = CATEGORIES.find((c) => c.key === cat);
+  if (def && def.color) return def.color;
   const hit = CATEGORY_COLORS[cat];
   if (hit)
     return hit;
@@ -142,10 +145,19 @@ var STRINGS = {
   whereItGoes: { en: "Where it goes", ru: "Куда уходят деньги" },
   spendKicker: { en: "Spending", ru: "Траты" },
   worthKicker: { en: "kopeika", ru: "kopeika" },
-  tapCategory: { en: "Tap a category to see the transactions", ru: "Нажмите на категорию, чтобы раскрыть операции" },
+  tapCategory: { en: "Every row can be retagged: pick a category, tick mandatory, leave a note. Copy the changes when done.", ru: "Любую строку можно перекинуть: выбрать категорию, отметить «обязательно», оставить заметку. Готово — скопируйте изменения." },
+  chgBtn: { en: "changes", ru: "изменения" },
+  chgCopy: { en: "copy", ru: "скопировать" },
+  chgClear: { en: "clear", ru: "очистить" },
+  colDate: { en: "date", ru: "дата" },
+  colMerchant: { en: "merchant", ru: "получатель" },
+  colAmount: { en: "EUR", ru: "EUR" },
+  colCategory: { en: "category", ru: "категория" },
+  colMandatory: { en: "mandatory", ru: "обязательно" },
+  colNote: { en: "note", ru: "заметка" },
   mandatory: { en: "Mandatory", ru: "Обязательные" },
-  nonMandatory: { en: "Non-mandatory", ru: "Необязательные" },
-  mandatorySub: { en: "Rent, utilities and subscriptions - owed no matter what", ru: "Аренда, коммуналка и подписки — платим всегда" },
+  nonMandatory: { en: "Optional", ru: "Свободные" },
+  mandatorySub: { en: "Housing, groceries, transport, work tools - owed no matter what", ru: "Жильё, продукты, транспорт, рабочие подписки — платим всегда" },
   flexSub: { en: "Everything else — the part you can flex", ru: "Всё остальное — здесь можно ужаться" },
   spent: { en: "spent", ru: "потрачено" },
   none: { en: "No spend recorded — nice and quiet.", ru: "Трат не было — тихий период." },
@@ -203,7 +215,7 @@ export var CATEGORY_RU = {
   "Bank fees": "Комиссии банка"
 };
 function catName(cat) {
-  return LANG === "ru" ? CATEGORY_RU[cat] ?? cat : cat;
+  return categoryLabel(cat, LANG);
 }
 function accountLabel(account) {
   return DISPLAY.accountLabels?.[account]?.[LANG] ?? account;
@@ -634,29 +646,20 @@ function categoryDetails(c, monthTotal, tierMax, monthKey) {
             <ul class="txns">${rows}</ul>
           </details>`;
 }
-function tierBlock(g, monthTotal, monthMax, monthKey) {
-  if (g.categories.length === 0)
-    return "";
-  const label = g.tier === "mandatory" ? t("mandatory") : t("nonMandatory");
-  const sub = g.tier === "mandatory" ? t("mandatorySub") : t("flexSub");
-  const fillMax = monthMax > 0 ? monthMax : g.categories.reduce((mx, c) => Math.max(mx, c.total), 0);
-  const cats = g.categories.map((c) => categoryDetails(c, monthTotal, fillMax, monthKey)).join("");
-  return `
-      <div class="tier tier-${g.tier}">
-        <div class="tier-head"><h3>${esc(label)}</h3><span class="tier-total">${esc(eur(g.total))}</span></div>
-        <p class="tier-sub">${esc(sub)}</p>
-        ${cats}
-      </div>`;
+function monthRows(m) {
+  const rows = [];
+  for (const g of m.groups) for (const c of g.categories) for (const tx of c.txns) rows.push({ id: tx.id, d: tx.date, m: tx.merchant, a: accountLabel(tx.account), e: tx.eur, c: c.category, man: tx.tier === "mandatory" });
+  rows.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : b.e - a.e));
+  return rows;
 }
 function monthBlock(m, selected) {
   const total = m.groups.reduce((s, g) => s + g.total, 0);
-  const monthMax = m.groups.reduce((mx, g) => g.categories.reduce((mx2, c) => Math.max(mx2, c.total), mx), 0);
-  const blocks = m.groups.map((g) => tierBlock(g, total, monthMax, m.month)).join("");
   return `
       <div class="month-block" data-month="${esc(m.month)}"${selected ? "" : " hidden"}>
         <div class="month-total">${esc(eur(total))}<span class="month-total-label">${esc(periodLabel(m.month))} · ${esc(t("spent"))}</span></div>
         ${splitBar(m.groups, total)}
-        ${blocks || `<p class="muted">${esc(t("none"))}</p>`}
+        <div class="txtable" data-month="${esc(m.month)}"></div>
+        <script type="application/json" class="txdata">${JSON.stringify(monthRows(m)).replace(/</g, "\\u003c")}</script>
       </div>`;
 }
 function spendSection(months, selected) {
@@ -669,22 +672,57 @@ function spendSection(months, selected) {
   });
   const options = ordered.map((m) => `<option value="${esc(m.month)}"${m.month === selected ? " selected" : ""}>${esc(periodLabel(m.month))}</option>`).join("");
   const blocks = ordered.map((m) => monthBlock(m, m.month === selected)).join("");
+  const cats = pickableCategories().filter((c) => c.kind === "spend").map((c) => ({ value: c.key, label: LANG === "ru" ? c.ru : c.en, tier: c.tier }));
+  const cfg = {
+    cats,
+    colors: Object.fromEntries(CATEGORIES.filter((c) => c.color).map((c) => [c.key, c.color])),
+    tier: { mandatory: t("mandatory"), optional: t("nonMandatory") },
+    cols: { d: t("colDate"), m: t("colMerchant"), e: t("colAmount"), c: t("colCategory"), man: t("colMandatory"), n: t("colNote") },
+    locale: LANG === "ru" ? "ru-RU" : "en-GB",
+  };
   const script = `(function(){
-var sec=document.currentScript.parentElement, sel=document.getElementById('monthSel');
-if(sel)sel.addEventListener('change',function(){var m=sel.value;
-  sec.querySelectorAll('.month-block').forEach(function(b){b.hidden=b.getAttribute('data-month')!==m;});});
-function setFocus(blk,cat){ blk.querySelectorAll('.bd-seg').forEach(function(s){var on=s.getAttribute('data-cat')===cat;s.classList.toggle('dim',!on);s.classList.toggle('hot',on);});
-  blk.querySelectorAll('details.cat').forEach(function(d){d.classList.toggle('rowdim',d.getAttribute('data-cat')!==cat);}); }
-function clearFocus(blk){ blk.querySelectorAll('.bd-seg').forEach(function(s){s.classList.remove('dim','hot');}); blk.querySelectorAll('details.cat').forEach(function(d){d.classList.remove('rowdim');}); }
-sec.addEventListener('mouseover',function(e){var el=e.target.closest('[data-cat]'); if(!el)return; var blk=el.closest('.month-block'); if(blk)setFocus(blk,el.getAttribute('data-cat')); });
-sec.addEventListener('mouseout',function(e){var el=e.target.closest('[data-cat]'); if(!el)return; var blk=el.closest('.month-block'); if(blk&&!blk.querySelector('[data-cat]:hover'))clearFocus(blk); });
+var sec=document.currentScript.parentElement, sel=document.getElementById('monthSel'), C=${JSON.stringify(cfg)};
+var CN={}; C.cats.forEach(function(c){CN[c.value]=c.label;}); var CT={}; C.cats.forEach(function(c){CT[c.value]=c.tier;});
+var KEY='kopeika-changes'; var CH={}; try{CH=JSON.parse(localStorage.getItem(KEY)||'{}');}catch(e){CH={};}
+function fmtE(n){return n.toLocaleString(C.locale,{minimumFractionDigits:2,maximumFractionDigits:2});}
+function save(){ try{localStorage.setItem(KEY,JSON.stringify(CH));}catch(e){} var n=Object.keys(CH).length; sec.querySelectorAll('.chg-n').forEach(function(b){b.textContent=n;}); renderCh(); }
+function renderCh(){ var ta=document.getElementById('chgText'); if(!ta)return; ta.value=Object.values(CH).map(function(c){return JSON.stringify(c);}).join(String.fromCharCode(10)); }
+function record(row){ var d=row.getData(); var o=d._o; var c={id:d.id,date:d.d,merchant:d.m,eur:d.e}; var diff=false;
+  if(d.c!==o.c){c.category=d.c;diff=true;} if(d.man!==o.man){c.mandatory=d.man?'yes':'no';diff=true;} if((d.n||'')!==''){c.note=d.n;diff=true;}
+  if(diff){CH[d.id]=c;}else{delete CH[d.id];} save(); row.getElement().classList.toggle('chg',diff); }
+function build(host){ if(host._built)return; host._built=true; var data=JSON.parse(host.parentElement.querySelector('.txdata').textContent);
+  data.forEach(function(r){ var ch=CH[r.id]; if(ch){ if(ch.category)r.c=ch.category; if(ch.mandatory)r.man=ch.mandatory==='yes'; if(ch.note)r.n=ch.note; } r._o={c:r.c,man:r.man}; if(ch){ r._o={c:r.c,man:r.man}; if(ch.category)r._o.c=data._oc; } });
+  // the original values are what the page rendered, before any stored change
+  var orig={}; JSON.parse(host.parentElement.querySelector('.txdata').textContent).forEach(function(r){orig[r.id]={c:r.c,man:r.man};}); data.forEach(function(r){r._o=orig[r.id];});
+  var table=new Tabulator(host,{data:data,layout:'fitColumns',reactiveData:false,groupBy:[function(r){return r.man?'1':'0';},'c'],groupStartOpen:[true,false],
+    groupHeader:[function(v,count,data){var sum=data.reduce(function(s,r){return s+r.e;},0);return '<span class="gh-tier gh-'+(v==='1'?'m':'o')+'">'+(v==='1'?C.tier.mandatory:C.tier.optional)+'</span><span class="gh-sum">'+fmtE(sum)+'</span>';},
+      function(v,count,data){var sum=data.reduce(function(s,r){return s+r.e;},0);return '<span class="gh-dot" style="background:'+(C.colors[v]||'#98917f')+'"></span><span class="gh-cat">'+(CN[v]||v||'—')+'</span><span class="gh-n">'+count+'</span><span class="gh-sum">'+fmtE(sum)+'</span>';}],
+    columns:[
+      {title:C.cols.d,field:'d',width:64,formatter:function(c){return c.getValue().slice(5);},cssClass:'mono',headerSort:true},
+      {title:C.cols.m,field:'m',minWidth:140,formatter:function(c){var r=c.getRow().getData();return '<span class="t-name">'+c.getValue().replace(/</g,'&lt;')+'</span><span class="t-acct">'+r.a+'</span>';}},
+      {title:C.cols.e,field:'e',width:96,hozAlign:'right',cssClass:'mono',formatter:function(c){return fmtE(c.getValue());},sorter:'number'},
+      {title:C.cols.c,field:'c',width:190,editor:'list',editorParams:{values:C.cats.map(function(c){return {value:c.value,label:c.label};}),autocomplete:false},formatter:function(c){return '<span class="pick">'+(CN[c.getValue()]||c.getValue()||'—')+'</span>';}},
+      {title:C.cols.man,field:'man',width:110,hozAlign:'center',editor:'tickCross',formatter:'tickCross',formatterParams:{allowEmpty:false,tickElement:'<span class="tick on">&#10003;</span>',crossElement:'<span class="tick">&#8211;</span>'}},
+      {title:C.cols.n,field:'n',minWidth:120,editor:'input',formatter:function(c){var v=c.getValue()||'';return v?'<span class="t-note">'+v.replace(/</g,'&lt;')+'</span>':'<span class="t-note faint">…</span>';}}
+    ]});
+  table.on('cellEdited',function(cell){ var f=cell.getField(); var row=cell.getRow(); if(f==='c'){ var d=row.getData(); var ch=CH[d.id]; if(!(ch&&ch.mandatory)){ row.update({man:CT[d.c]==='mandatory'}); } } record(row); });
+  table.on('tableBuilt',function(){ table.getRows().forEach(function(r){ if(CH[r.getData().id]) r.getElement().classList.add('chg'); }); });
+}
+function show(m){ sec.querySelectorAll('.month-block').forEach(function(b){var on=b.getAttribute('data-month')===m; b.hidden=!on; if(on)build(b.querySelector('.txtable'));}); }
+if(sel){ sel.addEventListener('change',function(){show(sel.value);}); show(sel.value); }
+var panel=document.getElementById('chgPanel');
+sec.querySelectorAll('.chg-btn').forEach(function(b){b.addEventListener('click',function(){panel.hidden=!panel.hidden;renderCh();});});
+var cp=document.getElementById('chgCopy'); if(cp)cp.addEventListener('click',function(){navigator.clipboard.writeText(document.getElementById('chgText').value).then(function(){cp.textContent='✓';setTimeout(function(){cp.textContent=C.copyLabel||cp.getAttribute('data-l');},1500);});});
+var cl=document.getElementById('chgClear'); if(cl)cl.addEventListener('click',function(){CH={};save();sec.querySelectorAll('.txtable').forEach(function(h){h._built=false;h.innerHTML='';});show(sel.value);});
+save();
 })();`;
   return `
     <section class="card spend" aria-label="${esc(t("whereItGoes"))}">
       <header class="block-head spend-head">
         <div><div class="eyebrow">${esc(t("spendKicker"))}</div><h2>${esc(t("whereItGoes"))}</h2><p class="muted">${esc(t("tapCategory"))}</p></div>
-        <select id="monthSel" class="month-pick" aria-label="${esc(t("whereItGoes"))}">${options}</select>
+        <div class="spend-ctl"><select id="monthSel" class="month-pick" aria-label="${esc(t("whereItGoes"))}">${options}</select><button type="button" class="chg-btn">${esc(t("chgBtn"))} <b class="chg-n">0</b></button></div>
       </header>
+      <div id="chgPanel" class="chg-panel" hidden><textarea id="chgText" rows="6" readonly spellcheck="false"></textarea><div class="chg-row"><button type="button" id="chgCopy" data-l="${esc(t("chgCopy"))}">${esc(t("chgCopy"))}</button><button type="button" id="chgClear">${esc(t("chgClear"))}</button></div></div>
       ${blocks}
       <script>${script}</script>
     </section>`;
@@ -819,6 +857,8 @@ export function renderDashboard(input) {
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,800;1,600;1,700&family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/tabulator/6.4.0/css/tabulator.min.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tabulator/6.4.0/js/tabulator.min.js"></script>
   <script>${themeBoot}</script>
   <style>
 ${buildCss()}
@@ -942,6 +982,45 @@ function buildCss() {
     .sv-rate-head { margin-top:26px; font-family:var(--sans); font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.14em; color:var(--ink-faint); }
     .sv-controls { margin-top:14px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:18px 28px; }
     .sv-slider { min-width:0; }
+    .spend-ctl { display:flex; gap:10px; align-items:center; }
+    .chg-btn, .chg-row button { font-family:var(--sans); font-size:13px; font-weight:600; padding:7px 12px; border:1px solid var(--border); border-radius:10px; background:var(--card); color:var(--ink); cursor:pointer; }
+    .chg-btn:hover, .chg-row button:hover { border-color:var(--green-bright); color:var(--green); }
+    .chg-btn b { color:var(--green); }
+    .chg-panel { margin:10px 0 16px; }
+    .chg-panel textarea { width:100%; box-sizing:border-box; font-family:var(--mono); font-size:12px; line-height:1.5; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--bg); color:var(--ink); resize:vertical; }
+    .chg-row { display:flex; gap:8px; margin-top:8px; }
+    .txtable { margin-top:18px; }
+    .tabulator { background:transparent; border:0; font-family:var(--sans); font-size:13.5px; color:var(--ink); }
+    .tabulator .tabulator-header { background:transparent; border-bottom:1px solid var(--border); color:var(--ink-faint); font-family:var(--mono); font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.12em; }
+    .tabulator .tabulator-header .tabulator-col { background:transparent; border-right:0; }
+    .tabulator .tabulator-header .tabulator-col .tabulator-col-content { padding:8px 8px; }
+    .tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover { background:transparent; color:var(--ink); }
+    .tabulator .tabulator-tableholder { background:transparent; }
+    .tabulator .tabulator-row { background:transparent; border-bottom:1px solid var(--border); color:var(--ink); min-height:34px; }
+    .tabulator .tabulator-row.tabulator-row-even { background:transparent; }
+    .tabulator .tabulator-row:hover { background:color-mix(in srgb, var(--green) 7%, transparent); }
+    .tabulator .tabulator-row .tabulator-cell { border-right:0; padding:7px 8px; }
+    .tabulator .tabulator-row .tabulator-cell.mono { font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums; }
+    .tabulator .tabulator-row.chg { background:color-mix(in srgb, var(--amber) 12%, transparent); }
+    .tabulator .tabulator-row .tabulator-cell.tabulator-editing { border:1px solid var(--green); background:var(--card); }
+    .tabulator .tabulator-row .tabulator-cell.tabulator-editing input, .tabulator .tabulator-row .tabulator-cell.tabulator-editing select { background:var(--card); color:var(--ink); font-family:var(--sans); }
+    .tabulator-edit-list { background:var(--card); border:1px solid var(--border); border-radius:10px; font-family:var(--sans); font-size:13px; color:var(--ink); box-shadow:0 10px 26px -8px rgba(0,0,0,.35); }
+    .tabulator-edit-list .tabulator-edit-list-item { color:var(--ink); padding:6px 10px; }
+    .tabulator-edit-list .tabulator-edit-list-item.active, .tabulator-edit-list .tabulator-edit-list-item:hover { background:var(--green); color:#fff; }
+    .tabulator .tabulator-row.tabulator-group { background:transparent; border-bottom:1px solid var(--border); border-right:0; padding:9px 10px; color:var(--ink); font-weight:600; display:flex; align-items:center; gap:10px; }
+    .tabulator .tabulator-row.tabulator-group .tabulator-arrow { border-left-color:var(--ink-faint); margin-right:6px; }
+    .tabulator .tabulator-row.tabulator-group.tabulator-group-level-1 { padding-left:24px; font-weight:500; }
+    .gh-tier { font-family:var(--serif); font-size:17px; }
+    .gh-m { color:var(--green); } .gh-o { color:var(--amber); }
+    .gh-dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+    .gh-n { font-family:var(--mono); font-size:11px; color:var(--ink-faint); }
+    .gh-sum { margin-left:auto; font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums; color:var(--ink); }
+    .tabulator .t-name { display:block; } .tabulator .t-acct { display:block; font-size:11px; color:var(--ink-faint); }
+    .tabulator .t-note { font-size:12.5px; color:var(--ink-soft); } .tabulator .t-note.faint { color:var(--ink-faint); }
+    .tabulator .pick { border-bottom:1px dotted var(--ink-faint); }
+    .tick { font-family:var(--mono); color:var(--ink-faint); } .tick.on { color:var(--green); font-weight:700; }
+    .tabulator .tabulator-col-resize-handle { display:none; }
+    @media (max-width:640px) { .tabulator .tabulator-header { display:none; } }
     .cat-rows { font-size:11px; color:var(--ink-faint); text-decoration:none; margin-left:4px; opacity:0; transition:opacity .15s; }
     details.cat summary:hover .cat-rows { opacity:1; }
     .cat-rows:hover { color:var(--green); }

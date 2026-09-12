@@ -18,6 +18,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { parseCsv } from "./csv.ts";
+import { mandatoryCategoryKeys } from "./categories.ts";
+import type { Pin } from "./pins.ts";
 
 /** The mandatory side of the world, pre-lowercased for case-insensitive matching. */
 export interface Tiers {
@@ -25,6 +27,8 @@ export interface Tiers {
   mandatoryCategories: ReadonlySet<string>;
   /** merchant_raw substrings that mark a row mandatory (case-insensitive contains). */
   mandatoryMerchants: readonly string[];
+  /** Per-row overrides from data/pins.csv, by transaction id. They beat everything. */
+  rowTiers?: ReadonlyMap<string, Tier>;
 }
 
 /** The two tiers. "mandatory" = floor, "optional" = flex. */
@@ -42,14 +46,18 @@ const VALID_TIERS: ReadonlySet<string> = new Set(["mandatory", "optional"]);
  * file can be exhaustive if the user wants) but are a no-op, since optional is
  * the default for anything unmatched.
  */
-export function loadTiers(path: string): Tiers {
-  if (!existsSync(path)) return { mandatoryCategories: new Set(), mandatoryMerchants: [] };
+export function loadTiers(path: string, pins?: ReadonlyMap<string, Pin>): Tiers {
+  // The category defaults come from the hard-coded set; tiers.csv adds merchant
+  // overrides (and may still list categories, harmlessly); pins override per row.
+  const mandatoryCategories = new Set<string>(mandatoryCategoryKeys().map((k) => k.toLowerCase()));
+  const mandatoryMerchants: string[] = [];
+  const rowTiers = new Map<string, Tier>();
+  if (pins) for (const p of pins.values()) if (p.mandatory !== null) rowTiers.set(p.id, p.mandatory);
+  if (!existsSync(path)) return { mandatoryCategories, mandatoryMerchants, rowTiers };
   const text = readFileSync(path, "utf8");
-  if (text.trim().length === 0) return { mandatoryCategories: new Set(), mandatoryMerchants: [] };
+  if (text.trim().length === 0) return { mandatoryCategories, mandatoryMerchants, rowTiers };
 
   const { records } = parseCsv(text);
-  const mandatoryCategories = new Set<string>();
-  const mandatoryMerchants: string[] = [];
 
   records.forEach((rec, i) => {
     const scope = rec.get("scope").trim().toLowerCase();
@@ -73,7 +81,7 @@ export function loadTiers(path: string): Tiers {
     else mandatoryMerchants.push(value.toLowerCase());
   });
 
-  return { mandatoryCategories, mandatoryMerchants };
+  return { mandatoryCategories, mandatoryMerchants, rowTiers };
 }
 
 /** True when no mandatory rows were declared — the floor is unknown, not zero. */
@@ -86,7 +94,11 @@ export function tiersConfigured(tiers: Tiers): boolean {
  * its merchant_raw contains a mandatory merchant substring; otherwise optional.
  * Matching is case-insensitive on both axes. Pure — safe to call in hot loops.
  */
-export function tierOf(tiers: Tiers, category: string, merchantRaw: string): Tier {
+export function tierOf(tiers: Tiers, category: string, merchantRaw: string, id?: string): Tier {
+  if (id !== undefined) {
+    const pinned = tiers.rowTiers?.get(id);
+    if (pinned !== undefined) return pinned;
+  }
   if (tiers.mandatoryCategories.has(category.toLowerCase())) return "mandatory";
   const m = merchantRaw.toLowerCase();
   if (tiers.mandatoryMerchants.some((sub) => m.includes(sub))) return "mandatory";

@@ -8,7 +8,7 @@
 import { isAnalyticsExcluded, EXCLUDE_CATEGORY, SAVINGS_CATEGORY } from "./analytics.ts";
 import { tierOf, type Tiers } from "./tiers.ts";
 import type { Transaction } from "./types.ts";
-import { CATEGORY_RU } from "./dashboard.ts";
+import { categoryLabel, pickableCategories } from "./categories.ts";
 
 export interface RowsOptions {
   lang: "en" | "ru";
@@ -46,7 +46,7 @@ export function renderRowsHtml(txs: readonly Transaction[], o: RowsOptions): str
         e: x.amount_eur,
         n: x.currency !== "EUR" ? `${x.amount_native} ${x.currency}` : "",
         c: x.category,
-        t: kind === "counted" && x.amount_eur !== null && x.amount_eur < 0 ? tierOf(o.tiers, x.category, x.merchant_raw) : "",
+        t: kind === "counted" && x.amount_eur !== null && x.amount_eur < 0 ? tierOf(o.tiers, x.category, x.merchant_raw, x.id) : "",
         k: kind,
         p: x.tax_person,
         x: x.tax_category,
@@ -58,7 +58,7 @@ export function renderRowsHtml(txs: readonly Transaction[], o: RowsOptions): str
   const periods = salaryDates.map((d, i) => ({ from: d, to: salaryDates[i + 1] ? prevDay(salaryDates[i + 1]!) : "" })).reverse();
   const accounts = [...new Set(rows.map((r) => r.a))].sort();
   const categories = [...new Set(rows.map((r) => r.c || "—"))].sort();
-  const catName = (c: string): string => (o.lang === "ru" ? (CATEGORY_RU as Record<string, string>)[c] ?? c : c);
+  const catName = (c: string): string => (c === "—" ? "—" : categoryLabel(c, o.lang));
   const months = [...new Set(rows.map((r) => r.d.slice(0, 7)))].sort().reverse();
 
   return `<!DOCTYPE html><html lang="${o.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t.title}</title>
@@ -98,7 +98,7 @@ a{color:var(--accent)}.top{display:flex;justify-content:space-between;align-item
 <table><thead><tr><th data-k="d">${t.date}</th><th class="acc" data-k="a">${t.account}</th><th data-k="m">${t.merchant}</th><th data-k="e" style="text-align:right">${t.amount}</th><th data-k="c">${t.category}</th><th data-k="t">${t.tier}</th><th data-k="p">${t.books}</th><th class="nt" data-k="nt">${t.note}</th></tr></thead><tbody id="tb"></tbody></table>
 <script>
 const ROWS=${JSON.stringify(rows)};const L=${JSON.stringify({ mandatory: t.mandatory, optional: t.optional, none: t.none, newCat: t.newCat, scopeRow: t.scopeRow, scopeMerchant: t.scopeMerchant })};
-const CATS=${JSON.stringify(categories.filter((c) => c !== "—"))};const CN=${JSON.stringify(Object.fromEntries(categories.filter((c) => c !== "—").map((c) => [c, catName(c)])))};const cn=(c)=>CN[c]||c||'—';const TAX=${JSON.stringify(o.taxCategories)};const PERSONS=${JSON.stringify(o.persons)};
+const CATS=${JSON.stringify(pickableCategories().map((c) => c.key))};const CN=${JSON.stringify(Object.fromEntries([...new Set([...pickableCategories().map((c) => c.key), ...categories.filter((c) => c !== "—")])].map((c) => [c, catName(c)])))};const cn=(c)=>CN[c]||c||'—';const TAX=${JSON.stringify(o.taxCategories)};const PERSONS=${JSON.stringify(o.persons)};
 let EDIT=false;let CH={};try{CH=JSON.parse(localStorage.getItem('kopeika-rows-changes')||'{}')}catch(e){CH={}}
 function saveCh(){try{localStorage.setItem('kopeika-rows-changes',JSON.stringify(CH))}catch(e){}document.getElementById('chgN').textContent=Object.keys(CH).length;renderCh()}
 function renderCh(){const lines=Object.values(CH).map(c=>'row '+c.id+' | '+c.d+' '+c.a+' | '+c.m+' | '+c.e+' | category: '+(c.c0||'—')+' -> '+(c.c1||'—')+' | books: '+(c.b0||'none')+' -> '+(c.b1||'none')+' | scope: '+(c.scope==='merchant'?'merchant':'row'));document.getElementById('chgText').value=lines.join(String.fromCharCode(10))}

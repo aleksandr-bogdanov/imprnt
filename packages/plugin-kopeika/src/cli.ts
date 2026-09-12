@@ -58,6 +58,7 @@ import {
   DEFAULT_RECURRING_OPTIONS,
 } from "./recurring.ts";
 import { loadTiers, tiersConfigured } from "./tiers.ts";
+import { loadPins } from "./pins.ts";
 import {
   DEFAULT_TRANSFER_OPTIONS,
   matchTransfers,
@@ -122,6 +123,7 @@ const LEDGER_PATH = join(DATA_DIR, "ledger.csv");
 const RULES_PATH = join(DATA_DIR, "rules.csv");
 const RATES_PATH = join(DATA_DIR, "rates.csv");
 const LEVERS_PATH = join(DATA_DIR, "levers.json");
+const PINS_PATH = join(DATA_DIR, "pins.csv");
 const TIERS_PATH = join(DATA_DIR, "tiers.csv");
 const SAVINGS_PATH = join(DATA_DIR, "savings.csv");
 // The household profile lives in profiles/ (the consolidated PII zone) since the
@@ -1461,9 +1463,19 @@ async function cmdCategorize(args: Args): Promise<number> {
       retyped += 1;
     }
   }
+  // Household pins (data/pins.csv) outrank every rule: a row's decided category always wins.
+  const pins = loadPins(PINS_PATH);
+  let pinned = 0;
+  for (const tx of ledger) {
+    const pin = pins.get(tx.id);
+    if (pin && pin.category !== "" && tx.category !== pin.category) {
+      tx.category = pin.category;
+      pinned += 1;
+    }
+  }
 
   writeLedger(LEDGER_PATH, ledger);
-  console.log(`categorized ${categorized} row(s)` + (retyped > 0 ? `, retyped ${retyped}` : ""));
+  console.log(`categorized ${categorized} row(s)` + (retyped > 0 ? `, retyped ${retyped}` : "") + (pinned > 0 ? `, pinned ${pinned}` : ""));
   const remaining = ledger.filter((t) => t.category === "").length;
   if (remaining > 0) {
     console.log(`${remaining} row(s) still uncategorized — run \`categorize --review\` to triage.`);
@@ -1535,7 +1547,7 @@ async function cmdRecurring(args: Args): Promise<number> {
     return 1;
   }
 
-  const tiers = loadTiers(TIERS_PATH);
+  const tiers = loadTiers(TIERS_PATH, loadPins(PINS_PATH));
   const recurring = detectRecurring(ledger, tiers, { minMonths, from: fromFlag });
 
   if (recurring.length === 0) {
@@ -1740,7 +1752,7 @@ async function cmdRows(args: Args): Promise<number> {
     lang: langRaw,
     from,
     accountLabels: PROFILE.accountLabels,
-    tiers: loadTiers(TIERS_PATH),
+    tiers: loadTiers(TIERS_PATH, loadPins(PINS_PATH)),
     salaryCategory: "Salary",
     taxCategories,
     persons,
@@ -1797,7 +1809,7 @@ async function cmdReport(args: Args): Promise<number> {
     }
   }
 
-  const tiers = loadTiers(TIERS_PATH);
+  const tiers = loadTiers(TIERS_PATH, loadPins(PINS_PATH));
   const report = buildReport(ledger, { month: monthFlag, from: fromFlag }, tiers);
   if (report.months.length === 0) {
     console.log("no transactions matched the selected range (after excluding transfers/exchanges).");
