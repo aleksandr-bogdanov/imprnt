@@ -1879,7 +1879,8 @@ async function cmdReport(args: Args): Promise<number> {
         lookbackMonths: DEFAULT_RATE_LOOKBACK,
         netWorth,
       };
-      series = savingsSeries(ledger, savingsCfg);
+      const asOf = new Date();
+      series = savingsSeries(ledger, savingsCfg, `${asOf.getUTCFullYear()}-${String(asOf.getUTCMonth() + 1).padStart(2, "0")}`);
     }
     const now = new Date();
     const nowMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;

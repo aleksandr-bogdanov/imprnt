@@ -4,7 +4,7 @@ import { renderDashboard } from "./dashboard.ts";
 import { tx } from "./test-helpers.ts";
 
 describe("renderDashboard", () => {
-  test("output is self-contained: no external URLs (no CDN fonts, no fetch)", () => {
+  test("output is self-contained: the only external URLs are the Google Fonts stylesheet (no CDN scripts, no fetch)", () => {
     const ledger = [
       tx({ date: "2026-05-10", amount_native: -12.5, amount_eur: -12.5, category: "Groceries" }),
       tx({ date: "2026-05-25", amount_native: 2000, amount_eur: 2000, type: "income", category: "Salary" }),
@@ -19,8 +19,15 @@ describe("renderDashboard", () => {
       months: [{ month: "2026-05", groups: buildSpendGroups(ledger, "2026-05") }],
       selectedMonth: "2026-05",
     });
-    // The whole product posture is "financial data never reaches a remote": the
-    // page must trigger zero third-party requests when opened.
-    expect(html).not.toMatch(/https?:\/\//);
+    // The whole product posture is "financial data never reaches a remote": the page
+    // carries no data-bearing request. The one allowed third-party fetch is the font
+    // stylesheet (Playfair Display, Golos Text, JetBrains Mono - the July 2026 design
+    // production has run since), which sends nothing about the household.
+    const external = [...html.matchAll(/https?:\/\/[^\s"'<>)]+/g)].map((m) => m[0]);
+    for (const url of external) {
+      expect(url).toMatch(/^https:\/\/fonts\.(googleapis|gstatic)\.com/);
+    }
+    expect(html).not.toMatch(/<script[^>]*\ssrc=/);
+    expect(html).not.toMatch(/\bfetch\(/);
   });
 });

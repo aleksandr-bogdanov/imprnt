@@ -296,11 +296,13 @@ function seriesMeta(key, fallbackLabel) {
   if (k === "house")
     return { label: ru ? "N26 (квартира)" : "N26 (house)", short: "N26", color: PALETTE.amber, cap: HOUSE_CAP_EUR, cur: "eur" };
   if (k === "alfa-deposit")
-    return { label: "RUB", short: "RUB", color: "#8a63b8", cap: null, cur: "rub" };
+    return { label: "RUB", short: "RUB", color: "#8a63b8", cap: null, cur: "rub", off: true };
+  if (k === "cash")
+    return { label: ru ? "Наличные" : "Cash", short: ru ? "Нал" : "Cash", color: "#5a8f3c", cap: null, cur: null };
   if (k === "property")
     return { label: ru ? "Недвижимость" : "Real estate", short: ru ? "Недвижимость" : "Real estate", color: "#9B6A43", cap: null, cur: null };
   if (k === "bcs")
-    return { label: "CNY", short: "CNY", color: "#b07a63", cap: null, cur: null };
+    return { label: "CNY", short: "CNY", color: "#b07a63", cap: null, cur: null, off: true };
   return { label: fallbackLabel, short: fallbackLabel, color: "#7A776F", cap: null, cur: "rub" };
 }
 function savingsSection(p, series, nowMonth) {
@@ -326,13 +328,13 @@ function savingsSection(p, series, nowMonth) {
     if (line.key === "house")
       continue;
     const meta = seriesMeta(line.key, line.label);
-    chartSeries.push({ key: line.key, label: meta.label, short: meta.short, color: meta.color, cap: meta.cap, cur: meta.cur, start: Math.round(line.values[line.values.length - 1] ?? 0), hist: histOf(line.values) });
+    chartSeries.push({ key: line.key, label: meta.label, short: meta.short, color: meta.color, cap: meta.cap, cur: meta.cur, start: Math.round(line.values[line.values.length - 1] ?? 0), hist: histOf(line.values), off: meta.off === true });
   }
   if (nw) {
     const flat = (v) => series.months.map((m) => [idxOf(m), Math.round(v)]);
     const pMeta = seriesMeta("property", "Property");
     const bMeta = seriesMeta("bcs", "BCS");
-    chartSeries.push({ key: "bcs", label: bMeta.label, short: bMeta.short, color: bMeta.color, cap: null, cur: null, start: Math.round(nw.bcsEur), hist: flat(nw.bcsEur), nw: true });
+    chartSeries.push({ key: "bcs", label: bMeta.label, short: bMeta.short, color: bMeta.color, cap: null, cur: null, start: Math.round(nw.bcsEur), hist: flat(nw.bcsEur), nw: true, off: true });
     chartSeries.push({ key: "property", label: pMeta.label, short: pMeta.short, color: pMeta.color, cap: null, cur: null, start: Math.round(nw.propertyEur), hist: flat(nw.propertyEur), nw: true, base: Math.round(nw.propertyBaseEur), debt: Math.round(nw.propertyDebtEur), apr: nw.propertyApr, off: true });
   }
   const houseSeries = chartSeries.find((s) => s.cap !== null);
@@ -341,7 +343,9 @@ function savingsSection(p, series, nowMonth) {
   const chips = chartSeries.map((s) => `<button type="button" class="sv-chip ${s.key === "total" ? "sv-chip-tot" : "sv-chip-sec"}${s.off ? " off" : ""}" data-key="${esc(s.key)}" style="--c:${s.color}">` + `<span class="sv-dot"></span><span class="sv-cname">${esc(s.label)}</span> <strong>${esc(eur(s.start))}</strong></button>`).join("");
   const eurPerRub = showRub && rubAt > 0 ? 1 / rubAt : 0.0105;
   const initEff = initEur + initRub * eurPerRub;
-  const initVisStart = netWorthStart - (nw ? Math.round(nw.propertyEur) : 0);
+  // The headline "now" starts from the VISIBLE lines only: every chip that is off by
+  // default (real estate, RUB, CNY) is subtracted, the same sum the chart's JS keeps live.
+  const initVisStart = chartSeries.filter((s) => s.key !== "total" && !s.off).reduce((sum, s) => sum + s.start, 0);
   const projEur = (mo) => initVisStart + initEff * mo;
   const milestones = [
     { eur: 50000, label: "\u20AC\u00A050k", hero: false },

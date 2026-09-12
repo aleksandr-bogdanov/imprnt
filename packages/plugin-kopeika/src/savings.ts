@@ -194,7 +194,7 @@ export interface SavingsSeriesLine {
   /** Stable key (the component's lowercased match value). */
   key: string;
   label: string;
-  kind: "account" | "marker";
+  kind: "account" | "marker" | "anchor";
   /** Cumulative EUR at each month in {@link SavingsSeriesData.months}. */
   values: number[];
 }
@@ -215,7 +215,13 @@ export interface SavingsSeriesData {
  * destination that did not move in a given month holds its level. Anchors have no
  * month, so they lift the total uniformly. For the breakdown chart.
  */
-export function savingsSeries(txs: readonly Transaction[], config: SavingsConfig): SavingsSeriesData {
+export function savingsSeries(
+  txs: readonly Transaction[],
+  config: SavingsConfig,
+  /** YYYY-MM to carry the curve through. Every month from the first move to this one
+   *  gets a point (level held between moves), so a quiet month is still on the chart. */
+  throughMonth?: string,
+): SavingsSeriesData {
   const defs = [
     ...config.accounts.map((a) => ({ ...a, kind: "account" as const })),
     ...config.markers.map((m) => ({ ...m, kind: "marker" as const })),
@@ -238,7 +244,8 @@ export function savingsSeries(txs: readonly Transaction[], config: SavingsConfig
 
   const monthSet = new Set<string>();
   for (const perMonth of flow.values()) for (const m of perMonth.keys()) monthSet.add(m);
-  const months = [...monthSet].sort();
+  const moved = [...monthSet].sort();
+  const months = moved.length === 0 ? [] : fillMonths(moved[0]!, throughMonth && throughMonth > moved[moved.length - 1]! ? throughMonth : moved[moved.length - 1]!);
 
   const lines: SavingsSeriesLine[] = defs.map((d) => {
     const perMonth = flow.get(d.match)!;
@@ -250,9 +257,26 @@ export function savingsSeries(txs: readonly Transaction[], config: SavingsConfig
     return { key: d.match, label: d.label, kind: d.kind, values };
   });
 
-  const anchorsTotal = config.anchors.reduce((s, a) => s + a.balanceEur, 0);
-  const total = months.map((_, i) => round2(lines.reduce((s, l) => s + l.values[i]!, 0) + anchorsTotal));
+  // Anchors (a cash pile, a lump sum) are flat lines: no month-bearing flow, one balance.
+  for (const a of config.anchors) {
+    lines.push({ key: a.label.toLowerCase(), label: a.label, kind: "anchor", values: months.map(() => round2(a.balanceEur)) });
+  }
+  const total = months.map((_, i) => round2(lines.reduce((s, l) => s + l.values[i]!, 0)));
   return { months, total, lines };
+}
+
+/** Every YYYY-MM from `from` to `to` inclusive. */
+function fillMonths(from: string, to: string): string[] {
+  const out: string[] = [];
+  let [y, m] = from.split("-").map(Number) as [number, number];
+  for (;;) {
+    const cur = `${y}-${String(m).padStart(2, "0")}`;
+    out.push(cur);
+    if (cur >= to) break;
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
 }
 
 function addFlow(m: Map<string, number>, month: string, eur: number): void {
