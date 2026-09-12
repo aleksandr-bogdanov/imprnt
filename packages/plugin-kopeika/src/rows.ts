@@ -16,11 +16,14 @@ export interface RowsOptions {
   tiers: Tiers;
   /** Merchant substring that marks a salary row; period presets cut on those dates. */
   salaryCategory: string;
+  /** Tax category ids of the pack (for the books picker), and the persons with a tax profile. */
+  taxCategories: string[];
+  persons: string[];
 }
 
 const T = {
-  en: { title: "kopeika · rows", period: "period", all: "all", month: "month", account: "account", category: "category", kind: "kind", search: "search", counted: "counted", internal: "internal move", savings: "savings", excluded: "excluded", mandatory: "mandatory", optional: "optional", date: "date", merchant: "merchant", amount: "EUR", tier: "tier", books: "books", note: "note", spend: "spend", income: "income", rows: "rows", from: "from", to: "to", today: "today", back: "dashboard" },
-  ru: { title: "kopeika · строки", period: "период", all: "все", month: "месяц", account: "счёт", category: "категория", kind: "вид", search: "поиск", counted: "в расчёте", internal: "между своими", savings: "накопления", excluded: "исключено", mandatory: "обязательное", optional: "свободное", date: "дата", merchant: "получатель", amount: "EUR", tier: "тип", books: "книги", note: "заметка", spend: "расход", income: "доход", rows: "строк", from: "с", to: "по", today: "сегодня", back: "дашборд" },
+  en: { edit: "edit", changes: "changes", copy: "copy for the agent", clear: "clear", scopeRow: "this row", scopeMerchant: "every row of this merchant", none: "none", newCat: "new…", title: "kopeika · rows", period: "period", all: "all", month: "month", account: "account", category: "category", kind: "kind", search: "search", counted: "counted", internal: "internal move", savings: "savings", excluded: "excluded", mandatory: "mandatory", optional: "optional", date: "date", merchant: "merchant", amount: "EUR", tier: "tier", books: "books", note: "note", spend: "spend", income: "income", rows: "rows", from: "from", to: "to", today: "today", back: "dashboard" },
+  ru: { edit: "правка", changes: "изменения", copy: "скопировать для агента", clear: "очистить", scopeRow: "эта строка", scopeMerchant: "все строки этого получателя", none: "нет", newCat: "новая…", title: "kopeika · строки", period: "период", all: "все", month: "месяц", account: "счёт", category: "категория", kind: "вид", search: "поиск", counted: "в расчёте", internal: "между своими", savings: "накопления", excluded: "исключено", mandatory: "обязательное", optional: "свободное", date: "дата", merchant: "получатель", amount: "EUR", tier: "тип", books: "книги", note: "заметка", spend: "расход", income: "доход", rows: "строк", from: "с", to: "по", today: "сегодня", back: "дашборд" },
 };
 
 function esc(s: string): string {
@@ -72,6 +75,9 @@ table{border-collapse:collapse;width:100%;margin-top:10px;font-variant-numeric:t
 td{padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}td.num{text-align:right;white-space:nowrap;font-family:var(--mono);font-size:12.5px}td:first-child{font-family:var(--mono);font-size:12px}.neg{color:var(--neg)}.pos{color:var(--pos)}
 tr.internal td,tr.excluded td{color:var(--faint)}tr.savings td{color:var(--accent)}td.nt{color:var(--soft);font-size:12px;max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}td.nt:hover{white-space:normal}
 .chip{display:inline-block;padding:0 6px;border-radius:10px;border:1px solid var(--line);font-size:11px;color:var(--soft)}.chip.m{border-color:var(--accent);color:var(--accent)}
+button{font:inherit;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);cursor:pointer}button.on{border-color:var(--accent);color:var(--accent)}
+#chgPanel{margin-top:8px}#chgPanel textarea{width:100%;font:12px var(--mono);background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px}#chgPanel .row{margin-top:6px;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--soft)}
+td.ed select{font:inherit;font-size:12px;padding:2px 4px;min-width:0;max-width:16ch}tr.chg td{background:color-mix(in srgb,var(--accent) 8%,transparent)}
 a{color:var(--accent)}.top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}h1{font-family:var(--display);font-size:20px;margin:0;font-weight:700}
 @media(max-width:700px){td.nt,th.nt,td.acc,th.acc{display:none}th{top:140px}}
 </style></head><body>
@@ -83,11 +89,18 @@ a{color:var(--accent)}.top{display:flex;justify-content:space-between;align-item
 <label>${t.category}<select id="category"><option value="">${t.all}</option>${categories.map((c) => `<option>${esc(c)}</option>`).join("")}</select></label>
 <label>${t.kind}<select id="kind"><option value="counted">${t.counted}</option><option value="">${t.all}</option><option value="internal">${t.internal}</option><option value="savings">${t.savings}</option><option value="excluded">${t.excluded}</option></select></label>
 <label>${t.search}<input id="q" type="search" placeholder="…"></label>
+<label>&nbsp;<span><button id="editBtn" type="button">${t.edit}</button> <button id="chgBtn" type="button">${t.changes} <b id="chgN">0</b></button></span></label>
 </div>
+<div id="chgPanel" hidden><textarea id="chgText" rows="8" readonly></textarea><div class="row"><button id="copyBtn" type="button">${t.copy}</button> <button id="clearBtn" type="button">${t.clear}</button> <span id="copied"></span></div></div>
 <div class="tot"><span>${t.spend} <b id="tSpend"></b></span><span>${t.income} <b id="tInc"></b></span><span>${t.mandatory} <b id="tMand"></b></span><span>${t.optional} <b id="tOpt"></b></span><span><b id="tN"></b> ${t.rows}</span></div></header>
 <table><thead><tr><th data-k="d">${t.date}</th><th class="acc" data-k="a">${t.account}</th><th data-k="m">${t.merchant}</th><th data-k="e" style="text-align:right">${t.amount}</th><th data-k="c">${t.category}</th><th data-k="t">${t.tier}</th><th data-k="p">${t.books}</th><th class="nt" data-k="nt">${t.note}</th></tr></thead><tbody id="tb"></tbody></table>
 <script>
-const ROWS=${JSON.stringify(rows)};const L=${JSON.stringify({ mandatory: t.mandatory, optional: t.optional })};
+const ROWS=${JSON.stringify(rows)};const L=${JSON.stringify({ mandatory: t.mandatory, optional: t.optional, none: t.none, newCat: t.newCat, scopeRow: t.scopeRow, scopeMerchant: t.scopeMerchant })};
+const CATS=${JSON.stringify(categories.filter((c) => c !== "—"))};const TAX=${JSON.stringify(o.taxCategories)};const PERSONS=${JSON.stringify(o.persons)};
+let EDIT=false;let CH={};try{CH=JSON.parse(localStorage.getItem('kopeika-rows-changes')||'{}')}catch(e){CH={}}
+function saveCh(){try{localStorage.setItem('kopeika-rows-changes',JSON.stringify(CH))}catch(e){}document.getElementById('chgN').textContent=Object.keys(CH).length;renderCh()}
+function renderCh(){const lines=Object.values(CH).map(c=>'row '+c.id+' | '+c.d+' '+c.a+' | '+c.m+' | '+c.e+' | category: '+(c.c0||'—')+' -> '+(c.c1||'—')+' | books: '+(c.b0||'none')+' -> '+(c.b1||'none')+' | scope: '+(c.scope==='merchant'?'merchant':'row'));document.getElementById('chgText').value=lines.join('\n')}
+function change(r,field,val){const c=CH[r.id]||{id:r.id,d:r.d,a:r.a,m:r.m,e:r.e,c0:r.c,c1:r.c,b0:(r.p?r.p+'/'+r.x:''),b1:(r.p?r.p+'/'+r.x:''),scope:'row'};if(field==='c')c.c1=val;else if(field==='b')c.b1=val;else if(field==='scope')c.scope=val;if(c.c1===c.c0&&c.b1===c.b0)delete CH[r.id];else CH[r.id]=c;saveCh();apply()}
 const $=(id)=>document.getElementById(id);let sortK='d',sortDir=-1;
 function fmt(n){return n==null?'':n.toLocaleString('${o.lang === "ru" ? "ru-RU" : "en-GB"}',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -96,10 +109,21 @@ let rs=ROWS.filter(r=>(!pf||r.d>=pf)&&(!pt||r.d<=pt)&&(!mo||r.d.startsWith(mo))&
 rs.sort((a,b)=>{const x=a[sortK],y=b[sortK];return (x==null?-1:y==null?1:x<y?-1:x>y?1:0)*sortDir});
 let sp=0,inc=0,mand=0;for(const r of rs){if(r.k!=='counted'||r.e==null)continue;if(r.e<0){sp-=r.e;if(r.t==='mandatory')mand-=r.e}else inc+=r.e}
 $('tSpend').textContent=fmt(sp);$('tInc').textContent=fmt(inc);$('tMand').textContent=fmt(mand);$('tOpt').textContent=fmt(sp-mand);$('tN').textContent=rs.length;
-$('tb').innerHTML=rs.map(r=>'<tr class="'+r.k+'"><td>'+r.d.slice(5)+'</td><td class="acc">'+esc(r.a)+'</td><td>'+esc(r.m)+(r.n?' <span class="chip">'+esc(r.n)+'</span>':'')+'</td><td class="num '+(r.e<0?'neg':'pos')+'">'+fmt(r.e)+'</td><td>'+esc(r.c||'—')+'</td><td>'+(r.t?'<span class="chip'+(r.t==='mandatory'?' m':'')+'">'+L[r.t]+'</span>':'')+'</td><td>'+(r.p?esc(r.p+' · '+r.x):'')+'</td><td class="nt" title="'+esc(r.nt)+'">'+esc(r.nt)+'</td></tr>').join('')}
+$('tb').innerHTML=rs.map(r=>{const ch=CH[r.id];const cat=ch?ch.c1:r.c;const bk=ch?ch.b1:(r.p?r.p+'/'+r.x:'');
+let catCell=esc(cat||'—'),bkCell=bk?esc(bk.replace('/',' · ')):'';
+if(EDIT){catCell='<select data-id="'+r.id+'" data-f="c">'+['<option value="">—</option>'].concat(CATS.map(c=>'<option'+(c===cat?' selected':'')+'>'+esc(c)+'</option>')).join('')+'<option value="__new">'+L.newCat+'</option></select>';
+const opts=['<option value="">'+L.none+'</option>'];PERSONS.forEach(p=>TAX.forEach(x=>{const v=p+'/'+x;opts.push('<option value="'+v+'"'+(v===bk?' selected':'')+'>'+esc(v)+'</option>')}));
+bkCell='<select data-id="'+r.id+'" data-f="b">'+opts.join('')+'</select>'+(ch?' <select data-id="'+r.id+'" data-f="scope"><option value="row"'+(ch.scope==='row'?' selected':'')+'>'+L.scopeRow+'</option><option value="merchant"'+(ch.scope==='merchant'?' selected':'')+'>'+L.scopeMerchant+'</option></select>':'')}
+return '<tr class="'+r.k+(ch?' chg':'')+'"><td>'+r.d.slice(5)+'</td><td class="acc">'+esc(r.a)+'</td><td>'+esc(r.m)+(r.n?' <span class="chip">'+esc(r.n)+'</span>':'')+'</td><td class="num '+(r.e<0?'neg':'pos')+'">'+fmt(r.e)+'</td><td class="ed">'+catCell+'</td><td>'+(r.t?'<span class="chip'+(r.t==='mandatory'?' m':'')+'">'+L[r.t]+'</span>':'')+'</td><td class="ed">'+bkCell+'</td><td class="nt" title="'+esc(r.nt)+'">'+esc(r.nt)+'</td></tr>'}).join('');
+if(EDIT)$('tb').querySelectorAll('select').forEach(sel=>sel.addEventListener('change',()=>{const r=ROWS.find(x=>x.id===sel.dataset.id);let v=sel.value;if(v==='__new'){v=prompt(L.newCat)||'';if(!v){apply();return}}change(r,sel.dataset.f,v)}))}
 for(const id of ['period','month','account','category','kind'])$(id).addEventListener('change',apply);$('q').addEventListener('input',apply);
 document.querySelectorAll('th').forEach(th=>th.addEventListener('click',()=>{const k=th.dataset.k;if(sortK===k)sortDir=-sortDir;else{sortK=k;sortDir=k==='d'||k==='e'?-1:1}apply()}));
-if(ROWS.length&&$('period').options.length>1)$('period').selectedIndex=1;apply();
+$('editBtn').addEventListener('click',()=>{EDIT=!EDIT;$('editBtn').classList.toggle('on',EDIT);apply()});
+$('chgBtn').addEventListener('click',()=>{$('chgPanel').hidden=!$('chgPanel').hidden;renderCh()});
+$('copyBtn').addEventListener('click',()=>{navigator.clipboard.writeText($('chgText').value).then(()=>{$('copied').textContent='✓';setTimeout(()=>$('copied').textContent='',1500)})});
+$('clearBtn').addEventListener('click',()=>{CH={};saveCh();apply()});
+const U=new URLSearchParams(location.search);let linked=false;for(const k of ['period','month','account','category','kind']){const v=U.get(k);if(v!==null){$(k).value=v;linked=true}}if(U.get('q')){$('q').value=U.get('q');linked=true}
+if(!linked&&ROWS.length&&$('period').options.length>1)$('period').selectedIndex=1;saveCh();apply();
 </script></body></html>`;
 }
 

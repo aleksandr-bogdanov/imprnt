@@ -1728,12 +1728,22 @@ async function cmdRows(args: Args): Promise<number> {
     return 1;
   }
   const ledger = loadLedger(LEDGER_PATH);
+  const persons = listPersons(ROOT);
+  const packCountry = persons.length > 0 ? loadPerson(ROOT, persons[0]!).profile.pack : "de";
+  let taxCategories: string[] = [];
+  try {
+    taxCategories = [...loadPack(ROOT, packCountry).categories.keys()];
+  } catch {
+    taxCategories = [];
+  }
   const html = renderRowsHtml(ledger, {
     lang: langRaw,
     from,
     accountLabels: PROFILE.accountLabels,
     tiers: loadTiers(TIERS_PATH),
     salaryCategory: "Salary",
+    taxCategories,
+    persons,
   });
   mkdirSync(dirname(htmlPath), { recursive: true });
   writeFileSync(htmlPath, html, "utf8");

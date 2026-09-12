@@ -537,8 +537,10 @@ function draw(){
     else { labels.forEach(function(L){ out+='<text x="'+(W-PR+6)+'" y="'+(L.y+3).toFixed(1)+'" class="sv-llabel" style="font-size:'+fs+'px" fill="'+L.c+'">'+L.t+'</text>'; }); } }
   out+='<circle id="svDot" r="5.5" fill="#fff" stroke="${PALETTE.green}" stroke-width="2.5" style="display:none"/>';
   svg.innerHTML=out;
-  setText('svRateEurLabel','€ '+fmt(rE)); setText('svRateRubLabel','₽ '+fmt(rR));
+  setText('svRateEurLabel','€ '+fmt(rE)); setText('svRateCashLabel','€ '+fmt(rC)); setText('svRateRubLabel','₽ '+fmt(rR));
   var rle=document.getElementById('svRateEurLabel'); if(rle)rle.style.color=colE;
+  var rlc=document.getElementById('svRateCashLabel'); if(rlc)rlc.style.color=colC;
+  cashS.style.setProperty('--thumb',colC); cashS.classList.toggle('hot', rC>=3000);
   var rlr=document.getElementById('svRateRubLabel'); if(rlr)rlr.style.color=colR;
   eurS.style.setProperty('--thumb',colE); eurS.classList.toggle('hot', rE>=3000);
   rubS.style.setProperty('--thumb',colR); rubS.classList.toggle('hot', rR>=60000);
@@ -612,7 +614,7 @@ function tierBar(g) {
   }).join("");
   return `<div class="bd-bar bd-tier">${bars}</div>`;
 }
-function categoryDetails(c, monthTotal, tierMax) {
+function categoryDetails(c, monthTotal, tierMax, monthKey) {
   const pct = monthTotal > 0 ? Math.round(c.total / monthTotal * 100) : 0;
   const widthPct = tierMax > 0 ? c.total / tierMax * 100 : 0;
   const rows = c.txns.map((tx) => (() => {
@@ -624,7 +626,7 @@ function categoryDetails(c, monthTotal, tierMax) {
             <summary>
               <span class="cat-fill" style="width:${widthPct.toFixed(1)}%;background:${categoryColor(c.category)}2E"></span>
               <span class="cat-dot" style="background:${categoryColor(c.category)}"></span>
-              <span class="cat-name">${esc(catName(c.category))}</span>
+              <span class="cat-name">${esc(catName(c.category))} <a class="cat-rows" href="/rows?month=${esc(encodeURIComponent(monthKey))}&category=${esc(encodeURIComponent(c.category))}" onclick="event.stopPropagation()" title="${LANG === "ru" ? "все строки" : "all rows"}">&#8599;</a></span>
               <span class="cat-pct">${pct}%</span>
               <span class="cat-meta">${c.count} ${esc(itemsWord(c.count))}</span>
               <span class="cat-amt">${esc(eur(c.total))}</span>
@@ -632,13 +634,13 @@ function categoryDetails(c, monthTotal, tierMax) {
             <ul class="txns">${rows}</ul>
           </details>`;
 }
-function tierBlock(g, monthTotal, monthMax) {
+function tierBlock(g, monthTotal, monthMax, monthKey) {
   if (g.categories.length === 0)
     return "";
   const label = g.tier === "mandatory" ? t("mandatory") : t("nonMandatory");
   const sub = g.tier === "mandatory" ? t("mandatorySub") : t("flexSub");
   const fillMax = monthMax > 0 ? monthMax : g.categories.reduce((mx, c) => Math.max(mx, c.total), 0);
-  const cats = g.categories.map((c) => categoryDetails(c, monthTotal, fillMax)).join("");
+  const cats = g.categories.map((c) => categoryDetails(c, monthTotal, fillMax, monthKey)).join("");
   return `
       <div class="tier tier-${g.tier}">
         <div class="tier-head"><h3>${esc(label)}</h3><span class="tier-total">${esc(eur(g.total))}</span></div>
@@ -649,7 +651,7 @@ function tierBlock(g, monthTotal, monthMax) {
 function monthBlock(m, selected) {
   const total = m.groups.reduce((s, g) => s + g.total, 0);
   const monthMax = m.groups.reduce((mx, g) => g.categories.reduce((mx2, c) => Math.max(mx2, c.total), mx), 0);
-  const blocks = m.groups.map((g) => tierBlock(g, total, monthMax)).join("");
+  const blocks = m.groups.map((g) => tierBlock(g, total, monthMax, m.month)).join("");
   return `
       <div class="month-block" data-month="${esc(m.month)}"${selected ? "" : " hidden"}>
         <div class="month-total">${esc(eur(total))}<span class="month-total-label">${esc(periodLabel(m.month))} · ${esc(t("spent"))}</span></div>
@@ -940,6 +942,9 @@ function buildCss() {
     .sv-rate-head { margin-top:26px; font-family:var(--sans); font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.14em; color:var(--ink-faint); }
     .sv-controls { margin-top:14px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:18px 28px; }
     .sv-slider { min-width:0; }
+    .cat-rows { font-size:11px; color:var(--ink-faint); text-decoration:none; margin-left:4px; opacity:0; transition:opacity .15s; }
+    details.cat summary:hover .cat-rows { opacity:1; }
+    .cat-rows:hover { color:var(--green); }
     .sv-control-row { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; gap:10px; }
     .sv-rate-label { font-family:var(--sans); font-size:11.5px; font-weight:600; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-soft); }
     .sv-rate { font-family:var(--sans); font-size:24px; font-weight:700; letter-spacing:-.01em; color:var(--green); transition:color .1s; white-space:nowrap; font-variant-numeric:tabular-nums; }
