@@ -160,8 +160,11 @@ export default function WhyRail() {
                     dotRefs.current[i] = el;
                   }}
                   style={{
+                    position: "relative",
+                    boxSizing: "border-box",
                     width: DOT,
                     height: DOT,
+                    padding: 0,
                     borderRadius: "50%",
                     display: "flex",
                     alignItems: "center",
@@ -169,6 +172,8 @@ export default function WhyRail() {
                     fontFamily: SANS,
                     fontSize: 11,
                     fontWeight: 600,
+                    lineHeight: 1,
+                    letterSpacing: 0,
                     zIndex: 1,
                     background: done ? C.accent : C.dotBg,
                     color: done ? C.accentText : C.dotText,
