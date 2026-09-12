@@ -261,3 +261,15 @@ body {
     padding-inline: calc(var(--imp-shell-gutter) + var(--sl-nav-pad-x));
   }
 }
+
+/* ---- even right edge on body prose ----
+   Ragged-right in a 48rem column read as jagged to the owner. Justified with
+   automatic hyphenation (the html lang is set, so the browser's English
+   dictionary breaks words) keeps the right edge straight without rivers at
+   this measure. Headings, lists, captions and the components keep their own
+   alignment. */
+.sl-markdown-content > p {
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}

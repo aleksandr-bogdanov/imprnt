@@ -12,15 +12,15 @@ import WhyKeepLose from "../src/components/docs/WhyKeepLose.astro";
 
 <span id="beat-bike" class="beat-anchor"></span>
 
-I am the guy who spends **two weeks buying a bike for a fifteen-minute commute**. Any bike would do, and I know it. But I crave the conscious decision, and that craving turns every purchase into an investigation nightmare. Week one goes to the internet: trail bikes, racing bikes, tire types - knowledge no commuter has ever needed. Week two goes to offline stores and test rides. Then I buy a bike way out of my initial budget, and it fits my commute so perfectly you could call it the perfect decision. If you don't count the money and the two weeks of my life. The 100 euro bike from the second-hand store around the corner would have done the trick easily.
+I am the guy who spends two weeks buying a bike for a fifteen-minute commute. Any bike would do, and I know it, but I crave the **conscious decision**, which turns every purchase into an investigation nightmare: a week of trail bikes and tire types no commuter needs, a week of test rides, then a bike way over budget that fits the commute perfectly if you don't count the money.
 
-It was like that for ages, with everything, and I know a lot of people who think alike. **Information became accessible, and mediocre stopped being acceptable.** Even when it costs money. Even when it costs time.
+It was like that for ages, with everything, and I know people who think alike. Information became accessible, and **mediocre stopped being acceptable**. Even when it costs time.
 
-The good news: it's 2026, and **you can afford a personal assistant**. A real one, that knows your life and offloads the boring part of being you - the keeping track of everything and not forgetting anything, which people in 2026 are generally not very good at. I built mine. This page is the story of why it looks the way it does.
+The good news: it's 2026, and **you can afford a personal assistant**. A real one, that knows your life and takes over the boring part of being you. I built mine.
 
 <span id="beat-claude" class="beat-anchor"></span>
 
-It started with Claude. The research that used to run through Google moved into chat, and Claude felt like a very smart friend who knows something about everything. But that friend had **no memory**. Every chat started from zero. I would type out my setup, my constraints, the decision we had made the week before, and by the next session all of it was gone. Every time, I was briefing a brilliant stranger who happened to have read the entire internet.
+It started with Claude. My research moved into chat, with a friend who knows something about everything and has **no memory**. Every session I briefed a brilliant stranger who happened to have read the entire internet.
 
 <WhyAmnesia />
 
@@ -30,23 +30,25 @@ It started with Claude. The research that used to run through Google moved into 
 
 ## PAI was perfect, for someone else
 
-Then I found PAI, I do not even remember where. **It did the one thing I wanted most: it remembered.** It carried context across sessions, it gave my goals and values a written structure it called TELOS, and it had **the depth I had been missing**. For a while it was exactly right.
+Then I found PAI, I don't even remember where. It did the one thing I wanted most: **it remembered**, and it gave my goals a written structure called TELOS. For a while it was exactly right.
 
-Version 5 is where we parted ways. **It grew machinery I never asked for**: a Pulse dashboard that ran on its own schedule, a Telegram bot wired in permanently when I had no use for one, a whole framework of ideal goals and ideal criteria that was **more machine than my life needed**. Every piece made sense for its author, who writes about AI for a living. A tool that helps him write all day is exactly the right tool for him to build. **Mine is a different job.**
+Version 5 is where we parted ways. It grew machinery I never asked for: a scheduled dashboard, a Telegram bot I had no use for, a framework of ideal goals and criteria that was **more machine than my life needed**. Every piece makes sense for its author, who writes about AI for a living. Mine is a different job.
 
 <span id="beat-tokens" class="beat-anchor"></span>
 
-Then I took it to work, where there is no flat subscription. Tokens used to be almost free for me - a monthly plan I could hardly imagine depleting. Work runs on the metered API, where every question suddenly had a price tag, and I caught myself **counting every token**: being careful with questions, not asking things I could have figured out otherwise. I had become afraid of my own assistant.
+Then came work, with no flat subscription. Tokens used to be almost free for me, and suddenly every question had a price tag. I caught myself **counting every token**, skipping things I could figure out otherwise. I had become afraid of my own assistant.
 
 <WhyTokenWall />
 
-**An assistant you are afraid to use is not an assistant.** And the setup I was running made it worse. On every fresh chat, the machinery I never asked for ate a third of the context window before I had typed a word, and the actual work got the leftovers.
+An assistant you are **afraid to use** is not an assistant.
 
 <span id="beat-rule" class="beat-anchor"></span>
 
 ## The rule that fixed it
 
-Around that time my colleague [Forud Ghafouri](https://github.com/fzerorubigd) shared how he works with AI agents, and he named the trap I was sitting in - the one most people fall into when they start with AI. They **treat it like magic** that knows everything and should therefore do everything. His rule went the other way: the model is a **peer** you bring in for judgment, and the software you write is the servant that does the work. You would not ask a smart colleague to do things that require no intellect whatsoever. Yet this is exactly what people do to their agents. **A machine able to launch spaceships ended up reading spam letters.**
+Around that time my colleague [Forud Ghafouri](https://github.com/fzerorubigd) showed me how he works with AI agents, and I felt blessed. He named the trap I was sitting in: people **treat it like magic** that should therefore do everything. Don't get me wrong, AI can do almost everything. That doesn't mean we have to ask it to.
+
+His rule goes the other way: the model is a **peer** you bring in for judgment, and your own code is the servant that does the work. Do it backwards and a machine able to launch spaceships ends up reading spam letters.
 
 <WhyQuote>
 You would not pay a sharp colleague to re-read your whole inbox every morning to find the three emails that matter. You would have them write the filter once. After that the filter runs every morning, for free, **forever**.
@@ -56,7 +58,7 @@ You would not pay a sharp colleague to re-read your whole inbox every morning to
 
 <span id="beat-bible" class="beat-anchor"></span>
 
-That was my whole PAI problem in one line. I had been treating a brilliant peer like a servant, paying full price for the same mechanical work over and over, so everything got slow and expensive. So I composed a list of rules for my assistant, brief and to the point, the way a bible should be:
+That was my whole PAI problem in one line. So I wrote my assistant a list of rules, **brief and to the point**, the way a bible should be:
 
 ## The bible
 
@@ -69,28 +71,32 @@ That was my whole PAI problem in one line. I had been treating a brilliant peer 
 7. Update the fact, keep the history.
 8. My notes have my voice, not yours.
 
-That list was the start of imprnt. **The model thinks once**: it reads a source and writes a clean note. **Plain code does the searching a thousand times after, for free.** Token use dropped and results improved, because I finally used the model for what it is good at.
+That list was the start of imprnt. **Token use went down, results went up**, because I was finally using the model for what it is good at.
 
-This is the setup that filed my German taxes, and my case was far from a textbook one. Around a week to get my head around the basic concept of taxation, all the bureaucracy filed, tax return received, **thousands saved on tax advisors**. And taxes are just one folder. The same housekeeping runs my documents, my purchases, my hobbies, and everything I figure out **stays solved** instead of evaporating with the browser tabs, the way the bike research did.
+This is the setup that did my German taxes, and my case was far from a textbook one. A week to get my head around taxation here, the bureaucracy done, the return received, **thousands saved on tax advisors**.
+
+And taxes are just one folder. The same housekeeping runs my documents, my purchases and my hobbies, and what I figure out **stays solved** instead of evaporating with the browser tabs, the way the bike research did.
 
 <span id="beat-keep" class="beat-anchor"></span>
 
 ## Your memory is plain text
 
-**Most AI memory tools store what they know about you as numbers**, built for the model to match and impossible for a person to read. To see your own memory you go through the tool. To fix a wrong fact you use whatever editor it gives you. **To leave, you export, if it lets you.**
+Most AI memory tools store what they know about you **as numbers**, built for the model to match and unreadable by a person. Your memory is reachable only through the tool that wrote it.
 
-imprnt keeps your memory as **plain text notes in one folder** on your computer. Open any note and read it. **A wrong fact is one line in one file.** Search is plain math on your machine, so **nothing depends on someone else's server**, and when you switch assistants the folder comes with you. Claude Code and Gemini CLI both run it today.
+imprnt keeps your memory as **plain text notes in one folder** on your computer. Search is plain math on your machine, so nothing depends on someone else's server. Claude Code and Gemini CLI both run it today.
 
 <WhyKeepLose />
 
-If you want the field walked tool by tool, with credit where another tool fits better, the [comparison](/comparison/) does exactly that.
+The [comparison](/comparison/) walks the field **tool by tool**, with credit where another tool fits better.
 
 <span id="beat-promise" class="beat-anchor"></span>
 
 ## My promise to you
 
-There is one rule I will not break, because breaking it is exactly what pushed me out of PAI. Line 6 of the bible is my promise to you: **what you don't need, it doesn't keep**. imprnt will never be shaped around only my problems, and it will never hand you a tool you did not ask for: no surprise dashboard, no background daemon you never asked for. The default setup ships with almost nothing. Your plain Claude stays plain. Everything is **opt-in**, and anything you add you can remove with a single command. You take what serves you and leave the rest.
+One rule I will not break, because breaking it is what pushed me out of PAI. Line 6 is my promise to you: **what you don't need, it doesn't keep**. No surprise dashboard, no background daemon you did not ask for. I have been shipping software for 13 years and I don't ship broken things.
 
-The over-researcher in me, obsessing about optimising life, is alive and well - he just got a platform to run on efficiently. The all-knowing nerd next to me already holds my sock size, my detergent dose and my beer tiers, so **the next obsession costs an evening, not two weeks**. The bike decision these days, ironically, would take about fifteen minutes.
+What ships is **essentially a folder of markdown files**. Your plain Claude stays plain, everything else is opt-in, and anything you add comes out with one command.
 
-If that is the assistant you have been wanting, [start here](/getting-started/). The base is small on purpose. Once it runs, browse the [plugins](/plugins/) and add only the ones you need.
+The over-researcher in me is alive and well, he just runs on a better platform now. The all-knowing nerd next to me already holds my sock size, my detergent dose and my beer tiers, so **the next obsession costs an evening, not two weeks**. The bike decision these days would take fifteen minutes.
+
+[Start here](/getting-started/). The base is **small on purpose**, and the [plugins](/plugins/) are there when you need one.
