@@ -33,7 +33,7 @@ function authed(req: Request): boolean {
 }
 function loginPage(failed = false): Response {
   const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>kopeika</title>
-<style>body{font:16px system-ui;background:#f6f4ec;color:#1b1d1a;display:grid;place-items:center;min-height:100vh;margin:0}
+<style>body{font:16px "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#f6f4ec;color:#1b1d1a;display:grid;place-items:center;min-height:100vh;margin:0}
 form{background:#fbf9f2;border:1px solid #ddd7c7;padding:28px;border-radius:8px;width:min(320px,90vw)}input{width:100%;box-sizing:border-box;padding:10px;margin:8px 0 14px;border:1px solid #ddd7c7;border-radius:6px;font:inherit}
 button{width:100%;padding:10px;border:0;border-radius:6px;background:#1b1d1a;color:#f6f4ec;font:inherit}p.err{color:#a33;margin:0 0 8px}</style>
 <form method="post" action="/login" autocomplete="on"><label>kopeika<input type="password" name="password" autocomplete="current-password" autofocus></label>${failed ? '<p class="err">wrong password</p>' : ""}<button>open</button></form>`;
