@@ -93,15 +93,18 @@ describe("buildReport exclusion of transfers / exchanges / Exclude", () => {
     expect(r.consideredRows).toBe(5);
   });
 
-  test("Savings rows are excluded from spend but surfaced as invested", () => {
+  test("Savings rows are excluded from spend but surfaced as invested, net of withdrawals", () => {
+    // Savings rows are the savings account's own rows: a deposit is positive, a
+    // withdrawal back to the bank is negative, and "put aside" is the net.
     const txs: Transaction[] = [
-      tx({ date: "2025-01-01", amount_eur: -1500, type: "transfer", category: SAVINGS_CATEGORY, is_transfer: true }),
+      tx({ date: "2025-01-01", amount_eur: 1500, type: "transfer", category: SAVINGS_CATEGORY, is_transfer: true }),
       tx({ date: "2025-01-02", amount_eur: -100, type: "spend", category: "Groceries" }),
+      tx({ date: "2025-01-03", amount_eur: -500, type: "transfer", category: SAVINGS_CATEGORY, is_transfer: true }),
     ];
     const r = buildReport(txs);
-    expect(r.overall.invested).toBe(1500);
-    expect(r.overall.spend).toBe(100); // savings transfer not in spend
-    expect(r.months[0]!.invested).toBe(1500);
+    expect(r.overall.invested).toBe(1000);
+    expect(r.overall.spend).toBe(100); // savings transfers not in spend
+    expect(r.months[0]!.invested).toBe(1000);
   });
 });
 

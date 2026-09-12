@@ -264,11 +264,12 @@ export function buildReport(
 
     // Money moved into a savings/investment account is excluded from income &
     // spend (it's a transfer, not consumption) but surfaced as `invested` so the
-    // act of putting money aside is never invisible.
+    // act of putting money aside is never invisible. Signed, as seen from the
+    // savings account: a deposit adds, a withdrawal back to the bank subtracts,
+    // so "put aside" is the net flow and agrees with the cost-basis stock.
     if (tx.category === SAVINGS_CATEGORY && tx.amount_eur !== null) {
-      const amt = Math.abs(tx.amount_eur);
-      getAcc().invested += amt;
-      overallInvested += amt;
+      getAcc().invested += tx.amount_eur;
+      overallInvested += tx.amount_eur;
     }
 
     if (isAnalyticsExcluded(tx)) {
