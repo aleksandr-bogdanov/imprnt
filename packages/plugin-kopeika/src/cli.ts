@@ -706,7 +706,7 @@ async function cmdTaxCategorize(who: string, _args: Args): Promise<number> {
     // Rules fill EMPTY dispositions only: never a pin, never an import-carried
     // category, never another person's row.
     if (tx.tax_source !== "" || (tx.tax_person !== "" && tx.tax_person !== who)) continue;
-    const rule = person.rules.find((r) => taxRuleMatches(r, tx));
+    const rule = person.rules.find((r) => taxRuleMatches(r, tx, person.clientNames));
     if (rule) {
       tx.tax_person = who;
       tx.tax_category = rule.category;

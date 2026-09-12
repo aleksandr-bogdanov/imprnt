@@ -23,11 +23,25 @@ import type { Transaction } from "../types.ts";
 
 export interface TaxRule {
   pattern: string;
-  match: "substring" | "regex" | "exact";
+  /**
+   * substring / regex / exact test `pattern` against `field`. `client` ignores
+   * `pattern` and fires when the row's merchant_raw is a name in the person's
+   * clients.json (case- and whitespace-insensitive) — one rule books every
+   * registered student's payment, and a payer the registry does not know
+   * queues instead of being guessed.
+   */
+  match: "substring" | "regex" | "exact" | "client";
   field: "merchant_raw" | "note" | "account";
   category: string;
-  /** Optional account scope: rule only fires on rows of this account. */
-  account: string;
+  /** Optional account scope: rule only fires on rows of these accounts (empty = any). */
+  accounts: string[];
+  /**
+   * Optional lower date bound (YYYY-MM-DD, inclusive). A rule with `from` never
+   * touches an earlier row. This is how a bank feed takes over from a migrated
+   * book export without double-booking the overlap: the export carries the rows
+   * up to the cutover, the rule claims the feed from the cutover on.
+   */
+  from: string;
   note: string;
   regex: RegExp | null;
 }
@@ -61,6 +75,8 @@ export interface Person {
   profile: PersonProfile;
   rules: TaxRule[];
   pins: Map<string, TaxPin>;
+  /** Normalized client names from clients.json, what a `match: "client"` rule tests against. */
+  clientNames: Set<string>;
   dir: string;
 }
 
@@ -115,6 +131,7 @@ export function loadPerson(rootDir: string, slug: string): Person {
     profile,
     rules: loadTaxRules(join(dir, "rules.json")),
     pins: loadPins(join(dir, "pins.json")),
+    clientNames: loadClientNames(join(dir, "clients.json")),
     dir,
   };
 }
@@ -125,18 +142,26 @@ function loadTaxRules(path: string): TaxRule[] {
   const list = Array.isArray(raw.rules) ? raw.rules : [];
   return list.map((r: Record<string, unknown>, i: number) => {
     const match = String(r.match ?? "substring");
-    if (match !== "substring" && match !== "regex" && match !== "exact") {
+    if (match !== "substring" && match !== "regex" && match !== "exact" && match !== "client") {
       throw new Error(`${path}: rule ${i}: invalid match "${match}"`);
     }
     const field = String(r.field ?? "merchant_raw");
     if (field !== "merchant_raw" && field !== "note" && field !== "account") {
       throw new Error(`${path}: rule ${i}: invalid field "${field}"`);
     }
-    const pattern = String(r.pattern ?? "");
+    const pattern = String(r.pattern ?? (match === "client" ? "*" : ""));
     const category = String(r.category ?? "");
     if (pattern === "" || category === "") {
       throw new Error(`${path}: rule ${i}: pattern and category are required`);
     }
+    const from = String(r.from ?? "");
+    if (from !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+      throw new Error(`${path}: rule ${i}: "from" must be YYYY-MM-DD (got "${from}")`);
+    }
+    const accountRaw = r.account ?? r.accounts ?? "";
+    const accounts = (Array.isArray(accountRaw) ? accountRaw : [accountRaw])
+      .map((a) => String(a).trim())
+      .filter((a) => a !== "");
     let regex: RegExp | null = null;
     if (match === "regex") {
       try {
@@ -150,7 +175,8 @@ function loadTaxRules(path: string): TaxRule[] {
       match,
       field,
       category,
-      account: String(r.account ?? ""),
+      accounts,
+      from,
       note: String(r.note ?? ""),
       regex,
     };
@@ -180,10 +206,13 @@ export function savePins(dir: string, pins: Map<string, TaxPin>): void {
 }
 
 /** Test one tax rule against a row. */
-export function taxRuleMatches(rule: TaxRule, tx: Transaction): boolean {
-  if (rule.account !== "" && tx.account !== rule.account) return false;
+export function taxRuleMatches(rule: TaxRule, tx: Transaction, clientNames?: Set<string>): boolean {
+  if (rule.accounts.length > 0 && !rule.accounts.includes(tx.account)) return false;
+  if (rule.from !== "" && tx.date < rule.from) return false;
   const value = tx[rule.field];
   switch (rule.match) {
+    case "client":
+      return clientNames !== undefined && clientNames.has(normClientName(tx.merchant_raw));
     case "substring":
       return value.toLowerCase().includes(rule.pattern.toLowerCase());
     case "exact":
@@ -191,6 +220,23 @@ export function taxRuleMatches(rule: TaxRule, tx: Transaction): boolean {
     case "regex":
       return rule.regex!.test(value);
   }
+}
+
+/** Lower-case, single-spaced: the equality a payer name is tested under. */
+export function normClientName(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** The names in clients.json (the invoice registry), normalized. Empty when the file is absent. */
+function loadClientNames(path: string): Set<string> {
+  const names = new Set<string>();
+  if (!existsSync(path)) return names;
+  const raw = readJson(path);
+  for (const name of Object.keys(raw)) {
+    if (name.startsWith("_")) continue;
+    names.add(normClientName(name));
+  }
+  return names;
 }
 
 function readJson(path: string): Record<string, unknown> {

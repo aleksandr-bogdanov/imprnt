@@ -52,7 +52,7 @@ local. None of them ship with the plugin code.
 Run as `imprnt kopeika <cmd>` (the core dispatches to `node plugins/kopeika/kopeika.js`), or call
 `node plugins/kopeika/kopeika.js <cmd>` directly:
 
-- `imprnt kopeika import <revolut|n26|trading212|tbank|alfa> <file> --account <label> --owner <owner>`
+- `imprnt kopeika import <revolut|n26|trading212|tbank|alfa|paypal> <file> --account <label> --owner <owner>`
   archives the raw export, parses, FX-converts to EUR, dedups, and appends.
 - `imprnt kopeika categorize [--review]` applies `data/rules.csv`. `--review` lists new merchants by spend.
 - `imprnt kopeika transfers` pairs internal account-to-account legs.

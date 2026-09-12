@@ -40,7 +40,7 @@ kopeika does not take hand-typed transactions. You feed it the bank's CSV export
 1. **Export** a fresh CSV from each account (re-importing an overlap is a safe no-op, dedup handles it).
 2. **Import** each file with its stable `--account` label:
    ```bash
-   imprnt kopeika import <revolut|n26|trading212|tbank|alfa> <file> --account <label> --owner <owner>
+   imprnt kopeika import <revolut|n26|trading212|tbank|alfa|paypal> <file> --account <label> --owner <owner>
    ```
 3. **Categorize and match transfers:**
    ```bash
@@ -68,7 +68,7 @@ A clean reset is `rm data/ledger.csv` then re-import every account.
 ## Commands
 
 ```
-imprnt kopeika import <revolut|n26|trading212|tbank|alfa> <file> --account <name> --owner <owner>
+imprnt kopeika import <revolut|n26|trading212|tbank|alfa|paypal> <file> --account <name> --owner <owner>
 imprnt kopeika categorize [--review]
 imprnt kopeika transfers
 imprnt kopeika recurring [--min-months N] [--from YYYY-MM]

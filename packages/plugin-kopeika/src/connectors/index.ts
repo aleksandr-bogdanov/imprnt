@@ -16,6 +16,7 @@ import { parseN26 } from "./n26.ts";
 import { parseTrading212 } from "./trading212.ts";
 import { parseTbank } from "./tbank.ts";
 import { parseAlfa } from "./alfa.ts";
+import { parsePaypal } from "./paypal.ts";
 
 export type ConnectorParseFn = (text: string) => ParsedRow[];
 
@@ -25,6 +26,7 @@ export const CONNECTORS: Readonly<Record<string, ConnectorParseFn>> = {
   trading212: parseTrading212,
   tbank: parseTbank,
   alfa: parseAlfa,
+  paypal: parsePaypal,
 };
 
 export function getConnector(name: string): ConnectorParseFn | null {
