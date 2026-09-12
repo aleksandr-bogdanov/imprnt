@@ -32,7 +32,7 @@ function authed(req: Request): boolean {
   return want.length === got.length && timingSafeEqual(want, got);
 }
 function loginPage(failed = false): Response {
-  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>kopeika</title>
+  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>kopeika</title><link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
 <style>body{font:16px "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#f6f4ec;color:#1b1d1a;display:grid;place-items:center;min-height:100vh;margin:0}
 form{background:#fbf9f2;border:1px solid #ddd7c7;padding:28px;border-radius:8px;width:min(320px,90vw)}input{width:100%;box-sizing:border-box;padding:10px;margin:8px 0 14px;border:1px solid #ddd7c7;border-radius:6px;font:inherit}
 button{width:100%;padding:10px;border:0;border-radius:6px;background:#1b1d1a;color:#f6f4ec;font:inherit}p.err{color:#a33;margin:0 0 8px}</style>

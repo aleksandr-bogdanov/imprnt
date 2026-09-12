@@ -57,6 +57,9 @@ export function renderRowsHtml(txs: readonly Transaction[], o: RowsOptions): str
   const months = [...new Set(rows.map((r) => r.d.slice(0, 7)))].sort().reverse();
 
   return `<!DOCTYPE html><html lang="${o.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t.title}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
 <style>
 :root{--display:"Space Grotesk","Inter",sans-serif;--mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;--paper:#f6f4ec;--surface:#fbf9f2;--line:#ddd7c7;--ink:#1b1d1a;--soft:#585b51;--faint:#8b8d81;--accent:#0f9999;--neg:#a33a2f;--pos:#2f7d4f}
 @media(prefers-color-scheme:dark){:root{--paper:#141310;--surface:#1c1a15;--line:#2c2a23;--ink:#ece9e0;--soft:#a3a094;--faint:#75736a;--accent:#60baba;--neg:#e0705f;--pos:#6cc08b}}
