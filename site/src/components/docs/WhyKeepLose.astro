@@ -1,103 +1,66 @@
 ---
 /**
- * Page-specific (why-imprnt): the keep-vs-lose argument, visual. Top half shows
- * the SAME fact stored two ways: a plain note you can read next to a machine-
- * store's rows of numbers you cannot. Bottom half is a four-row ledger: what a
- * plain-file vault keeps and what a machine-store loses, on the four moments
- * that matter (read it, fix it, switch tools, vendor moves on). The claims
- * restate the verified comparison-page facts, never more. Filled surfaces, no
- * border boxes. Scoped CSS, theme-aware via Starlight tokens, no Tailwind.
- * Reveal animation is additive: no JS or reduced motion renders fully visible.
+ * Page-specific (why-imprnt): the same fact stored two ways, as two alternatives
+ * side by side. Left: a note in your vault, readable, one line to fix, a folder
+ * you take with you. Right: the same fact as rows of numbers in a machine-store,
+ * nothing to read, no line to fix, an export if the tool allows one. Each card
+ * is complete on its own: a preview of the stored thing, then three plain
+ * consequences. Sans only, filled surfaces, no border boxes. Scoped CSS,
+ * theme-aware via Starlight tokens, no Tailwind. Reveal animation is additive:
+ * no JS or reduced motion renders fully visible.
  */
 const NOTE = [
-  { k: "h", t: "# Dr. Weber" },
+  { k: "h", t: "Dr. Weber" },
   { k: "m", t: "tags: health, cardiology" },
   { k: "m", t: "summary: My cardiologist since 2024." },
-  { k: "b", t: "" },
-  { k: "b", t: "Moved her practice to Friedrichstrasse" },
-  { k: "b", t: "in May. Next checkup due in October." },
+  { k: "b", t: "Moved her practice to Friedrichstrasse in May. Next checkup due in October." },
 ];
 
 const VEC = [
-  " 0.0132  -0.8841   0.5590  -0.1127",
-  "-0.4203   0.7719  -0.0865   0.3341",
-  " 0.9034  -0.2210   0.6402  -0.5577",
-  "-0.1848   0.4466  -0.9152   0.0719",
-  " 0.3305  -0.6674   0.2081   0.8420",
+  "0.0132  -0.8841  0.5590  -0.1127",
+  "-0.4203  0.7719  -0.0865  0.3341",
+  "0.9034  -0.2210  0.6402  -0.5577",
+  "-0.1848  0.4466  -0.9152  0.0719",
 ];
 
-const ROWS = [
-  {
-    q: "Read it",
-    keep: "Open the note like any text file.",
-    lose: "Rows of numbers, nothing to read.",
-  },
-  {
-    q: "Fix a wrong fact",
-    keep: "Find the line, edit it, done.",
-    lose: "There is no line to find.",
-  },
-  {
-    q: "Switch assistants",
-    keep: "The folder and its search go with you.",
-    lose: "Export first, if the tool offers one.",
-  },
-  {
-    q: "The vendor moves on",
-    keep: "Nothing happens. The files are on your disk.",
-    lose: "You are racing a shutdown notice.",
-  },
+const KEEP = [
+  "Open it like any text file and read it.",
+  "A wrong fact is one line. Edit it, done.",
+  "Switch assistants: the folder comes with you.",
+];
+const LOSE = [
+  "Rows of numbers. Nothing to read.",
+  "A wrong fact has no line to find.",
+  "Switch assistants: export first, if the tool allows.",
 ];
 ---
 
 <div class="kl" data-kl>
   <span class="kl-tag">the same fact, stored two ways</span>
-
   <div class="kl-cards">
-    <figure class="kl-fig" style="--d: 0ms">
-      <figcaption class="kl-cap"><span class="kl-dot keep-dot" aria-hidden="true"></span> a note in your vault</figcaption>
-      <div class="kl-file" role="img" aria-label="A plain text note: Dr. Weber, tagged health and cardiology, summary line, and the fact that she moved her practice to Friedrichstrasse in May.">
+    <figure class="kl-fig keep" style="--d: 0ms">
+      <figcaption class="kl-cap">A note in your vault</figcaption>
+      <div class="kl-preview" role="img" aria-label="A plain text note: Dr. Weber, tagged health and cardiology, a summary line, and the fact that she moved her practice to Friedrichstrasse in May.">
         <span class="kl-path">people/dr-weber.md</span>
-        <div class="kl-note">
-          {NOTE.map((l) => <span class={`ln ln-${l.k}`}>{l.t}</span>)}
-        </div>
+        {NOTE.map((l) => <span class={`ln ln-${l.k}`}>{l.t}</span>)}
       </div>
+      <ul class="kl-list">
+        {KEEP.map((t) => <li><span class="mark ok" aria-hidden="true">&#10003;</span>{t}</li>)}
+      </ul>
     </figure>
-    <figure class="kl-fig" style="--d: 140ms">
-      <figcaption class="kl-cap"><span class="kl-dot lose-dot" aria-hidden="true"></span> the same fact in a machine-store</figcaption>
-      <div class="kl-vec" role="img" aria-label="The same fact converted to long rows of decimal numbers. No sentence survives the conversion.">
-        <span class="kl-path dim">memory.index</span>
-        <div class="kl-nums" aria-hidden="true">
+    <figure class="kl-fig lose" style="--d: 140ms">
+      <figcaption class="kl-cap">The same fact in a machine-store</figcaption>
+      <div class="kl-preview" role="img" aria-label="The same fact converted to rows of decimal numbers. No sentence survives the conversion.">
+        <span class="kl-path">memory.index</span>
+        <span class="kl-nums" aria-hidden="true">
           {VEC.map((r) => <span class="vr">{r}</span>)}
-          <span class="vr more">+ hundreds more numbers</span>
-        </div>
+          <span class="vr more">and hundreds more</span>
+        </span>
       </div>
+      <ul class="kl-list">
+        {LOSE.map((t) => <li><span class="mark no" aria-hidden="true">&#10005;</span>{t}</li>)}
+      </ul>
     </figure>
-  </div>
-
-  <div class="kl-ledger" role="table" aria-label="What you keep with plain files and what you lose with a machine-store">
-    <div class="lrow lhead" role="row" style="--d: 220ms">
-      <span class="lq" role="columnheader"></span>
-      <span class="lc lk head" role="columnheader">plain files</span>
-      <span class="lc ll head" role="columnheader">a machine-store</span>
-    </div>
-    {
-      ROWS.map((r, i) => (
-        <div class="lrow" role="row" style={`--d:${300 + i * 110}ms`}>
-          <span class="lq" role="rowheader">{r.q}</span>
-          <span class="lc lk" role="cell">
-            <span class="mini" aria-hidden="true">plain files</span>
-            <span class="mark ok" aria-hidden="true">&#10003;</span>
-            {r.keep}
-          </span>
-          <span class="lc ll" role="cell">
-            <span class="mini" aria-hidden="true">machine-store</span>
-            <span class="mark no" aria-hidden="true">&#10005;</span>
-            {r.lose}
-          </span>
-        </div>
-      ))
-    }
   </div>
 </div>
 
@@ -114,152 +77,110 @@ const ROWS = [
     color: var(--sl-color-gray-3);
     margin-bottom: 0.8rem;
   }
-
-  /* the two cards */
   .kl-cards {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.7rem;
-    margin: 0 0 1rem;
   }
   .kl-fig {
     margin: 0;
     display: flex;
     flex-direction: column;
-  }
-  .kl-cap {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--sl-color-gray-1);
-    margin-bottom: 0.45rem;
-  }
-  .kl-dot {
-    width: 0.55rem;
-    height: 0.55rem;
-    border-radius: 50%;
-    flex: none;
-  }
-  .keep-dot {
-    background: var(--sl-color-text-accent);
-  }
-  .lose-dot {
-    background: color-mix(in oklab, var(--sl-color-gray-3) 70%, var(--sl-color-bg));
-  }
-  .kl-file,
-  .kl-vec {
-    flex: 1;
     border-radius: 13px;
-    padding: 0.8rem 0.95rem 0.9rem;
-    font-family: var(--sl-font-mono);
+    padding: 0.95rem 1rem 1rem;
   }
-  .kl-file {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
+  .kl-fig.keep {
+    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
   }
-  .kl-vec {
+  .kl-fig.lose {
     background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
   }
+  .kl-cap {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--sl-color-white);
+    margin-bottom: 0.65rem;
+  }
+  .lose .kl-cap {
+    color: var(--sl-color-gray-1);
+  }
+  .kl-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.18rem;
+    border-radius: 10px;
+    padding: 0.7rem 0.8rem 0.8rem;
+    background: color-mix(in oklab, var(--sl-color-bg) 70%, transparent);
+  }
   .kl-path {
-    display: inline-block;
+    align-self: flex-start;
     font-size: 0.66rem;
     letter-spacing: 0.04em;
-    padding: 0.16rem 0.5rem;
+    padding: 0.14rem 0.5rem;
     border-radius: 7px;
+    margin-bottom: 0.45rem;
     color: var(--sl-color-white);
     background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
-    margin-bottom: 0.6rem;
   }
-  .kl-path.dim {
+  .lose .kl-path {
     color: var(--sl-color-gray-2);
     background: color-mix(in oklab, var(--sl-color-gray-3) 22%, var(--sl-color-bg));
   }
-  .kl-note {
-    display: flex;
-    flex-direction: column;
-    gap: 0.12rem;
-  }
   .ln {
-    font-size: 0.76rem;
+    font-size: 0.8rem;
     line-height: 1.45;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    min-height: 0.6rem;
+    color: var(--sl-color-white);
   }
   .ln-h {
-    color: var(--sl-color-white);
     font-weight: 700;
   }
   .ln-m {
     color: var(--sl-color-gray-2);
   }
   .ln-b {
-    color: var(--sl-color-white);
+    margin-top: 0.3rem;
   }
   .kl-nums {
     display: flex;
     flex-direction: column;
-    gap: 0.12rem;
-    mask-image: linear-gradient(to bottom, #000 45%, transparent 98%);
-    -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent 98%);
+    gap: 0.18rem;
+    mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
   }
   .vr {
-    font-size: 0.76rem;
+    font-size: 0.8rem;
     line-height: 1.45;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    color: var(--sl-color-gray-3);
+    font-variant-numeric: tabular-nums;
+    white-space: pre;
+    color: var(--sl-color-gray-2);
   }
   .vr.more {
     color: var(--sl-color-gray-3);
-    font-size: 0.68rem;
-    letter-spacing: 0.04em;
   }
-
-  /* the ledger */
-  .kl-ledger {
+  .kl-list {
+    list-style: none;
+    margin: 0.8rem 0 0;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 0.45rem;
   }
-  .lrow {
-    display: grid;
-    grid-template-columns: minmax(7.6rem, 0.62fr) 1fr 1fr;
-    gap: 0.4rem;
-    align-items: stretch;
-  }
-  .lq {
-    display: flex;
-    align-items: center;
-    font-size: 0.84rem;
-    font-weight: 600;
-    line-height: 1.3;
-    color: var(--sl-color-white);
-    padding: 0.55rem 0.2rem 0.55rem 0;
-  }
-  .lc {
+  .kl-list li {
     position: relative;
-    border-radius: 11px;
-    padding: 0.55rem 0.75rem 0.55rem 2rem;
-    font-size: 0.82rem;
+    padding-left: 1.3rem;
+    font-size: 0.86rem;
     line-height: 1.42;
     color: var(--sl-color-white);
   }
-  .lk {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 9%, var(--sl-color-bg));
-  }
-  .ll {
-    background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
+  .lose .kl-list li {
     color: var(--sl-color-gray-1);
   }
   .mark {
     position: absolute;
-    left: 0.7rem;
-    top: 0.62rem;
-    font-size: 0.78rem;
+    left: 0;
+    top: 0;
+    font-size: 0.82rem;
     font-weight: 700;
-    line-height: 1.3;
   }
   .mark.ok {
     color: var(--sl-color-text-accent);
@@ -267,36 +188,16 @@ const ROWS = [
   .mark.no {
     color: var(--sl-color-gray-3);
   }
-  .lhead .lc {
-    background: none;
-    padding-top: 0.1rem;
-    padding-bottom: 0;
-    font-family: var(--sl-font);
-    font-size: 0.66rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .lhead .lk {
-    color: var(--sl-color-white);
-  }
-  .lhead .ll {
-    color: var(--sl-color-gray-2);
-  }
-  .mini {
-    display: none;
-  }
 
   /* reveal: armed only by JS, so no-JS and reduced-motion render static */
-  .kl.armed .kl-fig,
-  .kl.armed .lrow {
+  .kl.armed .kl-fig {
     opacity: 0;
     transform: translateY(12px);
     transition:
       opacity 0.55s ease var(--d),
       transform 0.55s ease var(--d);
   }
-  .kl.armed.in .kl-fig,
-  .kl.armed.in .lrow {
+  .kl.armed.in .kl-fig {
     opacity: 1;
     transform: none;
   }
@@ -304,34 +205,6 @@ const ROWS = [
   @media (max-width: 700px) {
     .kl-cards {
       grid-template-columns: 1fr;
-    }
-    .lrow {
-      grid-template-columns: 1fr;
-      gap: 0.35rem;
-      margin-bottom: 0.5rem;
-    }
-    .lhead {
-      display: none;
-    }
-    .lq {
-      padding: 0.1rem 0 0;
-    }
-    .mini {
-      display: block;
-      font-family: var(--sl-font);
-      font-size: 0.58rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      margin-bottom: 0.15rem;
-    }
-    .lk .mini {
-      color: var(--sl-color-white);
-    }
-    .ll .mini {
-      color: var(--sl-color-gray-2);
-    }
-    .mark {
-      top: 1.55rem;
     }
   }
 </style>

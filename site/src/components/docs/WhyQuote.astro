@@ -1,8 +1,9 @@
 ---
 /**
  * Page-specific (why-imprnt): a pull-quote for the one line the page turns on.
- * A filled tinted surface, larger type, no left-border bar (that reads as a
- * callout tell). Pass the line as the default slot. Scoped CSS, theme-aware.
+ * The same filled tinted surface and radius as the page's other cards, body
+ * size, no left-border bar (that reads as a callout tell). Pass the line as the
+ * default slot. Scoped CSS, theme-aware.
  */
 ---
 
@@ -12,24 +13,21 @@
 
 <style>
   .pull {
-    margin: 1.5rem 0;
-    padding: 1.2rem 1.4rem;
+    margin: 1.4rem 0;
+    padding: 1rem 1.1rem;
     border: none;
-    border-radius: 14px;
+    border-radius: 13px;
     background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
-    font-size: 1.18rem;
-    line-height: 1.5;
-    font-weight: 500;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    font-weight: 400;
     color: var(--sl-color-white);
+  }
+  .pull :global(p) {
+    margin: 0;
   }
   .pull :global(strong) {
     color: var(--sl-color-white);
     font-weight: 700;
-  }
-  @media (max-width: 640px) {
-    .pull {
-      font-size: 1.05rem;
-      padding: 1rem 1.1rem;
-    }
   }
 </style>

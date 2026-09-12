@@ -13,7 +13,6 @@ import { useEffect, useRef, useState } from "react";
  */
 
 const SANS = "var(--sl-font, system-ui, sans-serif)";
-const MONO = "var(--sl-font-mono, ui-monospace, monospace)";
 const DOT = 22;
 
 type Beat = { id: string; label: string; gist: string };
@@ -21,13 +20,12 @@ type Beat = { id: string; label: string; gist: string };
 const BEATS: Beat[] = [
   { id: "beat-bike", label: "The bike", gist: "I cannot buy anything without understanding it inside out first." },
   { id: "beat-claude", label: "Ask Claude", gist: "Brilliant answers, no memory. Every chat met a stranger." },
-  { id: "beat-pai", label: "PAI", gist: "Finally a tool that remembered me, with real depth." },
-  { id: "beat-v5", label: "Version 5", gist: "It grew machinery I never asked for and could not remove." },
+  { id: "beat-pai", label: "PAI, for someone else", gist: "It remembered me, then grew machinery I never asked for." },
   { id: "beat-tokens", label: "The token bill", gist: "At work, metered, the bloat ate the budget I needed to work." },
-  { id: "beat-rule", label: "A colleague's rule", gist: "The model is the peer. The software you write is the servant." },
-  { id: "beat-imprnt", label: "imprnt", gist: "Spend the model once to build the tool. Run the tool for free." },
-  { id: "beat-keep", label: "What you keep", gist: "Plain files you can read, fix, and take anywhere." },
-  { id: "beat-promise", label: "The promise", gist: "Ships with almost nothing. Everything is opt-in and removable." },
+  { id: "beat-rule", label: "The rule that fixed it", gist: "The model is the peer. The code you write is the servant." },
+  { id: "beat-bible", label: "The bible", gist: "Eight lines to the assistant, and the start of imprnt." },
+  { id: "beat-keep", label: "Your memory is plain text", gist: "Notes you can read, fix, and take anywhere." },
+  { id: "beat-promise", label: "My promise to you", gist: "Ships with almost nothing. Everything is opt-in and removable." },
 ];
 
 const PALETTE = {
@@ -168,7 +166,7 @@ export default function WhyRail() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontFamily: MONO,
+                    fontFamily: SANS,
                     fontSize: 11,
                     fontWeight: 600,
                     zIndex: 1,

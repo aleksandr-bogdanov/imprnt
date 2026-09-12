@@ -1,14 +1,20 @@
 ---
 /**
  * Page-specific (why-imprnt): the no-memory problem made visible. Three chat
- * cards carry the exact same briefing, each one ending in a memory wipe, so the
- * repetition lands before the prose explains it. The third card is "chat 47" to
- * say this loop never ends. Filled surfaces, no border boxes. Scoped CSS,
- * theme-aware via Starlight tokens, no Tailwind. Reveal animation is additive:
- * without JS or with reduced motion the strip renders fully visible.
+ * cards carry the exact same briefing in muted bubbles, then the ONE line each
+ * chat was actually opened for, in the accent, then the memory wipe. The
+ * briefing is the annoying part, the question is what should have been the
+ * first message. The third card is "chat 47" to say this loop never ends.
+ * Filled surfaces, no border boxes, sans only. Scoped CSS, theme-aware via
+ * Starlight tokens, no Tailwind. Reveal animation is additive: without JS or
+ * with reduced motion the strip renders fully visible.
  */
-const LINES = ["here is my setup", "these are my constraints", "this is what we decided last week"];
-const CHATS = ["chat 1", "chat 2", "chat 47"];
+const BRIEF = ["here is my setup", "these are my constraints", "this is what we decided last week"];
+const CHATS = [
+  { tag: "chat 1", ask: "which bike for a fifteen-minute commute?" },
+  { tag: "chat 2", ask: "is this clause in my rental contract normal?" },
+  { tag: "chat 47", ask: "which tax form covers freelance income?" },
+];
 ---
 
 <div class="am" data-am>
@@ -16,16 +22,18 @@ const CHATS = ["chat 1", "chat 2", "chat 47"];
     {
       CHATS.map((c, ci) => (
         <div class="chat" style={`--d:${ci * 160}ms`}>
-          <span class="ctag">{c}</span>
+          <span class="ctag">{c.tag}</span>
           <div class="msgs">
-            {LINES.map((l) => <span class="msg">{l}</span>)}
+            {BRIEF.map((l) => <span class="msg brief">{l}</span>)}
+            <span class="asklabel">what I came to ask</span>
+            <span class="msg ask">{c.ask}</span>
           </div>
           <span class="wipe"><b aria-hidden="true">&#10005;</b> chat ends, memory wiped</span>
         </div>
       ))
     }
   </div>
-  <p class="cap">The same briefing, typed again at the start of every chat.</p>
+  <p class="cap">Three lines of the same briefing before the one line I came to ask. Every chat.</p>
 </div>
 
 <style>
@@ -44,9 +52,7 @@ const CHATS = ["chat 1", "chat 2", "chat 47"];
     padding: 0.85rem 0.95rem 0.8rem;
     background: color-mix(in oklab, var(--sl-color-gray-4) 45%, var(--sl-color-bg));
     /* Starlight's global sibling spacing (* + * gets margin-top) reaches into
-       this grid: cards 2 and 3 follow a sibling, card 1 does not, so two cards
-       sat 16px lower and 16px shorter than the first. Kill it here so all
-       three share the row height. */
+       this grid. Kill it here so all three share the row height. */
     margin-top: 0;
   }
   .ctag {
@@ -66,10 +72,25 @@ const CHATS = ["chat 1", "chat 2", "chat 47"];
   .msg {
     font-size: 0.78rem;
     line-height: 1.35;
-    color: var(--sl-color-white);
     padding: 0.28rem 0.6rem;
     border-radius: 10px 10px 10px 4px;
-    background: color-mix(in oklab, var(--sl-color-text-accent) 10%, var(--sl-color-bg));
+  }
+  .msg.brief {
+    color: var(--sl-color-gray-2);
+    background: color-mix(in oklab, var(--sl-color-gray-3) 18%, var(--sl-color-bg));
+  }
+  .asklabel {
+    margin-top: 0.3rem;
+    font-family: var(--sl-font);
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent);
+  }
+  .msg.ask {
+    font-weight: 600;
+    color: var(--sl-color-white);
+    background: color-mix(in oklab, var(--sl-color-text-accent) 16%, var(--sl-color-bg));
   }
   .wipe {
     margin-top: auto;
