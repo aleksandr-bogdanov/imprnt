@@ -132,6 +132,9 @@ export function parseRevolut(text: string): ParsedRow[] {
       // the row is already EUR the pipeline's toEur() passes it through at 1.
       amountEur: null,
       balance,
+      // Time of day is the START of the transaction (when the card was tapped, in the
+      // account's local zone); Completed Date is the overnight settlement batch.
+      time: (timePart(rec.get("Started Date")) || timePart(rec.get("Completed Date"))).slice(0, 5),
       // Intraday time disambiguates two otherwise-identical same-day rows (two
       // equal metro tickets, two equal P2P payments) that would share an id on
       // date alone. Started Date is always populated; "" when it has no time.

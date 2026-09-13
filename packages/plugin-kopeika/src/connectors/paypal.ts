@@ -74,6 +74,15 @@ export function parseEuroNumber(raw: string, what: string): number {
 }
 
 /** DD.MM.YYYY or DD/MM/YYYY -> YYYY-MM-DD. */
+/** "HH:MM" from a PayPal Time cell when the zone is Central European (or unstated), else "". */
+function timeOfDay(raw: string, tz: string): string {
+  const t = raw.trim();
+  const z = tz.trim();
+  if (!/^\d{2}:\d{2}/.test(t)) return "";
+  if (z !== "" && !/^(Europe\/|CES?T$)/.test(z)) return "";
+  return t.slice(0, 5);
+}
+
 function isoDate(raw: string): string {
   const m = raw.trim().match(/^(\d{2})[./](\d{2})[./](\d{4})$/);
   if (!m) throw new Error(`parsePaypal: unexpected date "${raw}" (want DD.MM.YYYY or DD/MM/YYYY)`);
@@ -94,6 +103,11 @@ export function parsePaypal(text: string): ParsedRow[] {
   }
   const hasImpact = header.includes("Balance Impact");
   const hasBalance = header.includes("Balance");
+  // Time of day is kept only when the export states a Central European zone (the
+  // personal statement is Europe/Berlin; the business Activity report is PST/PDT,
+  // and a nine-hour-shifted time is worse than none).
+  const tzColumn = header.includes("Time Zone") ? "Time Zone" : header.includes("TimeZone") ? "TimeZone" : "";
+  const hasTime = header.includes("Time");
 
   const rows: ParsedRow[] = [];
   for (const rec of records) {
@@ -138,6 +152,7 @@ export function parsePaypal(text: string): ParsedRow[] {
       transferCandidate: type === "transfer",
       amountEur: null,
       balance,
+      time: timeOfDay(hasTime ? rec.get("Time") : "", tzColumn ? rec.get(tzColumn) : ""),
       dedupExtra: rec.get("Transaction ID").trim(),
     });
   }

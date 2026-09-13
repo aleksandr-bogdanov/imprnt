@@ -20,6 +20,7 @@ export function tx(overrides: Partial<Transaction> = {}): Transaction {
   const base: Transaction = {
     id: `id${counter}`,
     date: "2025-01-15",
+    time: "",
     data_source: "n26",
     account: "n26-eur",
     owner: "alex" as Owner,

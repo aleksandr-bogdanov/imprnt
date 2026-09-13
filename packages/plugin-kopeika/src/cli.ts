@@ -274,6 +274,7 @@ async function cmdImport(args: Args): Promise<number> {
     const tx: Transaction = {
       id,
       date: row.date,
+      time: row.time ?? "",
       data_source: source,
       account,
       owner,
@@ -298,13 +299,14 @@ async function cmdImport(args: Args): Promise<number> {
   });
 
   const existing = loadLedger(LEDGER_PATH);
-  const { appended, skippedDuplicate, merged } = appendDeduped(existing, candidates);
+  const { appended, skippedDuplicate, healedTime, merged } = appendDeduped(existing, candidates);
   // Rows imported before their FX rate existed carry amount_eur=null; now that
   // the rates table may have grown, resolve them (deterministic, never guessed).
   const backfilled = backfillEur(merged, rates);
   writeLedger(LEDGER_PATH, merged);
 
   console.log(`imported ${appended} / skipped-dup ${skippedDuplicate} / skipped-non-completed ${skippedNonCompleted}`);
+  if (healedTime > 0) console.log(`filled the time of day on ${healedTime} earlier row(s)`);
   if (backfilled > 0) {
     console.log(`backfilled amount_eur for ${backfilled} earlier row(s) from data/rates.csv`);
   }
@@ -416,6 +418,7 @@ async function cmdImportDatev(args: Args): Promise<number> {
     return {
       id,
       date: e.date,
+      time: "",
       data_source: "lexoffice-datev",
       account,
       owner,
@@ -582,6 +585,7 @@ async function cmdImportNorman(args: Args): Promise<number> {
     return {
       id,
       date: r.date,
+      time: "",
       data_source: "norman-dump",
       account,
       owner,
@@ -864,6 +868,7 @@ async function cmdManual(args: Args): Promise<number> {
   const tx: Transaction = {
     id,
     date,
+    time: "",
     data_source: "manual",
     account,
     owner: who,

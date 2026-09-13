@@ -109,6 +109,7 @@ export function parseAlfa(text: string): ParsedRow[] {
       transferCandidate: type === "transfer",
       amountEur: currency === "EUR" ? amount : null,
       balance: null,
+      time: timePart(opTimestamp).slice(0, 5),
       // Intraday time disambiguates two otherwise-identical same-day rows should
       // the export carry it; "" on the verified date-only shape keeps ids as-is.
       dedupExtra: timePart(opTimestamp),

@@ -136,6 +136,7 @@ export function parseTbank(text: string): ParsedRow[] {
       amountEur: currency === "EUR" ? amount : null,
       // The export carries no running-balance column.
       balance: null,
+      time: timePart(opTimestamp).slice(0, 5),
       // Intraday time disambiguates two otherwise-identical same-day rows (two equal
       // taxi fares, two equal P2P transfers) that would share an id on date alone.
       dedupExtra: timePart(opTimestamp),

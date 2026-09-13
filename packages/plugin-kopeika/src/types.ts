@@ -65,6 +65,8 @@ export function isTaxSource(value: string): value is TaxSource {
 export interface Transaction {
   id: string;
   date: string; // ISO YYYY-MM-DD
+  /** "HH:MM" as the export states it (its own zone, not normalized), "" when the source carries no time. */
+  time: string;
   data_source: string; // "revolut" | "n26" | future connectors
   account: string; // CLI-supplied account label, e.g. "revolut-eur"
   owner: Owner;
@@ -102,6 +104,8 @@ export interface Transaction {
  */
 export interface ParsedRow {
   date: string;
+  /** "HH:MM" when the export carries a time of day; omitted otherwise. */
+  time?: string;
   merchant_raw: string;
   amount_native: number;
   currency: string;
@@ -151,6 +155,7 @@ export const LEDGER_COLUMNS = [
   "tax_person",
   "tax_category",
   "tax_source",
+  "time",
 ] as const;
 
 export type LedgerColumn = (typeof LEDGER_COLUMNS)[number];

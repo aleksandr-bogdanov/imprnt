@@ -43,6 +43,7 @@ function txToRow(tx: Transaction): string[] {
     tx.tax_person,
     tx.tax_category,
     tx.tax_source,
+    tx.time,
   ];
 }
 
@@ -103,6 +104,8 @@ function rowToTx(get: (col: string) => string, rowNum: number): Transaction {
     tax_person: get("tax_person").trim(),
     tax_category: get("tax_category").trim(),
     tax_source: taxSourceRaw,
+    // time is a v4 column; an older ledger reads it as "".
+    time: get("time").trim(),
   };
 }
 
@@ -131,33 +134,43 @@ export function writeLedger(path: string, txs: readonly Transaction[]): void {
 export interface AppendResult {
   appended: number;
   skippedDuplicate: number;
+  /** Existing rows that had no time of day and gained one from the re-imported export. */
+  healedTime: number;
   merged: Transaction[];
 }
 
 /**
  * Append candidate transactions, skipping any id already present (idempotent).
- * Existing rows are never mutated — re-importing an overlapping file is a no-op.
+ * Existing rows are never re-valued: re-importing an overlapping file is a no-op,
+ * except that a row imported before the ledger carried a time of day gains it
+ * (the one field a re-import may fill, and only when it was empty).
  */
 export function appendDeduped(
   existing: readonly Transaction[],
   candidates: readonly Transaction[],
 ): AppendResult {
-  const seen = new Set(existing.map((t) => t.id));
+  const seen = new Map(existing.map((t, i) => [t.id, i]));
   const merged = [...existing];
   let appended = 0;
   let skippedDuplicate = 0;
+  let healedTime = 0;
 
   for (const cand of candidates) {
-    if (seen.has(cand.id)) {
+    const at = seen.get(cand.id);
+    if (at !== undefined) {
       skippedDuplicate += 1;
+      if (merged[at]!.time === "" && cand.time !== "") {
+        merged[at] = { ...merged[at]!, time: cand.time };
+        healedTime += 1;
+      }
       continue;
     }
-    seen.add(cand.id);
+    seen.set(cand.id, merged.length);
     merged.push(cand);
     appended += 1;
   }
 
-  return { appended, skippedDuplicate, merged };
+  return { appended, skippedDuplicate, healedTime, merged };
 }
 
 /**

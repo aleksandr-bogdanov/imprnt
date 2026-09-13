@@ -90,6 +90,7 @@ export function parseTrading212(text: string): ParsedRow[] {
       // Trading212's transactions export has no portfolio-value / balance column;
       // the savings stock for this account is cost basis (cumulative deposits).
       balance: null,
+      time: /^\d{2}:\d{2}/.test(time.slice(11)) ? time.slice(11, 16) : "",
       // Vendor ID disambiguates identical same-day rows in the dedup id.
       dedupExtra: txnId,
     });
