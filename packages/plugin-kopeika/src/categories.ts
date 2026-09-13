@@ -22,7 +22,7 @@ export const CATEGORIES: readonly CategoryDef[] = [
   { key: "housing", ru: "Жильё и коммуналка", en: "Housing & utilities", kind: "spend", tier: "mandatory", color: "#3d7fb2" },
   { key: "groceries", ru: "Продукты", en: "Groceries", kind: "spend", tier: "mandatory", color: "#3f9668" },
   { key: "transport", ru: "Транспорт", en: "Transport", kind: "spend", tier: "mandatory", color: "#54819f" },
-  { key: "work-subs", ru: "Рабочие подписки", en: "Work subscriptions", kind: "spend", tier: "mandatory", color: "#8a63b8" },
+  { key: "work", ru: "Рабочие расходы", en: "Work", kind: "spend", tier: "mandatory", color: "#8a63b8" },
   { key: "business-lunch", ru: "Бизнес-ланч", en: "Business lunch", kind: "spend", tier: "mandatory", color: "#b8892e" },
   { key: "household", ru: "Хозтовары и дом", en: "Household & home", kind: "spend", tier: "mandatory", color: "#ad8a4a" },
   { key: "health", ru: "Здоровье и красота", en: "Health & beauty", kind: "spend", tier: "mandatory", color: "#b5503f" },
@@ -67,7 +67,9 @@ export function pickableCategories(): readonly CategoryDef[] {
 
 /**
  * Old free-text category names (the merchant-history accretion before 2026-09-13)
- * to the keys above. Used once by the migration and kept so an old rules file
+ * to the keys above. `work-subs` was the first name of `work` (renamed 2026-09-13:
+ * subscriptions, hardware, office supplies, anything filed as a business expense on
+ * either person's books; whose books is the tax axis, not the category). Used once by the migration and kept so an old rules file
  * still resolves. Two old names need the merchant to decide and are handled in
  * `legacyCategoryFor`: Subscriptions (work vs fun) and Eating out (business lunch).
  */
@@ -75,7 +77,7 @@ export const LEGACY: Readonly<Record<string, string>> = {
   "Rent & utilities": "housing", Rent: "housing", Utilities: "housing", Phone: "housing", Insurance: "housing", Admin: "housing",
   Groceries: "groceries",
   Commute: "transport", Transport: "transport", Micromobility: "transport",
-  Subscriptions: "work-subs",
+  Subscriptions: "work", "work-subs": "work",
   "Business lunch": "business-lunch",
   "Eating out": "eating-out", Drinking: "eating-out",
   Drogerie: "household", Household: "household", Home: "household",
@@ -101,7 +103,7 @@ export const INTEREST = /cashback|interest on cash|выплата проц|ipid 
 /** Resolve an old category name (plus the merchant, for the two ambiguous ones) to a key. */
 export function legacyCategoryFor(oldCategory: string, merchantRaw: string): string {
   if (BY_KEY.has(oldCategory)) return oldCategory;
-  if (oldCategory === "Subscriptions") return FUN_SUBSCRIPTIONS.test(merchantRaw) ? "entertainment" : "work-subs";
+  if (oldCategory === "Subscriptions") return FUN_SUBSCRIPTIONS.test(merchantRaw) ? "entertainment" : "work";
   if (oldCategory === "Eating out") return BUSINESS_LUNCH.test(merchantRaw) ? "business-lunch" : "eating-out";
   if (oldCategory === "Bank" && INTEREST.test(merchantRaw)) return "interest";
   return LEGACY[oldCategory] ?? oldCategory;

@@ -9,7 +9,7 @@ const ledger = [
   tx({ id: "a3", date: "2026-05-25", amount_native: 2000, amount_eur: 2000, type: "income", category: "Salary" }),
   tx({ id: "a4", date: "2026-05-26", amount_native: -500, amount_eur: -500, type: "transfer", is_transfer: true, category: "" }),
 ];
-const opts = { from: "2026-01-01", accountLabels: {}, tiers: loadTiers("/nonexistent/tiers.csv"), salaryCategory: "Salary" } as const;
+const opts = { from: "2026-01-01", accountLabels: {}, tiers: loadTiers("/nonexistent/tiers.csv"), salaryCategory: "Salary", persons: ["alex", "anna"] } as const;
 
 describe("renderRetagHtml", () => {
   test("only counted spend rows are embedded, with their original category and tier", () => {
@@ -22,6 +22,7 @@ describe("renderRetagHtml", () => {
     expect(html).toContain('"c0":"eating-out","t0":"optional"');
     expect(html).toContain("Продукты"); // the Russian labels from categories.ts
     expect(html).toContain("kopeika-changes");
+    expect(html).toContain('"persons":["alex","anna"]');
     // A merchant string can never close the inline script.
     expect(html).not.toContain("REWE <Berlin>");
     expect(html).toContain("REWE \\u003cBerlin>");

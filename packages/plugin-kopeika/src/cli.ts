@@ -1797,6 +1797,7 @@ async function cmdRetag(args: Args): Promise<number> {
     accountLabels: PROFILE.accountLabels,
     tiers: loadTiers(TIERS_PATH, loadPins(PINS_PATH)),
     salaryCategory: "Salary",
+    persons: listPersons(ROOT),
   });
   mkdirSync(dirname(htmlPath), { recursive: true });
   writeFileSync(htmlPath, html, "utf8");

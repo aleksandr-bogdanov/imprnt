@@ -27,13 +27,15 @@ export interface RetagOptions {
   tiers: Tiers;
   /** Category of salary rows; each salary date opens a salary-to-salary preset. */
   salaryCategory: string;
+  /** Persons with a tax profile: the values of the books dropdown. */
+  persons: readonly string[];
 }
 
 const T = {
   en: {
     title: "kopeika · retag", h1: "Retag", back: "dashboard", rows: "rows", period: "period", bySalary: "salary to salary", byMonth: "calendar month",
     from: "from", to: "to", today: "today", changes: "changes", copy: "copy", copied: "copied", clear: "clear", collapse: "collapse all", expand: "expand all",
-    date: "date", merchant: "merchant", amount: "EUR", category: "category", mandatory: "mandatory", note: "note to the agent",
+    date: "date", merchant: "merchant", amount: "EUR", category: "category", mandatory: "mandatory", books: "books", note: "note to the agent",
     tierM: "Mandatory", tierO: "Optional", spend: "spend", tMand: "mandatory", tOpt: "optional", n: "rows",
     hint: "Changes stay in this browser. Copy the block into the chat and the agent files it.",
     empty: "No counted spend in this period.",
@@ -41,7 +43,7 @@ const T = {
   ru: {
     title: "kopeika · разметка", h1: "Разметка", back: "дашборд", rows: "строки", period: "период", bySalary: "от зарплаты до зарплаты", byMonth: "календарный месяц",
     from: "с", to: "по", today: "сегодня", changes: "изменения", copy: "скопировать", copied: "скопировано", clear: "очистить", collapse: "свернуть всё", expand: "развернуть всё",
-    date: "дата", merchant: "получатель", amount: "EUR", category: "категория", mandatory: "обязательно", note: "заметка агенту",
+    date: "дата", merchant: "получатель", amount: "EUR", category: "категория", mandatory: "обязательно", books: "книги", note: "заметка агенту",
     tierM: "Обязательные", tierO: "Свободные", spend: "расход", tMand: "обязательные", tOpt: "свободные", n: "строк",
     hint: "Изменения хранятся в этом браузере. Скопируй блок в чат, агент его применит.",
     empty: "За этот период нет расходов в расчёте.",
@@ -85,6 +87,7 @@ export function renderRetagHtml(txs: readonly Transaction[], o: RetagOptions): s
       e: Math.round(-x.amount_eur! * 100) / 100,
       c0: x.category,
       t0: tierOf(o.tiers, x.category, x.merchant_raw, x.id),
+      b0: x.tax_person,
     }));
 
   const salaryDates = [...new Set(txs.filter((x) => x.category === o.salaryCategory && (x.amount_eur ?? 0) > 0 && x.date >= o.from).map((x) => x.date))].sort();
@@ -102,7 +105,8 @@ export function renderRetagHtml(txs: readonly Transaction[], o: RetagOptions): s
     labels,
     colors,
     tier: { m: t.tierM, o: t.tierO },
-    cols: { d: t.date, m: t.merchant, e: t.amount, c: t.category, man: t.mandatory, n: t.note },
+    cols: { d: t.date, m: t.merchant, e: t.amount, c: t.category, man: t.mandatory, b: t.books, n: t.note },
+    persons: o.persons,
     copied: t.copied,
     copy: t.copy,
   };
@@ -123,12 +127,13 @@ function fmtE(n){return n.toLocaleString(C.locale,{minimumFractionDigits:2,maxim
 function escH(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function label(c){return C.labels[c]||c||'';}
 function defMan(r){return r.c===r.c0?r.t0==='mandatory':!!CT[r.c];}
-function restore(r){var ch=CH[r.id]; r.c=ch&&ch.category?ch.category:r.c0; r.man=ch&&ch.mandatory?ch.mandatory==='yes':defMan(r); r.n=ch&&ch.note?ch.note:''; return r;}
+function restore(r){var ch=CH[r.id]; r.c=ch&&ch.category?ch.category:r.c0; r.man=ch&&ch.mandatory?ch.mandatory==='yes':defMan(r); r.b=ch&&ch.books!==undefined?ch.books:r.b0; r.n=ch&&ch.note?ch.note:''; return r;}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(CH));}catch(e){} var n=Object.keys(CH).length; $('chgN').textContent=n; $('chgBtn').classList.toggle('on',n>0); renderCh();}
 function renderCh(){$('chgText').value=Object.keys(CH).map(function(k){return JSON.stringify(CH[k]);}).join(String.fromCharCode(10));}
 function record(r){var c={id:r.id,date:r.d,merchant:r.m,eur:r.e},diff=false;
   if(r.c!==r.c0){c.category=r.c;diff=true;}
   if(r.man!==defMan(r)){c.mandatory=r.man?'yes':'no';diff=true;}
+  if(r.b!==r.b0){c.books=r.b;diff=true;}
   if(r.n){c.note=r.n;diff=true;}
   if(diff)CH[r.id]=c;else delete CH[r.id]; save(); return diff;}
 ROWS.forEach(restore);
@@ -149,6 +154,7 @@ var table=new Tabulator('#table',{data:[],index:'id',layout:'fitColumns',renderV
       C.cats.forEach(function(k){opts+='<option value="'+escH(k.value)+'"'+(k.value===cur?' selected':'')+'>'+escH(k.label)+'</option>';});
       return '<select class="pick" data-id="'+escH(r.id)+'" data-f="c">'+opts+'</select>';}},
     {title:C.cols.man,field:'man',width:118,hozAlign:'center',headerHozAlign:'center',headerSort:false,formatter:function(c){var r=c.getRow().getData();return '<label class="tick"><input type="checkbox" data-id="'+escH(r.id)+'" data-f="man"'+(r.man?' checked':'')+'></label>';}},
+    {title:C.cols.b,field:'b',width:112,headerSort:false,formatter:function(c){var r=c.getRow().getData();var opts='<option value=""'+(r.b?'':' selected')+'>\u2014</option>';C.persons.forEach(function(p){opts+='<option value="'+escH(p)+'"'+(p===r.b?' selected':'')+'>'+escH(p)+'</option>';});return '<select class="pick books'+(r.b?' set':'')+'" data-id="'+escH(r.id)+'" data-f="b">'+opts+'</select>';}},
     {title:C.cols.n,field:'n',minWidth:160,headerSort:false,formatter:function(c){var r=c.getRow().getData();return '<input type="text" class="note" data-id="'+escH(r.id)+'" data-f="n" value="'+escH(r.n)+'">';}}
   ]});
 
@@ -156,6 +162,7 @@ var host=$('table');
 host.addEventListener('change',function(ev){var el=ev.target; if(!el.dataset||!el.dataset.id)return; var row=table.getRow(el.dataset.id); if(!row)return; var r=row.getData();
   if(el.dataset.f==='c'){r.c=el.value; r.man=defMan(r); var box=row.getElement().querySelector('input[data-f="man"]'); if(box)box.checked=r.man;}
   else if(el.dataset.f==='man'){r.man=el.checked;}
+  else if(el.dataset.f==='b'){r.b=el.value; el.classList.toggle('set',!!r.b);}
   else if(el.dataset.f==='n'){r.n=el.value.trim();}
   row.getElement().classList.toggle('chg',record(r));});
 host.addEventListener('input',function(ev){var el=ev.target; if(!el.dataset||el.dataset.f!=='n')return; var row=table.getRow(el.dataset.id); if(!row)return; var r=row.getData(); r.n=el.value.trim(); row.getElement().classList.toggle('chg',record(r));});
@@ -205,8 +212,8 @@ select{min-width:220px;padding-right:28px}button:hover{border-color:var(--ink-fa
 #chgPanel{margin-top:16px;padding-bottom:16px;border-bottom:1px solid var(--border)}#chgPanel textarea{width:100%;font:12px/1.55 var(--mono);color:var(--ink);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;resize:vertical}
 #chgPanel .row{display:flex;gap:8px;margin-top:8px}
 #empty{color:var(--ink-faint);padding:40px 0}
-.tabulator{background:transparent;border:0;font-family:var(--sans);font-size:13.5px;color:var(--ink);margin-top:4px}
-.tabulator .tabulator-header{background:transparent;border-bottom:1px solid var(--border);border-top:0;color:var(--ink-chrome);font-family:var(--sans);font-size:11.5px;font-weight:400;letter-spacing:.02em}
+.tabulator{background:transparent;border:0;font-family:var(--sans);font-size:13.5px;color:var(--ink);margin-top:4px;overflow:visible}
+.tabulator .tabulator-header{position:sticky;top:0;z-index:3;background:var(--bg);border-bottom:1px solid var(--border);border-top:0;color:var(--ink-chrome);font-family:var(--sans);font-size:11.5px;font-weight:400;letter-spacing:.02em}
 .tabulator .tabulator-header .tabulator-col{background:transparent;border-right:0}.tabulator .tabulator-header .tabulator-col .tabulator-col-content{padding:10px 10px}
 .tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover{background:transparent;color:var(--ink)}
 .tabulator .tabulator-header .tabulator-col.tabulator-sortable .tabulator-col-title{padding-right:20px}
@@ -219,7 +226,8 @@ select{min-width:220px;padding-right:28px}button:hover{border-color:var(--ink-fa
 .tabulator .tabulator-row .tabulator-cell{border-right:0;padding:11px 10px;display:inline-flex;align-items:center;vertical-align:middle}
 .tabulator .tabulator-row .tabulator-cell.mono{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
 .tabulator .tabulator-row .tabulator-cell.mono[tabulator-field="e"]{color:var(--ink);justify-content:flex-end}
-.tabulator .tabulator-row .tabulator-cell[tabulator-field="c"],.tabulator .tabulator-row .tabulator-cell[tabulator-field="n"]{padding-left:2px}
+.tabulator .tabulator-row .tabulator-cell[tabulator-field="c"],.tabulator .tabulator-row .tabulator-cell[tabulator-field="b"],.tabulator .tabulator-row .tabulator-cell[tabulator-field="n"]{padding-left:2px}
+.tabulator select.books:not(.set){color:var(--ink-faint)}
 .tabulator .tabulator-row.chg{background:color-mix(in srgb,var(--amber) 9%,transparent)}
 .tabulator .tabulator-row.tabulator-group{background:transparent;border:0;border-bottom:1px solid var(--line-soft);padding:26px 10px 12px;color:var(--ink);font-weight:400;display:flex;align-items:center;gap:10px;min-height:0}
 .tabulator .tabulator-row.tabulator-group.tabulator-group-level-0{margin-top:34px;border-bottom:0;padding:8px 10px 12px}
