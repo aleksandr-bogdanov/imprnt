@@ -141,7 +141,8 @@ function fmtE(n){return n.toLocaleString(C.locale,{minimumFractionDigits:2,maxim
 function escH(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function label(c){return C.labels[c]||c||'';}
 function defMan(r){return r.c===r.c0?r.t0==='mandatory':!!CT[r.c];}
-function restore(r){var ch=CH[r.id]; r.c=ch&&ch.category?ch.category:r.c0; r.man=ch&&ch.mandatory?ch.mandatory==='yes':defMan(r); r.b=ch&&ch.books!==undefined?ch.books:r.b0; r.n=ch&&ch.note?ch.note:''; return r;}
+function defManLeg(r,c){return c===r.c0?r.t0==='mandatory':!!CT[c];}
+function restore(r){var ch=CH[r.id]; if(r.lg&&CH[r.pid]&&CH[r.pid].splits){var l=CH[r.pid].splits[parseInt(r.lg)-1]; if(l){r.c=l.category||r.c0; r.man=defManLeg(r,r.c); r.b=l.books||''; r.n=''; return r;}} r.c=ch&&ch.category?ch.category:r.c0; r.man=ch&&ch.mandatory?ch.mandatory==='yes':defMan(r); r.b=ch&&ch.books!==undefined?ch.books:r.b0; r.n=ch&&ch.note?ch.note:''; return r;}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(CH));}catch(e){} var n=Object.keys(CH).length; $('chgN').textContent=n; $('chgBtn').classList.toggle('on',n>0); renderCh();}
 function renderCh(){$('chgText').value=Object.keys(CH).map(function(k){return JSON.stringify(CH[k]);}).join(String.fromCharCode(10));}
 function record(r){var c={id:r.id,date:r.d,merchant:r.m,eur:r.e},diff=false;
@@ -174,6 +175,7 @@ var table=new Tabulator('#table',{data:[],index:'id',layout:'fitColumns',renderV
 
 var host=$('table');
 host.addEventListener('change',function(ev){var el=ev.target; if(!el.dataset||!el.dataset.id)return; var row=table.getRow(el.dataset.id); if(!row)return; var r=row.getData();
+  if(r.lg&&el.dataset.f!=='n'){var legs=legsOf(r.pid); var i=parseInt(r.lg)-1; if(el.dataset.f==='c')legs[i].c=el.value; else if(el.dataset.f==='man'){el.checked=defManLeg(r,legs[i].c);} else if(el.dataset.f==='b'){legs[i].b=el.value; el.classList.toggle('set',!!r.b);} saveSplit(r.pid,legs); return;}
   if(el.dataset.f==='c'){r.c=el.value; r.man=defMan(r); var box=row.getElement().querySelector('input[data-f="man"]'); if(box)box.checked=r.man;}
   else if(el.dataset.f==='man'){r.man=el.checked;}
   else if(el.dataset.f==='b'){r.b=el.value; el.classList.toggle('set',!!r.b);}
