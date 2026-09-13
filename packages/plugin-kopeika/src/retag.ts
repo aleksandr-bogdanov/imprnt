@@ -18,6 +18,7 @@ import { isAnalyticsExcluded } from "./analytics.ts";
 import { tierOf, type Tiers } from "./tiers.ts";
 import type { Transaction } from "./types.ts";
 import { CATEGORIES, categoryLabel, pickableCategories } from "./categories.ts";
+import { isLegId, parentOf } from "./splits.ts";
 
 export interface RetagOptions {
   lang: "en" | "ru";
@@ -35,7 +36,7 @@ const T = {
   en: {
     title: "kopeika · retag", h1: "Retag", back: "dashboard", rows: "rows", period: "period", bySalary: "salary to salary", byMonth: "calendar month",
     from: "from", to: "to", today: "today", changes: "changes", copy: "copy", copied: "copied", clear: "clear", collapse: "collapse all", expand: "expand all",
-    date: "date", merchant: "merchant", amount: "EUR", category: "category", mandatory: "mandatory", books: "business", note: "note to the agent",
+    date: "date", merchant: "merchant", amount: "EUR", category: "category", mandatory: "mandatory", books: "business", note: "note to the agent", split: "split", addLeg: "+ item", left: "left", done: "done", unsplit: "unsplit", part: "part",
     tierM: "Mandatory", tierO: "Optional", spend: "spend", tMand: "mandatory", tOpt: "optional", n: "rows",
     hint: "Changes stay in this browser. Copy the block into the chat and the agent files it.",
     empty: "No counted spend in this period.",
@@ -43,7 +44,7 @@ const T = {
   ru: {
     title: "kopeika · разметка", h1: "Разметка", back: "дашборд", rows: "строки", period: "период", bySalary: "от зарплаты до зарплаты", byMonth: "календарный месяц",
     from: "с", to: "по", today: "сегодня", changes: "изменения", copy: "скопировать", copied: "скопировано", clear: "очистить", collapse: "свернуть всё", expand: "развернуть всё",
-    date: "дата", merchant: "получатель", amount: "EUR", category: "категория", mandatory: "обязательно", books: "бизнес", note: "заметка агенту",
+    date: "дата", merchant: "получатель", amount: "EUR", category: "категория", mandatory: "обязательно", books: "бизнес", note: "заметка агенту", split: "разделить", addLeg: "+ позиция", left: "остаток", done: "готово", unsplit: "не делить", part: "часть",
     tierM: "Обязательные", tierO: "Свободные", spend: "расход", tMand: "обязательные", tOpt: "свободные", n: "строк",
     hint: "Изменения хранятся в этом браузере. Скопируй блок в чат, агент его применит.",
     empty: "За этот период нет расходов в расчёте.",
@@ -75,20 +76,32 @@ function monthName(ym: string, lang: "en" | "ru"): string {
 
 export function renderRetagHtml(txs: readonly Transaction[], o: RetagOptions): string {
   const t = T[o.lang];
+  // Legs of a split row are counted spend rows like any other; a refund leg (positive) rides along so the editor can show the whole split.
+  const legCount = new Map<string, number>();
+  const parentEur = new Map<string, number>();
+  for (const x of txs) if (isLegId(x.id) && x.amount_eur !== null) { const p = parentOf(x.id); legCount.set(p, (legCount.get(p) ?? 0) + 1); parentEur.set(p, Math.round(((parentEur.get(p) ?? 0) + -x.amount_eur) * 100) / 100); }
   const rows = txs
-    .filter((x) => x.date >= o.from && !isAnalyticsExcluded(x) && x.amount_eur !== null && x.amount_eur < 0)
+    .filter((x) => x.date >= o.from && !isAnalyticsExcluded(x) && x.amount_eur !== null && (x.amount_eur < 0 || isLegId(x.id)))
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
-    .map((x) => ({
-      id: x.id,
-      d: x.date,
-      tm: x.time,
-      m: x.merchant_raw,
-      a: o.accountLabels[x.account]?.[o.lang] ?? x.account,
-      e: Math.round(-x.amount_eur! * 100) / 100,
-      c0: x.category,
-      t0: tierOf(o.tiers, x.category, x.merchant_raw, x.id),
-      b0: x.tax_person,
-    }));
+    .map((x) => {
+      const pid = parentOf(x.id);
+      const leg = isLegId(x.id);
+      return {
+        id: x.id,
+        pid,
+        lg: leg ? `${x.id.slice(pid.length + 1)}/${legCount.get(pid)}` : "",
+        pe: leg ? parentEur.get(pid)! : Math.round(-x.amount_eur! * 100) / 100,
+        d: x.date,
+        tm: x.time,
+        m: x.merchant_raw,
+        a: o.accountLabels[x.account]?.[o.lang] ?? x.account,
+        e: Math.round(-x.amount_eur! * 100) / 100,
+        c0: x.category,
+        t0: tierOf(o.tiers, x.category, x.merchant_raw, x.id),
+        b0: x.tax_person,
+        nt: leg ? x.note : "",
+      };
+    });
 
   const salaryDates = [...new Set(txs.filter((x) => x.category === o.salaryCategory && (x.amount_eur ?? 0) > 0 && x.date >= o.from).map((x) => x.date))].sort();
   const periods = salaryDates.map((d, i) => ({ from: d, to: salaryDates[i + 1] ? prevDay(salaryDates[i + 1]!) : "" })).reverse();
@@ -107,6 +120,7 @@ export function renderRetagHtml(txs: readonly Transaction[], o: RetagOptions): s
     tier: { m: t.tierM, o: t.tierO },
     cols: { d: t.date, m: t.merchant, e: t.amount, c: t.category, man: t.mandatory, b: t.books, n: t.note },
     persons: o.persons,
+    split: t.split, addLeg: t.addLeg, left: t.left, done: t.done, unsplit: t.unsplit, part: t.part,
     copied: t.copied,
     copy: t.copy,
   };
@@ -147,7 +161,7 @@ var table=new Tabulator('#table',{data:[],index:'id',layout:'fitColumns',renderV
   rowFormatter:function(row){var d=row.getData(); row.getElement().classList.toggle('chg',!!CH[d.id]);},
   columns:[
     {title:C.cols.d,field:'d',width:78,cssClass:'mono',headerSort:true,sorter:function(a,b,ra,rb){var x=a+' '+(ra.getData().tm||''),y=b+' '+(rb.getData().tm||'');return x<y?-1:x>y?1:0;},formatter:function(c){var r=c.getRow().getData();return '<div class="t-wrap"><span class="t-name">'+r.d.slice(8,10)+'.'+r.d.slice(5,7)+'</span><span class="t-acct t-time">'+escH(r.tm||'')+'</span></div>';}},
-    {title:C.cols.m,field:'m',minWidth:180,headerSort:false,formatter:function(c){var r=c.getRow().getData();return '<div class="t-wrap"><span class="t-name">'+escH(r.m)+'</span><span class="t-acct">'+escH(r.a)+'</span></div>';}},
+    {title:C.cols.m,field:'m',minWidth:180,headerSort:false,formatter:function(c){var r=c.getRow().getData();if(r.lg)return '<div class="t-wrap"><span class="t-name">'+escH(r.nt||r.m)+'</span><span class="t-acct">'+escH(r.m)+' \u00b7 '+C.part+' '+r.lg+' \u00b7 '+escH(r.a)+'</span></div>';return '<div class="t-wrap"><span class="t-name">'+escH(r.m)+'</span><span class="t-acct">'+escH(r.a)+'</span></div>';}},
     {title:C.cols.e,field:'e',width:104,hozAlign:'right',headerHozAlign:'right',cssClass:'mono',sorter:'number',headerSort:true,formatter:function(c){return fmtE(c.getValue());}},
     {title:C.cols.c,field:'c',width:210,headerSort:false,formatter:function(c){var r=c.getRow().getData();var cur=r.c;var opts='';
       if(!C.labels[cur]||!CT.hasOwnProperty(cur))opts+='<option value="'+escH(cur)+'" selected>'+escH(label(cur))+'</option>';
@@ -155,7 +169,7 @@ var table=new Tabulator('#table',{data:[],index:'id',layout:'fitColumns',renderV
       return '<select class="pick" data-id="'+escH(r.id)+'" data-f="c">'+opts+'</select>';}},
     {title:C.cols.man,field:'man',width:118,hozAlign:'center',headerHozAlign:'center',headerSort:false,formatter:function(c){var r=c.getRow().getData();return '<label class="tick"><input type="checkbox" data-id="'+escH(r.id)+'" data-f="man"'+(r.man?' checked':'')+'></label>';}},
     {title:C.cols.b,field:'b',width:112,headerSort:false,formatter:function(c){var r=c.getRow().getData();var opts='<option value=""'+(r.b?'':' selected')+'>\u2014</option>';C.persons.forEach(function(p){opts+='<option value="'+escH(p)+'"'+(p===r.b?' selected':'')+'>'+escH(p)+'</option>';});return '<select class="pick books'+(r.b?' set':'')+'" data-id="'+escH(r.id)+'" data-f="b">'+opts+'</select>';}},
-    {title:C.cols.n,field:'n',minWidth:160,headerSort:false,formatter:function(c){var r=c.getRow().getData();return '<input type="text" class="note" data-id="'+escH(r.id)+'" data-f="n" value="'+escH(r.n)+'">';}}
+    {title:C.cols.n,field:'n',minWidth:160,headerSort:false,formatter:function(c){var r=c.getRow().getData();return '<input type="text" class="note" data-id="'+escH(r.id)+'" data-f="n" value="'+escH(r.n)+'"><button type="button" class="quiet splitBtn'+((CH[r.pid]&&CH[r.pid].splits)||r.lg?' set':'')+'" data-pid="'+escH(r.pid)+'" data-id="'+escH(r.id)+'">'+C.split+'</button>';}}
   ]});
 
 var host=$('table');
@@ -165,6 +179,19 @@ host.addEventListener('change',function(ev){var el=ev.target; if(!el.dataset||!e
   else if(el.dataset.f==='b'){r.b=el.value; el.classList.toggle('set',!!r.b);}
   else if(el.dataset.f==='n'){r.n=el.value.trim();}
   row.getElement().classList.toggle('chg',record(r));});
+host.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('button.splitBtn'); if(!b)return; openSplit(b.dataset.pid, table.getRow(b.dataset.id));});
+function legsOf(pid){var ch=CH[pid]; if(ch&&ch.splits)return ch.splits.map(function(l){return {eur:l.eur,c:l.category||'',b:l.books||'',n:l.note||''};}); var fromRows=ROWS.filter(function(r){return r.pid===pid&&r.lg;}).sort(function(a,b){return parseInt(a.lg)-parseInt(b.lg);}); if(fromRows.length)return fromRows.map(function(r){return {eur:r.e,c:r.c0,b:r.b0,n:r.nt};}); var r=ROWS.filter(function(x){return x.id===pid;})[0]; return [{eur:r.e,c:r.c,b:r.b,n:''},{eur:0,c:r.c,b:'',n:''}];}
+function parentRow(pid){return ROWS.filter(function(x){return x.pid===pid;})[0];}
+function saveSplit(pid,legs){var p=parentRow(pid); var clean=legs.filter(function(l){return l.eur!==0;}); var c=CH[pid]&&!CH[pid].splits?CH[pid]:{id:pid,date:p.d,merchant:p.m,eur:p.pe}; if(clean.length){c.splits=clean.map(function(l){var o={eur:l.eur,category:l.c}; if(l.b)o.books=l.b; if(l.n)o.note=l.n; return o;});} else {delete c.splits; if(ROWS.some(function(r){return r.pid===pid&&r.lg;}))c.splits=[];} if(c.splits||c.category||c.mandatory||c.note||c.books!==undefined)CH[pid]=c; else delete CH[pid]; save(); host.querySelectorAll('button.splitBtn[data-pid="'+pid+'"]').forEach(function(b){b.classList.toggle('set',!!(CH[pid]&&CH[pid].splits));}); ROWS.forEach(function(r){if(r.pid===pid){var row=table.getRow(r.id); if(row)row.getElement().classList.toggle('chg',!!CH[r.id]||!!(CH[pid]&&CH[pid].splits));}});}
+function openSplit(pid,row){var old=document.querySelector('.split-panel'); if(old){var was=old.dataset.pid; old.remove(); if(was===pid)return;} var p=parentRow(pid); var legs=legsOf(pid); var panel=document.createElement('div'); panel.className='split-panel'; panel.dataset.pid=pid;
+  function render(){var sum=0; legs.forEach(function(l){sum+=l.eur;}); var left=Math.round((p.pe-sum)*100)/100; var h='<div class="sp-head"><span>'+escH(p.m)+' \u00b7 '+fmtE(p.pe)+'</span><span class="sp-left'+(Math.abs(left)>0.004?' off':'')+'">'+C.left+' '+fmtE(left)+'</span></div>';
+    legs.forEach(function(l,i){var cats=''; C.cats.forEach(function(k){cats+='<option value="'+escH(k.value)+'"'+(k.value===l.c?' selected':'')+'>'+escH(k.label)+'</option>';}); var ps='<option value=""'+(l.b?'':' selected')+'>\u2014</option>'; C.persons.forEach(function(q){ps+='<option value="'+escH(q)+'"'+(q===l.b?' selected':'')+'>'+escH(q)+'</option>';});
+      h+='<div class="leg" data-i="'+i+'"><input type="number" step="0.01" class="leg-eur" value="'+(l.eur||'')+'"><select class="pick leg-c">'+cats+'</select><select class="pick books leg-b'+(l.b?' set':'')+'">'+ps+'</select><input type="text" class="note leg-n" value="'+escH(l.n)+'"><button type="button" class="quiet leg-x">\u00d7</button></div>';});
+    h+='<div class="sp-foot"><button type="button" class="quiet sp-add">'+C.addLeg+'</button><button type="button" class="quiet sp-unsplit">'+C.unsplit+'</button><button type="button" class="sp-done">'+C.done+'</button></div>'; panel.innerHTML=h;}
+  render(); row.getElement().after(panel);
+  panel.addEventListener('input',function(ev){var leg=ev.target.closest('.leg'); if(!leg)return; var i=+leg.dataset.i; if(ev.target.classList.contains('leg-eur'))legs[i].eur=Math.round((parseFloat(ev.target.value)||0)*100)/100; if(ev.target.classList.contains('leg-n'))legs[i].n=ev.target.value.trim(); var sum=0; legs.forEach(function(l){sum+=l.eur;}); var left=Math.round((p.pe-sum)*100)/100; var el=panel.querySelector('.sp-left'); el.textContent=C.left+' '+fmtE(left); el.classList.toggle('off',Math.abs(left)>0.004); saveSplit(pid,legs);});
+  panel.addEventListener('change',function(ev){var leg=ev.target.closest('.leg'); if(!leg)return; var i=+leg.dataset.i; if(ev.target.classList.contains('leg-c'))legs[i].c=ev.target.value; if(ev.target.classList.contains('leg-b')){legs[i].b=ev.target.value; ev.target.classList.toggle('set',!!legs[i].b);} saveSplit(pid,legs);});
+  panel.addEventListener('click',function(ev){var t=ev.target; if(t.classList.contains('leg-x')){legs.splice(+t.closest('.leg').dataset.i,1); render(); saveSplit(pid,legs);} else if(t.classList.contains('sp-add')){var sum=0; legs.forEach(function(l){sum+=l.eur;}); legs.push({eur:Math.round((p.pe-sum)*100)/100,c:p.c0,b:'',n:''}); render(); saveSplit(pid,legs);} else if(t.classList.contains('sp-unsplit')){legs=[]; saveSplit(pid,legs); panel.remove();} else if(t.classList.contains('sp-done')){panel.remove();}});}
 host.addEventListener('input',function(ev){var el=ev.target; if(!el.dataset||el.dataset.f!=='n')return; var row=table.getRow(el.dataset.id); if(!row)return; var r=row.getData(); r.n=el.value.trim(); row.getElement().classList.toggle('chg',record(r));});
 
 function period(){var v=$('period').value||'|'; var p=v.split('|'); return {from:p[0],to:p[1]};}
@@ -242,8 +269,13 @@ select{min-width:220px;padding-right:28px}button:hover{border-color:var(--ink-fa
 .tabulator select.pick{width:auto;max-width:100%;min-width:0;padding:6px 22px 6px 8px;font-size:13.5px;color:var(--ink);border-color:transparent;appearance:none;-webkit-appearance:none;background-color:transparent;background-image:linear-gradient(45deg,transparent 50%,var(--ink-chrome) 50%),linear-gradient(135deg,var(--ink-chrome) 50%,transparent 50%);background-position:right 12px center,right 8px center;background-size:4px 4px,4px 4px;background-repeat:no-repeat}
 .tabulator select.pick:hover,.tabulator select.pick:focus{border-color:var(--border);background-color:var(--card);outline:none}
 .tabulator .tick{display:flex;justify-content:center;width:100%;cursor:pointer}.tabulator .tick input{width:16px;height:16px;margin:0;accent-color:var(--green);cursor:pointer}
-.tabulator input.note{width:100%;font:inherit;font-size:13.5px;color:var(--ink);background:transparent;border:1px solid transparent;border-radius:6px;padding:6px 8px}
+.tabulator .tabulator-cell[tabulator-field="n"]{gap:0}.tabulator input.note{width:100%;min-width:0;font:inherit;font-size:13.5px;color:var(--ink);background:transparent;border:1px solid transparent;border-radius:6px;padding:6px 8px}
 .tabulator input.note:hover,.tabulator input.note:focus{border-color:var(--border);background:var(--card);outline:none}
+.tabulator button.splitBtn{margin-left:4px;font-size:12px;white-space:nowrap;flex:0 0 auto;border-color:transparent;background:transparent;color:var(--ink-chrome);padding:6px 6px;visibility:hidden}.tabulator .tabulator-row:hover button.splitBtn,.tabulator button.splitBtn.set{visibility:visible}.tabulator button.splitBtn.set{color:var(--amber)}.tabulator button.splitBtn:hover{color:var(--ink)}
+.split-panel{padding:10px 10px 14px 88px;border-bottom:1px solid var(--line-soft);background:color-mix(in srgb,var(--amber) 5%,transparent)}
+.sp-head{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-chrome);margin-bottom:6px;font-variant-numeric:tabular-nums}.sp-left{font-family:var(--mono)}.sp-left.off{color:var(--amber)}
+.leg{display:flex;gap:8px;align-items:center;margin:4px 0}.leg input.leg-eur{width:96px;font:13px var(--mono);text-align:right;color:var(--ink);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 8px}.leg select.pick{width:auto;background-color:var(--card);border-color:var(--border)}.leg input.note{flex:1;background:var(--card);border-color:var(--border)}
+.sp-foot{display:flex;gap:8px;margin-top:8px;align-items:center}.sp-foot .sp-done{margin-left:auto}
 .tabulator .tabulator-col-resize-handle{display:none}.tabulator .tabulator-footer{display:none}
 @media(max-width:700px){.tabulator .tabulator-header{display:none}.tabulator .tabulator-row .tabulator-cell{padding:8px 6px}}
 </style></head><body>

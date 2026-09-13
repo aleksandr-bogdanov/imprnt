@@ -27,6 +27,7 @@ import {
 import { renderDashboard, type Levers, type ProjectionView } from "./dashboard.ts";
 import { renderRowsHtml } from "./rows.ts";
 import { renderRetagHtml } from "./retag.ts";
+import { loadSplits, expandSplits, legTiers, splitProblems } from "./splits.ts";
 import { loadProfile, EMPTY_PROFILE, type Profile } from "./profile.ts";
 import { setIdentity } from "./identity.ts";
 import { getConnector, connectorNames } from "./connectors/index.ts";
@@ -58,7 +59,7 @@ import {
   detectRecurring,
   DEFAULT_RECURRING_OPTIONS,
 } from "./recurring.ts";
-import { loadTiers, tiersConfigured } from "./tiers.ts";
+import { loadTiers, tiersConfigured, type Tiers } from "./tiers.ts";
 import { loadPins } from "./pins.ts";
 import {
   DEFAULT_TRANSFER_OPTIONS,
@@ -126,6 +127,7 @@ const RATES_PATH = join(DATA_DIR, "rates.csv");
 const LEVERS_PATH = join(DATA_DIR, "levers.json");
 const PINS_PATH = join(DATA_DIR, "pins.csv");
 const TIERS_PATH = join(DATA_DIR, "tiers.csv");
+const SPLITS_PATH = join(DATA_DIR, "splits.csv");
 const SAVINGS_PATH = join(DATA_DIR, "savings.csv");
 // The household profile lives in profiles/ (the consolidated PII zone) since the
 // tax face landed; data/profile.json is the pre-migration location and still reads.
@@ -188,6 +190,18 @@ function padStart(s: string, w: number): string {
 }
 
 // --- import -----------------------------------------------------------------
+/** The ledger as the reports read it: split rows replaced by their legs (data/splits.csv). */
+function ledgerWithSplits(): Transaction[] {
+  const ledger = loadLedger(LEDGER_PATH);
+  const splits = loadSplits(SPLITS_PATH);
+  for (const p of splitProblems(ledger, splits)) console.error(`⚠ ${p} — row kept whole`);
+  return expandSplits(ledger, splits);
+}
+/** Household tiers: category defaults, tiers.csv merchants, pins per row, legs per split. */
+function householdTiers(): Tiers {
+  return loadTiers(TIERS_PATH, loadPins(PINS_PATH), legTiers(loadSplits(SPLITS_PATH)));
+}
+
 async function cmdImport(args: Args): Promise<number> {
   const [source, file] = args.positionals;
   const account = flagString(args, "account");
@@ -826,6 +840,30 @@ async function cmdDecide(args: Args): Promise<number> {
  * a dedup no-op rather than a duplicate row.
  */
 async function cmdManual(args: Args): Promise<number> {
+  // --remove <txid>: take a manual row back out (it was the pre-splits way to put an
+  // item on someone's books; a split leg on the bank row replaces it). Only rows
+  // this verb wrote (data_source "manual") can be removed, and the person's pin goes with it.
+  const remove = flagString(args, "remove");
+  if (remove) {
+    const ledger = loadLedger(LEDGER_PATH);
+    const hits = ledger.filter((t) => t.id.startsWith(remove));
+    if (hits.length !== 1) {
+      console.error(hits.length === 0 ? `no row with id ${remove}` : `${hits.length} rows match ${remove}; give more of the id`);
+      return 1;
+    }
+    const row = hits[0]!;
+    if (row.data_source !== "manual") {
+      console.error(`${row.id} is a ${row.data_source} row, not a manual entry — only manual rows can be removed`);
+      return 1;
+    }
+    writeLedger(LEDGER_PATH, ledger.filter((t) => t.id !== row.id));
+    if (row.tax_person !== "") {
+      const person = loadPerson(ROOT, row.tax_person);
+      if (person.pins.delete(row.id)) savePins(person.dir, person.pins);
+    }
+    console.log(`removed manual row ${row.id} · ${row.date} · ${fmtEur(row.amount_eur ?? 0)} EUR · ${row.merchant_raw}`);
+    return 0;
+  }
   const who = flagString(args, "who");
   const date = flagString(args, "date");
   const amountRaw = flagString(args, "amount");
@@ -833,7 +871,7 @@ async function cmdManual(args: Args): Promise<number> {
   const category = flagString(args, "category");
   if (!who || !date || !amountRaw || !merchant || !category) {
     console.error(
-      'usage: kopeika manual --who <person> --date YYYY-MM-DD --amount <eur, negative = expense> --merchant "<text>" --category <cat> [--account <label>] [--note "<text>"] [--dry-run]',
+      'usage: kopeika manual --who <person> --date YYYY-MM-DD --amount <eur, negative = expense> --merchant "<text>" --category <cat> [--account <label>] [--note "<text>"] [--dry-run]\n       kopeika manual --remove <txid>',
     );
     return 1;
   }
@@ -927,7 +965,7 @@ function fmtCents(n: number): string {
 async function cmdTaxReport(who: string, args: Args): Promise<number> {
   const person = loadPerson(ROOT, who);
   const pack = loadPack(ROOT, person.profile.pack);
-  const ledger = loadLedger(LEDGER_PATH);
+  const ledger = ledgerWithSplits();
   const bookRows = ledger.filter((t) => t.tax_person === who);
   if (bookRows.length === 0) {
     console.log(`no rows on "${who}"'s books yet — import or categorize first.`);
@@ -1019,7 +1057,7 @@ async function cmdStatus(_args: Args): Promise<number> {
     console.log("no tax profiles under profiles/ — create profiles/<person>/profile.json (see profiles.example/).");
     return 0;
   }
-  const ledger = loadLedger(LEDGER_PATH);
+  const ledger = ledgerWithSplits();
   for (const slug of persons) {
     const person = loadPerson(ROOT, slug);
     const rows = ledger.filter((t) => t.tax_person === slug);
@@ -1106,7 +1144,7 @@ async function cmdTaxProject(who: string, args: Args): Promise<number> {
     console.error(`--year must be YYYY (got "${yearFlag}")`);
     return 1;
   }
-  const ledger = loadLedger(LEDGER_PATH);
+  const ledger = ledgerWithSplits();
   const bookRows = ledger.filter((t) => t.tax_person === who);
   if (bookRows.length === 0) {
     console.log(`no rows on "${who}"'s books yet — import or categorize first.`);
@@ -1530,7 +1568,7 @@ async function cmdTransfers(_args: Args): Promise<number> {
 
 // --- recurring --------------------------------------------------------------
 async function cmdRecurring(args: Args): Promise<number> {
-  const ledger = loadLedger(LEDGER_PATH);
+  const ledger = ledgerWithSplits();
   if (ledger.length === 0) {
     console.log("ledger is empty — import something first.");
     return 0;
@@ -1553,7 +1591,7 @@ async function cmdRecurring(args: Args): Promise<number> {
     return 1;
   }
 
-  const tiers = loadTiers(TIERS_PATH, loadPins(PINS_PATH));
+  const tiers = householdTiers();
   const recurring = detectRecurring(ledger, tiers, { minMonths, from: fromFlag });
 
   if (recurring.length === 0) {
@@ -1595,7 +1633,7 @@ async function cmdRecurring(args: Args): Promise<number> {
 
 // --- list -------------------------------------------------------------------
 async function cmdList(args: Args): Promise<number> {
-  const ledger = loadLedger(LEDGER_PATH);
+  const ledger = ledgerWithSplits();
   const sourceFilter = flagString(args, "source");
   const monthFilter = flagString(args, "month");
   const onlyUncategorized = hasFlag(args, "uncategorized");
@@ -1745,7 +1783,7 @@ async function cmdRows(args: Args): Promise<number> {
     console.error(`--from must be YYYY-MM-DD (got "${from}")`);
     return 1;
   }
-  const ledger = loadLedger(LEDGER_PATH);
+  const ledger = ledgerWithSplits();
   const persons = listPersons(ROOT);
   const packCountry = persons.length > 0 ? loadPerson(ROOT, persons[0]!).profile.pack : "de";
   let taxCategories: string[] = [];
@@ -1758,7 +1796,7 @@ async function cmdRows(args: Args): Promise<number> {
     lang: langRaw,
     from,
     accountLabels: PROFILE.accountLabels,
-    tiers: loadTiers(TIERS_PATH, loadPins(PINS_PATH)),
+    tiers: householdTiers(),
     salaryCategory: "Salary",
     taxCategories,
     persons,
@@ -1791,11 +1829,11 @@ async function cmdRetag(args: Args): Promise<number> {
     console.error(`--from must be YYYY-MM-DD (got "${from}")`);
     return 1;
   }
-  const html = renderRetagHtml(loadLedger(LEDGER_PATH), {
+  const html = renderRetagHtml(ledgerWithSplits(), {
     lang: langRaw,
     from,
     accountLabels: PROFILE.accountLabels,
-    tiers: loadTiers(TIERS_PATH, loadPins(PINS_PATH)),
+    tiers: householdTiers(),
     salaryCategory: "Salary",
     persons: listPersons(ROOT),
   });
@@ -1821,7 +1859,7 @@ async function cmdReport(args: Args): Promise<number> {
   // --who <person> renders that person's EÜR instead of the household report.
   const who = flagString(args, "who");
   if (who !== undefined) return cmdTaxReport(who, args);
-  const ledger = loadLedger(LEDGER_PATH);
+  const ledger = ledgerWithSplits();
   if (ledger.length === 0) {
     console.log("ledger is empty — import something first.");
     return 0;
@@ -1851,7 +1889,7 @@ async function cmdReport(args: Args): Promise<number> {
     }
   }
 
-  const tiers = loadTiers(TIERS_PATH, loadPins(PINS_PATH));
+  const tiers = householdTiers();
   const report = buildReport(ledger, { month: monthFlag, from: fromFlag }, tiers);
   if (report.months.length === 0) {
     console.log("no transactions matched the selected range (after excluding transfers/exchanges).");
@@ -2013,7 +2051,7 @@ async function cmdProject(args: Args): Promise<number> {
   // household savings projection below stays untouched.
   const who = flagString(args, "who");
   if (who !== undefined) return cmdTaxProject(who, args);
-  const ledger = loadLedger(LEDGER_PATH);
+  const ledger = ledgerWithSplits();
   if (ledger.length === 0) {
     console.log("ledger is empty — import something first.");
     return 0;

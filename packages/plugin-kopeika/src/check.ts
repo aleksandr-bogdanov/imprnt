@@ -11,6 +11,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { loadLedger } from "./ledger.ts";
+import { loadSplits, splitProblems } from "./splits.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = basename(HERE) === "src" ? dirname(HERE) : HERE;
@@ -115,6 +117,19 @@ if (existsSync(ledgerPath)) {
   notes.push(`ledger: ${rows} row(s)`);
 } else {
   notes.push("ledger: none yet (import something first)");
+}
+
+// Splits: every leg set must sit on a real row and sum to it, or the report keeps the row whole.
+const splitsPath = join(DATA, "splits.csv");
+if (existsSync(splitsPath) && existsSync(ledgerPath)) {
+  try {
+    const splits = loadSplits(splitsPath);
+    const bad = splitProblems(loadLedger(ledgerPath), splits);
+    notes.push(`splits: ${splits.size} row(s) split`);
+    for (const p of bad) problems.push(p);
+  } catch (e) {
+    problems.push(`splits.csv: ${(e as Error).message}`);
+  }
 }
 
 console.log("kopeika check");

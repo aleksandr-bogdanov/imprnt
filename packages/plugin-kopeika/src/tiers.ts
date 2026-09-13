@@ -46,13 +46,14 @@ const VALID_TIERS: ReadonlySet<string> = new Set(["mandatory", "optional"]);
  * file can be exhaustive if the user wants) but are a no-op, since optional is
  * the default for anything unmatched.
  */
-export function loadTiers(path: string, pins?: ReadonlyMap<string, Pin>): Tiers {
+export function loadTiers(path: string, pins?: ReadonlyMap<string, Pin>, legs?: ReadonlyMap<string, Tier>): Tiers {
   // The category defaults come from the hard-coded set; tiers.csv adds merchant
   // overrides (and may still list categories, harmlessly); pins override per row.
   const mandatoryCategories = new Set<string>(mandatoryCategoryKeys().map((k) => k.toLowerCase()));
   const mandatoryMerchants: string[] = [];
   const rowTiers = new Map<string, Tier>();
   if (pins) for (const p of pins.values()) if (p.mandatory !== null) rowTiers.set(p.id, p.mandatory);
+  if (legs) for (const [id, t] of legs) rowTiers.set(id, t);
   if (!existsSync(path)) return { mandatoryCategories, mandatoryMerchants, rowTiers };
   const text = readFileSync(path, "utf8");
   if (text.trim().length === 0) return { mandatoryCategories, mandatoryMerchants, rowTiers };
