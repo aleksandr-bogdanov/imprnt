@@ -35,7 +35,7 @@ const T = {
   en: {
     title: "kopeika · retag", h1: "Retag", back: "dashboard", rows: "rows", period: "period", bySalary: "salary to salary", byMonth: "calendar month",
     from: "from", to: "to", today: "today", changes: "changes", copy: "copy", copied: "copied", clear: "clear", collapse: "collapse all", expand: "expand all",
-    date: "date", merchant: "merchant", amount: "EUR", category: "category", mandatory: "mandatory", books: "books", note: "note to the agent",
+    date: "date", merchant: "merchant", amount: "EUR", category: "category", mandatory: "mandatory", books: "business", note: "note to the agent",
     tierM: "Mandatory", tierO: "Optional", spend: "spend", tMand: "mandatory", tOpt: "optional", n: "rows",
     hint: "Changes stay in this browser. Copy the block into the chat and the agent files it.",
     empty: "No counted spend in this period.",
@@ -43,7 +43,7 @@ const T = {
   ru: {
     title: "kopeika · разметка", h1: "Разметка", back: "дашборд", rows: "строки", period: "период", bySalary: "от зарплаты до зарплаты", byMonth: "календарный месяц",
     from: "с", to: "по", today: "сегодня", changes: "изменения", copy: "скопировать", copied: "скопировано", clear: "очистить", collapse: "свернуть всё", expand: "развернуть всё",
-    date: "дата", merchant: "получатель", amount: "EUR", category: "категория", mandatory: "обязательно", books: "книги", note: "заметка агенту",
+    date: "дата", merchant: "получатель", amount: "EUR", category: "категория", mandatory: "обязательно", books: "бизнес", note: "заметка агенту",
     tierM: "Обязательные", tierO: "Свободные", spend: "расход", tMand: "обязательные", tOpt: "свободные", n: "строк",
     hint: "Изменения хранятся в этом браузере. Скопируй блок в чат, агент его применит.",
     empty: "За этот период нет расходов в расчёте.",
