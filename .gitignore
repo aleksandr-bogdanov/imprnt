@@ -37,3 +37,7 @@ node_modules/
 
 # Turborepo local cache
 .turbo/
+
+# hub v3: GSD Core is installed per machine (npx @opengsd/gsd-core --claude --local in packages/plugin-hub), never committed.
+packages/plugin-hub/.claude/
+packages/plugin-hub/.planning/

@@ -29,6 +29,10 @@
       "name": "imprnt-plugin-character",
       "version": "0.1.0",
     },
+    "packages/plugin-hub": {
+      "name": "imprnt-plugin-hub",
+      "version": "3.0.0-alpha.0",
+    },
     "packages/plugin-kopeika": {
       "name": "imprnt-plugin-kopeika",
       "version": "0.1.0",
@@ -82,6 +86,8 @@
     "imprnt-plugin-anti-slop": ["imprnt-plugin-anti-slop@workspace:packages/plugin-anti-slop"],
 
     "imprnt-plugin-character": ["imprnt-plugin-character@workspace:packages/plugin-character"],
+
+    "imprnt-plugin-hub": ["imprnt-plugin-hub@workspace:packages/plugin-hub"],
 
     "imprnt-plugin-kopeika": ["imprnt-plugin-kopeika@workspace:packages/plugin-kopeika"],
 
