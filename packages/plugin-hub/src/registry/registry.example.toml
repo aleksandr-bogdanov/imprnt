@@ -1,0 +1,48 @@
+# The registry: everything the hub runs for this household, and every setting it
+# reads. Nothing runs because it is on disk. It runs because it is on this list.
+# Edit it with any editor. The hub notices on its own tick.
+
+[hub]
+tick_seconds = 5
+
+[[run]]
+id = "door-telegram"
+kind = "door"
+schedule = "always"
+memory_limit_mb = 192
+
+[[run]]
+id = "runner-pi"
+kind = "runner"
+schedule = "always"
+memory_limit_mb = 512
+
+[[run]]
+id = "watch-bikes"
+kind = "watcher"
+schedule = "every 30m"
+memory_limit_mb = 128
+
+[[run]]
+id = "vault-sync"
+kind = "sync"
+schedule = "every 15m"
+memory_limit_mb = 128
+
+[[run]]
+id = "backup"
+kind = "backup"
+schedule = "hourly"
+memory_limit_mb = 256
+
+[[run]]
+id = "transcriber"
+kind = "transcriber"
+schedule = "on demand"
+memory_limit_mb = 1024
+
+[[run]]
+id = "board"
+kind = "board"
+schedule = "always"
+memory_limit_mb = 256
