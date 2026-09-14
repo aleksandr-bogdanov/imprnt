@@ -15,7 +15,7 @@ Every phase starts as failing tests. Two different agents confirm they are red f
 
 - `.planning/` holds the roadmap, the requirements and each phase's plans (GSD Core).
 - `test/` holds the checks. `test/helpers/cluster.ts` starts a throwaway Postgres 17 for each run, nothing is mocked.
-- `src/` is the hub. It does not exist until the first phase is built.
+- `src/` is the hub: the store, the records, the registry, the wake path.
 
 ## Run the checks
 
