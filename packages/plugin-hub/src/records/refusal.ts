@@ -15,7 +15,7 @@ export async function recordRefusal(
   const sql = new SQL(store.url, { max: 1 });
   try {
     await sql`insert into ledger_event (stream, subject, kind, actor, detail)
-              values ('refusal', ${subject}, ${kind}, 'hub', ${JSON.stringify(detail)}::jsonb)`;
+              values ('refusal', ${subject}, ${kind}, 'hub', ${detail})`;
   } finally {
     await sql.close().catch(() => {});
   }

@@ -38,7 +38,7 @@ export async function appendEntry(store: StoreLike, entry: NewEntry): Promise<nu
   const rows = (await store.sql`
     insert into ledger_event (stream, subject, kind, actor, detail)
     values (${entry.stream}, ${entry.subject}, ${entry.kind}, ${entry.actor},
-            ${JSON.stringify(entry.detail ?? {})}::jsonb)
+            ${entry.detail ?? {}})
     returning seq`) as { seq: string }[];
   return Number(rows[0].seq);
 }
