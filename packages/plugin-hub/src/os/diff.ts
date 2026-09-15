@@ -1,5 +1,5 @@
 import type { RunEntry } from "../registry/load.ts";
-import { entryIdOf, isOurs, isWatched } from "./names.ts";
+import { entryIdOf, isOurs, isWatched, unitName } from "./names.ts";
 import type { OsSeam, UnitState, WantedState, WantedUnit } from "./types.ts";
 
 /**
@@ -96,12 +96,46 @@ export async function seenUnits(os: OsSeam, entries: RunEntry[]): Promise<UnitSt
  * run is worse than no fix at all (D-105). launchd's takes the uid from the
  * running process, because there is nowhere else in the signature for it.
  */
-export function stopCommand(flavour: string, unitName: string): string {
+export function stopCommand(flavour: string, unit: string): string {
   if (flavour === "launchd") {
     const uid = process.getuid?.() ?? -1;
-    return `launchctl bootout gui/${uid}/${unitName}`;
+    return `launchctl bootout gui/${uid}/${unit}`;
   }
-  return `systemctl --user stop ${unitName}`;
+  return `systemctl --user stop ${unit}`;
+}
+
+/**
+ * The command a human pastes to START a listed piece the manager is not
+ * running. Moved here from `check` by 03b item 7: a manager's name that `check`
+ * can spell is a name `check` could invoke, and the one place the difference
+ * cannot be observed from outside is a string built in the right place for the
+ * wrong reason. It takes the ENTRY ID, because the two flavours name the same
+ * entry differently and only this file knows which.
+ */
+export function startCommand(flavour: string, entryId: string): string {
+  if (flavour === "launchd") {
+    const uid = process.getuid?.() ?? -1;
+    return `launchctl kickstart gui/${uid}/${unitName(entryId)}`;
+  }
+  return `systemctl --user start ${unitName(entryId)}.service`;
+}
+
+/**
+ * The command that clears a unit the manager has GIVEN UP on (03b item 3).
+ *
+ * systemd parks a unit that hit its start limit in `ActiveState=failed` with
+ * `Result=start-limit-hit`, and such a unit does not come back from `start`
+ * alone: the failure has to be reset first, so a crash-loop fix that only said
+ * "start it" would not run (D-105). launchd never gives up, so there is no
+ * state to reset there and the honest command for a job that is bouncing is the
+ * one that takes it out of the domain. The whole string is the contract on both.
+ */
+export function resetCommand(flavour: "systemd" | "launchd" | string, unit: string): string {
+  if (flavour === "launchd") {
+    const uid = process.getuid?.() ?? -1;
+    return `launchctl bootout gui/${uid}/${unit}`;
+  }
+  return `systemctl --user reset-failed ${unit}`;
 }
 
 export { isOurs, isWatched };

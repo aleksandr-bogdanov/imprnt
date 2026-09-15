@@ -1,4 +1,11 @@
-import { diffUnits, seenUnits, stopCommand, wantedState } from "../os/diff.ts";
+import {
+  diffUnits,
+  resetCommand,
+  seenUnits,
+  startCommand,
+  stopCommand,
+  wantedState,
+} from "../os/diff.ts";
 import { entryIdOf, isOurs, unitName } from "../os/names.ts";
 import type { OsSeam, WantedUnit } from "../os/types.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
@@ -37,15 +44,6 @@ const CRASH_LOOP_RESTARTS = 2;
 function setting(registry: unknown, key: string, fallback: number): number {
   const found = readSetting(registry, key);
   return found === undefined || found === null ? fallback : Number(found);
-}
-
-/** The command a human pastes to start a listed piece that is not running. */
-function startCommand(flavour: string, entryId: string): string {
-  if (flavour === "launchd") {
-    const uid = process.getuid?.() ?? -1;
-    return `launchctl kickstart gui/${uid}/${unitName(entryId)}`;
-  }
-  return `systemctl --user start ${unitName(entryId)}.service`;
 }
 
 /**
@@ -213,24 +211,41 @@ export async function runCheck(options: {
     // flavours: at the moment the finding fires launchd is still bouncing the
     // job while systemd has parked it in `failed`, so a rule that read the
     // running flag would answer opposite on the two for the same illness.
-    const worst = new Map<string, number>();
+    // The unit's own name travels with the count, because the fix is a command
+    // a human pastes about THAT unit and only the manager's listing knows what
+    // it is called. A timer never carries the count that matters, so a service
+    // is preferred whenever both are listed for one entry.
+    const worst = new Map<string, { restarts: number; unit: string }>();
     for (const unit of found) {
       const id = entryIdOf(unit.name);
       if (id === null || !isOurs(unit.name)) continue;
       if (!entries.some((entry) => entry.id === id)) continue;
       const restarts = Number(unit.restarts ?? 0);
       if (!Number.isFinite(restarts)) continue;
-      worst.set(id, Math.max(worst.get(id) ?? 0, restarts));
+      const already = worst.get(id);
+      const timer = unit.name.endsWith(".timer");
+      if (already === undefined) {
+        worst.set(id, { restarts, unit: unit.name });
+        continue;
+      }
+      const preferName = timer && !already.unit.endsWith(".timer") ? already.unit : unit.name;
+      worst.set(id, {
+        restarts: Math.max(already.restarts, restarts),
+        unit: restarts >= already.restarts ? preferName : already.unit,
+      });
     }
-    for (const [id, restarts] of worst) {
-      if (restarts < CRASH_LOOP_RESTARTS) continue;
+    for (const [id, seen] of worst) {
+      if (seen.restarts < CRASH_LOOP_RESTARTS) continue;
       findings.push({
         id: findingId(machine, "crash-loop", id),
         kind: "crash-loop",
         subject: id,
         machine,
-        says: `${id} has been started again ${restarts} times, so it is dying in a loop rather than running`,
-        fix: `read why with journalctl --user -u ${unitName(id)}.service, then fix it or take it off the list`,
+        says: `${id} has been started again ${seen.restarts} times, so it is dying in a loop rather than running`,
+        // The state a parked unit is really in is what has to be cleared, and
+        // the command that clears it belongs to the seam that knows the
+        // flavour (03b items 3 and 7).
+        fix: resetCommand(os.flavour, seen.unit),
       });
     }
   }

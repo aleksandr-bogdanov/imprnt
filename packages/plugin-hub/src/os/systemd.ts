@@ -45,8 +45,14 @@ const FIELDS = [
   "ActiveEnterTimestamp",
 ];
 
-async function sh(args: string[]): Promise<{ code: number; out: string; err: string }> {
-  const proc = Bun.spawn(["systemctl", ...args], { stdout: "pipe", stderr: "pipe" });
+/**
+ * 03b item 7. The manager binary is a PARAMETER, defaulting to the bare name
+ * PATH resolves. `check` reaches a manager only through the seam it was handed,
+ * and a check that points this at a recording shim BY ABSOLUTE PATH catches the
+ * one route PATH fronting never could.
+ */
+async function sh(bin: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
+  const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
   const [out, err] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -92,15 +98,17 @@ function stateOf(name: string, fields: Map<string, string>): UnitState {
   };
 }
 
-export function systemd(options: { unitDir?: string } = {}): OsSeam {
+export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSeam {
   const unitDir = options.unitDir ?? join(homedir(), ".config", "systemd", "user");
+  const bin = options.bin ?? "systemctl";
+  const ask = (args: string[]) => sh(bin, args);
   const service = (entryId: string) => `${unitName(entryId)}.service`;
   const timer = (entryId: string) => timerName(entryId);
 
   const show = async (names: string[]): Promise<Map<string, UnitState>> => {
     const out = new Map<string, UnitState>();
     if (names.length === 0) return out;
-    const printed = await sh([
+    const printed = await ask([
       "--user",
       "show",
       ...names,
@@ -184,7 +192,7 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
         writeFileSync(file.path, file.text, "utf8");
         written.push(file.path);
       }
-      await sh(["--user", "daemon-reload"]);
+      await ask(["--user", "daemon-reload"]);
       // Enabling is what PINS the unit: without it systemd forgets a unit that
       // ran and went inactive, and "the manager's own record says it ran" stops
       // being answerable. The symlink is the manager's own, in its own wants
@@ -198,41 +206,41 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
             : ["--user", "enable", name],
         );
       }
-      await sh(["--user", "daemon-reload"]);
+      await ask(["--user", "daemon-reload"]);
       return written;
     },
 
     async remove(entryId: string): Promise<void> {
       for (const name of [timer(entryId), service(entryId)]) {
-        await sh(["--user", "stop", name]);
-        await sh(["--user", "disable", name]);
+        await ask(["--user", "stop", name]);
+        await ask(["--user", "disable", name]);
       }
       for (const name of [timer(entryId), service(entryId)]) {
         const path = join(unitDir, name);
         if (existsSync(path)) rmSync(path, { force: true });
       }
-      await sh(["--user", "daemon-reload"]);
+      await ask(["--user", "daemon-reload"]);
       // Ours, and only ours: a unit that crash-looped stays listed as failed
       // after its file is gone unless its state is reset.
-      await sh(["--user", "reset-failed", timer(entryId), service(entryId)]);
+      await ask(["--user", "reset-failed", timer(entryId), service(entryId)]);
     },
 
     async start(entryId: string): Promise<void> {
       // D-102. The program runs NOW. Enabling a cadence is install's job.
-      await sh(["--user", "start", service(entryId)]);
+      await ask(["--user", "start", service(entryId)]);
     },
 
     async stop(entryId: string): Promise<void> {
-      await sh(["--user", "stop", timer(entryId)]);
-      await sh(["--user", "stop", service(entryId)]);
+      await ask(["--user", "stop", timer(entryId)]);
+      await ask(["--user", "stop", service(entryId)]);
     },
 
     async restart(entryId: string): Promise<void> {
-      await sh(["--user", "restart", service(entryId)]);
+      await ask(["--user", "restart", service(entryId)]);
     },
 
     async list(): Promise<UnitState[]> {
-      const listed = await sh([
+      const listed = await ask([
         "--user",
         "list-units",
         "--all",
@@ -304,7 +312,7 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
     },
 
     async available(): Promise<{ ok: boolean; reason: string }> {
-      const answer = await sh(["--user", "is-system-running"]);
+      const answer = await ask(["--user", "is-system-running"]);
       const said = (answer.out + answer.err).trim().split("\n")[0] || "nothing";
       if (!/^(running|degraded|starting|maintenance)$/.test(said)) {
         return { ok: false, reason: `no user manager answers: systemctl --user is-system-running said ${said}` };
