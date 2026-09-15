@@ -355,7 +355,15 @@ test.skipIf(!gate.ok)(
     // was there before with the SAME CONTENTS, so a write the return value hid
     // fails, and so does an edit that kept the name, the size and the mtime.
     const mine = new Set(written.map((p) => p.slice(unitDir.length + 1)));
-    const notMine = (entry: string) => !mine.has(entry.slice(0, entry.indexOf(":")));
+    // A `<target>.wants` directory is the manager's own bookkeeping: on systemd
+    // `enable` creates it on the first unit ever enabled and fills it with a
+    // symlink named after the unit. On the hub box it already existed before
+    // this phase, on a fresh box (CI) it appears here, and either way it is the
+    // manager writing its index, not the installer writing a file. Its symlink
+    // is `mine` by name; the directory entry itself is what is set aside.
+    const managerIndex = (entry: string) => /\.wants:dir$/.test(entry);
+    const notMine = (entry: string) =>
+      !mine.has(entry.slice(0, entry.indexOf(":"))) && !managerIndex(entry);
     expect(contentCensus(unitDir).filter(notMine)).toEqual(before.filter(notMine));
 
     // No boot file moved, by content hash, and nothing landed in the manager's

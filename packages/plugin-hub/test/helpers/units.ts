@@ -30,6 +30,7 @@
 // <plist>` loads a job from ANY path (03-BRIEF, measured), so the plists go into
 // a scratch directory this fixture owns and the owner's own
 // `~/Library/LaunchAgents` is never written to by a check.
+import { livePid } from "./manager.ts";
 
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
@@ -280,6 +281,18 @@ export function unitFixture(): UnitFixture {
         (n) => n === base || n.startsWith(`${base}.`),
       );
       if (!name) throw new Error(`the planted stray ${base} is not loaded`);
+      // Loaded is not yet running. launchd lists a job the moment it is
+      // bootstrapped and publishes its pid a beat later, so a check that read
+      // the pid on the next line saw null once in five full runs and blamed
+      // the hub for a process that had not been born yet. The stray is handed
+      // back only once the manager reports a live process for it.
+      const deadline = Date.now() + 15_000;
+      while (livePid(base) === null) {
+        if (Date.now() > deadline) {
+          throw new Error(`the planted stray ${base} is loaded but never got a live pid`);
+        }
+        await Bun.sleep(100);
+      }
       return { base, name, file };
     },
     track(unitBase) {

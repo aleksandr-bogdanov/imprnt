@@ -37,6 +37,17 @@ const HEALTHY = {
   // The hub box's own boot line, as measured this morning.
   cmdline:
     "console=serial0,115200 console=tty1 root=PARTUUID=deadbeef-02 rootfstype=ext4 fsck.repair=yes rootwait cgroup_enable=memory cgroup_memory=1",
+  bootFile: "/boot/firmware/cmdline.txt",
+  controllers: ["cpu", "memory", "pids"],
+  earlyoom: "active" as const,
+};
+
+// A box that is not a Raspberry Pi: no boot file to edit, a kernel line that
+// never carries the two words, and the controller on regardless. Debian and
+// Ubuntu look like this, and CI's runner is one.
+const PLAIN_LINUX = {
+  cmdline: "BOOT_IMAGE=/boot/vmlinuz root=UUID=deadbeef ro quiet",
+  bootFile: null,
   controllers: ["cpu", "memory", "pids"],
   earlyoom: "active" as const,
 };
@@ -109,6 +120,18 @@ test(
     //     always complains.
     expect(findings(HEALTHY, "pi")).toEqual([]);
 
+    // --- 4b. a box with no boot file is not told to edit one. The words are a
+    //     Raspberry Pi's switch, and a Debian or Ubuntu kernel never carries
+    //     them while its controller is on. Only the controller route applies
+    //     there, and its fix names the controller, not a file the box lacks.
+    expect(findings(PLAIN_LINUX, "box")).toEqual([]);
+    const plainUndelegated = only(
+      findings({ ...PLAIN_LINUX, controllers: ["cpu", "pids"] }, "box"),
+      "kernel-memory-cgroup",
+    );
+    expect(plainUndelegated.fix).not.toContain("/boot/firmware/cmdline.txt");
+    expect(plainUndelegated.fix.toLowerCase()).toContain("memory");
+
     // --- 5. the two at once, so neither hides the other.
     const both = findings(
       { cmdline: "rootwait", controllers: ["cpu", "pids"], earlyoom: "absent" },
@@ -126,21 +149,39 @@ test(
       findings({ cmdline: "rootwait", controllers: [], earlyoom: "absent" }, "mac")[0].id,
     );
 
-    // --- 6. the real box. On linux the view reads and produces neither finding,
-    //     which is the recorded truth of the machine this phase is built on. On
-    //     darwin there is no cgroup question at all, so the reader returns null
-    //     and `kernelFindings(null, ...)` is empty.
+    // --- 6. the real box. On linux the view reads, and the findings it yields
+    //     are exactly the ones the view itself justifies: the controller route
+    //     fires iff memory is not delegated, the words route iff the box has a
+    //     boot file that lacks them, earlyoom iff it is not active. That holds
+    //     on the hub box (neither fires) and on a bare CI runner (earlyoom is
+    //     absent there, honestly). Asserting an EMPTY list here would be a claim
+    //     about the box running the suite, not about the code. On darwin there
+    //     is no cgroup question at all, so the reader returns null and
+    //     `kernelFindings(null, ...)` is empty.
     const real = await read();
     if (process.platform === "darwin") {
       expect(real).toBeNull();
       expect(findings(null, "mac")).toEqual([]);
     } else {
       expect(real).not.toBeNull();
-      const view = real as { cmdline: string; controllers: string[]; earlyoom: string };
+      const view = real as {
+        cmdline: string;
+        bootFile: string | null;
+        controllers: string[];
+        earlyoom: string;
+      };
       expect(typeof view.cmdline).toBe("string");
+      expect(view.bootFile === null || typeof view.bootFile === "string").toBe(true);
       expect(Array.isArray(view.controllers)).toBe(true);
       expect(["active", "inactive", "absent"]).toContain(view.earlyoom);
-      expect(findings(real, "pi")).toEqual([]);
+      const realFindings = findings(real, "pi").map((f) => f.kind).sort();
+      const expected: string[] = [];
+      const wordsMissing =
+        view.bootFile !== null &&
+        !(view.cmdline.includes("cgroup_enable=memory") && view.cmdline.includes("cgroup_memory=1"));
+      if (wordsMissing || !view.controllers.includes("memory")) expected.push("kernel-memory-cgroup");
+      if (view.earlyoom !== "active") expected.push("kernel-earlyoom");
+      expect(realFindings).toEqual(expected.sort());
     }
   },
   30_000,

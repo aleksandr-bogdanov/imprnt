@@ -12,25 +12,37 @@ import { findingId, type Finding } from "./finding.ts";
  * exists so the real box can be the extra control that produces neither.
  */
 export interface KernelView {
-  cmdline: string;        // the contents of the boot command line file
+  cmdline: string;        // the contents of the boot command line file, or the kernel's own line
+  bootFile: string | null; // the boot file a household edits, or null where the box has none
   controllers: string[];  // the controllers the user slice delegates
   earlyoom: "active" | "inactive" | "absent";
 }
 
 const CGROUP_FIX =
   "append cgroup_enable=memory cgroup_memory=1 to /boot/firmware/cmdline.txt, then reboot";
+// A box with no boot file to edit is not a Raspberry Pi, and the words above
+// mean nothing to its kernel. What such a box lacks is the controller itself.
+const CGROUP_FIX_GENERIC =
+  "the memory cgroup controller is not delegated to your user slice: enable cgroup v2 with the memory controller and Delegate=memory for user@.service, then reboot";
 const EARLYOOM_FIX = "sudo apt install earlyoom";
 
-/** The boot command line, from the file a household edits, not from the kernel. */
-function bootCommandLine(): string {
-  for (const file of ["/boot/firmware/cmdline.txt", "/boot/cmdline.txt", "/proc/cmdline"]) {
+/** The boot file a household edits, when the box has one, and the line it holds. */
+const BOOT_FILES = ["/boot/firmware/cmdline.txt", "/boot/cmdline.txt"];
+
+function bootCommandLine(): { cmdline: string; bootFile: string | null } {
+  for (const file of [...BOOT_FILES, "/proc/cmdline"]) {
     try {
-      if (existsSync(file)) return readFileSync(file, "utf8").trim();
+      if (existsSync(file)) {
+        return {
+          cmdline: readFileSync(file, "utf8").trim(),
+          bootFile: BOOT_FILES.includes(file) ? file : null,
+        };
+      }
     } catch {
       // Unreadable is the same as absent for this question.
     }
   }
-  return "";
+  return { cmdline: "", bootFile: null };
 }
 
 /** The controllers this user's own slice has been delegated. */
@@ -84,7 +96,7 @@ function earlyoomState(): KernelView["earlyoom"] {
 export async function readKernelView(): Promise<KernelView | null> {
   if (process.platform !== "linux") return null;
   return {
-    cmdline: bootCommandLine(),
+    ...bootCommandLine(),
     controllers: delegated(),
     earlyoom: earlyoomState(),
   };
@@ -94,7 +106,14 @@ export function kernelFindings(view: KernelView | null, machine: string): Findin
   if (!view) return [];
   const out: Finding[] = [];
   const words = ["cgroup_enable=memory", "cgroup_memory=1"];
-  const missingWords = words.filter((word) => !String(view.cmdline).includes(word));
+  // The two words are a Raspberry Pi's way of switching the controller on, so
+  // their absence is a finding only on a box that HAS the boot file they go in.
+  // A Debian or Ubuntu box has no such file and its kernel never carries them;
+  // what it can lack is the controller itself, which is the second route.
+  const hasBootFile = typeof view.bootFile === "string" && view.bootFile !== "";
+  const missingWords = hasBootFile
+    ? words.filter((word) => !String(view.cmdline).includes(word))
+    : [];
   const undelegated = !(view.controllers ?? []).includes("memory");
   if (missingWords.length > 0 || undelegated) {
     // The words in the file and the controller actually being delegated are two
@@ -109,7 +128,7 @@ export function kernelFindings(view: KernelView | null, machine: string): Findin
       subject: "",
       machine,
       says,
-      fix: CGROUP_FIX,
+      fix: hasBootFile ? CGROUP_FIX : CGROUP_FIX_GENERIC,
     });
   }
   if (view.earlyoom !== "active") {
