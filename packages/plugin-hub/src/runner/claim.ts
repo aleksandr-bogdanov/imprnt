@@ -1,0 +1,37 @@
+import type { StoreLike } from "../store/connect.ts";
+import type { EligibleRow } from "../store/wake.ts";
+
+/**
+ * Take the next row for this agent, or nothing.
+ *
+ * One statement, so two runners racing for the same row cannot both take it.
+ * Feed order is the table's: rank first, then oldest, then the id.
+ *
+ * A row already claimed by THIS runner is its own to redo. A runner that is
+ * claiming is a runner that has just started or has just settled, so it was not
+ * running that turn: it was killed in the middle of one. That is what lets a
+ * restart pick the turn up without waiting a lease out.
+ */
+export async function claimNext(
+  store: StoreLike,
+  who: { runner: string; agent: string; leaseMs: number },
+): Promise<EligibleRow | null> {
+  const rows = (await store.sql`
+    update inbound
+       set claimed_by = ${who.runner},
+           claim_deadline = now() + make_interval(secs => ${who.leaseMs / 1000})
+     where id = (
+       select id from inbound
+        where agent = ${who.agent}
+          and state not in ('answered', 'delivered')
+          and (claimed_by is null or claimed_by = ${who.runner}
+               or (claim_deadline is not null and claim_deadline <= now()))
+          and (retry_at is null or retry_at <= now())
+        order by rank, received_at, id
+        limit 1
+        for update skip locked
+     )
+    returning id, person, agent, body, kind, rank, received_at, state,
+              claimed_by, claim_deadline, retry_at`) as unknown as EligibleRow[];
+  return rows.length === 0 ? null : rows[0];
+}
