@@ -91,6 +91,32 @@ function systemdShow(unit: string, properties: string[]): Map<string, string> {
   return fields;
 }
 
+/**
+ * The LIMITER'S OWN EVIDENCE that it parked this unit, which is what item 3 is
+ * really after.
+ *
+ * MEASURED on the hub box (BUILD-NOTES 10): systemd 252 records a unit's
+ * failure result ONCE, so a unit whose own program exited non-zero keeps
+ * `Result=exit-code` forever and `start-limit-hit` is only ever seen on a unit
+ * that was still at `success` when the limiter refused it. What IS there on
+ * every version is the manager's own journal line, printed the moment it
+ * refuses the next start. So the property is bound as a disjunction: the
+ * literal result where a systemd sets it, and the journal line where it does
+ * not, and a systemd that does set the result still binds through the first
+ * half rather than being quietly let off.
+ *
+ * `fixture.entryId` appends random hex (test/helpers/units.ts:266), so this
+ * unit name is unique to this run and the journal cannot carry a stale match.
+ */
+function limiterParked(unit: string): boolean {
+  if (systemdShow(unit, ["Result"]).get("Result") === "start-limit-hit") return true;
+  const out = Bun.spawnSync(
+    ["journalctl", "--user", "-u", unit, "--no-pager", "-o", "cat"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  return (out.stdout?.toString() ?? "").includes("Start request repeated too quickly");
+}
+
 test.skipIf(!gate.ok)(
   `RUN-02 systemd gives up and check says so: a unit whose program exits at once is parked by the manager's own rate limiter in ActiveState=failed with Result=start-limit-hit, check reports exactly one crash-loop finding for it naming the restart count, and the fix it carries is the reset-failed command that unit really needs (SPEC §6, L13, D7, D-96, D-103)${gateSuffix(gate)}`,
   async () => {
@@ -194,16 +220,20 @@ test.skipIf(!gate.ok)(
       //     the branch phase 3 wrote and never executed.
       await until(
         "systemd parked the unit at its own start limit",
-        () => {
-          const shown = systemdShow(unit, ["ActiveState", "Result"]);
-          return shown.get("ActiveState") === "failed" && shown.get("Result") === "start-limit-hit";
-        },
+        () =>
+          systemdShow(unit, ["ActiveState"]).get("ActiveState") === "failed" &&
+          limiterParked(unit),
         90_000,
-        () => JSON.stringify([...systemdShow(unit, ["ActiveState", "SubState", "Result", "NRestarts"])]),
+        () =>
+          JSON.stringify([
+            ...systemdShow(unit, ["ActiveState", "SubState", "Result", "NRestarts"]),
+            ["limiterParked", String(limiterParked(unit))],
+          ]),
       );
       const parked = systemdShow(unit, ["ActiveState", "Result", "NRestarts", "ExecMainStatus"]);
       expect(parked.get("ActiveState")).toBe("failed");
-      expect(parked.get("Result")).toBe("start-limit-hit");
+      // The manager really stopped restarting it, by its own evidence.
+      expect(limiterParked(unit)).toBe(true);
       const restarts = Number(parked.get("NRestarts") ?? 0);
       // D-103's threshold, reachable under either reading of the ceiling.
       expect(restarts).toBeGreaterThanOrEqual(2);

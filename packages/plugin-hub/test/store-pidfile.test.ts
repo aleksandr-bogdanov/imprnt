@@ -50,6 +50,19 @@ import { loadRegistry, SETTING_FIELDS } from "../src/registry/load.ts";
 
 const SLOW = 150_000;
 const TICK = 1;
+/**
+ * How far UNDER an earlier `ps` sample the hub's later reading may sit.
+ *
+ * MEASURED on the hub box (BUILD-NOTES 14): `VmHWM` is not a high-water mark on
+ * that kernel. It equals `VmRSS` at every sample and falls with it as a process
+ * settles, two to five pages of 16 kB on a 43 MB holder, and the seam agrees
+ * with `ps` to the byte at the same instant. The hub samples seconds after this
+ * check did, so the row can sit a little under `mine` with nothing wrong. One
+ * mebibyte is about twelve times the measured drift and still three orders of
+ * magnitude under the reading itself, so a build that filed a constant, or
+ * measured the wrong process, is as red as it was.
+ */
+const PEAK_DRIFT_BYTES = 1024 * 1024;
 
 let cluster: Cluster;
 const gate = osGate();
@@ -249,7 +262,10 @@ test.skipIf(!gate.ok)(
       const row = (await sheet.row("postgres"))!;
       expect(Number(row.data.pid)).toBe(holder.pid);
       // A reading, inside a band, so a build that filed a constant fails.
-      expect(Number(row.data.bytes)).toBeGreaterThanOrEqual(mine);
+      // MEASURED on the hub box (BUILD-NOTES 14): `VmHWM` is not a high-water
+      // mark there. It equals `VmRSS` and falls with it, so the hub's later
+      // sample can sit a few pages under this one. The band carries that drift.
+      expect(Number(row.data.bytes)).toBeGreaterThanOrEqual(mine - PEAK_DRIFT_BYTES);
       expect(Number(row.data.bytes)).toBeLessThan(10 * mine);
       expect(row.data.machine).toBe(machine.id);
       expect(["vmhwm", "sampled", "time-l"]).toContain(String(row.data.how));
