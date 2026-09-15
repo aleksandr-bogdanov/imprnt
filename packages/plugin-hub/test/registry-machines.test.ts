@@ -330,3 +330,110 @@ test(
   },
   30_000,
 );
+
+// ---------------------------------------------------------------------------
+// 03b item 5. `child_memory_limit_mb` is required on a runner entry whether or
+// not the file declares its machines.
+//
+// BUILD-NOTES 1 made the refusal conditional on `[[machines]]`, because phase 1
+// fixtures carried runner entries without the field and an unconditional rule
+// turned two green checks red on contact. That was a compromise with the test
+// suite and not a rule anybody wanted: D-81's words are "required on a runner
+// entry, refused by name when missing, so a child that could never be watched
+// cannot be configured", and a file with no `[[machines]]` table is exactly the
+// file a household starts with. Every fixture in the repository now carries the
+// field, so the tolerance has nothing left to protect.
+//
+// DEVIATION from 03b-DEBTS, recorded: the plan asks for "the refusal with a
+// one-machine file", and a one-machine file is ALREADY refused today, because
+// the shipped rule fires whenever `machines.length > 0`. So the one-machine
+// file is kept as the CONTROL that says the existing half did not move, and the
+// case that is red today is the file with no `[[machines]]` table at all.
+//
+// Red reason: behaviour absent. `src/registry/load.ts` refuses a runner with no
+// `child_memory_limit_mb` only when the file declares at least one machine, so
+// the machineless file below loads with no complaint.
+// ---------------------------------------------------------------------------
+
+/** A file with no `[[machines]]` table: the shape a household starts with. */
+function machinelessLines(childLimit: boolean): string[] {
+  return [
+    "# the hub's registry",
+    "",
+    "[hub]",
+    "tick_seconds = 5",
+    "",
+    "[[run]]",
+    'id = "door-fake"',
+    'kind = "door"',
+    'schedule = "always"',
+    "memory_limit_mb = 192",
+    "",
+    "[[run]]",
+    'id = "runner-pi"',
+    'kind = "runner"',
+    'schedule = "always"',
+    "memory_limit_mb = 512",
+    ...(childLimit ? ["child_memory_limit_mb = 512"] : []),
+  ];
+}
+
+/** The same file with exactly one `[[machines]]` entry. */
+function oneMachineLines(childLimit: boolean): string[] {
+  const lines = machinelessLines(childLimit);
+  const at = lines.indexOf("tick_seconds = 5") + 1;
+  return [...lines.slice(0, at), "", "[[machines]]", 'id = "pi"', 'os = "linux"', ...lines.slice(at)];
+}
+
+test(
+  "RUN-08 a runner with no child memory limit is refused by name whether or not the file declares its machines: a machineless file is refused at the entry's own line, a one-machine file still is, and the same two files carrying the field load (SPEC §6, L13, L14, D-81)",
+  async () => {
+    // The check above deletes the shared scratch directory when it ends, so
+    // this one takes a directory of its own rather than a path that is gone.
+    dir = mkdtempSync(join(tmpdir(), "hub-machines-3b-"));
+
+    // --- the case that is red today: no [[machines]] table at all.
+    {
+      const lines = machinelessLines(false);
+      const refusal = refusalOf(write(lines));
+      expect(refusal).toBeInstanceOf(RegistryRefused);
+      expect(refusal.key).toContain("child_memory_limit_mb");
+      expect(refusal.key).toContain("run[1]");
+      // An absent key has no line of its own, so the refusal names the entry's
+      // id line, which is the convention the shipped loader already uses.
+      expect(refusal.line).toBe(lineOf(lines, 'id = "runner-pi"'));
+      expect(String(refusal.message)).toContain(String(refusal.line));
+      expect(refusal.reason).toContain("runner-pi");
+    }
+
+    // --- the control that says the shipped half did not move: one machine
+    //     declared, and the same entry is refused the same way.
+    {
+      const lines = oneMachineLines(false);
+      const refusal = refusalOf(write(lines));
+      expect(refusal.key).toContain("child_memory_limit_mb");
+      expect(refusal.line).toBe(lineOf(lines, 'id = "runner-pi"'));
+    }
+
+    // --- and both files LOAD once the entry carries the field, so what is
+    //     refused is the missing limit and not the shape of the file.
+    for (const lines of [machinelessLines(true), oneMachineLines(true)]) {
+      const registry = loadRegistry(write(lines));
+      const runner = registry.run.find((entry) => entry.id === "runner-pi")!;
+      expect(runner.child_memory_limit_mb).toBe(512);
+    }
+
+    // --- a DOOR with no child limit still loads, in both shapes. The rule is
+    //     about the entry that spawns a child and about nothing else.
+    for (const lines of [machinelessLines(true), oneMachineLines(true)]) {
+      const withoutRunner = lines.filter(
+        (line, index) => index < lines.indexOf('id = "runner-pi"') - 1,
+      );
+      const registry = loadRegistry(write(withoutRunner));
+      expect(registry.run.map((entry) => entry.id)).toEqual(["door-fake"]);
+    }
+
+    rmSync(dir, { recursive: true, force: true });
+  },
+  30_000,
+);

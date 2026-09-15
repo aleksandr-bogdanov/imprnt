@@ -29,7 +29,7 @@
 // progress held, a session is open, a message is fed and acknowledged, and no
 // `started` stamp may exist.
 
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -51,6 +51,37 @@ export interface StartRecord {
   sessionId: string | null;
   preset: Preset | null;
   at: number;
+  /** 03b item 1. Whether the runner handed this start a boxing hook. */
+  wrapped?: boolean;
+}
+
+/** 03b item 1. One real child spawn, as the adapter really made it. */
+export interface SpawnRecord {
+  /** The argv the child was spawned with, after the runner's hook. */
+  argv: string[];
+  /** Whether a hook was supplied at all. */
+  wrapped: boolean;
+  pid: number;
+  /** The `-f` profile in that argv, when there is one. */
+  profile: string | null;
+  /** Whether that profile was on disk AT THE MOMENT of the spawn. */
+  profileExisted: boolean | null;
+  /** The child itself, so a check can read what it reported. */
+  child: HeldChild;
+}
+
+/**
+ * The `-f <profile>` of a `sandbox-exec` argv, and null for anything else.
+ *
+ * The fixture's own copy of one shape, the way `test/helpers/units.ts` keeps its
+ * own copy of the two prefixes: an oracle that asked the boxing code where it
+ * put the profile would agree with a build that never wrote one.
+ */
+function profileOf(argv: string[]): string | null {
+  const at = argv.indexOf("-f");
+  if (at < 0 || at + 1 >= argv.length) return null;
+  if (!/sandbox-exec$/.test(argv[0] ?? "")) return null;
+  return argv[at + 1];
 }
 
 export interface ScriptedOptions {
@@ -68,6 +99,18 @@ export interface ScriptedOptions {
    * check unable to fail, which is why the child is real.
    */
   child?: boolean;
+  /**
+   * 03b item 1. A path the real child tries to READ the moment it starts, and
+   * reports on its own stdout.
+   *
+   * The child is what "wear the box" is about, and a child that is boxed cannot
+   * reach another person's tree. Nothing outside the process can see that on
+   * macOS (`sandbox-exec` execs in place, so the process's own argv is the
+   * TARGET's and never names the tool), so the child says what it saw and the
+   * check reads the answer. The channel is an inherited stdout pipe rather than
+   * a file, because an already-open descriptor needs no rule in any profile.
+   */
+  probePath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +138,19 @@ const HOLDER = `
 const fs = require("fs");
 const os = require("os");
 const file = os.tmpdir() + "/hub-child-" + process.pid + ".grow";
+// 03b item 1. One line on stdout before anything else: what this child could
+// read of the path it was pointed at. Outside a box it reads it; inside one it
+// does not, and that difference is what "the agent's process wears the box"
+// means from where a check stands.
+const probe = process.env.HUB_BOX_PROBE || "";
+if (probe !== "") {
+  let saw = null;
+  let refused = null;
+  try { saw = fs.readFileSync(probe, "utf8"); } catch (e) { refused = String(e.code || e.message); }
+  try {
+    process.stdout.write(JSON.stringify({ probe: probe, saw: saw, refused: refused }) + "\\n");
+  } catch (e) {}
+}
 const CHUNK = 16 * 1024 * 1024;
 const held = [];
 setInterval(() => {
@@ -112,19 +168,86 @@ setInterval(() => {
 setInterval(() => {}, 1000000000);
 `;
 
+export interface BoxProbe {
+  /** The path the child was told to read. */
+  probe: string;
+  /** Its contents, when the child could read them. */
+  saw: string | null;
+  /** The errno the box refused it with, when it could not. */
+  refused: string | null;
+}
+
 export interface HeldChild {
   pid: number;
+  /** The argv this child was really spawned with, boxed or not (03b item 1). */
+  argv: string[];
+  /** What the child reported about `probePath`, once it has said it. */
+  boxProbe(): BoxProbe | null;
   kill(): void;
 }
 
-export function spawnHolder(): HeldChild {
-  const proc = Bun.spawn(["bun", "-e", HOLDER], {
-    stdout: "ignore",
+export interface HolderOptions {
+  /**
+   * 03b item 1. The runner's own boxing hook, applied to the argv this holder
+   * would otherwise be spawned with. The fixture calls it and spawns whatever
+   * comes back, so a wrap that returns a boxed argv puts the child in the box
+   * and a missing one leaves it plain.
+   */
+  wrap?: (argv: string[]) => string[];
+  /** A path the child tries to read at once and reports on stdout. */
+  probePath?: string;
+}
+
+export function spawnHolder(options: HolderOptions = {}): HeldChild {
+  const plain = ["bun", "-e", HOLDER];
+  const argv = typeof options.wrap === "function" ? options.wrap(plain) : plain;
+  const wants = typeof options.probePath === "string" && options.probePath !== "";
+  let said: BoxProbe | null = null;
+  const proc = Bun.spawn(argv, {
+    // The default is UNCHANGED, deliberately: `test/runner-memory.test.ts` and
+    // `test/check-peak.test.ts` get exactly the process they have today, and
+    // only a caller that asked for a probe gets a pipe to drain.
+    stdout: wants ? "pipe" : "ignore",
     stderr: "ignore",
     stdin: "ignore",
+    env: wants ? { ...process.env, HUB_BOX_PROBE: options.probePath } : undefined,
   });
+  if (wants) {
+    void (async () => {
+      // Read LINE BY LINE as they arrive. The holder never exits, so waiting
+      // for the stream to end would wait for the kill, and the probe would
+      // always read null at the moment a check asks for it.
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (value) buffer += decoder.decode(value, { stream: true });
+          let cut = buffer.indexOf("\n");
+          while (cut >= 0) {
+            const line = buffer.slice(0, cut);
+            buffer = buffer.slice(cut + 1);
+            cut = buffer.indexOf("\n");
+            if (line.trim() === "") continue;
+            try {
+              const parsed = JSON.parse(line) as BoxProbe;
+              if (typeof parsed.probe === "string") said = parsed;
+            } catch {
+              // A line that is not the probe is the child's own noise.
+            }
+          }
+          if (done) return;
+        }
+      } catch {
+        // The child went away, which is what a kill looks like from here.
+      }
+    })();
+  }
   return {
     pid: proc.pid,
+    argv: [...argv],
+    boxProbe: () => (said ? { ...said } : null),
     kill() {
       try {
         proc.kill(9);
@@ -197,6 +320,8 @@ export interface ScriptedAdapter {
   adapter: Adapter;
   /** Every real child this adapter still owns, so a test can reap them. */
   children(): HeldChild[];
+  /** 03b item 1. Every real child spawn, with the argv it really used. */
+  spawns(): SpawnRecord[];
   /** Every message handed to the loop, with the moment it happened. */
   fed(): FedMessage[];
   /** Every start or resume the runner asked for. */
@@ -246,6 +371,7 @@ export function createScriptedAdapter(
   const fedLog: FedMessage[] = [];
   const startLog: StartRecord[] = [];
   const children: HeldChild[] = [];
+  const spawnLog: SpawnRecord[] = [];
   let openedAt: number | null = null;
   let opened = 0;
 
@@ -303,11 +429,33 @@ export function createScriptedAdapter(
     step2();
   };
 
-  const openOne = (sessionId: string | null): ChildSession => {
+  const openOne = (
+    sessionId: string | null,
+    wrap?: (argv: string[]) => string[],
+  ): ChildSession => {
     const live: Live = { receipt: [], progress: [], end: [], sessionId };
     current = live;
-    const held = options.child ? spawnHolder() : null;
-    if (held) children.push(held);
+    // 03b item 1. The adapter is BOX-AGNOSTIC: it imports nothing from
+    // `src/box/`, knows no tool name, and spawns whatever the hook it was
+    // handed returns. What it records is the argv it really used, so a check
+    // reads the production code's own output at the seam rather than asking
+    // the boxing code whether it boxed.
+    const held = options.child
+      ? spawnHolder({ wrap, probePath: options.probePath })
+      : null;
+    if (held) {
+      children.push(held);
+      spawnLog.push({
+        argv: [...held.argv],
+        wrapped: typeof wrap === "function",
+        pid: held.pid,
+        // Read at the MOMENT of the spawn: a profile written after the child
+        // started is a profile `sandbox-exec` already refused to open.
+        profileExisted: profileOf(held.argv) === null ? null : existsSync(profileOf(held.argv)!),
+        profile: profileOf(held.argv),
+        child: held,
+      });
+    }
     return {
       get sessionId() {
         return live.sessionId;
@@ -352,15 +500,19 @@ export function createScriptedAdapter(
       preset: Preset;
       sessionId: string | null;
       cwd?: string;
+      /** 03b item 1. The runner's boxing hook, applied to this loop's argv. */
+      wrap?: (argv: string[]) => string[];
     }): Promise<AdapterSession> {
       startLog.push({
         sessionId: where.sessionId,
         preset: where.preset ?? null,
         at: Date.now(),
+        wrapped: typeof where.wrap === "function",
       });
       opened += 1;
       return openOne(
         where.sessionId ?? options.sessionId ?? `scripted-session-${opened}`,
+        where.wrap,
       );
     },
   };
@@ -368,6 +520,7 @@ export function createScriptedAdapter(
   return {
     adapter,
     children: () => [...children],
+    spawns: () => spawnLog.map((one) => ({ ...one, argv: [...one.argv] })),
     fed: () => fedLog.map((f) => ({ ...f })),
     starts: () => startLog.map((s) => ({ ...s })),
     openSession() {

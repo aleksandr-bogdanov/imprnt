@@ -47,6 +47,7 @@ import {
   type RegistrySpec,
   type PresetSpec,
   type RunSpec,
+  type StoreSpec,
 } from "./registry.ts";
 import { openStore, type Store } from "../../src/store/connect.ts";
 
@@ -277,6 +278,8 @@ export interface StageOptions {
   agents?: AgentSpec[];
   /** Extra or replacement `[hub]` settings. */
   hub?: Record<string, string | number>;
+  /** 03b item 2. The `[store]` section, absent unless a check asks for one. */
+  store?: StoreSpec;
 }
 
 export async function stageHub(
@@ -302,6 +305,7 @@ export async function stageHub(
 
   const base: RegistrySpec = {
     hub: { store_url: storeUrl, state_dir: dir, ...(options.hub ?? {}) },
+    ...(options.store ? { store: options.store } : {}),
     ...(options.machines ? { machines: options.machines } : {}),
     ...(options.people ? { people: options.people } : {}),
     ...(options.run ? { run: options.run } : {}),
