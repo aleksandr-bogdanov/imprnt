@@ -58,7 +58,7 @@ export async function runRunner(options: {
 
   const runAgent = async (agent: AgentEntry): Promise<void> => {
     let session: AdapterSession | null = null;
-    let running = "";
+    let startedWith = "";
     let turn: OpenTurn | null = null;
 
     // The stamps of a turn land in the order the loop reported them. The verbs
@@ -134,7 +134,7 @@ export async function runRunner(options: {
       const adapter = adapterFor(options.adapters, preset.adapter);
       if (session) await session.close();
       session = await adapter.start({ preset, sessionId: null });
-      running = presetId(preset);
+      startedWith = presetId(preset);
 
       session.onReceipt((messageId) => {
         const open = turn;
@@ -187,7 +187,7 @@ export async function runRunner(options: {
         const preset = getPreset(registry, agent.preset);
         // A session carries the preset it was started with, so a changed one is
         // a new child. The runner process itself never restarts.
-        if (presetId(preset) !== running) await spawn(preset, registry);
+        if (presetId(preset) !== startedWith) await spawn(preset, registry);
         await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry });
       }
     } catch (error) {

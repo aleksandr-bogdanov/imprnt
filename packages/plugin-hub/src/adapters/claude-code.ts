@@ -1,3 +1,4 @@
+import type { Preset } from "../registry/presets.ts";
 import type {
   Adapter,
   AdapterProgress,
@@ -44,7 +45,7 @@ function numberOrNull(value: unknown): number | null {
 }
 
 async function open(options: {
-  preset: { model: string; effort: string };
+  preset: Preset;
   sessionId: string | null;
   cwd?: string;
 }): Promise<AdapterSession> {
@@ -173,5 +174,5 @@ async function open(options: {
 
 export const claudeCode: Adapter = {
   name: "claude-code",
-  start: (options) => open(options),
+  start: open,
 };

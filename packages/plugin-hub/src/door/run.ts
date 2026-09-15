@@ -98,9 +98,10 @@ export async function runDoor(options: {
   };
 
   const post = async (agent: AgentEntry): Promise<void> => {
-    // Which chunks already have their line on disk. A post the platform refused
-    // is tried again, and the line is written once, because the chat log is a
-    // diary and not a record of attempts.
+    // Which chunks already have their line on disk, so a post the platform
+    // refused is tried again with no second line: the chat log is a diary and
+    // not a record of attempts. A delivered chunk leaves the set, which is what
+    // keeps it the size of what is in flight.
     const logged = new Set<number>();
     let owed = false;
 
@@ -132,6 +133,7 @@ export async function runDoor(options: {
           continue;
         }
         await markDelivered(store, chunk.id);
+        logged.delete(chunk.id);
         posted.add(chunk.inbound_id);
       }
       for (const id of posted) {

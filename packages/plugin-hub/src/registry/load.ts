@@ -373,7 +373,14 @@ export function loadRegistry(file: string): Registry {
         `${entry.id} names the preset ${entry.preset}, which this file does not define`,
       );
     }
-    agents.push(entry as unknown as AgentEntry);
+    agents.push({
+      id: entry.id as string,
+      person: entry.person as string,
+      preset: entry.preset as string,
+      chat: entry.chat as string,
+      door: entry.door as string,
+      runner: entry.runner as string,
+    });
   });
 
   // A door that serves an agent has to say which platform it speaks, whose it is
