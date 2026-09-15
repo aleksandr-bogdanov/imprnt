@@ -1,0 +1,9 @@
+# Test discovery is limited to test/, so `bun test` and CI never pick up live/.
+#
+# The two live checks drive the real Claude Code loop and need a model login,
+# which CI does not have. Bun has no exclude flag, and an explicit path outside
+# this root still runs, so the split is the root plus the `test:live` script in
+# package.json.
+
+[test]
+root = "test"
