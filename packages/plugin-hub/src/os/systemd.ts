@@ -177,6 +177,13 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
           text: [
             "[Unit]",
             `Description=imprnt hub ${entry.id} cadence on ${ctx.machine}`,
+            // On every unit the hub writes, the timer included. An enabled
+            // timer is referenced by `timers.target` and is never collected
+            // whatever this says, so it costs nothing while the timer is
+            // wanted, and it is the service beside it that the mode really
+            // matters for. Two units of one entry that disagree about their own
+            // disposal is a difference somebody has to explain later.
+            "CollectMode=inactive-or-failed",
             "",
             "[Timer]",
             `OnUnitActiveSec=${every}`,

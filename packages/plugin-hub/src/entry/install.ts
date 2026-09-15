@@ -12,8 +12,12 @@
 // RUN-07: argv is `<registryFile> [--dry]`, it says what it is doing and to
 // whom, `--dry` is an action modifier and not a behaviour switch (it says "tell
 // me what you would do" about the same work), and nothing here reads the
-// environment. RUN-14: it never edits a boot file, and it never touches a unit,
-// because units are the hub's.
+// environment. RUN-14: it never edits a boot file. It installs no unit of the
+// hub's, because those are the hub's, and the ONE manager verb it ever issues is
+// the `brew services start` that 03b item 2's own approach paragraph asks for by
+// name: on macOS a freshly installed Postgres is not running until its package
+// manager starts it. That one is named on the way in and again in the closing
+// line, so nothing is ever loaded on a person's box silently (REVIEW.md D11).
 //
 // It is IDEMPOTENT by asking rather than by remembering: a database that already
 // carries `ledger_event` is not re-applied (the schema creates tables, and only
@@ -47,6 +51,14 @@ if (!registryFile || unknown.length > 0) {
 }
 
 const say = (line: string) => process.stdout.write(`${line}\n`);
+
+/**
+ * Every unit this run asked a service manager to load, so the closing line can
+ * name them. It is empty on every path but the one that installs Postgres from
+ * scratch on macOS, which is the one place 03b item 2's own approach paragraph
+ * asks for a manager verb (REVIEW.md D11).
+ */
+const loaded: string[] = [];
 
 /**
  * The version of the cluster this box already has, when it has one.
@@ -221,10 +233,19 @@ if (!serverIsUp) {
     process.exit(1);
   }
   if (process.platform === "darwin") {
+    // THE ONE UNIT THIS SCRIPT LOADS, and it says so. 03b item 2 asks for this
+    // command by name in the same paragraph that says the script touches no
+    // unit, and the two cannot both hold: on macOS a freshly installed Postgres
+    // is not running until its own package manager starts it, which is a
+    // launchd job. What can hold is that the script never loads one silently,
+    // so the job is named on the way in and again in the closing line, and a
+    // person reading the terminal knows what is on their box (REVIEW.md D11).
+    say(`install: starting ${standard.unit} with brew services, which loads that job`);
     Bun.spawnSync(["brew", "services", "start", "postgresql@17"], {
       stdout: "inherit",
       stderr: "inherit",
     });
+    loaded.push(standard.unit);
   }
   if (!(await answers(maintenanceUrl(storeUrl))).up) {
     process.stderr.write(
@@ -294,4 +315,8 @@ if (alreadyDeclared || /^\s*\[\s*store\s*\]/m.test(text)) {
   say(`install: wrote the [store] section of ${registryFile}, naming ${standard.pidFile}`);
 }
 
-say("install: done.");
+say(
+  loaded.length === 0
+    ? "install: done, and this run loaded no unit."
+    : `install: done. This run loaded ${loaded.join(", ")}, and nothing else on this box was touched.`,
+);
