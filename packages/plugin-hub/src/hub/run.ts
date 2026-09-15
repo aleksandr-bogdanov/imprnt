@@ -77,20 +77,27 @@ export async function runHub(options: {
   // SPEC section 6 and D7: ONE hub process per machine. Two of them reconciling
   // the same machine fight over every unit on it, and BUILD-NOTES B.2 already
   // records what one stray hub does to a box. The register of who is running is
-  // the store's own client list, because the hub names itself at connect the
-  // same way the runner does, so there is no lock file and nothing to clean up
-  // after a crash: a dead hub's backend is gone from `pg_stat_activity` by the
-  // time anybody asks. This happens BEFORE the first tick, so a hub that
-  // refuses has touched no unit on its way out.
-  const [{ others }] = (await store.sql.unsafe(
-    `select count(*)::int as others
-       from pg_stat_activity
-      where datname = current_database()
-        and application_name = $1
-        and pid <> pg_backend_pid()`,
+  // the store itself, because the hub is already connected to it, so there is
+  // no lock file and nothing to clean up after a crash: a dead hub's backend is
+  // gone by the time anybody asks. This happens BEFORE the first tick, so a hub
+  // that refuses has touched no unit on its way out.
+  //
+  // IT IS A LOCK AND NOT A COUNT (REVIEW.md D5). Counting the other backends
+  // with this name and then carrying on is a check-then-act: two hubs starting
+  // in the same instant both count zero and both proceed, which enforces "one
+  // hub per machine unless two start together". `pg_try_advisory_lock` is the
+  // same register answered atomically, held by the SESSION, so exactly one of
+  // any number of simultaneous starts gets it and a hub that dies by any route
+  // gives it back with its backend. The key is this machine's own application
+  // name hashed to the bigint the function takes, so two machines against one
+  // store never collide. The store is opened with `max: 1` and the hub's
+  // `application_name` already depends on the session outliving the statement
+  // that set it, so the lock is exactly as durable as what is here already.
+  const [{ mine }] = (await store.sql.unsafe(
+    `select pg_try_advisory_lock(('x' || substr(md5($1), 1, 16))::bit(64)::bigint) as mine`,
     [application],
-  )) as { others: number }[];
-  if (Number(others) > 0) {
+  )) as { mine: boolean }[];
+  if (!mine) {
     await appendEntry(store, {
       stream: "refusal",
       subject: options.machine,
@@ -99,7 +106,7 @@ export async function runHub(options: {
       detail: {
         machine: options.machine,
         application_name: application,
-        reason: "another hub for this machine is already connected to this store",
+        reason: "another hub for this machine already holds this machine's lock in this store",
       },
     });
     await store.close().catch(() => {});
