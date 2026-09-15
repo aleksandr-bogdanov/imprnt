@@ -15,10 +15,145 @@
 import { SQL } from "bun";
 import { mkdtemp, rm, readFile, appendFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join, dirname } from "node:path";
 
 const NEEDED = ["initdb", "pg_ctl", "psql", "postgres"] as const;
+
+// ---------------------------------------------------------------------------
+// 03b item 9. The suite does not cost this Mac a shared memory slot every time
+// a run is interrupted.
+//
+// BUILD-NOTES B.3: `kern.sysv.shmmni` is 32 on this Mac, each throwaway cluster
+// holds one System V segment, and a cluster KILLED rather than stopped leaks
+// it. About thirty interrupted runs later every `initdb` fails with "could not
+// create shared memory segment: No space left on device" and the suite reports
+// a setup error that says nothing about the real cause.
+//
+// Two halves. The first stops every cluster this process started when the
+// process leaves by any route, which is what stops the leak happening. The
+// second sweeps, before `initdb` and on darwin only, the segments this account
+// owns that have nobody attached and whose creator is dead, which is what makes
+// a leak that happened anyway survivable. Only the second can be checked from
+// inside a test, because a check cannot observe its own death.
+//
+// Linux clusters use POSIX shared memory for the same job, so there is nothing
+// to leak and nothing to sweep there.
+// ---------------------------------------------------------------------------
+
+/** Every cluster this process started and has not stopped, by data directory. */
+const started = new Set<string>();
+let leaveWired = false;
+
+/** A stop that works in an `exit` handler, where nothing may be awaited. */
+function stopNow(dataDir: string): void {
+  try {
+    Bun.spawnSync([pgBin("pg_ctl"), "-D", dataDir, "-m", "immediate", "-w", "-t", "10", "stop"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+  } catch {
+    // A cluster that is already gone is the outcome this wanted.
+  }
+}
+
+function wireLeaving(): void {
+  if (leaveWired) return;
+  leaveWired = true;
+  process.on("exit", () => {
+    for (const dataDir of started) stopNow(dataDir);
+  });
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.on(signal, () => {
+      for (const dataDir of started) stopNow(dataDir);
+      started.clear();
+      // The default disposition, restored: a handler that swallowed the signal
+      // would turn an interrupted run into a hung one.
+      process.kill(process.pid, signal);
+    });
+  }
+}
+
+interface Segment {
+  id: number;
+  owner: string;
+  attached: number;
+  creator: number;
+}
+
+/** `ipcs -mo` carries the attach count and `ipcs -mp` the creator, so both. */
+function segments(): Segment[] {
+  const read = (flag: string): Map<number, string[]> => {
+    const out = new Map<number, string[]>();
+    try {
+      const done = Bun.spawnSync(["ipcs", flag], { stdout: "pipe", stderr: "pipe" });
+      for (const line of (done.stdout?.toString() ?? "").split("\n")) {
+        const columns = line.trim().split(/\s+/);
+        if (columns[0] !== "m" || columns.length < 7) continue;
+        const id = Number(columns[1]);
+        if (Number.isFinite(id)) out.set(id, columns);
+      }
+    } catch {
+      // No `ipcs` is a box with nothing to sweep.
+    }
+    return out;
+  };
+  const attach = read("-mo");
+  const creator = read("-mp");
+  const found: Segment[] = [];
+  for (const [id, columns] of attach) {
+    const pair = creator.get(id);
+    if (!pair) continue;
+    found.push({
+      id,
+      owner: columns[4] ?? "",
+      attached: Number(columns[columns.length - 1]),
+      // `-mp` prints CPID then LPID, so the creator is the second from last.
+      creator: Number(pair[pair.length - 2]),
+    });
+  }
+  return found;
+}
+
+function processGone(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    // EPERM is a live process this account does not own, which is somebody
+    // else's segment and is never swept.
+    return (error as { code?: string }).code !== "EPERM";
+  }
+}
+
+/**
+ * Remove this account's abandoned segments. Never one with a process attached,
+ * never one whose creator is still alive, and never one another account owns.
+ */
+function sweepAbandonedSegments(): void {
+  if (process.platform !== "darwin") return;
+  let me = "";
+  try {
+    me = userInfo().username;
+  } catch {
+    return;
+  }
+  for (const segment of segments()) {
+    if (segment.owner !== me) continue;
+    if (segment.attached !== 0) continue;
+    if (!processGone(segment.creator)) continue;
+    const done = Bun.spawnSync(["ipcrm", "-m", String(segment.id)], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if ((done.exitCode ?? 1) === 0) {
+      process.stderr.write(
+        `[cluster] swept abandoned shared memory segment ${segment.id}, whose creator ${segment.creator} is gone\n`,
+      );
+    }
+  }
+}
 
 const CANDIDATE_PREFIXES = [
   "/opt/homebrew/opt/postgresql@17/bin",
@@ -139,6 +274,10 @@ export async function startCluster(options: StartOptions = {}): Promise<Cluster>
   await Bun.write(join(socketDir, ".keep"), "");
   const logFile = join(root, "server.log");
 
+  // Before `initdb`, because that is the call that runs out of slots.
+  wireLeaving();
+  sweepAbandonedSegments();
+
   const init = await run(pgBin("initdb"), [
     "-D",
     dataDir,
@@ -175,6 +314,7 @@ export async function startCluster(options: StartOptions = {}): Promise<Cluster>
   }
   await appendFile(join(dataDir, "postgresql.conf"), conf.join("\n") + "\n");
 
+  started.add(dataDir);
   const start = await run(pgBin("pg_ctl"), [
     "-D",
     dataDir,
@@ -192,6 +332,7 @@ export async function startCluster(options: StartOptions = {}): Promise<Cluster>
     } catch {
       // the log may not exist if the server never started
     }
+    started.delete(dataDir);
     await rm(root, { recursive: true, force: true });
     throw new Error(
       `pg_ctl start failed (prefix ${pgPrefix()}): ${start.stderr || start.stdout}\n${log}`,
@@ -255,6 +396,7 @@ export async function startCluster(options: StartOptions = {}): Promise<Cluster>
         }
       }
       await run(pgBin("pg_ctl"), ["-D", dataDir, "-m", "immediate", "-w", "stop"]);
+      started.delete(dataDir);
       await rm(root, { recursive: true, force: true });
     },
   };
