@@ -7,7 +7,7 @@ import { agentsFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
 import { getPreset, presetId, priceFor, type Preset } from "../registry/presets.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
-import { waitForWork } from "../store/wake.ts";
+import { openWorkWaiter, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
 import { settleTurn, type TurnRecord } from "./settle.ts";
 
@@ -60,6 +60,7 @@ export async function runRunner(options: {
     let session: AdapterSession | null = null;
     let startedWith = "";
     let turn: OpenTurn | null = null;
+    let waiter: Waiter | null = null;
 
     // The stamps of a turn land in the order the loop reported them. The verbs
     // fire back to back and the writes are asynchronous, so without this chain
@@ -164,6 +165,12 @@ export async function runRunner(options: {
     };
 
     try {
+      // The LISTEN is opened before the first read of the table and held across
+      // every wait after it, so a row committed between a read that found
+      // nothing and the wait that follows is announced to a listener that
+      // already exists. Opened after the read, that notification is emitted to
+      // nobody and the row waits for the tick.
+      waiter = await openWorkWaiter(store, { agent: agent.id });
       await spawn(getPreset(first, agent.preset), first);
       while (!stopping) {
         // Before each turn, because a preset or a rate is a registry edit and
@@ -176,10 +183,9 @@ export async function runRunner(options: {
         });
         if (!row) {
           await Promise.race([
-            waitForWork(store, {
-              agent: agent.id,
-              timeoutMs: setting(registry, "hub.tick_seconds") * 1000,
-            }).catch(() => "timeout" as const),
+            waiter
+              .wait(setting(registry, "hub.tick_seconds") * 1000)
+              .catch(() => "timeout" as const),
             stopped,
           ]);
           continue;
@@ -206,6 +212,7 @@ export async function runRunner(options: {
         },
       });
     } finally {
+      if (waiter) await waiter.close();
       if (session) await session.close().catch(() => {});
     }
   };

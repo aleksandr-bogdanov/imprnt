@@ -1,5 +1,5 @@
 import type { StoreLike } from "./connect.ts";
-import { listenForWork } from "./listen.ts";
+import { listenForWork, type Listener } from "./listen.ts";
 
 /** Why a waiting runner woke up. */
 export type WakeReason = "notified" | "deadline" | "timeout";
@@ -154,5 +154,169 @@ export async function waitForOutbox(
     wakesOn: options.person,
     deadlineMs: null,
     timeoutMs: options.timeoutMs,
+  });
+}
+
+/**
+ * A waiter that holds its LISTEN open across many waits.
+ *
+ * The one above opens its LISTEN on the way in, which leaves a gap: a loop
+ * reads the table, finds nothing, and only then starts listening, so a
+ * transaction that commits in between emits a notification nobody is listening
+ * for. The runner recovers on its tick and the door never re-reads on a bare
+ * timeout, so on a slow box that gap is a reply that waits for the next commit.
+ *
+ * Opened once before the first read and kept open, the two halves cover each
+ * other: a commit before the read is seen by the read, and a commit after it is
+ * delivered to a listener that already exists.
+ */
+export interface Waiter {
+  /** Sleep until something wakes this waiter, at most `timeoutMs`. */
+  wait(timeoutMs: number): Promise<WakeReason>;
+  /** Close the connection, settling a wait that is in flight. */
+  close(): Promise<void>;
+}
+
+async function openWaiter(
+  store: StoreLike,
+  options: {
+    channel: string;
+    wakesOn: string;
+    deadline(): Promise<number | null>;
+  },
+): Promise<Waiter> {
+  // A notification that lands while the caller is reading the table or working
+  // through what it found belongs to the next wait. Kept here, it is consumed
+  // by that wait instead of being dropped between the two.
+  let pending = false;
+  // The connection died on its own, so it is opened again on the next wait.
+  let lost = false;
+  let closed = false;
+  let listener: Listener | null = null;
+  let wake: ((reason: WakeReason) => void) | null = null;
+
+  const arrived = (payload: string) => {
+    if (payload !== options.wakesOn) return;
+    if (wake) wake("notified");
+    else pending = true;
+  };
+
+  const dropped = () => {
+    if (closed) return;
+    lost = true;
+    if (wake) wake("notified");
+    else pending = true;
+  };
+
+  const open = async (): Promise<Listener> =>
+    await listenForWork({
+      url: store.url,
+      channel: options.channel,
+      onNotify: arrived,
+      onLost: dropped,
+    });
+
+  try {
+    listener = await open();
+  } catch {
+    // A store that cannot be listened on is not a reason to refuse the loop
+    // that owns this waiter. The first wait tries again, on the bound it was
+    // given, which is what the loop did before it held a listener at all.
+    lost = true;
+  }
+
+  return {
+    async wait(timeoutMs: number): Promise<WakeReason> {
+      if (closed) return "timeout";
+
+      if (lost) {
+        try {
+          listener = await open();
+          lost = false;
+          pending = false;
+          // The caller's last read ran with nothing listening, so it is sent
+          // back to read once more now that something is.
+          return "notified";
+        } catch {
+          // Nothing announces a server's return, so this wait is the bound.
+        }
+      } else if (pending) {
+        pending = false;
+        return "notified";
+      }
+
+      let settle: (reason: WakeReason) => void = () => {};
+      const woken = new Promise<WakeReason>((resolve) => {
+        settle = resolve;
+      });
+      let done = false;
+      const finish = (reason: WakeReason) => {
+        if (done) return;
+        done = true;
+        wake = null;
+        settle(reason);
+      };
+      // Armed before the deadline is read, so a notification that lands during
+      // that read is this wait's wake rather than a flag nobody consumes.
+      wake = finish;
+
+      // The deadline is read once, here, on the way in. After it this waiter
+      // issues no statement at all until it is woken, which is what makes a
+      // wait tellable apart from a poll in the server's own statement log.
+      const due = lost || done ? null : await options.deadline();
+
+      const timers: ReturnType<typeof setTimeout>[] = [];
+      try {
+        if (!done) {
+          if (due !== null) {
+            timers.push(
+              setTimeout(
+                () => finish("deadline"),
+                Math.max(0, due) + PAST_THE_DEADLINE_MS,
+              ),
+            );
+          }
+          timers.push(setTimeout(() => finish("timeout"), timeoutMs));
+        }
+        return await woken;
+      } finally {
+        for (const timer of timers) clearTimeout(timer);
+        if (wake === finish) wake = null;
+      }
+    },
+
+    async close(): Promise<void> {
+      closed = true;
+      // A loop that stops while a wait is in flight leaves that wait holding
+      // two timers and a socket. Settling it here is what lets both go.
+      if (wake) wake("timeout");
+      const held = listener;
+      listener = null;
+      if (held) await held.close();
+    },
+  };
+}
+
+/** The runner's waiter: one agent, and the deadlines recorded on its rows. */
+export async function openWorkWaiter(
+  store: StoreLike,
+  options: { agent: string },
+): Promise<Waiter> {
+  return await openWaiter(store, {
+    channel: WORK_CHANNEL,
+    wakesOn: options.agent,
+    deadline: () => untilNextDeadline(store, options.agent),
+  });
+}
+
+/** The door's waiter: one person, and no deadline, the way a chunk has none. */
+export async function openOutboxWaiter(
+  store: StoreLike,
+  options: { person: string },
+): Promise<Waiter> {
+  return await openWaiter(store, {
+    channel: OUTBOX_CHANNEL,
+    wakesOn: options.person,
+    deadline: async () => null,
   });
 }

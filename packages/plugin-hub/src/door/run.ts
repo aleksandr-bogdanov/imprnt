@@ -5,7 +5,7 @@ import { loadRegistry, readSetting, type AgentEntry } from "../registry/load.ts"
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
-import { waitForOutbox } from "../store/wake.ts";
+import { openOutboxWaiter } from "../store/wake.ts";
 import { readCursor, writeCursor } from "./cursor.ts";
 import type { Platform } from "./platform.ts";
 
@@ -144,22 +144,30 @@ export async function runDoor(options: {
       owed = refused.size > 0;
     };
 
-    // Once on connect, because a reply settled while this door was down is on
-    // disk with nothing left to announce it.
-    await deliver();
-    while (!stopping) {
-      const why = await Promise.race([
-        waitForOutbox(store, { person: agent.person, timeoutMs }).catch(
-          () => "timeout" as const,
-        ),
-        stopped,
-      ]);
-      if (why === "stopped" || stopping) return;
-      // The notification is what says there is something to post. The bound
-      // running out says nothing, and reading the table on it would be the
-      // timer the store exists to avoid. A refused post is the one thing owed
-      // to the clock, because nothing will announce the platform's return.
-      if (why === "notified" || owed) await deliver();
+    // The LISTEN is opened before the first read and held across every wait,
+    // so a settle that commits between a read and the wait after it is
+    // announced to a listener that already exists. Opened after the read, it
+    // would miss exactly that commit, and this door never re-reads on a bare
+    // timeout to recover from one.
+    const waiter = await openOutboxWaiter(store, { person: agent.person });
+    try {
+      // Once on connect, because a reply settled while this door was down is on
+      // disk with nothing left to announce it.
+      await deliver();
+      while (!stopping) {
+        const why = await Promise.race([
+          waiter.wait(timeoutMs).catch(() => "timeout" as const),
+          stopped,
+        ]);
+        if (why === "stopped" || stopping) return;
+        // The notification is what says there is something to post. The bound
+        // running out says nothing, and reading the table on it would be the
+        // timer the store exists to avoid. A refused post is the one thing owed
+        // to the clock, because nothing will announce the platform's return.
+        if (why === "notified" || owed) await deliver();
+      }
+    } finally {
+      await waiter.close();
     }
   };
 
