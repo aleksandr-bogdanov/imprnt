@@ -43,6 +43,7 @@ const FIELDS = [
   "ExecMainStatus",
   "ExecMainStartTimestamp",
   "ActiveEnterTimestamp",
+  "Result",
 ];
 
 /** A value systemd would read back as one word, quoted only when it must be. */
@@ -66,6 +67,10 @@ function when(text: string): string | null {
 }
 
 function stateOf(name: string, fields: Map<string, string>): UnitState {
+  const said = (field: string): string | null => {
+    const value = fields.get(field);
+    return value === undefined || value === "" ? null : value;
+  };
   const pid = Number(fields.get("ExecMainPID") || fields.get("MainPID") || 0) || null;
   const restarts = fields.get("NRestarts") ?? "";
   const status = fields.get("ExecMainStatus") ?? "";
@@ -80,6 +85,8 @@ function stateOf(name: string, fields: Map<string, string>): UnitState {
     restarts: /^\d+$/.test(restarts) ? Number(restarts) : null,
     lastExit: /^-?\d+$/.test(status) ? Number(status) : null,
     since: when(fields.get("ActiveEnterTimestamp") ?? ""),
+    state: said("ActiveState"),
+    result: said("Result"),
   };
 }
 
@@ -288,6 +295,8 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
             restarts: null,
             lastExit: null,
             since: null,
+            state: null,
+            result: null,
           },
       );
     },
@@ -311,6 +320,8 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
             restarts: null,
             lastExit: null,
             since: null,
+            state: null,
+            result: null,
           }
         );
       }

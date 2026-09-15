@@ -245,14 +245,39 @@ export async function runCheck(options: {
         unit: restarts >= already.restarts ? preferName : already.unit,
       });
     }
+    // The unit rows by name, so a finding can quote the state the manager
+    // reported for the very unit it names (03b row 3).
+    const byName = new Map(found.map((unit) => [unit.name, unit]));
     for (const [id, seen] of worst) {
       if (seen.restarts < CRASH_LOOP_RESTARTS) continue;
+      // WHAT THE MANAGER SAYS IT IS, beside the count (03b item 3, row 3). A
+      // count alone reads the same for a unit the manager is still patiently
+      // restarting and for one it has given up on and parked, and those two
+      // need different things done to them: the second does not come back from
+      // `start` at all until its failure is reset, which is why the fix below
+      // is `reset-failed` and why the sentence has to say that is the state it
+      // is in. The word is the manager's own, unedited, and the sentence says
+      // which manager said it, because systemd and launchd do not share a
+      // vocabulary. The RESULT rides along when there is one worth reading,
+      // which is where the limiter's own evidence lands when it lands
+      // (`start-limit-hit`); on this systemd it usually does not, because the
+      // manager keeps a unit's FIRST failure result and the limiter's later
+      // refusal does not overwrite it (BUILD-NOTES A.6).
+      const said = byName.get(seen.unit) ?? null;
+      const state =
+        said?.state == null
+          ? `and ${os.flavour} does not say what state it is in`
+          : `and ${os.flavour} has it ${said.state}`;
+      const result =
+        said?.result == null || said.result === "success"
+          ? ""
+          : `, with ${said.result} as its last result`;
       findings.push({
         id: findingId(machine, "crash-loop", id),
         kind: "crash-loop",
         subject: id,
         machine,
-        says: `${id} has been started again ${seen.restarts} times, so it is dying in a loop rather than running`,
+        says: `${id} has been started again ${seen.restarts} times, so it is dying in a loop rather than running, ${state}${result}`,
         // The state a parked unit is really in is what has to be cleared, and
         // the command that clears it belongs to the seam that knows the
         // flavour (03b items 3 and 7).

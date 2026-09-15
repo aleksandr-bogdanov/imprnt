@@ -253,6 +253,26 @@ test.skipIf(!gate.ok)(
       expect(loops[0].subject).toContain(dyingId);
       expect(loops[0].says).toContain(dyingId);
       expect(loops[0].says).toContain(String(restarts));
+      // THE STATE IT IS REALLY IN, beside the count (03b item 3, row 3). A
+      // count alone reads the same for a unit systemd is still restarting and
+      // for one it has parked, and only the second needs the reset the fix
+      // below carries: a household reading "started again five times" and
+      // pasting `start` gets nothing and no explanation. The word is the
+      // manager's own and it is read back from the manager in the same breath,
+      // so a `check` that hard-coded "failed" is caught by the unit really
+      // being in that state rather than by the string matching itself.
+      expect(parked.get("ActiveState")).toBe("failed");
+      expect(loops[0].says).toContain("failed");
+      expect(loops[0].says).toContain("systemd");
+      // AND THE LIMITER'S EVIDENCE WHEN THERE IS ANY. `Result` keeps a unit's
+      // FIRST failure result on this systemd (BUILD-NOTES A.6), so what it
+      // holds here is `exit-code` rather than `start-limit-hit`, and either way
+      // the finding quotes whatever the manager reported rather than inventing
+      // a verdict of its own.
+      const verdict = systemdShow(unit, ["Result"]).get("Result") ?? "";
+      if (verdict !== "" && verdict !== "success") {
+        expect(loops[0].says).toContain(verdict);
+      }
       // THE FIX A PARKED UNIT NEEDS. A unit systemd has given up on does not
       // come back from `start` alone: the failure has to be reset first, and a
       // fix that does not run is worse than no fix (D-105).

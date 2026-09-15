@@ -65,6 +65,10 @@ function readPrint(label: string, text: string): UnitState {
     restarts: runs === null ? null : Math.max(runs - 1, 0),
     lastExit: /^-?\d+$/.test(exitText) ? Number(exitText) : null,
     since: null,
+    state: state === "" ? null : state,
+    // launchd keeps no equivalent of systemd's `Result`: it never gives up, so
+    // there is no verdict to record (D-96).
+    result: null,
   };
 }
 
@@ -192,6 +196,8 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
             restarts: null,
             lastExit: null,
             since: null,
+            state: null,
+            result: null,
           },
         );
       }
@@ -213,6 +219,8 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
           restarts: null,
           lastExit: null,
           since: null,
+          state: null,
+          result: null,
         };
       }
       return null;

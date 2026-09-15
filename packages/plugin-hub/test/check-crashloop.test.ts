@@ -190,6 +190,14 @@ test.skipIf(!gate.ok)(
       // is dying in a loop from one sitting quietly failed.
       expect(loops[0].says).toContain(dyingId);
       expect(/\d/.test(loops[0].says)).toBe(true);
+      // AND WHAT THE MANAGER SAYS IT IS (03b row 3), on both platforms, taken
+      // from the same reading rather than written into the check: on launchd
+      // that is a job still being restarted, on systemd one the limiter has
+      // parked, and a household given only a count cannot tell those apart or
+      // know which of `start` and `reset-failed` will do anything.
+      expect(typeof dying.state).toBe("string");
+      expect(loops[0].says).toContain(String(dying.state));
+      expect(loops[0].says).toContain(os.flavour);
       expect(typeof loops[0].fix).toBe("string");
       expect(loops[0].fix.length).toBeGreaterThan(0);
       // The healthy one produces no finding of this kind at all.
