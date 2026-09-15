@@ -24,6 +24,7 @@ import { managerState } from "./helpers/manager.ts";
 import { unitFixture, type UnitFixture } from "./helpers/units.ts";
 import { stageHub, superStore } from "./helpers/hub-fixture.ts";
 import { writeRegistry } from "./helpers/registry.ts";
+import type { Finding } from "./helpers/finding.ts";
 import { loadRegistry } from "../src/registry/load.ts";
 import { listRunEntries } from "../src/registry/entries.ts";
 
@@ -62,15 +63,6 @@ afterAll(async () => {
     if (cluster) await cluster.stop();
   }
 });
-
-interface Finding {
-  id: string;
-  kind: string;
-  subject: string;
-  machine: string;
-  says: string;
-  fix: string;
-}
 
 test.skipIf(!gate.ok)(
   `RUN-02 a crash loop is a finding: a unit whose command exits non-zero has the manager's OWN restart counter climbing past two, check reports exactly one crash-loop finding naming it and the count, a healthy always entry installed in the same run has RAN with ZERO restarts and produces none, and the platform's path to the finding is asserted rather than assumed (SPEC §6, L13, D7, D-96, D-101, D-103)${gateSuffix(gate)}`,

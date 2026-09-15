@@ -145,7 +145,6 @@ export function managerState(base: string): ManagerView | null {
   return process.platform === "darwin" ? darwin(base) : linux(base);
 }
 
-/** The pid the manager itself reports, or null. */
 export function managerPid(base: string): number | null {
   return managerState(base)?.pid ?? null;
 }

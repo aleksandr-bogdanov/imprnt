@@ -97,15 +97,6 @@ afterAll(async () => {
   }
 });
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 test(
   "RUN-09 the routine operations that need no operating system take effect with no process restarted: a person added, an agent added whose message arrives THROUGH THE PLATFORM and is answered, an agent removed whose chat is no longer pulled while another agent answers in the same window, and a model changed so the next turn record carries the new preset id, with the door's and the runner's pids read from the OS again at the end (SPEC §6, L11, D-87, D-88, D-104)",
   async () => {
@@ -216,7 +207,7 @@ test(
       expect(added.person).toBe(PERSON2);
       expect(runner.pid).toBe(runnerPid);
       expect(door.pid).toBe(doorPid);
-      expect(alive(runnerPid)).toBe(true);
+      expect(pidAlive(runnerPid)).toBe(true);
 
       // And the person the new agent names is readable off the file, which is
       // the other half of operation 1 having taken effect.
@@ -299,8 +290,8 @@ test(
 
       // --- and the final assertion over all four, read from the operating
       //     system again rather than from a variable set at the start.
-      expect(alive(doorPid)).toBe(true);
-      expect(alive(runnerPid)).toBe(true);
+      expect(pidAlive(doorPid)).toBe(true);
+      expect(pidAlive(runnerPid)).toBe(true);
       expect(door.proc.exitCode).toBeNull();
       expect(runner.proc.exitCode).toBeNull();
     } finally {
@@ -443,7 +434,7 @@ test.skipIf(!gate.ok)(
         60_000,
         async () => JSON.stringify(await it.read.ledger({ stream: "machine" })),
       );
-      for (const pid of Object.values(pids)) expect(alive(pid)).toBe(true);
+      for (const pid of Object.values(pids)) expect(pidAlive(pid)).toBe(true);
       expect(hub.pid).toBe(pids.hub);
       expect(door.pid).toBe(pids.door);
       expect(runner.pid).toBe(pids.runner);
@@ -463,9 +454,9 @@ test.skipIf(!gate.ok)(
       expect(pidAlive(addedPid)).toBe(false);
 
       // --- and all three pids, read from the operating system again.
-      expect(alive(pids.hub)).toBe(true);
-      expect(alive(pids.door)).toBe(true);
-      expect(alive(pids.runner)).toBe(true);
+      expect(pidAlive(pids.hub)).toBe(true);
+      expect(pidAlive(pids.door)).toBe(true);
+      expect(pidAlive(pids.runner)).toBe(true);
       expect(hub.proc.exitCode).toBeNull();
       expect(door.proc.exitCode).toBeNull();
       expect(runner.proc.exitCode).toBeNull();

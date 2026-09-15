@@ -46,6 +46,7 @@ import { osGate, gateSuffix, announceGate, thisMachine } from "./helpers/os-gate
 import { livePid, managerState, pidAlive } from "./helpers/manager.ts";
 import { unitFixture, type UnitFixture } from "./helpers/units.ts";
 import { writeRegistry } from "./helpers/registry.ts";
+import type { Finding } from "./helpers/finding.ts";
 import { loadRegistry } from "../src/registry/load.ts";
 
 const SLOW = 120_000;
@@ -85,15 +86,6 @@ afterAll(async () => {
     if (cluster) await cluster.stop();
   }
 });
-
-interface Finding {
-  id: string;
-  kind: string;
-  subject: string;
-  machine: string;
-  says: string;
-  fix: string;
-}
 
 test(
   "RUN-11 every resident piece has a peak on record: the resident set is the always entries for this machine plus Postgres under its fixed id, a missing peak is a finding that clears when one is recorded, the sheet keeps one row per id, and a reading is bytes measured against a known change in size (SPEC §6, L4, D-84)",

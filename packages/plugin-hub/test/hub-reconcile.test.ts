@@ -62,15 +62,6 @@ afterAll(async () => {
   }
 });
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 test.skipIf(!gate.ok)(
   `RUN-03 the hub reconciles the registry against the operating system on its own tick and never touches a unit it did not generate: an added entry becomes a unit with a LIVE PID in the manager's own record and a machine event naming the hub, a tick that changed nothing writes no event, a removed entry is stopped and its file is gone, and a planted stray under the watch prefix is still running as the SAME PROCESS with no machine event about it at all (SPEC §6, D7, L13, D-78, D-79)${gateSuffix(gate)}`,
   async () => {
@@ -104,7 +95,7 @@ test.skipIf(!gate.ok)(
     try {
       hub = await startHub(it.registryFile, machine.id, fixture.unitDir());
       const hubPid = hub.pid;
-      expect(alive(hubPid)).toBe(true);
+      expect(pidAlive(hubPid)).toBe(true);
 
       const entryId = fixture.entryId("resident");
       const unit = `imprnt-hub-${entryId}`;
@@ -214,7 +205,7 @@ test.skipIf(!gate.ok)(
 
       // --- and the hub's own process never restarted to do any of it.
       expect(hub.pid).toBe(hubPid);
-      expect(alive(hubPid)).toBe(true);
+      expect(pidAlive(hubPid)).toBe(true);
     } finally {
       if (hub) await hub.stop();
       await it.stop();

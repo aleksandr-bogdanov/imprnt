@@ -15,12 +15,11 @@
 // so the log can never be empty by accident: an empty log would otherwise read
 // the same whether nothing was invoked or the fronting never applied.
 //
-// Usage: bun run test/helpers/check-subprocess.ts <registryFile> <machine> <storeUrl> <kernelJson> <unitDir|->
+// Usage: bun run test/helpers/check-subprocess.ts <registryFile> <machine> <storeUrl> <kernelJson> -
 //
-// With `-` as the last argument `runCheck` is handed `os: null`, which is the
-// box with no manager: nothing of ours has any business invoking one, so the
-// log must hold the control line and nothing else. With a directory it is
-// handed the real seam, whose reads are legitimate and whose mutations are not.
+// The last argument is `-`, so `runCheck` is handed `os: null`, which is the box
+// with no manager: nothing of ours has any business invoking one, so the log
+// must hold the control line and nothing else.
 
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -36,7 +35,7 @@ const [registryFile, machine, storeUrl, kernelJson, unitDir] = process.argv.slic
 if (!registryFile || !machine || !storeUrl || !kernelJson || !unitDir) {
   say({
     ok: false,
-    error: "usage: check-subprocess.ts <registryFile> <machine> <storeUrl> <kernelJson> <unitDir|->",
+    error: "usage: check-subprocess.ts <registryFile> <machine> <storeUrl> <kernelJson> -",
   });
 }
 
@@ -61,15 +60,6 @@ try {
   const store = await openStore({ url: storeUrl });
 
   let os: unknown = null;
-  if (unitDir !== "-") {
-    const osModule = join(hub, "src/os/index.ts");
-    if (!existsSync(osModule)) {
-      say({ ok: false, error: `seam module missing: src/os/index.ts (expected at ${osModule})` });
-    }
-    const osMod = (await import(osModule)) as Record<string, Function>;
-    os = osMod.thisOs({ unitDir });
-  }
-
   const findings = await runCheck({
     machine,
     registryFile,

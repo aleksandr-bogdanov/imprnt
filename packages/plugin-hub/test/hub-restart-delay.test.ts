@@ -36,7 +36,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hubPath, until } from "./helpers/cluster.ts";
 import { osGate, gateSuffix, announceGate, thisMachine } from "./helpers/os-gate.ts";
-import { managerState } from "./helpers/manager.ts";
+import { managerState, pidAlive } from "./helpers/manager.ts";
 import { unitFixture, type UnitFixture } from "./helpers/units.ts";
 import { writeRegistry } from "./helpers/registry.ts";
 import { loadRegistry } from "../src/registry/load.ts";
@@ -71,15 +71,6 @@ afterAll(async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /** The delay the RENDERER put in the file, read back out of it. */
 function renderedDelaySeconds(text: string): number {
@@ -203,7 +194,7 @@ test.skipIf(!gate.ok)(
     const first = managerState(residentUnit)!;
     const firstPid = Number(first.pid);
     const firstRestarts = Number(first.restarts ?? 0);
-    expect(alive(firstPid)).toBe(true);
+    expect(pidAlive(firstPid)).toBe(true);
     // A resident that has been started once and never died: D-101's counters
     // say exactly that, and they say it the same way on both managers.
     expect(first.ran).toBe(true);
@@ -228,7 +219,7 @@ test.skipIf(!gate.ok)(
     );
     const back = managerState(residentUnit)!;
     expect(back.pid).not.toBe(firstPid);
-    expect(alive(Number(back.pid))).toBe(true);
+    expect(pidAlive(Number(back.pid))).toBe(true);
     expect(Date.now() - killedAt).toBeLessThan(bound);
     // The manager's OWN counter climbed, so a check cannot pass on a process
     // that never actually died.
@@ -253,7 +244,7 @@ test.skipIf(!gate.ok)(
     // Loaded, and not running, which is the state the file asked for.
     expect(stillDead!.loaded).toBe(true);
     expect(stillDead!.running).toBe(false);
-    expect(alive(idlePid)).toBe(false);
+    expect(pidAlive(idlePid)).toBe(false);
   },
   SLOW,
 );

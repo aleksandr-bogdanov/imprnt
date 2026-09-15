@@ -23,15 +23,7 @@
 
 import { test, expect } from "bun:test";
 import { seam } from "./helpers/cluster.ts";
-
-interface Finding {
-  id: string;
-  kind: string;
-  subject: string;
-  machine: string;
-  says: string;
-  fix: string;
-}
+import type { Finding } from "./helpers/finding.ts";
 
 const HEALTHY = {
   // The hub box's own boot line, as measured this morning.

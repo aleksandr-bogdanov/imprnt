@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendEntry } from "../records/diary.ts";
-import { diffUnits, wantedState } from "../os/diff.ts";
+import { diffUnits, seenUnits, wantedState } from "../os/diff.ts";
 import { entryIdOf } from "../os/names.ts";
 import { thisOs } from "../os/index.ts";
-import type { OsSeam, RenderContext, UnitState, WantedUnit } from "../os/types.ts";
+import type { OsSeam, RenderContext, WantedUnit } from "../os/types.ts";
 import { listMachines, runEntriesFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
@@ -140,19 +140,6 @@ export async function runHub(options: {
     giveUpWindowSeconds: setting(registry, "hub.give_up_window_seconds", 300),
   });
 
-  /** What the manager has, plus what it knows about each entry it did not list. */
-  const found = async (entries: RunEntry[]): Promise<UnitState[]> => {
-    const listed = await os.list();
-    const seen = new Set(listed.map((unit) => entryIdOf(unit.name)).filter((id) => id !== null));
-    const out = [...listed];
-    for (const entry of entries) {
-      if (seen.has(entry.id)) continue;
-      const one = await os.show(entry.id);
-      if (one) out.push(one);
-    }
-    return out;
-  };
-
   const act = async (): Promise<void> => {
     let registry: unknown;
     try {
@@ -192,7 +179,7 @@ export async function runHub(options: {
       unit: `imprnt-hub-${entry.id}`,
       state: wantedState(entry),
     }));
-    const difference = diffUnits({ wanted, found: await found(entries) });
+    const difference = diffUnits({ wanted, found: await seenUnits(os, entries) });
 
     for (const one of difference.missing) {
       if (one.state !== "running" || started.has(one.id)) continue;

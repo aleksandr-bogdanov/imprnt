@@ -34,27 +34,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCluster, hubPath, seam, type Cluster } from "./helpers/cluster.ts";
 import { hubReader, stageHub, superStore } from "./helpers/hub-fixture.ts";
+import type { Finding } from "./helpers/finding.ts";
 
 const SLOW = 120_000;
-
-/** Every verb that CHANGES a manager's state. None of these may be invoked. */
-const MUTATING = [
-  "bootout",
-  "bootstrap",
-  "kickstart",
-  "kill",
-  "load",
-  "unload",
-  "remove",
-  "stop",
-  "start",
-  "restart",
-  "disable",
-  "enable",
-  "daemon-reload",
-  "reset-failed",
-  "set-property",
-];
 
 /**
  * A scratch directory holding a `launchctl` and a `systemctl` that log every
@@ -146,15 +128,6 @@ afterAll(async () => {
   if (cluster) await cluster.stop();
 });
 
-interface Finding {
-  id: string;
-  kind: string;
-  subject: string;
-  machine: string;
-  says: string;
-  fix: string;
-}
-
 function unitState(over: Record<string, unknown>): Record<string, unknown> {
   return {
     name: "",
@@ -170,7 +143,7 @@ function unitState(over: Record<string, unknown>): Record<string, unknown> {
 
 /**
  * A seam over a supplied unit list. Allowed here and only here, because what is
- * under test is the record. Every MUTATING verb throws, so a `check` that tried
+ * under test is the record. Every mutating verb throws, so a `check` that tried
  * to act on a finding fails loudly instead of quietly doing it.
  */
 function fakeOs(units: Record<string, unknown>[]) {
@@ -416,9 +389,6 @@ test(
         // And that control line is the ONLY one. `check` with no seam invoked
         // no manager at all, mutating or otherwise.
         expect(invocations.slice(1)).toEqual([]);
-        for (const line of invocations.slice(1)) {
-          for (const verb of MUTATING) expect(line).not.toContain(verb);
-        }
       } finally {
         shims.remove();
       }

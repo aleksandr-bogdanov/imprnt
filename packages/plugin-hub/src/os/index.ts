@@ -28,7 +28,6 @@ export function osFor(platform: string, options: { unitDir?: string } = {}): OsS
   throw new OsUnavailable(platform, "this hub has launchd and systemd, and nothing else");
 }
 
-/** The seam for the platform this process is running on. */
 export function thisOs(options: { unitDir?: string } = {}): OsSeam {
   return osFor(process.platform, options);
 }

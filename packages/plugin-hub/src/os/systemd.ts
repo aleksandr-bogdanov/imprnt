@@ -59,24 +59,6 @@ function argument(value: string): string {
   return /[\s"'\\]/.test(value) ? JSON.stringify(value) : value;
 }
 
-function sections(text: string): Map<string, Map<string, string>> {
-  const out = new Map<string, Map<string, string>>();
-  let current = "";
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (line === "" || line.startsWith("#")) continue;
-    const header = /^\[([A-Za-z]+)\]$/.exec(line);
-    if (header) {
-      current = header[1];
-      if (!out.has(current)) out.set(current, new Map());
-      continue;
-    }
-    const cut = line.indexOf("=");
-    if (cut > 0 && current !== "") out.get(current)!.set(line.slice(0, cut), line.slice(cut + 1));
-  }
-  return out;
-}
-
 function properties(block: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const line of block.split("\n")) {
@@ -209,7 +191,7 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
       // directory, and is not a file this installer wrote.
       for (const file of files) {
         const name = file.path.slice(file.path.lastIndexOf("/") + 1);
-        if (!sections(file.text).has("Install")) continue;
+        if (!file.text.split("\n").some((line) => line.trim() === "[Install]")) continue;
         await sh(
           name.endsWith(".timer")
             ? ["--user", "enable", "--now", name]

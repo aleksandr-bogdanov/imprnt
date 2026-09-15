@@ -57,7 +57,6 @@ function delegated(): string[] {
     try {
       if (existsSync(file)) return readFileSync(file, "utf8").trim().split(/\s+/).filter(Boolean);
     } catch {
-      // The next one.
     }
   }
   return [];

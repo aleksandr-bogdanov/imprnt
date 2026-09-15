@@ -24,6 +24,7 @@ import { hubReader, stageHub, superStore } from "./helpers/hub-fixture.ts";
 import { osGate, gateSuffix, announceGate, thisMachine } from "./helpers/os-gate.ts";
 import { managerState } from "./helpers/manager.ts";
 import { unitFixture, type UnitFixture } from "./helpers/units.ts";
+import type { Finding } from "./helpers/finding.ts";
 import { loadRegistry } from "../src/registry/load.ts";
 import { listRunEntries } from "../src/registry/entries.ts";
 import { readSheet } from "../src/records/statesheet.ts";
@@ -61,15 +62,6 @@ afterAll(async () => {
     if (cluster) await cluster.stop();
   }
 });
-
-interface Finding {
-  id: string;
-  kind: string;
-  subject: string;
-  machine: string;
-  says: string;
-  fix: string;
-}
 
 function ago(seconds: number): string {
   return new Date(Date.now() - seconds * 1000).toISOString();

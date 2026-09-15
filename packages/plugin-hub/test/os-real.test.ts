@@ -109,15 +109,6 @@ function context(script: string, registryFile: string): Record<string, unknown> 
   };
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * A file by its CONTENTS, not by its size and its timestamp.
  *
@@ -216,7 +207,7 @@ test.skipIf(!gate.ok)(
       async () => JSON.stringify(await os.show(entryId)),
     );
     const running = (await os.show(entryId))!;
-    expect(alive(Number(running.pid))).toBe(true);
+    expect(pidAlive(Number(running.pid))).toBe(true);
 
     const listed = await os.list();
     expect(listed.some((u) => String(u.name).startsWith(name(entryId)))).toBe(true);
@@ -274,7 +265,7 @@ test.skipIf(!gate.ok)(
     const strayNow = afterDiff.find((u) => String(u.name).startsWith(stray.base));
     expect(strayNow).toBeDefined();
     expect(strayNow!.running).toBe(true);
-    expect(alive(Number(strayNow!.pid))).toBe(true);
+    expect(pidAlive(Number(strayNow!.pid))).toBe(true);
     const strayByManager = managerState(stray.base);
     expect(strayByManager).not.toBeNull();
     expect(strayByManager!.running).toBe(true);

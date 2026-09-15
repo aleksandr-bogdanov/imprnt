@@ -26,7 +26,6 @@ export interface DoorHandle {
  * the door's outbox wait still issues nothing at all.
  */
 interface Served {
-  agent: AgentEntry;
   leaving: boolean;
   /** Resolves when this agent alone is asked to leave. */
   left: Promise<"stopped">;
@@ -202,7 +201,7 @@ export async function runDoor(options: {
     const left = new Promise<"stopped">((resolve) => {
       release = () => resolve("stopped");
     });
-    const it: Served = { agent, leaving: false, left, release, done: Promise.resolve() };
+    const it: Served = { leaving: false, left, release, done: Promise.resolve() };
     served.set(agent.id, it);
     it.done = Promise.allSettled([read(agent, it), post(agent, it)]).then(() => {});
   };

@@ -40,6 +40,7 @@ import {
   stageHub,
   superStore,
 } from "./helpers/hub-fixture.ts";
+import type { Finding } from "./helpers/finding.ts";
 
 const RUNNER_PI = "runner-pi";
 const SILENT_HOURS = 6;
@@ -54,15 +55,6 @@ beforeAll(async () => {
 afterAll(async () => {
   if (cluster) await cluster.stop();
 });
-
-interface Finding {
-  id: string;
-  kind: string;
-  subject: string;
-  machine: string;
-  says: string;
-  fix: string;
-}
 
 function hoursAgo(n: number): string {
   return new Date(Date.now() - n * 3600 * 1000).toISOString();

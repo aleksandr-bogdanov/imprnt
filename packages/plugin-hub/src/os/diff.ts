@@ -1,6 +1,6 @@
 import type { RunEntry } from "../registry/load.ts";
 import { entryIdOf, isOurs, isWatched } from "./names.ts";
-import type { UnitState, WantedState, WantedUnit } from "./types.ts";
+import type { OsSeam, UnitState, WantedState, WantedUnit } from "./types.ts";
 
 /**
  * The arithmetic behind criterion 1: running units minus the registry's set is
@@ -60,11 +60,9 @@ export function diffUnits(args: { wanted: WantedUnit[]; found: UnitState[] }): {
 } {
   const wanted = args.wanted ?? [];
   const found = args.found ?? [];
-  const wantedIds = new Set(wanted.map((one) => idOf(one)));
+  const wantedIds = new Set(wanted.map((one) => one.id));
 
-  const missing = wanted.filter(
-    (one) => !satisfied(stateOf(one), unitsFor(found, idOf(one))),
-  );
+  const missing = wanted.filter((one) => !satisfied(one.state, unitsFor(found, one.id)));
 
   const stale: UnitState[] = [];
   const extra: UnitState[] = [];
@@ -79,18 +77,17 @@ export function diffUnits(args: { wanted: WantedUnit[]; found: UnitState[] }): {
   return { missing, stale, extra };
 }
 
-/** The entry id of a wanted unit, however the caller shaped it. */
-function idOf(one: WantedUnit | Record<string, unknown>): string {
-  const direct = (one as { id?: unknown }).id;
-  if (typeof direct === "string" && direct !== "") return direct;
-  const entry = (one as { entry?: { id?: string } }).entry;
-  return String(entry?.id ?? "");
-}
-
-function stateOf(one: WantedUnit | Record<string, unknown>): WantedState {
-  const given = (one as { state?: unknown }).state;
-  if (given === "running" || given === "scheduled" || given === "loaded") return given;
-  return wantedState(one as { schedule: string });
+/** What the manager has, plus what it knows about an entry it did not list. */
+export async function seenUnits(os: OsSeam, entries: RunEntry[]): Promise<UnitState[]> {
+  const listed = await os.list();
+  const known = new Set(listed.map((unit) => entryIdOf(unit.name)).filter((id) => id !== null));
+  const out = [...listed];
+  for (const entry of entries) {
+    if (known.has(entry.id)) continue;
+    const one = await os.show(entry.id);
+    if (one) out.push(one);
+  }
+  return out;
 }
 
 /**

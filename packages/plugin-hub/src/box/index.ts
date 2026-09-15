@@ -39,7 +39,7 @@ const MAC_SYSTEM = [
 ];
 
 function flavourOf(ctx: BoxContext, platform?: string): string {
-  return String(platform ?? ctx.platform ?? process.platform);
+  return String(platform ?? process.platform);
 }
 
 /** Everything the box needs about one agent, read off the registry and nothing else. */

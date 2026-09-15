@@ -14,8 +14,6 @@ export interface BoxContext {
   tree: string;            // this person's vault tree
   sharedZone: string;      // one zone, every person, from hub.shared_zone
   otherTrees: string[];    // every other declared person's tree
-  /** Which flavour to build. Defaults to the platform this process is on. */
-  platform?: string;
 }
 
 export interface BoxedCommand {

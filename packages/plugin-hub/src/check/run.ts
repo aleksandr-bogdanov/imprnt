@@ -1,9 +1,9 @@
-import { diffUnits, stopCommand, wantedState } from "../os/diff.ts";
+import { diffUnits, seenUnits, stopCommand, wantedState } from "../os/diff.ts";
 import { entryIdOf, isOurs, unitName } from "../os/names.ts";
-import type { OsSeam, UnitState, WantedUnit } from "../os/types.ts";
+import type { OsSeam, WantedUnit } from "../os/types.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import { listAgents, runEntriesFor } from "../registry/entries.ts";
-import { loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
+import { loadRegistry, readSetting } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readPeaks, residentIds } from "../hub/peak.ts";
 import { findingId, type Finding } from "./finding.ts";
@@ -46,19 +46,6 @@ function startCommand(flavour: string, entryId: string): string {
     return `launchctl kickstart gui/${uid}/${unitName(entryId)}`;
   }
   return `systemctl --user start ${unitName(entryId)}.service`;
-}
-
-/** What the manager has, plus what it knows about an entry it did not list. */
-async function seen(os: OsSeam, entries: RunEntry[]): Promise<UnitState[]> {
-  const listed = await os.list();
-  const known = new Set(listed.map((unit) => entryIdOf(unit.name)).filter((id) => id !== null));
-  const out = [...listed];
-  for (const entry of entries) {
-    if (known.has(entry.id)) continue;
-    const one = await os.show(entry.id);
-    if (one) out.push(one);
-  }
-  return out;
 }
 
 /**
@@ -135,7 +122,7 @@ export async function runCheck(options: {
       unit: unitName(entry.id),
       state: wantedState(entry),
     }));
-    const found = await seen(os, entries);
+    const found = await seenUnits(os, entries);
     const difference = diffUnits({ wanted, found });
 
     for (const one of difference.missing) {

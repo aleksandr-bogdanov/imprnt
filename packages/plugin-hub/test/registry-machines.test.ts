@@ -124,14 +124,8 @@ function lineOf(lines: string[], text: string, nth = 1): number {
 /** Replace the nth occurrence of a line. */
 function replace(lines: string[], text: string, withText: string, nth = 1): string[] {
   const out = [...lines];
-  let seen = 0;
-  for (let i = 0; i < out.length; i++) {
-    if (out[i] === text && ++seen === nth) {
-      out[i] = withText;
-      return out;
-    }
-  }
-  throw new Error(`the fixture has no ${nth} occurrence of ${JSON.stringify(text)}`);
+  out[lineOf(lines, text, nth) - 1] = withText;
+  return out;
 }
 
 /** Drop the nth occurrence of a line, keeping every other line's number. */

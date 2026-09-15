@@ -194,7 +194,6 @@ export function parsePlist(text: string): PlistValue {
     }
   };
 
-  // The root is <plist>, and what is inside it is the tree.
   let node = take();
   while (node.kind === "text") node = take();
   if (node.kind !== "open" || node.name !== "plist") {
