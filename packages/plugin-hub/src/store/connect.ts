@@ -55,3 +55,14 @@ export async function openStore(options: { url: string }): Promise<Store> {
 export async function closeStore(store: { close(): Promise<void> }): Promise<void> {
   await store.close();
 }
+
+/**
+ * The same store, opened as a named role. The registry carries the location and
+ * no user, so a process supplies its own identity here and a typo in the file
+ * cannot hand the door the runner's role.
+ */
+export function storeUrlAs(url: string, role: string): string {
+  const where = new URL(url);
+  where.username = role;
+  return where.toString();
+}
