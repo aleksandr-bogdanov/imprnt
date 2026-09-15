@@ -409,23 +409,44 @@ export async function runRunner(options: {
       // An agent whose log had no tail to feed is served the moment its session
       // is up, and this is where that one settles.
       own.settle();
+      /**
+       * Whether the table is worth asking about (03b row 6, D-70, D5).
+       *
+       * SPEC section 1: the runner reads its eligible rows ON CONNECT and after
+       * every turn, wakes itself on a recorded retry or claim deadline, and
+       * never polls on a timer. A BARE TIMEOUT IS NOT ONE OF THOSE. It says
+       * only that nothing was announced and nothing came due, so a claim issued
+       * on it is a question whose answer was already known, once a tick,
+       * forever: on a one second tick that was eight statements every four
+       * seconds out of a runner with nothing to do.
+       *
+       * So a bare timeout claims nothing. It re-reads the registry FILE, which
+       * is the agent's own reconcile (D-87), and the memory watch (D-81) runs
+       * on the supervision loop's tick beside this one, neither of which
+       * touches the store. What comes back to the table is a notification, a
+       * deadline the store itself recorded, connect, and the turn just settled.
+       */
+      let ask = true;
       while (!stopping && !own.leaving) {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
         const registry = loadRegistry(options.registryFile);
-        const row = await claimNext(store, {
-          runner: options.runner,
-          agent: agent.id,
-          leaseMs: setting(registry, "hub.claim_lease_seconds") * 1000,
-        });
+        const row = ask
+          ? await claimNext(store, {
+              runner: options.runner,
+              agent: agent.id,
+              leaseMs: setting(registry, "hub.claim_lease_seconds") * 1000,
+            })
+          : null;
         if (!row) {
-          await Promise.race([
+          const why = await Promise.race([
             waiter
               .wait(setting(registry, "hub.tick_seconds") * 1000)
               .catch(() => "timeout" as const),
             stopped,
             own.left,
           ]);
+          ask = why !== "timeout";
           continue;
         }
         const preset = getPreset(registry, agent.preset);
@@ -434,6 +455,9 @@ export async function runRunner(options: {
         // runner process itself never restarts for either.
         if (presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
         await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry });
+        // A settled turn changed the table under this loop, so the next row is
+        // asked for rather than waited on.
+        ask = true;
       }
     } catch (error) {
       if (stopping || own.leaving) return;

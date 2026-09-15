@@ -468,8 +468,21 @@ export async function backendPid(conn: {
  * This is how a check tells a waiter that sleeps on a notification apart from
  * one that wakes on a timer and looks. Start the cluster with
  * `log_statement: "'all'"` and `log_line_prefix: "'pid=%p '"`, tell the watch
- * which pids belong to the test, and every remaining `statement:` entry in the
- * window was issued by the thing under test.
+ * which pids belong to the test, and every remaining entry in the window was
+ * issued by the thing under test.
+ *
+ * BOTH WIRE PROTOCOLS COUNT, and that is the correction the Codex round made
+ * (03b row 6). `log_statement = 'all'` writes `statement: <sql>` for a query
+ * sent down the SIMPLE protocol and `execute <name>: <sql>` for one sent with
+ * bound parameters down the EXTENDED protocol, which is what every tagged
+ * template in this package produces. A watch that matched `statement:` alone
+ * therefore counted zero for `claimNext`, for the deadline read, for
+ * `readEligible` and for every other parameterised query in the codebase: a
+ * runner polling `inbound` once a second scored as perfectly silent, and the
+ * only statements it ever saw were the checks' own `unsafe` calls. Measured on
+ * this Mac against PostgreSQL 17, one `execute` entry per execution, with the
+ * bound values on a following `DETAIL:` line that carries the prefix and is
+ * therefore not counted as a second entry.
  *
  * It counts ENTRIES, not lines, and it does not look at the SQL text. The
  * second seat broke the earlier text-matching version three ways: a statement
@@ -485,6 +498,15 @@ export async function backendPid(conn: {
  * pg_stat_statements is deliberately not used. It needs a preloaded library and
  * a contrib package, which is one more thing to be missing on the Pi.
  */
+/**
+ * A log line that is a query the server was asked to run: the simple
+ * protocol's `statement:` and the extended protocol's `execute <name>:`. A
+ * `parse` line is deliberately not here, because PostgreSQL emits it for the
+ * same query that is about to be executed and counting both would double every
+ * parameterised call.
+ */
+const ISSUED = /\bLOG:\s+(?:statement:|execute\s)/;
+
 export async function statementWatch(
   cluster: Cluster,
   ignorePids: number[] = [],
@@ -507,7 +529,7 @@ export async function statementWatch(
       const head = /^pid=(\d+)\s/.exec(line);
       if (head) {
         if (current) out.push(current);
-        current = /\bstatement:/.test(line)
+        current = ISSUED.test(line)
           ? { pid: Number(head[1]), text: line }
           : null;
       } else if (current) {
