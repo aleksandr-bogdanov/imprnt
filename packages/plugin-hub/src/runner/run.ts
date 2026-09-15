@@ -75,6 +75,15 @@ function setting(registry: Registry, key: string): number {
  * `ledger_event_hub_writes` fences it. It is ONE statement pair at connect,
  * which D-85 already allows and which lands long before any wait window opens,
  * so a waiting runner still issues nothing at all.
+ *
+ * A RUNNER THAT COULD NOT READ THE IDENTIFIER SAYS WHY. It used to write an
+ * empty one, and an empty identifier is the one value `check` cannot tell from
+ * a healthy runner, so a runner pointing at the wrong cluster could go on
+ * saying nothing forever. The reason is written into the line instead, and
+ * `check` reports the silence as a finding rather than skipping it. The read is
+ * wrapped and the append is not: a runner that cannot write its connect line at
+ * all is a runner whose store is refusing it, and that is not a thing to
+ * swallow here.
  */
 async function sayWhichServer(
   store: Store,
@@ -83,19 +92,32 @@ async function sayWhichServer(
 ): Promise<void> {
   // `system_identifier` is a 64 bit value well past what a double holds, so it
   // crosses as text and is compared as text everywhere after this.
-  const [server] = (await store.sql.unsafe(
-    `select system_identifier::text as system_identifier, version() as server_version
-       from pg_control_system()`,
-  )) as { system_identifier: string; server_version: string }[];
+  let identifier = "";
+  let version = "";
+  let unreadable = "";
+  try {
+    const [server] = (await store.sql.unsafe(
+      `select system_identifier::text as system_identifier, version() as server_version
+         from pg_control_system()`,
+    )) as { system_identifier: string; server_version: string }[];
+    identifier = String(server?.system_identifier ?? "");
+    version = String(server?.server_version ?? "");
+    if (identifier === "") {
+      unreadable = "the server answered pg_control_system() with no system_identifier";
+    }
+  } catch (error) {
+    unreadable = `reading pg_control_system() failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
   await appendEntry(store, {
     stream: "runner",
     subject: runner,
     kind: "connected",
     actor: "runner",
     detail: {
-      system_identifier: String(server?.system_identifier ?? ""),
-      server_version: String(server?.server_version ?? ""),
+      system_identifier: identifier,
+      server_version: version,
       machine: listRunEntries(registry).find((entry) => entry.id === runner)?.machine ?? "",
+      ...(unreadable === "" ? {} : { identifier_error: unreadable }),
     },
   });
 }

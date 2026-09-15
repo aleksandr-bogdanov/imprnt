@@ -84,7 +84,7 @@ async function newestWork(store: StoreLike): Promise<Map<string, string>> {
  */
 async function connectedRunners(store: StoreLike): Promise<{
   here: string;
-  said: { runner: string; identifier: string }[];
+  said: { runner: string; identifier: string; silence: string }[];
 }> {
   const [control] = (await store.sql.unsafe(
     "select system_identifier::text as id from pg_control_system()",
@@ -97,10 +97,21 @@ async function connectedRunners(store: StoreLike): Promise<{
   )) as { subject: string; detail: string | null }[];
   return {
     here: String(control?.id ?? ""),
-    said: rows.map((row) => ({
-      runner: String(row.subject),
-      identifier: String(fieldOf(row.detail, "system_identifier")),
-    })),
+    said: rows.map((row) => {
+      const identifier = String(fieldOf(row.detail, "system_identifier"));
+      // WHY this line names no server, when it names none. A runner that could
+      // not read the identifier writes the reason into its own line, and a
+      // detail in an encoding this cannot read carries no reason to find, so
+      // the second case says that instead of saying nothing.
+      const said = fieldOf(row.detail, "identifier_error");
+      const silence =
+        identifier !== ""
+          ? ""
+          : said !== ""
+            ? said
+            : "its connect line carries no readable system_identifier";
+      return { runner: String(row.subject), identifier, silence };
+    }),
   };
 }
 
@@ -298,15 +309,27 @@ export async function runCheck(options: {
   }
 
   // --- every runner reached the ONE store (03b item 4, D5) ----------------
+  //
+  // A RUNNER THAT NAMED NO SERVER IS A FINDING TOO, and it is the same one. An
+  // empty identifier used to be skipped without a word, which made a runner
+  // that could not read the server's identity indistinguishable from one that
+  // read it and found it right, so `store-split` could never fire for that
+  // runner however wrong its store was. The finding kind is not split in two,
+  // because the question a household is asking is the same in both cases and
+  // the answer to it is the same line in the file. What changes is the reason
+  // the finding gives.
   const reached = await connectedRunners(options.store);
   for (const one of reached.said) {
-    if (one.identifier === "" || one.identifier === reached.here) continue;
+    if (one.identifier !== "" && one.identifier === reached.here) continue;
     findings.push({
       id: findingId(machine, "store-split", one.runner),
       kind: "store-split",
       subject: one.runner,
       machine,
-      says: `${one.runner} last connected to the server ${one.identifier}, and the store being read here is ${reached.here}, so the household's rows are in two places`,
+      says:
+        one.identifier === ""
+          ? `${one.runner} last connected without saying which server it reached (${one.silence}), and the store being read here is ${reached.here}, so nothing here can say whether the household's rows are all in one place`
+          : `${one.runner} last connected to the server ${one.identifier}, and the store being read here is ${reached.here}, so the household's rows are in two places`,
       fix: `point every runner's hub.store_url at the one store, then restart ${one.runner}`,
     });
   }

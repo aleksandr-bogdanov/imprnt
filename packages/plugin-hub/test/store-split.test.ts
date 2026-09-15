@@ -277,6 +277,61 @@ test(
       expect(found[0].fix.length).toBeGreaterThan(0);
       // The runner that is where it should be is not reported.
       expect(found.map((one) => one.subject)).not.toContain(RUNNER_PI);
+
+      // --- AND A RUNNER THAT NAMED NO SERVER AT ALL. An empty identifier used
+      //     to be skipped without a word, which is the one value that cannot be
+      //     told from a healthy runner: a runner that could not read the
+      //     server's identity then pointed wherever it liked and `check` called
+      //     the household clean. It is the same finding with a different
+      //     reason, and the reason is the runner's own.
+      const plantRaw = async (runner: string, detail: unknown) => {
+        await it.read.sql(
+          `insert into ledger_event (stream, subject, kind, actor, detail)
+           values ('runner', $1, 'connected', 'runner', $2::jsonb)`,
+          [runner, JSON.stringify(detail)],
+        );
+      };
+      const denied = "reading pg_control_system() failed: permission denied";
+      await plantRaw(RUNNER_PI, {
+        system_identifier: "",
+        server_version: "",
+        machine: "pi",
+        identifier_error: denied,
+      });
+      const mute = await check({
+        machine: "mac",
+        registryFile: it.registryFile,
+        store,
+        os: null,
+        kernel: null,
+      });
+      const quiet = mute.filter((one) => one.kind === "store-split" && one.subject === RUNNER_PI);
+      expect(quiet.length).toBe(1);
+      // It carries the runner's OWN reason, so a household reads why rather
+      // than being told to go and look.
+      expect(quiet[0].says).toContain(denied);
+      expect(quiet[0].fix).toContain("hub.store_url");
+      // The runner that really is in the wrong place is still reported beside
+      // it, so the silent one did not take its place.
+      expect(mute.filter((one) => one.kind === "store-split").length).toBe(2);
+
+      // --- AND A DETAIL IN AN ENCODING THIS READER DOES NOT UNDERSTAND, which
+      //     is the shape a client upgrade could land tomorrow. It carries no
+      //     reason to quote, so the finding supplies one rather than falling
+      //     silent, which is what the whole item is about.
+      await plantRaw(RUNNER_PI, "not a detail this reader understands");
+      const strange = await check({
+        machine: "mac",
+        registryFile: it.registryFile,
+        store,
+        os: null,
+        kernel: null,
+      });
+      const odd = strange.filter((one) => one.kind === "store-split" && one.subject === RUNNER_PI);
+      expect(odd.length).toBe(1);
+      expect(odd[0].says).toContain(RUNNER_PI);
+      expect(odd[0].says.length).toBeGreaterThan(0);
+      expect(odd[0].fix).toContain("hub.store_url");
     } finally {
       await store.close().catch(() => {});
       await it.stop();
