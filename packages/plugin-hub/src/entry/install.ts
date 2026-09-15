@@ -101,14 +101,28 @@ function databaseOf(storeUrl: string): string {
   return new URL(storeUrl).pathname.replace(/^\//, "");
 }
 
-/** Whether a server answers on this url at all. */
-async function answers(url: string): Promise<boolean> {
+/**
+ * Whether a server answers on this url at all.
+ *
+ * A server that REFUSED THIS ACCOUNT answered: it is running, it heard the
+ * connection and it said no. `apt-get install postgresql` would not help
+ * somebody whose role or password is wrong, and putting a second copy on a box
+ * that already has a working one is the worst thing this script could do, so an
+ * authentication failure counts as up and only a connection that finds nothing
+ * at the other end counts as absent.
+ */
+async function answers(url: string): Promise<{ up: boolean; said: string }> {
   const sql = new SQL(url, { max: 1 });
   try {
     await sql.unsafe("select 1");
-    return true;
-  } catch {
-    return false;
+    return { up: true, said: "" };
+  } catch (error) {
+    const said = String((error as Error).message);
+    const itAnswered =
+      /password|authentication|role .* does not exist|database .* does not exist|permission denied/i.test(
+        said,
+      );
+    return { up: itAnswered, said };
   } finally {
     await sql.close().catch(() => {});
   }
@@ -154,7 +168,8 @@ say(`install: the store for ${registryFile}`);
 say(`install: this is ${process.platform}, so the standard install is ${standard.install.join(" ")}`);
 say(`install: the standard pid file here is ${standard.pidFile}, under the unit ${standard.unit}`);
 
-const serverIsUp = await answers(maintenanceUrl(storeUrl));
+const reached = await answers(maintenanceUrl(storeUrl));
+const serverIsUp = reached.up;
 
 if (dry) {
   say("install: DRY RUN. Nothing below is done, and nothing on this box is changed.");
@@ -190,14 +205,18 @@ if (!serverIsUp) {
       stderr: "inherit",
     });
   }
-  if (!(await answers(maintenanceUrl(storeUrl)))) {
+  if (!(await answers(maintenanceUrl(storeUrl))).up) {
     process.stderr.write(
       `install: postgres was installed and still does not answer at ${maintenanceUrl(storeUrl)}\n`,
     );
     process.exit(1);
   }
 } else {
-  say(`install: postgres already answers at ${maintenanceUrl(storeUrl)}, so nothing is installed`);
+  say(
+    reached.said === ""
+      ? `install: postgres already answers at ${maintenanceUrl(storeUrl)}, so nothing is installed`
+      : `install: postgres answers at ${maintenanceUrl(storeUrl)} and refused this account, so nothing is installed: ${reached.said}`,
+  );
 }
 
 // --- 2. the database the registry names -------------------------------------
