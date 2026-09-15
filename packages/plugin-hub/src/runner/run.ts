@@ -39,6 +39,9 @@ interface Live {
   left: Promise<"stopped">;
   release(): void;
   done: Promise<void>;
+  /** Resolves once this agent's loop is up, or has given up trying. */
+  serving: Promise<void>;
+  settle(): void;
 }
 
 /** The turn that is open right now. One message per turn, never two. */
@@ -113,6 +116,11 @@ export async function runRunner(options: {
       });
       turn = { id: message.id, tail: about.tail, acked: false, started: false, finish };
       await own.session!.feed(message);
+      // The agent is SERVED from here: its session is up and it has been handed
+      // the tail of its own log. What the loop answers to that tail can take as
+      // long as a loop takes, and a runner that reported itself ready only
+      // after it would be a runner a service manager waits on for a model.
+      if (about.tail) own.settle();
       const end = await Promise.race([ended, stopped, own.left]);
       turn = null;
       if (end === "stopped") return;
@@ -206,6 +214,9 @@ export async function runRunner(options: {
       // nobody and the row waits for the tick.
       waiter = await openWorkWaiter(store, { agent: agent.id });
       await spawn(getPreset(first, agent.preset), first);
+      // An agent whose log had no tail to feed is served the moment its session
+      // is up, and this is where that one settles.
+      own.settle();
       while (!stopping && !own.leaving) {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
@@ -248,6 +259,7 @@ export async function runRunner(options: {
         },
       });
     } finally {
+      own.settle();
       if (waiter) await waiter.close();
       const session = own.session;
       own.session = null;
@@ -283,6 +295,10 @@ export async function runRunner(options: {
     const left = new Promise<"stopped">((resolve) => {
       release = () => resolve("stopped");
     });
+    let settle: () => void = () => {};
+    const serving = new Promise<void>((resolve) => {
+      settle = () => resolve();
+    });
     const it: Live = {
       agent,
       session: null,
@@ -291,6 +307,8 @@ export async function runRunner(options: {
       left,
       release,
       done: Promise.resolve(),
+      serving,
+      settle,
     };
     live.set(agent.id, it);
     it.done = runAgent(agent, it);
@@ -356,6 +374,10 @@ export async function runRunner(options: {
   };
 
   for (const agent of agentsFor(first, { runner: options.runner })) serve(agent);
+  // Ready means SERVING, so a caller that is handed this runner is handed one
+  // whose agents are up and fed rather than one that is still starting, and its
+  // startup work lands before anything that was waiting on it starts watching.
+  await Promise.all([...live.values()].map((it) => it.serving));
 
   const supervise = (async () => {
     while (!stopping) {
