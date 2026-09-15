@@ -45,21 +45,6 @@ const FIELDS = [
   "ActiveEnterTimestamp",
 ];
 
-/**
- * 03b item 7. The manager binary is a PARAMETER, defaulting to the bare name
- * PATH resolves. `check` reaches a manager only through the seam it was handed,
- * and a check that points this at a recording shim BY ABSOLUTE PATH catches the
- * one route PATH fronting never could.
- */
-async function sh(bin: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
-  const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
-  const [out, err] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  return { code: await proc.exited, out, err };
-}
-
 /** A value systemd would read back as one word, quoted only when it must be. */
 function argument(value: string): string {
   return /[\s"'\\]/.test(value) ? JSON.stringify(value) : value;
@@ -99,9 +84,27 @@ function stateOf(name: string, fields: Map<string, string>): UnitState {
 }
 
 export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSeam {
-  const unitDir = options.unitDir ?? join(homedir(), ".config", "systemd", "user");
   const bin = options.bin ?? "systemctl";
-  const ask = (args: string[]) => sh(bin, args);
+  const unitDir = options.unitDir ?? join(homedir(), ".config", "systemd", "user");
+  /**
+   * 03b item 7. The manager binary is a PARAMETER, defaulting to the bare
+   * name PATH resolves. `check` reaches a manager only through the seam it
+   * was handed, and a check that points this at a recording shim BY
+   * ABSOLUTE PATH catches the one route PATH fronting never could.
+   *
+   * It lives INSIDE the factory so there is exactly one way to invoke the
+   * manager from this file. A module-level helper beside it left a second
+   * spelling that one call site kept using, and that call spawned an array
+   * as if it were a binary.
+   */
+  const ask = async (args: string[]): Promise<{ code: number; out: string; err: string }> => {
+    const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
+    const [out, err] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    return { code: await proc.exited, out, err };
+  };
   const service = (entryId: string) => `${unitName(entryId)}.service`;
   const timer = (entryId: string) => timerName(entryId);
 
@@ -200,7 +203,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
       for (const file of files) {
         const name = file.path.slice(file.path.lastIndexOf("/") + 1);
         if (!file.text.split("\n").some((line) => line.trim() === "[Install]")) continue;
-        await sh(
+        await ask(
           name.endsWith(".timer")
             ? ["--user", "enable", "--now", name]
             : ["--user", "enable", name],

@@ -31,20 +31,6 @@ function uid(): number {
   return process.getuid?.() ?? -1;
 }
 
-/**
- * 03b item 7. The manager binary is a PARAMETER, defaulting to the bare name
- * PATH resolves, so a check can point the seam at a recording shim by absolute
- * path and catch a caller that went round it.
- */
-async function sh(bin: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
-  const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
-  const [out, err] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  return { code: await proc.exited, out, err };
-}
-
 function xml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -83,9 +69,27 @@ function readPrint(label: string, text: string): UnitState {
 }
 
 export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSeam {
-  const unitDir = options.unitDir ?? join(homedir(), "Library", "LaunchAgents");
   const bin = options.bin ?? "launchctl";
-  const ask = (args: string[]) => sh(bin, args);
+  const unitDir = options.unitDir ?? join(homedir(), "Library", "LaunchAgents");
+  /**
+   * 03b item 7. The manager binary is a PARAMETER, defaulting to the bare
+   * name PATH resolves. `check` reaches a manager only through the seam it
+   * was handed, and a check that points this at a recording shim BY
+   * ABSOLUTE PATH catches the one route PATH fronting never could.
+   *
+   * It lives INSIDE the factory so there is exactly one way to invoke the
+   * manager from this file. A module-level helper beside it left a second
+   * spelling that one call site kept using, and that call spawned an array
+   * as if it were a binary.
+   */
+  const ask = async (args: string[]): Promise<{ code: number; out: string; err: string }> => {
+    const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
+    const [out, err] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    return { code: await proc.exited, out, err };
+  };
   const fileOf = (label: string) => join(unitDir, `${label}.plist`);
 
   const print = async (label: string): Promise<UnitState | null> => {
