@@ -202,9 +202,13 @@ create policy ledger_event_runner_stamps on ledger_event
 
 -- What a turn cost and what the runner refused are the runner's own to write.
 -- Neither is a stamp, so neither widens the fence above.
+--
+-- 03b item 4 adds the `runner` stream: one line at connect naming the server
+-- this runner really reached. It cannot be stream `machine`, which is the hub's
+-- and is fenced below, so the runner says it in a stream of its own.
 create policy ledger_event_runner_turn on ledger_event
   for insert to hub_runner
-  with check (actor = 'runner' and stream in ('turn', 'refusal', 'memory'));
+  with check (actor = 'runner' and stream in ('turn', 'refusal', 'memory', 'runner'));
 
 -- What the hub did to the operating system, the restart requests it acts on and
 -- the ones it refused. Three streams, one actor, and nothing else.

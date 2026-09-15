@@ -75,6 +75,69 @@ async function newestWork(store: StoreLike): Promise<Map<string, string>> {
 }
 
 /**
+ * Every runner's newest `connected` line, and the identifier of the store this
+ * run is reading (03b item 4).
+ *
+ * The identifier is `initdb`'s own, generated per cluster, so a line carrying
+ * one that is not this store's was written against some other cluster and the
+ * household's rows are not all in one place. The NEWEST line per runner is what
+ * counts, so a runner that was pointed somewhere else and then corrected clears
+ * its own finding by reconnecting.
+ */
+async function connectedRunners(store: StoreLike): Promise<{
+  here: string;
+  said: { runner: string; identifier: string }[];
+}> {
+  const [control] = (await store.sql.unsafe(
+    "select system_identifier::text as id from pg_control_system()",
+  )) as { id: string }[];
+  const rows = (await store.sql.unsafe(
+    `select distinct on (subject) subject, detail::text as detail
+       from ledger_event
+      where stream = 'runner' and kind = 'connected'
+      order by subject, seq desc`,
+  )) as { subject: string; detail: string | null }[];
+  return {
+    here: String(control?.id ?? ""),
+    said: rows.map((row) => ({
+      runner: String(row.subject),
+      identifier: String(fieldOf(row.detail, "system_identifier")),
+    })),
+  };
+}
+
+/**
+ * One field of a `detail` read back as jsonb TEXT.
+ *
+ * MEASURED: this client sends a bound jsonb parameter as a JSON string, so a
+ * writer that binds an already serialised object stores a jsonb SCALAR STRING
+ * whose contents are the object, while `appendEntry`'s own writes store the
+ * object itself. Both are details a household can find in its ledger, and a
+ * reader that understood only one of them would report the other as carrying
+ * nothing at all, which is a finding that silently never fires. So the text is
+ * parsed here and one layer of string encoding is unwrapped.
+ */
+function fieldOf(detail: string | null, field: string): string {
+  if (detail === null || detail === "") return "";
+  let value: unknown;
+  try {
+    value = JSON.parse(detail);
+  } catch {
+    return "";
+  }
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return "";
+    }
+  }
+  if (value === null || typeof value !== "object") return "";
+  const found = (value as Record<string, unknown>)[field];
+  return found === undefined || found === null ? "" : String(found);
+}
+
+/**
  * Which runner ids the server currently has a client for.
  *
  * The columns are chosen for what a NON-superuser can see. PostgreSQL masks
@@ -193,6 +256,20 @@ export async function runCheck(options: {
       machine,
       says: `${id} runs all day and nothing has ever measured what it holds`,
       fix: `let the hub run a tick with ${id} up, or measure it once with /usr/bin/time -l`,
+    });
+  }
+
+  // --- every runner reached the ONE store (03b item 4, D5) ----------------
+  const reached = await connectedRunners(options.store);
+  for (const one of reached.said) {
+    if (one.identifier === "" || one.identifier === reached.here) continue;
+    findings.push({
+      id: findingId(machine, "store-split", one.runner),
+      kind: "store-split",
+      subject: one.runner,
+      machine,
+      says: `${one.runner} last connected to the server ${one.identifier}, and the store being read here is ${reached.here}, so the household's rows are in two places`,
+      fix: `point every runner's hub.store_url at the one store, then restart ${one.runner}`,
     });
   }
 

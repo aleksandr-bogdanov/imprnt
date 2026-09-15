@@ -58,6 +58,46 @@ function setting(registry: Registry, key: string): number {
 }
 
 /**
+ * ONE line, at connect, naming the server this runner really reached.
+ *
+ * D-98's residue: the household's own check that two runners share one store
+ * could observe one server and could not rule out a second hidden one, because
+ * `application_name` says who connected and nothing says WHERE. `initdb`
+ * generates a `system_identifier` per cluster, so a runner that writes the one
+ * it sees has said which cluster it is talking to in a way nothing on the
+ * client side could have invented, and `check` compares it with the identifier
+ * of the store IT is reading.
+ *
+ * It is stream `runner` and not `machine`, because `machine` is the hub's and
+ * `ledger_event_hub_writes` fences it. It is ONE statement pair at connect,
+ * which D-85 already allows and which lands long before any wait window opens,
+ * so a waiting runner still issues nothing at all.
+ */
+async function sayWhichServer(
+  store: Store,
+  registry: Registry,
+  runner: string,
+): Promise<void> {
+  // `system_identifier` is a 64 bit value well past what a double holds, so it
+  // crosses as text and is compared as text everywhere after this.
+  const [server] = (await store.sql.unsafe(
+    `select system_identifier::text as system_identifier, version() as server_version
+       from pg_control_system()`,
+  )) as { system_identifier: string; server_version: string }[];
+  await appendEntry(store, {
+    stream: "runner",
+    subject: runner,
+    kind: "connected",
+    actor: "runner",
+    detail: {
+      system_identifier: String(server?.system_identifier ?? ""),
+      server_version: String(server?.server_version ?? ""),
+      machine: listRunEntries(registry).find((entry) => entry.id === runner)?.machine ?? "",
+    },
+  });
+}
+
+/**
  * The runner: it claims a message, feeds it to a loop through the five-verb
  * seam, stamps what the loop reports, and settles the reply in one transaction.
  *
@@ -83,6 +123,7 @@ export async function runRunner(options: {
     // heartbeat is written on any tick.
     url: storeUrlAs(String(readSetting(first, "hub.store_url")), "hub_runner", options.runner),
   });
+  await sayWhichServer(store, first, options.runner);
 
   let stopping = false;
   let release: () => void = () => {};
