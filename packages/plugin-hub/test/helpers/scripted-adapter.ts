@@ -29,6 +29,9 @@
 // progress held, a session is open, a message is fed and acknowledged, and no
 // `started` stamp may exist.
 
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   Adapter,
   AdapterProgress,
@@ -57,10 +60,143 @@ export interface ScriptedOptions {
   lacks?: readonly string[];
   usage?: AdapterUsage;
   sessionId?: string;
+  /**
+   * D-82. With this, `start` spawns a REAL child that holds memory on command
+   * and the session's `pid` is that process's id. Without it `pid` is null and
+   * every phase 2 check behaves exactly as it does today, which is what keeps
+   * the 65 green. A scripted adapter with a FAKE pid would make the memory kill
+   * check unable to fail, which is why the child is real.
+   */
+  child?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// The real child: a `bun -e` that holds memory on command and reports nothing.
+//
+// It is spawned by whoever owns the SESSION, which for a runner under test is
+// the runner's own process, so `ps -o ppid=` on it names the runner. That is
+// what check 12 reads, and it is why the child cannot live on the scripted
+// adapter's server side: the server runs inside the test process and its pid
+// would be the wrong parent.
+//
+// It is told how much to hold through a file it derives from its OWN pid, so
+// nothing has to be plumbed through argv and a test in another process can
+// reach it with the pid it already has. A file rather than a signal because
+// standard signals do not queue: two SIGUSR2 in flight can coalesce into one,
+// and a coalesced grow is a flaky check.
+// ---------------------------------------------------------------------------
+
+/** Where a child of this pid reads the number of megabytes it should hold. */
+export function growFileFor(pid: number): string {
+  return join(tmpdir(), `hub-child-${pid}.grow`);
+}
+
+const HOLDER = `
+const fs = require("fs");
+const os = require("os");
+const file = os.tmpdir() + "/hub-child-" + process.pid + ".grow";
+const CHUNK = 16 * 1024 * 1024;
+const held = [];
+setInterval(() => {
+  // A child whose parent went away is a leak, and a suite that leaks one of
+  // these leaks the memory it was told to hold.
+  if (process.ppid === 1) process.exit(0);
+  let want = 0;
+  try { want = Number(fs.readFileSync(file, "utf8").trim()) || 0; } catch (e) {}
+  while (held.length * 16 < want) {
+    const b = Buffer.alloc(CHUNK);
+    b.fill(1);
+    held.push(b);
+  }
+}, 100);
+setInterval(() => {}, 1000000000);
+`;
+
+export interface HeldChild {
+  pid: number;
+  kill(): void;
+}
+
+export function spawnHolder(): HeldChild {
+  const proc = Bun.spawn(["bun", "-e", HOLDER], {
+    stdout: "ignore",
+    stderr: "ignore",
+    stdin: "ignore",
+  });
+  return {
+    pid: proc.pid,
+    kill() {
+      try {
+        proc.kill(9);
+      } catch {
+        // already gone, which is what a memory kill looks like
+      }
+      try {
+        rmSync(growFileFor(proc.pid), { force: true });
+      } catch {
+        // the grow file may never have been written
+      }
+    },
+  };
+}
+
+/** Tell a child to hold this many megabytes. It picks it up on its next poll. */
+export function growChild(pid: number, mb: number): void {
+  writeFileSync(growFileFor(pid), String(mb), "utf8");
+}
+
+/** The resident size of a process in BYTES, from the platform's own tool. */
+export function residentBytes(pid: number): number {
+  const out = Bun.spawnSync(["ps", "-o", "rss=", "-p", String(pid)], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const kb = Number((out.stdout?.toString() ?? "").trim());
+  // `ps -o rss=` is KILOBYTES on both platforms. Every number in the memory
+  // seam is bytes, so the conversion happens at this reader's own edge.
+  return Number.isFinite(kb) ? kb * 1024 : 0;
+}
+
+/**
+ * Every holder child still alive anywhere on this box, by pid.
+ *
+ * The second seat's finding: killing the children a fixture still TRACKS is a
+ * cleanup path, not proof that none survived. This asks the platform instead,
+ * and it can see a holder whose owner forgot it, including one left by an
+ * earlier file. The marker is the grow-file name the holder script carries in
+ * its own source, which `ps` prints because the script is its command line.
+ */
+export function survivingHolders(): number[] {
+  const out = Bun.spawnSync(["ps", "-axo", "pid=,command="], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return (out.stdout?.toString() ?? "")
+    .split("\n")
+    .filter((line) => line.includes("hub-child-") && line.includes("setInterval"))
+    .map((line) => Number(line.trim().split(/\s+/)[0]))
+    .filter((pid) => Number.isFinite(pid) && pid > 0);
+}
+
+/** Whether a process is gone. A memory kill is asserted with this. */
+export function childGone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** `AdapterSession` with the handle property D-82 adds to it. */
+export interface ChildSession extends AdapterSession {
+  readonly pid: number | null;
 }
 
 export interface ScriptedAdapter {
   adapter: Adapter;
+  /** Every real child this adapter still owns, so a test can reap them. */
+  children(): HeldChild[];
   /** Every message handed to the loop, with the moment it happened. */
   fed(): FedMessage[];
   /** Every start or resume the runner asked for. */
@@ -109,6 +245,7 @@ export function createScriptedAdapter(
 
   const fedLog: FedMessage[] = [];
   const startLog: StartRecord[] = [];
+  const children: HeldChild[] = [];
   let openedAt: number | null = null;
   let opened = 0;
 
@@ -166,12 +303,19 @@ export function createScriptedAdapter(
     step2();
   };
 
-  const openOne = (sessionId: string | null): AdapterSession => {
+  const openOne = (sessionId: string | null): ChildSession => {
     const live: Live = { receipt: [], progress: [], end: [], sessionId };
     current = live;
+    const held = options.child ? spawnHolder() : null;
+    if (held) children.push(held);
     return {
       get sessionId() {
         return live.sessionId;
+      },
+      // D-82: a handle property like `close`, never a sixth verb. Null means
+      // this loop has no local child for a hub to watch.
+      get pid() {
+        return held ? held.pid : null;
       },
       get lacks() {
         return lacks;
@@ -197,6 +341,7 @@ export function createScriptedAdapter(
         live.progress.length = 0;
         live.end.length = 0;
         if (turn && turn.live === live) turn = null;
+        if (held) held.kill();
       },
     };
   };
@@ -222,6 +367,7 @@ export function createScriptedAdapter(
 
   return {
     adapter,
+    children: () => [...children],
     fed: () => fedLog.map((f) => ({ ...f })),
     starts: () => startLog.map((s) => ({ ...s })),
     openSession() {
@@ -270,8 +416,32 @@ export function createScriptedAdapter(
 // which is what lets the test release a gate while the child is mid-turn.
 // ---------------------------------------------------------------------------
 
+/**
+ * What one session over the wire did: the messages it was fed and the pid of
+ * the real child the CLIENT spawned for it.
+ *
+ * This is how a check maps an agent to its child across a process boundary. The
+ * runner feeds the tail of the chat log as the first message of every spawned
+ * session and that message's id IS the agent id (`src/runner/run.ts` passes
+ * `{ id: agent.id, text: tail }`), so a planted chat line makes every session
+ * self-identifying with nothing plumbed through argv.
+ */
+export interface SeenSession {
+  session: string;
+  pid: number | null;
+  fed: { id: string; text: string }[];
+}
+
 export interface AdapterServer {
   url: string;
+  /** Every session the wire opened, with its child's pid and what it was fed. */
+  seen(): SeenSession[];
+  /** The child's pid of the LATEST session fed a message with this id. */
+  childFor(messageId: string): number | null;
+  /** Every child pid, oldest first, of the sessions fed a message with this id.
+   *  A respawn opens a second session and feeds the same tail, so this is how a
+   *  check tells the child that died from the one that replaced it. */
+  childPids(messageId: string): number[];
   stop(): Promise<void>;
 }
 
@@ -288,6 +458,7 @@ export async function serveAdapter(
   const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const encoder = new TextEncoder();
   const sessions = new Map<string, AdapterSession>();
+  const seen = new Map<string, SeenSession>();
   let token = 0;
 
   const push = (event: WireEvent) => {
@@ -326,6 +497,7 @@ export async function serveAdapter(
         const opened = await scripted.adapter.start(asked);
         const id = `s${++token}`;
         sessions.set(id, opened);
+        seen.set(id, { session: id, pid: null, fed: [] });
         opened.onReceipt((messageId) => push({ kind: "receipt", messageId }));
         opened.onProgress((progress) => push({ kind: "progress", progress }));
         opened.onTurnEnd((end) => push({ kind: "end", end }));
@@ -343,7 +515,16 @@ export async function serveAdapter(
         };
         const opened = sessions.get(asked.session);
         if (!opened) return new Response("no such session", { status: 404 });
+        seen.get(asked.session)?.fed.push({ id: asked.id, text: asked.text });
         await opened.feed({ id: asked.id, text: asked.text });
+        return Response.json({ ok: true });
+      }
+      if (url.pathname === "/child") {
+        // The client spawned the real child, because the child has to be a
+        // child of the RUNNER's process and not of the test's.
+        const asked = (await request.json()) as { session: string; pid: number };
+        const row = seen.get(asked.session);
+        if (row) row.pid = Number(asked.pid);
         return Response.json({ ok: true });
       }
       if (url.pathname === "/close") {
@@ -359,6 +540,19 @@ export async function serveAdapter(
 
   return {
     url: `http://127.0.0.1:${server.port}`,
+    seen: () => [...seen.values()].map((s) => ({ ...s, fed: [...s.fed] })),
+    childFor(messageId) {
+      const all = [...seen.values()].filter((row) =>
+        row.fed.some((f) => f.id === messageId),
+      );
+      return all.length ? all[all.length - 1].pid : null;
+    },
+    childPids(messageId) {
+      return [...seen.values()]
+        .filter((row) => row.fed.some((f) => f.id === messageId))
+        .map((row) => row.pid)
+        .filter((pid): pid is number => typeof pid === "number");
+    },
     async stop() {
       for (const controller of streams) {
         try {
@@ -373,8 +567,20 @@ export async function serveAdapter(
   };
 }
 
-/** The `Adapter` a runner in another process is handed. */
-export function adapterClient(url: string, name = "scripted-over-http"): Adapter {
+/**
+ * The `Adapter` a runner in another process is handed.
+ *
+ * With `child: true` it spawns the REAL child here, inside the runner's own
+ * process, so `ps -o ppid=` on that child names the runner (check 12) and the
+ * runner's memory watch has a pid it can actually read and kill (check 11). A
+ * child spawned on the server side would be a child of the TEST process, and
+ * both of those checks would be about the wrong parent.
+ */
+export function adapterClient(
+  url: string,
+  name = "scripted-over-http",
+  options: { child?: boolean } = {},
+): Adapter {
   const receiptHandlers: ((messageId: string) => void)[] = [];
   const progressHandlers: ((event: AdapterProgress) => void)[] = [];
   const endHandlers: ((end: TurnEnd) => void)[] = [];
@@ -436,9 +642,20 @@ export function adapterClient(url: string, name = "scripted-over-http"): Adapter
         sessionId: string | null;
         lacks: string[];
       };
-      const session: AdapterSession = {
+      const held = options.child ? spawnHolder() : null;
+      if (held) {
+        await fetch(`${url}/child`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: opened.session, pid: held.pid }),
+        }).catch(() => {});
+      }
+      const session: ChildSession = {
         get sessionId() {
           return opened.sessionId;
+        },
+        get pid() {
+          return held ? held.pid : null;
         },
         get lacks() {
           return opened.lacks;
@@ -466,6 +683,7 @@ export function adapterClient(url: string, name = "scripted-over-http"): Adapter
         async close() {
           stopped = true;
           pumping = null;
+          if (held) held.kill();
           // A closed session's handlers are gone, so a later session on the
           // same client cannot see one turn reported twice.
           receiptHandlers.length = 0;

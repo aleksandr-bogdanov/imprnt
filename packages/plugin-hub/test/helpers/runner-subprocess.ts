@@ -9,7 +9,12 @@
 //
 // It calls the production `runRunner` and defines no runner of its own.
 //
-// Usage: bun run test/helpers/runner-subprocess.ts <registryFile> <runnerId> <adapterServerUrl> <adapterName>
+// Usage: bun run test/helpers/runner-subprocess.ts <registryFile> <runnerId> <adapterServerUrl> <adapterName> [child]
+//
+// With the fifth argument `child`, the adapter client spawns a REAL child here,
+// inside THIS process, so the child's parent pid is the runner's (D-82, checks
+// 11 and 12). Without it nothing changes and every phase 2 check that uses this
+// entry behaves exactly as it does today.
 
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -23,10 +28,10 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-const [registryFile, runnerId, adapterUrl, adapterName] = process.argv.slice(2);
+const [registryFile, runnerId, adapterUrl, adapterName, childFlag] = process.argv.slice(2);
 if (!registryFile || !runnerId || !adapterUrl || !adapterName) {
   fail(
-    "usage: runner-subprocess.ts <registryFile> <runnerId> <adapterServerUrl> <adapterName>",
+    "usage: runner-subprocess.ts <registryFile> <runnerId> <adapterServerUrl> <adapterName> [child]",
   );
 }
 
@@ -58,7 +63,11 @@ try {
   handle = await runRunner({
     runner: runnerId,
     registryFile,
-    adapters: { [adapterName]: adapterClient(adapterUrl, adapterName) },
+    adapters: {
+      [adapterName]: adapterClient(adapterUrl, adapterName, {
+        child: childFlag === "child",
+      }),
+    },
   });
 } catch (err) {
   fail(`runRunner refused to start: ${(err as Error).message}`);

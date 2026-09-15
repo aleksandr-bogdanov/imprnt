@@ -1,9 +1,10 @@
 import { adapterFor } from "../adapters/index.ts";
 import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
 import { readTail } from "../chatlog.ts";
+import { thisOs } from "../os/index.ts";
 import { appendEntry } from "../records/diary.ts";
 import { stamp } from "../records/stamps.ts";
-import { agentsFor } from "../registry/entries.ts";
+import { agentsFor, listRunEntries } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
 import { getPreset, presetId, priceFor, type Preset } from "../registry/presets.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
@@ -14,6 +15,33 @@ import { settleTurn, type TurnRecord } from "./settle.ts";
 export interface RunnerHandle {
   runner: string;
   stop(): Promise<void>;
+}
+
+/**
+ * One agent this runner is serving right now.
+ *
+ * The set is reconciled on the tick (D-87), so adding an agent to the registry
+ * starts its loop and removing one stops it, with no restart and without
+ * touching the others. The reconcile is its own loop rather than something
+ * inside an agent's, because one that lived inside `runAgent` would never run
+ * on a runner that has no agents yet and would never notice the first one
+ * added. It reads the FILE and issues no SQL, which is what keeps the runner's
+ * wait a wait: `test/runner-drain.test.ts` counts zero statements in it.
+ */
+interface Live {
+  agent: AgentEntry;
+  /** The loop the agent is talking to, for the memory watch to read and kill. */
+  session: AdapterSession | null;
+  /** The watch killed this child, so the next turn starts a new session first. */
+  killed: boolean;
+  leaving: boolean;
+  /** Resolves when this agent alone is asked to leave. */
+  left: Promise<"stopped">;
+  release(): void;
+  done: Promise<void>;
+  /** Resolves once this agent's loop is up, or has given up trying. */
+  serving: Promise<void>;
+  settle(): void;
 }
 
 /** The turn that is open right now. One message per turn, never two. */
@@ -43,11 +71,17 @@ export async function runRunner(options: {
   adapters: Record<string, Adapter>;
 }): Promise<RunnerHandle> {
   const first = loadRegistry(options.registryFile);
+  // The memory reader for this platform. Nothing else of the seam is used here:
+  // a model child is a child of its runner with no unit of its own (D7).
+  const os = thisOs();
   const stateDir = String(readSetting(first, "hub.state_dir"));
   // Connecting is the read that surfaces the rows that waited while this runner
   // was down. The notifications they emitted are long gone, so nothing asks.
   const store: Store = await openStore({
-    url: storeUrlAs(String(readSetting(first, "hub.store_url")), "hub_runner"),
+    // D-85. The runner names itself to the server once, at connect, so a silent
+    // runner is DERIVED from the server's own view of its clients and no
+    // heartbeat is written on any tick.
+    url: storeUrlAs(String(readSetting(first, "hub.store_url")), "hub_runner", options.runner),
   });
 
   let stopping = false;
@@ -56,8 +90,7 @@ export async function runRunner(options: {
     release = () => resolve("stopped");
   });
 
-  const runAgent = async (agent: AgentEntry): Promise<void> => {
-    let session: AdapterSession | null = null;
+  const runAgent = async (agent: AgentEntry, own: Live): Promise<void> => {
     let startedWith = "";
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
@@ -82,8 +115,13 @@ export async function runRunner(options: {
         finish = resolve;
       });
       turn = { id: message.id, tail: about.tail, acked: false, started: false, finish };
-      await session!.feed(message);
-      const end = await Promise.race([ended, stopped]);
+      await own.session!.feed(message);
+      // The agent is SERVED from here: its session is up and it has been handed
+      // the tail of its own log. What the loop answers to that tail can take as
+      // long as a loop takes, and a runner that reported itself ready only
+      // after it would be a runner a service manager waits on for a model.
+      if (about.tail) own.settle();
+      const end = await Promise.race([ended, stopped, own.left]);
       turn = null;
       if (end === "stopped") return;
 
@@ -108,7 +146,7 @@ export async function runRunner(options: {
         plan_usage: end.usage.plan_usage,
         raw_usage: end.usage.raw,
         session_id: end.session_id,
-        lacks: [...session!.lacks],
+        lacks: [...own.session!.lacks],
         tail: about.tail,
       };
 
@@ -133,8 +171,12 @@ export async function runRunner(options: {
 
     const spawn = async (preset: Preset, registry: Registry): Promise<void> => {
       const adapter = adapterFor(options.adapters, preset.adapter);
-      if (session) await session.close();
-      session = await adapter.start({ preset, sessionId: null });
+      if (own.session) await own.session.close().catch(() => {});
+      own.session = await adapter.start({ preset, sessionId: null });
+      // A child the watch killed is a session that is gone, and this is where
+      // it comes back: before the next turn, with the runner never restarting.
+      own.killed = false;
+      const session = own.session;
       startedWith = presetId(preset);
 
       session.onReceipt((messageId) => {
@@ -172,7 +214,10 @@ export async function runRunner(options: {
       // nobody and the row waits for the tick.
       waiter = await openWorkWaiter(store, { agent: agent.id });
       await spawn(getPreset(first, agent.preset), first);
-      while (!stopping) {
+      // An agent whose log had no tail to feed is served the moment its session
+      // is up, and this is where that one settles.
+      own.settle();
+      while (!stopping && !own.leaving) {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
         const registry = loadRegistry(options.registryFile);
@@ -187,17 +232,19 @@ export async function runRunner(options: {
               .wait(setting(registry, "hub.tick_seconds") * 1000)
               .catch(() => "timeout" as const),
             stopped,
+            own.left,
           ]);
           continue;
         }
         const preset = getPreset(registry, agent.preset);
         // A session carries the preset it was started with, so a changed one is
-        // a new child. The runner process itself never restarts.
-        if (presetId(preset) !== startedWith) await spawn(preset, registry);
+        // a new child, and so is one whose child the memory watch killed. The
+        // runner process itself never restarts for either.
+        if (presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
         await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry });
       }
     } catch (error) {
-      if (stopping) return;
+      if (stopping || own.leaving) return;
       // Loud, never a silent wait: a household that hears nothing all day has no
       // way to tell a quiet agent from a broken one.
       await appendEntry(store, {
@@ -212,19 +259,159 @@ export async function runRunner(options: {
         },
       });
     } finally {
+      own.settle();
       if (waiter) await waiter.close();
-      if (session) await session.close().catch(() => {});
+      const session = own.session;
+      own.session = null;
+      if (session) {
+        if (stopping) {
+          await session.close().catch(() => {});
+        } else {
+          // The agent left the FILE while this runner kept running, which is
+          // RUN-09's routine operation and not a shutdown. A loop host shares
+          // state across the sessions it is serving, so closing one of them
+          // mid-life can disturb the agents that are still being served. What
+          // this agent owned exclusively is its child, and that is released
+          // here. The session handle itself is closed when the runner stops.
+          if (session.pid && session.pid > 0) {
+            try {
+              process.kill(session.pid, 9);
+            } catch {
+              // It went away on its own, which is the same outcome.
+            }
+          }
+          retired.push(session);
+        }
+      }
     }
   };
 
-  const loops = agentsFor(first, { runner: options.runner }).map((agent) => runAgent(agent));
+  const live = new Map<string, Live>();
+  /** Sessions of agents that left the file. Closed when the runner stops. */
+  const retired: AdapterSession[] = [];
+
+  const serve = (agent: AgentEntry): void => {
+    let release: () => void = () => {};
+    const left = new Promise<"stopped">((resolve) => {
+      release = () => resolve("stopped");
+    });
+    let settle: () => void = () => {};
+    const serving = new Promise<void>((resolve) => {
+      settle = () => resolve();
+    });
+    const it: Live = {
+      agent,
+      session: null,
+      killed: false,
+      leaving: false,
+      left,
+      release,
+      done: Promise.resolve(),
+      serving,
+      settle,
+    };
+    live.set(agent.id, it);
+    it.done = runAgent(agent, it);
+  };
+
+  const drop = async (id: string): Promise<void> => {
+    const it = live.get(id);
+    if (!it) return;
+    live.delete(id);
+    it.leaving = true;
+    it.release();
+    await it.done.catch(() => {});
+  };
+
+  /**
+   * RUN-12. On the tick the runner reads each child's memory and kills the one
+   * over the limit its OWN `[[run]]` entry carries (D-81), with ONE ledger line
+   * naming the child, the reading and the limit, because L4 words that line as
+   * "killed the transcriber at 2.1 GB" and a line with only one of the two
+   * cannot be read.
+   *
+   * The reading is `/proc/<pid>/status` on linux and `ps -o rss=` on macOS,
+   * through the OS seam, which converts kilobytes to bytes at its own edge. It
+   * touches no table, so a runner that is waiting still issues nothing.
+   */
+  const watchChildren = async (registry: Registry): Promise<void> => {
+    const own = listRunEntries(registry).find((entry) => entry.id === options.runner);
+    const limitMb = own?.child_memory_limit_mb;
+    if (!limitMb || limitMb <= 0) return;
+    for (const it of live.values()) {
+      const pid = it.session?.pid ?? null;
+      // A hosted loop has no local child for this hub to watch, and a child
+      // already killed is not killed twice.
+      if (!pid || pid <= 0 || it.killed) continue;
+      let bytes = 0;
+      try {
+        bytes = (await os.memory(pid)).current_bytes;
+      } catch {
+        continue;
+      }
+      if (bytes <= limitMb * 1024 * 1024) continue;
+      it.killed = true;
+      try {
+        process.kill(pid, 9);
+      } catch {
+        // It went away between the reading and the signal, which is the same
+        // outcome by another route.
+      }
+      await appendEntry(store, {
+        stream: "memory",
+        subject: it.agent.id,
+        kind: "killed.child",
+        actor: "runner",
+        detail: {
+          agent: it.agent.id,
+          pid,
+          reading_bytes: bytes,
+          limit_mb: limitMb,
+          runner: options.runner,
+        },
+      });
+    }
+  };
+
+  for (const agent of agentsFor(first, { runner: options.runner })) serve(agent);
+  // Ready means SERVING, so a caller that is handed this runner is handed one
+  // whose agents are up and fed rather than one that is still starting, and its
+  // startup work lands before anything that was waiting on it starts watching.
+  await Promise.all([...live.values()].map((it) => it.serving));
+
+  const supervise = (async () => {
+    while (!stopping) {
+      await Promise.race([Bun.sleep(setting(first, "hub.tick_seconds") * 1000), stopped]);
+      if (stopping) break;
+      let registry: Registry;
+      try {
+        registry = loadRegistry(options.registryFile);
+      } catch {
+        // A file half written by an editor is one this tick cannot read. The
+        // next tick reads the finished one and nothing is dropped meanwhile.
+        continue;
+      }
+      try {
+        const wanted = agentsFor(registry, { runner: options.runner });
+        for (const agent of wanted) if (!live.has(agent.id)) serve(agent);
+        for (const id of [...live.keys()]) {
+          if (!wanted.some((agent) => agent.id === id)) await drop(id);
+        }
+        await watchChildren(registry);
+      } catch {
+        // A tick that could not finish is a tick. The next one runs.
+      }
+    }
+  })();
 
   return {
     runner: options.runner,
     async stop() {
       stopping = true;
       release();
-      await Promise.allSettled(loops);
+      await supervise;
+      await Promise.allSettled([...live.values()].map((it) => it.done));
+      for (const session of retired) await session.close().catch(() => {});
       await store.close();
     },
   };

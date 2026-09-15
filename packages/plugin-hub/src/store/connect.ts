@@ -45,11 +45,27 @@ export async function openStore(options: { url: string }): Promise<Store> {
       const value = String(row[setting]);
       if (forbidden.includes(value)) throw new DurabilityRefused(setting, value);
     }
+    // D-85. The name a process answers to in the server's own view of its
+    // clients, which is what lets a silent runner be DERIVED rather than
+    // heartbeaten. One statement, at connect, long before any wait window
+    // opens, so a runner that is waiting still issues nothing at all.
+    const named = applicationNameOf(options.url);
+    if (named !== null) await sql.unsafe("select set_config('application_name', $1, false)", [named]);
   } catch (error) {
     await sql.close().catch(() => {});
     throw error;
   }
   return { sql, url: options.url, close: () => sql.close() };
+}
+
+/** The name `storeUrlAs` wrote into the url, when it wrote one. */
+function applicationNameOf(url: string): string | null {
+  try {
+    const found = new URL(url).searchParams.get("application_name");
+    return found && found !== "" ? found : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function closeStore(store: { close(): Promise<void> }): Promise<void> {
@@ -61,8 +77,14 @@ export async function closeStore(store: { close(): Promise<void> }): Promise<voi
  * no user, so a process supplies its own identity here and a typo in the file
  * cannot hand the door the runner's role.
  */
-export function storeUrlAs(url: string, role: string): string {
+export function storeUrlAs(url: string, role: string, applicationName?: string): string {
   const where = new URL(url);
   where.username = role;
+  // The name is optional and is the process's own id, never a behaviour: it is
+  // how the server's client list says WHO is connected, and nothing reads it
+  // back to decide anything.
+  if (applicationName !== undefined && applicationName !== "") {
+    where.searchParams.set("application_name", applicationName);
+  }
   return where.toString();
 }

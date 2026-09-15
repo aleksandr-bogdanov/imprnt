@@ -30,6 +30,15 @@ export interface TurnEnd {
 export interface AdapterSession {
   readonly sessionId: string | null;
   /**
+   * The process id of the child this loop is, when the hub has one to watch.
+   *
+   * D-82. A handle property like `close`, never a sixth verb: RUN-12 needs the
+   * pid of every child the runner spawned, and D11's five verbs are what the
+   * loop DOES, not what the handle IS. Null means this loop has no local child
+   * for this hub to watch (a hosted loop), and the memory watch skips it.
+   */
+  readonly pid: number | null;
+  /**
    * The verbs this loop does not have. An adapter that lacks "stream" emits one
    * progress event carrying the whole text just before the end of turn, so the
    * runner behaves the same for every loop and branches on none of them.

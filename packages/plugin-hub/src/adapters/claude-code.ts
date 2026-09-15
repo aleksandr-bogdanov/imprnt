@@ -143,6 +143,11 @@ async function open(options: {
     get sessionId() {
       return sessionId;
     },
+    // D-82. The child the runner's memory watch reads and, over its limit,
+    // kills. It is this process's own child, with no unit of its own (D7).
+    get pid() {
+      return child.pid ?? null;
+    },
     lacks: [],
     async feed(message) {
       pending = { id: message.id, text: message.text };

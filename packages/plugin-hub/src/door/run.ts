@@ -15,6 +15,25 @@ export interface DoorHandle {
 }
 
 /**
+ * One agent this door is serving right now.
+ *
+ * D-104. The door reconciles its agent set on the tick exactly as the runner
+ * does, because RUN-09's Forbidden line is "a process that reads its
+ * configuration only at startup" and it does not say "the runner": an agent
+ * added to the file whose door never pulls its chat is an agent nobody can
+ * reach, so the routine operation "add an agent" is not done until the door has
+ * noticed too. The reconcile is one file parse per tick and issues no SQL, so
+ * the door's outbox wait still issues nothing at all.
+ */
+interface Served {
+  leaving: boolean;
+  /** Resolves when this agent alone is asked to leave. */
+  left: Promise<"stopped">;
+  release(): void;
+  done: Promise<void>;
+}
+
+/**
  * The door: everything a person says is written down before the platform is
  * told it arrived, and everything the loop answered is posted only after the
  * transaction that settled it committed.
@@ -45,20 +64,23 @@ export async function runDoor(options: {
     release = () => resolve("stopped");
   });
 
-  const read = async (agent: AgentEntry): Promise<void> => {
+  const read = async (agent: AgentEntry, own: Served): Promise<void> => {
     let cursor = await readCursor(store, options.door, agent.chat);
-    while (!stopping) {
+    while (!stopping && !own.leaving) {
       const pulled = await Promise.race([
         options.platform
           .pull({ chat: agent.chat, cursor, timeoutMs })
           .catch(() => null),
         stopped,
+        own.left,
       ]);
-      if (pulled === "stopped" || stopping) return;
+      // An agent that left the file is a chat this door no longer pulls, so
+      // anything said in it after that is never read and never written down.
+      if (pulled === "stopped" || stopping || own.leaving) return;
       if (pulled === null) {
         // The platform is unreachable. Nothing announces its return, so this is
         // the one wait on a clock, and it touches no table.
-        await Promise.race([Bun.sleep(timeoutMs), stopped]);
+        await Promise.race([Bun.sleep(timeoutMs), stopped, own.left]);
         continue;
       }
 
@@ -97,7 +119,7 @@ export async function runDoor(options: {
     }
   };
 
-  const post = async (agent: AgentEntry): Promise<void> => {
+  const post = async (agent: AgentEntry, own: Served): Promise<void> => {
     // Which chunks already have their line on disk, so a post the platform
     // refused is tried again with no second line: the chat log is a diary and
     // not a record of attempts. A delivered chunk leaves the set, which is what
@@ -110,7 +132,7 @@ export async function runDoor(options: {
       const refused = new Set<string>();
       const posted = new Set<string>();
       for (const chunk of pending) {
-        if (stopping) return;
+        if (stopping || own.leaving) return;
         if (refused.has(chunk.inbound_id)) continue;
         if (!logged.has(chunk.id)) {
           await appendChatLine(
@@ -154,12 +176,13 @@ export async function runDoor(options: {
       // Once on connect, because a reply settled while this door was down is on
       // disk with nothing left to announce it.
       await deliver();
-      while (!stopping) {
+      while (!stopping && !own.leaving) {
         const why = await Promise.race([
           waiter.wait(timeoutMs).catch(() => "timeout" as const),
           stopped,
+          own.left,
         ]);
-        if (why === "stopped" || stopping) return;
+        if (why === "stopped" || stopping || own.leaving) return;
         // The notification is what says there is something to post. The bound
         // running out says nothing, and reading the table on it would be the
         // timer the store exists to avoid. A refused post is the one thing owed
@@ -171,17 +194,58 @@ export async function runDoor(options: {
     }
   };
 
-  const loops = agentsFor(registry, { door: options.door }).flatMap((agent) => [
-    read(agent),
-    post(agent),
-  ]);
+  const served = new Map<string, Served>();
+
+  const serve = (agent: AgentEntry): void => {
+    let release: () => void = () => {};
+    const left = new Promise<"stopped">((resolve) => {
+      release = () => resolve("stopped");
+    });
+    const it: Served = { leaving: false, left, release, done: Promise.resolve() };
+    served.set(agent.id, it);
+    it.done = Promise.allSettled([read(agent, it), post(agent, it)]).then(() => {});
+  };
+
+  const drop = async (id: string): Promise<void> => {
+    const it = served.get(id);
+    if (!it) return;
+    served.delete(id);
+    it.leaving = true;
+    it.release();
+    await it.done.catch(() => {});
+  };
+
+  for (const agent of agentsFor(registry, { door: options.door })) serve(agent);
+
+  const supervise = (async () => {
+    while (!stopping) {
+      await Promise.race([Bun.sleep(timeoutMs), stopped]);
+      if (stopping) break;
+      let fresh: unknown;
+      try {
+        fresh = loadRegistry(options.registryFile);
+      } catch {
+        continue;
+      }
+      try {
+        const wanted = agentsFor(fresh, { door: options.door });
+        for (const agent of wanted) if (!served.has(agent.id)) serve(agent);
+        for (const id of [...served.keys()]) {
+          if (!wanted.some((agent) => agent.id === id)) await drop(id);
+        }
+      } catch {
+        // A tick that could not finish is a tick. The next one runs.
+      }
+    }
+  })();
 
   return {
     door: options.door,
     async stop() {
       stopping = true;
       release();
-      await Promise.allSettled(loops);
+      await supervise;
+      await Promise.allSettled([...served.values()].map((it) => it.done));
       await store.close();
     },
   };
