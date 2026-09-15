@@ -1,13 +1,4 @@
-import { Registry, type AgentEntry, type RunEntry } from "./load.ts";
-
-function loaded(registry: unknown, who: string): Registry {
-  if (!(registry instanceof Registry)) {
-    throw new TypeError(
-      `${who} reads a registry loaded by loadRegistry, and this is ${typeof registry}`,
-    );
-  }
-  return registry;
-}
+import { loaded, type AgentEntry, type RunEntry } from "./load.ts";
 
 /**
  * Everything the hub runs for this household. A missing field and a reused id

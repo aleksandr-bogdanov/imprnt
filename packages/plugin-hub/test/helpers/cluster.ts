@@ -535,16 +535,6 @@ export async function waitForBackendsGone(
   }
 }
 
-/** The role a connection is actually using, which is the fence's own view. */
-export async function currentUserOf(conn: {
-  unsafe(query: string): Promise<unknown>;
-}): Promise<string> {
-  const rows = (await conn.unsafe("select current_user as who")) as {
-    who: string;
-  }[];
-  return String(rows[0].who);
-}
-
 /**
  * Every client backend on this database that is not one of the test's own, with
  * the role it connected as.

@@ -7,8 +7,8 @@
 // log and the tail are the real thing in every check, and only the platform and
 // the loop are fixtures.
 //
-// D-68. The fixtures are p1, p1-lair, p2 and p2-lair, and the chat id is a digit
-// string, because the repository is public.
+// D-68. The fixtures are p1 and p1-lair, and the chat id is a digit string,
+// because the repository is public.
 
 import { mkdtemp, rm } from "node:fs/promises";
 import {
@@ -41,8 +41,6 @@ import {
 
 export const PERSON = "p1";
 export const AGENT = "p1-lair";
-export const OTHER_PERSON = "p2";
-export const OTHER_AGENT = "p2-lair";
 export const DOOR = "door-fake";
 export const RUNNER = "runner-test";
 export const CHAT = FAKE_CHAT;

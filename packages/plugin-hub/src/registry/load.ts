@@ -144,6 +144,20 @@ export class Registry {
 }
 
 /**
+ * The registry a reader was handed, checked once. Three modules read a loaded
+ * registry and each one has to refuse anything else, so the check lives here
+ * with the class rather than being written out at every door.
+ */
+export function loaded(registry: unknown, who: string): Registry {
+  if (!(registry instanceof Registry)) {
+    throw new TypeError(
+      `${who} reads a registry loaded by loadRegistry, and this is ${typeof registry}`,
+    );
+  }
+  return registry;
+}
+
+/**
  * Line of every key in the file, by its path: `hub.tick_seconds`, `run[1].id`.
  * The scan tracks the table header it is under, because `id` and
  * `memory_limit_mb` repeat in every entry and a refusal has to name the one a
@@ -346,15 +360,6 @@ export function loadRegistry(file: string): Registry {
   ((parsed.agents ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
     const where = `agents[${nth}]`;
     const here = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
-    for (const field of ["id", "person", "preset", "chat", "door", "runner"] as const) {
-      if (typeof entry[field] !== "string" || entry[field] === "") {
-        refuse(
-          `${where}.${field}`,
-          here,
-          `this agent has no ${field}, and an agent is a person, a preset, a chat and the pieces that serve it`,
-        );
-      }
-    }
     // The tail is one size for the household. A key the loader ignored quietly
     // would look like it worked and change nothing.
     for (const own of ["tail_hours", "tail_tokens"]) {
@@ -420,13 +425,9 @@ export function loadRegistry(file: string): Registry {
 }
 
 export function readSetting(registry: unknown, key: string): unknown {
-  if (!(registry instanceof Registry)) {
-    throw new TypeError(
-      `readSetting reads a registry loaded by loadRegistry, and this is ${typeof registry}`,
-    );
-  }
+  const it = loaded(registry, "readSetting");
   const name = settingKey(key);
   const field = SETTING_FIELDS.find((f) => f.key === name);
   if (!field) throw new UnknownSetting(key);
-  return valueAt(registry.data, name);
+  return valueAt(it.data, name);
 }

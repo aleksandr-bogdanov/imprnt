@@ -1,4 +1,4 @@
-import { PRESET_KEYS, Registry, type PresetEntry, type RateEntry } from "./load.ts";
+import { loaded, PRESET_KEYS, type PresetEntry, type RateEntry } from "./load.ts";
 
 /**
  * A preset is a bundle of settings and its id is derived from them, so two
@@ -33,21 +33,9 @@ export function presetId(preset: Preset): string {
   return new Bun.CryptoHasher("sha256").update(canonical).digest("hex").slice(0, 16);
 }
 
-function loaded(registry: unknown, who: string): Registry {
-  if (!(registry instanceof Registry)) {
-    throw new TypeError(
-      `${who} reads a registry loaded by loadRegistry, and this is ${typeof registry}`,
-    );
-  }
-  return registry;
-}
-
 /** The preset by name, as the five settings and nothing else. */
 export function getPreset(registry: unknown, name: string): Preset {
-  const it = loaded(registry, "getPreset");
-  const preset = it.presets[name];
-  if (!preset) throw new Error(`${name} is not a preset of ${it.file}`);
-  return { ...preset };
+  return { ...loaded(registry, "getPreset").presets[name] };
 }
 
 /** The newest rate row for this model that was already in force at that moment. */

@@ -3,14 +3,10 @@
 // Every door and every runner reads its settings from a registry file, so a
 // check that starts one needs a real file naming the throwaway cluster and a
 // temporary state dir. `writeRegistry` renders one and returns its path.
-// `renderRegistry` returns the same text, so a refusal check can compute the
-// line number it asserts from the text it wrote rather than hard-coding it.
 //
-// The file it writes is a file phase 1's shipped `loadRegistry` already loads:
-// `hub.tick_seconds` is set and every `[[run]]` entry carries an id, a kind, a
-// schedule and a positive memory limit. The phase 2 fields travel with it and
-// the shipped loader ignores them today, which is the expected state until the
-// build tasks land.
+// The file it writes is a file `loadRegistry` accepts: `hub.tick_seconds` is
+// set and every `[[run]]` entry carries an id, a kind, a schedule and a
+// positive memory limit.
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -127,7 +123,7 @@ function impliedRun(agents: AgentSpec[]): RunSpec[] {
   return out;
 }
 
-export function renderRegistry(spec: RegistrySpec): string {
+function renderRegistry(spec: RegistrySpec): string {
   const lines: string[] = ["# a scratch registry written by a check", ""];
 
   lines.push("[hub]");
