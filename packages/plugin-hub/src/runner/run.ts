@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { adapterFor } from "../adapters/index.ts";
 import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
@@ -37,6 +37,12 @@ interface Live {
   session: AdapterSession | null;
   /** The watch killed this child, so the next turn starts a new session first. */
   killed: boolean;
+  /**
+   * The loop was spawned INSIDE a box, so `session.pid` is the box tool's and
+   * the loop is somewhere below it. What the memory watch must read is not the
+   * pid it holds (03b item 1's own regression, REVIEW.md D3).
+   */
+  boxed: boolean;
   leaving: boolean;
   /** Resolves when this agent alone is asked to leave. */
   left: Promise<"stopped">;
@@ -167,6 +173,76 @@ function boxFor(
 }
 
 /**
+ * Every process under this one, on linux, host pids.
+ *
+ * THE BOX TOOL IS NOT THE LOOP (REVIEW.md D3, the regression 03b item 1
+ * introduced). `bwrap` spawns the command inside a new pid namespace and stays
+ * outside it, so the pid the adapter hands up is the wrapper's, its resident
+ * size is a megabyte or two, and a `child_memory_limit_mb` read off it can
+ * never trip. The tree is not one level deep either: without `--as-pid-1` the
+ * namespace's pid 1 is bwrap's own reaper and the loop is the reaper's child,
+ * so a watch that took "the child" literally would read the reaper and be just
+ * as blind. This walks the whole tree.
+ *
+ * `/proc/<pid>/task/<pid>/children` is the kernel's own list and is one read.
+ * A kernel built without it answers nothing, so the fallback is the walk every
+ * process table tool does: every numeric entry under `/proc` whose `stat` names
+ * this pid as its parent. The `comm` field is parenthesised and may hold spaces
+ * and parentheses of its own, so the fields are taken from after the LAST close
+ * parenthesis, which is the only parse of that file that is not a guess.
+ */
+function childrenOf(pid: number): number[] {
+  try {
+    const listed = readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim();
+    if (listed !== "") {
+      return listed
+        .split(/\s+/)
+        .map((one) => Number(one))
+        .filter((one) => Number.isFinite(one) && one > 0);
+    }
+    return [];
+  } catch {
+    // This kernel does not publish the list, so it is read off the table below.
+  }
+  const out: number[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync("/proc");
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+      const fields = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+      // After the comm field come state and then ppid.
+      if (Number(fields[1]) === pid) out.push(Number(entry));
+    } catch {
+      // A process that left between the listing and the read, which is a
+      // process that is not under anything any more.
+    }
+  }
+  return out;
+}
+
+/** The same tree, flattened, with a depth bound so a cycle cannot spin it. */
+function descendantsOf(pid: number): number[] {
+  const seen = new Set<number>();
+  let frontier = childrenOf(pid);
+  for (let depth = 0; depth < 8 && frontier.length > 0; depth++) {
+    const next: number[] = [];
+    for (const one of frontier) {
+      if (seen.has(one) || one === pid) continue;
+      seen.add(one);
+      next.push(...childrenOf(one));
+    }
+    frontier = next;
+  }
+  return [...seen];
+}
+
+/**
  * The runner: it claims a message, feeds it to a loop through the five-verb
  * seam, stamps what the loop reports, and settles the reply in one transaction.
  *
@@ -288,6 +364,7 @@ export async function runRunner(options: {
         sessionId: null,
         ...(box ? { wrap: box.wrap, ...(box.cwd ? { cwd: box.cwd } : {}) } : {}),
       });
+      own.boxed = box !== null;
       // A child the watch killed is a session that is gone, and this is where
       // it comes back: before the next turn, with the runner never restarting.
       own.killed = false;
@@ -418,6 +495,7 @@ export async function runRunner(options: {
       agent,
       session: null,
       killed: false,
+      boxed: false,
       leaving: false,
       left,
       release,
@@ -448,6 +526,17 @@ export async function runRunner(options: {
    * The reading is `/proc/<pid>/status` on linux and `ps -o rss=` on macOS,
    * through the OS seam, which converts kilobytes to bytes at its own edge. It
    * touches no table, so a runner that is waiting still issues nothing.
+   *
+   * A BOXED AGENT ON LINUX IS READ THROUGH ITS BOX. The pid the adapter hands
+   * up is `bwrap`'s and the loop is under it, so the reading is the largest of
+   * the wrapper and every process below it: a wrapper with nothing under it yet
+   * is still its own reading, so a loop that has not started is watched rather
+   * than skipped. The largest rather than the sum, because the limit is the one
+   * the unboxed path reads, a single process's resident size, and the box tool
+   * and its reaper are a megabyte between them. macOS is untouched: there
+   * `sandbox-exec` execs in place and the pid the runner holds IS the loop's
+   * (BUILD-NOTES 5), and an unboxed agent is untouched on both, so what the
+   * watch reads for the loops the checks exercise is the same number it was.
    */
   const watchChildren = async (registry: Registry): Promise<void> => {
     const own = listRunEntries(registry).find((entry) => entry.id === options.runner);
@@ -463,6 +552,17 @@ export async function runRunner(options: {
         bytes = (await os.memory(pid)).current_bytes;
       } catch {
         continue;
+      }
+      if (it.boxed && process.platform === "linux") {
+        for (const under of descendantsOf(pid)) {
+          try {
+            const reading = (await os.memory(under)).current_bytes;
+            if (reading > bytes) bytes = reading;
+          } catch {
+            // It left while the tree was being read, and a process that is
+            // gone is using nothing.
+          }
+        }
       }
       if (bytes <= limitMb * 1024 * 1024) continue;
       it.killed = true;
