@@ -224,13 +224,22 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
     },
 
     async remove(entryId: string): Promise<void> {
+      // Disable FIRST, while the file still exists, because `disable` finds the
+      // symlinks it drops through the file's own [Install] section. Then the
+      // FILES go, then the manager is asked to stop: with CollectMode set a
+      // stopped unit leaves `list-units` at once, so a stop before the delete
+      // opens a window where the unit is gone from the list and its file is
+      // still on disk, which a slow box (CI) fell into. This order closes it:
+      // nothing observes the unit unlisted before its file is gone.
       for (const name of [timer(entryId), service(entryId)]) {
-        await ask(["--user", "stop", name]);
         await ask(["--user", "disable", name]);
       }
       for (const name of [timer(entryId), service(entryId)]) {
         const path = join(unitDir, name);
         if (existsSync(path)) rmSync(path, { force: true });
+      }
+      for (const name of [timer(entryId), service(entryId)]) {
+        await ask(["--user", "stop", name]);
       }
       await ask(["--user", "daemon-reload"]);
       // Ours, and only ours: a unit that crash-looped stays listed as failed

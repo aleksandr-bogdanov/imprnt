@@ -148,8 +148,11 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
 
     async remove(entryId: string): Promise<void> {
       const label = unitName(entryId);
-      await ask(["bootout", `gui/${uid()}/${label}`]);
+      // The file goes before the job: bootout works by label and needs no file,
+      // and the other order leaves a moment where `list` no longer shows the
+      // job while its plist is still on disk. Same ordering as systemd's.
       if (existsSync(fileOf(label))) rmSync(fileOf(label), { force: true });
+      await ask(["bootout", `gui/${uid()}/${label}`]);
     },
 
     async start(entryId: string): Promise<void> {
