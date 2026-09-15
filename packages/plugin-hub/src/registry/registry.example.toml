@@ -4,10 +4,46 @@
 
 [hub]
 tick_seconds = 5
+store_url = "postgres://127.0.0.1:5432/hub"
+state_dir = "/var/lib/imprnt-hub"
+tail_hours = 24
+tail_tokens = 8000
+claim_lease_seconds = 300
+
+# A preset is a bundle of settings. Its id is derived from these five, so a
+# changed setting is a different preset and an id is never typed here.
+[presets.daily]
+adapter = "claude-code"
+model = "a-model-name"
+provider = "anthropic"
+effort = "medium"
+paid = "plan"
+
+# An agent is a person, a preset, a chat, and the pieces that serve it.
+[[agents]]
+id = "p1-lair"
+person = "p1"
+preset = "daily"
+chat = "0000000000"
+door = "door-telegram"
+runner = "runner-pi"
+
+# What a model cost per million tokens, from the day the price started. A turn is
+# priced from the newest row already in force when it ran, and from no other.
+[[rates]]
+model = "a-model-name"
+from = "2026-01-01"
+input_per_m = 1.0
+cached_per_m = 0.1
+output_per_m = 5.0
+currency = "USD"
 
 [[run]]
 id = "door-telegram"
 kind = "door"
+platform = "telegram"
+person = "p1"
+token_file = "/etc/imprnt-hub/telegram.token"
 schedule = "always"
 memory_limit_mb = 192
 

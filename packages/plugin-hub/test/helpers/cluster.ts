@@ -378,3 +378,347 @@ export async function statementWatch(
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2. Staging a kill at an exact point, with no switch in production code.
+//
+// A `kill -9` has to land while the process under test is inside the statement
+// the check is about. A sleep before the kill is a race. Postgres gives a
+// deterministic alternative: hold `lock table <t> in access exclusive mode` in
+// an open transaction on a reserved superuser connection, and every write to
+// that table blocks at that statement until the lock is released. The check
+// watches `pg_stat_activity` for the blocked backend of the role under test,
+// and only when it sees it does it send the signal.
+// ---------------------------------------------------------------------------
+
+export interface HeldLock {
+  /** The superuser backend holding the lock, so a watch can ignore it. */
+  pid: number;
+  release(): Promise<void>;
+}
+
+/**
+ * Hold an access exclusive lock on one table until `release()`.
+ *
+ * The transaction stays open on a reserved connection, so nothing else on that
+ * client can steal it. Releasing commits the empty transaction and hands the
+ * connection back.
+ */
+export async function lockTable(
+  cluster: Cluster,
+  database: string,
+  table: string,
+): Promise<HeldLock> {
+  if (!/^[a-z_][a-z0-9_]*$/.test(table)) {
+    throw new Error(`${table} is not a table name`);
+  }
+  const client = cluster.connect(database) as unknown as {
+    reserve(): Promise<{
+      unsafe(query: string): Promise<unknown>;
+      release(): void | Promise<void>;
+    }>;
+    close(): Promise<void>;
+  };
+  const held = await client.reserve();
+  const pid = await backendPid(held);
+  await held.unsafe("begin");
+  await held.unsafe(`lock table ${table} in access exclusive mode`);
+  return {
+    pid,
+    async release() {
+      try {
+        await held.unsafe("commit");
+      } catch {
+        // the transaction may already be gone if the server was stopped
+      }
+      await held.release();
+      await client.close().catch(() => {});
+    },
+  };
+}
+
+/**
+ * The pid of a backend of `role` blocked on a lock on `relation`.
+ *
+ * Throws on the timeout rather than returning zero, because a check that killed
+ * a process which had not reached the point under test would be staging its
+ * kill somewhere else and would still look like it passed.
+ */
+export async function waitForLockWaiter(
+  cluster: Cluster,
+  database: string,
+  options: { role: string; relation: string; timeoutMs: number },
+): Promise<number> {
+  const conn = cluster.connect(database) as unknown as {
+    unsafe(query: string, values?: unknown[]): Promise<unknown>;
+    close(): Promise<void>;
+  };
+  const deadline = Date.now() + options.timeoutMs;
+  let seen = "nothing at all";
+  try {
+    for (;;) {
+      const rows = (await conn.unsafe(
+        `select a.pid
+           from pg_stat_activity a
+           join pg_locks l on l.pid = a.pid and not l.granted
+          where a.usename = $1
+            and a.wait_event_type = 'Lock'
+            and l.relation = $2::regclass
+          order by a.pid`,
+        [options.role, options.relation],
+      )) as { pid: number }[];
+      if (rows.length > 0) return Number(rows[0].pid);
+
+      if (Date.now() >= deadline) {
+        const others = (await conn.unsafe(
+          `select pid, usename, wait_event_type, wait_event, left(query, 120) as query
+             from pg_stat_activity where backend_type = 'client backend'`,
+        )) as Record<string, unknown>[];
+        seen = others
+          .map(
+            (r) =>
+              `pid ${r.pid} as ${r.usename} waiting on ${r.wait_event_type}/${r.wait_event}: ${r.query}`,
+          )
+          .join("\n");
+        throw new Error(
+          `no ${options.role} backend blocked on a lock on ${options.relation} within ${options.timeoutMs} ms. ` +
+            `The kill would have landed somewhere other than the point under test. Backends seen:\n${seen}`,
+        );
+      }
+      await Bun.sleep(50);
+    }
+  } finally {
+    await conn.close().catch(() => {});
+  }
+}
+
+/**
+ * Wait until the server has noticed that these backends are gone.
+ *
+ * A `kill -9` on a client does not release the locks its backend held: the
+ * server only reaps the backend when it notices the closed socket. An assertion
+ * made before that reads the dead transaction's world, not the one that
+ * survived.
+ */
+export async function waitForBackendsGone(
+  cluster: Cluster,
+  database: string,
+  pids: number[],
+  timeoutMs: number,
+): Promise<void> {
+  if (pids.length === 0) return;
+  const conn = cluster.connect(database) as unknown as {
+    unsafe(query: string, values?: unknown[]): Promise<unknown>;
+    close(): Promise<void>;
+  };
+  // The pid list goes into the statement as integers rather than as a bound
+  // array: bun's SQL client encodes a bound array as a binary array and the
+  // server reads the first element as a dimension count. Every value here came
+  // from the server as an integer, so the list is built from Number().
+  const list = pids.map((p) => Number(p)).join(", ");
+  const deadline = Date.now() + timeoutMs;
+  try {
+    for (;;) {
+      const rows = (await conn.unsafe(
+        `select pid from pg_stat_activity where pid in (${list})`,
+      )) as { pid: number }[];
+      if (rows.length === 0) return;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `backends ${rows.map((r) => r.pid).join(", ")} were still registered ${timeoutMs} ms after the kill`,
+        );
+      }
+      await Bun.sleep(50);
+    }
+  } finally {
+    await conn.close().catch(() => {});
+  }
+}
+
+/**
+ * Every client backend on this database that is not one of the test's own, with
+ * the role it connected as.
+ *
+ * A check that asserts one backend's role passes on a process that opens a
+ * second connection as somebody else, so the probes read all of them.
+ */
+export async function foreignBackends(
+  cluster: Cluster,
+  database: string,
+  minePids: number[],
+): Promise<{ pid: number; usename: string }[]> {
+  const conn = cluster.connect(database) as unknown as {
+    unsafe(query: string, values?: unknown[]): Promise<unknown>;
+    close(): Promise<void>;
+  };
+  try {
+    const mine = [0, ...minePids.map((p) => Number(p))].join(", ");
+    const rows = (await conn.unsafe(
+      `select pid, usename from pg_stat_activity
+        where datname = current_database()
+          and backend_type = 'client backend'
+          and pid <> pg_backend_pid()
+          and pid not in (${mine})
+        order by pid`,
+    )) as { pid: number; usename: string }[];
+    return rows.map((r) => ({ pid: Number(r.pid), usename: String(r.usename) }));
+  } finally {
+    await conn.close().catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A helper process that says when it is up.
+//
+// D-64. Every subprocess entry prints exactly one JSON line when its handle has
+// returned. A test that staged a kill without waiting for that line could not
+// tell "not started yet" from "started and waiting", and would be killing some
+// other moment than the one it names.
+// ---------------------------------------------------------------------------
+
+export interface ReadyProcess {
+  /** The child, so a check can send it a signal. */
+  proc: ReturnType<typeof Bun.spawn>;
+  /** The pid the child reported as its own. */
+  pid: number;
+  /** Everything the child has printed, for a failure message. */
+  output(): string;
+  /** Kill it and wait. Safe to call twice, and safe after a kill -9. */
+  stop(signal?: number): Promise<void>;
+}
+
+export async function startReadySubprocess(
+  entry: string,
+  argv: string[],
+  timeoutMs = 30_000,
+): Promise<ReadyProcess> {
+  const proc = Bun.spawn(["bun", "run", hubPath(entry), ...argv], {
+    cwd: hubPath("."),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let seen = "";
+  const decoder = new TextDecoder();
+  const reader = proc.stdout.getReader();
+  const errors = new Response(proc.stderr).text();
+
+  const stop = async (signal = 15) => {
+    try {
+      proc.kill(signal);
+    } catch {
+      // already gone
+    }
+    await proc.exited.catch(() => {});
+  };
+
+  const deadline = Date.now() + timeoutMs;
+
+  /** A read that cannot outlive the deadline, so a silent child cannot hang. */
+  const readBounded = async (): Promise<
+    { value?: Uint8Array; done: boolean } | "timeout"
+  > => {
+    const left = deadline - Date.now();
+    if (left <= 0) return "timeout";
+    return await Promise.race([
+      reader.read() as Promise<{ value?: Uint8Array; done: boolean }>,
+      Bun.sleep(left).then(() => "timeout" as const),
+    ]);
+  };
+
+  /** A WHOLE line, so a fragment that merely starts with a brace is not parsed. */
+  const readyLine = (): string | null => {
+    const cut = seen.indexOf("\n");
+    if (cut < 0) return null;
+    for (const line of seen.split("\n")) {
+      if (line.trim().startsWith("{") && line.trim().endsWith("}")) return line;
+    }
+    return null;
+  };
+
+  try {
+    for (;;) {
+      const step = await readBounded();
+      if (step === "timeout") {
+        await stop(9);
+        throw new Error(
+          `${entry} printed no ready line within ${timeoutMs} ms. stdout: ${seen.trim().slice(0, 400)} stderr: ${(await errors).trim().slice(0, 400)}`,
+        );
+      }
+      if (step.value) seen += decoder.decode(step.value, { stream: true });
+      const line = readyLine();
+      if (line) {
+        const said = JSON.parse(line) as {
+          ready: boolean;
+          pid?: number;
+          error?: string;
+        };
+        if (!said.ready) {
+          await stop(9);
+          throw new Error(`${entry} refused to start: ${said.error}`);
+        }
+        // Keep draining after readiness. A child whose stdout pipe fills up
+        // blocks, and a blocked child is a hang with no explanation.
+        void (async () => {
+          try {
+            for (;;) {
+              const more = (await reader.read()) as {
+                value?: Uint8Array;
+                done: boolean;
+              };
+              if (more.value) seen += decoder.decode(more.value, { stream: true });
+              if (more.done) return;
+            }
+          } catch {
+            // the child went away, which is what a kill looks like
+          }
+        })();
+        return {
+          proc,
+          pid: Number(said.pid),
+          output: () => seen,
+          stop,
+        };
+      }
+      if (step.done) {
+        await stop(9);
+        throw new Error(
+          `${entry} exited without a ready line. stdout: ${seen.trim().slice(0, 400)} stderr: ${(await errors).trim().slice(0, 400)}`,
+        );
+      }
+    }
+  } catch (error) {
+    try {
+      reader.releaseLock();
+    } catch {
+      // the reader may already be released
+    }
+    throw error;
+  }
+}
+
+/**
+ * Wait for a condition, or throw saying what was true instead.
+ *
+ * A bounded wait, never an unbounded one: a check that hangs says nothing, and
+ * a check that sleeps a fixed time and then asserts is slower and flakier than
+ * one that watches. The message is what a failure reads like, so it carries the
+ * caller's own description.
+ */
+export async function until(
+  what: string,
+  ready: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  describe: () => string | Promise<string> = () => "",
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await ready()) return;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `${what} did not happen within ${timeoutMs} ms. ${await describe()}`,
+      );
+    }
+    await Bun.sleep(40);
+  }
+}

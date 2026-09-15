@@ -20,6 +20,36 @@ export const SETTING_FIELDS: SettingField[] = [
     type: "integer",
     what: "how often the hub re-reads the registry and acts on what changed",
   },
+  {
+    key: "hub.store_url",
+    type: "string",
+    what: "where the one store is, with no user: a process supplies its own role",
+    required: false,
+  },
+  {
+    key: "hub.state_dir",
+    type: "string",
+    what: "the directory the chat logs are written under",
+    required: false,
+  },
+  {
+    key: "hub.tail_hours",
+    type: "integer",
+    what: "how many hours of the chat log a spawned session is fed",
+    required: false,
+  },
+  {
+    key: "hub.tail_tokens",
+    type: "integer",
+    what: "the size of that tail, one number for the household",
+    required: false,
+  },
+  {
+    key: "hub.claim_lease_seconds",
+    type: "integer",
+    what: "how long a runner's claim on a message stands before another may take it",
+    required: false,
+  },
 ];
 
 export class RegistryRefused extends Error {
@@ -58,16 +88,73 @@ export interface RunEntry {
   memory_limit_mb: number;
 }
 
+/** The five, alphabetical, which is the order the derived id hashes them in. */
+export const PRESET_KEYS = ["adapter", "effort", "model", "paid", "provider"] as const;
+
+/** The five settings a preset is, and the only ones its id is derived from. */
+export interface PresetEntry {
+  adapter: string;
+  effort: string;
+  model: string;
+  paid: string;
+  provider: string;
+}
+
+export interface AgentEntry {
+  id: string;
+  person: string;
+  preset: string;
+  chat: string;
+  door: string;
+  runner: string;
+}
+
+export interface RateEntry {
+  model: string;
+  from: string;
+  input_per_m: number;
+  cached_per_m: number;
+  output_per_m: number;
+  currency: string;
+}
+
 export class Registry {
   readonly file: string;
   readonly data: Record<string, unknown>;
   readonly run: RunEntry[];
+  readonly presets: Record<string, PresetEntry>;
+  readonly agents: AgentEntry[];
+  readonly rates: RateEntry[];
 
-  constructor(file: string, data: Record<string, unknown>, run: RunEntry[]) {
+  constructor(
+    file: string,
+    data: Record<string, unknown>,
+    run: RunEntry[],
+    presets: Record<string, PresetEntry> = {},
+    agents: AgentEntry[] = [],
+    rates: RateEntry[] = [],
+  ) {
     this.file = file;
     this.data = data;
     this.run = run;
+    this.presets = presets;
+    this.agents = agents;
+    this.rates = rates;
   }
+}
+
+/**
+ * The registry a reader was handed, checked once. Three modules read a loaded
+ * registry and each one has to refuse anything else, so the check lives here
+ * with the class rather than being written out at every door.
+ */
+export function loaded(registry: unknown, who: string): Registry {
+  if (!(registry instanceof Registry)) {
+    throw new TypeError(
+      `${who} reads a registry loaded by loadRegistry, and this is ${typeof registry}`,
+    );
+  }
+  return registry;
 }
 
 /**
@@ -234,17 +321,113 @@ export function loadRegistry(file: string): Registry {
     });
   });
 
-  return new Registry(file, parsed, entries);
+  const refuse = (key: string, fallback: number, reason: string): never => {
+    throw new RegistryRefused(file, lines.get(key) ?? fallback, key, reason);
+  };
+
+  const presets: Record<string, PresetEntry> = {};
+  for (const [name, table] of Object.entries(
+    (parsed.presets ?? {}) as Record<string, Record<string, unknown>>,
+  )) {
+    const where = `presets.${name}`;
+    const here = lines.get(where) ?? 0;
+    if (table.id !== undefined) {
+      refuse(
+        `${where}.id`,
+        here,
+        `${name} carries an id, and a preset id is derived from its five settings, never typed`,
+      );
+    }
+    for (const field of PRESET_KEYS) {
+      if (typeof table[field] !== "string" || table[field] === "") {
+        refuse(
+          `${where}.${field}`,
+          here,
+          `${name} has no ${field}, and a preset is the five settings its id is derived from`,
+        );
+      }
+    }
+    presets[name] = {
+      adapter: table.adapter as string,
+      effort: table.effort as string,
+      model: table.model as string,
+      paid: table.paid as string,
+      provider: table.provider as string,
+    };
+  }
+
+  const agents: AgentEntry[] = [];
+  ((parsed.agents ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
+    const where = `agents[${nth}]`;
+    const here = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
+    // The tail is one size for the household. A key the loader ignored quietly
+    // would look like it worked and change nothing.
+    for (const own of ["tail_hours", "tail_tokens"]) {
+      if (entry[own] !== undefined) {
+        refuse(
+          `${where}.${own}`,
+          here,
+          `${entry.id} sets its own ${own}, and the tail is one size for the household, under [hub]`,
+        );
+      }
+    }
+    if (!((entry.preset as string) in presets)) {
+      refuse(
+        `${where}.preset`,
+        here,
+        `${entry.id} names the preset ${entry.preset}, which this file does not define`,
+      );
+    }
+    agents.push({
+      id: entry.id as string,
+      person: entry.person as string,
+      preset: entry.preset as string,
+      chat: entry.chat as string,
+      door: entry.door as string,
+      runner: entry.runner as string,
+    });
+  });
+
+  // A door that serves an agent has to say which platform it speaks, whose it is
+  // and where its credential lives, because that is all the hub is ever told
+  // about it. A door nobody points at is on the list and serves nobody yet.
+  const served = new Set(agents.map((agent) => agent.door));
+  entries.forEach((entry, nth) => {
+    if (entry.kind !== "door" || !served.has(entry.id)) return;
+    const where = `run[${nth}]`;
+    const here = lines.get(`${where}.id`) ?? 0;
+    for (const field of ["platform", "person", "token_file"] as const) {
+      const value = (parsed.run as Record<string, unknown>[])[nth][field];
+      if (typeof value !== "string" || value === "") {
+        refuse(
+          `${where}.${field}`,
+          here,
+          `${entry.id} serves an agent and has no ${field}, and a door is a platform, a person and a token file`,
+        );
+      }
+    }
+  });
+
+  const rates: RateEntry[] = [];
+  ((parsed.rates ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
+    const where = `rates[${nth}]`;
+    if (typeof entry.from !== "string" || Number.isNaN(Date.parse(entry.from))) {
+      refuse(
+        `${where}.from`,
+        lines.get(where) ?? 0,
+        `this rate row is dated ${describe(entry.from)}, and a price is knowable only from a row that says when it started`,
+      );
+    }
+    rates.push(entry as unknown as RateEntry);
+  });
+
+  return new Registry(file, parsed, entries, presets, agents, rates);
 }
 
 export function readSetting(registry: unknown, key: string): unknown {
-  if (!(registry instanceof Registry)) {
-    throw new TypeError(
-      `readSetting reads a registry loaded by loadRegistry, and this is ${typeof registry}`,
-    );
-  }
+  const it = loaded(registry, "readSetting");
   const name = settingKey(key);
   const field = SETTING_FIELDS.find((f) => f.key === name);
   if (!field) throw new UnknownSetting(key);
-  return valueAt(registry.data, name);
+  return valueAt(it.data, name);
 }

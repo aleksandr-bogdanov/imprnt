@@ -96,6 +96,12 @@ export async function listenForWork(options: {
   url: string;
   channel: string;
   onNotify(payload: string): void;
+  /**
+   * The connection went away on its own rather than being closed by its owner.
+   * Every notification after that point is gone, so a caller that holds one
+   * listener across many waits has to be told, or it goes deaf in silence.
+   */
+  onLost?(): void;
 }): Promise<Listener> {
   if (!/^[a-z_][a-z0-9_]*$/.test(options.channel)) {
     throw new ListenRefused(`${options.channel} is not a channel name`);
@@ -105,6 +111,7 @@ export async function listenForWork(options: {
   let buffer = new Uint8Array(0);
   let step: { resolve: () => void; reject: (error: Error) => void } | null = null;
   let closed = false;
+  let ended = false;
 
   const settle = (error?: Error) => {
     const waiting = step;
@@ -159,9 +166,11 @@ export async function listenForWork(options: {
       close() {
         closed = true;
         settle(new ListenRefused("the server closed the notification connection"));
+        if (!ended) options.onLost?.();
       },
       error(_socket, error) {
         settle(new ListenRefused(String(error)));
+        if (!ended) options.onLost?.();
       },
     },
   });
@@ -191,6 +200,7 @@ export async function listenForWork(options: {
   return {
     async close() {
       closed = true;
+      ended = true;
       step = null;
       socket.end();
     },

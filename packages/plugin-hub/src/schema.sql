@@ -45,19 +45,26 @@ create table ledger_event (
 create index ledger_event_stream_subject on ledger_event (stream, subject, seq);
 
 -- One row per message. `state` is a function of the diary above, maintained by
--- trigger, and a direct write to it is refused.
+-- trigger, and a direct write to it is refused. `rank` is a function of `kind`
+-- and is generated, so a writer cannot set one to disagree with the other: rank
+-- 0 is what a human is waiting on, rank 1 is proactive work.
 create table inbound (
   id             text primary key,
   person         text not null,
   agent          text not null,
   body           text not null,
+  kind           text not null default 'human',
+  rank           int generated always as
+                   (case when kind in ('human', 'report') then 0 else 1 end) stored,
   received_at    timestamptz not null default now(),
   state          text not null default 'received',
   claimed_by     text,
   claim_deadline timestamptz,
   retry_at       timestamptz,
   constraint inbound_state_is_a_stamp
-    check (state in ('received', 'acked', 'started', 'answered', 'delivered'))
+    check (state in ('received', 'acked', 'started', 'answered', 'delivered')),
+  constraint inbound_kind_is_known
+    check (kind in ('human', 'report', 'triage', 'room', 'harvest'))
 );
 
 create index inbound_by_agent on inbound (agent, state);
@@ -148,6 +155,22 @@ create trigger inbound_notify_work
   after insert on inbound
   for each row execute function hub_notify_work();
 
+-- The same rule on the way out. The chunk insert happens inside the settling
+-- transaction, so the door hears about a reply at the commit that made it
+-- postable and never before. The payload is the person, because the door filters
+-- to the agents it serves and the outbox row does not carry a door.
+create function hub_notify_out() returns trigger
+language plpgsql as $$
+begin
+  perform pg_notify('hub_outbox',
+                    (select person from inbound where id = new.inbound_id));
+  return null;
+end $$;
+
+create trigger outbox_notify_out
+  after insert on outbox
+  for each row execute function hub_notify_out();
+
 -- The fence. One owner per table, and inside the diary one owner per event kind,
 -- because the door and the runner each own their own steps of a message.
 alter table ledger_event enable row level security;
@@ -169,6 +192,12 @@ create policy ledger_event_runner_stamps on ledger_event
   with check (actor = 'runner' and stream = 'inbound'
               and kind in ('acked', 'started', 'answered'));
 
+-- What a turn cost and what the runner refused are the runner's own to write.
+-- Neither is a stamp, so neither widens the fence above.
+create policy ledger_event_runner_turn on ledger_event
+  for insert to hub_runner
+  with check (actor = 'runner' and stream in ('turn', 'refusal'));
+
 grant select, insert on inbound to hub_door;
 grant select on inbound to hub_runner;
 grant update (claimed_by, claim_deadline, retry_at) on inbound to hub_runner;
@@ -186,3 +215,8 @@ grant select, insert on outbox to hub_runner;
 grant usage on sequence outbox_id_seq to hub_runner;
 grant select on outbox to hub_door;
 grant update (delivered_at) on outbox to hub_door;
+
+-- The door keeps its platform cursor on a state sheet, so it writes here. The
+-- runner only reads.
+grant select, insert, update on state_row to hub_door;
+grant select on state_row to hub_runner;
