@@ -48,7 +48,37 @@ const MAC_SYSTEM = [
  * never starts, and "the box broke the loop" is indistinguishable from "the box
  * worked" to every probe that matters.
  */
-const MAC_TOOLS = ["/opt/homebrew", join(homedir(), ".local"), join(homedir(), ".bun")];
+function macTools(): string[] {
+  return [brewPrefix(), join(homedir(), ".local"), join(homedir(), ".bun")];
+}
+
+/**
+ * Where Homebrew is on THIS Mac, asked rather than assumed.
+ *
+ * `/opt/homebrew` is Apple Silicon's prefix and `/usr/local` is Intel's, and a
+ * box whose profile names the wrong one is a box that denies the loop the tools
+ * it is made of, which on macOS is a child that dies at startup with "An
+ * unknown error occurred" and nothing else (entry 5). So brew is asked for its
+ * own prefix, and only a box with no brew on it falls back to the prefix its
+ * architecture ships with. Asked once and remembered, because a profile is
+ * rendered per agent per spawn and this is a process spawn.
+ */
+let brewPrefixSaid: string | null = null;
+function brewPrefix(): string {
+  if (brewPrefixSaid !== null) return brewPrefixSaid;
+  try {
+    const asked = Bun.spawnSync(["brew", "--prefix"], { stdout: "pipe", stderr: "pipe" });
+    const said = (asked.stdout?.toString() ?? "").trim();
+    if ((asked.exitCode ?? 1) === 0 && said.startsWith("/")) {
+      brewPrefixSaid = said;
+      return said;
+    }
+  } catch {
+    // No brew on this box at all, which the fallback below is for.
+  }
+  brewPrefixSaid = process.arch === "arm64" ? "/opt/homebrew" : "/usr/local";
+  return brewPrefixSaid;
+}
 
 /**
  * The loop's own login, which SPEC section 5 names as the one thing inside the
@@ -103,7 +133,7 @@ function profileText(ctx: BoxContext): string {
     // Measured: without this, nothing starts at all.
     '(allow file-read* (literal "/"))',
     ...MAC_SYSTEM.map((path) => `(allow file-read* (subpath "${path}"))`),
-    ...MAC_TOOLS.map((path) => `(allow file-read* (subpath "${path}"))`),
+    ...macTools().map((path) => `(allow file-read* (subpath "${path}"))`),
     ...MAC_LOGIN.map((path) => `(allow file-read* (subpath "${path}"))`),
     // A scratch directory is not anybody's vault and every tool expects one.
     '(allow file-read* file-write* (subpath "/private/tmp"))',

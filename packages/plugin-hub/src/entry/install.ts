@@ -74,11 +74,32 @@ function debianCluster(): { version: string; cluster: string } {
   return { version: "15", cluster: "main" };
 }
 
+/**
+ * Where Homebrew is on THIS Mac, asked rather than assumed.
+ *
+ * `/opt/homebrew` is Apple Silicon's prefix and `/usr/local` is Intel's. A
+ * script that assumed the first would write a `[store]` section naming a pid
+ * file that does not exist on the second, `readStorePid` would return null with
+ * a reason, and the household would carry `peak-missing:postgres` forever under
+ * a section that looks perfectly correct. So brew is asked, and only a box with
+ * no brew falls back to the prefix its architecture ships with.
+ */
+function brewPrefix(): string {
+  try {
+    const asked = Bun.spawnSync(["brew", "--prefix"], { stdout: "pipe", stderr: "pipe" });
+    const said = (asked.stdout?.toString() ?? "").trim();
+    if ((asked.exitCode ?? 1) === 0 && said.startsWith("/")) return said;
+  } catch {
+    // No brew on this box at all, which the fallback below is for.
+  }
+  return process.arch === "arm64" ? "/opt/homebrew" : "/usr/local";
+}
+
 function standardFor(platform: string): Standard {
   if (platform === "darwin") {
     return {
       install: ["brew", "install", "postgresql@17"],
-      pidFile: "/opt/homebrew/var/postgresql@17/postmaster.pid",
+      pidFile: `${brewPrefix()}/var/postgresql@17/postmaster.pid`,
       unit: "homebrew.mxcl.postgresql@17",
     };
   }
