@@ -8,7 +8,6 @@ export function listRunEntries(registry: unknown): RunEntry[] {
   return loaded(registry, "listRunEntries").run.map((entry) => ({ ...entry }));
 }
 
-/** Every agent this household has, each pointing at one preset. */
 export function listAgents(registry: unknown): AgentEntry[] {
   return loaded(registry, "listAgents").agents.map((entry) => ({ ...entry }));
 }

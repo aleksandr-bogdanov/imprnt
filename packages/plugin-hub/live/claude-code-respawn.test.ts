@@ -208,7 +208,6 @@ test(
         "select coalesce(max(seq), 0) as seq from ledger_event",
       )) as { seq: string }[];
 
-      // SPAWN TWO.
       second = await (runRunner as Function)({
         runner: RUNNER,
         registryFile,

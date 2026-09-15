@@ -165,7 +165,6 @@ function renderRegistry(spec: RegistrySpec): string {
   return lines.join("\n");
 }
 
-/** Write the rendered registry into `dir` and return its path. */
 export function writeRegistry(dir: string, spec: RegistrySpec): string {
   const file = join(dir, "registry.toml");
   writeFileSync(file, renderRegistry(spec), "utf8");

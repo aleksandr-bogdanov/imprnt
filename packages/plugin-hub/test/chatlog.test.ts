@@ -17,10 +17,10 @@
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { startCluster, seam, until, type Cluster } from "./helpers/cluster.ts";
 import { scriptedReply } from "./helpers/scripted-adapter.ts";
+/** The pinned formula, computed by the test rather than read from the build. */
+import { expectedPresetId } from "./helpers/preset-oracle.ts";
 import {
   AGENT,
   DOOR,
@@ -148,7 +148,6 @@ test(
       }
 
       for (const line of lines) {
-        // Exactly the four keys, so an extra field is caught here.
         expect(Object.keys(line).sort()).toEqual([
           "at",
           "direction",
@@ -166,7 +165,6 @@ test(
         from: AGENT,
         text: scriptedReply(MESSAGE),
       });
-      // Byte equal to what the platform received.
       expect(lines[1].text).toBe(it.fake.posts()[0].text);
 
     } finally {
@@ -197,24 +195,10 @@ test(
       // Generated at run time, so no build can have it baked in and an empty
       // chat cannot know it.
       const codeWord = `codeword-${crypto.randomUUID().slice(0, 8)}`;
-      const planted = new Date();
-      const file = chatLogFile({
+      plantChatLine({
         stateDir: it.stateDir,
-        person: PERSON,
-        agent: AGENT,
-        at: planted,
+        text: `the word for today is ${codeWord}`,
       });
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(
-        file,
-        JSON.stringify({
-          at: planted.toISOString(),
-          direction: "in",
-          from: PERSON,
-          text: `the word for today is ${codeWord}`,
-        }) + "\n",
-        "utf8",
-      );
 
       door = await (runDoor as Function)({
         door: DOOR,
@@ -280,24 +264,10 @@ test(
 
     try {
       const codeWord = `codeword-${crypto.randomUUID().slice(0, 8)}`;
-      const planted = new Date();
-      const file = chatLogFile({
+      plantChatLine({
         stateDir: it.stateDir,
-        person: PERSON,
-        agent: AGENT,
-        at: planted,
+        text: `the word for today is ${codeWord}`,
       });
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(
-        file,
-        JSON.stringify({
-          at: planted.toISOString(),
-          direction: "in",
-          from: PERSON,
-          text: `the word for today is ${codeWord}`,
-        }) + "\n",
-        "utf8",
-      );
 
       // Each turn of this session reports its OWN numbers. Two records that
       // carry the same counts could be one record copied, and a copy is exactly
@@ -388,18 +358,7 @@ test(
         paid: "plan",
         provider: "a-provider",
       };
-      const expectedId = new Bun.CryptoHasher("sha256")
-        .update(
-          JSON.stringify({
-            adapter: settings.adapter,
-            effort: settings.effort,
-            model: settings.model,
-            paid: settings.paid,
-            provider: settings.provider,
-          }),
-        )
-        .digest("hex")
-        .slice(0, 16);
+      const expectedId = expectedPresetId(settings);
       for (const turn of turns) {
         expect(turn.actor).toBe("runner");
         expect(turn.detail.preset).toBe("daily");

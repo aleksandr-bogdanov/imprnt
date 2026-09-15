@@ -84,13 +84,8 @@ export interface ScriptedAdapter {
   /** The numbers this loop reports right now. A check asserts them exactly. */
   readonly usage: AdapterUsage;
   lacks: readonly string[];
-  /** The deterministic answer, so a check knows the reply before it happens. */
-  replyFor(text: string): string;
-  /** How many sessions were opened, so a respawn is countable. */
-  sessions(): number;
 }
 
-/** The one place the scripted answer is defined. */
 export function scriptedReply(text: string): string {
   return `reply to ${text}`;
 }
@@ -263,8 +258,6 @@ export function createScriptedAdapter(
       return usage;
     },
     lacks,
-    replyFor: scriptedReply,
-    sessions: () => opened,
   };
 }
 
@@ -318,9 +311,6 @@ export async function serveAdapter(
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             streams.add(controller);
-          },
-          cancel() {
-            // the set is swept below
           },
         });
         return new Response(stream, {

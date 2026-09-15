@@ -41,7 +41,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
   startCluster,
-  freshDatabase,
   seam,
   lockTable,
   waitForLockWaiter,
@@ -51,17 +50,7 @@ import {
   type Cluster,
   type ReadyProcess,
 } from "./helpers/cluster.ts";
-import {
-  createFakePlatform,
-  servePlatform,
-  type FakePlatform,
-} from "./helpers/fake-platform.ts";
-import {
-  createScriptedAdapter,
-  serveAdapter,
-  scriptedReply,
-} from "./helpers/scripted-adapter.ts";
-import { writeRegistry } from "./helpers/registry.ts";
+import { scriptedReply } from "./helpers/scripted-adapter.ts";
 import {
   AGENT,
   CHAT,
@@ -69,9 +58,7 @@ import {
   PERSON,
   RUNNER,
   chatLogLines,
-  scratchDir,
-  storeReader,
-  userlessStoreUrl,
+  stageHub,
 } from "./helpers/hub-fixture.ts";
 
 let cluster: Cluster;
@@ -91,65 +78,14 @@ afterAll(async () => {
   if (cluster) await cluster.stop();
 });
 
-interface Stage {
-  db: string;
-  stateDir: string;
-  registryFile: string;
-  fake: FakePlatform;
-  platformUrl: string;
-  adapterName: string;
-  scripted: ReturnType<typeof createScriptedAdapter>;
-  adapterUrl: string;
-  stop(): Promise<void>;
-}
-
-/** One throwaway database, one fake platform, one scripted loop, one registry. */
-async function stage(): Promise<Stage> {
-  const db = await freshDatabase(cluster);
-  const dir = await scratchDir();
-  const stateDir = dir;
-  const fake = createFakePlatform({ name: "fake" });
-  const platform = await servePlatform(fake);
-  // A name generated at run time, so no build can have branched on it.
-  const adapterName = `scripted-${crypto.randomUUID().slice(0, 8)}`;
-  const scripted = createScriptedAdapter({ name: adapterName });
-  const adapter = await serveAdapter(scripted);
-  const registryFile = writeRegistry(dir, {
-    hub: { store_url: userlessStoreUrl(cluster, db), state_dir: stateDir },
-    presets: {
-      daily: {
-        adapter: adapterName,
-        model: "a-model-name",
-        provider: "a-provider",
-        effort: "medium",
-        paid: "plan",
-      },
-    },
-    agents: [
-      {
-        id: AGENT,
-        person: PERSON,
-        preset: "daily",
-        chat: CHAT,
-        door: DOOR,
-        runner: RUNNER,
-      },
-    ],
-  });
-  return {
-    db,
-    stateDir,
-    registryFile,
-    fake,
-    platformUrl: platform.url,
-    adapterName,
-    scripted,
-    adapterUrl: adapter.url,
-    async stop() {
-      await platform.stop();
-      await adapter.stop();
-    },
-  };
+/**
+ * One throwaway database, one fake platform, one scripted loop, one registry,
+ * with the platform and the loop behind http because a kill needs its own
+ * process. The adapter name is generated at run time, so no build can have
+ * branched on it.
+ */
+function stage() {
+  return stageHub(cluster, { servers: true });
 }
 
 test(
@@ -163,7 +99,7 @@ test(
     expect(typeof CURSOR_SHEET).toBe("string");
 
     const it = await stage();
-    const read = storeReader(cluster, it.db);
+    const read = it.read;
     let door: ReadyProcess | null = null;
     let runner: ReadyProcess | null = null;
     let lock: { pid: number; release(): Promise<void> } | null = null;
@@ -269,7 +205,6 @@ test(
       if (lock) await lock.release();
       if (door) await door.stop();
       if (runner) await runner.stop();
-      await read.close();
       await it.stop();
     }
   },
@@ -287,7 +222,7 @@ test(
     expect(typeof cursorId).toBe("function");
 
     const it = await stage();
-    const read = storeReader(cluster, it.db);
+    const read = it.read;
     let door: ReadyProcess | null = null;
     let runner: ReadyProcess | null = null;
     let lock: { pid: number; release(): Promise<void> } | null = null;
@@ -404,7 +339,6 @@ test(
       if (lock) await lock.release();
       if (door) await door.stop();
       if (runner) await runner.stop();
-      await read.close();
       await it.stop();
     }
   },

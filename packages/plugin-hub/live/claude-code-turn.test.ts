@@ -37,6 +37,8 @@ import {
   userlessStoreUrl,
 } from "../test/helpers/hub-fixture.ts";
 import { createFakePlatform } from "../test/helpers/fake-platform.ts";
+/** The pinned formula, computed by the test rather than read from the build. */
+import { expectedPresetId } from "../test/helpers/preset-oracle.ts";
 
 let cluster: Cluster;
 
@@ -54,22 +56,6 @@ beforeAll(async () => {
 afterAll(async () => {
   if (cluster) await cluster.stop();
 });
-
-/** The pinned formula, computed here rather than read from the code under test. */
-function expectedPresetId(preset: Record<string, string>): string {
-  return new Bun.CryptoHasher("sha256")
-    .update(
-      JSON.stringify({
-        adapter: preset.adapter,
-        effort: preset.effort,
-        model: preset.model,
-        paid: preset.paid,
-        provider: preset.provider,
-      }),
-    )
-    .digest("hex")
-    .slice(0, 16);
-}
 
 test(
   "LIVE MSG-03 and LOOP-02 a turn with no tool call still lands and carries the loop's own numbers: the posted text is the turn's text, the preset id is the pinned formula over the scratch registry, the token counts are above zero, and acked precedes started precedes answered (SPEC §2 and §3, L1 and L18)",

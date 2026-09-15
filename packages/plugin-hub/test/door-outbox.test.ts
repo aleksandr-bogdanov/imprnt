@@ -32,7 +32,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
   startCluster,
-  freshDatabase,
   seam,
   statementWatch,
   backendPid,
@@ -40,22 +39,7 @@ import {
   until,
   type Cluster,
 } from "./helpers/cluster.ts";
-import {
-  createFakePlatform,
-  type FakePlatform,
-} from "./helpers/fake-platform.ts";
-import { writeRegistry } from "./helpers/registry.ts";
-import {
-  AGENT,
-  CHAT,
-  DOOR,
-  PERSON,
-  RUNNER,
-  scratchDir,
-  storeReader,
-  userlessStoreUrl,
-  type StoreReader,
-} from "./helpers/hub-fixture.ts";
+import { AGENT, CHAT, DOOR, PERSON, stageHub } from "./helpers/hub-fixture.ts";
 
 let cluster: Cluster;
 
@@ -86,49 +70,9 @@ type Conn = {
   close(): Promise<void>;
 };
 
-interface Stage {
-  db: string;
-  stateDir: string;
-  registryFile: string;
-  storeUrl: string;
-  fake: FakePlatform;
-  read: StoreReader;
-}
-
-async function stage(): Promise<Stage> {
-  const db = await freshDatabase(cluster);
-  const dir = await scratchDir();
-  const storeUrl = userlessStoreUrl(cluster, db);
-  const registryFile = writeRegistry(dir, {
-    hub: { store_url: storeUrl, state_dir: dir },
-    presets: {
-      daily: {
-        adapter: "scripted",
-        model: "a-model-name",
-        provider: "a-provider",
-        effort: "medium",
-        paid: "plan",
-      },
-    },
-    agents: [
-      {
-        id: AGENT,
-        person: PERSON,
-        preset: "daily",
-        chat: CHAT,
-        door: DOOR,
-        runner: RUNNER,
-      },
-    ],
-  });
-  return {
-    db,
-    stateDir: dir,
-    registryFile,
-    storeUrl,
-    fake: createFakePlatform({ name: "fake" }),
-    read: storeReader(cluster, db),
-  };
+/** One throwaway database, one registry naming it, one in-process platform. */
+function stage() {
+  return stageHub(cluster, { preset: { adapter: "scripted" } });
 }
 
 /** A committed inbound row, written by the door role, with no runner involved. */

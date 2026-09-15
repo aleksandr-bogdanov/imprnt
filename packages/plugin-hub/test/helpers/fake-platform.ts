@@ -71,10 +71,6 @@ export interface FakePlatform {
   pulls(): PullRecord[];
   /** While on, every post is refused and the caller sees the error. */
   holdPosts(on: boolean): void;
-  /** The cursor of the last message this fake handed out, for observation. */
-  servedThrough(): string | null;
-  /** Every message the fake holds, in arrival order. */
-  messages(): PlatformMessage[];
 }
 
 export class PlatformRefused extends Error {
@@ -204,8 +200,6 @@ export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
     holdPosts(on) {
       refusing = on;
     },
-    servedThrough: () => (served < 0 ? null : String(served)),
-    messages: () => queue.map((m) => ({ ...m })),
   };
 }
 

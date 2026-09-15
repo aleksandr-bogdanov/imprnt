@@ -32,6 +32,8 @@ import {
   stageHub,
   type LedgerRow,
 } from "./helpers/hub-fixture.ts";
+/** The pinned formula, computed by the test rather than read from the build. */
+import { expectedPresetId } from "./helpers/preset-oracle.ts";
 
 let cluster: Cluster;
 
@@ -44,21 +46,6 @@ beforeAll(async () => {
 afterAll(async () => {
   if (cluster) await cluster.stop();
 });
-
-/** The pinned formula, computed here rather than read from the code under test. */
-function expectedPresetId(preset: Record<string, string>): string {
-  const canonical = JSON.stringify({
-    adapter: preset.adapter,
-    effort: preset.effort,
-    model: preset.model,
-    paid: preset.paid,
-    provider: preset.provider,
-  });
-  return new Bun.CryptoHasher("sha256")
-    .update(canonical)
-    .digest("hex")
-    .slice(0, 16);
-}
 
 /** The turn record for one inbound row, and there must be exactly one. */
 function turnFor(turns: LedgerRow[], subject: string): LedgerRow {

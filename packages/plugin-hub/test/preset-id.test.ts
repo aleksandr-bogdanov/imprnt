@@ -18,31 +18,8 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
 import { scratchDir } from "./helpers/hub-fixture.ts";
-
-/**
- * The pinned formula, computed by the TEST rather than read from the code under
- * test, so the id is reproducible outside this codebase and a later question
- * about an old turn record can be answered without running the hub.
- */
-function expectedPresetId(preset: {
-  adapter: string;
-  effort: string;
-  model: string;
-  paid: string;
-  provider: string;
-}): string {
-  const canonical = JSON.stringify({
-    adapter: preset.adapter,
-    effort: preset.effort,
-    model: preset.model,
-    paid: preset.paid,
-    provider: preset.provider,
-  });
-  return new Bun.CryptoHasher("sha256")
-    .update(canonical)
-    .digest("hex")
-    .slice(0, 16);
-}
+/** The pinned formula, computed by the test rather than read from the build. */
+import { expectedPresetId } from "./helpers/preset-oracle.ts";
 
 const BASE = {
   adapter: "an-adapter",

@@ -116,7 +116,6 @@ test(
       );
       await Bun.sleep(1500);
 
-      // The order is asserted as a sequence, never as a set.
       const fed = it.scripted.fed();
       expect(fed[0].text.startsWith(TAIL_PREAMBLE as string)).toBe(true);
       expect(fed.slice(1).map((f) => f.text)).toEqual([
@@ -144,7 +143,6 @@ test(
     // The tagged red reason is schema missing, so the schema is probed before
     // any seam import and nothing else can fire first.
     const it = await stageHub(cluster);
-    let runner: { stop(): Promise<void> } | null = null;
 
     try {
       // A row with no kind named, which is every phase 1 insert. The default
@@ -204,8 +202,8 @@ test(
       const { runRunner } = await seam("src/runner/run.ts");
       expect(typeof runRunner).toBe("function");
 
-      // Its own handle, so the outer finally can never reach a runner this
-      // half started and this half can never leave one behind.
+      // Its own handle, stopped by this half's own finally, so this half can
+      // never leave a runner behind.
       const second = await stageHub(cluster);
       let laterRunner: { stop(): Promise<void> } | null = null;
       try {
@@ -251,7 +249,6 @@ test(
       expect(PERSON).toBe("p1");
       expect(AGENT).toBe("p1-lair");
     } finally {
-      if (runner) await runner.stop();
       await it.stop();
     }
   },

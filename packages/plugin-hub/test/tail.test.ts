@@ -17,11 +17,11 @@
 // per-agent tail size, for the third.
 
 import { test, expect } from "bun:test";
-import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { seam, hubPath } from "./helpers/cluster.ts";
-import { AGENT, PERSON, chatLogFile, scratchDir } from "./helpers/hub-fixture.ts";
+import { AGENT, PERSON, plantChatLine, scratchDir } from "./helpers/hub-fixture.ts";
 
 /**
  * A fixed `now`, chosen so that 30 hours ago, 23 hours ago and 10 minutes ago
@@ -31,18 +31,7 @@ import { AGENT, PERSON, chatLogFile, scratchDir } from "./helpers/hub-fixture.ts
 const NOW = new Date("2026-09-15T05:00:00.000Z");
 
 function planted(stateDir: string, at: Date, text: string): void {
-  const file = chatLogFile({ stateDir, person: PERSON, agent: AGENT, at });
-  mkdirSync(dirname(file), { recursive: true });
-  appendFileSync(
-    file,
-    JSON.stringify({
-      at: at.toISOString(),
-      direction: "in",
-      from: PERSON,
-      text,
-    }) + "\n",
-    "utf8",
-  );
+  plantChatLine({ stateDir, at, text });
 }
 
 function hoursBefore(hours: number, extraMs = 0): Date {

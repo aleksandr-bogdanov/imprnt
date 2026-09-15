@@ -45,7 +45,6 @@ export const DOOR = "door-fake";
 export const RUNNER = "runner-test";
 export const CHAT = FAKE_CHAT;
 
-/** A temporary directory for a registry file and a state dir. */
 export async function scratchDir(what = "hub-phase2-"): Promise<string> {
   return await mkdtemp(join(tmpdir(), what));
 }
@@ -244,7 +243,6 @@ export interface StageOptions {
   preset?: PresetSpec;
   /** Replace the whole registry spec, given the pieces this stage built. */
   registry?: (base: RegistrySpec) => RegistrySpec;
-  agents?: RegistrySpec["agents"];
 }
 
 export async function stageHub(
@@ -280,7 +278,7 @@ export async function stageHub(
         ...(options.preset ?? {}),
       },
     },
-    agents: options.agents ?? [
+    agents: [
       {
         id: AGENT,
         person: PERSON,
