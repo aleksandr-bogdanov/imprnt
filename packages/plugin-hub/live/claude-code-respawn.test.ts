@@ -159,7 +159,16 @@ test(
       // A word an empty session cannot know, generated at run time so no build
       // can have it baked in, planted into the log AFTER the first session is
       // gone so nothing that ran can have heard it.
-      const codeWord = `zephyr${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
+      //
+      // It is planted as ORDINARY CONVERSATION, a thing the person decided and
+      // the agent acknowledged, and the question below asks it back the same
+      // way. An earlier wording called it the passphrase for today and asked
+      // for it by that name, and the real loop refused three times out of
+      // three: instructions embedded in chat history framed as a passphrase
+      // are not something it follows, and the tail's own preamble says do not
+      // answer it. SPEC section 2 asks for a word an empty chat cannot know,
+      // and says nothing about a secret.
+      const codeWord = `Pelican${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
       const planted = new Date();
       const file = chatLogFile({
         stateDir: dir,
@@ -168,14 +177,25 @@ test(
         at: planted,
       });
       mkdirSync(dirname(file), { recursive: true });
+      // Both halves of the exchange, because a person deciding something and an
+      // agent answering is what the log holds, and a lone unanswered line reads
+      // as an instruction left lying about.
       writeFileSync(
         file,
-        JSON.stringify({
-          at: planted.toISOString(),
-          direction: "in",
-          from: PERSON,
-          text: `remember this, the passphrase for today is ${codeWord}`,
-        }) + "\n",
+        [
+          JSON.stringify({
+            at: planted.toISOString(),
+            direction: "in",
+            from: PERSON,
+            text: `by the way, I have decided to call the new espresso machine ${codeWord}`,
+          }),
+          JSON.stringify({
+            at: new Date(planted.getTime() + 1000).toISOString(),
+            direction: "out",
+            from: AGENT,
+            text: `Got it, ${codeWord} it is.`,
+          }),
+        ].join("\n") + "\n",
         "utf8",
       );
       expect(
@@ -195,7 +215,7 @@ test(
         adapters: ADAPTERS,
       });
       fake.deliver({
-        text: "what is the passphrase for today? answer with the word only.",
+        text: "what did I decide to call the new espresso machine? answer with the name only.",
       });
 
       // The three ways this can miss are told apart, so a failure says which.
