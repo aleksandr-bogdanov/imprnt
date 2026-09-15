@@ -8,7 +8,7 @@ import type { OsSeam, RenderContext, WantedUnit } from "../os/types.ts";
 import { listMachines, runEntriesFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
-import { POSTGRES_PEAK_ID, recordPeak, residentIds } from "./peak.ts";
+import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.ts";
 import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
 
 /**
@@ -48,38 +48,6 @@ const KINDS: Record<string, string> = { door: "door", runner: "runner" };
 function setting(registry: unknown, key: string, fallback: number): number {
   const found = readSetting(registry, key);
   return found === undefined || found === null ? fallback : Number(found);
-}
-
-/** The pid of the process that fathered this backend, when it is on this box. */
-async function postmasterPid(store: Store): Promise<number | null> {
-  try {
-    const [row] = (await store.sql`select pg_backend_pid() as pid`) as { pid: number }[];
-    const backend = Number(row?.pid ?? 0);
-    if (!backend) return null;
-    let parent = 0;
-    if (process.platform === "linux") {
-      const stat = readFileSync(`/proc/${backend}/stat`, "utf8");
-      parent = Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[1] ?? 0);
-    } else {
-      const out = Bun.spawnSync(["ps", "-o", "ppid=", "-p", String(backend)], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      parent = Number((out.stdout?.toString() ?? "").trim());
-    }
-    if (!parent || parent <= 1) return null;
-    // The backend's parent is the postmaster, and this only holds when the store
-    // is on the same box. A spoke reading a store over the tailnet gets a pid
-    // that is not a process here, so the name is checked before it is believed.
-    const named = Bun.spawnSync(["ps", "-o", "comm=", "-p", String(parent)], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const comm = (named.stdout?.toString() ?? "").trim().toLowerCase();
-    return comm.includes("postgres") ? parent : null;
-  } catch {
-    return null;
-  }
 }
 
 export async function runHub(options: {
@@ -285,7 +253,10 @@ export async function runHub(options: {
     for (const id of residentIds(registry, options.machine)) {
       let pid: number | null = null;
       if (id === POSTGRES_PEAK_ID) {
-        pid = await postmasterPid(store);
+        // 03b item 2. The file the household DECLARED, never a process tree.
+        // With no `[store]` section nothing is measured for the store and
+        // `check` keeps `peak-missing:postgres`, which is the honest state.
+        pid = readStorePid(registry).pid;
       } else if (entries.some((entry) => entry.id === id)) {
         pid = (await os.show(id))?.pid ?? null;
       }

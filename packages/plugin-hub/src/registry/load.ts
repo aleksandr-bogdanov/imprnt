@@ -86,6 +86,25 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "how long a runner may be off the store with no work before it is reported",
     required: false,
   },
+  // 03b item 2. Where the store's own process writes its pid, and what the
+  // machine's service manager calls it. Every standard install writes a pid
+  // file, so the hub reads that rather than guessing at a process tree, and the
+  // install script writes these two once per box. They go at the END of the
+  // list on purpose: RUN-06's negative direction deletes the FIRST declared
+  // field's line from the shipped example and requires the load to be refused,
+  // which only a required field can do.
+  {
+    key: "store.pid_file",
+    type: "string",
+    what: "the file the store's postmaster writes its pid into, whose first line the hub reads",
+    required: false,
+  },
+  {
+    key: "store.unit",
+    type: "string",
+    what: "what this machine's service manager calls the store, for a person to look up",
+    required: false,
+  },
 ];
 
 export class RegistryRefused extends Error {
