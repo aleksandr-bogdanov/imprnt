@@ -295,16 +295,30 @@ export async function runCheck(options: {
   for (const agent of listAgents(registry)) {
     if (!ownRunners.has(agent.runner)) continue;
     const person = personOf(registry, agent.id);
-    // No `[[people]]` table at all is the shape a household starts with and is
-    // not a finding, which is the same tolerance the loader gives the field.
-    if (person === null || person.tree !== "") continue;
+    // A DECLARED PERSON WITH NO TREE AND NO PERSON AT ALL ARE THE SAME FINDING
+    // (03b-DEBTS:19, VERIFY-CODEX row 1). Entry 1 of these build notes shipped
+    // the narrow reading, where a file carrying no `[[people]]` table was
+    // silent, on the argument that half the fixtures would otherwise carry a
+    // row. That is an argument about the fixtures. What `check` is being asked
+    // is whether this machine's agents run inside a box, and the answer for an
+    // agent whose person the file never mentions is no, exactly as loudly as
+    // for one whose entry omits the field: the runner wraps nothing either way
+    // (`boxFor` returns null on an empty tree) and the other people's trees on
+    // that box are open to it. The two differ only in the line a household has
+    // to add, so the finding says which.
+    if (person !== null && person.tree !== "") continue;
+    const declared = person !== null;
     findings.push({
       id: findingId(machine, "agent-unboxed", agent.id),
       kind: "agent-unboxed",
       subject: agent.id,
       machine,
-      says: `${agent.id} runs unboxed, because the person ${agent.person} declares no tree and the tree is what the box fences`,
-      fix: `give ${agent.person} a tree in ${options.registryFile}, as tree = "/var/lib/imprnt-hub/${agent.person}" under that [[people]] entry`,
+      says: declared
+        ? `${agent.id} runs unboxed, because the person ${agent.person} declares no tree and the tree is what the box fences`
+        : `${agent.id} runs unboxed, because ${options.registryFile} carries no [[people]] entry for ${agent.person} at all, and the tree on that entry is what the box fences`,
+      fix: declared
+        ? `give ${agent.person} a tree in ${options.registryFile}, as tree = "/var/lib/imprnt-hub/${agent.person}" under that [[people]] entry`
+        : `add a [[people]] entry for ${agent.person} to ${options.registryFile}, carrying tree = "/var/lib/imprnt-hub/${agent.person}"`,
     });
   }
 

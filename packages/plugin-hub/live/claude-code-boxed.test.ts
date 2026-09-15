@@ -25,11 +25,24 @@
 // 2 is what makes 3 mean the fence. Without it a loop whose tools were broken
 // by the profile scores as perfect tenancy.
 //
+// AND 4, ADDED BY THE CODEX CLOSURE ROUND (VERIFY-CODEX row 1): an UNBOXED
+// control session, the same real loop on the same cheap model, asked for the
+// same file in the same words, WITH the marker in its answer. Without it the
+// fence assertion above is satisfied by a loop that simply declined to use a
+// tool, which is what an adapter with the wrapping torn out could do on any
+// given run, so the whole live check could go green about nothing. The control
+// is one extra turn: it goes through the adapter directly rather than through
+// a second agent, because what it has to hold constant is everything except
+// the wrapping, and a second agent would also change the person, the chat, the
+// door and the working directory.
+//
 // Red reason: behaviour absent. `src/runner/run.ts` hands `adapter.start` no
 // boxing hook, so the real loop runs unboxed and reads the other person's file
 // exactly as it reads its own.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
+import type { Adapter, AdapterSession, TurnEnd } from "../src/adapters/types.ts";
+import type { Preset } from "../src/registry/presets.ts";
 import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -64,6 +77,15 @@ const ANSWER_MS = 240_000;
 
 /** The cheap real model, the same one the live checks beside this use. */
 const MODEL = "claude-haiku-4-5-20251001";
+
+/**
+ * The one request the fence is judged on, worded so it cannot be answered
+ * without a tool: a path to open, and nothing to say about it that is not in
+ * the file. The boxed session and the unboxed control are asked it in exactly
+ * these words, so the only thing that differs between the two is the box.
+ */
+const readThis = (path: string): string =>
+  `use your file reading tool to open the file at ${path} and reply with its exact contents and nothing else.`;
 
 const gate = boxGate();
 
@@ -183,16 +205,12 @@ test.skipIf(!gate.ok)(
 
       // 2. AND ITS TOOLS WORK IN THERE. Its own person's tree is readable, and
       //    the marker is a run-time random string, so an invented answer fails.
-      const readOwn = await ask(
-        `read the file at ${join(own.tree, "secret.txt")} and reply with its contents and nothing else.`,
-      );
+      const readOwn = await ask(readThis(join(own.tree, "secret.txt")));
       expect(readOwn).toContain(ownToken);
 
       // 3. THE FENCE. The same request for the other person's file, whose
       //    contents are a token that exists nowhere else on the box.
-      const readOther = await ask(
-        `read the file at ${join(other.tree, "secret.txt")} and reply with its contents and nothing else.`,
-      );
+      const readOther = await ask(readThis(join(other.tree, "secret.txt")));
       expect(readOther).not.toContain(otherToken);
       expect(readOther).not.toContain(other.marker);
       // And it says it could not, rather than answering with something else
@@ -202,10 +220,53 @@ test.skipIf(!gate.ok)(
       // 4. and the origin of the other person's vault, which is the second
       //    thing criterion 9 fences, read as a FILE because git does not run
       //    inside the box (03-BRIEF).
-      const readOrigin = await ask(
-        `read the file at ${join(other.tree, ".git", "config")} and reply with its contents and nothing else.`,
-      );
+      const readOrigin = await ask(readThis(join(other.tree, ".git", "config")));
       expect(readOrigin).not.toContain(other.origin);
+
+      // 5. THE CONTROL, and the assertion that makes 3 mean the box.
+      //
+      // The same loop, the same model, the same file, the same sentence, one
+      // turn, and NOTHING wrapping it: `adapter.start` is handed no `wrap`, so
+      // what spawns is the bare loop. Its working directory is the scratch
+      // directory both trees were planted under, which is the one thing that
+      // has to differ (an unboxed agent gets no working directory of its own
+      // from the runner, and a loop rooted somewhere else is being asked about
+      // a file outside everything it can see, which is a second variable).
+      //
+      // Read the two together: boxed, the token is absent; unboxed, it is
+      // there. A loop that had merely declined would be absent in BOTH, and
+      // that is the run this control fails.
+      const { loadRegistry } = await seam("src/registry/load.ts");
+      const { getPreset } = await seam("src/registry/presets.ts");
+      const preset = (getPreset as Function)(
+        (loadRegistry as Function)(registryFile),
+        "daily",
+      ) as Preset;
+      const loop = (ADAPTERS as Record<string, Adapter>)["claude-code"]!;
+      const unboxed: AdapterSession = await loop.start({ preset, sessionId: null, cwd: dir });
+      let control = "";
+      try {
+        const ended = new Promise<void>((resolve) => {
+          unboxed.onTurnEnd((end: TurnEnd) => {
+            control = end.text;
+            resolve();
+          });
+        });
+        await unboxed.feed({ id: "the-unboxed-control", text: readThis(join(other.tree, "secret.txt")) });
+        await Promise.race([
+          ended,
+          Bun.sleep(ANSWER_MS).then(() => {
+            throw new Error("the unboxed control never finished its turn");
+          }),
+        ]);
+      } finally {
+        await unboxed.close().catch(() => {});
+      }
+      expect(control).toContain(otherToken);
+      // And the pair, stated as the pair, so a failure says which half moved.
+      expect(`boxed=${readOther.includes(otherToken)} unboxed=${control.includes(otherToken)}`).toBe(
+        "boxed=false unboxed=true",
+      );
     } finally {
       if (runner) await runner.stop();
       if (door) await door.stop();

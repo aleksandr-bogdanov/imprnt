@@ -54,6 +54,7 @@ import {
   type HeldChild,
 } from "./helpers/scripted-adapter.ts";
 import {
+  AGENT,
   AGENT2,
   CHAT,
   DOOR,
@@ -221,6 +222,52 @@ test(
       } finally {
         await second.close().catch(() => {});
         await whole.stop();
+      }
+
+      // --- AND THE FILE THAT DECLARES NO PEOPLE AT ALL, which is the shape
+      //     03b-DEBTS:19 names first and the one the build round left silent.
+      //     An agent whose person the file never mentions runs exactly as
+      //     unboxed as one whose entry omits the field: `boxFor` returns null
+      //     for an empty tree either way, and the other trees on that box are
+      //     open to it. The two differ only in the line a household has to
+      //     add, so the finding has to say WHICH line, and that is what is
+      //     asserted rather than merely that it fired.
+      const nobody = await stageHub(cluster, {
+        machines: [machine],
+        run: [
+          { id: DOOR, kind: "door", machine: machine.id, platform: "fake", person: PERSON, token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 },
+          { id: RUNNER, kind: "runner", machine: machine.id, schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048 },
+        ],
+      });
+      const third = await superStore(cluster, nobody.db);
+      try {
+        const found = await check({
+          machine: machine.id,
+          registryFile: nobody.registryFile,
+          store: third,
+          os: null,
+          kernel: null,
+        });
+        const silent = found.filter((one) => one.kind === "agent-unboxed");
+        expect(silent.map((one) => one.subject)).toEqual([AGENT]);
+        expect(silent[0].machine).toBe(machine.id);
+        expect(silent[0].id).toBe(`${machine.id}/agent-unboxed:${AGENT}`);
+        expect(silent[0].says).toContain(AGENT);
+        expect(silent[0].says).toContain(PERSON);
+        // The two wordings are not interchangeable. This file has no table to
+        // put a field in, so a fix that said "under that [[people]] entry"
+        // would be pointing at a line that does not exist.
+        expect(silent[0].says).toContain("[[people]]");
+        expect(silent[0].fix).toContain("[[people]]");
+        expect(silent[0].fix).toContain("tree");
+        expect(silent[0].fix).toContain(nobody.registryFile);
+        expect(silent[0].fix).not.toContain("under that");
+        // Not a refusal here either: the file loaded and the rest of the run
+        // happened, which is what separates a finding from a fence.
+        expect(found.some((one) => one.kind === "peak-missing")).toBe(true);
+      } finally {
+        await third.close().catch(() => {});
+        await nobody.stop();
       }
     } finally {
       await store.close().catch(() => {});
