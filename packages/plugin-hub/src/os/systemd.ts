@@ -142,17 +142,20 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
         // D-96. The give-up pair, which launchd has no equivalent of at all.
         `StartLimitIntervalSec=${ctx.giveUpWindowSeconds}`,
         `StartLimitBurst=${ctx.giveUpAfter}`,
-        // A unit that wants to be LOADED is the one kind of ours systemd will
-        // not let go of by itself. It carries no `[Install]`, nothing enables
-        // it and no timer names it, so it is already collected the moment it
-        // goes inactive. Killed rather than stopped it goes to `failed`
-        // instead, and the default collect mode keeps a failed unit loaded
-        // forever: a dead on-demand piece would sit in `list-units --all` with
-        // nobody to clear it, since the hub reads the manager rather than
-        // sweeping it. MEASURED: `Result=signal`, `ExecMainStatus=9`, listed
-        // indefinitely. This says collect it in that state too, which is the
-        // same rule the manager already applies to the inactive one.
-        ...(wanted === "loaded" ? ["CollectMode=inactive-or-failed"] : []),
+        // The default collect mode keeps a FAILED unit loaded forever, and the
+        // hub reads the manager rather than sweeping it, so one of ours that
+        // died would sit in `list-units --all` with nobody to clear it.
+        // MEASURED on the hub box, twice: a `loaded` piece killed rather than
+        // stopped goes to `failed` with `Result=signal`, `ExecMainStatus=9` and
+        // is listed indefinitely; and a RESIDENT one systemd has given up
+        // restarting sits in `failed` after it has been stopped and disabled,
+        // which leaves it on the box after the removal that was meant to take
+        // it off. This is on every unit the hub writes, and it costs a resident
+        // nothing while it is enabled: an enabled unit is referenced by
+        // `default.target` and is never collected, so the mode only decides
+        // what happens once the hub has disabled it, which is the one moment
+        // the hub wants it gone.
+        "CollectMode=inactive-or-failed",
         "",
         "[Service]",
         `ExecStart=${argv.map(argument).join(" ")}`,
