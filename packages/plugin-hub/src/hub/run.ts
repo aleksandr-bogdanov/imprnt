@@ -239,13 +239,23 @@ export async function runHub(options: {
       }
       // A target this machine does not run belongs to the other machine's hub.
       if (!entry) continue;
-      await os.restart(request.target);
+      // The line goes down BEFORE the manager is asked, because the line is
+      // what the hub decided and not a report that the process came back. On
+      // launchd `kickstart -k` returns while the old process is still dying, so
+      // the diary already could not promise a live pid; on systemd `restart`
+      // returns only once the new one is up, and a line written after it would
+      // reach the store AFTER anything watching the pid saw it change, leaving
+      // the reason for the change absent at the only moment someone would look
+      // for it. Written first, the two flavours say the same thing in the same
+      // order, and a manager that refuses the restart throws out of the tick
+      // loudly rather than quietly.
       await say("unit.restarted", request.target, {
         entry: request.target,
         machine: options.machine,
         asked_by: request.askedBy,
         why: request.why,
       });
+      await os.restart(request.target);
     }
   };
 

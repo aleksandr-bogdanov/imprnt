@@ -15,7 +15,7 @@ import type { MemoryReading, OsSeam, RenderContext, UnitFile, UnitState } from "
  * not a violation of "never edit a unit you did not create": it re-reads every
  * user unit including the live v2's, and it starts, stops and restarts nothing.
  *
- * MEASURED on the hub box (systemd 252), and the build leans on all four:
+ * MEASURED on the hub box (systemd 252), and the build leans on all five:
  *   - a unit that is neither enabled nor referenced is garbage collected the
  *     moment it goes inactive, and `ExecMainStartTimestamp`, `ExecMainStatus`
  *     and `ActiveEnterTimestamp` all come back EMPTY afterwards. So `install`
@@ -27,6 +27,9 @@ import type { MemoryReading, OsSeam, RenderContext, UnitFile, UnitState } from "
  *   - with `StartLimitBurst=3` a unit that keeps exiting reaches
  *     `NRestarts=3` and then sits in `failed`, so a crash-loop threshold of two
  *     restarts is reachable here as well as on a Mac.
+ *   - a unit killed by a signal goes to `failed`, and the DEFAULT collect mode
+ *     never lets go of a failed one however unreferenced it is, so the unit
+ *     that wants to be loaded says otherwise in its own file.
  */
 
 const FIELDS = [
@@ -146,6 +149,17 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
         // D-96. The give-up pair, which launchd has no equivalent of at all.
         `StartLimitIntervalSec=${ctx.giveUpWindowSeconds}`,
         `StartLimitBurst=${ctx.giveUpAfter}`,
+        // A unit that wants to be LOADED is the one kind of ours systemd will
+        // not let go of by itself. It carries no `[Install]`, nothing enables
+        // it and no timer names it, so it is already collected the moment it
+        // goes inactive. Killed rather than stopped it goes to `failed`
+        // instead, and the default collect mode keeps a failed unit loaded
+        // forever: a dead on-demand piece would sit in `list-units --all` with
+        // nobody to clear it, since the hub reads the manager rather than
+        // sweeping it. MEASURED: `Result=signal`, `ExecMainStatus=9`, listed
+        // indefinitely. This says collect it in that state too, which is the
+        // same rule the manager already applies to the inactive one.
+        ...(wanted === "loaded" ? ["CollectMode=inactive-or-failed"] : []),
         "",
         "[Service]",
         `ExecStart=${argv.map(argument).join(" ")}`,
