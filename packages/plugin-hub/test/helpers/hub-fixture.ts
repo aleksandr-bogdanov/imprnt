@@ -20,7 +20,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { freshDatabase, type Cluster } from "./cluster.ts";
+import {
+  freshDatabase,
+  startReadySubprocess,
+  type Cluster,
+  type ReadyProcess,
+} from "./cluster.ts";
 import {
   createFakePlatform,
   servePlatform,
@@ -30,20 +35,33 @@ import {
 import {
   createScriptedAdapter,
   serveAdapter,
+  type AdapterServer,
   type ScriptedAdapter,
   type ScriptedOptions,
 } from "./scripted-adapter.ts";
 import {
   writeRegistry,
+  type AgentSpec,
+  type MachineSpec,
+  type PersonSpec,
   type RegistrySpec,
   type PresetSpec,
+  type RunSpec,
 } from "./registry.ts";
+import { openStore, type Store } from "../../src/store/connect.ts";
 
 export const PERSON = "p1";
 export const AGENT = "p1-lair";
 export const DOOR = "door-fake";
 export const RUNNER = "runner-test";
 export const CHAT = FAKE_CHAT;
+
+// D-100. The second person, the second agent and the second runner, for the
+// two-machine checks. The repository is public, so these are fixtures and not
+// anybody's name.
+export const PERSON2 = "p2";
+export const AGENT2 = "p2-lair";
+export const RUNNER2 = "runner-mac";
 
 export async function scratchDir(what = "hub-phase2-"): Promise<string> {
   return await mkdtemp(join(tmpdir(), what));
@@ -229,6 +247,9 @@ export interface StagedHub {
   /** Set when `servers` was asked for. */
   platformUrl: string;
   adapterUrl: string;
+  /** The adapter over the wire, when `servers` was asked for. It is what maps
+   *  an agent to the pid of the real child the RUNNER's process spawned. */
+  adapterServer: AdapterServer | null;
   read: StoreReader;
   stop(): Promise<void>;
 }
@@ -243,6 +264,19 @@ export interface StageOptions {
   preset?: PresetSpec;
   /** Replace the whole registry spec, given the pieces this stage built. */
   registry?: (base: RegistrySpec) => RegistrySpec;
+  // Phase 3. Each of these is ABSENT from the default spec, so every phase 2
+  // check keeps loading the registry it loads today (D-76 and D-93's tolerance
+  // is what makes that legal once the loader carries the new fields).
+  /** D-76. The machines this file declares. */
+  machines?: MachineSpec[];
+  /** D-93. The people this file declares, each with its tree. */
+  people?: PersonSpec[];
+  /** The `[[run]]` entries, when the agents' implied set is not what is wanted. */
+  run?: RunSpec[];
+  /** Extra agents beyond the default `p1-lair`. */
+  agents?: AgentSpec[];
+  /** Extra or replacement `[hub]` settings. */
+  hub?: Record<string, string | number>;
 }
 
 export async function stageHub(
@@ -260,14 +294,17 @@ export async function stageHub(
   });
 
   let platform: { url: string; stop(): Promise<void> } | null = null;
-  let adapter: { url: string; stop(): Promise<void> } | null = null;
+  let adapter: AdapterServer | null = null;
   if (options.servers) {
     platform = await servePlatform(fake);
     adapter = await serveAdapter(scripted);
   }
 
   const base: RegistrySpec = {
-    hub: { store_url: storeUrl, state_dir: dir },
+    hub: { store_url: storeUrl, state_dir: dir, ...(options.hub ?? {}) },
+    ...(options.machines ? { machines: options.machines } : {}),
+    ...(options.people ? { people: options.people } : {}),
+    ...(options.run ? { run: options.run } : {}),
     presets: {
       daily: {
         adapter: adapterName,
@@ -287,6 +324,7 @@ export async function stageHub(
         door: DOOR,
         runner: RUNNER,
       },
+      ...(options.agents ?? []),
     ],
   };
   const spec = options.registry ? options.registry(base) : base;
@@ -304,16 +342,92 @@ export async function stageHub(
     adapterName,
     platformUrl: platform?.url ?? "",
     adapterUrl: adapter?.url ?? "",
+    adapterServer: adapter,
     read,
     async stop() {
       if (platform) await platform.stop();
       if (adapter) await adapter.stop();
+      // Every real child this stage's loop still owns, reaped, so a suite that
+      // spawned one never leaks the memory it was told to hold.
+      for (const child of scripted.children()) child.kill();
       await read.close().catch(() => {});
       // The scratch dir is this stage's own, so it goes with it. Leaving it
       // behind is a side effect of running the suite, outside the package.
       await rm(dir, { recursive: true, force: true }).catch(() => {});
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 additions.
+// ---------------------------------------------------------------------------
+
+/**
+ * A real `StoreLike` over the throwaway cluster, as the SUPERUSER.
+ *
+ * `runCheck`, `recordPeak` and `recordJobSuccess` take a store. In production
+ * the hub opens it as `hub_hub`, which is a role the schema does not carry yet.
+ * Opening as that role here would make every check in 03-03 and 03-04 red for
+ * "role does not exist" rather than for the module the plan names, so the
+ * fixture opens as the superuser and the ROLE fence stays bound where phase 1
+ * and phase 2 bind it.
+ */
+export async function superStore(
+  cluster: Cluster,
+  database: string,
+): Promise<Store> {
+  return await openStore({ url: cluster.url(database) });
+}
+
+/** One state sheet, read through a superuser connection. */
+export interface SheetReader {
+  rows(): Promise<{ id: string; data: Record<string, unknown>; updated_at: Date }[]>;
+  row(id: string): Promise<{ id: string; data: Record<string, unknown>; updated_at: Date } | null>;
+  close(): Promise<void>;
+}
+
+export function hubReader(
+  cluster: Cluster,
+  database: string,
+  sheet: string,
+): SheetReader {
+  const conn = cluster.connect(database) as unknown as {
+    unsafe(query: string, values?: unknown[]): Promise<unknown>;
+    close(): Promise<void>;
+  };
+  const all = async () =>
+    (await conn.unsafe(
+      "select id, data, updated_at from state_row where sheet = $1 order by id",
+      [sheet],
+    )) as unknown as {
+      id: string;
+      data: Record<string, unknown>;
+      updated_at: Date;
+    }[];
+  return {
+    rows: all,
+    async row(id) {
+      return (await all()).find((r) => r.id === id) ?? null;
+    },
+    close: () => conn.close(),
+  };
+}
+
+/**
+ * The hub as a PROCESS, so a check that asserts "this pid did not change" is
+ * asserting about a process and not about a handle in its own runtime. The same
+ * reason phase 2 gave for the door and the runner.
+ */
+export async function startHub(
+  registryFile: string,
+  machine: string,
+  unitDir?: string,
+): Promise<ReadyProcess> {
+  return await startReadySubprocess("test/helpers/hub-subprocess.ts", [
+    registryFile,
+    machine,
+    ...(unitDir ? [unitDir] : []),
+  ]);
 }
 
 /**
