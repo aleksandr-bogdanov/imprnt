@@ -1,0 +1,235 @@
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import type { RunEntry } from "../registry/load.ts";
+import { scheduleSeconds, wantedState } from "./diff.ts";
+import { SCAN_PREFIX, unitName } from "./names.ts";
+import type { MemoryReading, OsSeam, RenderContext, UnitFile, UnitState } from "./types.ts";
+
+/**
+ * launchd, as the hub talks to it: `launchctl` in the per-user gui domain, which
+ * needs no sudo.
+ *
+ * MEASURED on this Mac, and the build leans on all of it:
+ *   - `bootstrap gui/<uid> <plist>` loads a job from ANY path, so `unitDir` is a
+ *     scratch directory in a check and `~/Library/LaunchAgents` in production.
+ *   - `kickstart` on a running job does nothing and `kickstart -k` kills and
+ *     starts it again, which is exactly `start` and `restart`.
+ *   - `print` reports `runs`, which counts EXECUTIONS, and `last exit code`,
+ *     which reads `(never exited)` until the program has exited once. D-101's
+ *     four fields come from those two: a healthy KeepAlive job that has never
+ *     died is `runs = 1`, so `restarts` is `max(runs - 1, 0)` and is zero.
+ *   - a `KeepAlive` job is back 0.03 s after a `kill -9` with `ThrottleInterval`
+ *     1 and waits out launchd's own 10 s default without the key, so the key is
+ *     always rendered.
+ *   - launchd never gives up restarting, so there is no equivalent of systemd's
+ *     `StartLimitBurst` and the renderer emits none (D-96). `check` carries the
+ *     `crash-loop` finding instead.
+ */
+
+function uid(): number {
+  return process.getuid?.() ?? -1;
+}
+
+async function sh(args: string[]): Promise<{ code: number; out: string; err: string }> {
+  const proc = Bun.spawn(["launchctl", ...args], { stdout: "pipe", stderr: "pipe" });
+  const [out, err] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  return { code: await proc.exited, out, err };
+}
+
+function xml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function plist(entries: string[]): string {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>",
+    ...entries,
+    "</dict>",
+    "</plist>",
+    "",
+  ].join("\n");
+}
+
+function readPrint(label: string, text: string): UnitState {
+  const state = /^\s*state = (.+)$/m.exec(text)?.[1]?.trim() ?? "";
+  const pid = Number(/^\s*pid = (\d+)$/m.exec(text)?.[1] ?? 0) || null;
+  const runsFound = /^\s*runs = (\d+)$/m.exec(text)?.[1];
+  const runs = runsFound === undefined ? null : Number(runsFound);
+  const exitText = /^\s*last exit code = (.+)$/m.exec(text)?.[1]?.trim() ?? "";
+  return {
+    name: label,
+    // `print` answered at all, so the job is bootstrapped.
+    loaded: true,
+    running: state === "running",
+    pid,
+    runs,
+    ran: (runs ?? 0) >= 1,
+    restarts: runs === null ? null : Math.max(runs - 1, 0),
+    lastExit: /^-?\d+$/.test(exitText) ? Number(exitText) : null,
+    since: null,
+  };
+}
+
+export function launchd(options: { unitDir?: string } = {}): OsSeam {
+  const unitDir = options.unitDir ?? join(homedir(), "Library", "LaunchAgents");
+  const fileOf = (label: string) => join(unitDir, `${label}.plist`);
+
+  const print = async (label: string): Promise<UnitState | null> => {
+    const printed = await sh(["print", `gui/${uid()}/${label}`]);
+    if (printed.code !== 0) return null;
+    return readPrint(label, printed.out + printed.err);
+  };
+
+  return {
+    flavour: "launchd",
+
+    render(entry: RunEntry, ctx: RenderContext): UnitFile[] {
+      const wanted = wantedState(entry);
+      const label = unitName(entry.id);
+      const argv = [ctx.execPath, "run", ctx.entryScript, ctx.registryFile, entry.id];
+      const every = wanted === "scheduled" ? scheduleSeconds(entry.schedule) : null;
+      const body = [
+        "  <key>Label</key>",
+        `  <string>${xml(label)}</string>`,
+        "  <key>ProgramArguments</key>",
+        "  <array>",
+        ...argv.map((one) => `    <string>${xml(one)}</string>`),
+        "  </array>",
+        // A resident comes back at login and is kept alive. Nothing else is.
+        "  <key>RunAtLoad</key>",
+        wanted === "running" ? "  <true/>" : "  <false/>",
+        ...(wanted === "running" ? ["  <key>KeepAlive</key>", "  <true/>"] : []),
+        // Measured: without this launchd waits out its own ten second default.
+        "  <key>ThrottleInterval</key>",
+        `  <integer>${ctx.restartDelaySeconds}</integer>`,
+        ...(every === null
+          ? []
+          : ["  <key>StartInterval</key>", `  <integer>${every}</integer>`]),
+      ];
+      return [{ path: fileOf(label), text: plist(body) }];
+    },
+
+    async install(files: UnitFile[]): Promise<string[]> {
+      const written: string[] = [];
+      for (const file of files) {
+        mkdirSync(dirname(file.path), { recursive: true });
+        writeFileSync(file.path, file.text, "utf8");
+        written.push(file.path);
+      }
+      for (const file of files) {
+        const label = file.path.slice(file.path.lastIndexOf("/") + 1).replace(/\.plist$/, "");
+        const first = await sh(["bootstrap", `gui/${uid()}`, file.path]);
+        if (first.code === 0) continue;
+        // A job already in the domain carries the plist it was loaded with, so a
+        // changed one only takes effect once it has been unloaded.
+        await sh(["bootout", `gui/${uid()}/${label}`]);
+        await sh(["bootstrap", `gui/${uid()}`, file.path]);
+      }
+      return written;
+    },
+
+    async remove(entryId: string): Promise<void> {
+      const label = unitName(entryId);
+      await sh(["bootout", `gui/${uid()}/${label}`]);
+      if (existsSync(fileOf(label))) rmSync(fileOf(label), { force: true });
+    },
+
+    async start(entryId: string): Promise<void> {
+      // D-102. The program runs NOW, and on a job that is already running this
+      // does nothing at all (measured).
+      await sh(["kickstart", `gui/${uid()}/${unitName(entryId)}`]);
+    },
+
+    async stop(entryId: string): Promise<void> {
+      // A KeepAlive job cannot be stopped by killing it: launchd starts it
+      // again. Unloading is the only stop launchd has, so the plist stays on
+      // disk and `show` reports it as a unit that exists and is not loaded.
+      await sh(["bootout", `gui/${uid()}/${unitName(entryId)}`]);
+    },
+
+    async restart(entryId: string): Promise<void> {
+      await sh(["kickstart", "-k", `gui/${uid()}/${unitName(entryId)}`]);
+    },
+
+    async list(): Promise<UnitState[]> {
+      const listed = await sh(["list"]);
+      const labels = listed.out
+        .split("\n")
+        .slice(1)
+        .map((line) => line.split("\t")[2]?.trim() ?? "")
+        .filter((label) => label.startsWith(SCAN_PREFIX));
+      const out: UnitState[] = [];
+      for (const label of labels) {
+        out.push(
+          (await print(label)) ?? {
+            name: label,
+            loaded: true,
+            running: false,
+            pid: null,
+            runs: null,
+            ran: false,
+            restarts: null,
+            lastExit: null,
+            since: null,
+          },
+        );
+      }
+      return out;
+    },
+
+    async show(entryId: string): Promise<UnitState | null> {
+      const label = unitName(entryId);
+      const found = await print(label);
+      if (found) return found;
+      if (existsSync(fileOf(label))) {
+        return {
+          name: label,
+          loaded: false,
+          running: false,
+          pid: null,
+          runs: null,
+          ran: false,
+          restarts: null,
+          lastExit: null,
+          since: null,
+        };
+      }
+      return null;
+    },
+
+    async memory(pid: number): Promise<MemoryReading> {
+      // macOS keeps no peak for a running process at all, so the peak is null
+      // here and the running maximum is the hub's, in the sheet (D-84). `ps`
+      // reports KILOBYTES and the seam is bytes, so it converts at this edge.
+      const proc = Bun.spawnSync(["ps", "-o", "rss=", "-p", String(pid)], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const kb = Number((proc.stdout?.toString() ?? "").trim().split("\n")[0] ?? "0");
+      return {
+        current_bytes: Number.isFinite(kb) ? kb * 1024 : 0,
+        peak_bytes: null,
+        source: "ps-rss",
+      };
+    },
+
+    async available(): Promise<{ ok: boolean; reason: string }> {
+      if (uid() < 0) return { ok: false, reason: "no manager for darwin: this process has no uid" };
+      const answer = await sh(["print", `gui/${uid()}`]);
+      if (answer.code !== 0) {
+        return {
+          ok: false,
+          reason: `the user manager does not answer: launchctl print gui/${uid()} exited ${answer.code}`,
+        };
+      }
+      return { ok: true, reason: "" };
+    },
+  };
+}
