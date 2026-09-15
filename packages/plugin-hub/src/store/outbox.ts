@@ -25,9 +25,10 @@ export async function appendChunks(
 /**
  * What this agent has to post, oldest reply first and in order inside a reply.
  *
- * A chunk whose row is not settled yet is not here. The reply is postable only
- * once the transaction that wrote it committed the `answered` stamp with it, and
- * a chunk on disk without that stamp is exactly what the door must hold.
+ * A chunk whose message still has a turn open on it is not here. Between `acked`
+ * and `answered` the runner holds that message and its settle has not committed,
+ * so a chunk sitting there is half of a reply and posting it is the send before
+ * the settle that L1 step 6 forbids.
  */
 export async function readPendingChunks(
   store: StoreLike,
@@ -39,7 +40,7 @@ export async function readPendingChunks(
     join inbound i on i.id = o.inbound_id
     where i.agent = ${where.agent}
       and o.delivered_at is null
-      and i.state in ('answered', 'delivered')
+      and i.state not in ('acked', 'started')
     order by o.id`) as unknown as PendingChunk[];
 }
 
