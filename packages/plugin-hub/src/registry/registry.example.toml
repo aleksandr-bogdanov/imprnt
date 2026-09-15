@@ -9,6 +9,33 @@ state_dir = "/var/lib/imprnt-hub"
 tail_hours = 24
 tail_tokens = 8000
 claim_lease_seconds = 300
+shared_zone = "/var/lib/imprnt-hub/shared"
+restart_delay_seconds = 1
+give_up_after = 5
+give_up_window_seconds = 300
+job_grace_seconds = 300
+silent_runner_hours = 6
+
+# The machines this household has. `os` is in the file rather than taken from the
+# process, so a mis-set machine id is refused here instead of writing systemd
+# unit files onto a Mac. Below two machines, no [[run]] entry needs a `machine`.
+[[machines]]
+id = "pi"
+os = "linux"
+
+[[machines]]
+id = "mac"
+os = "macos"
+
+# A person, and the tree that is the boundary. Each agent's box reaches its own
+# person's tree and the one shared zone above, and nothing else.
+[[people]]
+id = "p1"
+tree = "/var/lib/imprnt-hub/p1"
+
+[[people]]
+id = "p2"
+tree = "/var/lib/imprnt-hub/p2"
 
 # A preset is a bundle of settings. Its id is derived from these five, so a
 # changed setting is a different preset and an id is never typed here.
@@ -41,6 +68,7 @@ currency = "USD"
 [[run]]
 id = "door-telegram"
 kind = "door"
+machine = "pi"
 platform = "telegram"
 person = "p1"
 token_file = "/etc/imprnt-hub/telegram.token"
@@ -50,35 +78,43 @@ memory_limit_mb = 192
 [[run]]
 id = "runner-pi"
 kind = "runner"
+machine = "pi"
 schedule = "always"
 memory_limit_mb = 512
+# The limit the runner enforces on its model child. It is not the runner's own.
+child_memory_limit_mb = 2048
 
 [[run]]
 id = "watch-bikes"
+machine = "pi"
 kind = "watcher"
 schedule = "every 30m"
 memory_limit_mb = 128
 
 [[run]]
 id = "vault-sync"
+machine = "pi"
 kind = "sync"
 schedule = "every 15m"
 memory_limit_mb = 128
 
 [[run]]
 id = "backup"
+machine = "pi"
 kind = "backup"
 schedule = "hourly"
 memory_limit_mb = 256
 
 [[run]]
 id = "transcriber"
+machine = "pi"
 kind = "transcriber"
 schedule = "on demand"
 memory_limit_mb = 1024
 
 [[run]]
 id = "board"
+machine = "pi"
 kind = "board"
 schedule = "always"
 memory_limit_mb = 256

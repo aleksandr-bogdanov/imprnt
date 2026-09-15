@@ -50,6 +50,42 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "how long a runner's claim on a message stands before another may take it",
     required: false,
   },
+  {
+    key: "hub.shared_zone",
+    type: "string",
+    what: "the one zone every person's box can read, and there is no second one",
+    required: false,
+  },
+  {
+    key: "hub.restart_delay_seconds",
+    type: "integer",
+    what: "how long the operating system waits before starting a dead piece again",
+    required: false,
+  },
+  {
+    key: "hub.give_up_after",
+    type: "integer",
+    what: "how many starts inside the window before systemd stops trying",
+    required: false,
+  },
+  {
+    key: "hub.give_up_window_seconds",
+    type: "integer",
+    what: "the window those starts are counted in",
+    required: false,
+  },
+  {
+    key: "hub.job_grace_seconds",
+    type: "integer",
+    what: "how late a scheduled job's own success stamp may be before it is reported",
+    required: false,
+  },
+  {
+    key: "hub.silent_runner_hours",
+    type: "integer",
+    what: "how long a runner may be off the store with no work before it is reported",
+    required: false,
+  },
 ];
 
 export class RegistryRefused extends Error {
@@ -86,7 +122,30 @@ export interface RunEntry {
   kind: string;
   schedule: string;
   memory_limit_mb: number;
+  /**
+   * D-76. Which machine runs this entry. A file that declares fewer than two
+   * machines needs no `machine` anywhere and every entry belongs to the one the
+   * asking process names, so this carries the single machine's id there and the
+   * empty string when the file declares none at all.
+   */
+  machine: string;
+  /** D-81. The limit the RUNNER enforces on its model child, not its own. */
+  child_memory_limit_mb?: number;
 }
+
+/** D-76. A machine the household has. `os` is in the file, never process.platform. */
+export interface MachineEntry {
+  id: string;
+  os: string;
+}
+
+/** D-93. A person and the tree that is the tenancy boundary. */
+export interface PersonEntry {
+  id: string;
+  tree: string;
+}
+
+const MACHINE_OS = ["linux", "macos"];
 
 /** The five, alphabetical, which is the order the derived id hashes them in. */
 export const PRESET_KEYS = ["adapter", "effort", "model", "paid", "provider"] as const;
@@ -125,6 +184,8 @@ export class Registry {
   readonly presets: Record<string, PresetEntry>;
   readonly agents: AgentEntry[];
   readonly rates: RateEntry[];
+  readonly machines: MachineEntry[];
+  readonly people: PersonEntry[];
 
   constructor(
     file: string,
@@ -133,6 +194,8 @@ export class Registry {
     presets: Record<string, PresetEntry> = {},
     agents: AgentEntry[] = [],
     rates: RateEntry[] = [],
+    machines: MachineEntry[] = [],
+    people: PersonEntry[] = [],
   ) {
     this.file = file;
     this.data = data;
@@ -140,6 +203,8 @@ export class Registry {
     this.presets = presets;
     this.agents = agents;
     this.rates = rates;
+    this.machines = machines;
+    this.people = people;
   }
 }
 
@@ -259,6 +324,38 @@ export function loadRegistry(file: string): Registry {
     }
   }
 
+  // D-76. The machines come first, so an entry naming a machine whose `os` is
+  // outside the two is refused at the declaration rather than at the entry.
+  const machines: MachineEntry[] = [];
+  ((parsed.machines ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
+    const at = `machines[${nth}]`;
+    const here = lines.get(`${at}.id`) ?? lines.get(at) ?? 0;
+    const id = entry.id;
+    if (typeof id !== "string" || id === "") {
+      throw new RegistryRefused(
+        file,
+        here,
+        `${at}.id`,
+        `this machine has no id, and an entry says which machine runs it by name`,
+      );
+    }
+    const os = entry.os;
+    if (typeof os !== "string" || !MACHINE_OS.includes(os)) {
+      throw new RegistryRefused(
+        file,
+        lines.get(`${at}.os`) ?? here,
+        `${at}.os`,
+        `${id} runs ${describe(os)}, and the two this hub knows are ${MACHINE_OS.join(" and ")}`,
+      );
+    }
+    machines.push({ id, os });
+  });
+  const declared = new Set(machines.map((machine) => machine.id));
+  // The backward compatibility rule: `machine` becomes required, by name, only
+  // once the file declares two or more. Below that there is nothing to be
+  // ambiguous about, and every entry belongs to the one machine that asks.
+  const namesAMachine = machines.length >= 2;
+
   const raw = parsed.run;
   const entries: RunEntry[] = [];
   const claimed = new Map<string, number>();
@@ -313,11 +410,66 @@ export function loadRegistry(file: string): Registry {
       );
     }
 
+    const machine = entry.machine;
+    if (machine === undefined || machine === null || machine === "") {
+      if (namesAMachine) {
+        throw new RegistryRefused(
+          file,
+          here,
+          `${at}.machine`,
+          `${id} says no machine, and this file declares ${machines.length}, so nothing would ever run it`,
+        );
+      }
+    } else if (typeof machine !== "string" || (declared.size > 0 && !declared.has(machine))) {
+      throw new RegistryRefused(
+        file,
+        lines.get(`${at}.machine`) ?? here,
+        `${at}.machine`,
+        `${id} runs on ${describe(machine)}, which no [[machines]] entry declares`,
+      );
+    }
+
+    // D-81. The CHILD's limit, which is not the entry's own `memory_limit_mb`.
+    // A child that could never be watched cannot be configured.
+    //
+    // Asked only of a file that declares its machines, which is the same
+    // tolerance `machine` above carries and is there for the same reason: the
+    // shipped phase 1 checks write a bare `[hub]` plus `[[run]]` file with no
+    // machines in it, and a loader that made this unconditional would refuse
+    // every one of them on contact.
+    let childLimit: number | undefined;
+    if (entry.kind === "runner") {
+      const asked = entry.child_memory_limit_mb;
+      if ((asked === undefined || asked === null) && machines.length > 0) {
+        throw new RegistryRefused(
+          file,
+          here,
+          `${at}.child_memory_limit_mb`,
+          `${id} is a runner with no child_memory_limit_mb, and every child it spawns is watched against one`,
+        );
+      }
+      if (
+        asked !== undefined &&
+        asked !== null &&
+        (typeof asked !== "number" || !Number.isInteger(asked) || asked <= 0)
+      ) {
+        throw new RegistryRefused(
+          file,
+          lines.get(`${at}.child_memory_limit_mb`) ?? here,
+          `${at}.child_memory_limit_mb`,
+          `${id} has child_memory_limit_mb ${describe(asked)}, and it must be a whole number of megabytes above zero`,
+        );
+      }
+      childLimit = typeof asked === "number" ? asked : undefined;
+    }
+
     entries.push({
       id,
       kind: entry.kind as string,
       schedule: entry.schedule as string,
       memory_limit_mb: limit,
+      machine: typeof machine === "string" && machine !== "" ? machine : (machines[0]?.id ?? ""),
+      ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
   });
 
@@ -356,6 +508,30 @@ export function loadRegistry(file: string): Registry {
     };
   }
 
+  // D-93. A person is a registry entry and its tree is the boundary. Two with
+  // one id is the same refusal a duplicate [[run]] id already carries.
+  const people: PersonEntry[] = [];
+  const peopleAt = new Map<string, number>();
+  ((parsed.people ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
+    const where = `people[${nth}]`;
+    const here = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
+    const id = entry.id;
+    if (typeof id !== "string" || id === "") {
+      refuse(`${where}.id`, here, `this person has no id, and an agent names its person by id`);
+    }
+    const already = peopleAt.get(id as string);
+    if (already !== undefined) {
+      refuse(
+        `${where}.id`,
+        here,
+        `${id} is already a person of this registry, on line ${already}. The boundary is the person, and one id is one person`,
+      );
+    }
+    peopleAt.set(id as string, here);
+    people.push({ id: id as string, tree: typeof entry.tree === "string" ? entry.tree : "" });
+  });
+  const knownPerson = new Set(people.map((person) => person.id));
+
   const agents: AgentEntry[] = [];
   ((parsed.agents ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
     const where = `agents[${nth}]`;
@@ -376,6 +552,15 @@ export function loadRegistry(file: string): Registry {
         `${where}.preset`,
         here,
         `${entry.id} names the preset ${entry.preset}, which this file does not define`,
+      );
+    }
+    // Asked only of a file that declares people at all, which is the same
+    // tolerance the machine field has and for the same reason.
+    if (knownPerson.size > 0 && !knownPerson.has(entry.person as string)) {
+      refuse(
+        `${where}.person`,
+        here,
+        `${entry.id} names the person ${entry.person}, which this file does not declare`,
       );
     }
     agents.push({
@@ -421,7 +606,7 @@ export function loadRegistry(file: string): Registry {
     rates.push(entry as unknown as RateEntry);
   });
 
-  return new Registry(file, parsed, entries, presets, agents, rates);
+  return new Registry(file, parsed, entries, presets, agents, rates, machines, people);
 }
 
 export function readSetting(registry: unknown, key: string): unknown {

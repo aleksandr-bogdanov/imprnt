@@ -21,7 +21,15 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
-grant usage on schema public to hub_door, hub_runner, hub_agent;
+-- D-79. The hub process writes to the ledger as actor `hub`, and the invariant
+-- `current_user = 'hub_' || actor` is what makes the name this one. It is ugly
+-- and it is kept, because a prettier one would cost that one-line check.
+do $$ begin
+  create role hub_hub login;
+exception when duplicate_object then null;
+end $$;
+
+grant usage on schema public to hub_door, hub_runner, hub_agent, hub_hub;
 
 -- The diary. Every state change of every message, plus every refusal. Appended,
 -- never edited, never deleted.
@@ -180,7 +188,7 @@ grant select, insert on ledger_event to hub_door, hub_runner;
 grant usage on sequence ledger_event_seq_seq to hub_door, hub_runner;
 
 create policy ledger_event_readable on ledger_event
-  for select to hub_door, hub_runner using (true);
+  for select to hub_door, hub_runner, hub_hub using (true);
 
 create policy ledger_event_door_stamps on ledger_event
   for insert to hub_door
@@ -196,7 +204,19 @@ create policy ledger_event_runner_stamps on ledger_event
 -- Neither is a stamp, so neither widens the fence above.
 create policy ledger_event_runner_turn on ledger_event
   for insert to hub_runner
-  with check (actor = 'runner' and stream in ('turn', 'refusal'));
+  with check (actor = 'runner' and stream in ('turn', 'refusal', 'memory'));
+
+-- What the hub did to the operating system, the restart requests it acts on and
+-- the ones it refused. Three streams, one actor, and nothing else.
+grant select, insert on ledger_event to hub_hub;
+grant usage on sequence ledger_event_seq_seq to hub_hub;
+
+create policy ledger_event_hub_writes on ledger_event
+  for insert to hub_hub
+  with check (actor = 'hub'
+              and stream in ('machine', 'restart', 'refusal'));
+
+grant select on inbound to hub_hub;
 
 grant select, insert on inbound to hub_door;
 grant select on inbound to hub_runner;
@@ -220,3 +240,11 @@ grant update (delivered_at) on outbox to hub_door;
 -- runner only reads.
 grant select, insert, update on state_row to hub_door;
 grant select on state_row to hub_runner;
+
+-- The hub keeps the measured peaks and, later, the findings. One row per id,
+-- edited in place, and a thing that is gone leaves no line behind.
+grant select, insert, update, delete on state_row to hub_hub;
+grant select on outbox to hub_hub;
+
+create policy inbound_hub_reads on inbound
+  for select to hub_hub using (true);
