@@ -86,6 +86,25 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "how long a runner may be off the store with no work before it is reported",
     required: false,
   },
+  // 03b item 2. Where the store's own process writes its pid, and what the
+  // machine's service manager calls it. Every standard install writes a pid
+  // file, so the hub reads that rather than guessing at a process tree, and the
+  // install script writes these two once per box. They go at the END of the
+  // list on purpose: RUN-06's negative direction deletes the FIRST declared
+  // field's line from the shipped example and requires the load to be refused,
+  // which only a required field can do.
+  {
+    key: "store.pid_file",
+    type: "string",
+    what: "the file the store's postmaster writes its pid into, whose first line the hub reads",
+    required: false,
+  },
+  {
+    key: "store.unit",
+    type: "string",
+    what: "what this machine's service manager calls the store, for a person to look up",
+    required: false,
+  },
 ];
 
 export class RegistryRefused extends Error {
@@ -432,15 +451,17 @@ export function loadRegistry(file: string): Registry {
     // D-81. The CHILD's limit, which is not the entry's own `memory_limit_mb`.
     // A child that could never be watched cannot be configured.
     //
-    // Asked only of a file that declares its machines, which is the same
-    // tolerance `machine` above carries and is there for the same reason: the
-    // shipped phase 1 checks write a bare `[hub]` plus `[[run]]` file with no
-    // machines in it, and a loader that made this unconditional would refuse
-    // every one of them on contact.
+    // 03b item 5. Asked of EVERY runner entry, whether or not the file declares
+    // its machines. BUILD-NOTES 1 made the rule conditional because phase 1
+    // fixtures carried runner entries without the field and an unconditional
+    // one turned two green checks red on contact. Every fixture in the
+    // repository carries it now, so the tolerance has nothing left to protect,
+    // and a file with no `[[machines]]` table is exactly the file a household
+    // starts with.
     let childLimit: number | undefined;
     if (entry.kind === "runner") {
       const asked = entry.child_memory_limit_mb;
-      if ((asked === undefined || asked === null) && machines.length > 0) {
+      if (asked === undefined || asked === null) {
         throw new RegistryRefused(
           file,
           here,

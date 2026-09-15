@@ -1,5 +1,8 @@
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { adapterFor } from "../adapters/index.ts";
 import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
+import { boxCommand, boxContextFor } from "../box/index.ts";
 import { readTail } from "../chatlog.ts";
 import { thisOs } from "../os/index.ts";
 import { appendEntry } from "../records/diary.ts";
@@ -34,6 +37,12 @@ interface Live {
   session: AdapterSession | null;
   /** The watch killed this child, so the next turn starts a new session first. */
   killed: boolean;
+  /**
+   * The loop was spawned INSIDE a box, so `session.pid` is the box tool's and
+   * the loop is somewhere below it. What the memory watch must read is not the
+   * pid it holds (03b item 1's own regression, REVIEW.md D3).
+   */
+  boxed: boolean;
   leaving: boolean;
   /** Resolves when this agent alone is asked to leave. */
   left: Promise<"stopped">;
@@ -55,6 +64,182 @@ interface OpenTurn {
 
 function setting(registry: Registry, key: string): number {
   return Number(readSetting(registry, key));
+}
+
+/**
+ * ONE line, at connect, naming the server this runner really reached.
+ *
+ * D-98's residue: the household's own check that two runners share one store
+ * could observe one server and could not rule out a second hidden one, because
+ * `application_name` says who connected and nothing says WHERE. `initdb`
+ * generates a `system_identifier` per cluster, so a runner that writes the one
+ * it sees has said which cluster it is talking to in a way nothing on the
+ * client side could have invented, and `check` compares it with the identifier
+ * of the store IT is reading.
+ *
+ * It is stream `runner` and not `machine`, because `machine` is the hub's and
+ * `ledger_event_hub_writes` fences it. It is ONE statement pair at connect,
+ * which D-85 already allows and which lands long before any wait window opens,
+ * so a waiting runner still issues nothing at all.
+ *
+ * A RUNNER THAT COULD NOT READ THE IDENTIFIER SAYS WHY. It used to write an
+ * empty one, and an empty identifier is the one value `check` cannot tell from
+ * a healthy runner, so a runner pointing at the wrong cluster could go on
+ * saying nothing forever. The reason is written into the line instead, and
+ * `check` reports the silence as a finding rather than skipping it. The read is
+ * wrapped and the append is not: a runner that cannot write its connect line at
+ * all is a runner whose store is refusing it, and that is not a thing to
+ * swallow here.
+ */
+async function sayWhichServer(
+  store: Store,
+  registry: Registry,
+  runner: string,
+): Promise<void> {
+  // `system_identifier` is a 64 bit value well past what a double holds, so it
+  // crosses as text and is compared as text everywhere after this.
+  let identifier = "";
+  let version = "";
+  let unreadable = "";
+  try {
+    const [server] = (await store.sql.unsafe(
+      `select system_identifier::text as system_identifier, version() as server_version
+         from pg_control_system()`,
+    )) as { system_identifier: string; server_version: string }[];
+    identifier = String(server?.system_identifier ?? "");
+    version = String(server?.server_version ?? "");
+    if (identifier === "") {
+      unreadable = "the server answered pg_control_system() with no system_identifier";
+    }
+  } catch (error) {
+    unreadable = `reading pg_control_system() failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  await appendEntry(store, {
+    stream: "runner",
+    subject: runner,
+    kind: "connected",
+    actor: "runner",
+    detail: {
+      system_identifier: identifier,
+      server_version: version,
+      machine: listRunEntries(registry).find((entry) => entry.id === runner)?.machine ?? "",
+      ...(unreadable === "" ? {} : { identifier_error: unreadable }),
+    },
+  });
+}
+
+/**
+ * The agent's box, ready to hand to a loop (03b item 1, D-92, D-93).
+ *
+ * The RUNNER decides the boxing, because the box is derived from the registry
+ * and the registry is what the runner already reads. The loop is handed a hook
+ * and spawns what comes back, so a new adapter inherits the fence without
+ * knowing a box exists.
+ *
+ * THE PROFILE IS WRITTEN HERE, before the hook is handed over. `boxCommand`
+ * computes the path and the text and writes nothing, and `sandbox-exec` refuses
+ * to start on a profile it cannot open, so a wiring that forgot the write gets
+ * a child that never runs.
+ *
+ * A person with no tree is UNBOXED and is not a refusal: whether a person has a
+ * tree is a question about a machine, not about the file (D-93), so the agent
+ * runs and `check` reports `agent-unboxed` about it.
+ */
+function boxFor(
+  registry: Registry,
+  agentId: string,
+): { wrap: (argv: string[]) => string[]; cwd: string | undefined } | null {
+  if (process.platform !== "darwin" && process.platform !== "linux") return null;
+  let ctx;
+  try {
+    ctx = boxContextFor(registry, agentId);
+  } catch {
+    // An agent the registry no longer carries is one this runner is dropping.
+    return null;
+  }
+  if (ctx.tree === "") return null;
+  const ready = boxCommand([], ctx);
+  if (ready.profile) {
+    mkdirSync(dirname(ready.profile.path), { recursive: true });
+    writeFileSync(ready.profile.path, ready.profile.text, "utf8");
+  }
+  return {
+    wrap: (argv: string[]) => boxCommand(argv, ctx).argv,
+    // The agent WORKS in its own tree, which is the directory the box is drawn
+    // around. A declared tree that is not on this machine yet is left alone
+    // rather than made a spawn that cannot start.
+    cwd: existsSync(ctx.tree) ? ctx.tree : undefined,
+  };
+}
+
+/**
+ * Every process under this one, on linux, host pids.
+ *
+ * THE BOX TOOL IS NOT THE LOOP (REVIEW.md D3, the regression 03b item 1
+ * introduced). `bwrap` spawns the command inside a new pid namespace and stays
+ * outside it, so the pid the adapter hands up is the wrapper's, its resident
+ * size is a megabyte or two, and a `child_memory_limit_mb` read off it can
+ * never trip. The tree is not one level deep either: without `--as-pid-1` the
+ * namespace's pid 1 is bwrap's own reaper and the loop is the reaper's child,
+ * so a watch that took "the child" literally would read the reaper and be just
+ * as blind. This walks the whole tree.
+ *
+ * `/proc/<pid>/task/<pid>/children` is the kernel's own list and is one read.
+ * A kernel built without it answers nothing, so the fallback is the walk every
+ * process table tool does: every numeric entry under `/proc` whose `stat` names
+ * this pid as its parent. The `comm` field is parenthesised and may hold spaces
+ * and parentheses of its own, so the fields are taken from after the LAST close
+ * parenthesis, which is the only parse of that file that is not a guess.
+ */
+function childrenOf(pid: number): number[] {
+  try {
+    const listed = readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim();
+    if (listed !== "") {
+      return listed
+        .split(/\s+/)
+        .map((one) => Number(one))
+        .filter((one) => Number.isFinite(one) && one > 0);
+    }
+    return [];
+  } catch {
+    // This kernel does not publish the list, so it is read off the table below.
+  }
+  const out: number[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync("/proc");
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+      const fields = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+      // After the comm field come state and then ppid.
+      if (Number(fields[1]) === pid) out.push(Number(entry));
+    } catch {
+      // A process that left between the listing and the read, which is a
+      // process that is not under anything any more.
+    }
+  }
+  return out;
+}
+
+/** The same tree, flattened, with a depth bound so a cycle cannot spin it. */
+function descendantsOf(pid: number): number[] {
+  const seen = new Set<number>();
+  let frontier = childrenOf(pid);
+  for (let depth = 0; depth < 8 && frontier.length > 0; depth++) {
+    const next: number[] = [];
+    for (const one of frontier) {
+      if (seen.has(one) || one === pid) continue;
+      seen.add(one);
+      next.push(...childrenOf(one));
+    }
+    frontier = next;
+  }
+  return [...seen];
 }
 
 /**
@@ -83,6 +268,7 @@ export async function runRunner(options: {
     // heartbeat is written on any tick.
     url: storeUrlAs(String(readSetting(first, "hub.store_url")), "hub_runner", options.runner),
   });
+  await sayWhichServer(store, first, options.runner);
 
   let stopping = false;
   let release: () => void = () => {};
@@ -172,7 +358,13 @@ export async function runRunner(options: {
     const spawn = async (preset: Preset, registry: Registry): Promise<void> => {
       const adapter = adapterFor(options.adapters, preset.adapter);
       if (own.session) await own.session.close().catch(() => {});
-      own.session = await adapter.start({ preset, sessionId: null });
+      const box = boxFor(registry, agent.id);
+      own.session = await adapter.start({
+        preset,
+        sessionId: null,
+        ...(box ? { wrap: box.wrap, ...(box.cwd ? { cwd: box.cwd } : {}) } : {}),
+      });
+      own.boxed = box !== null;
       // A child the watch killed is a session that is gone, and this is where
       // it comes back: before the next turn, with the runner never restarting.
       own.killed = false;
@@ -303,6 +495,7 @@ export async function runRunner(options: {
       agent,
       session: null,
       killed: false,
+      boxed: false,
       leaving: false,
       left,
       release,
@@ -333,6 +526,17 @@ export async function runRunner(options: {
    * The reading is `/proc/<pid>/status` on linux and `ps -o rss=` on macOS,
    * through the OS seam, which converts kilobytes to bytes at its own edge. It
    * touches no table, so a runner that is waiting still issues nothing.
+   *
+   * A BOXED AGENT ON LINUX IS READ THROUGH ITS BOX. The pid the adapter hands
+   * up is `bwrap`'s and the loop is under it, so the reading is the largest of
+   * the wrapper and every process below it: a wrapper with nothing under it yet
+   * is still its own reading, so a loop that has not started is watched rather
+   * than skipped. The largest rather than the sum, because the limit is the one
+   * the unboxed path reads, a single process's resident size, and the box tool
+   * and its reaper are a megabyte between them. macOS is untouched: there
+   * `sandbox-exec` execs in place and the pid the runner holds IS the loop's
+   * (BUILD-NOTES 5), and an unboxed agent is untouched on both, so what the
+   * watch reads for the loops the checks exercise is the same number it was.
    */
   const watchChildren = async (registry: Registry): Promise<void> => {
     const own = listRunEntries(registry).find((entry) => entry.id === options.runner);
@@ -348,6 +552,17 @@ export async function runRunner(options: {
         bytes = (await os.memory(pid)).current_bytes;
       } catch {
         continue;
+      }
+      if (it.boxed && process.platform === "linux") {
+        for (const under of descendantsOf(pid)) {
+          try {
+            const reading = (await os.memory(under)).current_bytes;
+            if (reading > bytes) bytes = reading;
+          } catch {
+            // It left while the tree was being read, and a process that is
+            // gone is using nothing.
+          }
+        }
       }
       if (bytes <= limitMb * 1024 * 1024) continue;
       it.killed = true;

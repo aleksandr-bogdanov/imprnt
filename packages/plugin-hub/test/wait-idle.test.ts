@@ -1,0 +1,165 @@
+// 03b item 6b. A door and a runner with nothing to do burn no processor time.
+// (SPEC §2, D-70)
+//
+// D-70 is the residue phase 1, phase 2 and phase 3 all carried forward
+// verbatim: "a waiter that keeps a flag in memory and re-checks it on a 100 ms
+// timer issues no SQL at all, so it is invisible to a statement count and to
+// any other black-box probe." The statement count is what
+// `test/runner-drain.test.ts` binds. This is the second thing a black box can
+// see: a poll that does any work at all costs processor time, and a process
+// genuinely asleep on a notification costs almost none.
+//
+// WHAT THIS CANNOT CATCH, stated plainly because it is the whole point of item
+// 6 having two halves: a timer that wakes, reads one boolean and sleeps again
+// costs a few microseconds a wake, so at 100 ms it finishes a three second
+// window well under any bound loose enough not to be flaky. MEASURED on this
+// Mac: a 100 ms timer doing three million additions each time burns 0.03 s over
+// three seconds, which is a tenth of the bound below. So this is the GUARD, and
+// the CLOSURE is 03b item 6a, the reviewer's written pass over every wait in
+// `src/store/wake.ts`, `src/door/run.ts`, `src/runner/run.ts` and
+// `src/hub/run.ts` naming what wakes each one, with file and line.
+//
+// THE CONTROL IS WHAT MAKES IT A CHECK. A pair of assertions that only ever
+// says "these two processes are quiet" cannot fail on a box where the reader
+// is broken, where the pids are wrong, or where `ps` prints something this
+// parser does not understand. So a process that really does spin is measured in
+// the SAME window with the SAME reader, and it must come out over the bound.
+//
+// MEASURED BESIDE IT, and worth recording: `await new Promise(() => {})` as the
+// ONLY thing keeping a bun process alive spins at 100% (3.00 s of processor
+// time over a 3 s window, measured). It is idle only because something else
+// holds the event loop open, which for the door and the runner is their own
+// tick timer. `src/entry/hold.ts` and both subprocess helpers hold that way.
+//
+// Red reason: NONE. This check PASSES against 0cefd6c and is a regression
+// guard, which is what 03b-DEBTS asks item 6b to be. Recorded as a deviation
+// from "every 3b check is red" in RED-RUN-1.md rather than forced into a red.
+
+import { test, expect, beforeAll, afterAll } from "bun:test";
+import {
+  startCluster,
+  startReadySubprocess,
+  until,
+  type Cluster,
+  type ReadyProcess,
+} from "./helpers/cluster.ts";
+import { cpuSeconds } from "./helpers/cpu.ts";
+import { DOOR, RUNNER, plantChatLine, stageHub } from "./helpers/hub-fixture.ts";
+
+const SLOW = 120_000;
+/** The window. Long enough that a 100 ms poll doing real work shows up. */
+const WINDOW_MS = 3_000;
+/** The bound, generous on purpose: what is being caught is a spin, not a tick. */
+const BOUND_SECONDS = 0.3;
+
+let cluster: Cluster;
+
+beforeAll(async () => {
+  cluster = await startCluster();
+});
+
+afterAll(async () => {
+  if (cluster) await cluster.stop();
+});
+
+test(
+  "D-70 a door and a runner that are waiting are ASLEEP: after a message has gone the whole way, neither process advances its processor time by a third of a second over a three second window, while a process that really polls is over that bound in the same window read by the same probe (SPEC §2, D-70, STORE-01)",
+  async () => {
+    const it = await stageHub(cluster, { servers: true, hub: { tick_seconds: 1 } });
+    let door: ReadyProcess | null = null;
+    let runner: ReadyProcess | null = null;
+    // The control: a process that wakes ten times a second and does work each
+    // time. It is what proves the reader can see a poll at all.
+    const busy = Bun.spawn(
+      [
+        "bun",
+        "-e",
+        "setInterval(() => { let s = 0; for (let i = 0; i < 6e7; i++) s += i; globalThis.__sink = s; }, 100); setInterval(() => {}, 1e9);",
+      ],
+      { stdout: "ignore", stderr: "ignore", stdin: "ignore" },
+    );
+    try {
+      plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" });
+      door = await startReadySubprocess("test/helpers/door-subprocess.ts", [
+        it.registryFile,
+        DOOR,
+        it.platformUrl,
+      ]);
+      runner = await startReadySubprocess("test/helpers/runner-subprocess.ts", [
+        it.registryFile,
+        RUNNER,
+        it.adapterUrl,
+        it.adapterName,
+      ]);
+
+      // ONE message, the whole way, so what is measured afterwards is a pair of
+      // processes that have finished their work rather than two that never
+      // started. Without it a door that never read the platform would look
+      // beautifully quiet.
+      it.fake.deliver({ text: "a message that goes the whole way" });
+      await until(
+        "the reply was delivered to the platform",
+        () => it.fake.posts().length >= 1,
+        60_000,
+        async () => JSON.stringify(await it.read.inbound()),
+      );
+      await until(
+        "the outbox chunk was marked delivered",
+        async () => (await it.read.outbox()).every((chunk) => chunk.delivered_at !== null),
+        30_000,
+        async () => JSON.stringify(await it.read.outbox()),
+      );
+      // A beat for the settling writes to finish, so the window holds only the
+      // waiting and not the tail of the turn.
+      await Bun.sleep(1500);
+
+      const before = {
+        door: cpuSeconds(door.pid),
+        runner: cpuSeconds(runner.pid),
+        busy: cpuSeconds(busy.pid),
+      };
+      // A reading of null is a process that is gone, and a check that read it
+      // as zero would score a dead door as a quiet one.
+      expect(before.door).not.toBeNull();
+      expect(before.runner).not.toBeNull();
+      expect(before.busy).not.toBeNull();
+
+      await Bun.sleep(WINDOW_MS);
+
+      const after = {
+        door: cpuSeconds(door.pid),
+        runner: cpuSeconds(runner.pid),
+        busy: cpuSeconds(busy.pid),
+      };
+      expect(after.door).not.toBeNull();
+      expect(after.runner).not.toBeNull();
+      expect(after.busy).not.toBeNull();
+
+      const burned = {
+        door: after.door! - before.door!,
+        runner: after.runner! - before.runner!,
+        busy: after.busy! - before.busy!,
+      };
+
+      // --- THE CONTROL FIRST, so a broken probe fails here rather than
+      //     reporting two beautifully quiet processes it cannot actually read.
+      expect(burned.busy).toBeGreaterThan(BOUND_SECONDS);
+
+      // --- and the two that are waiting.
+      expect(burned.door).toBeLessThan(BOUND_SECONDS);
+      expect(burned.runner).toBeLessThan(BOUND_SECONDS);
+
+      // Both are still alive at the end of it, which is what makes "quiet" mean
+      // waiting rather than gone.
+      expect(cpuSeconds(door.pid)).not.toBeNull();
+      expect(cpuSeconds(runner.pid)).not.toBeNull();
+    } finally {
+      busy.kill(9);
+      await busy.exited.catch(() => {});
+      if (runner) await runner.stop();
+      if (door) await door.stop();
+      await it.stop();
+    }
+  },
+  SLOW,
+);

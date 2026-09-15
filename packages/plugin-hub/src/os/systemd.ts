@@ -45,15 +45,6 @@ const FIELDS = [
   "ActiveEnterTimestamp",
 ];
 
-async function sh(args: string[]): Promise<{ code: number; out: string; err: string }> {
-  const proc = Bun.spawn(["systemctl", ...args], { stdout: "pipe", stderr: "pipe" });
-  const [out, err] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  return { code: await proc.exited, out, err };
-}
-
 /** A value systemd would read back as one word, quoted only when it must be. */
 function argument(value: string): string {
   return /[\s"'\\]/.test(value) ? JSON.stringify(value) : value;
@@ -92,15 +83,35 @@ function stateOf(name: string, fields: Map<string, string>): UnitState {
   };
 }
 
-export function systemd(options: { unitDir?: string } = {}): OsSeam {
+export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSeam {
+  const bin = options.bin ?? "systemctl";
   const unitDir = options.unitDir ?? join(homedir(), ".config", "systemd", "user");
+  /**
+   * 03b item 7. The manager binary is a PARAMETER, defaulting to the bare
+   * name PATH resolves. `check` reaches a manager only through the seam it
+   * was handed, and a check that points this at a recording shim BY
+   * ABSOLUTE PATH catches the one route PATH fronting never could.
+   *
+   * It lives INSIDE the factory so there is exactly one way to invoke the
+   * manager from this file. A module-level helper beside it left a second
+   * spelling that one call site kept using, and that call spawned an array
+   * as if it were a binary.
+   */
+  const ask = async (args: string[]): Promise<{ code: number; out: string; err: string }> => {
+    const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
+    const [out, err] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    return { code: await proc.exited, out, err };
+  };
   const service = (entryId: string) => `${unitName(entryId)}.service`;
   const timer = (entryId: string) => timerName(entryId);
 
   const show = async (names: string[]): Promise<Map<string, UnitState>> => {
     const out = new Map<string, UnitState>();
     if (names.length === 0) return out;
-    const printed = await sh([
+    const printed = await ask([
       "--user",
       "show",
       ...names,
@@ -131,17 +142,20 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
         // D-96. The give-up pair, which launchd has no equivalent of at all.
         `StartLimitIntervalSec=${ctx.giveUpWindowSeconds}`,
         `StartLimitBurst=${ctx.giveUpAfter}`,
-        // A unit that wants to be LOADED is the one kind of ours systemd will
-        // not let go of by itself. It carries no `[Install]`, nothing enables
-        // it and no timer names it, so it is already collected the moment it
-        // goes inactive. Killed rather than stopped it goes to `failed`
-        // instead, and the default collect mode keeps a failed unit loaded
-        // forever: a dead on-demand piece would sit in `list-units --all` with
-        // nobody to clear it, since the hub reads the manager rather than
-        // sweeping it. MEASURED: `Result=signal`, `ExecMainStatus=9`, listed
-        // indefinitely. This says collect it in that state too, which is the
-        // same rule the manager already applies to the inactive one.
-        ...(wanted === "loaded" ? ["CollectMode=inactive-or-failed"] : []),
+        // The default collect mode keeps a FAILED unit loaded forever, and the
+        // hub reads the manager rather than sweeping it, so one of ours that
+        // died would sit in `list-units --all` with nobody to clear it.
+        // MEASURED on the hub box, twice: a `loaded` piece killed rather than
+        // stopped goes to `failed` with `Result=signal`, `ExecMainStatus=9` and
+        // is listed indefinitely; and a RESIDENT one systemd has given up
+        // restarting sits in `failed` after it has been stopped and disabled,
+        // which leaves it on the box after the removal that was meant to take
+        // it off. This is on every unit the hub writes, and it costs a resident
+        // nothing while it is enabled: an enabled unit is referenced by
+        // `default.target` and is never collected, so the mode only decides
+        // what happens once the hub has disabled it, which is the one moment
+        // the hub wants it gone.
+        "CollectMode=inactive-or-failed",
         "",
         "[Service]",
         `ExecStart=${argv.map(argument).join(" ")}`,
@@ -163,6 +177,13 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
           text: [
             "[Unit]",
             `Description=imprnt hub ${entry.id} cadence on ${ctx.machine}`,
+            // On every unit the hub writes, the timer included. An enabled
+            // timer is referenced by `timers.target` and is never collected
+            // whatever this says, so it costs nothing while the timer is
+            // wanted, and it is the service beside it that the mode really
+            // matters for. Two units of one entry that disagree about their own
+            // disposal is a difference somebody has to explain later.
+            "CollectMode=inactive-or-failed",
             "",
             "[Timer]",
             `OnUnitActiveSec=${every}`,
@@ -184,7 +205,7 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
         writeFileSync(file.path, file.text, "utf8");
         written.push(file.path);
       }
-      await sh(["--user", "daemon-reload"]);
+      await ask(["--user", "daemon-reload"]);
       // Enabling is what PINS the unit: without it systemd forgets a unit that
       // ran and went inactive, and "the manager's own record says it ran" stops
       // being answerable. The symlink is the manager's own, in its own wants
@@ -192,47 +213,56 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
       for (const file of files) {
         const name = file.path.slice(file.path.lastIndexOf("/") + 1);
         if (!file.text.split("\n").some((line) => line.trim() === "[Install]")) continue;
-        await sh(
+        await ask(
           name.endsWith(".timer")
             ? ["--user", "enable", "--now", name]
             : ["--user", "enable", name],
         );
       }
-      await sh(["--user", "daemon-reload"]);
+      await ask(["--user", "daemon-reload"]);
       return written;
     },
 
     async remove(entryId: string): Promise<void> {
+      // Disable FIRST, while the file still exists, because `disable` finds the
+      // symlinks it drops through the file's own [Install] section. Then the
+      // FILES go, then the manager is asked to stop: with CollectMode set a
+      // stopped unit leaves `list-units` at once, so a stop before the delete
+      // opens a window where the unit is gone from the list and its file is
+      // still on disk, which a slow box (CI) fell into. This order closes it:
+      // nothing observes the unit unlisted before its file is gone.
       for (const name of [timer(entryId), service(entryId)]) {
-        await sh(["--user", "stop", name]);
-        await sh(["--user", "disable", name]);
+        await ask(["--user", "disable", name]);
       }
       for (const name of [timer(entryId), service(entryId)]) {
         const path = join(unitDir, name);
         if (existsSync(path)) rmSync(path, { force: true });
       }
-      await sh(["--user", "daemon-reload"]);
+      for (const name of [timer(entryId), service(entryId)]) {
+        await ask(["--user", "stop", name]);
+      }
+      await ask(["--user", "daemon-reload"]);
       // Ours, and only ours: a unit that crash-looped stays listed as failed
       // after its file is gone unless its state is reset.
-      await sh(["--user", "reset-failed", timer(entryId), service(entryId)]);
+      await ask(["--user", "reset-failed", timer(entryId), service(entryId)]);
     },
 
     async start(entryId: string): Promise<void> {
       // D-102. The program runs NOW. Enabling a cadence is install's job.
-      await sh(["--user", "start", service(entryId)]);
+      await ask(["--user", "start", service(entryId)]);
     },
 
     async stop(entryId: string): Promise<void> {
-      await sh(["--user", "stop", timer(entryId)]);
-      await sh(["--user", "stop", service(entryId)]);
+      await ask(["--user", "stop", timer(entryId)]);
+      await ask(["--user", "stop", service(entryId)]);
     },
 
     async restart(entryId: string): Promise<void> {
-      await sh(["--user", "restart", service(entryId)]);
+      await ask(["--user", "restart", service(entryId)]);
     },
 
     async list(): Promise<UnitState[]> {
-      const listed = await sh([
+      const listed = await ask([
         "--user",
         "list-units",
         "--all",
@@ -304,7 +334,7 @@ export function systemd(options: { unitDir?: string } = {}): OsSeam {
     },
 
     async available(): Promise<{ ok: boolean; reason: string }> {
-      const answer = await sh(["--user", "is-system-running"]);
+      const answer = await ask(["--user", "is-system-running"]);
       const said = (answer.out + answer.err).trim().split("\n")[0] || "nothing";
       if (!/^(running|degraded|starting|maintenance)$/.test(said)) {
         return { ok: false, reason: `no user manager answers: systemctl --user is-system-running said ${said}` };

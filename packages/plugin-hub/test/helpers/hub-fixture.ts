@@ -47,6 +47,7 @@ import {
   type RegistrySpec,
   type PresetSpec,
   type RunSpec,
+  type StoreSpec,
 } from "./registry.ts";
 import { openStore, type Store } from "../../src/store/connect.ts";
 
@@ -198,7 +199,22 @@ export function chatLogFile(args: {
   return join(args.stateDir, args.person, "chatlog", args.agent, `${day}.jsonl`);
 }
 
-/** Every line of every dated file for this agent, oldest file first. */
+/**
+ * Every line of every dated file for this agent, oldest file first.
+ *
+ * 03b item 11. THE LAST LINE OF THE LAST FILE MAY BE HALF WRITTEN, and only
+ * that one. This reader is handed to the fake platform as `outLineOnDisk`'s
+ * probe, so it runs INSIDE the door's post attempt: a `JSON.parse` that throws
+ * there throws out of `platform.post`, the door catches it as a refused post,
+ * and the attempt is never recorded at all. An observation that can change what
+ * it observes is not an observation, and the line a writer can be in the middle
+ * of is the one it is appending, which is the last line of the file it is
+ * appending to.
+ *
+ * Every other unparseable line still throws. A corrupt line in the middle of a
+ * log is a real defect and a reader that swallowed it could not fail for the
+ * right reason, which is the rule this round is written under.
+ */
 export function chatLogLines(
   stateDir: string,
   person: string,
@@ -206,15 +222,25 @@ export function chatLogLines(
 ): ChatLine[] {
   const dir = join(stateDir, person, "chatlog", agent);
   if (!existsSync(dir)) return [];
+  const files = readdirSync(dir)
+    .sort()
+    .filter((name) => name.endsWith(".jsonl"));
   const out: ChatLine[] = [];
-  for (const name of readdirSync(dir).sort()) {
-    if (!name.endsWith(".jsonl")) continue;
-    const text = readFileSync(join(dir, name), "utf8");
-    for (const line of text.split("\n")) {
-      if (line.trim() === "") continue;
-      out.push(JSON.parse(line) as ChatLine);
-    }
-  }
+  files.forEach((name, nth) => {
+    const lines = readFileSync(join(dir, name), "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "");
+    lines.forEach((line, at) => {
+      const lastOfTheLast = nth === files.length - 1 && at === lines.length - 1;
+      try {
+        out.push(JSON.parse(line) as ChatLine);
+      } catch (error) {
+        if (!lastOfTheLast) throw error;
+        // A line an appender has not finished. It is not on disk yet as far as
+        // any reader is concerned, and it will be on the next read.
+      }
+    });
+  });
   return out;
 }
 
@@ -277,6 +303,8 @@ export interface StageOptions {
   agents?: AgentSpec[];
   /** Extra or replacement `[hub]` settings. */
   hub?: Record<string, string | number>;
+  /** 03b item 2. The `[store]` section, absent unless a check asks for one. */
+  store?: StoreSpec;
 }
 
 export async function stageHub(
@@ -302,6 +330,7 @@ export async function stageHub(
 
   const base: RegistrySpec = {
     hub: { store_url: storeUrl, state_dir: dir, ...(options.hub ?? {}) },
+    ...(options.store ? { store: options.store } : {}),
     ...(options.machines ? { machines: options.machines } : {}),
     ...(options.people ? { people: options.people } : {}),
     ...(options.run ? { run: options.run } : {}),

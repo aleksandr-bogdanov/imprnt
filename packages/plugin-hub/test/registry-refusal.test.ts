@@ -53,6 +53,11 @@ function fixture(valueLine: string): string[] {
     'kind = "runner"',
     'schedule = "always"',
     valueLine,
+    // D-81 as phase 3b makes it: a runner entry carries the CHILD's limit in
+    // every file, whether or not the file declares its machines. Added as a
+    // fixture line, not an assertion: the bad value above is still the line
+    // this check names, and it is still the last line whose number it asserts.
+    "child_memory_limit_mb = 512",
   ];
 }
 

@@ -104,6 +104,9 @@ test("LOOP-01 a typed preset ID is refused: a presets table carrying an id key r
       'kind = "runner"',
       'schedule = "always"',
       "memory_limit_mb = 512",
+      // D-81 as phase 3b makes it: required on every runner entry, machines
+      // declared or not. Below every line this check numbers.
+      "child_memory_limit_mb = 512",
       "",
     ];
 
@@ -240,12 +243,14 @@ test("LOOP-01 an agent points at one preset and the file says which pieces serve
       'kind = "runner"',
       'schedule = "always"',
       "memory_limit_mb = 512",
+      "child_memory_limit_mb = 512",
       "",
       "[[run]]",
       'id = "runner-mac"',
       'kind = "runner"',
       'schedule = "always"',
       "memory_limit_mb = 512",
+      "child_memory_limit_mb = 2048",
       "",
     ];
     const file = join(dir, "agents.toml");

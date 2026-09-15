@@ -68,8 +68,21 @@ export interface PersonSpec {
   [key: string]: string | number | undefined;
 }
 
+/**
+ * 03b item 2. The `[store]` section: where Postgres's own pid file is, and what
+ * the machine's service manager calls it. Both are written by the install
+ * script and read by the hub, so a check that plants one needs the file to
+ * carry it.
+ */
+export interface StoreSpec {
+  pid_file?: string;
+  unit?: string;
+  [key: string]: string | number | undefined;
+}
+
 export interface RegistrySpec {
   hub?: Record<string, string | number>;
+  store?: StoreSpec;
   presets?: Record<string, PresetSpec>;
   agents?: AgentSpec[];
   rates?: RateSpec[];
@@ -160,6 +173,12 @@ function renderRegistry(spec: RegistrySpec): string {
   lines.push("[hub]");
   table(lines, { ...HUB_DEFAULTS, ...(spec.hub ?? {}) });
   lines.push("");
+
+  if (spec.store) {
+    lines.push("[store]");
+    table(lines, spec.store as Record<string, unknown>);
+    lines.push("");
+  }
 
   // An absent section renders NOTHING, so a spec that names no machines and no
   // people produces the same file it produces today and no phase 2 check sees a
