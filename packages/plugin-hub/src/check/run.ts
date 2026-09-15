@@ -9,7 +9,7 @@ import {
 import { entryIdOf, isOurs, unitName } from "../os/names.ts";
 import type { OsSeam, WantedUnit } from "../os/types.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
-import { listAgents, runEntriesFor } from "../registry/entries.ts";
+import { listAgents, personOf, runEntriesFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readPeaks, residentIds } from "../hub/peak.ts";
@@ -271,6 +271,29 @@ export async function runCheck(options: {
       machine,
       says: `${id} runs all day and nothing has ever measured what it holds`,
       fix: `let the hub run a tick with ${id} up, or measure it once with /usr/bin/time -l`,
+    });
+  }
+
+  // --- an agent that cannot be boxed, because the tree is the boundary -----
+  //     (03b item 1, D-92, D-93). A finding and never a refusal: whether a
+  //     person has a tree is a question about a machine and not about the file,
+  //     so the registry loads and the agent runs, unfenced, loudly.
+  const ownRunners = new Set(
+    entries.filter((entry) => entry.kind === "runner").map((entry) => entry.id),
+  );
+  for (const agent of listAgents(registry)) {
+    if (!ownRunners.has(agent.runner)) continue;
+    const person = personOf(registry, agent.id);
+    // No `[[people]]` table at all is the shape a household starts with and is
+    // not a finding, which is the same tolerance the loader gives the field.
+    if (person === null || person.tree !== "") continue;
+    findings.push({
+      id: findingId(machine, "agent-unboxed", agent.id),
+      kind: "agent-unboxed",
+      subject: agent.id,
+      machine,
+      says: `${agent.id} runs unboxed, because the person ${agent.person} declares no tree and the tree is what the box fences`,
+      fix: `give ${agent.person} a tree in ${options.registryFile}, as tree = "/var/lib/imprnt-hub/${agent.person}" under that [[people]] entry`,
     });
   }
 

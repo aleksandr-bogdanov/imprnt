@@ -1,5 +1,8 @@
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { adapterFor } from "../adapters/index.ts";
 import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
+import { boxCommand, boxContextFor } from "../box/index.ts";
 import { readTail } from "../chatlog.ts";
 import { thisOs } from "../os/index.ts";
 import { appendEntry } from "../records/diary.ts";
@@ -95,6 +98,50 @@ async function sayWhichServer(
       machine: listRunEntries(registry).find((entry) => entry.id === runner)?.machine ?? "",
     },
   });
+}
+
+/**
+ * The agent's box, ready to hand to a loop (03b item 1, D-92, D-93).
+ *
+ * The RUNNER decides the boxing, because the box is derived from the registry
+ * and the registry is what the runner already reads. The loop is handed a hook
+ * and spawns what comes back, so a new adapter inherits the fence without
+ * knowing a box exists.
+ *
+ * THE PROFILE IS WRITTEN HERE, before the hook is handed over. `boxCommand`
+ * computes the path and the text and writes nothing, and `sandbox-exec` refuses
+ * to start on a profile it cannot open, so a wiring that forgot the write gets
+ * a child that never runs.
+ *
+ * A person with no tree is UNBOXED and is not a refusal: whether a person has a
+ * tree is a question about a machine, not about the file (D-93), so the agent
+ * runs and `check` reports `agent-unboxed` about it.
+ */
+function boxFor(
+  registry: Registry,
+  agentId: string,
+): { wrap: (argv: string[]) => string[]; cwd: string | undefined } | null {
+  if (process.platform !== "darwin" && process.platform !== "linux") return null;
+  let ctx;
+  try {
+    ctx = boxContextFor(registry, agentId);
+  } catch {
+    // An agent the registry no longer carries is one this runner is dropping.
+    return null;
+  }
+  if (ctx.tree === "") return null;
+  const ready = boxCommand([], ctx);
+  if (ready.profile) {
+    mkdirSync(dirname(ready.profile.path), { recursive: true });
+    writeFileSync(ready.profile.path, ready.profile.text, "utf8");
+  }
+  return {
+    wrap: (argv: string[]) => boxCommand(argv, ctx).argv,
+    // The agent WORKS in its own tree, which is the directory the box is drawn
+    // around. A declared tree that is not on this machine yet is left alone
+    // rather than made a spawn that cannot start.
+    cwd: existsSync(ctx.tree) ? ctx.tree : undefined,
+  };
 }
 
 /**
@@ -213,7 +260,12 @@ export async function runRunner(options: {
     const spawn = async (preset: Preset, registry: Registry): Promise<void> => {
       const adapter = adapterFor(options.adapters, preset.adapter);
       if (own.session) await own.session.close().catch(() => {});
-      own.session = await adapter.start({ preset, sessionId: null });
+      const box = boxFor(registry, agent.id);
+      own.session = await adapter.start({
+        preset,
+        sessionId: null,
+        ...(box ? { wrap: box.wrap, ...(box.cwd ? { cwd: box.cwd } : {}) } : {}),
+      });
       // A child the watch killed is a session that is gone, and this is where
       // it comes back: before the next turn, with the runner never restarting.
       own.killed = false;
