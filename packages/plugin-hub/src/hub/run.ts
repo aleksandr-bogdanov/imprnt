@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendEntry } from "../records/diary.ts";
 import { diffUnits, seenUnits, wantedState } from "../os/diff.ts";
-import { entryIdOf } from "../os/names.ts";
+import { entryIdOf, unitName } from "../os/names.ts";
 import { thisOs } from "../os/index.ts";
 import type { OsSeam, RenderContext, WantedUnit } from "../os/types.ts";
 import { listMachines, runEntriesFor } from "../registry/entries.ts";
@@ -173,11 +173,10 @@ export async function runHub(options: {
     }
 
     const wanted: WantedUnit[] = entries.map((entry) => ({
-      ...entry,
-      entry,
-      name: `imprnt-hub-${entry.id}`,
-      unit: `imprnt-hub-${entry.id}`,
+      id: entry.id,
+      name: unitName(entry.id),
       state: wantedState(entry),
+      entry,
     }));
     const difference = diffUnits({ wanted, found: await seenUnits(os, entries) });
 

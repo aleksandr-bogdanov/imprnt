@@ -116,11 +116,10 @@ export async function runCheck(options: {
   const os = options.os ?? null;
   if (os) {
     const wanted: WantedUnit[] = entries.map((entry) => ({
-      ...entry,
-      entry,
+      id: entry.id,
       name: unitName(entry.id),
-      unit: unitName(entry.id),
       state: wantedState(entry),
+      entry,
     }));
     const found = await seenUnits(os, entries);
     const difference = diffUnits({ wanted, found });

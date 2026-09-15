@@ -46,12 +46,20 @@ export interface MemoryReading {
   source: "proc-status" | "ps-rss";
 }
 
-/** A wanted unit: the entry, the name it renders to and the state it asks for. */
-export interface WantedUnit extends RunEntry {
-  entry: RunEntry;
+/**
+ * A wanted unit: the entry, the name it renders to and the state it asks for.
+ *
+ * D-107. Four fields, pinned, and `diffUnits` accepts exactly this. The earlier
+ * shape spread the whole `RunEntry` in beside `entry` and carried `name` twice
+ * (once as `unit`), so the same fact had three spellings and nothing said which
+ * one a reader was meant to use. `id` is the entry's, because that is what the
+ * diff matches a found unit against.
+ */
+export interface WantedUnit {
+  id: string;
   name: string;
-  unit: string;
   state: WantedState;
+  entry: RunEntry;
 }
 
 export interface OsSeam {
