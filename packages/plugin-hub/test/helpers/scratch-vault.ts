@@ -17,10 +17,34 @@
 // init` walks up from the target and refuses to nest. `scratchDir()` puts it
 // under the system temp directory, which is not one.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { hubPath } from "./cluster.ts";
 import { imprntCliPath } from "./imprnt-shim.ts";
+
+/**
+ * The vault contract, as a published `imprnt` carries it.
+ *
+ * MEASURED in the build round, and it is why this helper does one thing the
+ * plan did not ask for. `imprnt init <root>` copies `<packageRoot>/CLAUDE.md`
+ * to `<root>/CLAUDE.md`, and `packages/imprnt/package.json` gets that file from
+ * the repository root through its `shipdocs` script at PUBLISH time. So an
+ * installed `imprnt` writes the contract and the monorepo's own
+ * `scripts/cli.ts`, which is what `hub.imprnt` names in every check, copies
+ * nothing and says nothing about it.
+ *
+ * D-150's whole point is that a loop started in the vault root loads the filing
+ * rules the way any agent working in a vault does, so a scratch vault without
+ * the contract is not the vault this phase is about. The helper puts the same
+ * bytes there that a published install would: the repository's OWN `CLAUDE.md`,
+ * unconditionally, rather than a `packages/imprnt/CLAUDE.md` that exists only
+ * on a machine where `shipdocs` has been run and can be a stale copy there.
+ */
+function contractPath(): string | null {
+  const at = hubPath("../../CLAUDE.md");
+  return existsSync(at) ? at : null;
+}
 
 export interface ScratchVault {
   /** The project root: the directory holding `vault/` and `raw/`. */
@@ -71,6 +95,12 @@ export async function scratchVault(
         `stdout: ${out}\nstderr: ${err}`,
     );
   }
+
+  // The contract the published CLI would have left here. Never overwritten, so
+  // a CLI that did write one keeps its own copy.
+  const contract = join(root, "CLAUDE.md");
+  const from = contractPath();
+  if (!existsSync(contract) && from !== null) copyFileSync(from, contract);
 
   return {
     root,

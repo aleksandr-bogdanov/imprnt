@@ -571,19 +571,45 @@ export interface HeldLock {
 }
 
 /**
- * Hold an access exclusive lock on one table until `release()`.
+ * The two lock modes a check may hold, and the difference between them.
+ *
+ * MEASURED in phase 5's build round, on this Mac, bun 1.3.14: with `access
+ * exclusive` held on `state_row`, a plain `select` from a SEPARATE superuser
+ * connection blocked for the whole three seconds it was given and returned the
+ * moment the lock was released. `access exclusive` conflicts with `access
+ * share`, which is the lock every `SELECT` takes, so a check that holds one and
+ * then reads the locked table waits on itself for ever.
+ *
+ * `exclusive` conflicts with `row exclusive` (every `insert`, `update` and
+ * `delete`) and NOT with `access share`, so the write under test still queues
+ * and `waitForLockWaiter` still finds it, measured the same way. It is the mode
+ * a check wants when it has to LOOK at the table while the write waits.
+ */
+export type LockMode = "access exclusive" | "exclusive";
+
+/**
+ * Hold a lock on one table until `release()`.
  *
  * The transaction stays open on a reserved connection, so nothing else on that
  * client can steal it. Releasing commits the empty transaction and hands the
  * connection back.
+ *
+ * The default is `access exclusive`, which is what every shipped caller holds
+ * and what their own comments describe: every write to that table blocks at its
+ * own statement. `exclusive` is the additive second mode, for a check that also
+ * reads the table while the write is blocked.
  */
 export async function lockTable(
   cluster: Cluster,
   database: string,
   table: string,
+  mode: LockMode = "access exclusive",
 ): Promise<HeldLock> {
   if (!/^[a-z_][a-z0-9_]*$/.test(table)) {
     throw new Error(`${table} is not a table name`);
+  }
+  if (mode !== "access exclusive" && mode !== "exclusive") {
+    throw new Error(`${mode} is not a lock mode this helper holds`);
   }
   const client = cluster.connect(database) as unknown as {
     reserve(): Promise<{
@@ -595,7 +621,7 @@ export async function lockTable(
   const held = await client.reserve();
   const pid = await backendPid(held);
   await held.unsafe("begin");
-  await held.unsafe(`lock table ${table} in access exclusive mode`);
+  await held.unsafe(`lock table ${table} in ${mode} mode`);
   return {
     pid,
     async release() {

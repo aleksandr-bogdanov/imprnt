@@ -264,6 +264,13 @@ test(
       expect(existsSync(join(staged, "1.md"))).toBe(false);
       expect(await it.read.harvestSheet()).toEqual([]);
       gate.release(2);
+      // BUILD-NOTES 6. AND THE GATE'S WORK IS DONE HERE. Every assertion that
+      // needs an apply held is above, and the shim takes the NEXT ticket for
+      // every apply after these two, so the retry stage below would spend its
+      // whole bound waiting out the shim's own sixty second give-up twice over.
+      // `open()` is the gate's own verb for exactly this: the ones waiting and
+      // the ones still to come.
+      gate.open();
 
       // The lower bound for the retry below: the refusal cannot have been
       // written before this moment.
@@ -317,7 +324,11 @@ test(
       // instantly and spins, and naming that gap does not discharge it. The
       // lower bound is the moment the check started waiting for the refusal,
       // which is before the refusal was written.
-      const retryAt = new Date(String(heldRow.retry_at)).getTime();
+      // BUILD-NOTES 4. `new Date(String(<a Date>))` truncates to the SECOND,
+      // because `Date.prototype.toString` has no milliseconds, while the column
+      // and the diary both carry them. Reading the value rather than its human
+      // spelling is what makes the equality below an equality.
+      const retryAt = new Date(heldRow.retry_at as string).getTime();
       expect(retryAt).toBeGreaterThan(refusedAfter);
       expect(retryAt).toBeLessThanOrEqual(Date.now() + (RETRY_SECONDS + 30) * 1000);
 
@@ -543,7 +554,13 @@ test(
       // below land in front of the settle and not in front of the read.
       expect(await it.read.harvestSheet()).toEqual([]);
 
-      held = await lockTable(cluster, it.db, "state_row");
+      // BUILD-NOTES 5. `exclusive` AND NOT `access exclusive`, measured: the
+      // stronger mode conflicts with `access share`, which is the lock every
+      // `SELECT` takes, so the read of the sheet below would have waited on
+      // this check's own lock until the test timed out. `exclusive` still
+      // conflicts with the `row exclusive` the settle's own `putRow` takes, so
+      // the write still queues and `waitForLockWaiter` still finds it.
+      held = await lockTable(cluster, it.db, "state_row", "exclusive");
       gate.open();
 
       await waitForLockWaiter(cluster, it.db, {

@@ -4,11 +4,30 @@ import { adapterFor } from "../adapters/index.ts";
 import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
 import { boxCommand, boxContextFor } from "../box/index.ts";
 import { readTail } from "../chatlog.ts";
+import { applyNote, stageDirFor, stageNotes } from "../harvest/apply.ts";
+import { parseHarvestReply } from "../harvest/parse.ts";
+import { harvestMessage } from "../harvest/prompt.ts";
+import { decodeHarvestBody, type HarvestBody } from "../harvest/row.ts";
+import { readWatermark, watermarkRow } from "../harvest/sheet.ts";
+import { readSlice } from "../harvest/slice.ts";
 import { thisOs } from "../os/index.ts";
 import { appendEntry } from "../records/diary.ts";
 import { stamp } from "../records/stamps.ts";
-import { catchUpNotice, outageNotice, windowNotice, type Language } from "../door/lines.ts";
-import { agentsFor, languageOf, listAgents, listRunEntries } from "../registry/entries.ts";
+import {
+  catchUpNotice,
+  harvestNothing,
+  harvestReport,
+  outageNotice,
+  windowNotice,
+  type Language,
+} from "../door/lines.ts";
+import {
+  agentsFor,
+  harvestFor,
+  languageOf,
+  listAgents,
+  listRunEntries,
+} from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
 import {
   credentialOfPreset,
@@ -21,7 +40,7 @@ import {
 } from "../registry/presets.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
 import { appendNotice } from "../store/outbox.ts";
-import { openWorkWaiter, type Waiter } from "../store/wake.ts";
+import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
 import { writeProgress } from "./progress.ts";
 import {
@@ -35,7 +54,13 @@ import {
   recordWindow,
   type WindowRow,
 } from "./outage.ts";
-import { refuseTurn, settleTurn, type TurnRecord } from "./settle.ts";
+import {
+  refuseTurn,
+  settleHarvest,
+  settleTurn,
+  type HarvestRecord,
+  type TurnRecord,
+} from "./settle.ts";
 
 export interface RunnerHandle {
   runner: string;
@@ -699,6 +724,318 @@ export async function runRunner(options: {
       });
     };
 
+    /**
+     * D-148 to D-159. A harvest turn, which touches the agent's own session not
+     * at all.
+     *
+     * It opens a session of its OWN under the harvester's preset, in the
+     * person's vault root, feeds it one message, closes it, files what came
+     * back through the household's `imprnt`, and settles the watermark with the
+     * turn. `own.session`, `own.killed`, `startedWith` and `turn` are never
+     * read or written here, so nothing of the agent's turn machinery can see a
+     * harvest: no receipt, no progress, no `acked` and no `started` stamp, and
+     * therefore no typing, no progress line and no clock line about a row
+     * nobody sent (D-155, and D-143 is its belt and braces).
+     */
+    const harvestTurn = async (row: EligibleRow, registry: Registry): Promise<void> => {
+      const staged = stageDirFor(stateDir, agent.person, row.id);
+      const settings = harvestFor(registry, agent.person);
+      const every = retrySeconds(registry);
+      let body: HarvestBody;
+      try {
+        body = decodeHarvestBody(row.body);
+      } catch (error) {
+        // A body no reader can decode is a row the door did not write, so there
+        // is nothing here to harvest and nothing to guess at. It is REFUSED
+        // rather than thrown: a throw out of this function ends the whole
+        // serving loop for this agent, and a person whose messages stopped
+        // being answered because of a row nobody sent is the silence this phase
+        // exists to close. `check`'s `harvest-stale` is the household-facing
+        // half when it never clears.
+        await refuseTurn(store, {
+          inboundId: row.id,
+          runner: options.runner,
+          agent: agent.id,
+          cause: "other",
+          said: `this harvest row's body is not readable: ${(error as Error).message}`,
+          retryAt: new Date(Date.now() + every * 1000).toISOString(),
+          kind: "refused.harvest",
+        });
+        return;
+      }
+
+      /** The parts of the record that are true whatever the turn did. */
+      const recordOf = (
+        preset: Preset,
+        what: {
+          harvest: HarvestRecord;
+          end?: TurnEnd;
+          lacks?: readonly string[];
+        },
+      ): TurnRecord => ({
+        agent: agent.id,
+        runner: options.runner,
+        preset: settings?.harvester ?? agent.preset,
+        preset_id: presetId(preset),
+        preset_settings: { ...preset },
+        input_tokens: what.end?.usage.input_tokens ?? null,
+        cached_input_tokens: what.end?.usage.cached_input_tokens ?? null,
+        output_tokens: what.end?.usage.output_tokens ?? null,
+        price: what.end
+          ? priceFor(registry, {
+              model: preset.model,
+              at: new Date(),
+              paid: preset.paid,
+              usage: what.end.usage,
+            })
+          : null,
+        plan_usage: what.end?.usage.plan_usage ?? null,
+        raw_usage: what.end?.usage.raw ?? {},
+        session_id: what.end?.session_id ?? null,
+        lacks: [...(what.lacks ?? [])],
+        tail: false,
+        harvest: what.harvest,
+      });
+
+      // D-137. This person's chats are not harvested any more, and a row
+      // written before the setting was taken out would otherwise sit there for
+      // ever. It is settled with nothing harvested rather than refused: there
+      // is nothing to retry.
+      if (settings === null) {
+        await settleHarvest(store, {
+          inboundId: row.id,
+          turn: recordOf(getPreset(registry, agent.preset), {
+            harvest: {
+              from: body.from,
+              until: body.until,
+              reason: body.reason,
+              lines: 0,
+              notes: [],
+              conflicts: [],
+              staged,
+            },
+          }),
+          watermark: null,
+        });
+        return;
+      }
+
+      // D-150. A VAULT ROOT THAT IS NOT ON THIS MACHINE REFUSES BEFORE ANY
+      // SESSION STARTS. `boxFor`'s own shape for a tree that is not here is
+      // `cwd: undefined`, and copying it would start a loop with no cwd, have
+      // it read nothing, and then die on the CLI's `no vault at <dir>` after
+      // the household had already paid for a model turn. Zero model cost, and
+      // the row comes back when the disk does.
+      if (!existsSync(settings.vault)) {
+        await refuseTurn(store, {
+          inboundId: row.id,
+          runner: options.runner,
+          agent: agent.id,
+          cause: "other",
+          said: `no vault at ${settings.vault} on this machine`,
+          retryAt: new Date(Date.now() + every * 1000).toISOString(),
+          kind: "refused.harvest",
+        });
+        return;
+      }
+
+      const harvester = getPreset(registry, settings.harvester);
+      // D-149. THE SLICE IS COMPUTED FROM THE SHEET AND NEVER FROM THE ROW'S
+      // OWN `from`: the row records what the door believed when it wrote it and
+      // the sheet is what a runner has really settled. That is what makes "a
+      // slice harvested twice" impossible by arithmetic rather than by a lock:
+      // one agent has one runner and one open turn, so two rows for one chat
+      // run one after the other and the second computes its slice after the
+      // first advanced the watermark.
+      const watermark = await readWatermark(store, {
+        person: agent.person,
+        agent: agent.id,
+      });
+      const lines = await readSlice({
+        stateDir,
+        person: agent.person,
+        agent: agent.id,
+        from: watermark?.at ?? null,
+        until: body.until,
+      });
+      const base = {
+        from: watermark?.at ?? null,
+        until: body.until,
+        reason: body.reason,
+        lines: lines.length,
+        staged,
+      };
+
+      // D-149. An empty slice costs NO MODEL TURN: no session, no message, and
+      // no watermark, because nothing was harvested. It still writes its `turn`
+      // line, or criterion 2's query is vacuously true for the case it exists
+      // to cover.
+      if (lines.length === 0) {
+        await settleHarvest(store, {
+          inboundId: row.id,
+          turn: recordOf(harvester, {
+            harvest: { ...base, notes: [], conflicts: [] },
+          }),
+          watermark: null,
+        });
+        return;
+      }
+
+      const last = lines[lines.length - 1];
+      const language = languageOf(registry, agent.person) as Language;
+      const box = boxFor(registry, agent.id);
+      const session = await adapterFor(options.adapters, harvester.adapter).start({
+        preset: harvester,
+        // What makes it FRESH, which is SPEC §4's "a harvester that sees chat
+        // context" read from the other side: a resumed session IS chat context.
+        sessionId: null,
+        ...(box ? { wrap: box.wrap } : {}),
+        // D-150. `imprnt init` writes the vault contract as the project root's
+        // own CLAUDE.md, so a loop started there loads the filing rules the way
+        // any agent working in a vault does. That is L19's "given the vault's
+        // filing rules" delivered by the vault rather than by a prompt that
+        // restates them.
+        cwd: settings.vault,
+      });
+      let end: TurnEnd | "stopped";
+      try {
+        let finish: (ending: TurnEnd) => void = () => {};
+        const ended = new Promise<TurnEnd>((resolve) => {
+          finish = resolve;
+        });
+        // The ONLY handler. A harvest writes no stamp between `received` and
+        // `answered`, so there is nothing for a receipt or a progress event to
+        // do (D-155).
+        session.onTurnEnd((ending) => finish(ending));
+        await session.feed({
+          id: row.id,
+          text: harvestMessage({ language, lines }),
+        });
+        end = await Promise.race([ended, stopped, own.left]);
+      } finally {
+        await session.close().catch(() => {});
+      }
+      if (end === "stopped") return;
+
+      // D-156. A harvest turn DOES record the window it reported, under the
+      // HARVESTER's own credential, because on the common household the
+      // harvester and the agents share one plan login and that is how the
+      // household learns its allowance moved. It writes no window NOTICE, for
+      // the same reason it opens no outage: the notice says "Messages are
+      // waiting and nothing is lost", and that sentence is false when what is
+      // waiting is proactive work nobody asked for.
+      const reading = end.usage.window ?? null;
+      if (reading) {
+        await recordWindow(store, {
+          credential:
+            credentialOfPreset(registry, settings.harvester) ??
+            `preset:${settings.harvester}`,
+          utilization: reading.utilization,
+          resetsAt: reading.resets_at,
+          runner: options.runner,
+        });
+      }
+
+      const refuse = async (said: string): Promise<void> => {
+        await refuseTurn(store, {
+          inboundId: row.id,
+          runner: options.runner,
+          agent: agent.id,
+          cause: "other",
+          said,
+          retryAt: new Date(Date.now() + every * 1000).toISOString(),
+          kind: "refused.harvest",
+        });
+      };
+
+      // D-156. A refused harvest turn opens NO outage and writes NO notice.
+      if (end.refused) {
+        await refuse(end.refused.said);
+        return;
+      }
+
+      const reply = parseHarvestReply(end.text);
+      if (reply.kind === "unreadable") {
+        await refuse(reply.said);
+        return;
+      }
+
+      const notes: string[] = [];
+      const conflicts: string[] = [];
+      if (reply.kind === "notes") {
+        const files = await stageNotes({
+          stateDir,
+          person: agent.person,
+          rowId: row.id,
+          notes: reply.notes,
+        });
+        // IN ORDER, and a refusal stops the row here: the notes before it are
+        // on disk, the watermark does not move, and the staging directory is
+        // left for a human to read. L19: "a crash means a re-run, never a lost
+        // fact."
+        for (const file of files) {
+          const result = await applyNote({
+            imprnt: String(readSetting(registry, "hub.imprnt") ?? "imprnt"),
+            vault: settings.vault,
+            file,
+          });
+          if (result.outcome === "refused") {
+            await refuse(result.said);
+            return;
+          }
+          // D-153. A conflict COUNTS AS LANDED: the vault's own contradiction
+          // workflow recorded it in `_needs-review.md`, nothing about the slice
+          // is lost, and re-running the model on the same slice produces the
+          // same conflict for ever, so a watermark that stood still would
+          // harvest that chat every quiet period until a human intervened.
+          if (result.outcome === "conflict") conflicts.push(result.note);
+          else notes.push(result.note);
+        }
+      }
+
+      // D-159. The line back, written BEFORE the settle, so a person reads it
+      // and then the next answers. It is keyed on the harvest ROW, so a second
+      // attempt at one harvest meets its own key and a second harvest of the
+      // same chat gets its own line.
+      const owed = settings.report || body.reason === "demand";
+      if (owed) {
+        const said =
+          notes.length > 0 || conflicts.length > 0
+            ? harvestReport(language, { notes, conflicts })
+            : body.reason === "demand"
+              ? harvestNothing(language)
+              : null;
+        if (said !== null) {
+          await appendNotice(store, {
+            person: agent.person,
+            agent: agent.id,
+            body: said,
+            noticeKey: `harvest:${row.id}`,
+          });
+        }
+      }
+
+      // D-141, D-154. The watermark is the LAST HARVESTED LINE's own time and
+      // never the row's `until`, and it lands with the settle or not at all.
+      await settleHarvest(store, {
+        inboundId: row.id,
+        turn: recordOf(harvester, {
+          harvest: { ...base, notes, conflicts },
+          end,
+          lacks: session.lacks,
+        }),
+        watermark: watermarkRow({
+          person: agent.person,
+          agent: agent.id,
+          at: last.at,
+          row: row.id,
+          harvestedAt: new Date().toISOString(),
+          notes: notes.length,
+          lines: lines.length,
+        }),
+      });
+    };
+
     const spawn = async (preset: Preset, registry: Registry): Promise<void> => {
       const adapter = adapterFor(options.adapters, preset.adapter);
       if (own.session) await own.session.close().catch(() => {});
@@ -865,6 +1202,17 @@ export async function runRunner(options: {
         });
         if (!row) {
           await sleep();
+          continue;
+        }
+        // D-148. THE BRANCH GOES ABOVE THE RESPAWN LINE, and the placement is
+        // the contract. A harvest is served by a session of its own, so a build
+        // that branched BELOW would kill and respawn the agent's resident
+        // session on every harvest, throw away the session L2's whole tail
+        // machinery exists to keep, and pay the tail's tokens again every quiet
+        // period. `claimNext`'s `returning` already carries the kind, so the
+        // branch costs no read.
+        if (row.kind === "harvest") {
+          await harvestTurn(row, registry);
           continue;
         }
         const preset = getPreset(registry, agent.preset);
