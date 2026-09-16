@@ -61,13 +61,24 @@ async function walBetween(store: StoreLike, from: string, to: string): Promise<n
  * THESE ARE NOT SYNTHETIC TEST MESSAGES. They reach no door, no platform and no
  * person: MSG-11's forbidden thing is a synthetic message sent to test the
  * pipe, and these are rows written to weigh the store.
+ *
+ * THEIR KIND IS THEIR OWN (REVIEW S6). Left as `human` they would grow a
+ * permanent `store-measure` person and agent in the household's own metrics
+ * table, because `readStampMetrics` and `readStampRows` both select on
+ * `kind = 'human'`. With a kind of their own they are invisible to every reader
+ * that asks about a person's messages, and `sweep` below takes the rows
+ * themselves away afterwards.
  */
+const MEASURE_KIND = "measure";
+const MEASURE_WHO = "store-measure";
+
 async function oneMessage(store: StoreLike, nth: number, run: string): Promise<void> {
   const id = `store-measure:${run}:${nth}`;
   await enqueueInbound(store, {
     id,
-    person: "store-measure",
-    agent: "store-measure",
+    person: MEASURE_WHO,
+    agent: MEASURE_WHO,
+    kind: MEASURE_KIND,
     body: `a message written to weigh the store, number ${nth}`,
   });
   await stamp(store, { messageId: id, kind: "acked", actor: "runner" });
@@ -75,6 +86,33 @@ async function oneMessage(store: StoreLike, nth: number, run: string): Promise<v
   await appendChunks(store, id, [`the answer to message ${nth}`]);
   await stamp(store, { messageId: id, kind: "answered", actor: "runner" });
   await stamp(store, { messageId: id, kind: "delivered", actor: "door" });
+}
+
+/**
+ * Take the rows away again.
+ *
+ * REVIEW S6. Owner ask 3 runs this on the household's own store after a week of
+ * real messages, and a tool that measured a store by permanently enlarging it
+ * would be a poor tool. `outbox` first, because it references `inbound`.
+ *
+ * WHAT IT CANNOT TAKE AWAY is the diary: `ledger_event` is append-only by
+ * trigger and by rule, and an entry is never changed and never deleted. Those
+ * rows are invisible to every reader that joins `inbound`, which is all of
+ * them, once the rows below are gone.
+ *
+ * Best effort, because the rows are the tool's own and a caller with no delete
+ * on them is a caller whose store is simply a little larger afterwards. It is
+ * never worth failing a measurement over.
+ */
+async function sweep(store: StoreLike, run: string): Promise<void> {
+  const like = `store-measure:${run}:%`;
+  try {
+    await store.sql`delete from outbox where inbound_id like ${like}`;
+    await store.sql`delete from inbound where id like ${like}`;
+  } catch {
+    // A caller without delete on the two tables. The rows carry a kind of their
+    // own and reach no reader that asks about a person's messages.
+  }
 }
 
 export async function measureStore(
@@ -106,6 +144,7 @@ export async function measureStore(
     await sample(SAMPLES_EACH_SIDE + nth);
   }
   await store.sql`delete from state_row where sheet = 'store_measure'`;
+  await sweep(store, run);
 
   const to = await walPosition(store);
   const written = await walBetween(store, from, to);

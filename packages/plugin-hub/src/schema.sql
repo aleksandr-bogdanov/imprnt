@@ -71,8 +71,14 @@ create table inbound (
   retry_at       timestamptz,
   constraint inbound_state_is_a_stamp
     check (state in ('received', 'acked', 'started', 'answered', 'delivered')),
+  -- REVIEW S6. `measure` is the sixth and it is not work: it is what the
+  -- store's own measuring tool writes to weigh a message, and it is rank 1 like
+  -- every other kind nobody is waiting on. It exists so those rows are
+  -- invisible to every reader that asks about a person's messages, all of which
+  -- select on `kind = 'human'`, in the window before the tool takes them away
+  -- again and afterwards for a caller that could not.
   constraint inbound_kind_is_known
-    check (kind in ('human', 'report', 'triage', 'room', 'harvest'))
+    check (kind in ('human', 'report', 'triage', 'room', 'harvest', 'measure'))
 );
 
 create index inbound_by_agent on inbound (agent, state);
