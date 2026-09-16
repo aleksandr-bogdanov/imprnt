@@ -11,6 +11,7 @@ import { entryIdOf, isOurs, unitName } from "../os/names.ts";
 import type { OsSeam, WantedUnit } from "../os/types.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import {
+  harvestFor,
   listAgents,
   listCredentials,
   listPeople,
@@ -30,6 +31,7 @@ import {
   type CredentialProber,
 } from "./credentials.ts";
 import { findingId, type Finding } from "./finding.ts";
+import { harvestFindings, readHarvestState } from "./harvest.ts";
 import { readStampRows, stampFindings } from "./stamps.ts";
 import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
@@ -438,6 +440,32 @@ export async function runCheck(options: {
         thresholds: (person) => thresholdsFor(registry, person),
         runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
         machine,
+        now,
+      }),
+    );
+  }
+
+  // --- every chat whose slice has outlived a quiet period plus a day, and ---
+  //     every person who has chosen no harvester at all (criterion 1, D-160).
+  //
+  //     THE MACHINE IS THE AGENT'S RUNNER'S, which is the `mine` set above, so
+  //     two machines running `check` do not both report one chat or one person.
+  //     A spoke whose `hub.state_dir` is not on it sees no logs and reports no
+  //     stale chat, which is honest rather than silent, and the undeclared
+  //     finding is a question about the FILE and fires wherever that person's
+  //     agent runs.
+  if (mine.length > 0) {
+    const stateDir = String(readSetting(registry, "hub.state_dir") ?? "");
+    findings.push(
+      ...harvestFindings({
+        chats:
+          stateDir === ""
+            ? []
+            : await readHarvestState(options.store, { stateDir, agents: mine, now }),
+        settings: (person) => harvestFor(registry, person),
+        people: [...new Set(mine.map((agent) => agent.person))],
+        machine,
+        registryFile: options.registryFile,
         now,
       }),
     );
