@@ -88,7 +88,7 @@ async function checkInSubprocess(args: {
 }): Promise<{ ok: boolean; error?: string; findings?: unknown[]; control?: string }> {
   const proc = Bun.spawn(
     [
-      "bun",
+      process.execPath,
       "run",
       hubPath("test/helpers/check-subprocess.ts"),
       args.registryFile,

@@ -153,7 +153,7 @@ test(
       );
 
       // The runner goes away, and with it the session that heard anything.
-      await first.stop();
+      await first!.stop();
       first = null;
 
       // A word an empty session cannot know, generated at run time so no build

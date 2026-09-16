@@ -36,7 +36,7 @@ const AUTH_METHODS: Record<number, string> = {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function concat(head: Uint8Array, tail: Uint8Array): Uint8Array {
+function concat(head: Uint8Array, tail: Uint8Array): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(head.length + tail.length);
   out.set(head);
   out.set(tail, head.length);

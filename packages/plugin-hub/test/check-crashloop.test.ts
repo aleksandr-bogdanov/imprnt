@@ -190,6 +190,33 @@ test.skipIf(!gate.ok)(
       // is dying in a loop from one sitting quietly failed.
       expect(loops[0].says).toContain(dyingId);
       expect(/\d/.test(loops[0].says)).toBe(true);
+      // AND WHAT THE MANAGER SAYS IT IS (03b row 3), on both platforms: a
+      // household given only a count cannot tell a unit still being restarted
+      // from one the limiter has parked, or know which of `start` and
+      // `reset-failed` will do anything.
+      //
+      // THE WORD IS NOT COMPARED TO ONE READING. A unit in a restart loop is
+      // MOVING: `check` reads its state a moment after this file does, and on
+      // the hub box the two came back `activating` and `active`, which is the
+      // same mistake BUILD-NOTES 18 recorded for the memory drift, made by this
+      // assertion's first draft. So what is bound here is that the sentence
+      // names the manager and carries a word out of THAT manager's own state
+      // vocabulary, widened by whatever this file actually saw. The exact word
+      // against a live reading is bound in `test/check-giveup.test.ts`, where
+      // the unit is parked and has stopped moving.
+      const vocabulary = new Set(
+        os.flavour === "launchd"
+          ? ["running", "not running", "waiting", "spawn scheduled"]
+          : ["active", "activating", "deactivating", "inactive", "failed", "reloading", "refreshing", "maintenance"],
+      );
+      vocabulary.add(String(dying.state));
+      vocabulary.add(String((await os.show(dyingId))?.state ?? ""));
+      expect(typeof dying.state).toBe("string");
+      expect(loops[0].says).toContain(os.flavour);
+      const word = /has it ([a-z][a-z ]*?)(?:,|$)/.exec(loops[0].says)?.[1] ?? "";
+      expect(
+        vocabulary.has(word) ? "one of the manager's own words" : `${word} is no state ${os.flavour} has`,
+      ).toBe("one of the manager's own words");
       expect(typeof loops[0].fix).toBe("string");
       expect(loops[0].fix.length).toBeGreaterThan(0);
       // The healthy one produces no finding of this kind at all.

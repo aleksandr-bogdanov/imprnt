@@ -243,6 +243,9 @@ test(
         'kind = "runner"',
         'schedule = "always"',
         "memory_limit_mb = 512",
+        // D-81 as phase 3b makes it: required on every runner entry, machines
+        // declared or not. A fixture line below every line this check numbers.
+        "child_memory_limit_mb = 512",
         "",
       ];
 

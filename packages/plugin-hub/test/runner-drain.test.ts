@@ -223,8 +223,16 @@ test(
         "the first message was settled",
         async () => (await it.read.outbox()).length >= 1,
         60_000,
+        // WHAT A FAILURE HERE HAS TO SAY, because this one only happens on the
+        // slower box inside a full suite run and the first two times it did,
+        // the message said only what the loop had been fed, which cannot tell
+        // "the row never arrived" from "the runner heard nothing" from "the
+        // runner fell over and wrote down why". All three are in the store.
         async () =>
-          `fed=${JSON.stringify(it.scripted.fed().map((f) => f.text))}`,
+          `fed=${JSON.stringify(it.scripted.fed().map((f) => f.text))} ` +
+          `inbound=${JSON.stringify(await it.read.inbound())} ` +
+          `refusals=${JSON.stringify(await it.read.ledger({ stream: "refusal" }))} ` +
+          `runner=${JSON.stringify(await it.read.ledger({ stream: "runner" }))}`,
       );
 
       // Nothing can announce the next row. The trigger is disabled BY NAME, so

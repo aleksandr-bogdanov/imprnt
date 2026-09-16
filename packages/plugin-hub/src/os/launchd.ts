@@ -31,15 +31,6 @@ function uid(): number {
   return process.getuid?.() ?? -1;
 }
 
-async function sh(args: string[]): Promise<{ code: number; out: string; err: string }> {
-  const proc = Bun.spawn(["launchctl", ...args], { stdout: "pipe", stderr: "pipe" });
-  const [out, err] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  return { code: await proc.exited, out, err };
-}
-
 function xml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -74,15 +65,39 @@ function readPrint(label: string, text: string): UnitState {
     restarts: runs === null ? null : Math.max(runs - 1, 0),
     lastExit: /^-?\d+$/.test(exitText) ? Number(exitText) : null,
     since: null,
+    state: state === "" ? null : state,
+    // launchd keeps no equivalent of systemd's `Result`: it never gives up, so
+    // there is no verdict to record (D-96).
+    result: null,
   };
 }
 
-export function launchd(options: { unitDir?: string } = {}): OsSeam {
+export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSeam {
+  const bin = options.bin ?? "launchctl";
   const unitDir = options.unitDir ?? join(homedir(), "Library", "LaunchAgents");
+  /**
+   * 03b item 7. The manager binary is a PARAMETER, defaulting to the bare
+   * name PATH resolves. `check` reaches a manager only through the seam it
+   * was handed, and a check that points this at a recording shim BY
+   * ABSOLUTE PATH catches the one route PATH fronting never could.
+   *
+   * It lives INSIDE the factory so there is exactly one way to invoke the
+   * manager from this file. A module-level helper beside it left a second
+   * spelling that one call site kept using, and that call spawned an array
+   * as if it were a binary.
+   */
+  const ask = async (args: string[]): Promise<{ code: number; out: string; err: string }> => {
+    const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
+    const [out, err] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    return { code: await proc.exited, out, err };
+  };
   const fileOf = (label: string) => join(unitDir, `${label}.plist`);
 
   const print = async (label: string): Promise<UnitState | null> => {
-    const printed = await sh(["print", `gui/${uid()}/${label}`]);
+    const printed = await ask(["print", `gui/${uid()}/${label}`]);
     if (printed.code !== 0) return null;
     return readPrint(label, printed.out + printed.err);
   };
@@ -125,41 +140,44 @@ export function launchd(options: { unitDir?: string } = {}): OsSeam {
       }
       for (const file of files) {
         const label = file.path.slice(file.path.lastIndexOf("/") + 1).replace(/\.plist$/, "");
-        const first = await sh(["bootstrap", `gui/${uid()}`, file.path]);
+        const first = await ask(["bootstrap", `gui/${uid()}`, file.path]);
         if (first.code === 0) continue;
         // A job already in the domain carries the plist it was loaded with, so a
         // changed one only takes effect once it has been unloaded.
-        await sh(["bootout", `gui/${uid()}/${label}`]);
-        await sh(["bootstrap", `gui/${uid()}`, file.path]);
+        await ask(["bootout", `gui/${uid()}/${label}`]);
+        await ask(["bootstrap", `gui/${uid()}`, file.path]);
       }
       return written;
     },
 
     async remove(entryId: string): Promise<void> {
       const label = unitName(entryId);
-      await sh(["bootout", `gui/${uid()}/${label}`]);
+      // The file goes before the job: bootout works by label and needs no file,
+      // and the other order leaves a moment where `list` no longer shows the
+      // job while its plist is still on disk. Same ordering as systemd's.
       if (existsSync(fileOf(label))) rmSync(fileOf(label), { force: true });
+      await ask(["bootout", `gui/${uid()}/${label}`]);
     },
 
     async start(entryId: string): Promise<void> {
       // D-102. The program runs NOW, and on a job that is already running this
       // does nothing at all (measured).
-      await sh(["kickstart", `gui/${uid()}/${unitName(entryId)}`]);
+      await ask(["kickstart", `gui/${uid()}/${unitName(entryId)}`]);
     },
 
     async stop(entryId: string): Promise<void> {
       // A KeepAlive job cannot be stopped by killing it: launchd starts it
       // again. Unloading is the only stop launchd has, so the plist stays on
       // disk and `show` reports it as a unit that exists and is not loaded.
-      await sh(["bootout", `gui/${uid()}/${unitName(entryId)}`]);
+      await ask(["bootout", `gui/${uid()}/${unitName(entryId)}`]);
     },
 
     async restart(entryId: string): Promise<void> {
-      await sh(["kickstart", "-k", `gui/${uid()}/${unitName(entryId)}`]);
+      await ask(["kickstart", "-k", `gui/${uid()}/${unitName(entryId)}`]);
     },
 
     async list(): Promise<UnitState[]> {
-      const listed = await sh(["list"]);
+      const listed = await ask(["list"]);
       const labels = listed.out
         .split("\n")
         .slice(1)
@@ -178,6 +196,8 @@ export function launchd(options: { unitDir?: string } = {}): OsSeam {
             restarts: null,
             lastExit: null,
             since: null,
+            state: null,
+            result: null,
           },
         );
       }
@@ -199,6 +219,8 @@ export function launchd(options: { unitDir?: string } = {}): OsSeam {
           restarts: null,
           lastExit: null,
           since: null,
+          state: null,
+          result: null,
         };
       }
       return null;
@@ -222,7 +244,7 @@ export function launchd(options: { unitDir?: string } = {}): OsSeam {
 
     async available(): Promise<{ ok: boolean; reason: string }> {
       if (uid() < 0) return { ok: false, reason: "no manager for darwin: this process has no uid" };
-      const answer = await sh(["print", `gui/${uid()}`]);
+      const answer = await ask(["print", `gui/${uid()}`]);
       if (answer.code !== 0) {
         return {
           ok: false,

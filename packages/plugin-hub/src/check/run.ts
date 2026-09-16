@@ -1,8 +1,15 @@
-import { diffUnits, seenUnits, stopCommand, wantedState } from "../os/diff.ts";
+import {
+  diffUnits,
+  resetCommand,
+  seenUnits,
+  startCommand,
+  stopCommand,
+  wantedState,
+} from "../os/diff.ts";
 import { entryIdOf, isOurs, unitName } from "../os/names.ts";
 import type { OsSeam, WantedUnit } from "../os/types.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
-import { listAgents, runEntriesFor } from "../registry/entries.ts";
+import { listAgents, personOf, runEntriesFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readPeaks, residentIds } from "../hub/peak.ts";
@@ -39,15 +46,6 @@ function setting(registry: unknown, key: string, fallback: number): number {
   return found === undefined || found === null ? fallback : Number(found);
 }
 
-/** The command a human pastes to start a listed piece that is not running. */
-function startCommand(flavour: string, entryId: string): string {
-  if (flavour === "launchd") {
-    const uid = process.getuid?.() ?? -1;
-    return `launchctl kickstart gui/${uid}/${unitName(entryId)}`;
-  }
-  return `systemctl --user start ${unitName(entryId)}.service`;
-}
-
 /**
  * The newest WORK event for each agent, whichever shape its subject wears.
  *
@@ -72,6 +70,80 @@ async function newestWork(store: StoreLike): Promise<Map<string, string>> {
     out.set(String(row.agent), new Date(row.at as string).toISOString());
   }
   return out;
+}
+
+/**
+ * Every runner's newest `connected` line, and the identifier of the store this
+ * run is reading (03b item 4).
+ *
+ * The identifier is `initdb`'s own, generated per cluster, so a line carrying
+ * one that is not this store's was written against some other cluster and the
+ * household's rows are not all in one place. The NEWEST line per runner is what
+ * counts, so a runner that was pointed somewhere else and then corrected clears
+ * its own finding by reconnecting.
+ */
+async function connectedRunners(store: StoreLike): Promise<{
+  here: string;
+  said: { runner: string; identifier: string; silence: string }[];
+}> {
+  const [control] = (await store.sql.unsafe(
+    "select system_identifier::text as id from pg_control_system()",
+  )) as { id: string }[];
+  const rows = (await store.sql.unsafe(
+    `select distinct on (subject) subject, detail::text as detail
+       from ledger_event
+      where stream = 'runner' and kind = 'connected'
+      order by subject, seq desc`,
+  )) as { subject: string; detail: string | null }[];
+  return {
+    here: String(control?.id ?? ""),
+    said: rows.map((row) => {
+      const identifier = String(fieldOf(row.detail, "system_identifier"));
+      // WHY this line names no server, when it names none. A runner that could
+      // not read the identifier writes the reason into its own line, and a
+      // detail in an encoding this cannot read carries no reason to find, so
+      // the second case says that instead of saying nothing.
+      const said = fieldOf(row.detail, "identifier_error");
+      const silence =
+        identifier !== ""
+          ? ""
+          : said !== ""
+            ? said
+            : "its connect line carries no readable system_identifier";
+      return { runner: String(row.subject), identifier, silence };
+    }),
+  };
+}
+
+/**
+ * One field of a `detail` read back as jsonb TEXT.
+ *
+ * MEASURED: this client sends a bound jsonb parameter as a JSON string, so a
+ * writer that binds an already serialised object stores a jsonb SCALAR STRING
+ * whose contents are the object, while `appendEntry`'s own writes store the
+ * object itself. Both are details a household can find in its ledger, and a
+ * reader that understood only one of them would report the other as carrying
+ * nothing at all, which is a finding that silently never fires. So the text is
+ * parsed here and one layer of string encoding is unwrapped.
+ */
+function fieldOf(detail: string | null, field: string): string {
+  if (detail === null || detail === "") return "";
+  let value: unknown;
+  try {
+    value = JSON.parse(detail);
+  } catch {
+    return "";
+  }
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return "";
+    }
+  }
+  if (value === null || typeof value !== "object") return "";
+  const found = (value as Record<string, unknown>)[field];
+  return found === undefined || found === null ? "" : String(found);
 }
 
 /**
@@ -116,11 +188,10 @@ export async function runCheck(options: {
   const os = options.os ?? null;
   if (os) {
     const wanted: WantedUnit[] = entries.map((entry) => ({
-      ...entry,
-      entry,
+      id: entry.id,
       name: unitName(entry.id),
-      unit: unitName(entry.id),
       state: wantedState(entry),
+      entry,
     }));
     const found = await seenUnits(os, entries);
     const difference = diffUnits({ wanted, found });
@@ -151,24 +222,66 @@ export async function runCheck(options: {
     // flavours: at the moment the finding fires launchd is still bouncing the
     // job while systemd has parked it in `failed`, so a rule that read the
     // running flag would answer opposite on the two for the same illness.
-    const worst = new Map<string, number>();
+    // The unit's own name travels with the count, because the fix is a command
+    // a human pastes about THAT unit and only the manager's listing knows what
+    // it is called. A timer never carries the count that matters, so a service
+    // is preferred whenever both are listed for one entry.
+    const worst = new Map<string, { restarts: number; unit: string }>();
     for (const unit of found) {
       const id = entryIdOf(unit.name);
       if (id === null || !isOurs(unit.name)) continue;
       if (!entries.some((entry) => entry.id === id)) continue;
       const restarts = Number(unit.restarts ?? 0);
       if (!Number.isFinite(restarts)) continue;
-      worst.set(id, Math.max(worst.get(id) ?? 0, restarts));
+      const already = worst.get(id);
+      const timer = unit.name.endsWith(".timer");
+      if (already === undefined) {
+        worst.set(id, { restarts, unit: unit.name });
+        continue;
+      }
+      const preferName = timer && !already.unit.endsWith(".timer") ? already.unit : unit.name;
+      worst.set(id, {
+        restarts: Math.max(already.restarts, restarts),
+        unit: restarts >= already.restarts ? preferName : already.unit,
+      });
     }
-    for (const [id, restarts] of worst) {
-      if (restarts < CRASH_LOOP_RESTARTS) continue;
+    // The unit rows by name, so a finding can quote the state the manager
+    // reported for the very unit it names (03b row 3).
+    const byName = new Map(found.map((unit) => [unit.name, unit]));
+    for (const [id, seen] of worst) {
+      if (seen.restarts < CRASH_LOOP_RESTARTS) continue;
+      // WHAT THE MANAGER SAYS IT IS, beside the count (03b item 3, row 3). A
+      // count alone reads the same for a unit the manager is still patiently
+      // restarting and for one it has given up on and parked, and those two
+      // need different things done to them: the second does not come back from
+      // `start` at all until its failure is reset, which is why the fix below
+      // is `reset-failed` and why the sentence has to say that is the state it
+      // is in. The word is the manager's own, unedited, and the sentence says
+      // which manager said it, because systemd and launchd do not share a
+      // vocabulary. The RESULT rides along when there is one worth reading,
+      // which is where the limiter's own evidence lands when it lands
+      // (`start-limit-hit`); on this systemd it usually does not, because the
+      // manager keeps a unit's FIRST failure result and the limiter's later
+      // refusal does not overwrite it (BUILD-NOTES A.6).
+      const said = byName.get(seen.unit) ?? null;
+      const state =
+        said?.state == null
+          ? `and ${os.flavour} does not say what state it is in`
+          : `and ${os.flavour} has it ${said.state}`;
+      const result =
+        said?.result == null || said.result === "success"
+          ? ""
+          : `, with ${said.result} as its last result`;
       findings.push({
         id: findingId(machine, "crash-loop", id),
         kind: "crash-loop",
         subject: id,
         machine,
-        says: `${id} has been started again ${restarts} times, so it is dying in a loop rather than running`,
-        fix: `read why with journalctl --user -u ${unitName(id)}.service, then fix it or take it off the list`,
+        says: `${id} has been started again ${seen.restarts} times, so it is dying in a loop rather than running, ${state}${result}`,
+        // The state a parked unit is really in is what has to be cleared, and
+        // the command that clears it belongs to the seam that knows the
+        // flavour (03b items 3 and 7).
+        fix: resetCommand(os.flavour, seen.unit),
       });
     }
   }
@@ -194,6 +307,69 @@ export async function runCheck(options: {
       machine,
       says: `${id} runs all day and nothing has ever measured what it holds`,
       fix: `let the hub run a tick with ${id} up, or measure it once with /usr/bin/time -l`,
+    });
+  }
+
+  // --- an agent that cannot be boxed, because the tree is the boundary -----
+  //     (03b item 1, D-92, D-93). A finding and never a refusal: whether a
+  //     person has a tree is a question about a machine and not about the file,
+  //     so the registry loads and the agent runs, unfenced, loudly.
+  const ownRunners = new Set(
+    entries.filter((entry) => entry.kind === "runner").map((entry) => entry.id),
+  );
+  for (const agent of listAgents(registry)) {
+    if (!ownRunners.has(agent.runner)) continue;
+    const person = personOf(registry, agent.id);
+    // A DECLARED PERSON WITH NO TREE AND NO PERSON AT ALL ARE THE SAME FINDING
+    // (03b-DEBTS:19, VERIFY-CODEX row 1). Entry 1 of these build notes shipped
+    // the narrow reading, where a file carrying no `[[people]]` table was
+    // silent, on the argument that half the fixtures would otherwise carry a
+    // row. That is an argument about the fixtures. What `check` is being asked
+    // is whether this machine's agents run inside a box, and the answer for an
+    // agent whose person the file never mentions is no, exactly as loudly as
+    // for one whose entry omits the field: the runner wraps nothing either way
+    // (`boxFor` returns null on an empty tree) and the other people's trees on
+    // that box are open to it. The two differ only in the line a household has
+    // to add, so the finding says which.
+    if (person !== null && person.tree !== "") continue;
+    const declared = person !== null;
+    findings.push({
+      id: findingId(machine, "agent-unboxed", agent.id),
+      kind: "agent-unboxed",
+      subject: agent.id,
+      machine,
+      says: declared
+        ? `${agent.id} runs unboxed, because the person ${agent.person} declares no tree and the tree is what the box fences`
+        : `${agent.id} runs unboxed, because ${options.registryFile} carries no [[people]] entry for ${agent.person} at all, and the tree on that entry is what the box fences`,
+      fix: declared
+        ? `give ${agent.person} a tree in ${options.registryFile}, as tree = "/var/lib/imprnt-hub/${agent.person}" under that [[people]] entry`
+        : `add a [[people]] entry for ${agent.person} to ${options.registryFile}, carrying tree = "/var/lib/imprnt-hub/${agent.person}"`,
+    });
+  }
+
+  // --- every runner reached the ONE store (03b item 4, D5) ----------------
+  //
+  // A RUNNER THAT NAMED NO SERVER IS A FINDING TOO, and it is the same one. An
+  // empty identifier used to be skipped without a word, which made a runner
+  // that could not read the server's identity indistinguishable from one that
+  // read it and found it right, so `store-split` could never fire for that
+  // runner however wrong its store was. The finding kind is not split in two,
+  // because the question a household is asking is the same in both cases and
+  // the answer to it is the same line in the file. What changes is the reason
+  // the finding gives.
+  const reached = await connectedRunners(options.store);
+  for (const one of reached.said) {
+    if (one.identifier !== "" && one.identifier === reached.here) continue;
+    findings.push({
+      id: findingId(machine, "store-split", one.runner),
+      kind: "store-split",
+      subject: one.runner,
+      machine,
+      says:
+        one.identifier === ""
+          ? `${one.runner} last connected without saying which server it reached (${one.silence}), and the store being read here is ${reached.here}, so nothing here can say whether the household's rows are all in one place`
+          : `${one.runner} last connected to the server ${one.identifier}, and the store being read here is ${reached.here}, so the household's rows are in two places`,
+      fix: `point every runner's hub.store_url at the one store, then restart ${one.runner}`,
     });
   }
 

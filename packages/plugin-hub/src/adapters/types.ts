@@ -58,6 +58,17 @@ export interface Adapter {
     preset: Preset;
     sessionId: string | null;
     cwd?: string;
+    /**
+     * 03b item 1. The runner's boxing hook, applied to whatever argv this loop
+     * would otherwise spawn. The adapter spawns `wrap(argv)` when it is given
+     * one and `argv` when it is not.
+     *
+     * The adapter stays loop-specific and BOX-AGNOSTIC: it imports nothing from
+     * `src/box/`, names no tool, and knows nothing about what the wrapping does.
+     * That is what keeps "which box" a question the runner answers from the
+     * registry and not one every new loop has to answer again.
+     */
+    wrap?: (argv: string[]) => string[];
   }): Promise<AdapterSession>;
 }
 

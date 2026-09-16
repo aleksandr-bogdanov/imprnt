@@ -29,10 +29,20 @@ function lineOf(lines: string[], needle: string, from = 0): number {
   return index + 1;
 }
 
+// D-81 as phase 3b makes it: `child_memory_limit_mb` is required on every
+// `kind = "runner"` entry, whether or not the file declares its machines, so the
+// runner of the seven carries one. A fixture field: every line number this file
+// asserts is computed from the array it just built, so nothing below it moves.
 /** The seven kinds L13 names, each with a schedule and a memory limit. */
-const SEVEN: { id: string; kind: string; schedule: string; mb: number }[] = [
+const SEVEN: {
+  id: string;
+  kind: string;
+  schedule: string;
+  mb: number;
+  childMb?: number;
+}[] = [
   { id: "door-telegram", kind: "door", schedule: "always", mb: 192 },
-  { id: "runner-pi", kind: "runner", schedule: "always", mb: 512 },
+  { id: "runner-pi", kind: "runner", schedule: "always", mb: 512, childMb: 512 },
   { id: "watch-bikes", kind: "watcher", schedule: "every 30m", mb: 128 },
   { id: "vault-sync", kind: "sync", schedule: "every 15m", mb: 128 },
   { id: "backup", kind: "backup", schedule: "hourly", mb: 256 },
@@ -44,7 +54,13 @@ function header(): string[] {
   return ["[hub]", "tick_seconds = 5", ""];
 }
 
-function entry(e: { id: string; kind: string; schedule: string; mb?: number }): string[] {
+function entry(e: {
+  id: string;
+  kind: string;
+  schedule: string;
+  mb?: number;
+  childMb?: number;
+}): string[] {
   const lines = [
     "[[run]]",
     `id = "${e.id}"`,
@@ -52,6 +68,7 @@ function entry(e: { id: string; kind: string; schedule: string; mb?: number }): 
     `schedule = "${e.schedule}"`,
   ];
   if (e.mb !== undefined) lines.push(`memory_limit_mb = ${e.mb}`);
+  if (e.childMb !== undefined) lines.push(`child_memory_limit_mb = ${e.childMb}`);
   lines.push("");
   return lines;
 }

@@ -246,7 +246,7 @@ test.skipIf(!gate.ok)(
     const reported = diff({ wanted, found: withStray });
     // CONTAINMENT, never equality: on the hub box `extra` also holds v2.
     expect(reported.extra.map((e) => String(e.name))).toContain(
-      withStray.find((u) => String(u.name).startsWith(stray.base))!.name,
+      String(withStray.find((u) => String(u.name).startsWith(stray.base))!.name),
     );
     // It is NOT the hub's to remove (D-78), which is the separation that keeps a
     // live v2 unit safe from a hub that treated every imprnt-* as its own.

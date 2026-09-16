@@ -48,11 +48,17 @@ async function open(options: {
   preset: Preset;
   sessionId: string | null;
   cwd?: string;
+  wrap?: (argv: string[]) => string[];
 }): Promise<AdapterSession> {
   const args = ["claude", ...FLAGS, "--model", options.preset.model, "--effort", options.preset.effort];
   if (options.sessionId) args.push("--resume", options.sessionId);
 
-  const child = Bun.spawn(args, {
+  // 03b item 1. Whatever the runner handed over, applied to this loop's own
+  // argv. This file names no tool and imports nothing from `src/box/`: what
+  // comes back is simply what gets spawned.
+  const argv = typeof options.wrap === "function" ? options.wrap(args) : args;
+
+  const child = Bun.spawn(argv, {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "inherit",

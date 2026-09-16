@@ -23,6 +23,25 @@ export interface UnitState {
   restarts: number | null; // systemd NRestarts, launchd max(runs - 1, 0)
   lastExit: number | null; // launchd last exit code (null on "(never exited)"), systemd ExecMainStatus
   since: string | null;    // ISO 8601, or null
+  /**
+   * The manager's own word for what state the unit is in, verbatim: systemd's
+   * `ActiveState` (`active`, `failed`, `activating`) and launchd's `state`
+   * (`running`, `not running`). Null when the manager did not say.
+   *
+   * 03b row 3. `running` above is a BOOLEAN derived from one substate, and a
+   * finding that has to tell a household what is wrong cannot say "it is not
+   * running" when the manager's answer is "it is failed and I have stopped
+   * trying". The two flavours disagree about what the words are, so what is
+   * carried here is the manager's, unedited, and the reader says which manager
+   * it is reading.
+   */
+  state: string | null;
+  /**
+   * The manager's own word for why it last stopped, verbatim: systemd's
+   * `Result` (`success`, `exit-code`, `start-limit-hit`). Null on launchd,
+   * which keeps no such field and never gives up (D-96).
+   */
+  result: string | null;
 }
 
 export interface RenderContext {
@@ -46,12 +65,20 @@ export interface MemoryReading {
   source: "proc-status" | "ps-rss";
 }
 
-/** A wanted unit: the entry, the name it renders to and the state it asks for. */
-export interface WantedUnit extends RunEntry {
-  entry: RunEntry;
+/**
+ * A wanted unit: the entry, the name it renders to and the state it asks for.
+ *
+ * D-107. Four fields, pinned, and `diffUnits` accepts exactly this. The earlier
+ * shape spread the whole `RunEntry` in beside `entry` and carried `name` twice
+ * (once as `unit`), so the same fact had three spellings and nothing said which
+ * one a reader was meant to use. `id` is the entry's, because that is what the
+ * diff matches a found unit against.
+ */
+export interface WantedUnit {
+  id: string;
   name: string;
-  unit: string;
   state: WantedState;
+  entry: RunEntry;
 }
 
 export interface OsSeam {

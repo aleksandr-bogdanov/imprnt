@@ -2,13 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendEntry } from "../records/diary.ts";
 import { diffUnits, seenUnits, wantedState } from "../os/diff.ts";
-import { entryIdOf } from "../os/names.ts";
+import { entryIdOf, unitName } from "../os/names.ts";
 import { thisOs } from "../os/index.ts";
 import type { OsSeam, RenderContext, WantedUnit } from "../os/types.ts";
 import { listMachines, runEntriesFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
-import { POSTGRES_PEAK_ID, recordPeak, residentIds } from "./peak.ts";
+import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.ts";
 import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
 
 /**
@@ -50,38 +50,6 @@ function setting(registry: unknown, key: string, fallback: number): number {
   return found === undefined || found === null ? fallback : Number(found);
 }
 
-/** The pid of the process that fathered this backend, when it is on this box. */
-async function postmasterPid(store: Store): Promise<number | null> {
-  try {
-    const [row] = (await store.sql`select pg_backend_pid() as pid`) as { pid: number }[];
-    const backend = Number(row?.pid ?? 0);
-    if (!backend) return null;
-    let parent = 0;
-    if (process.platform === "linux") {
-      const stat = readFileSync(`/proc/${backend}/stat`, "utf8");
-      parent = Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[1] ?? 0);
-    } else {
-      const out = Bun.spawnSync(["ps", "-o", "ppid=", "-p", String(backend)], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      parent = Number((out.stdout?.toString() ?? "").trim());
-    }
-    if (!parent || parent <= 1) return null;
-    // The backend's parent is the postmaster, and this only holds when the store
-    // is on the same box. A spoke reading a store over the tailnet gets a pid
-    // that is not a process here, so the name is checked before it is believed.
-    const named = Bun.spawnSync(["ps", "-o", "comm=", "-p", String(parent)], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const comm = (named.stdout?.toString() ?? "").trim().toLowerCase();
-    return comm.includes("postgres") ? parent : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function runHub(options: {
   machine: string;
   registryFile: string;
@@ -101,9 +69,51 @@ export async function runHub(options: {
   }
 
   const os = options.os ?? thisOs();
+  const application = `hub-${options.machine}`;
   const store: Store = await openStore({
-    url: storeUrlAs(String(readSetting(first, "hub.store_url")), "hub_hub", `hub-${options.machine}`),
+    url: storeUrlAs(String(readSetting(first, "hub.store_url")), "hub_hub", application),
   });
+
+  // SPEC section 6 and D7: ONE hub process per machine. Two of them reconciling
+  // the same machine fight over every unit on it, and BUILD-NOTES B.2 already
+  // records what one stray hub does to a box. The register of who is running is
+  // the store itself, because the hub is already connected to it, so there is
+  // no lock file and nothing to clean up after a crash: a dead hub's backend is
+  // gone by the time anybody asks. This happens BEFORE the first tick, so a hub
+  // that refuses has touched no unit on its way out.
+  //
+  // IT IS A LOCK AND NOT A COUNT (REVIEW.md D5). Counting the other backends
+  // with this name and then carrying on is a check-then-act: two hubs starting
+  // in the same instant both count zero and both proceed, which enforces "one
+  // hub per machine unless two start together". `pg_try_advisory_lock` is the
+  // same register answered atomically, held by the SESSION, so exactly one of
+  // any number of simultaneous starts gets it and a hub that dies by any route
+  // gives it back with its backend. The key is this machine's own application
+  // name hashed to the bigint the function takes, so two machines against one
+  // store never collide. The store is opened with `max: 1` and the hub's
+  // `application_name` already depends on the session outliving the statement
+  // that set it, so the lock is exactly as durable as what is here already.
+  const [{ mine }] = (await store.sql.unsafe(
+    `select pg_try_advisory_lock(('x' || substr(md5($1), 1, 16))::bit(64)::bigint) as mine`,
+    [application],
+  )) as { mine: boolean }[];
+  if (!mine) {
+    await appendEntry(store, {
+      stream: "refusal",
+      subject: options.machine,
+      kind: "refused.second_hub",
+      actor: "hub",
+      detail: {
+        machine: options.machine,
+        application_name: application,
+        reason: "another hub for this machine already holds this machine's lock in this store",
+      },
+    });
+    await store.close().catch(() => {});
+    throw new HubRefused(
+      `a hub for ${options.machine} is already connected to this store, and a machine has one hub`,
+    );
+  }
 
   // The watermark starts at what the ledger already holds, so a hub that is
   // started again does not act on every request the household ever made.
@@ -173,11 +183,10 @@ export async function runHub(options: {
     }
 
     const wanted: WantedUnit[] = entries.map((entry) => ({
-      ...entry,
-      entry,
-      name: `imprnt-hub-${entry.id}`,
-      unit: `imprnt-hub-${entry.id}`,
+      id: entry.id,
+      name: unitName(entry.id),
       state: wantedState(entry),
+      entry,
     }));
     const difference = diffUnits({ wanted, found: await seenUnits(os, entries) });
 
@@ -251,7 +260,10 @@ export async function runHub(options: {
     for (const id of residentIds(registry, options.machine)) {
       let pid: number | null = null;
       if (id === POSTGRES_PEAK_ID) {
-        pid = await postmasterPid(store);
+        // 03b item 2. The file the household DECLARED, never a process tree.
+        // With no `[store]` section nothing is measured for the store and
+        // `check` keeps `peak-missing:postgres`, which is the honest state.
+        pid = readStorePid(registry).pid;
       } else if (entries.some((entry) => entry.id === id)) {
         pid = (await os.show(id))?.pid ?? null;
       }

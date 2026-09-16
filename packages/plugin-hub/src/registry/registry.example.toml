@@ -16,6 +16,13 @@ give_up_window_seconds = 300
 job_grace_seconds = 300
 silent_runner_hours = 6
 
+# Where the store's own process is, so the hub can measure it without guessing
+# at a process tree. Every standard install writes a pid file: this is Debian's,
+# and `imprnt install` writes the right one for the box it is run on, once.
+[store]
+pid_file = "/var/run/postgresql/15-main.pid"
+unit = "postgresql@15-main.service"
+
 # The machines this household has. `os` is in the file rather than taken from the
 # process, so a mis-set machine id is refused here instead of writing systemd
 # unit files onto a Mac. Below two machines, no [[run]] entry needs a `machine`.
