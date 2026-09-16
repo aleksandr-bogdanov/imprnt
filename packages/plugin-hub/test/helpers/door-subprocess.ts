@@ -58,7 +58,10 @@ try {
   handle = await runDoor({
     door: doorId,
     registryFile,
-    platform: platformClient(platformUrl),
+    // The client asks the server what it is before it is handed over, so a
+    // door in this process holds the same typing lifetime the in-process one
+    // does (D-125).
+    platform: await platformClient(platformUrl),
   });
 } catch (err) {
   fail(`runDoor refused to start: ${(err as Error).message}`);

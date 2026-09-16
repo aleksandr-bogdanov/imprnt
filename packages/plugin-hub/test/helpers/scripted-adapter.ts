@@ -41,6 +41,45 @@ import type {
 } from "../../src/adapters/types.ts";
 import type { Preset } from "../../src/registry/presets.ts";
 
+/**
+ * D-118. What the loop said when it would not answer, and the window it
+ * reported, written out HERE rather than imported from `src/adapters/types.ts`,
+ * because that file carries the phase 3 shape and this round creates nothing
+ * under `src/`. The same reason `test/helpers/units.ts` keeps its own copy of
+ * the two unit prefixes.
+ */
+export interface TurnRefusal {
+  cause: "login" | "window" | "other";
+  said: string;
+}
+
+export interface WindowReading {
+  /** 0.0 to 1.0, the highest window the loop reported. */
+  utilization: number;
+  /** ISO 8601, from that window's own reset. */
+  resets_at: string | null;
+}
+
+/** A turn end carrying phase 4's two fields beside phase 2's three. */
+export interface ScriptedTurnEnd extends TurnEnd {
+  refused: TurnRefusal | null;
+}
+
+/** The usage a scripted turn reports, with the normalised window beside it. */
+export interface ScriptedUsage extends AdapterUsage {
+  window: WindowReading | null;
+}
+
+/**
+ * What a scripted loop says when `refusals` is what put it there. A check
+ * asserts this sentence, so a refusal the fixture invented is still the
+ * fixture's own and never mistaken for a measured one.
+ */
+export const SCRIPTED_REFUSAL: TurnRefusal = {
+  cause: "login",
+  said: "the scripted loop refused this turn",
+};
+
 export interface FedMessage {
   id: string;
   text: string;
@@ -111,6 +150,20 @@ export interface ScriptedOptions {
    * a file, because an already-open descriptor needs no rule in any profile.
    */
   probePath?: string;
+  /**
+   * D-121. Answer REFUSED for the first n turns, then reply normally.
+   *
+   * A refused turn replays the user line (so the receipt lands and the row
+   * reaches `acked`, which D-121a says is what the measured no-login wire
+   * does) and produces NO text at all, so no `started` stamp can land and the
+   * runner has nothing to write into the outbox.
+   *
+   * The count includes the tail turn the runner feeds on every spawn, because
+   * that is a turn the loop really refused too.
+   */
+  refusals?: number;
+  /** D-119. The window every turn of this loop reports, until it is changed. */
+  window?: WindowReading;
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +395,13 @@ export interface ScriptedAdapter {
    * turn fail rather than pass.
    */
   setUsage(usage: AdapterUsage): void;
+  /**
+   * What this loop refuses with from the next turn on, or null to answer
+   * normally again. It overrides whatever `refusals` had left to run.
+   */
+  setRefusal(refusal: TurnRefusal | null): void;
+  /** The window every turn from here on reports, or null for none at all. */
+  setWindow(window: WindowReading | null): void;
   /** The numbers this loop reports right now. A check asserts them exactly. */
   readonly usage: AdapterUsage;
   lacks: readonly string[];
@@ -367,6 +427,12 @@ export function createScriptedAdapter(
   // The usage a turn end reports is read at the moment it fires, so a test can
   // give each turn of one session its own numbers.
   let usage: AdapterUsage = options.usage ?? { ...DEFAULT_USAGE };
+  // Phase 4. Both are null by default, so a turn end carries exactly what it
+  // carries today plus two nulls, and every phase 2 and phase 3 check behaves
+  // as it does now.
+  let window: WindowReading | null = options.window ?? null;
+  let countdown = options.refusals ?? 0;
+  let standing: TurnRefusal | null = countdown > 0 ? { ...SCRIPTED_REFUSAL } : null;
 
   const fedLog: FedMessage[] = [];
   const startLog: StartRecord[] = [];
@@ -391,43 +457,86 @@ export function createScriptedAdapter(
   }
 
   let current: Live | null = null;
-  let turn: { id: string; text: string; live: Live } | null = null;
 
-  const fireReceipt = (id: string) => {
-    for (const h of (turn?.live ?? current)?.receipt ?? []) h(id);
+  /**
+   * ONE OPEN TURN PER SESSION, not one per fixture (the second seat's finding
+   * on check 17).
+   *
+   * A runner serves its agents concurrently (`src/runner/run.ts` runs one
+   * `runAgent` per agent), and every agent opens its own session on the ONE
+   * adapter its runner was handed. With a single `turn` field on the fixture,
+   * two agents feeding it at the same time overwrote each other: the second
+   * feed replaced the first, the first turn could never end, and a gate release
+   * advanced only whichever feed happened to land last. Two checks then
+   * depended on scheduling rather than on the door or the runner.
+   *
+   * A session can still have at most one turn open at a time, which is the
+   * runner's own rule, so this is a map from the session to its turn rather
+   * than a queue.
+   */
+  interface Turn {
+    id: string;
+    text: string;
+    live: Live;
+  }
+  const turns = new Map<Live, Turn>();
+
+  const fireReceipt = (live: Live, id: string) => {
+    for (const h of live.receipt) h(id);
   };
-  const fireProgress = (event: AdapterProgress) => {
-    for (const h of (turn?.live ?? current)?.progress ?? []) h(event);
+  const fireProgress = (live: Live, event: AdapterProgress) => {
+    for (const h of live.progress) h(event);
   };
-  const fireEnd = (end: TurnEnd) => {
-    for (const h of (turn?.live ?? current)?.end ?? []) h(end);
+  const fireEnd = (live: Live, end: TurnEnd) => {
+    for (const h of live.end) h(end);
   };
 
-  const step3 = () => {
-    if (!turn) return;
-    const ending = turn;
-    fireEnd({
-      text: scriptedReply(ending.text),
+  const step3 = (live: Live) => {
+    const ending = turns.get(live);
+    if (!ending) return;
+    const refused = standing;
+    // The countdown is spent on the turn it refused, so `refusals: 2` is two
+    // refused turns and the third replies.
+    if (refused && countdown > 0) {
+      countdown -= 1;
+      if (countdown === 0) standing = null;
+    }
+    // Built as a VARIABLE and not as a literal at the call, so the two fields
+    // phase 4 adds travel without an excess property error against the phase 3
+    // `TurnEnd` the handler is typed with.
+    const end: ScriptedTurnEnd = {
+      // D-118: the text is empty whenever a refusal is set, so a runner that
+      // ignored the field would write an empty chunk rather than an apology.
+      text: refused ? "" : scriptedReply(ending.text),
       session_id: ending.live.sessionId,
-      usage,
-    });
-    turn = null;
+      usage: { ...usage, window } as ScriptedUsage,
+      refused,
+    };
+    turns.delete(live);
+    fireEnd(live, end);
   };
 
-  const step2 = () => {
-    if (!turn) return;
+  const step2 = (live: Live) => {
+    const open = turns.get(live);
+    if (!open) return;
     if (gateProgress) return;
-    fireProgress({ kind: "text", text: scriptedReply(turn.text) });
+    // A refused turn produces NOTHING, so no `started` stamp can land on a row
+    // the loop never began answering (D-121a).
+    if (!standing) fireProgress(live, { kind: "text", text: scriptedReply(open.text) });
     if (gateEnd) return;
-    step3();
+    step3(live);
   };
 
-  const step1 = () => {
-    if (!turn) return;
+  const step1 = (live: Live) => {
+    const open = turns.get(live);
+    if (!open) return;
     if (gateReceipt) return;
-    fireReceipt(turn.id);
-    step2();
+    fireReceipt(live, open.id);
+    step2(live);
   };
+
+  /** Every session with a turn open right now, oldest first. */
+  const openSessions = (): Live[] => [...turns.keys()];
 
   const openOne = (
     sessionId: string | null,
@@ -470,10 +579,10 @@ export function createScriptedAdapter(
       },
       async feed(message: { id: string; text: string }): Promise<void> {
         fedLog.push({ id: message.id, text: message.text, at: Date.now() });
-        turn = { id: message.id, text: message.text, live };
+        turns.set(live, { id: message.id, text: message.text, live });
         // The verbs are asynchronous in every real loop, so nothing lands
         // inside the caller's own call stack here either.
-        queueMicrotask(step1);
+        queueMicrotask(() => step1(live));
       },
       onReceipt(handler) {
         live.receipt.push(handler);
@@ -488,7 +597,7 @@ export function createScriptedAdapter(
         live.receipt.length = 0;
         live.progress.length = 0;
         live.end.length = 0;
-        if (turn && turn.live === live) turn = null;
+        turns.delete(live);
         if (held) held.kill();
       },
     };
@@ -527,31 +636,52 @@ export function createScriptedAdapter(
       openedAt = Date.now();
     },
     openedAt: () => openedAt,
+    // A GATE IS THE FIXTURE'S, so releasing one releases every turn this
+    // fixture is holding. With one session open that is what it always did.
+    // With two, which is a runner serving two agents, it is what lets a check
+    // hold both and release both, instead of whichever feed landed last.
     holdReceipt(on) {
       gateReceipt = on;
-      if (!on) step1();
+      if (!on) for (const live of openSessions()) step1(live);
     },
+    // A RECEIPT FOR AN ID NOBODY FED STILL REACHES THE RUNNER. That is what
+    // `test/runner-receipt.test.ts` is about: L1 says "only when the loop
+    // acknowledges that exact message", and the RUNNER is what has to filter.
+    // A fixture that swallowed the wrong id would make that check pass for the
+    // fixture's reason instead of the runner's.
     sendReceipt(messageId) {
-      fireReceipt(messageId);
-      if (turn && turn.id === messageId) step2();
+      const open = openSessions();
+      const matching = open.filter((live) => turns.get(live)?.id === messageId);
+      const heard = matching.length > 0 ? matching : open.length > 0 ? open : current ? [current] : [];
+      for (const live of heard) fireReceipt(live, messageId);
+      for (const live of matching) step2(live);
     },
     holdProgress(on) {
       gateProgress = on;
-      if (!on) step2();
+      if (!on) for (const live of openSessions()) step2(live);
     },
     sendProgress(event) {
-      if (!turn) return;
-      fireProgress(event ?? { kind: "text", text: scriptedReply(turn.text) });
+      for (const live of openSessions()) {
+        const open = turns.get(live)!;
+        fireProgress(live, event ?? { kind: "text", text: scriptedReply(open.text) });
+      }
     },
     holdTurnEnd(on) {
       gateEnd = on;
-      if (!on) step3();
+      if (!on) for (const live of openSessions()) step3(live);
     },
     endTurn() {
-      step3();
+      for (const live of openSessions()) step3(live);
     },
     setUsage(next) {
       usage = next;
+    },
+    setRefusal(next) {
+      standing = next;
+      countdown = 0;
+    },
+    setWindow(next) {
+      window = next;
     },
     get usage() {
       return usage;
@@ -610,7 +740,8 @@ interface WireEvent {
   session: string;
   messageId?: string;
   progress?: AdapterProgress;
-  end?: TurnEnd;
+  /** Phase 4's two fields ride along, because the whole object is serialised. */
+  end?: ScriptedTurnEnd;
 }
 
 export async function serveAdapter(
@@ -661,7 +792,12 @@ export async function serveAdapter(
         seen.set(id, { session: id, pid: null, fed: [] });
         opened.onReceipt((messageId) => push({ kind: "receipt", session: id, messageId }));
         opened.onProgress((progress) => push({ kind: "progress", session: id, progress }));
-        opened.onTurnEnd((end) => push({ kind: "end", session: id, end }));
+        // The handler is typed with the phase 3 `TurnEnd`, and what this
+        // fixture really fires carries phase 4's two fields as well. The whole
+        // object is serialised, so they cross the wire on their own.
+        opened.onTurnEnd((end) =>
+          push({ kind: "end", session: id, end: end as ScriptedTurnEnd }),
+        );
         return Response.json({
           session: id,
           sessionId: opened.sessionId,

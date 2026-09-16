@@ -42,6 +42,7 @@ import {
 import {
   writeRegistry,
   type AgentSpec,
+  type CredentialSpec,
   type MachineSpec,
   type PersonSpec,
   type RegistrySpec,
@@ -107,10 +108,30 @@ export interface InboundRow {
   claim_deadline: Date | null;
 }
 
+/**
+ * D-113. A notice is an outbox row with no message on it, so it carries its own
+ * person and agent and the key that makes it the only one of its kind.
+ */
+export interface NoticeRow {
+  id: number;
+  kind: string;
+  person: string | null;
+  agent: string | null;
+  inbound_id: string | null;
+  notice_key: string | null;
+  body: string;
+  written_at: Date;
+  delivered_at: Date | null;
+}
+
 export interface StoreReader {
   ledger(filter?: { stream?: string; subject?: string; kind?: string }): Promise<LedgerRow[]>;
   inbound(): Promise<InboundRow[]>;
   outbox(): Promise<OutboxRow[]>;
+  /** Phase 4. The notice rows alone, in outbox order. */
+  noticeRows(): Promise<NoticeRow[]>;
+  /** Phase 4. The `outage` sheet, which is one row per credential id. */
+  outageSheet(): Promise<{ sheet: string; id: string; data: Record<string, unknown> }[]>;
   sheet(name: string): Promise<{ sheet: string; id: string; data: Record<string, unknown> }[]>;
   sql(query: string, values?: unknown[]): Promise<Record<string, unknown>[]>;
   pid(): Promise<number>;
@@ -156,6 +177,26 @@ export function storeReader(cluster: Cluster, database: string): StoreReader {
         `select id, inbound_id, seq_in_reply, body, written_at, delivered_at
          from outbox order by id`,
       )) as unknown as OutboxRow[];
+    },
+    async noticeRows() {
+      // The columns are phase 4's own, so this reader throws a readable
+      // "column does not exist" against the shipped schema. Every check that
+      // calls it asserts the catalog first, so the red reason is the missing
+      // object and never this helper.
+      return (await rows(
+        `select id, kind, person, agent, inbound_id, notice_key, body,
+                written_at, delivered_at
+         from outbox where kind = 'notice' order by id`,
+      )) as unknown as NoticeRow[];
+    },
+    async outageSheet() {
+      return (await rows(
+        "select sheet, id, data from state_row where sheet = 'outage' order by id",
+      )) as unknown as {
+        sheet: string;
+        id: string;
+        data: Record<string, unknown>;
+      }[];
     },
     async sheet(name) {
       return (await rows(
@@ -303,6 +344,29 @@ export interface StageOptions {
   agents?: AgentSpec[];
   /** Extra or replacement `[hub]` settings. */
   hub?: Record<string, string | number>;
+  // Phase 4. Both ABSENT from the default spec, so every shipped check keeps
+  // loading the registry it loads today.
+  /** D-111. The credentials this file declares. */
+  credentials?: CredentialSpec[];
+  /**
+   * D-108. The language the DEFAULT person reads the door's lines in.
+   *
+   * A stage that names no people declares one for `p1` carrying this and no
+   * tree, because a tree is what the box is drawn around and a stage that
+   * grew one would be boxing every loop these checks run. A stage that names
+   * its own people gets it on the entry for `p1`, when that entry says none.
+   */
+  language?: "en" | "ru";
+  /**
+   * D-125. What the staged platform is, beyond its name and its probe.
+   *
+   * `typingSeconds` is a platform's own documented lifetime (Telegram's 5,
+   * Discord's 10), and a check that watches the cadence reads its bound off
+   * the platform rather than writing a number beside itself. A fixture may
+   * therefore declare a SHORT one and stay honest, which is what keeps a
+   * cadence check seconds long instead of a minute.
+   */
+  platform?: { typingSeconds?: number; noTyping?: boolean };
   /** 03b item 2. The `[store]` section, absent unless a check asks for one. */
   store?: StoreSpec;
 }
@@ -315,7 +379,11 @@ export async function stageHub(
   const dir = await scratchDir();
   const storeUrl = userlessStoreUrl(cluster, db);
   const adapterName = `scripted-${crypto.randomUUID().slice(0, 8)}`;
-  const fake = createFakePlatform({ name: "fake", probe: options.probe });
+  const fake = createFakePlatform({
+    name: "fake",
+    probe: options.probe,
+    ...(options.platform ?? {}),
+  });
   const scripted = createScriptedAdapter({
     name: adapterName,
     ...(options.adapter ?? {}),
@@ -328,11 +396,26 @@ export async function stageHub(
     adapter = await serveAdapter(scripted);
   }
 
+  // The default person, declared only when a stage asked for a language. An
+  // absent option renders no `[[people]]` table at all, which is the file every
+  // phase 2 check loads today.
+  const people: PersonSpec[] | undefined =
+    options.language === undefined
+      ? options.people
+      : options.people === undefined
+        ? [{ id: PERSON, language: options.language }]
+        : options.people.map((one) =>
+            one.id === PERSON && one.language === undefined
+              ? { ...one, language: options.language }
+              : one,
+          );
+
   const base: RegistrySpec = {
     hub: { store_url: storeUrl, state_dir: dir, ...(options.hub ?? {}) },
     ...(options.store ? { store: options.store } : {}),
     ...(options.machines ? { machines: options.machines } : {}),
-    ...(options.people ? { people: options.people } : {}),
+    ...(people ? { people } : {}),
+    ...(options.credentials ? { credentials: options.credentials } : {}),
     ...(options.run ? { run: options.run } : {}),
     presets: {
       daily: {
@@ -508,11 +591,26 @@ export async function insertInbound(
        values (${columns.map((_, i) => `$${i + 1}`).join(", ")})`,
       values,
     );
-    await conn.unsafe(
-      `insert into ledger_event (stream, subject, kind, actor)
-       values ('inbound', $1, 'received', 'door')`,
-      [row.id],
-    );
+    // THE STAMP CARRIES THE SAME TIME THE COLUMN DOES (the second seat's
+    // finding on check 24). A backdated `received_at` with a `received` stamp
+    // at `now()` is a row whose own two records of when it arrived disagree,
+    // and every phase 4 reader derives from the LEDGER: the metrics measure
+    // from the stamps, `check`'s stamp finding measures from them, and a
+    // fixture that planted two different times would make a correct build fail
+    // an oracle computed from the other one.
+    if (row.receivedAt === undefined) {
+      await conn.unsafe(
+        `insert into ledger_event (stream, subject, kind, actor)
+         values ('inbound', $1, 'received', 'door')`,
+        [row.id],
+      );
+    } else {
+      await conn.unsafe(
+        `insert into ledger_event (at, stream, subject, kind, actor)
+         values ($2, 'inbound', $1, 'received', 'door')`,
+        [row.id, row.receivedAt],
+      );
+    }
     await conn.unsafe("commit");
   } finally {
     await conn.close();

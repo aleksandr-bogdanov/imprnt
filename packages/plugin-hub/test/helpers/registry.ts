@@ -17,6 +17,12 @@ export interface PresetSpec {
   provider?: string;
   effort?: string;
   paid?: string;
+  /** D-111. Which declared credential this preset's loop reads its login from. */
+  credential?: string;
+  /** D-110. The three window thresholds, percent, on a `paid = "plan"` preset. */
+  window_pause_at?: number;
+  window_notice_at?: number;
+  window_hold_at?: number;
   /** Anything else, so a refusal check can plant a forbidden key. */
   [key: string]: string | number | undefined;
 }
@@ -65,6 +71,25 @@ export interface MachineSpec {
 export interface PersonSpec {
   id: string;
   tree?: string;
+  /** D-108. The language this person reads the door's own lines in. */
+  language?: string;
+  /** D-108. The four stamp thresholds, seconds, this person's own. */
+  acked_seconds?: number;
+  started_seconds?: number;
+  answered_seconds?: number;
+  delivered_seconds?: number;
+  [key: string]: string | number | undefined;
+}
+
+/**
+ * D-111. A credential this household has: one owner, one place, and every agent
+ * that uses it points at that file.
+ */
+export interface CredentialSpec {
+  id: string;
+  kind?: string;
+  file?: string;
+  owner?: string;
   [key: string]: string | number | undefined;
 }
 
@@ -89,6 +114,7 @@ export interface RegistrySpec {
   run?: RunSpec[];
   machines?: MachineSpec[];
   people?: PersonSpec[];
+  credentials?: CredentialSpec[];
 }
 
 const HUB_DEFAULTS: Record<string, string | number> = {
@@ -117,6 +143,29 @@ function table(lines: string[], entries: Record<string, unknown>): void {
  * tolerates the fields phase 2 added, so the file still loads unchanged.
  */
 const DEFAULT_CHILD_LIMIT_MB = 2048;
+
+/**
+ * D-110 makes the three window thresholds required on every `paid = "plan"`
+ * preset, by name, in the build round. Every plan preset this helper renders
+ * carries them from today, for the reason above: without it every check that
+ * stages a hub turns red the moment the loader requires them, and that is a
+ * fixture problem wearing a production failure's clothes. Today's loader
+ * tolerates a key it has no rule about, so the file still loads unchanged.
+ *
+ * The numbers are v2's own, which is what `src/registry/registry.example.toml`
+ * ships. A check that is ABOUT the thresholds says its own, and `test/runner-window.test.ts`
+ * deliberately says numbers that are not these, so a build carrying v2's in
+ * code passes nothing there.
+ *
+ * A `paid = "key"` preset carries NONE, because the loader refuses them there,
+ * and a spec that names a field explicitly as `undefined` gets none either, so
+ * a check can render a plan preset with a field missing on purpose.
+ */
+const DEFAULT_WINDOW: Record<string, number> = {
+  window_pause_at: 85,
+  window_notice_at: 95,
+  window_hold_at: 100,
+};
 
 /** The `[[run]]` entries the agents imply, when the spec names none itself. */
 function impliedRun(agents: AgentSpec[]): RunSpec[] {
@@ -195,9 +244,21 @@ function renderRegistry(spec: RegistrySpec): string {
     lines.push("");
   }
 
+  for (const credential of spec.credentials ?? []) {
+    lines.push("[[credentials]]");
+    table(lines, credential as Record<string, unknown>);
+    lines.push("");
+  }
+
   for (const [name, preset] of Object.entries(spec.presets ?? {})) {
     lines.push(`[presets.${name}]`);
-    table(lines, preset as Record<string, unknown>);
+    const window: Record<string, number> = {};
+    if (preset.paid === "plan") {
+      for (const [key, number] of Object.entries(DEFAULT_WINDOW)) {
+        if (!(key in preset)) window[key] = number;
+      }
+    }
+    table(lines, { ...(preset as Record<string, unknown>), ...window });
     lines.push("");
   }
 
