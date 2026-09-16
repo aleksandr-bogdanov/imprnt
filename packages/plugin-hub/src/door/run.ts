@@ -131,16 +131,25 @@ export async function runDoor(options: {
       const pending = await readPendingChunks(store, { agent: agent.id });
       const refused = new Set<string>();
       const posted = new Set<string>();
+      let anyRefused = false;
       for (const chunk of pending) {
         if (stopping || own.leaving) return;
-        if (refused.has(chunk.inbound_id)) continue;
+        // D-113. A NOTICE has no message on it, so none of the per-message
+        // bookkeeping below is about it: it is not half of a reply, it holds
+        // nothing else back, and there is nothing to stamp delivered.
+        if (chunk.inbound_id !== null && refused.has(chunk.inbound_id)) continue;
         if (!logged.has(chunk.id)) {
           await appendChatLine(
             { stateDir, person: chunk.person, agent: chunk.agent },
             {
               at: new Date().toISOString(),
               direction: "out",
-              from: chunk.agent,
+              // D-129. A machinery line is the DOOR speaking, so the tail
+              // renders `<door id>: [door] ...` and the next spawned session
+              // reads exactly what the chat holds, marked as machinery twice
+              // over. A reply chunk keeps the agent and nothing about it
+              // changes.
+              from: chunk.kind === "notice" ? options.door : chunk.agent,
               text: chunk.body,
             },
           );
@@ -151,19 +160,20 @@ export async function runDoor(options: {
         } catch {
           // The rest of this reply waits with it, so a person never reads the
           // second half of an answer before the first.
-          refused.add(chunk.inbound_id);
+          if (chunk.inbound_id !== null) refused.add(chunk.inbound_id);
+          anyRefused = true;
           continue;
         }
         await markDelivered(store, chunk.id);
         logged.delete(chunk.id);
-        posted.add(chunk.inbound_id);
+        if (chunk.inbound_id !== null) posted.add(chunk.inbound_id);
       }
       for (const id of posted) {
         if (!refused.has(id)) {
           await stamp(store, { messageId: id, kind: "delivered", actor: "door" });
         }
       }
-      owed = refused.size > 0;
+      owed = anyRefused;
     };
 
     // The LISTEN is opened before the first read and held across every wait,

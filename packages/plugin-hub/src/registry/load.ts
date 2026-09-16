@@ -86,6 +86,16 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "how long a runner may be off the store with no work before it is reported",
     required: false,
   },
+  // D-112. How long a runner waits before it tries a refused credential again.
+  // L10 rule 3: "the runners retry on their own on a fixed interval", and v2's
+  // was a fixed five minutes. It is a retry cadence and not a window threshold,
+  // so SPEC section 6's "a window threshold in code" does not reach it.
+  {
+    key: "hub.outage_retry_seconds",
+    type: "integer",
+    what: "how long a runner waits before it tries a credential that refused a turn again",
+    required: false,
+  },
   // 03b item 2. Where the store's own process writes its pid, and what the
   // machine's service manager calls it. Every standard install writes a pid
   // file, so the hub reads that rather than guessing at a process tree, and the
@@ -158,13 +168,73 @@ export interface MachineEntry {
   os: string;
 }
 
-/** D-93. A person and the tree that is the tenancy boundary. */
+/**
+ * D-93. A person and the tree that is the tenancy boundary.
+ *
+ * D-108. The five phase 4 fields are OPTIONAL and are spread onto the entry only
+ * when the file carries them, exactly the way `child_memory_limit_mb` is spread
+ * onto a `RunEntry`. `test/registry-machines.test.ts` asserts that
+ * `listPeople` on a file that sets none returns rows carrying `id` and `tree`
+ * and nothing else, so an entry that always carried five more keys would turn a
+ * green check red for a fixture edit nobody asked for.
+ */
 export interface PersonEntry {
   id: string;
   tree: string;
+  /** D-108. The four stamp clocks, this person's own, in seconds. */
+  acked_seconds?: number;
+  started_seconds?: number;
+  answered_seconds?: number;
+  delivered_seconds?: number;
+  /** D-108. The language this person reads the door's own lines in. */
+  language?: string;
+}
+
+/**
+ * D-111. A credential this household runs on: one owner, one place, and every
+ * agent that uses it points at that file (L10 rule 1).
+ */
+export interface CredentialEntry {
+  id: string;
+  kind: string;
+  file: string;
+  owner: string;
 }
 
 const MACHINE_OS = ["linux", "macos"];
+
+/** D-110. How a preset is paid for, and there is no third way. */
+export const PAID_KINDS = ["plan", "key"] as const;
+
+/** D-111. The three credential kinds this hub knows how to open. */
+export const CREDENTIAL_KINDS = ["claude-login", "telegram", "discord"] as const;
+
+/** D-108. The two languages this household speaks. */
+export const LANGUAGES = ["en", "ru"] as const;
+
+/** D-108. The four clocks a person's own file may override, one at a time. */
+const STAMP_THRESHOLD_KEYS = [
+  "acked_seconds",
+  "started_seconds",
+  "answered_seconds",
+  "delivered_seconds",
+] as const;
+
+/**
+ * D-108. L6's own four numbers, called defaults by the ruling itself, so a
+ * default in code is allowed HERE and forbidden for the window (D-110).
+ */
+export const STAMP_THRESHOLD_DEFAULTS = {
+  acked_seconds: 30,
+  started_seconds: 60,
+  answered_seconds: 900,
+  delivered_seconds: 60,
+} as const;
+
+export const DEFAULT_LANGUAGE = "en";
+
+/** D-110. The three window thresholds, percent, on a `paid = "plan"` preset. */
+const WINDOW_KEYS = ["window_pause_at", "window_notice_at", "window_hold_at"] as const;
 
 /** The five, alphabetical, which is the order the derived id hashes them in. */
 export const PRESET_KEYS = ["adapter", "effort", "model", "paid", "provider"] as const;
@@ -205,6 +275,7 @@ export class Registry {
   readonly rates: RateEntry[];
   readonly machines: MachineEntry[];
   readonly people: PersonEntry[];
+  readonly credentials: CredentialEntry[];
 
   constructor(
     file: string,
@@ -215,6 +286,7 @@ export class Registry {
     rates: RateEntry[] = [],
     machines: MachineEntry[] = [],
     people: PersonEntry[] = [],
+    credentials: CredentialEntry[] = [],
   ) {
     this.file = file;
     this.data = data;
@@ -224,6 +296,7 @@ export class Registry {
     this.rates = rates;
     this.machines = machines;
     this.people = people;
+    this.credentials = credentials;
   }
 }
 
@@ -520,6 +593,78 @@ export function loadRegistry(file: string): Registry {
         );
       }
     }
+    // D-110. `paid` is a closed set of two, because everything below turns on
+    // which of them it is and a third value would read as a quiet default.
+    const paid = table.paid as string;
+    if (!(PAID_KINDS as readonly string[]).includes(paid)) {
+      refuse(
+        `${where}.paid`,
+        here,
+        `${name} is paid for by ${describe(paid)}, and the two this hub has are ` +
+          `${PAID_KINDS.join(" and ")}`,
+      );
+    }
+
+    // D-110. The window thresholds are settings on the preset, never code
+    // (L10 rule 4), so a plan preset carries all three or the file is refused,
+    // and a key preset carrying one is refused by name: "an agent on a
+    // per-token key has no window", and a setting nothing reads is forbidden.
+    //
+    // THERE IS NO FALLBACK ANYWHERE IN CODE. v2's 85/95/100 ship in
+    // src/registry/registry.example.toml, which is where a shipped default
+    // belongs: a code fallback would be a window threshold in code for every
+    // household that never writes the file.
+    const window: Record<string, number> = {};
+    for (const field of WINDOW_KEYS) {
+      const value = table[field];
+      const said = value !== undefined && value !== null;
+      if (paid === "key") {
+        if (said) {
+          refuse(
+            `${where}.${field}`,
+            here,
+            `${name} is paid for by a per-token key and carries ${field}, and an ` +
+              `agent on a key has no window, so nothing in production would ever read it`,
+          );
+        }
+        continue;
+      }
+      if (!said) {
+        refuse(
+          `${where}.${field}`,
+          here,
+          `${name} is on a plan and has no ${field}, and the window thresholds are ` +
+            `settings on the preset rather than numbers in code`,
+        );
+      }
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 100) {
+        refuse(
+          `${where}.${field}`,
+          here,
+          `${name} has ${field} ${describe(value)}, and it must be a whole percent ` +
+            `from 1 to 100`,
+        );
+      }
+      window[field] = value as number;
+    }
+    // A file that said hold at 50 and pause at 90 would pause nothing and hold
+    // everything with no complaint, which is the quiet default RUN-08 forbids.
+    if (
+      paid === "plan" &&
+      !(
+        window.window_pause_at <= window.window_notice_at &&
+        window.window_notice_at <= window.window_hold_at
+      )
+    ) {
+      refuse(
+        `${where}.window_hold_at`,
+        here,
+        `${name} says pause at ${window.window_pause_at}, notice at ` +
+          `${window.window_notice_at} and hold at ${window.window_hold_at}, and the ` +
+          `three must rise: pause_at <= notice_at <= hold_at`,
+      );
+    }
+
     presets[name] = {
       adapter: table.adapter as string,
       effort: table.effort as string,
@@ -549,9 +694,130 @@ export function loadRegistry(file: string): Registry {
       );
     }
     peopleAt.set(id as string, here);
-    people.push({ id: id as string, tree: typeof entry.tree === "string" ? entry.tree : "" });
+
+    // D-108. The four clocks and the language, each OPTIONAL, each refused by
+    // name and by line when it is there and wrong. A clock that runs out at
+    // once is a clock nobody set, so zero is refused with everything below it.
+    const clocks: Partial<Record<(typeof STAMP_THRESHOLD_KEYS)[number], number>> = {};
+    for (const field of STAMP_THRESHOLD_KEYS) {
+      const value = entry[field];
+      if (value === undefined || value === null) continue;
+      if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+        refuse(
+          `${where}.${field}`,
+          here,
+          `${id} has ${field} ${describe(value)}, and a clock is a whole number of ` +
+            `seconds above zero`,
+        );
+      }
+      clocks[field] = value as number;
+    }
+    const speaks = entry.language;
+    if (speaks !== undefined && speaks !== null) {
+      if (typeof speaks !== "string" || !(LANGUAGES as readonly string[]).includes(speaks)) {
+        refuse(
+          `${where}.language`,
+          here,
+          `${id} reads ${describe(speaks)}, and the two languages this hub speaks ` +
+            `are ${LANGUAGES.join(" and ")}`,
+        );
+      }
+    }
+
+    // Spread, never set: a file that carries none of the five leaves an entry
+    // of exactly `id` and `tree`, which is the shape a shipped check asserts.
+    people.push({
+      id: id as string,
+      tree: typeof entry.tree === "string" ? entry.tree : "",
+      ...clocks,
+      ...(typeof speaks === "string" ? { language: speaks } : {}),
+    });
   });
   const knownPerson = new Set(people.map((person) => person.id));
+
+  // D-111. Every credential this household runs on, named here so a preset can
+  // point at one and so `check` can open every one of them. A door's
+  // `token_file` stays exactly as it is and is treated as a credential without
+  // being an entry, which is what keeps every phase 2 and phase 3 fixture green.
+  const credentials: CredentialEntry[] = [];
+  const credentialAt = new Map<string, number>();
+  ((parsed.credentials ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
+    const where = `credentials[${nth}]`;
+    const here = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
+    const id = entry.id;
+    if (typeof id !== "string" || id === "") {
+      refuse(`${where}.id`, here, `this credential has no id, and a preset names its login by id`);
+    }
+    const already = credentialAt.get(id as string);
+    if (already !== undefined) {
+      refuse(
+        `${where}.id`,
+        here,
+        `${id} is already a credential of this registry, on line ${already}. A ` +
+          `credential has one owner and ONE place`,
+      );
+    }
+    credentialAt.set(id as string, here);
+
+    const kind = entry.kind;
+    if (typeof kind !== "string" || !(CREDENTIAL_KINDS as readonly string[]).includes(kind)) {
+      refuse(
+        `${where}.kind`,
+        here,
+        `${id} is a ${describe(kind)}, and the three kinds this hub opens are ` +
+          `${CREDENTIAL_KINDS.join(", ")}`,
+      );
+    }
+    const at = entry.file;
+    if (typeof at !== "string" || at === "") {
+      refuse(`${where}.file`, here, `${id} names no file, and a credential lives in exactly one`);
+    }
+    const owner = entry.owner;
+    if (typeof owner !== "string" || owner === "") {
+      refuse(
+        `${where}.owner`,
+        here,
+        `${id} names no owner, and the owner is the household or one person`,
+      );
+    }
+    // Asked only of a file that declares people at all, which is D-93's own
+    // tolerance and is here for the same reason: whether a person is declared
+    // is a question this file may not be answering yet.
+    if (knownPerson.size > 0 && owner !== "household" && !knownPerson.has(owner as string)) {
+      refuse(
+        `${where}.owner`,
+        here,
+        `${id} is owned by ${describe(owner)}, which is neither the household nor a ` +
+          `person this file declares`,
+      );
+    }
+
+    credentials.push({
+      id: id as string,
+      kind: kind as string,
+      file: at as string,
+      owner: owner as string,
+    });
+  });
+
+  // D-111. A preset points at its login by id, and a typo is otherwise an agent
+  // reading a login nobody owns. Naming NONE is a `check` finding and never a
+  // refusal, which is what keeps every shipped fixture loading.
+  const declaredCredential = new Set(credentials.map((one) => one.id));
+  for (const [name, table] of Object.entries(
+    (parsed.presets ?? {}) as Record<string, Record<string, unknown>>,
+  )) {
+    const named = table.credential;
+    if (named === undefined || named === null) continue;
+    if (typeof named !== "string" || !declaredCredential.has(named)) {
+      refuse(
+        `presets.${name}.credential`,
+        lines.get(`presets.${name}`) ?? 0,
+        `${name} reads its login from ${describe(named)}, which no [[credentials]] ` +
+          `entry declares`,
+      );
+    }
+  }
 
   const agents: AgentEntry[] = [];
   ((parsed.agents ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
@@ -627,7 +893,17 @@ export function loadRegistry(file: string): Registry {
     rates.push(entry as unknown as RateEntry);
   });
 
-  return new Registry(file, parsed, entries, presets, agents, rates, machines, people);
+  return new Registry(
+    file,
+    parsed,
+    entries,
+    presets,
+    agents,
+    rates,
+    machines,
+    people,
+    credentials,
+  );
 }
 
 export function readSetting(registry: unknown, key: string): unknown {

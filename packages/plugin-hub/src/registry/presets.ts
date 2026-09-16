@@ -86,3 +86,48 @@ export function priceFor(
     rate_from: rate.from,
   };
 }
+
+/** D-110. The three window thresholds a plan preset carries, as percent. */
+export interface WindowThresholds {
+  pause_at: number;
+  notice_at: number;
+  hold_at: number;
+}
+
+/**
+ * The window thresholds of a preset, or null when it is paid for by a per-token
+ * key and has no window at all (L10 rule 4).
+ *
+ * D-109. They are read off the RAW table rather than off `PresetEntry`, and
+ * that is deliberate rather than shy. `test/preset-id.test.ts` pins
+ * `PRESET_FIELDS` against an oracle that recomputes the hash outside this code,
+ * and one level below it `src/runner/run.ts` writes `preset_settings: {
+ * ...preset }` into every turn record, which `test/turn-record.test.ts` asserts
+ * equals five keys. So a sixth field on the entry would change the meaning of
+ * every turn record in the world even with the hash untouched.
+ */
+export function windowThresholds(
+  registry: unknown,
+  presetName: string,
+): WindowThresholds | null {
+  const it = loaded(registry, "windowThresholds");
+  const table = (it.data.presets as Record<string, Record<string, unknown>> | undefined)?.[
+    presetName
+  ];
+  if (!table || table.paid !== "plan") return null;
+  return {
+    pause_at: Number(table.window_pause_at),
+    notice_at: Number(table.window_notice_at),
+    hold_at: Number(table.window_hold_at),
+  };
+}
+
+/** D-111. The credential id this preset's loop reads its login from, or null. */
+export function credentialOfPreset(registry: unknown, presetName: string): string | null {
+  const it = loaded(registry, "credentialOfPreset");
+  const table = (it.data.presets as Record<string, Record<string, unknown>> | undefined)?.[
+    presetName
+  ];
+  const named = table?.credential;
+  return typeof named === "string" && named !== "" ? named : null;
+}

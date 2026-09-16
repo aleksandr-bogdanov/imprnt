@@ -50,6 +50,46 @@ export async function appendRow(
   }
 }
 
+/**
+ * Claim the one row an id may have: one winner, and the loser is handed what
+ * the winner wrote.
+ *
+ * D-115. `appendRow` is the wrong primitive here for a concrete reason. On a
+ * duplicate it calls `recordRefusal`, which opens a SECOND connection on the
+ * caller's own url and inserts a `refusal` row as actor `hub`, and only
+ * `hub_hub` may write that actor. From a `hub_runner` connection that insert is
+ * refused by the policy, so the caller meets a permission error instead of a
+ * losing claim and the loser's re-read never happens. Beyond that, two runners
+ * racing for one outage row is an EXPECTED race, and a refusal per race is
+ * noise in the one diary a household reads.
+ *
+ * D-122. The loser's answer is the WINNER'S DATA, and that is what the whole
+ * one-notice arithmetic stands on: the notice key is built from the outage's
+ * `since`, so a loser that kept its own would write a second notice per person.
+ * The primary key does the arithmetic, which is why this holds across two
+ * runners and across a restart.
+ */
+export async function claimRow(
+  store: StoreLike,
+  sheet: string,
+  id: string,
+  data: Record<string, unknown>,
+): Promise<{ mine: boolean; data: Record<string, unknown> }> {
+  const won = (await store.sql`insert into state_row (sheet, id, data)
+                               values (${sheet}, ${id}, ${data})
+                               on conflict (sheet, id) do nothing
+                               returning data`) as unknown as {
+    data: Record<string, unknown>;
+  }[];
+  if (won.length > 0) return { mine: true, data: won[0].data };
+  // Only when it lost, so the common case is one statement.
+  const standing = (await store.sql`select data from state_row
+                                    where sheet = ${sheet} and id = ${id}`) as unknown as {
+    data: Record<string, unknown>;
+  }[];
+  return { mine: false, data: standing[0]?.data ?? { ...data } };
+}
+
 /** A change is an edit to that row. */
 export async function putRow(
   store: StoreLike,
