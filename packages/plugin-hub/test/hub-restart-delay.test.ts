@@ -101,7 +101,7 @@ async function installAndStartElsewhere(args: {
 }): Promise<{ rendered: Record<string, string>; installed: string[]; flavour: string }> {
   const proc = Bun.spawn(
     [
-      "bun",
+      process.execPath,
       "run",
       hubPath("test/helpers/os-once.ts"),
       args.unitDir,

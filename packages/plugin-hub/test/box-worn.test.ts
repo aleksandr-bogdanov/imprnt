@@ -412,7 +412,7 @@ test.skipIf(!gate.ok)(
       );
       const spawn = it.scripted.spawns()[0];
       expect(spawn.wrapped).toBe(false);
-      expect(spawn.argv[0]).toBe("bun");
+      expect(spawn.argv[0]).toBe(process.execPath);
       expect(spawn.profile).toBeNull();
       await until(
         "the unboxed child reported what it could read",

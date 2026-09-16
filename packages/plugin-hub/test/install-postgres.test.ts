@@ -98,7 +98,7 @@ function contentCensus(dir: string): string[] {
 }
 
 async function runInstall(args: string[]): Promise<{ code: number; out: string; err: string }> {
-  const proc = Bun.spawn(["bun", "run", hubPath(SCRIPT), ...args], {
+  const proc = Bun.spawn([process.execPath, "run", hubPath(SCRIPT), ...args], {
     cwd: hubPath("."),
     stdout: "pipe",
     stderr: "pipe",

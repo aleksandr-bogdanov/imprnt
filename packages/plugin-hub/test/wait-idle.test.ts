@@ -92,7 +92,7 @@ test(
     // time. It is what proves the reader can see a poll at all.
     const busy = Bun.spawn(
       [
-        "bun",
+        process.execPath,
         "-e",
         "setInterval(() => { let s = 0; for (let i = 0; i < 6e7; i++) s += i; globalThis.__sink = s; }, 100); setInterval(() => {}, 1e9);",
       ],

@@ -65,7 +65,7 @@ async function readSettingOutOfProcess(
   extraArgv: string[],
 ): Promise<OutOfProcess> {
   const runner = hubPath("test/helpers/read-setting-subprocess.ts");
-  const proc = Bun.spawn(["bun", "run", runner, ...extraArgv], {
+  const proc = Bun.spawn([process.execPath, "run", runner, ...extraArgv], {
     cwd: hubPath("."),
     env: { ...process.env, ...env },
     stdout: "pipe",
@@ -104,7 +104,7 @@ test("[partial] RUN-06 every setting the code reads has a field in the file: the
   for (const field of fields) {
     const value = (readSetting as Function)(registry, field.key);
     expect(value).toBeDefined();
-    expect(typeof value).toBe(field.type === "integer" ? "number" : field.type);
+    expect(String(typeof value)).toBe(field.type === "integer" ? "number" : field.type);
   }
 
   // Direction two, the negative. Take the shipped file, delete the line

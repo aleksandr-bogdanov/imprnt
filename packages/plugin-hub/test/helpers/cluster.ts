@@ -765,7 +765,7 @@ export async function startReadySubprocess(
   argv: string[],
   timeoutMs = 30_000,
 ): Promise<ReadyProcess> {
-  const proc = Bun.spawn(["bun", "run", hubPath(entry), ...argv], {
+  const proc = Bun.spawn([process.execPath, "run", hubPath(entry), ...argv], {
     cwd: hubPath("."),
     stdout: "pipe",
     stderr: "pipe",

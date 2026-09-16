@@ -199,7 +199,7 @@ export interface HolderOptions {
 }
 
 export function spawnHolder(options: HolderOptions = {}): HeldChild {
-  const plain = ["bun", "-e", HOLDER];
+  const plain = [process.execPath, "-e", HOLDER];
   const argv = typeof options.wrap === "function" ? options.wrap(plain) : plain;
   const wants = typeof options.probePath === "string" && options.probePath !== "";
   let said: BoxProbe | null = null;
@@ -217,7 +217,7 @@ export function spawnHolder(options: HolderOptions = {}): HeldChild {
       // Read LINE BY LINE as they arrive. The holder never exits, so waiting
       // for the stream to end would wait for the kill, and the probe would
       // always read null at the moment a check asks for it.
-      const reader = proc.stdout.getReader();
+      const reader = proc.stdout!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       try {

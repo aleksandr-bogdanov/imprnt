@@ -67,7 +67,7 @@ async function startSecondHub(
   unitDir: string,
 ): Promise<{ code: number; said: Record<string, unknown> | null; out: string }> {
   const proc = Bun.spawn(
-    ["bun", "run", hubPath("test/helpers/hub-subprocess.ts"), registryFile, machine, unitDir],
+    [process.execPath, "run", hubPath("test/helpers/hub-subprocess.ts"), registryFile, machine, unitDir],
     { cwd: hubPath("."), stdout: "pipe", stderr: "pipe", stdin: "ignore" },
   );
   const finished = await Promise.race([
