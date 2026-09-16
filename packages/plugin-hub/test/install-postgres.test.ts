@@ -12,6 +12,18 @@
 // WHAT THIS CHECK WILL NOT DO IS INSTALL POSTGRES. A check that ran
 // `brew install` or `apt-get install` would change the box it is run on, which
 // is the one thing every rule in this phase is about. So the two halves are:
+// WHAT THIS FILE CANNOT EXERCISE, stated once (VERIFY-CODEX row 2). Both real
+// runs below start from a scratch cluster that ANSWERS, so the absent-server
+// branch of `src/entry/install.ts` (the one that runs the package manager and,
+// on macOS, the service command) is never entered here and cannot be. Entering
+// it would mean a box with no Postgres, and the boxes this suite runs on both
+// have one: that is the whole reason the hub can be checked against a real
+// store at all. The dry run is what binds that branch's WORDS on this
+// platform, `pg_lsclusters` and the manager census either side bind that it
+// changed nothing, and BUILD-NOTES 27 records the same limit for the Linux
+// half. A check that claimed otherwise would be claiming a measurement nobody
+// made.
+//
 // `--dry`, which prints this platform's commands and touches nothing, and a
 // real run against the THROWAWAY cluster, where Postgres already answers and
 // the install step is the one thing the script must decide not to do. The apt
@@ -150,6 +162,27 @@ test(
       expect(said).toContain("apt-get");
       expect(said).toContain("postgresql");
       expect(said).toContain(".pid");
+    }
+    // --- IT NAMES THE SERVICE COMMAND, whether or not this run would reach
+    //     for it (03b-DEBTS item 2's dated note, VERIFY-CODEX row 2). Starting
+    //     Postgres's OWN service through the package manager is part of the
+    //     standard install and is allowed; what is not allowed is doing it
+    //     without saying so. This box already has a server, so the real run
+    //     would not issue the command at all, and that is exactly the case
+    //     where a dry run that only printed what it would DO said nothing
+    //     about the one manager verb this script can ever issue.
+    if (process.platform === "darwin") {
+      expect(said).toContain("brew services start postgresql@17");
+      expect(said).toContain("homebrew.mxcl.postgresql@17");
+      // And the condition, so the line is not read as "it is about to".
+      expect(said).toContain("would not run that service command");
+    } else {
+      // Debian's own postinst creates and starts the cluster's unit, so the
+      // honest answer to "which service would you start" is none, and the line
+      // still names the unit that install brings up.
+      expect(said).toContain("would start no service of its own");
+      expect(said).toContain("apt-get");
+      expect(said).toContain("postgresql@");
     }
     // --- and it says it did nothing, so a person reading the terminal is not
     //     left guessing whether the box changed.

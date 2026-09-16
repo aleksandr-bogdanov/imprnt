@@ -12,12 +12,19 @@
 // RUN-07: argv is `<registryFile> [--dry]`, it says what it is doing and to
 // whom, `--dry` is an action modifier and not a behaviour switch (it says "tell
 // me what you would do" about the same work), and nothing here reads the
-// environment. RUN-14: it never edits a boot file. It installs no unit of the
-// hub's, because those are the hub's, and the ONE manager verb it ever issues is
-// the `brew services start` that 03b item 2's own approach paragraph asks for by
-// name: on macOS a freshly installed Postgres is not running until its package
-// manager starts it. That one is named on the way in and again in the closing
-// line, so nothing is ever loaded on a person's box silently (REVIEW.md D11).
+// environment. RUN-14: it never edits a boot file.
+//
+// WHICH UNITS IT MAY TOUCH, settled 2026-09-16 (03b-DEBTS item 2's dated note,
+// VERIFY-CODEX row 2). It installs no unit OF THE HUB'S, because those are the
+// hub's, and it touches no boot file. Starting POSTGRES'S OWN service through
+// the package manager is a different thing and is part of the standard install:
+// on macOS a freshly installed Postgres is not running until `brew services
+// start` loads its job, and on Debian `apt-get install postgresql` creates and
+// starts the cluster's unit itself, so refusing the macOS half would only mean
+// shipping a script that installs a server the household then has to start by
+// hand. What holds instead is that nothing lands silently: the command is
+// printed by `--dry` whether or not this run would reach for it, named again on
+// the way in, and named a third time in the closing line (REVIEW.md D11).
 //
 // It is IDEMPOTENT by asking rather than by remembering: a database that already
 // carries `ledger_event` is not re-applied (the schema creates tables, and only
@@ -35,6 +42,13 @@ import { loadRegistry, readSetting } from "../registry/load.ts";
 interface Standard {
   /** The package manager command a person would run, as they would type it. */
   install: string[];
+  /**
+   * The command that starts Postgres's OWN service after that install, as a
+   * person would type it, or null on a platform whose package manager starts
+   * the cluster itself. It is one constant, used by `--dry` and by the real
+   * run, so the command printed is the command issued.
+   */
+  service: string[] | null;
   /** The pid file that install writes, absolute. */
   pidFile: string;
   /** What the machine's service manager calls it. Informational. */
@@ -111,6 +125,7 @@ function standardFor(platform: string): Standard {
   if (platform === "darwin") {
     return {
       install: ["brew", "install", "postgresql@17"],
+      service: ["brew", "services", "start", "postgresql@17"],
       pidFile: `${brewPrefix()}/var/postgresql@17/postmaster.pid`,
       unit: "homebrew.mxcl.postgresql@17",
     };
@@ -118,6 +133,10 @@ function standardFor(platform: string): Standard {
   const { version, cluster } = debianCluster();
   return {
     install: ["sudo", "apt-get", "install", "-y", "postgresql"],
+    // Debian's own postinst runs `pg_createcluster` and starts the cluster's
+    // unit, so there is no second command here and saying so is the honest
+    // answer to "what service would you start".
+    service: null,
     pidFile: `/var/run/postgresql/${version}-${cluster}.pid`,
     unit: `postgresql@${version}-${cluster}.service`,
   };
@@ -211,6 +230,22 @@ if (dry) {
       ? `install: would install nothing, because postgres already answers at ${maintenanceUrl(storeUrl)}`
       : `install: would run ${standard.install.join(" ")}, because no postgres answers at ${maintenanceUrl(storeUrl)}`,
   );
+  // THE SERVICE COMMAND, NAMED WHETHER OR NOT THIS RUN WOULD REACH FOR IT. A
+  // dry run on a box that already has a server would otherwise never print the
+  // one manager verb this script can issue, which is the half a person is
+  // entitled to read before they let it run on a box that has none.
+  say(
+    standard.service === null
+      ? `install: would start no service of its own here: ${standard.install.join(" ")} creates and starts ${standard.unit} itself`
+      : `install: the service command here is ${standard.service.join(" ")}, and running it loads the job ${standard.unit}`,
+  );
+  if (standard.service !== null) {
+    say(
+      serverIsUp
+        ? "install: would not run that service command, because postgres already answers"
+        : "install: would run that service command as part of the install above",
+    );
+  }
   say(`install: would create the database ${database} if it is not there`);
   say(`install: would apply ${schemaFile} with psql -v ON_ERROR_STOP=1`);
   say(
@@ -232,19 +267,15 @@ if (!serverIsUp) {
     );
     process.exit(1);
   }
-  if (process.platform === "darwin") {
-    // THE ONE UNIT THIS SCRIPT LOADS, and it says so. 03b item 2 asks for this
-    // command by name in the same paragraph that says the script touches no
-    // unit, and the two cannot both hold: on macOS a freshly installed Postgres
-    // is not running until its own package manager starts it, which is a
-    // launchd job. What can hold is that the script never loads one silently,
-    // so the job is named on the way in and again in the closing line, and a
-    // person reading the terminal knows what is on their box (REVIEW.md D11).
-    say(`install: starting ${standard.unit} with brew services, which loads that job`);
-    Bun.spawnSync(["brew", "services", "start", "postgresql@17"], {
-      stdout: "inherit",
-      stderr: "inherit",
-    });
+  if (standard.service !== null) {
+    // THE ONE UNIT THIS SCRIPT LOADS, and it says so. Starting Postgres's own
+    // service through the package manager is the standard install (03b-DEBTS
+    // item 2's dated note); what the script never touches is a unit of the
+    // HUB's or a boot file. The command is the same constant `--dry` printed,
+    // so what a person read is what runs, and the job is named on the way in
+    // and again in the closing line (REVIEW.md D11).
+    say(`install: running ${standard.service.join(" ")}, which loads the job ${standard.unit}`);
+    Bun.spawnSync(standard.service, { stdout: "inherit", stderr: "inherit" });
     loaded.push(standard.unit);
   }
   if (!(await answers(maintenanceUrl(storeUrl))).up) {
