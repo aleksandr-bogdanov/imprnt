@@ -79,14 +79,20 @@ test(
       // A CHECKPOINT REALLY HAPPENED, read from the server's own counter either
       // side of the measurement, and a server that publishes NEITHER counter
       // FAILS rather than skipping (the second pass's finding: a skip let the
-      // exact no-measurement implementation through). The view was renamed in
-      // PostgreSQL 17, so both names are tried and one of them has to answer.
+      // exact no-measurement implementation through). PostgreSQL 17 moved the
+      // counter from pg_stat_bgwriter (checkpoints_req, checkpoints_timed) to
+      // pg_stat_checkpointer (num_requested, num_timed), view AND columns, so
+      // both shapes are tried and one of them has to answer. Measured: the hub
+      // box's 15 has only the first shape, this Mac's 17 only the second.
       const checkpoints = async (): Promise<number> => {
         const tried: string[] = [];
-        for (const view of ["pg_stat_checkpointer", "pg_stat_bgwriter"]) {
+        for (const [view, sum] of [
+          ["pg_stat_checkpointer", "coalesce(num_requested, 0) + coalesce(num_timed, 0)"],
+          ["pg_stat_bgwriter", "coalesce(checkpoints_req, 0) + coalesce(checkpoints_timed, 0)"],
+        ]) {
           try {
             const [row] = (await store!.sql.unsafe(
-              `select coalesce(num_requested, 0) + coalesce(num_timed, 0) as n from ${view}`,
+              `select ${sum} as n from ${view}`,
             )) as { n: number | string }[];
             return Number(row.n);
           } catch (error) {
