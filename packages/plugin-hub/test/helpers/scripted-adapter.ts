@@ -600,6 +600,14 @@ export interface AdapterServer {
 
 interface WireEvent {
   kind: "receipt" | "progress" | "end";
+  /**
+   * WHOSE event this is (VERIFY-CODEX, the unresolved adapterClient defect).
+   * The server used to broadcast every event with no session on it, so a client
+   * serving two agents had no way to route one and handed all three kinds to
+   * every handler it held. Moving the handler arrays into the sessions alone
+   * would not have fixed that: without this field there is nothing to route BY.
+   */
+  session: string;
   messageId?: string;
   progress?: AdapterProgress;
   end?: TurnEnd;
@@ -651,9 +659,9 @@ export async function serveAdapter(
         const id = `s${++token}`;
         sessions.set(id, opened);
         seen.set(id, { session: id, pid: null, fed: [] });
-        opened.onReceipt((messageId) => push({ kind: "receipt", messageId }));
-        opened.onProgress((progress) => push({ kind: "progress", progress }));
-        opened.onTurnEnd((end) => push({ kind: "end", end }));
+        opened.onReceipt((messageId) => push({ kind: "receipt", session: id, messageId }));
+        opened.onProgress((progress) => push({ kind: "progress", session: id, progress }));
+        opened.onTurnEnd((end) => push({ kind: "end", session: id, end }));
         return Response.json({
           session: id,
           sessionId: opened.sessionId,
@@ -729,25 +737,52 @@ export async function serveAdapter(
  * child spawned on the server side would be a child of the TEST process, and
  * both of those checks would be about the wrong parent.
  */
+/** One session's own handlers, which is the unit the fix below turns on. */
+interface WiredSession {
+  receipt: ((messageId: string) => void)[];
+  progress: ((event: AdapterProgress) => void)[];
+  end: ((end: TurnEnd) => void)[];
+}
+
 export function adapterClient(
   url: string,
   name = "scripted-over-http",
   options: { child?: boolean } = {},
 ): Adapter {
-  const receiptHandlers: ((messageId: string) => void)[] = [];
-  const progressHandlers: ((event: AdapterProgress) => void)[] = [];
-  const endHandlers: ((end: TurnEnd) => void)[] = [];
+  /**
+   * HANDLERS BELONG TO A SESSION, not to this client (VERIFY-CODEX, the
+   * unresolved adapterClient defect, confirmed structurally there).
+   *
+   * One subprocess builds ONE client for all of its agents, and the three
+   * handler arrays used to live here, on the client. Every session registered
+   * into them and `close()` emptied all three, so a runner respawning agent
+   * A's child (a preset change, or a child the memory watch killed) deafened
+   * agent B in the middle of B's turn: B's `onTurnEnd` was gone, the turn never
+   * finished, and what the ledger showed was a started row with no end. It also
+   * cleared `pumping` without cancelling its reader, so the next `start`
+   * created a second pump while the first was still blocked on the same stream.
+   *
+   * Three things had to change together, and the first is why the smallest fix
+   * is not just moving the arrays: the server had to put the session on every
+   * event, or there is nothing to route BY.
+   */
+  const bySession = new Map<string, WiredSession>();
   let pumping: Promise<void> | null = null;
+  // Only `cancel` is ever called on it from outside the pump, so that is all
+  // this holds: the reader's own type differs between runtimes and naming it
+  // here would be pinning a runtime detail rather than the behaviour.
+  let reader: { cancel(): Promise<void> } | null = null;
   let stopped = false;
 
   let pumpError: Error | null = null;
   const pump = async () => {
     const res = await fetch(`${url}/events`);
-    const reader = res.body!.getReader();
+    const own = res.body!.getReader();
+    reader = own;
     const decoder = new TextDecoder();
     let buffer = "";
     for (;;) {
-      const { value, done } = await reader.read();
+      const { value, done } = await own.read();
       if (done || stopped) return;
       buffer += decoder.decode(value, { stream: true });
       let cut = buffer.indexOf("\n");
@@ -756,12 +791,17 @@ export function adapterClient(
         buffer = buffer.slice(cut + 1);
         if (line.trim() !== "") {
           const event = JSON.parse(line) as WireEvent;
-          if (event.kind === "receipt") {
-            for (const h of receiptHandlers) h(String(event.messageId));
-          } else if (event.kind === "progress") {
-            for (const h of progressHandlers) h(event.progress!);
-          } else if (event.kind === "end") {
-            for (const h of endHandlers) h(event.end!);
+          // An event for a session this client has closed belongs to nobody,
+          // which is different from belonging to everybody.
+          const its = bySession.get(String(event.session));
+          if (its) {
+            if (event.kind === "receipt") {
+              for (const h of its.receipt) h(String(event.messageId));
+            } else if (event.kind === "progress") {
+              for (const h of its.progress) h(event.progress!);
+            } else if (event.kind === "end") {
+              for (const h of its.end) h(event.end!);
+            }
           }
         }
         cut = buffer.indexOf("\n");
@@ -795,6 +835,8 @@ export function adapterClient(
         sessionId: string | null;
         lacks: string[];
       };
+      const wired: WiredSession = { receipt: [], progress: [], end: [] };
+      bySession.set(opened.session, wired);
       const held = options.child ? spawnHolder() : null;
       if (held) {
         await fetch(`${url}/child`, {
@@ -825,29 +867,38 @@ export function adapterClient(
           });
         },
         onReceipt(handler) {
-          receiptHandlers.push(handler);
+          wired.receipt.push(handler);
         },
         onProgress(handler) {
-          progressHandlers.push(handler);
+          wired.progress.push(handler);
         },
         onTurnEnd(handler) {
-          endHandlers.push(handler);
+          wired.end.push(handler);
         },
         async close() {
-          stopped = true;
-          pumping = null;
+          // THIS session's handlers, and no other's. A closed session cannot
+          // see a turn reported twice, and an open one beside it keeps hearing.
+          bySession.delete(opened.session);
           if (held) held.kill();
-          // A closed session's handlers are gone, so a later session on the
-          // same client cannot see one turn reported twice.
-          receiptHandlers.length = 0;
-          progressHandlers.length = 0;
-          endHandlers.length = 0;
-          if (pumpError) throw pumpError;
+          // The stream is shared, so it goes only when the last session does,
+          // and it is CANCELLED and awaited rather than dropped: a pump left
+          // blocked on a reader nobody holds is a second pump the next `start`
+          // would create beside it.
+          if (bySession.size === 0) {
+            stopped = true;
+            const reading = reader;
+            reader = null;
+            await reading?.cancel().catch(() => {});
+            const running = pumping;
+            pumping = null;
+            await running?.catch(() => {});
+          }
           await fetch(`${url}/close`, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ session: opened.session }),
           }).catch(() => {});
+          if (pumpError) throw pumpError;
         },
       };
       return session;
