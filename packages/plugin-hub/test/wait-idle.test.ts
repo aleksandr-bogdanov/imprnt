@@ -243,6 +243,23 @@ test(
       expect(roles).toContain("hub_door");
       expect(roles).toContain("hub_runner");
 
+      // AND BOTH ARE REALLY LISTENING, which is a precondition and not a
+      // decoration. A waiter whose LISTEN could not be opened answers every
+      // bound with `notified` on purpose (`src/store/wake.ts`, and the check
+      // for it in `test/store-wake.test.ts`), so a runner and a door in that
+      // state read the table once a second here and this window counts EIGHT
+      // statements: the same number, and the same failure message, as the
+      // polling this check exists to forbid. Asserted first, so a run where the
+      // listeners never came up says THAT rather than accusing the loop.
+      const listening = (await it.read.sql(
+        `select usename from pg_stat_activity
+          where datname = current_database() and backend_type = 'client backend'
+            and query ilike 'listen %'`,
+      )) as { usename: string }[];
+      const ears = listening.map((row) => String(row.usename));
+      expect(ears).toContain("hub_door");
+      expect(ears).toContain("hub_runner");
+
       const watch = await statementWatch(cluster, [readerPid]);
       await Bun.sleep(SQL_WINDOW_MS);
 

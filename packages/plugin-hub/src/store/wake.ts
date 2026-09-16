@@ -302,9 +302,16 @@ async function openWaiter(
       // poll in the server's own statement log.
       if (!deadlineKnown && !lost && !done) {
         const due = await options.deadline();
-        deadlineAt =
-          due === null ? null : Date.now() + Math.max(0, due) + PAST_THE_DEADLINE_MS;
-        deadlineKnown = true;
+        // A notification that landed DURING that read has already dropped what
+        // this waiter knows, and writing it back here would hand the next wait
+        // a deadline read before the caller went and changed the table. The
+        // wake is unaffected either way; what this keeps true is the sentence
+        // above it, which is what a later change will trust.
+        if (!done) {
+          deadlineAt =
+            due === null ? null : Date.now() + Math.max(0, due) + PAST_THE_DEADLINE_MS;
+          deadlineKnown = true;
+        }
       }
 
       const timers: ReturnType<typeof setTimeout>[] = [];
