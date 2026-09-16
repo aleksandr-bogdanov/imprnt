@@ -320,7 +320,19 @@ async function openWaiter(
           }
           timers.push(setTimeout(() => finish("timeout"), timeoutMs));
         }
-        return await woken;
+        const why = await woken;
+        // A WAIT THAT RAN WITH NO LISTENER IS NOT A WAIT THAT WAS TOLD
+        // NOTHING. Its bound is the only thing that could ever have ended it,
+        // so the honest answer to "why are you awake" is the one that sends the
+        // caller to the table: a runner whose LISTEN could not be opened or
+        // reopened would otherwise sleep through every row committed for it,
+        // for as long as the server refused the second connection. Measured:
+        // with `listenForWork` throwing, `test/runner-drain.test.ts` waits out
+        // its full minute for a message the door committed in the first second,
+        // and with this line it answers it. It is the same reasoning the door
+        // already applies to a refused post (`src/door/run.ts:190`): nothing
+        // announces a thing coming back, so the clock is what has to.
+        return lost && why === "timeout" ? "notified" : why;
       } finally {
         for (const timer of timers) clearTimeout(timer);
         if (wake === finish) wake = null;

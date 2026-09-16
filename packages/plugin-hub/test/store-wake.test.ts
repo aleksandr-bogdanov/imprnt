@@ -354,3 +354,68 @@ test(
   },
   SLOW,
 );
+
+test(
+  "STORE-04 a waiter that could not open its LISTEN sends its caller to the table anyway: with the channel unreachable, a wait answers notified on its bound rather than timeout, because a caller told nothing by a waiter nobody can talk to would sleep through every row committed for it (SPEC §1, D5, D-70)",
+  async () => {
+    const { openStore, closeStore } = await seam("src/store/connect.ts");
+    const { openWorkWaiter } = await seam("src/store/wake.ts");
+    expect(typeof openWorkWaiter).toBe("function");
+
+    const db = await freshDatabase(cluster);
+    const store = (await (openStore as Function)({ url: cluster.url(db) })) as {
+      url: string;
+      sql: unknown;
+    };
+
+    // WHY THIS EXISTS. 03b row 6 stopped the runner claiming on a bare timeout,
+    // which is what SPEC §1 asks for, and that turned a waiter with no listener
+    // from "slow" into "deaf forever": the bound was the only thing that could
+    // ever end its wait, and the caller was being told the bound meant nothing
+    // happened. MEASURED on this Mac with `listenForWork` made to throw:
+    // `test/runner-drain.test.ts` waited out its full minute for a message the
+    // door had committed in the first second. On the hub box it showed up as
+    // that same file failing in a full suite run and passing alone, which is
+    // what a load-dependent lost listener looks like from the outside.
+    //
+    // The store is REAL and only its channel is unreachable, which is the
+    // shape of the failure: the work connection is fine, the second connection
+    // the LISTEN needs is what the server refused.
+    const deaf = { url: "postgres://127.0.0.1:1/nothing", sql: store.sql };
+    const waiter = (await (openWorkWaiter as Function)(deaf, { agent: AGENT })) as {
+      wait(ms: number): Promise<string>;
+      close(): Promise<void>;
+    };
+    try {
+      const started = Date.now();
+      const first = await waiter.wait(1500);
+      const waited = Date.now() - started;
+      // It waited its bound rather than returning at once: a waiter that spun
+      // would be a poll wearing this answer.
+      expect(waited).toBeGreaterThanOrEqual(1200);
+      // And the answer is the one that means LOOK. `timeout` here is the answer
+      // that loses work.
+      expect(first).toBe("notified");
+      // Still true on the next one, because nothing has come back.
+      expect(await waiter.wait(1200)).toBe("notified");
+    } finally {
+      await waiter.close();
+    }
+
+    // THE CONTROL, and it is what stops this passing on a waiter that answers
+    // `notified` to everything: the same call against the REAL store, with
+    // nothing to be told about, comes back `timeout`.
+    const healthy = (await (openWorkWaiter as Function)(store, { agent: AGENT })) as {
+      wait(ms: number): Promise<string>;
+      close(): Promise<void>;
+    };
+    try {
+      expect(await healthy.wait(1500)).toBe("timeout");
+    } finally {
+      await healthy.close();
+    }
+
+    await (closeStore as Function)(store);
+  },
+  SLOW,
+);
