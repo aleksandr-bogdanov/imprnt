@@ -12,12 +12,14 @@
 // about the real cause." That is a check round's own tooling eating the machine
 // it runs on, and it is the reason the phase 3 red run had to be started twice.
 //
-// THE FIX HAS TWO HALVES and this binds the second: `test/helpers/cluster.ts`
+// THE FIX HAS TWO HALVES and this file now binds both: `test/helpers/cluster.ts`
 // stops every cluster it started when the process leaves by any route, AND
 // sweeps before `initdb`, on darwin, the segments this user owns that have zero
-// processes attached and whose creator is dead. The first half cannot be
-// checked from inside a test (it is about a process that is being killed); the
-// second half is exactly what this leaks a segment on purpose to see.
+// processes attached and whose creator is dead. The second is what the first
+// check here leaks a segment on purpose to see. The first was called
+// uncheckable because a check cannot observe its own death, and the second
+// check below is the answer to that: the process that dies is a CHILD, and this
+// file is the one watching it (VERIFY-CODEX row 9).
 //
 // THE ORACLE IS AN ID DIFF AND NOT THE RULE UNDER TEST. The sweep decides what
 // to remove by ownership, attach count and a dead creator. A check that found
@@ -36,8 +38,9 @@
 
 import { test, expect, afterAll } from "bun:test";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { startCluster, until, type Cluster } from "./helpers/cluster.ts";
+import { rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { hubPath, startCluster, until, type Cluster } from "./helpers/cluster.ts";
 import { removeSegment, segmentById, segmentIds } from "./helpers/shm.ts";
 
 const SLOW = 150_000;
@@ -125,6 +128,111 @@ test.skipIf(!darwin)(
     expect(live.every((id) => segmentById(id)!.attached > 0)).toBe(true);
     // And nothing that was on the box before this check began was touched.
     for (const id of before) expect(segmentById(id)).not.toBeNull();
+  },
+  SLOW,
+);
+test.skipIf(!darwin)(
+  `SPEC §8 a run that is interrupted really ends, and takes its cluster's shared memory with it: a child that started a cluster and was sent SIGINT is gone within ten seconds, its postmaster with it, and the segment that cluster held is not left on the box with nobody attached${
+    darwin ? "" : " [skipped: System V shared memory is exhausted by Postgres on darwin only]"
+  }`,
+  async () => {
+    // WHAT THIS IS FOR (VERIFY-CODEX row 9). The check above kills the
+    // POSTMASTER, which is not the process that owns the cleanup handlers, so
+    // reinstating the signal-handler defect REVIEW.md D1 found (re-raise with
+    // the listener still attached, which re-enters the handler and burns
+    // processor time forever) would pass it untouched. The process that has to
+    // be signalled is the one holding the handlers, and here it is a child.
+    //
+    // Measured when that defect was live, `bun -e`, a process of this exact
+    // shape: still alive 5000 ms after its SIGINT with 5.45 s of processor time
+    // burned. With the listener removed before the re-raise, 28 ms.
+    const before = new Set(segmentIds());
+
+    const child = Bun.spawn(
+      [process.execPath, "run", hubPath("test/helpers/cluster-subprocess.ts")],
+      { cwd: hubPath("."), stdout: "pipe", stderr: "pipe", stdin: "ignore" },
+    );
+    let root: string | null = null;
+    try {
+      // Its one ready line, so what is signalled below is a process whose
+      // cluster is really up rather than one still running `initdb`.
+      const said = await Promise.race([
+        (async () => {
+          const reader = child.stdout.getReader();
+          const decoder = new TextDecoder();
+          let seen = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (value) seen += decoder.decode(value, { stream: true });
+            const line = seen.split("\n").find((one) => one.trim().startsWith("{"));
+            if (line) return JSON.parse(line) as { pid: number; dataDir: string };
+            if (done) throw new Error("the child ended before it said it was up");
+          }
+        })(),
+        Bun.sleep(120_000).then(() => {
+          throw new Error("the child never said it was up");
+        }),
+      ]);
+      root = dirname(said.dataDir);
+
+      const grew = segmentIds().filter((id) => !before.has(id));
+      expect(grew.length).toBe(1);
+      const segment = grew[0];
+      mine.add(segment);
+      expect(segmentById(segment)!.attached).toBeGreaterThan(0);
+
+      const postmaster = Number(
+        readFileSync(join(said.dataDir, "postmaster.pid"), "utf8").split("\n")[0].trim(),
+      );
+      expect(postmaster).toBeGreaterThan(0);
+      expect(alive(postmaster)).toBe(true);
+
+      // --- THE INTERRUPT, the way a person's own does it.
+      const sent = Date.now();
+      child.kill(2);
+      const left = await Promise.race([
+        child.exited.then(() => "left" as const),
+        Bun.sleep(10_000).then(() => "still here" as const),
+      ]);
+      if (left !== "left") {
+        // A hung child is this file's to take off the box whatever the verdict.
+        child.kill(9);
+        await child.exited.catch(() => {});
+      }
+      expect(`${left} after ${Date.now() - sent < 10_000 ? "under" : "over"} ten seconds`).toBe(
+        "left after under ten seconds",
+      );
+
+      // --- ITS CLUSTER WENT WITH IT. The handler's whole job.
+      await until(
+        "the child's postmaster went away with it",
+        () => !alive(postmaster),
+        10_000,
+        () => `the postmaster is still running`,
+      );
+
+      // --- AND NOTHING WAS LEFT ON THE BOX. Phrased so a failure prints an id
+      //     and an attach count and never the `ipcs` row, which names the
+      //     owning account and this repository is public.
+      await until(
+        "the segment the child's cluster held is gone",
+        () => segmentById(segment) === null,
+        10_000,
+        () => `segment ${segment} has ${segmentById(segment)?.attached ?? "no row"} attached`,
+      );
+      const stranded = segmentIds().filter(
+        (id) => !before.has(id) && (segmentById(id)?.attached ?? 1) === 0,
+      );
+      expect(stranded).toEqual([]);
+      // And nothing that was on the box before this check began was touched.
+      for (const id of before) expect(segmentById(id)).not.toBeNull();
+    } finally {
+      child.kill(9);
+      await child.exited.catch(() => {});
+      // The child stops its cluster and leaves its scratch directory, because
+      // an `exit` handler may not await. This file is what takes it off.
+      if (root) await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
   },
   SLOW,
 );
