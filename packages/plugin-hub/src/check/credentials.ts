@@ -34,6 +34,17 @@ const SHORTEST_SECRET = 8;
 
 type Send = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+/**
+ * How long an identity call may take before it is one this household is not
+ * getting an answer to (REVIEW S3).
+ *
+ * This runtime's `fetch` has no deadline of its own, and `check` is the one
+ * command a household runs to find out what is wrong: a black-holed packet
+ * would turn it into a command that prints nothing at all. An abort lands in
+ * the catch below and is reported as `unreadable`, which is what it is.
+ */
+const IDENTITY_TIMEOUT_MS = 10_000;
+
 function unreadable(says: string): CredentialHealth {
   return { ok: false, kind: "unreadable", says };
 }
@@ -131,6 +142,7 @@ export function realProber(options: { fetch?: typeof fetch } = {}): CredentialPr
     try {
       const answer = await send(`https://api.telegram.org/bot${token}/getMe`, {
         method: "GET",
+        signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
       });
       const said = (await answer.json().catch(() => ({}))) as Record<string, unknown>;
       if (!answer.ok || said.ok !== true) {
@@ -151,6 +163,7 @@ export function realProber(options: { fetch?: typeof fetch } = {}): CredentialPr
       const answer = await send("https://discord.com/api/v10/users/@me", {
         method: "GET",
         headers: { Authorization: `Bot ${token}` },
+        signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
       });
       if (!answer.ok) {
         const said = await answer.text().catch(() => "");

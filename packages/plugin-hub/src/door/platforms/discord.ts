@@ -21,6 +21,16 @@ type Send = (input: string | URL | Request, init?: RequestInit) => Promise<Respo
 const API = "https://discord.com/api/v10";
 const READ_AGAIN_MS = 2000;
 
+/**
+ * How long one call may take before the door stops waiting on it (REVIEW S3).
+ *
+ * This runtime's `fetch` has no deadline of its own, and a door that hung on a
+ * black-holed packet would stop serving its person with nothing said. The read
+ * carries the wait it was given plus this, the way Telegram's does; every other
+ * verb carries this alone.
+ */
+const ANSWER_WITHIN_MS = 10_000;
+
 interface Message {
   id: string;
   content: string;
@@ -50,7 +60,10 @@ export function discord(options: {
         const where = new URL(`${API}/channels/${chat}/messages`);
         where.searchParams.set("limit", "50");
         if (cursor !== null) where.searchParams.set("after", cursor);
-        const answer = await send(where, { headers });
+        const answer = await send(where, {
+          headers,
+          signal: AbortSignal.timeout(timeoutMs + ANSWER_WITHIN_MS),
+        });
         if (!answer.ok) await refuse("a channel read", answer);
         // Newest first on the wire, and the door reads a conversation forwards.
         const read = ((await answer.json()) as Message[]).reverse();
@@ -76,6 +89,7 @@ export function discord(options: {
         method: "POST",
         headers,
         body: JSON.stringify({ content: text }),
+        signal: AbortSignal.timeout(ANSWER_WITHIN_MS),
       });
       if (!answer.ok) await refuse("a post", answer);
       // The message object Discord answers with, whose `id` a PATCH needs.
@@ -88,6 +102,7 @@ export function discord(options: {
         method: "PATCH",
         headers,
         body: JSON.stringify({ content: text }),
+        signal: AbortSignal.timeout(ANSWER_WITHIN_MS),
       });
       if (!answer.ok) await refuse("an edit", answer);
     },
@@ -96,6 +111,7 @@ export function discord(options: {
       const answer = await send(`${API}/channels/${chat}/typing`, {
         method: "POST",
         headers,
+        signal: AbortSignal.timeout(ANSWER_WITHIN_MS),
       });
       if (!answer.ok) await refuse("a typing indicator", answer);
     },

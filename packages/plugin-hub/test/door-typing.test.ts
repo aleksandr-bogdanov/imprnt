@@ -241,6 +241,47 @@ test(
       // Nothing after the answer, give or take one refresh already in flight.
       expect(after.filter((one) => one.at > postedAt + seconds * 2 * 1000)).toEqual([]);
       expect(after.filter((one) => one.at > answeredAt + seconds * 2 * 1000)).toEqual([]);
+
+      // --- half two's LAST side, added under the separate review (S4, and
+      //     BUILD-NOTES 29): a row at `acked` that NOBODY HOLDS draws no
+      //     typing. D-121a leaves a refused row at `acked` and releases it onto
+      //     its `retry_at`, so the state alone cannot tell a turn that is
+      //     running from one that is waiting out an outage, and a door that
+      //     typed for the second shows a person somebody working on a message
+      //     while the notice beside it says the messages are waiting.
+      //
+      //     The runner is stopped first, so nothing can claim the row and make
+      //     the typing honest.
+      await runner!.stop();
+      runner = null;
+      const heldFrom = Date.now();
+      await it.read.sql(
+        `insert into inbound (id, person, agent, body)
+         values ('t-unclaimed', $1, $2, 'a message a refused turn left waiting')`,
+        [PERSON, AGENT],
+      );
+      await it.read.sql(
+        `insert into ledger_event (stream, subject, kind, actor)
+         values ('inbound', 't-unclaimed', 'received', 'door')`,
+      );
+      await it.read.sql(
+        `insert into ledger_event (stream, subject, kind, actor)
+         values ('inbound', 't-unclaimed', 'acked', 'runner')`,
+      );
+      await until(
+        "the door heard that the row had been acknowledged",
+        async () =>
+          (await it.read.inbound()).some(
+            (row) => row.id === "t-unclaimed" && row.state === "acked",
+          ),
+        20_000,
+      );
+      const unclaimed = (await it.read.inbound()).find((row) => row.id === "t-unclaimed")!;
+      expect(unclaimed.claimed_by).toBeNull();
+      await Bun.sleep(seconds * 3 * 1000);
+      expect(
+        it.fake.typings().filter((one) => one.chat === CHAT && one.at >= heldFrom),
+      ).toEqual([]);
     } finally {
       if (runner) await runner.stop();
       if (door) await door.stop();

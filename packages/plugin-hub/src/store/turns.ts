@@ -10,6 +10,15 @@ export interface OpenTurnRow {
   agent: string;
   received_at: Date;
   state: string;
+  /**
+   * The runner that holds this row right now, or null.
+   *
+   * REVIEW S4. A row a turn was REFUSED on is left at `acked` (D-121a) and is
+   * released onto its `retry_at`, so its state alone cannot tell a turn that is
+   * running from one that is waiting out an outage. The door shows typing for
+   * the first and must not for the second.
+   */
+  claimed_by: string | null;
 }
 
 /**
@@ -28,7 +37,7 @@ export async function readOpenTurns(
   where: { agent: string },
 ): Promise<OpenTurnRow[]> {
   return (await store.sql`
-    select id, person, agent, received_at, state
+    select id, person, agent, received_at, state, claimed_by
     from inbound
     where agent = ${where.agent}
       and state in ('received', 'acked', 'started')

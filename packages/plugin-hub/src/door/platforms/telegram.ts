@@ -49,7 +49,10 @@ export function telegram(options: {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
       // Longer than the poll it carries, so the wait is Telegram's and not the
-      // client's.
+      // client's. A call with no poll of its own (a post, an edit, a typing
+      // indicator) carries the same ten seconds, because this runtime's `fetch`
+      // has no deadline and a door that hung on one would stop serving its
+      // person (REVIEW S3).
       signal: AbortSignal.timeout(timeoutMs + 10_000),
     });
     const said = (await answer.json()) as Record<string, unknown>;

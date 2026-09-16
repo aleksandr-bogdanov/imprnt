@@ -200,6 +200,7 @@ export async function runDoor(options: {
             agent: agent.id,
             received_at: new Date(),
             state: "received",
+            claimed_by: null,
           });
           own.arrived.wake();
           await appendChatLine(
@@ -351,7 +352,19 @@ export async function runDoor(options: {
       // `received` row would show a person somebody working on a message the
       // loop has not accepted, and an `answered` one would show it after the
       // answer was written.
-      open.filter((row) => row.state === "acked" || row.state === "started");
+      //
+      // AND IT HAS TO BE CLAIMED (D-126 as amended after the review, REVIEW
+      // S4). A turn the loop REFUSED leaves its row at `acked` (D-121a) and
+      // releases it onto `retry_at`, so the state alone cannot tell a turn that
+      // is running from one that is waiting out an outage. Without the claim
+      // the door typed for the whole of an outage: a person watched a chat
+      // saying somebody was typing while the notice beside it said messages
+      // were waiting, and the platform took one call every few seconds per
+      // agent for as long as it lasted.
+      open.filter(
+        (row) =>
+          (row.state === "acked" || row.state === "started") && row.claimed_by !== null,
+      );
 
     const show = async (): Promise<void> => {
       try {
