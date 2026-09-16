@@ -1,5 +1,5 @@
 import type { WindowReading } from "../adapters/types.ts";
-import { claimRow, putRow, readSheet, removeRow } from "../records/statesheet.ts";
+import { claimRow, putRow } from "../records/statesheet.ts";
 import type { WindowThresholds } from "../registry/presets.ts";
 import type { StoreLike } from "../store/connect.ts";
 
@@ -124,17 +124,6 @@ export async function readWindow(
     data: Record<string, unknown>;
   }[];
   return rows.length === 0 ? null : (rows[0].data as unknown as WindowRow);
-}
-
-/** Every row of the outage sheet, for a reader that wants the household's own. */
-export async function readOutages(store: StoreLike): Promise<OutageRow[]> {
-  const rows = await readSheet(store, OUTAGE_SHEET);
-  return rows.map((row) => row.data as unknown as OutageRow);
-}
-
-/** Take one row away by id, for a caller that already knows it lost nothing. */
-export async function dropOutage(store: StoreLike, credential: string): Promise<void> {
-  await removeRow(store, OUTAGE_SHEET, credential);
 }
 
 /**

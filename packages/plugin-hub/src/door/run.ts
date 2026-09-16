@@ -73,6 +73,11 @@ interface Nudge {
 }
 
 function nudge(): Nudge {
+  // A `wake()` that finds a resolver another branch of the race already settled
+  // resolves it again and sets no flag, so THAT poke is dropped. It costs
+  // nothing and the reason is worth writing down rather than rediscovering: the
+  // payload rides in `own.arrivals`, which is drained at the top of the very
+  // next iteration whatever woke it (REVIEW's note on this function).
   let pending = false;
   let fire: (() => void) | null = null;
   return {
@@ -140,7 +145,7 @@ interface Served {
  * one wake and the next it issues no statement at all.
  */
 /** D-125's pinned refusal, thrown by `runDoor` at start. */
-export function cannotShowTyping(door: string): string {
+function cannotShowTyping(door: string): string {
   return (
     `${door} serves a platform that cannot show typing, and a turn open with no typing ` +
     `shown is forbidden. A platform carries typing() and typingSeconds.`
@@ -348,7 +353,7 @@ export async function runDoor(options: {
    * notification, and once per clock that has run out. The typing refresh is a
    * timer over memory and issues no statement at all.
    */
-  const attend = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const attending = async (agent: AgentEntry, own: Served): Promise<void> => {
     const thresholds = thresholdsFor(registry, agent.person);
     const language = languageOf(registry, agent.person) as Language;
     // One second inside the platform's own lifetime, so the status never
@@ -723,6 +728,21 @@ export async function runDoor(options: {
       for (const line of own.progress.values()) line.finished();
       own.progress.clear();
       await waiter.close();
+    }
+  };
+
+  const attend = async (agent: AgentEntry, own: Served): Promise<void> => {
+    // REVIEW S7. `runDoor` waits on `attending` before it hands its caller a
+    // handle, and everything from here to the connect read can throw: the two
+    // registry reads, and `openTurnWaiter`. A throw is swallowed by the
+    // `Promise.allSettled` this task sits in, so without this outer finally a
+    // door that could not start would HANG its caller instead of saying so.
+    // Resolving twice is free: the inner one is what makes ready mean
+    // attending, and this one is what makes it mean anything at all.
+    try {
+      await attending(agent, own);
+    } finally {
+      own.attended();
     }
   };
 

@@ -13,33 +13,45 @@
  */
 export type Language = "en" | "ru";
 
-/** The marker, per language. It names the door, in the person's own words. */
+/**
+ * The marker, per language. It names the door, in the person's own words.
+ *
+ * EVERY TEMPLATE BELOW IS BUILT FROM IT (REVIEW's note on this file). Spelling
+ * the marker out again in each of the fourteen would make this constant a
+ * second source of truth that could not drift into the strings it claims to
+ * define, which is worse than having no constant at all.
+ */
 export const MACHINERY_LINES: Record<Language, string> = {
   en: "[door]",
   ru: "[дверь]",
 };
+
+/** One line a person reads, opened by the marker that says who is speaking. */
+function says(language: Language, sentence: string): string {
+  return `${MACHINERY_LINES[language]} ${sentence}`;
+}
 
 type Stamp = "acked" | "started" | "answered";
 
 const CLOCK: Record<Language, Record<Stamp, (seconds: number) => string>> = {
   en: {
     acked: (n) =>
-      `[door] still waiting: the loop has not accepted this message. ${n} s so far.`,
+      `still waiting: the loop has not accepted this message. ${n} s so far.`,
     started: (n) =>
-      `[door] still waiting: the agent has not started answering. ${n} s so far.`,
-    answered: (n) => `[door] still waiting: the turn has not ended. ${n} s so far.`,
+      `still waiting: the agent has not started answering. ${n} s so far.`,
+    answered: (n) => `still waiting: the turn has not ended. ${n} s so far.`,
   },
   ru: {
     acked: (n) =>
-      `[дверь] всё ещё жду: агент не принял это сообщение. Прошло ${n} с.`,
-    started: (n) => `[дверь] всё ещё жду: агент не начал отвечать. Прошло ${n} с.`,
-    answered: (n) => `[дверь] всё ещё жду: ответ ещё не готов. Прошло ${n} с.`,
+      `всё ещё жду: агент не принял это сообщение. Прошло ${n} с.`,
+    started: (n) => `всё ещё жду: агент не начал отвечать. Прошло ${n} с.`,
+    answered: (n) => `всё ещё жду: ответ ещё не готов. Прошло ${n} с.`,
   },
 };
 
 /** MSG-10. A clock ran out, and the line says which one and how long it has been. */
 export function clockLine(language: Language, stamp: string, seconds: number): string {
-  return CLOCK[language][stamp as Stamp](seconds);
+  return says(language, CLOCK[language][stamp as Stamp](seconds));
 }
 
 /**
@@ -52,24 +64,24 @@ export function clockLine(language: Language, stamp: string, seconds: number): s
 const OUTAGE: Record<Language, Record<string, (n: number) => string>> = {
   en: {
     login: (n) =>
-      `[door] the model login was refused. Messages are waiting and nothing is lost. ` +
+      `the model login was refused. Messages are waiting and nothing is lost. ` +
       `I try again every ${n} s and will say when it works.`,
     window: (n) =>
-      `[door] the plan's usage window is used up. Messages are waiting and nothing is lost. ` +
+      `the plan's usage window is used up. Messages are waiting and nothing is lost. ` +
       `I try again every ${n} s and will say when it works.`,
     other: (n) =>
-      `[door] the loop refused the turn. Messages are waiting and nothing is lost. ` +
+      `the loop refused the turn. Messages are waiting and nothing is lost. ` +
       `I try again every ${n} s and will say when it works.`,
   },
   ru: {
     login: (n) =>
-      `[дверь] вход в модель отклонён. Сообщения ждут, ничего не потеряно. ` +
+      `вход в модель отклонён. Сообщения ждут, ничего не потеряно. ` +
       `Повторяю попытку каждые ${n} с и сообщу, когда заработает.`,
     window: (n) =>
-      `[дверь] лимит тарифа исчерпан. Сообщения ждут, ничего не потеряно. ` +
+      `лимит тарифа исчерпан. Сообщения ждут, ничего не потеряно. ` +
       `Повторяю попытку каждые ${n} с и сообщу, когда заработает.`,
     other: (n) =>
-      `[дверь] модель отказалась отвечать. Сообщения ждут, ничего не потеряно. ` +
+      `модель отказалась отвечать. Сообщения ждут, ничего не потеряно. ` +
       `Повторяю попытку каждые ${n} с и сообщу, когда заработает.`,
   },
 };
@@ -80,7 +92,7 @@ export function outageNotice(
   cause: string,
   retrySeconds: number,
 ): string {
-  return (OUTAGE[language][cause] ?? OUTAGE[language].other)(retrySeconds);
+  return says(language, (OUTAGE[language][cause] ?? OUTAGE[language].other)(retrySeconds));
 }
 
 /**
@@ -90,18 +102,24 @@ export function outageNotice(
  * number agreement, and `Сообщений в очереди: 5` is correct for every count.
  */
 export function catchUpNotice(language: Language, count: number): string {
-  return language === "ru"
-    ? `[дверь] снова работает. Сообщений в очереди: ${count}.`
-    : `[door] it works again. Messages waiting: ${count}.`;
+  return says(
+    language,
+    language === "ru"
+      ? `снова работает. Сообщений в очереди: ${count}.`
+      : `it works again. Messages waiting: ${count}.`,
+  );
 }
 
 /** RUN-19. The one line at the notice threshold, before anything is held. */
 export function windowNotice(language: Language, percent: number): string {
-  return language === "ru"
-    ? `[дверь] лимит тарифа израсходован на ${percent}%. ` +
-        `Фоновая работа приостановлена, сообщения по-прежнему идут первыми.`
-    : `[door] the plan window is ${percent}% used. ` +
-        `Proactive work is paused and your messages still go first.`;
+  return says(
+    language,
+    language === "ru"
+      ? `лимит тарифа израсходован на ${percent}%. ` +
+          `Фоновая работа приостановлена, сообщения по-прежнему идут первыми.`
+      : `the plan window is ${percent}% used. ` +
+          `Proactive work is paused and your messages still go first.`,
+  );
 }
 
 /**
@@ -117,13 +135,17 @@ export function progressLine(
 ): string {
   const actions = what.actions ?? 0;
   if (actions <= 0 || !what.lastAction) {
-    return language === "ru"
-      ? `[дверь] работаю: ${what.seconds} с`
-      : `[door] working: ${what.seconds} s`;
+    return says(
+      language,
+      language === "ru" ? `работаю: ${what.seconds} с` : `working: ${what.seconds} s`,
+    );
   }
-  return language === "ru"
-    ? `[дверь] работаю: ${what.lastAction}, вызовов инструментов: ${actions}, ${what.seconds} с`
-    : `[door] working: ${what.lastAction}, ${actions} tool calls, ${what.seconds} s`;
+  return says(
+    language,
+    language === "ru"
+      ? `работаю: ${what.lastAction}, вызовов инструментов: ${actions}, ${what.seconds} с`
+      : `working: ${what.lastAction}, ${actions} tool calls, ${what.seconds} s`,
+  );
 }
 
 /** MSG-10. The last edit before the reply is posted: "ending with the totals". */
@@ -133,11 +155,15 @@ export function progressTotals(
 ): string {
   const actions = what.actions ?? 0;
   if (actions <= 0) {
-    return language === "ru"
-      ? `[дверь] готово. Время: ${what.seconds} с.`
-      : `[door] done. Time: ${what.seconds} s.`;
+    return says(
+      language,
+      language === "ru" ? `готово. Время: ${what.seconds} с.` : `done. Time: ${what.seconds} s.`,
+    );
   }
-  return language === "ru"
-    ? `[дверь] готово. Вызовов инструментов: ${actions}, время: ${what.seconds} с.`
-    : `[door] done. Tool calls: ${actions}, time: ${what.seconds} s.`;
+  return says(
+    language,
+    language === "ru"
+      ? `готово. Вызовов инструментов: ${actions}, время: ${what.seconds} с.`
+      : `done. Tool calls: ${actions}, time: ${what.seconds} s.`,
+  );
 }

@@ -87,6 +87,12 @@ export async function claimRow(
                                     where sheet = ${sheet} and id = ${id}`) as unknown as {
     data: Record<string, unknown>;
   }[];
+  // THE ONE HOLE IN D-122'S ARITHMETIC, named rather than left to be found
+  // (REVIEW's note on this function). A loser whose re-read finds no row at all
+  // answers with its OWN data, which carries its own `since` and therefore a
+  // second notice key. It needs a row opened and cleared between one statement
+  // and the next, so it is remote, and the alternative is answering with
+  // nothing, which every caller would have to branch on.
   return { mine: false, data: standing[0]?.data ?? { ...data } };
 }
 

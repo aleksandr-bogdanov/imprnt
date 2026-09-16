@@ -451,6 +451,11 @@ export async function runRunner(options: {
       // delete and the winner's lines, and the person would read the answer
       // above "it works again". The key is the same for all of them, so the
       // second write lands nothing.
+      // A runner RESTARTED through the outage remembers nothing, so it counts
+      // after its own clear rather than before it and can report one too few
+      // (REVIEW's note). The runner that lived through the outage counts first
+      // and its line is the one that lands, so this is the rarer of two rare
+      // paths and it is named rather than hidden.
       const waiting = sawOutage
         ? await waitingPerPerson(store, registry, credential)
         : null;

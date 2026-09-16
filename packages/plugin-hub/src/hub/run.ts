@@ -90,9 +90,16 @@ export async function runHub(options: {
   // any number of simultaneous starts gets it and a hub that dies by any route
   // gives it back with its backend. The key is this machine's own application
   // name hashed to the bigint the function takes, so two machines against one
-  // store never collide. The store is opened with `max: 1` and the hub's
-  // `application_name` already depends on the session outliving the statement
-  // that set it, so the lock is exactly as durable as what is here already.
+  // store never collide.
+  //
+  // WHAT THE LOCK'S DURABILITY RESTS ON (REVIEW S8). It used to rest on the
+  // store being opened with one connection, and it does not any more: a store
+  // holds several. It rests on what it always really rested on, which is that
+  // `pg_try_advisory_lock` is held by the SESSION that took it and that this
+  // client keeps its connections for the life of the store rather than opening
+  // and closing one per statement. Measured on a throwaway cluster: the lock
+  // taken through the pool stays held across churn and a second store on the
+  // same url is refused, which is what `test/hub-single.test.ts` asks for.
   const [{ mine }] = (await store.sql.unsafe(
     `select pg_try_advisory_lock(('x' || substr(md5($1), 1, 16))::bit(64)::bigint) as mine`,
     [application],
