@@ -227,7 +227,7 @@ test(
       expect(killed[0].subject).toBe(AGENT2);
       const detail = killed[0].detail as Record<string, unknown>;
       expect(detail.agent).toBe(AGENT2);
-      expect(Number(detail.pid)).toBe(secondChild);
+      expect(Number(detail.pid)).toBe(secondChild!);
       expect(Number(detail.reading_bytes)).toBeGreaterThan(CHILD_LIMIT_MB * 1024 * 1024);
       // AND A BAND, not merely "over the limit". The reading is the size that
       // process really was, so it sits between the limit it broke and half as

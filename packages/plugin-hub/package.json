@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "test": "bun test --timeout 90000",
-    "test:live": "bun test --timeout 600000 ./live/*.test.ts"
+    "test:live": "bun test --timeout 600000 ./live/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "license": "MIT",
   "author": "Aleksandr Bogdanov"
