@@ -418,12 +418,21 @@ test(
           .split(/\s{2,}|\t|\|/)
           .map((cell) => cell.trim())
           .filter((cell) => cell !== "");
+      // THE ID IS MATCHED AS A CELL, not as a substring (BUILD-NOTES 22). A
+      // person's id is a PREFIX of their agents' (`p1` and `p1-lair`), so a
+      // line naming the agent also contains the person's id and a substring
+      // filter finds three lines for `p1` where the check needs one. No
+      // renderer can answer that, whatever it prints: the fixture ids are
+      // pinned and one really is inside the other. The cell split is the one
+      // this check already declares as the way to read the table.
       const lineFor = (row: MetricsRow, metric: string): string[] => {
         const candidates = text
           .split("\n")
           .filter(
             (line) =>
-              line.includes(row.id) && line.includes(row.window) && line.includes(metric),
+              cellsOf(line).includes(row.id) &&
+              line.includes(row.window) &&
+              line.includes(metric),
           );
         if (candidates.length !== 1) {
           throw new Error(
