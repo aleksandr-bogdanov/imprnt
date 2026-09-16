@@ -14,8 +14,14 @@ import type { EligibleRow } from "../store/wake.ts";
  */
 export async function claimNext(
   store: StoreLike,
-  who: { runner: string; agent: string; leaseMs: number },
+  who: { runner: string; agent: string; leaseMs: number; maxRank?: number },
 ): Promise<EligibleRow | null> {
+  // D-123. The pause is a WHERE clause on the statement the runner already
+  // runs, not a second query: at the household's own pause threshold proactive
+  // work stops and a row a human is waiting on still goes first. 1 is
+  // everything, 0 is rank-0 only. Claiming nothing at all is the caller's
+  // decision and it never reaches this statement.
+  const maxRank = who.maxRank ?? 1;
   const rows = (await store.sql`
     update inbound
        set claimed_by = ${who.runner},
@@ -23,6 +29,7 @@ export async function claimNext(
      where id = (
        select id from inbound
         where agent = ${who.agent}
+          and rank <= ${maxRank}
           and state not in ('answered', 'delivered')
           and (claimed_by is null or claimed_by = ${who.runner}
                or (claim_deadline is not null and claim_deadline <= now()))

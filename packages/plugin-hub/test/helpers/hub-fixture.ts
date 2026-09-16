@@ -173,21 +173,30 @@ export function storeReader(cluster: Cluster, database: string): StoreReader {
       )) as unknown as InboundRow[];
     },
     async outbox() {
-      return (await rows(
+      // `outbox.id` is a bigserial, and this client hands a bigint column back
+      // as a STRING, because the type's range is past what a double holds.
+      // `OutboxRow.id` says `number` and a check that compares two of them
+      // reads it as one, so the conversion happens here rather than at every
+      // reader (BUILD-NOTES 9). A household's outbox id is nowhere near
+      // 2^53, so nothing is lost by it.
+      const found = await rows(
         `select id, inbound_id, seq_in_reply, body, written_at, delivered_at
          from outbox order by id`,
-      )) as unknown as OutboxRow[];
+      );
+      return found.map((row) => ({ ...row, id: Number(row.id) })) as unknown as OutboxRow[];
     },
     async noticeRows() {
       // The columns are phase 4's own, so this reader throws a readable
       // "column does not exist" against the shipped schema. Every check that
       // calls it asserts the catalog first, so the red reason is the missing
       // object and never this helper.
-      return (await rows(
+      const found = await rows(
         `select id, kind, person, agent, inbound_id, notice_key, body,
                 written_at, delivered_at
          from outbox where kind = 'notice' order by id`,
-      )) as unknown as NoticeRow[];
+      );
+      // The same bigserial, read as the number `NoticeRow.id` declares.
+      return found.map((row) => ({ ...row, id: Number(row.id) })) as unknown as NoticeRow[];
     },
     async outageSheet() {
       return (await rows(

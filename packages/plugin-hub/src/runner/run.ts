@@ -7,13 +7,34 @@ import { readTail } from "../chatlog.ts";
 import { thisOs } from "../os/index.ts";
 import { appendEntry } from "../records/diary.ts";
 import { stamp } from "../records/stamps.ts";
-import { agentsFor, listRunEntries } from "../registry/entries.ts";
+import { catchUpNotice, outageNotice, windowNotice, type Language } from "../door/lines.ts";
+import { agentsFor, languageOf, listAgents, listRunEntries } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
-import { getPreset, presetId, priceFor, type Preset } from "../registry/presets.ts";
+import {
+  credentialOfPreset,
+  getPreset,
+  presetId,
+  priceFor,
+  windowThresholds,
+  type Preset,
+  type WindowThresholds,
+} from "../registry/presets.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
+import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
-import { settleTurn, type TurnRecord } from "./settle.ts";
+import {
+  clearOutage,
+  maxRankFor,
+  noticeKey,
+  openOutage,
+  percentOf,
+  readingStands,
+  readWindow,
+  recordWindow,
+  type WindowRow,
+} from "./outage.ts";
+import { refuseTurn, settleTurn, type TurnRecord } from "./settle.ts";
 
 export interface RunnerHandle {
   runner: string;
@@ -64,6 +85,72 @@ interface OpenTurn {
 
 function setting(registry: Registry, key: string): number {
   return Number(readSetting(registry, key));
+}
+
+/**
+ * D-112. How long a runner waits before it tries a refused credential again.
+ * L10 rule 3's fixed interval, and v2's own was five minutes.
+ */
+function retrySeconds(registry: Registry): number {
+  const said = readSetting(registry, "hub.outage_retry_seconds");
+  return typeof said === "number" && said > 0 ? said : 300;
+}
+
+/** D-121. The credential this agent's outage is keyed by, from the agent in hand. */
+function credentialFor(registry: Registry, agent: AgentEntry): string {
+  return credentialOfPreset(registry, agent.preset) ?? `preset:${agent.preset}`;
+}
+
+/**
+ * D-122. One line per PERSON, and the agent on the row is the FIRST agent of
+ * that person, in registry order, whose preset resolves to this credential.
+ *
+ * Computed the same way by every runner, so two of them write one row between
+ * them and the key never depends on which got there first. Per person and not
+ * per agent, because a household-wide cause is one thing a person is told once
+ * however many of their agents it stopped.
+ */
+function peopleOn(
+  registry: Registry,
+  credential: string,
+): { person: string; agent: string }[] {
+  const out: { person: string; agent: string }[] = [];
+  for (const one of listAgents(registry)) {
+    if (credentialFor(registry, one) !== credential) continue;
+    if (out.some((row) => row.person === one.person)) continue;
+    out.push({ person: one.person, agent: one.id });
+  }
+  return out;
+}
+
+/**
+ * How many messages each person still has waiting, for the catch-up's own N.
+ *
+ * ONE statement over the rows that are not finished, counted in memory, because
+ * the alternative is an array bound into the statement for a table that holds
+ * what is in flight and nothing else.
+ */
+async function waitingPerPerson(
+  store: Store,
+  registry: Registry,
+  credential: string,
+): Promise<Map<string, number>> {
+  const mine = new Set(
+    listAgents(registry)
+      .filter((one) => credentialFor(registry, one) === credential)
+      .map((one) => one.id),
+  );
+  const rows = (await store.sql`select person, agent from inbound
+                                where state not in ('answered', 'delivered')`) as unknown as {
+    person: string;
+    agent: string;
+  }[];
+  const count = new Map<string, number>();
+  for (const row of rows) {
+    if (!mine.has(row.agent)) continue;
+    count.set(row.person, (count.get(row.person) ?? 0) + 1);
+  }
+  return count;
 }
 
 /**
@@ -280,6 +367,110 @@ export async function runRunner(options: {
     let startedWith = "";
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
+    /** This agent stopped claiming because the household's window is used up. */
+    let heldByWindow = false;
+    /**
+     * This agent has refused a turn or held its rows since its last success, so
+     * an outage may be standing. It is what keeps the clear off the hot path: a
+     * runner that has never met one issues no delete on a healthy turn.
+     */
+    let sawOutage = false;
+
+    /** RUN-18. One notice per person, and never a second one for the same outage. */
+    const sayOutage = async (
+      registry: Registry,
+      credential: string,
+      outage: { cause: string; since: string },
+    ): Promise<void> => {
+      const every = retrySeconds(registry);
+      for (const who of peopleOn(registry, credential)) {
+        await appendNotice(store, {
+          person: who.person,
+          agent: who.agent,
+          body: outageNotice(
+            languageOf(registry, who.person) as Language,
+            outage.cause,
+            every,
+          ),
+          noticeKey: noticeKey("outage", credential, outage.since, who.person),
+        });
+      }
+    };
+
+    /**
+     * RUN-18. It works again, once per person, carrying that person's own count.
+     *
+     * THE COUNT IS TAKEN BEFORE THE CLEAR, and the order is what makes N right
+     * across two runners. Count, then clear: the runner that wins the clear
+     * counted before it, and a sibling only settles its own turn after its
+     * clear came back empty, so no reply of anybody's can land between this
+     * count and the line it produces.
+     */
+    const sayCatchUp = async (registry: Registry, credential: string): Promise<void> => {
+      const waiting = await waitingPerPerson(store, registry, credential);
+      const cleared = await clearOutage(store, { credential });
+      if (!cleared) return;
+      for (const who of peopleOn(registry, credential)) {
+        await appendNotice(store, {
+          person: who.person,
+          agent: who.agent,
+          body: catchUpNotice(
+            languageOf(registry, who.person) as Language,
+            waiting.get(who.person) ?? 0,
+          ),
+          noticeKey: noticeKey("outage-over", credential, cleared.since, who.person),
+        });
+      }
+    };
+
+    /** RUN-19. One line per person at the notice threshold, keyed on the reset. */
+    const sayWindow = async (
+      registry: Registry,
+      credential: string,
+      reading: { utilization: number; resets_at: string | null },
+    ): Promise<void> => {
+      const percent = percentOf(reading);
+      for (const who of peopleOn(registry, credential)) {
+        await appendNotice(store, {
+          person: who.person,
+          agent: who.agent,
+          body: windowNotice(languageOf(registry, who.person) as Language, percent),
+          noticeKey: noticeKey(
+            "window-notice",
+            credential,
+            String(reading.resets_at),
+            who.person,
+          ),
+        });
+      }
+    };
+
+    /**
+     * RUN-19. This agent's unfinished rows wait for the window's own reset.
+     *
+     * The guard is what keeps it a write that happens once rather than one per
+     * wake: a row already waiting for that reset is left alone, and a row that
+     * arrived during the hold is picked up on the next one.
+     */
+    const holdRows = async (until: string): Promise<void> => {
+      await store.sql`update inbound
+                         set claimed_by = null, claim_deadline = null, retry_at = ${until}
+                       where agent = ${agent.id}
+                         and state not in ('answered', 'delivered')
+                         and (retry_at is null or retry_at < ${until})`;
+    };
+
+    /**
+     * The hold is off, so the rows are eligible NOW and not at the old reset.
+     * Without this a released household would wait out a reset that has already
+     * stopped meaning anything (04-CONTEXT's harness amendment to D-123).
+     */
+    const releaseRows = async (): Promise<void> => {
+      await store.sql`update inbound set retry_at = null
+                       where agent = ${agent.id}
+                         and state not in ('answered', 'delivered')
+                         and retry_at is not null`;
+    };
 
     // The stamps of a turn land in the order the loop reported them. The verbs
     // fire back to back and the writes are asynchronous, so without this chain
@@ -336,6 +527,30 @@ export async function runRunner(options: {
         tail: about.tail,
       };
 
+      const credential = credentialFor(about.registry, agent);
+      const thresholds = windowThresholds(about.registry, agent.preset);
+      const reading = end.usage.window ?? null;
+
+      // RUN-19. The household's one row, written by whichever turn reported a
+      // reading, and read by every runner before it claims. A turn that
+      // reported nothing leaves it alone: a loop on a per-token key has no
+      // window, and a missing report is not a reading of zero.
+      if (reading) {
+        await recordWindow(store, {
+          credential,
+          utilization: reading.utilization,
+          resetsAt: reading.resets_at,
+          runner: options.runner,
+        });
+        if (
+          thresholds &&
+          percentOf(reading) >= thresholds.notice_at &&
+          readingStands(reading)
+        ) {
+          await sayWindow(about.registry, credential, reading);
+        }
+      }
+
       // The tail's own answer is not a reply to anybody, so it is recorded and
       // dropped. Only a turn fed from an inbound row reaches the outbox.
       if (about.tail) {
@@ -348,6 +563,44 @@ export async function runRunner(options: {
         });
         return;
       }
+
+      // RUN-18. A turn the loop refused writes NO chunk and NO stamp. The row
+      // goes back on a recorded retry, the diary says why, and the person is
+      // told once about the CAUSE rather than once about every message of
+      // theirs that is waiting on it.
+      if (end.refused) {
+        const every = retrySeconds(about.registry);
+        const retryAt =
+          end.refused.cause === "window" && reading?.resets_at
+            ? reading.resets_at
+            : new Date(Date.now() + every * 1000).toISOString();
+        await refuseTurn(store, {
+          inboundId: message.id,
+          runner: options.runner,
+          agent: agent.id,
+          cause: end.refused.cause,
+          said: end.refused.said,
+          retryAt,
+        });
+        const standing = await openOutage(store, {
+          credential,
+          cause: end.refused.cause,
+          said: end.refused.said,
+          runner: options.runner,
+          retryAt,
+        });
+        sawOutage = true;
+        await sayOutage(about.registry, credential, standing);
+        return;
+      }
+
+      // It works again. The catch-up goes in BEFORE the reply, so a person
+      // reads "it stopped", then "it works again", then their answers.
+      if (sawOutage) {
+        await sayCatchUp(about.registry, credential);
+        sawOutage = false;
+      }
+
       await settleTurn(store, {
         inboundId: message.id,
         chunks: [end.text],
@@ -436,19 +689,70 @@ export async function runRunner(options: {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
         const registry = loadRegistry(options.registryFile);
-        const row = await claimNext(store, {
-          runner: options.runner,
-          agent: agent.id,
-          leaseMs: setting(registry, "hub.claim_lease_seconds") * 1000,
-        });
-        if (!row) {
+        const sleep = async (): Promise<void> => {
           await Promise.race([
-            waiter
+            waiter!
               .wait(setting(registry, "hub.tick_seconds") * 1000)
               .catch(() => "timeout" as const),
             stopped,
             own.left,
           ]);
+        };
+
+        // RUN-19. THE WINDOW IS READ HERE AND NOWHERE ELSE: beside the claim,
+        // on a wake the runner was already having, and never on a timer of its
+        // own (D-123). An agent on a per-token key has no window and this costs
+        // it no statement at all.
+        const credential = credentialFor(registry, agent);
+        const thresholds: WindowThresholds | null = windowThresholds(registry, agent.preset);
+        let maxRank: number | null = 1;
+        if (thresholds) {
+          const window: WindowRow | null = await readWindow(store, credential);
+          maxRank = maxRankFor(window, thresholds);
+          if (maxRank === null) {
+            const every = retrySeconds(registry);
+            const until =
+              window?.resets_at ?? new Date(Date.now() + every * 1000).toISOString();
+            if (!heldByWindow) {
+              heldByWindow = true;
+              sawOutage = true;
+              const standing = await openOutage(store, {
+                credential,
+                cause: "window",
+                said: `the plan window is ${percentOf(window!)}% used`,
+                runner: options.runner,
+                retryAt: until,
+              });
+              await sayOutage(registry, credential, standing);
+            }
+            // A row that arrived during the hold is put on the same reset, and
+            // one already waiting for it is left alone.
+            await holdRows(until);
+            await sleep();
+            continue;
+          }
+          if (heldByWindow) {
+            heldByWindow = false;
+            await releaseRows();
+            // A reading that still stands and is back under the hold is the
+            // household's window really coming back. A reading whose own reset
+            // has passed says nothing yet: what releases THAT hold is the turn
+            // this claim is about to let through, reporting a fresh one.
+            if (readingStands(window)) {
+              await sayCatchUp(registry, credential);
+              sawOutage = false;
+            }
+          }
+        }
+
+        const row = await claimNext(store, {
+          runner: options.runner,
+          agent: agent.id,
+          leaseMs: setting(registry, "hub.claim_lease_seconds") * 1000,
+          maxRank,
+        });
+        if (!row) {
+          await sleep();
           continue;
         }
         const preset = getPreset(registry, agent.preset);

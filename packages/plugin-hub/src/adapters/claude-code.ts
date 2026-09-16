@@ -5,6 +5,8 @@ import type {
   AdapterSession,
   AdapterUsage,
   TurnEnd,
+  TurnRefusal,
+  WindowReading,
 } from "./types.ts";
 
 /**
@@ -44,6 +46,49 @@ function numberOrNull(value: unknown): number | null {
   return typeof value === "number" ? value : null;
 }
 
+/**
+ * D-119. The highest utilization this loop reported, with THAT window's own
+ * reset, out of the `unifiedWindows` object measured on 2026-09-16:
+ * `{"five_hour":{"utilization":0.27,"resetsAt":1789523400},
+ *   "seven_day":{"utilization":0.55,"resetsAt":1789808400}}`.
+ *
+ * The highest and not `five_hour`, because a weekly cap at 100% would otherwise
+ * never pause anything and the household would be held by the provider with
+ * nothing said. `resetsAt` is unix SECONDS on the wire and ISO 8601 here.
+ */
+function readWindow(info: Record<string, unknown> | undefined): WindowReading | null {
+  const windows = info?.unifiedWindows as Record<string, unknown> | undefined;
+  if (!windows || typeof windows !== "object") return null;
+  let highest: WindowReading | null = null;
+  for (const one of Object.values(windows)) {
+    const window = one as { utilization?: unknown; resetsAt?: unknown };
+    if (typeof window?.utilization !== "number") continue;
+    if (highest !== null && window.utilization <= highest.utilization) continue;
+    highest = {
+      utilization: window.utilization,
+      resets_at:
+        typeof window.resetsAt === "number"
+          ? new Date(window.resetsAt * 1000).toISOString()
+          : null,
+    };
+  }
+  return highest;
+}
+
+/**
+ * Whether what the loop said names the plan's allowance rather than a
+ * credential. Nothing parses a NUMBER out of it: the sentence is copied whole
+ * into `said` and this only chooses which cause it is.
+ *
+ * A used-up plan window's exact wire shape was never observed (04-BRIEF: the
+ * owner's window cannot be exhausted for a probe), so this is the honest half
+ * of D-118: the measured path is `utilization`, and this is what a loop that
+ * says it in prose gets.
+ */
+function namesARateLimit(said: string): boolean {
+  return /rate[ _-]?limit|usage limit|quota|too many requests/i.test(said);
+}
+
 async function open(options: {
   preset: Preset;
   sessionId: string | null;
@@ -74,12 +119,109 @@ async function open(options: {
   // The plan windows arrive once per process rather than once per turn, so the
   // newest the loop has reported is what every turn of this session records.
   let planUsage: Record<string, unknown> | null = null;
+  // D-119. The NEWEST reading, up or down. Keeping the highest one ever seen
+  // would hold a household on a number that has already reset: the window came
+  // back and every runner still reads the old percent.
+  let window: WindowReading | null = null;
+  // D-118. A refusal the stream has already named, waiting for the event that
+  // ends the turn. The measured no-login stream says it on the `assistant` line
+  // and then again on the `result`, and a stream with only the second is the
+  // other route to the same cause.
+  let seen: TurnRefusal | null = null;
   let closed = false;
+
+  /**
+   * Let the child go, once. The adapter itself calls this on a refused
+   * credential and the runner calls it when the session ends, so it has to be
+   * safe both ways round: a second call waits on the same exit rather than
+   * ending a stream that is already gone.
+   */
+  const shut = async (): Promise<void> => {
+    if (closed) {
+      await child.exited;
+      return;
+    }
+    closed = true;
+    try {
+      child.stdin.end();
+    } catch {
+      // The child took the pipe with it, which is the outcome this wanted.
+    }
+    child.kill();
+    await child.exited;
+  };
+
+  const settle = (end: TurnEnd) => {
+    seen = null;
+    for (const listener of ends) listener(end);
+  };
+
+  /**
+   * The end of a turn the loop refused, with no `result` behind it.
+   *
+   * D-118. `text` is empty, so a runner that ignored `refused` altogether would
+   * write an empty chunk rather than the loop's own apology into a person's
+   * chat. The usage is the shape every other turn end carries, with nothing in
+   * it, because zero tokens is what a refused turn really used.
+   */
+  const refuse = (refusal: TurnRefusal, raw: Record<string, unknown>) => {
+    settle({
+      text: "",
+      session_id: sessionId,
+      refused: refusal,
+      usage: {
+        input_tokens: null,
+        cached_input_tokens: null,
+        output_tokens: null,
+        plan_usage: planUsage,
+        window,
+        raw,
+      },
+    });
+  };
 
   const handle = (event: Record<string, unknown>) => {
     if (event.type === "rate_limit_event") {
       const info = event.rate_limit_info as Record<string, unknown> | undefined;
       planUsage = (info?.unifiedWindows as Record<string, unknown>) ?? info ?? null;
+      window = readWindow(info);
+      return;
+    }
+    // D-118. A synthetic assistant line carrying the refusal as text, with a
+    // top-level `error` field naming the cause. Measured with an empty
+    // CLAUDE_CONFIG_DIR: `error: "authentication_failed"`,
+    // `is_api_error_message: true`, and the text "Not logged in · Please run
+    // /login". The `result` right behind it is what ends the turn.
+    if (
+      event.type === "assistant" &&
+      event.error === "authentication_failed" &&
+      event.is_api_error_message === true
+    ) {
+      const message = event.message as { content?: unknown } | undefined;
+      const blocks = Array.isArray(message?.content) ? message.content : [];
+      const said = blocks
+        .map((block) => (block as { text?: unknown }).text)
+        .filter((text): text is string => typeof text === "string")
+        .join(" ");
+      seen = { cause: "login", said: said || String(event.error) };
+      return;
+    }
+    // D-118. The CLI does not give up on a refused credential: measured with an
+    // invalid key it emits one of these per attempt with delays 623, 1153,
+    // 2188, 4969, 8302, 18484 and 35294 ms and rising, ten attempts, and writes
+    // no `result` meanwhile. No retry fixes a dead credential and the RUNNER
+    // owns the retry clock (L10 rule 3), so the adapter ends the turn on the
+    // FIRST one and closes the child rather than holding a person's message
+    // open for minutes.
+    //
+    // A 503 is passed over: a transient upstream failure is the loop's own to
+    // retry and is not an outage.
+    if (event.type === "system" && event.subtype === "api_retry") {
+      const status = event.error_status;
+      if (status !== 401 && status !== 429) return;
+      const said = String(event.error ?? (status === 401 ? "authentication_failed" : status));
+      refuse({ cause: status === 401 ? "login" : "window", said }, { ...event });
+      void shut();
       return;
     }
     if (event.type === "user" && event.isReplay === true && pending) {
@@ -110,6 +252,7 @@ async function open(options: {
         cached_input_tokens: numberOrNull(reported.cache_read_input_tokens),
         output_tokens: numberOrNull(reported.output_tokens),
         plan_usage: planUsage,
+        window,
         raw: {
           ...reported,
           num_turns: event.num_turns,
@@ -117,9 +260,24 @@ async function open(options: {
           total_cost_usd: event.total_cost_usd,
         },
       };
-      for (const listener of ends) {
-        listener({ text: String(event.result ?? ""), session_id: sessionId, usage });
+      const said = String(event.result ?? "");
+      // MEASURED, and it is the trap the whole of D-118 is about: the no-login
+      // `result` carries `subtype: "success"` AND `is_error: true`. An adapter
+      // reading `subtype` alone settles it as a reply, the runner writes "Not
+      // logged in" into the outbox and the door posts it to the person, which
+      // is the per-row apology L10 forbids by name.
+      if (event.is_error === true) {
+        const refusal: TurnRefusal = seen
+          ? { cause: seen.cause, said: said || seen.said }
+          : namesARateLimit(said)
+            ? { cause: "window", said }
+            : event.terminal_reason === "api_error"
+              ? { cause: "login", said }
+              : { cause: "other", said };
+        settle({ text: "", session_id: sessionId, usage, refused: refusal });
+        return;
       }
+      settle({ text: said, session_id: sessionId, usage, refused: null });
     }
   };
 
@@ -174,12 +332,7 @@ async function open(options: {
     onTurnEnd(handler) {
       ends.push(handler);
     },
-    async close() {
-      closed = true;
-      child.stdin.end();
-      child.kill();
-      await child.exited;
-    },
+    close: shut,
   };
 }
 

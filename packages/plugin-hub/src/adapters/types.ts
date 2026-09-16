@@ -12,19 +12,56 @@ export interface AdapterProgress {
   text: string;
 }
 
+/**
+ * D-118. Why a loop would not answer, typed, so the runner branches on no
+ * loop's name and no loop's prose.
+ *
+ * A `login` is a credential no retry fixes. A `window` is the plan's own
+ * allowance, which comes back on its own clock. Anything else is `other`.
+ */
+export interface TurnRefusal {
+  cause: "login" | "window" | "other";
+  /** What the loop itself said, copied. Nothing parses a number out of it. */
+  said: string;
+}
+
+/**
+ * D-119. The plan window a loop reported, normalised: the HIGHEST utilization
+ * across every window it named, with that window's own reset.
+ */
+export interface WindowReading {
+  /** 0.0 to 1.0. */
+  utilization: number;
+  /** ISO 8601, or null when the loop reported no reset for it. */
+  resets_at: string | null;
+}
+
 /** What the loop said it used. A count it did not report is null, never zero. */
 export interface AdapterUsage {
   input_tokens: number | null;
   cached_input_tokens: number | null;
   output_tokens: number | null;
   plan_usage: Record<string, unknown> | null;
+  /**
+   * D-118. The normalised reading beside the raw `plan_usage`, never instead of it.
+   *
+   * OPTIONAL rather than required, and the reason is a shipped assertion
+   * (BUILD-NOTES 6): `test/turn-record.test.ts`, `test/chatlog.test.ts` and
+   * `test/helpers/scripted-adapter.ts` build `AdapterUsage` literals, and since
+   * 3b `tsc --noEmit` is part of what green means, so a required field would
+   * make four shipped files red for a fixture edit this round may not make. The
+   * Claude Code adapter always sets it, null included, and check 9 binds that.
+   */
+  window?: WindowReading | null;
   raw: Record<string, unknown>;
 }
 
 export interface TurnEnd {
+  /** Empty whenever `refused` is not null, so an ignored field still posts nothing. */
   text: string;
   session_id: string | null;
   usage: AdapterUsage;
+  refused: TurnRefusal | null;
 }
 
 export interface AdapterSession {

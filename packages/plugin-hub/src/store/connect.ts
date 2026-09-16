@@ -35,8 +35,29 @@ const SAYS_OK_EARLY: [string, string[]][] = [
   ["fsync", ["off"]],
 ];
 
+/**
+ * How many connections one store holds.
+ *
+ * MEASURED 2026-09-16, and the reason it is not 1 (BUILD-NOTES 8). With a pool
+ * of one, two of a process's own tasks that have statements in flight at the
+ * same moment get each other's result rows: a runner serving TWO agents read
+ * back a `ledger_event.seq` from the other agent's diary write as the value of
+ * its own `returning data` column, reproducibly, and the same runner serving
+ * ONE agent never did. It is not the statement text, not the prepared
+ * statement's name and not a transaction boundary: the same two statements
+ * driven by hand in either order never cross, and a pool above one never
+ * crosses at all, because two statements in flight are then two connections.
+ *
+ * The hub's own tasks are genuinely concurrent (a runner's agents, a door's
+ * read and post and attend), so this is a floor rather than a tuning knob. What
+ * stays true of one connection stays true of the first: the process names
+ * itself to the server there, the hub's advisory lock is held by that session,
+ * and a waiting process still issues nothing at all.
+ */
+const CONNECTIONS_PER_STORE = 8;
+
 export async function openStore(options: { url: string }): Promise<Store> {
-  const sql = new SQL(options.url, { max: 1 });
+  const sql = new SQL(options.url, { max: CONNECTIONS_PER_STORE });
   try {
     const [row] = (await sql.unsafe(
       `select ${SAYS_OK_EARLY.map(([name]) => `current_setting('${name}') as ${name}`).join(", ")}`,
