@@ -441,12 +441,35 @@ test.skipIf(!gate.ok)(
 
       // --- 2. REMOVE IT.
       rewrite(baseRun);
+      // THE WAIT IS ON THE HUB'S OWN LINE AND WAS ON THE MANAGER'S LIST
+      // (BUILD-NOTES 18). The hub stops a stale unit and only then removes it
+      // (`src/hub/run.ts`), so by the time `remove` runs the service is already
+      // inactive; `remove` then DISABLES it, which drops the last reference and
+      // makes an already-inactive unit collectable, and the delete of the files
+      // is the step after that. Between those two the unit can leave
+      // `list-units` while its file is still on disk, and a wait on the listing
+      // therefore lets the three assertions below run in the middle of the
+      // removal rather than after it. `unit.removed` is written after
+      // `os.remove` has returned, which is the event these assertions mean, and
+      // the stage above already reads this ledger for `unit.installed` and
+      // `unit.started`. Nothing below is weakened: the file and the pid are
+      // still read from the operating system, after the wait instead of during
+      // it.
       await until(
-        "the removed entry's unit is gone",
-        async () => !(await fixture.listWatched()).some((n) => n.startsWith(`imprnt-hub-${added}`)),
+        "the hub said it removed the entry's unit",
+        async () =>
+          (await it.read.ledger({ stream: "machine" })).some(
+            (e) => e.subject === added && e.kind === "unit.removed",
+          ),
         90_000,
-        async () => (await fixture.listWatched()).join(", "),
+        async () =>
+          `${JSON.stringify(await it.read.ledger({ stream: "machine" }))} | ${(
+            await fixture.listWatched()
+          ).join(", ")}`,
       );
+      expect(
+        (await fixture.listWatched()).some((n) => n.startsWith(`imprnt-hub-${added}`)),
+      ).toBe(false);
       expect(readdirSync(fixture.unitDir()).some((f) => f.startsWith(`imprnt-hub-${added}`))).toBe(
         false,
       );

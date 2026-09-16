@@ -5,7 +5,7 @@ import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
 import { boxCommand, boxContextFor } from "../box/index.ts";
 import { readTail } from "../chatlog.ts";
 import { applyNote, stageDirFor, stageNotes } from "../harvest/apply.ts";
-import { parseHarvestReply } from "../harvest/parse.ts";
+import { parseHarvestReply, SAID_CAP } from "../harvest/parse.ts";
 import { harvestMessage } from "../harvest/prompt.ts";
 import { decodeHarvestBody, type HarvestBody } from "../harvest/row.ts";
 import { readWatermark, watermarkRow } from "../harvest/sheet.ts";
@@ -840,6 +840,24 @@ export async function runRunner(options: {
       }
 
       const harvester = getPreset(registry, settings.harvester);
+      const language = languageOf(registry, agent.person) as Language;
+      /**
+       * D-159. Whether a line is owed for this harvest at all.
+       *
+       * A demand ALWAYS answers, whatever the setting says, and that is the
+       * ruling's own sentence: a person who typed a phrase at the machinery and
+       * got silence has no way to tell it worked from a hub that is broken.
+       */
+      const owed = settings.report || body.reason === "demand";
+      const say = async (said: string): Promise<void> => {
+        await appendNotice(store, {
+          person: agent.person,
+          agent: agent.id,
+          body: said,
+          noticeKey: `harvest:${row.id}`,
+        });
+      };
+
       // D-149. THE SLICE IS COMPUTED FROM THE SHEET AND NEVER FROM THE ROW'S
       // OWN `from`: the row records what the door believed when it wrote it and
       // the sheet is what a runner has really settled. That is what makes "a
@@ -871,6 +889,14 @@ export async function runRunner(options: {
       // line, or criterion 2's query is vacuously true for the case it exists
       // to cover.
       if (lines.length === 0) {
+        // REVIEW M2. A DEMAND STILL ANSWERS HERE, and this is the branch that
+        // used to return in silence. It is reachable in ordinary use rather
+        // than in an edge case: `readSlice` drops every line that IS the
+        // phrase, so typing it, letting it file and typing it again with
+        // nothing said in between leaves a slice that is empty by
+        // construction, and the first demand in a chat whose only other lines
+        // are the door's own machinery is the same shape.
+        if (body.reason === "demand") await say(harvestNothing(language));
         await settleHarvest(store, {
           inboundId: row.id,
           turn: recordOf(harvester, {
@@ -882,7 +908,6 @@ export async function runRunner(options: {
       }
 
       const last = lines[lines.length - 1];
-      const language = languageOf(registry, agent.person) as Language;
       const box = boxFor(registry, agent.id);
       const session = await adapterFor(options.adapters, harvester.adapter).start({
         preset: harvester,
@@ -988,6 +1013,18 @@ export async function runRunner(options: {
           // is lost, and re-running the model on the same slice produces the
           // same conflict for ever, so a watermark that stood still would
           // harvest that chat every quiet period until a human intervened.
+          // REVIEW S4. ONLY A PATH THE CLI REALLY NAMED. `classifyApply`
+          // answers `note: ""` whenever a marker line carries no token at its
+          // own skip index, and an empty entry joined into the report line
+          // renders `[door] saved. Notes: .`, a sentence about nothing. It
+          // would go into the turn record as an empty string too, which is a
+          // note nobody can look up.
+          if (result.note === "") continue;
+          // D-153. A conflict COUNTS AS LANDED: the vault's own contradiction
+          // workflow recorded it in `_needs-review.md`, nothing about the slice
+          // is lost, and re-running the model on the same slice produces the
+          // same conflict for ever, so a watermark that stood still would
+          // harvest that chat every quiet period until a human intervened.
           if (result.outcome === "conflict") conflicts.push(result.note);
           else notes.push(result.note);
         }
@@ -997,7 +1034,6 @@ export async function runRunner(options: {
       // and then the next answers. It is keyed on the harvest ROW, so a second
       // attempt at one harvest meets its own key and a second harvest of the
       // same chat gets its own line.
-      const owed = settings.report || body.reason === "demand";
       if (owed) {
         const said =
           notes.length > 0 || conflicts.length > 0
@@ -1005,14 +1041,7 @@ export async function runRunner(options: {
             : body.reason === "demand"
               ? harvestNothing(language)
               : null;
-        if (said !== null) {
-          await appendNotice(store, {
-            person: agent.person,
-            agent: agent.id,
-            body: said,
-            noticeKey: `harvest:${row.id}`,
-          });
-        }
+        if (said !== null) await say(said);
       }
 
       // D-141, D-154. The watermark is the LAST HARVESTED LINE's own time and
@@ -1212,7 +1241,36 @@ export async function runRunner(options: {
         // period. `claimNext`'s `returning` already carries the kind, so the
         // branch costs no read.
         if (row.kind === "harvest") {
-          await harvestTurn(row, registry);
+          // REVIEW M1. NOTHING A HARVEST DOES LEAVES THIS LOOP. `Bun.spawn`
+          // throws SYNCHRONOUSLY on a command it cannot find (measured, bun
+          // 1.3.14: `ENOENT: no such file or directory, posix_spawn '<path>'`),
+          // and `hub.imprnt` is optional and falls back to the bare word
+          // `imprnt`, which no rendered unit file puts on a PATH. Without this
+          // try the throw leaves `harvestTurn`, leaves this `while`, and lands
+          // in the outer catch, which writes one diary line about the AGENT and
+          // falls through to the `finally`: the person's own messages stop
+          // being answered and nothing in a chat says so.
+          //
+          // Every other throw site on that path meets the same net: the two
+          // reads, the session start, the window record, the staging, the
+          // apply, the notice and all three settles. The row goes back on its
+          // retry with the failure in its own words, exactly as a note the
+          // vault refused does, and the agent goes on serving.
+          try {
+            await harvestTurn(row, registry);
+          } catch (error) {
+            await refuseTurn(store, {
+              inboundId: row.id,
+              runner: options.runner,
+              agent: agent.id,
+              cause: "other",
+              said: `the harvest failed: ${(error as Error).message}`.slice(0, SAID_CAP),
+              retryAt: new Date(
+                Date.now() + retrySeconds(registry) * 1000,
+              ).toISOString(),
+              kind: "refused.harvest",
+            });
+          }
           continue;
         }
         const preset = getPreset(registry, agent.preset);

@@ -12,7 +12,13 @@ import { isDemand, newestLine, readSlice } from "../harvest/slice.ts";
 import { stamp } from "../records/stamps.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import { agentsFor, harvestFor, languageOf, thresholdsFor } from "../registry/entries.ts";
-import { loadRegistry, readSetting, type AgentEntry } from "../registry/load.ts";
+import {
+  loadRegistry,
+  readSetting,
+  type AgentEntry,
+  type Registry,
+} from "../registry/load.ts";
+import { getPreset } from "../registry/presets.ts";
 import { TURN_PROGRESS_SHEET, type ProgressRow } from "../runner/progress.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
@@ -804,6 +810,35 @@ export async function runDoor(options: {
    * The door already parses the registry once a tick in `supervise`, so this is
    * a second parse of a file the process is already reading.
    */
+  /**
+   * REVIEW S5. ONE registry parse per tick for the WHOLE door, not one per
+   * agent per pass.
+   *
+   * The task's own reason for re-reading stands (D-161: a changed knob lands
+   * with nothing restarted), and its doc comment's claim that this is "a second
+   * parse of a file the process is already reading" was true for one agent and
+   * not for four. A door serving four agents was reading and parsing the file
+   * four times a tick on top of `supervise`'s own one, and
+   * `test/wait-idle.test.ts` is the processor-time window that sees exactly
+   * that cost.
+   *
+   * Keyed on the TICK, so a knob still lands within one tick of the edit, which
+   * is the bound the per-pass parse already had. A parse that THROWS leaves the
+   * cache untouched, so a half-written file is met again on the next pass
+   * rather than papered over by the last good one.
+   */
+  let parsedFor = -1;
+  let parsedRegistry: Registry | null = null;
+  const registryThisTick = (): Registry => {
+    const tick = Math.floor(Date.now() / timeoutMs);
+    if (parsedRegistry === null || parsedFor !== tick) {
+      const fresh = loadRegistry(options.registryFile);
+      parsedRegistry = fresh;
+      parsedFor = tick;
+    }
+    return parsedRegistry;
+  };
+
   const harvesting = async (agent: AgentEntry, own: Served): Promise<void> => {
     const chat = { stateDir, person: agent.person, agent: agent.id };
     const key = { person: agent.person, agent: agent.id };
@@ -840,13 +875,30 @@ export async function runDoor(options: {
     while (!stopping && !own.leaving) {
       let sleepMs = timeoutMs;
       try {
-        const asked = own.demands.splice(0);
-        // D-161. Re-read per pass, so the harvester, the quiet timeout, the
+        // REVIEW M3. READ, NEVER TAKE. Everything below this line can throw,
+        // and a pass that throws is caught and the loop goes on, which is right
+        // for a pass and wrong for the queue: a demand spliced off here and
+        // lost to a half-written registry lives nowhere else, and the person's
+        // phrase produces no row and no line back for ever. SPEC §6 says the
+        // installer, the web board and an editor all edit that file, so a
+        // half-written one is an ordinary moment rather than an accident. The
+        // queue is cleared only after the row is on the table.
+        const asked = own.demands.slice();
+        // D-161. Re-read per tick, so the harvester, the quiet timeout, the
         // minimum slice and the report switch all land with nothing restarted.
-        const settings = harvestFor(loadRegistry(options.registryFile), agent.person);
+        const fresh = registryThisTick();
+        const settings = harvestFor(fresh, agent.person);
         if (settings === null) {
           // D-137. This person's chats are not harvested at all, and `check`
           // says so rather than this task complaining once a tick.
+          //
+          // The demand IS dropped here, and that is deliberate: nothing in the
+          // hub can ever serve a phrase typed at a person whose file names no
+          // harvester, and a queue that kept every one of them would grow for
+          // as long as the household kept typing. `check` reports
+          // `harvest-undeclared` for that person, which is the line a household
+          // can act on.
+          own.demands.splice(0, asked.length);
           await Promise.race([
             Bun.sleep(timeoutMs),
             own.demanded.wait(),
@@ -895,25 +947,56 @@ export async function runDoor(options: {
           settled = await readWatermark(store, key);
           const from = settled?.at ?? null;
           const slice = await readSlice({ ...chat, from, until });
-          const body: HarvestBody = {
-            from,
-            until,
-            reason,
-            lines: slice.length,
-            ...(said === undefined ? {} : { said }),
-          };
-          await store.sql.begin(async (tx) =>
-            enqueueInbound(
-              { ...store, sql: tx as unknown as Store["sql"] },
-              {
-                id: harvestRowId(agent.id, until),
-                person: agent.person,
-                agent: agent.id,
-                body: encodeHarvestBody(body),
-                kind: "harvest",
-              },
-            ),
-          );
+          // REVIEW S3, D-145's second gate: "writes the row in one transaction
+          // WHEN THE COUNT IS AT LEAST THE APPLICABLE MINIMUM". The count above
+          // is the door's own, measured from a bound that is empty every time
+          // this task starts, so a door that has just come up counts lines a
+          // runner has long since harvested. This is the count the RUNNER will
+          // really read.
+          //
+          // IT GATES A KEY HARVESTER AND NOT A PLAN ONE, and the two are
+          // different questions rather than one rule half applied. A plan
+          // preset carries the three window thresholds and phase 4's pause,
+          // notice and hold are what fence what it spends; D-110's own sentence
+          // is that "an agent on a per-token key has no window", so for a key
+          // harvester the minimum is the ONLY cost fence there is, and a turn
+          // bought under it is money the household did not agree to spend. On a
+          // plan the row still lands and the runner settles it for what it
+          // really holds, which is what `test/door-harvest.test.ts`'s own stage
+          // 4 pins and what BUILD-NOTES 1 argues.
+          const paid = getPreset(fresh, settings.harvester).paid;
+          const tooFew =
+            reason === "quiet" && paid === "key" && slice.length < settings.min_messages;
+          if (!tooFew) {
+            const body: HarvestBody = {
+              from,
+              until,
+              reason,
+              lines: slice.length,
+              ...(said === undefined ? {} : { said }),
+            };
+            await store.sql.begin(async (tx) =>
+              enqueueInbound(
+                { ...store, sql: tx as unknown as Store["sql"] },
+                {
+                  id: harvestRowId(agent.id, until),
+                  person: agent.person,
+                  agent: agent.id,
+                  body: encodeHarvestBody(body),
+                  kind: "harvest",
+                },
+              ),
+            );
+            // REVIEW M3. The demands this pass acted on, and only those: the
+            // queue is push-only and in order, so the first `asked.length` of
+            // it are the ones read at the top. One that arrived while this pass
+            // ran is still there for the next.
+            own.demands.splice(0, asked.length);
+          }
+          // The bound moves either way. A pass that looked and found too few
+          // has ASKED about those lines, and leaving the bound behind would
+          // make it read the watermark again on every tick for ever to decline
+          // again, which is a poll where a notification exists.
           bound = until;
         }
 

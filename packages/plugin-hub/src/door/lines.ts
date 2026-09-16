@@ -138,15 +138,26 @@ export function harvestReport(
   language: Language,
   what: { notes: string[]; conflicts: string[] },
 ): string {
-  const notes = what.notes.join(", ");
-  const conflicts = what.conflicts.join(", ");
-  if (what.conflicts.length === 0) {
+  // REVIEW S4. AN ENTRY THAT NAMES NOTHING IS NOT IN THE SENTENCE. The apply's
+  // classifier answers `note: ""` whenever a marker line carries no path at its
+  // own skip index, and one of those joined into the list renders
+  // `[door] saved. Notes: .`, which is the sentence about nothing these three
+  // forms exist to make unreachable. The caller drops them too, so this is the
+  // fence rather than the rule.
+  const kept = what.notes.filter((one) => one !== "");
+  const clashed = what.conflicts.filter((one) => one !== "");
+  // Nothing named on either side is a report about nothing, and the honest
+  // answer to that is the line that says so.
+  if (kept.length === 0 && clashed.length === 0) return harvestNothing(language);
+  const notes = kept.join(", ");
+  const conflicts = clashed.join(", ");
+  if (clashed.length === 0) {
     return says(
       language,
       language === "ru" ? `сохранено. Заметки: ${notes}.` : `saved. Notes: ${notes}.`,
     );
   }
-  if (what.notes.length === 0) {
+  if (kept.length === 0) {
     return says(
       language,
       language === "ru"
