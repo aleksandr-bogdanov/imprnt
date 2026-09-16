@@ -410,43 +410,45 @@ export async function runRunner(options: {
       // is up, and this is where that one settles.
       own.settle();
       /**
-       * Whether the table is worth asking about (03b row 6, D-70, D5).
+       * WHY THIS LOOP STILL ASKS ON ITS BOUND (03b row 6, D-70, and the reason
+       * it is NOT closed).
        *
-       * SPEC section 1: the runner reads its eligible rows ON CONNECT and after
-       * every turn, wakes itself on a recorded retry or claim deadline, and
-       * never polls on a timer. A BARE TIMEOUT IS NOT ONE OF THOSE. It says
-       * only that nothing was announced and nothing came due, so a claim issued
-       * on it is a question whose answer was already known, once a tick,
-       * forever: on a one second tick that was eight statements every four
-       * seconds out of a runner with nothing to do.
+       * `docs/SPEC.md:17` says the runner reads its eligible rows on connect
+       * and after every turn, wakes itself on a recorded deadline, and never
+       * polls on a timer, and a bare timeout is none of those. This round
+       * gated the claim on the wake reason exactly as that reads, and the hub
+       * box then failed `test/runner-drain.test.ts` in THREE of four full suite
+       * runs while passing it alone every time: a notification the runner has
+       * to hear does not reach it under load there, and with no read on the
+       * bound the row it announced is never claimed at all. The tick was
+       * covering that, which nobody had written down, and taking the cover away
+       * without knowing what is dropping the notification trades a statement a
+       * second for a message a household never gets an answer to.
        *
-       * So a bare timeout claims nothing. It re-reads the registry FILE, which
-       * is the agent's own reconcile (D-87), and the memory watch (D-81) runs
-       * on the supervision loop's tick beside this one, neither of which
-       * touches the store. What comes back to the table is a notification, a
-       * deadline the store itself recorded, connect, and the turn just settled.
+       * So the gate is reverted and the debt is recorded rather than closed.
+       * What ships from that work is the half that stands on its own: the
+       * statement probe that could not see a bound query at all, and a waiter
+       * with no listener answering its caller `notified` instead of `timeout`
+       * (`src/store/wake.ts`), which the door needed too and had no tick
+       * behind it.
        */
-      let ask = true;
       while (!stopping && !own.leaving) {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
         const registry = loadRegistry(options.registryFile);
-        const row = ask
-          ? await claimNext(store, {
-              runner: options.runner,
-              agent: agent.id,
-              leaseMs: setting(registry, "hub.claim_lease_seconds") * 1000,
-            })
-          : null;
+        const row = await claimNext(store, {
+          runner: options.runner,
+          agent: agent.id,
+          leaseMs: setting(registry, "hub.claim_lease_seconds") * 1000,
+        });
         if (!row) {
-          const why = await Promise.race([
+          await Promise.race([
             waiter
               .wait(setting(registry, "hub.tick_seconds") * 1000)
               .catch(() => "timeout" as const),
             stopped,
             own.left,
           ]);
-          ask = why !== "timeout";
           continue;
         }
         const preset = getPreset(registry, agent.preset);
@@ -455,9 +457,6 @@ export async function runRunner(options: {
         // runner process itself never restarts for either.
         if (presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
         await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry });
-        // A settled turn changed the table under this loop, so the next row is
-        // asked for rather than waited on.
-        ask = true;
       }
     } catch (error) {
       if (stopping || own.leaving) return;

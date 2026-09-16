@@ -189,34 +189,6 @@ async function openWaiter(
   // through what it found belongs to the next wait. Kept here, it is consumed
   // by that wait instead of being dropped between the two.
   let pending = false;
-  /**
-   * The nearest recorded deadline, as a local moment with the grace already in
-   * it, and whether it has been asked for since anything could have moved it.
-   *
-   * 03b row 6. THE DEADLINE READ IS ONE STATEMENT, and a wait that asked for it
-   * on the way in every time was a statement per bound: a runner on a one
-   * second tick asked the store what its nearest deadline was once a second
-   * forever, which is the polling `docs/SPEC.md` forbids wearing the costume of
-   * arming a wait.
-   *
-   * A BARE TIMEOUT IS THE PROOF THAT NOTHING MOVED. The timeout timer fires
-   * only when no notification arrived AND the deadline timer did not, so the
-   * deadline this waiter read is still ahead of it by exactly what is left on
-   * the clock. It is carried into the next wait rather than asked for again.
-   * Anything else invalidates it: a notification, the deadline itself falling
-   * due, and a listener that had to be opened again (which is a window this
-   * waiter was deaf through).
-   *
-   * WHAT MAKES THAT SOUND is that nothing but this waiter's own caller records
-   * a deadline on the rows it is waiting on without announcing it:
-   * `claimNext` and `settleTurn` are the only writers of `claim_deadline` and
-   * `retry_at` in `src/`, both belong to the runner that owns this waiter, and
-   * both run between waits after a wake that was not a bare timeout. A third
-   * party that started recording deadlines on this agent's rows in silence
-   * would have to invalidate this, and would be wrong not to notify anyway.
-   */
-  let deadlineAt: number | null = null;
-  let deadlineKnown = false;
   // The connection died on its own, so it is opened again on the next wait.
   let lost = false;
   let closed = false;
@@ -262,10 +234,6 @@ async function openWaiter(
           listener = await open();
           lost = false;
           pending = false;
-          // A window this waiter was deaf through is a window a deadline could
-          // have been recorded in without it hearing, so what it carried is
-          // dropped and the next wait asks again.
-          deadlineKnown = false;
           // The caller's last read ran with nothing listening, so it is sent
           // back to read once more now that something is.
           return "notified";
@@ -274,7 +242,6 @@ async function openWaiter(
         }
       } else if (pending) {
         pending = false;
-        deadlineKnown = false;
         return "notified";
       }
 
@@ -286,9 +253,6 @@ async function openWaiter(
       const finish = (reason: WakeReason) => {
         if (done) return;
         done = true;
-        // Everything but the bound running out is something happening, and
-        // something happening is what can move a deadline.
-        if (reason !== "timeout") deadlineKnown = false;
         wake = null;
         settle(reason);
       };
@@ -296,33 +260,20 @@ async function openWaiter(
       // that read is this wait's wake rather than a flag nobody consumes.
       wake = finish;
 
-      // The deadline is read here, on the way in, and ONLY when this waiter
-      // does not already know it. After it this waiter issues no statement at
-      // all until it is woken, which is what makes a wait tellable apart from a
-      // poll in the server's own statement log.
-      if (!deadlineKnown && !lost && !done) {
-        const due = await options.deadline();
-        // A notification that landed DURING that read has already dropped what
-        // this waiter knows, and writing it back here would hand the next wait
-        // a deadline read before the caller went and changed the table. The
-        // wake is unaffected either way; what this keeps true is the sentence
-        // above it, which is what a later change will trust.
-        if (!done) {
-          deadlineAt =
-            due === null ? null : Date.now() + Math.max(0, due) + PAST_THE_DEADLINE_MS;
-          deadlineKnown = true;
-        }
-      }
+      // The deadline is read once, here, on the way in. After it this waiter
+      // issues no statement at all until it is woken, which is what makes a
+      // wait tellable apart from a poll in the server's own statement log.
+      const due = lost || done ? null : await options.deadline();
 
       const timers: ReturnType<typeof setTimeout>[] = [];
       try {
         if (!done) {
-          if (deadlineKnown && deadlineAt !== null) {
-            // What is left of it, so a deadline carried across three bounds
-            // still lands at the moment the server named rather than three
-            // bounds after it.
+          if (due !== null) {
             timers.push(
-              setTimeout(() => finish("deadline"), Math.max(0, deadlineAt - Date.now())),
+              setTimeout(
+                () => finish("deadline"),
+                Math.max(0, due) + PAST_THE_DEADLINE_MS,
+              ),
             );
           }
           timers.push(setTimeout(() => finish("timeout"), timeoutMs));
