@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import {
   diffUnits,
   resetCommand,
@@ -9,11 +10,27 @@ import {
 import { entryIdOf, isOurs, unitName } from "../os/names.ts";
 import type { OsSeam, WantedUnit } from "../os/types.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
-import { listAgents, personOf, runEntriesFor } from "../registry/entries.ts";
-import { loadRegistry, readSetting } from "../registry/load.ts";
+import {
+  listAgents,
+  listCredentials,
+  listPeople,
+  personOf,
+  runEntriesFor,
+  thresholdsFor,
+} from "../registry/entries.ts";
+import { credentialOfPreset } from "../registry/presets.ts";
+import { loadRegistry, readSetting, type CredentialEntry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readPeaks, residentIds } from "../hub/peak.ts";
+import {
+  copyFindings,
+  credentialFindings,
+  doorCredential,
+  realProber,
+  type CredentialProber,
+} from "./credentials.ts";
 import { findingId, type Finding } from "./finding.ts";
+import { readStampRows, stampFindings } from "./stamps.ts";
 import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
 import { silentRunners } from "./silence.ts";
@@ -176,6 +193,13 @@ export async function runCheck(options: {
   store: StoreLike;
   os?: OsSeam | null;
   kernel?: KernelView | null;
+  /**
+   * D-131. How a credential is opened, in the style of `os` and `kernel`. The
+   * default is the real reader, so a household that hands nothing still has
+   * every credential OPENED rather than merely listed: "presence is not
+   * health" is the whole of L10 rule 2.
+   */
+  credentials?: CredentialProber;
   now?: Date;
 }): Promise<Finding[]> {
   const machine = options.machine;
@@ -400,6 +424,82 @@ export async function runCheck(options: {
         machine,
       }),
     );
+  }
+
+  // --- every human row past its person's own threshold (criterion 1) ------
+  //
+  // THE MACHINE IS THE AGENT'S RUNNER'S, so two machines running `check` do not
+  // both report one row. The set is the one `agent-unboxed` already computed.
+  const mine = listAgents(registry).filter((agent) => ownRunners.has(agent.runner));
+  if (mine.length > 0) {
+    findings.push(
+      ...stampFindings({
+        rows: await readStampRows(options.store, { agents: mine.map((agent) => agent.id) }),
+        thresholds: (person) => thresholdsFor(registry, person),
+        runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        machine,
+        now,
+      }),
+    );
+  }
+
+  // --- check OPENS every credential and asks whether it still works --------
+  //     (criterion 8, RUN-17, L10 rule 2). The incident behind it: a login
+  //     died, thirteen turns failed over 31 hours, and `check` was green
+  //     throughout because it never opened the file.
+  const prober = options.credentials ?? realProber();
+  const declared = listCredentials(registry);
+  const doors: CredentialEntry[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== "door") continue;
+    const said = (registry.data.run as Record<string, unknown>[] | undefined)?.find(
+      (one) => (one as { id?: unknown }).id === entry.id,
+    ) as { platform?: string; person?: string; token_file?: string } | undefined;
+    if (!said?.platform || !said.token_file) continue;
+    const credential = doorCredential({
+      id: entry.id,
+      platform: said.platform,
+      person: said.person,
+      token_file: said.token_file,
+    });
+    if (credential) doors.push(credential);
+  }
+  const opened = [...declared, ...doors];
+  findings.push(
+    ...(await credentialFindings({ entries: opened, prober, machine })),
+  );
+
+  // --- a copy anywhere inside the roots the registry names (criterion 2) ---
+  findings.push(
+    ...(await copyFindings({
+      entries: declared,
+      prober,
+      roots: [
+        ...listPeople(registry).map((person) => person.tree),
+        String(readSetting(registry, "hub.shared_zone") ?? ""),
+        String(readSetting(registry, "hub.state_dir") ?? ""),
+        ...opened.map((entry) => dirname(entry.file)),
+      ],
+      machine,
+    })),
+  );
+
+  // --- a plan preset that names no credential is REPORTED, never refused ---
+  //     (D-111). A household that has not written the table yet still runs and
+  //     is told, loudly, because nothing can open what the file does not name.
+  const usedHere = new Set(mine.map((agent) => agent.preset));
+  for (const [name, preset] of Object.entries(registry.presets)) {
+    if (!usedHere.has(name)) continue;
+    if (preset.paid !== "plan") continue;
+    if (credentialOfPreset(registry, name) !== null) continue;
+    findings.push({
+      id: findingId(machine, "credential-undeclared", name),
+      kind: "credential-undeclared",
+      subject: name,
+      machine,
+      says: `the preset ${name} runs on a plan and names no credential, so nothing can open the login it runs on: what the file does not name cannot be checked`,
+      fix: `add credential = "<an id>" to [presets.${name}] in ${options.registryFile}, and a [[credentials]] entry carrying that id, its kind, its file and its owner`,
+    });
   }
 
   // --- the sheet: one row per finding id, and a fixed one leaves NO line ---
