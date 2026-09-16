@@ -35,6 +35,7 @@
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { appendFileSync, mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { seam, startCluster, until, type Cluster } from "./helpers/cluster.ts";
 import { stageHarvest, type HarvestStage } from "./helpers/harvest-stage.ts";
@@ -137,7 +138,8 @@ test(
     // word `imprnt` would be found on a developer's Mac and not on the box the
     // unit file starts, which is the configuration this is about, so the
     // fixture names something nothing anywhere can resolve.
-    const nowhere = join(await scratchDir("hub-no-imprnt-"), "there-is-no-imprnt-here");
+    const missingDir = await scratchDir("hub-no-imprnt-");
+    const nowhere = join(missingDir, "there-is-no-imprnt-here");
     const stage = await stageHarvest(cluster, {
       hub: { tick_seconds: TICK_SECONDS, outage_retry_seconds: RETRY_SECONDS },
       harvest: { quiet_minutes: 600, min_messages: 99, report: false },
@@ -230,6 +232,9 @@ test(
     } finally {
       if (runner) await runner.stop();
       await stage.stop();
+      // The scratch directory the missing command was named under goes with the
+      // check, so a suite run leaves none behind.
+      await rm(missingDir, { recursive: true, force: true }).catch(() => {});
     }
   },
   SLOW,
