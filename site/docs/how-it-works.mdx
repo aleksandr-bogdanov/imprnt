@@ -1,6 +1,6 @@
 ---
 title: How it works
-description: Spend the AI once, when you file. Read with cheap local code, every time after.
+description: Spend the AI once, when you write. Read with cheap local code, every time after.
 ---
 
 import HowItWorksSplit from "../src/components/docs/HowItWorksSplit.astro";
@@ -12,66 +12,62 @@ import HowItWorksServer from "../src/components/docs/HowItWorksServer.astro";
 import HowItWorksEdits from "../src/components/docs/HowItWorksEdits.astro";
 import HowItWorksChip from "../src/components/docs/HowItWorksChip.astro";
 
-imprnt is plain **markdown** files on your computer. No database, no cloud, no app to log into. You talk to your assistant, and it drives imprnt underneath, filing what you tell it and recalling what you ask.
+imprnt is plain **markdown** files on your computer. No database, no cloud, no app to log into. You talk to your assistant, and it drives imprnt underneath.
 
-A model costs money every time it thinks, and it forgets everything between sessions. So imprnt gives it exactly one job, the one that needs real **understanding**, and keeps it out of the mechanical work of parsing, filing, and searching. Which side a step lands on comes down to one thing: how often the step runs.
+A model costs money every time it thinks, and it forgets everything between sessions. So imprnt gives it one job, the one that needs real **understanding**, and keeps it out of the parsing, the sorting and the searching. Which side a step lands on comes down to how often it runs.
 
 <HowItWorksSplit />
 
-That is the whole trick: pay the model for the rare hard job, keep it out of the job you do a hundred times a day.
+## When you write: the model works
 
-## When you file: the model works
-
-Hand over a transcript or a document, and imprnt runs one pass of four steps. Only one of them spends the model.
+Hand over a **transcript or a document**, and imprnt runs **one pass of four steps**: the model reads it, decides what it is, writes the summary, and picks the tags.
 
 <HowItWorksIngest />
 
-The rules for where a note lands are in [Vault layout](/vault-layout/). Handing the model a source you cannot place yourself is exactly what step 2 is for.
+**Where a note lands** follows the rules in [Vault layout](/vault-layout/), and the model pays that cost **exactly once** per source.
 
 ## Edits are cheap, originals are forever
 
 <HowItWorksEdits />
 
-**One edit fixes a fact everywhere it appears.** Say you filed a colleague as Carl, an Engineer, and a later meeting reveals he is Boris, a Director. Filing looks him up by **alias** and finds the existing note. The model corrects that one note and keeps {'"Carl"'} in the aliases so old references still resolve. Every other note points at him by his permanent file ID, so the single fix shows the right name and role across every meeting and project.
+**One edit** fixes a fact everywhere it appears. A rename is looked up by alias, so the correction lands in the existing note and {'"Carl"'} stays in the aliases for old references. Every other note points at that person by their permanent file ID, so one fix carries the new name and role across every meeting and project.
 
-A contradiction is the special case. If a new meeting says a date moved, filing never overwrites. It flags the conflict for review, and the stale line gets stamped **superseded** in the note, so a reader can see which fact won. Old information is marked, never quietly dropped. Old information is marked, never quietly overwritten.
+A contradiction never overwrites. The next pass flags it for review and stamps the stale line **superseded**, so a reader can see which fact won.
 
-**Your raw sources are kept forever**, one untouched snapshot per source under `raw/`. To change how notes are structured, re-run filing over the originals. You pay the model once more and get the new layout across the whole vault. You are never stuck in an old format, and any claim in a note traces back to its **snapshot**.
+**Your raw sources are kept forever**, one untouched snapshot per source under `raw/`. To change how notes are structured, re-run the model over the originals: you pay the model once more and get the new layout across the whole vault, so you are never stuck in an old format. Any claim traces back to its snapshot.
 
 ## When you read: plain code works
 
-**Ranking is arithmetic, so no model touches it.** `recall` scores your notes with **BM25**, <HowItWorksChip>a formula from the 1990s, pure arithmetic, no server.</HowItWorksChip> Three things set a note's score:
+Ranking is arithmetic, so **no model touches it**. `recall` scores every note with BM25, <HowItWorksChip>a formula from the 1990s, pure arithmetic, no server.</HowItWorksChip> Three things set the score:
 
 <HowItWorksRanking />
 
-The model only turns your question into search words at the start and reads the few best notes at the end. It never does the **ranking**, and nothing AI-made sits under the search: no embeddings, no vectors (numeric codes a model would have to compute for every note). A rare matched word floats to the top on its own, and `recall` hands back only the top 15, so you get a short ranked list instead of a dump of the whole vault. We put a number on how well that holds up.
+The model only turns your question into search words at the start and reads the few best notes at the end. Nothing AI-made sits under the search: no embeddings, no vectors (numeric codes a model would have to compute for every note). `recall` hands back the **top 15**.
 
-**Three things sit on top of BM25, and all three are on by default.** BM25 alone has three blind spots, and each is fixed by more arithmetic rather than by a model:
+Three things sit on top of BM25, **all on by default**, each fixing a blind spot with more arithmetic:
 
-- **Stemming** folds English inflections, so a note about *swimming* answers a search for *swim*, and *policies* answers *policy*. Without it a query and a note can describe the same thing in different tenses and never meet. Any word not ending in a Latin letter is left alone, so Russian, Greek and CJK text is untouched.
-- **Coverage** rewards matching more *distinct* words from your query. BM25 adds up its score per word, so a note repeating one of your words could outrank a note that matched three different ones.
-- **Proximity** rewards your words appearing near each other. BM25 discards word positions entirely, so *double charge* side by side and *double charge* two hundred words apart score identically.
+- **Stemming** folds English inflections, so a note about *swimming* answers a search for *swim*, and *policies* answers *policy*. Any word not ending in a Latin letter is left alone, so Russian, Greek and CJK are untouched.
+- **Coverage** rewards matching more *distinct* words from your query, because BM25 adds up its score per word and a note repeating one word could outrank a note that matched three.
+- **Proximity** rewards your words appearing near each other, because BM25 discards positions entirely: *double charge* side by side scores the same as two hundred words apart.
 
-Together they lift retrieval — the right note in first position — from 19.7% to 24.9% on the LoCoMo benchmark, at no measurable cost: 157 ms before, 134 ms after, on a real 308-note vault. Turn any of them off with `--no-stem`, `--no-coverage` or `--no-proximity`.
+Together they lift retrieval (the right note in first position) from 19.7% to 24.9% on the LoCoMo benchmark, at no measurable cost: 157 ms before, 134 ms after, on a real 308-note vault. Turn any of them off with `--no-stem`, `--no-coverage` or `--no-proximity`.
 
 <HowItWorksEval />
 
-The [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval) folder holds the test harness.
+The [`eval/`](https://github.com/aleksandr-bogdanov/imprnt/tree/master/eval) folder holds the queries and the runner.
 
 ## The whole loop, step by step
-
-Who does each step, and why:
 
 <HowItWorksTable />
 
 ## Why no search server
 
-**Every tool call the model makes costs tokens**, the units AI work is billed in, whatever the wires look like. The two levers are **payload size** and **caching**. So imprnt does the heavy scan in code, hands the model a tight result, and caches locally to skip the re-fetch.
+Every tool call the model makes costs **tokens**, the units AI work is billed in, whatever the wires look like. The two levers are payload size and caching.
 
 <HowItWorksServer />
 
-A live server answering search queries breaks both levers, which is why there is no query layer over the vault. A plugin's `sync` is fine: one batched call that caches locally, and everything after it reads the cache.
+A live server answering search queries breaks both levers, so there is no query layer over the vault. A plugin's `sync` is fine: one batched call that caches locally.
 
 ## Core plus plugins
 
-The only thing always present is the core: the vault plus `ingest`, `recall`, and `check`. Everything else is an optional **plugin** you add or delete with one command, under one rule that keeps the core small: the core never depends on a plugin. The how is in [How plugins work](/plugins/), the why in [Design decisions](/design-decisions/).
+Always present: the core, meaning the vault plus `ingest`, `recall` and `check`. Everything else is an optional **plugin** you add or delete with one command, under one rule: the core never depends on a plugin. The how is in [How plugins work](/plugins/), the why in [Design decisions](/design-decisions/).

@@ -247,7 +247,7 @@ export default function MemoryVaultDoors() {
     <div
       className="not-content"
       role="group"
-      aria-label="The vault's three on-demand doors"
+      aria-label="The vault's three ways in, each on demand"
       style={{
         margin: "1.6rem 0",
         padding: narrow ? "1.15rem 0.9rem 1rem" : "1.5rem 1.4rem 1.15rem",

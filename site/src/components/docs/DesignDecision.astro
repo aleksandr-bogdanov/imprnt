@@ -1,15 +1,14 @@
 ---
 /**
- * Page-specific (design-decisions). The progressive-disclosure card every
- * decision on the page lives in: a native <details> whose always-visible
- * summary carries a small glyph and the decision stated in one plain line,
- * with the reasoning, the visual, and the flips-if line inside. Native
- * details keeps it accessible and working with zero JS. The script adds
- * three enhancements: a scroll-in reveal (reduced-motion aware), and
- * deep-link handling so a TOC or hash jump to the heading above a card
- * opens that card. Open/close animates via ::details-content where the
- * browser supports it, with an instant toggle everywhere else. Filled
- * surfaces, scoped CSS, theme-aware via Starlight tokens, no Tailwind.
+ * Page-specific (design-decisions). The card every decision on the page lives
+ * in: a header row with a small glyph and the decision stated in one plain
+ * line, then the reasoning, the visual, and the flips-if line, always open.
+ * It was a <details> once, which made the reader unfold sixteen cards by hand
+ * and, worse, inherited Starlight's 2px left border on details (the accent
+ * rail the design bans). A plain filled surface now, no
+ * script: a reveal that hides cards until scrolled left a hash jump on a
+ * blank page. Scoped CSS, theme-aware via
+ * Starlight tokens, no Tailwind.
  */
 interface Props {
   icon: string;
@@ -55,8 +54,8 @@ const GLYPHS: Record<string, string> = {
 const glyph = GLYPHS[icon] ?? GLYPHS.page;
 ---
 
-<details class="ddx" data-ddx>
-  <summary class="ddx-sum">
+<div class="ddx" data-ddx>
+  <div class="ddx-sum">
     <span class="ddx-glyph" aria-hidden="true">
       <svg
         viewBox="0 0 24 24"
@@ -71,53 +70,21 @@ const glyph = GLYPHS[icon] ?? GLYPHS.page;
       />
     </span>
     <span class="ddx-line">{oneLiner}</span>
-    <span class="ddx-hint" aria-hidden="true">
-      <svg
-        class="ddx-chev"
-        viewBox="0 0 16 16"
-        width="13"
-        height="13"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.8"
-        stroke-linecap="round"
-        stroke-linejoin="round"><path d="M4 6l4 4 4-4"></path></svg
-      >
-    </span>
-  </summary>
+  </div>
   <div class="ddx-body"><slot /></div>
-</details>
+</div>
 
 <style>
   .ddx {
     margin: 0.9rem 0 0.4rem;
     border-radius: 14px;
     background: color-mix(in oklab, var(--sl-color-text-accent) 7%, var(--sl-color-bg));
-    interpolate-size: allow-keywords;
   }
   .ddx-sum {
     display: flex;
     align-items: center;
     gap: 0.8rem;
-    padding: 0.95rem 1.1rem;
-    cursor: pointer;
-    list-style: none;
-    border-radius: 14px;
-    transition: background 0.15s ease;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .ddx-sum::-webkit-details-marker {
-    display: none;
-  }
-  .ddx-sum::marker {
-    content: "";
-  }
-  .ddx-sum:hover {
-    background: color-mix(in oklab, var(--sl-color-text-accent) 12%, var(--sl-color-bg));
-  }
-  .ddx-sum:focus-visible {
-    outline: 2px solid var(--sl-color-text-accent);
-    outline-offset: 2px;
+    padding: 0.95rem 1.1rem 0.4rem;
   }
   .ddx-glyph {
     flex: 0 0 auto;
@@ -138,29 +105,6 @@ const glyph = GLYPHS[icon] ?? GLYPHS.page;
     line-height: 1.4;
     color: var(--sl-color-white);
   }
-  .ddx-hint {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-family: var(--sl-font);
-    font-size: 0.64rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--sl-color-gray-3);
-  }
-  .ddx-hint::before {
-    content: "why";
-  }
-  .ddx[open] .ddx-hint::before {
-    content: "close";
-  }
-  .ddx-chev {
-    transition: transform 0.25s ease;
-  }
-  .ddx[open] .ddx-chev {
-    transform: rotate(180deg);
-  }
   .ddx-body {
     padding: 0.2rem 1.1rem 1.2rem;
   }
@@ -169,38 +113,6 @@ const glyph = GLYPHS[icon] ?? GLYPHS.page;
   }
   /* the open/close animation, only where ::details-content is supported and
      motion is welcome. Everyone else gets the instant native toggle. */
-  @media (prefers-reduced-motion: no-preference) {
-    .ddx::details-content {
-      opacity: 0;
-      block-size: 0;
-      overflow-y: clip;
-      transition:
-        content-visibility 0.32s allow-discrete,
-        opacity 0.32s ease,
-        block-size 0.32s ease;
-    }
-    .ddx[open]::details-content {
-      opacity: 1;
-      block-size: auto;
-    }
-    /* scroll-in reveal, armed by the script only when motion is allowed */
-    .ddx.armed {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    .ddx.in {
-      opacity: 1;
-      transform: none;
-      transition:
-        opacity 0.5s ease,
-        transform 0.5s ease;
-    }
-  }
-  @media print {
-    .ddx::details-content {
-      content-visibility: visible;
-    }
-  }
   @media (max-width: 640px) {
     .ddx-sum {
       gap: 0.65rem;
@@ -211,44 +123,3 @@ const glyph = GLYPHS[icon] ?? GLYPHS.page;
     }
   }
 </style>
-
-<script>
-  const cards = Array.from(document.querySelectorAll<HTMLDetailsElement>("details[data-ddx]"));
-
-  // a hash jump (TOC click, shared link) targets the heading above a card,
-  // so find the card that follows the target and open it
-  const openForHash = () => {
-    const id = decodeURIComponent(location.hash.replace("#", ""));
-    if (!id) return;
-    const target = document.getElementById(id);
-    if (!target) return;
-    let el: Element | null = target.nextElementSibling;
-    while (el && el.tagName !== "DETAILS") {
-      if (/^H[1-6]$/.test(el.tagName)) return;
-      el = el.nextElementSibling;
-    }
-    if (el && el.hasAttribute("data-ddx")) (el as HTMLDetailsElement).open = true;
-  };
-  openForHash();
-  window.addEventListener("hashchange", openForHash);
-
-  // scroll-in reveal, matching the site's other docs visuals
-  const ddxMotionOk = window.matchMedia("(prefers-reduced-motion: no-preference)").matches;
-  if (ddxMotionOk && "IntersectionObserver" in window) {
-    for (const card of cards) {
-      card.classList.add("armed");
-      const io = new IntersectionObserver(
-        (entries) => {
-          for (const e of entries) {
-            if (e.isIntersecting) {
-              card.classList.add("in");
-              io.disconnect();
-            }
-          }
-        },
-        { threshold: 0.12 },
-      );
-      io.observe(card);
-    }
-  }
-</script>

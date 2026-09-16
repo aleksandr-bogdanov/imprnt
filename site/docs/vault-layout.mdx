@@ -9,33 +9,33 @@ import VaultLayoutAnatomy from "../src/components/docs/VaultLayoutAnatomy.astro"
 import TagsFlow from "../src/components/docs/TagsFlow.astro";
 import VaultDataRule from "../src/components/docs/VaultDataRule.astro";
 
-**Folders** are for you to browse, never for search to use. `recall`, the search command, ignores them entirely, so where a note sits never affects whether you find it. One carve-out: folders starting with `_` or `.` hold control files, and both search and `check` skip them, so don't file notes there. That frees the folders to be an honest map of your life instead of a filing system you fight.
+**Folders** are for you to browse, never for search to use. `recall` ignores them entirely. One carve-out: folders starting with `_` or `.` hold control files, and both search and `check` skip them, so don't put notes there. That frees the folders to be an honest map of your life.
 
 ## The layout
 
-Three kinds of folder, each with a real reason to exist. Entities get one home each and everything links to them. Life-areas hold most of your content, and you pick the set. Forms are split out by how you use them. Hover or tap any row below and it explains itself.
+Three kinds of folder, each with a real reason to exist, and you pick your own set of life-areas. Tap any row for what it holds.
 
 <VaultLayoutMap />
 
-## How the model files a note
+## How the model writes a note
 
-The model makes the call itself, checked top to bottom, and the first match wins.
+The model makes the call itself.
 
 <FilingDecision />
 
 ## What carries the meaning
 
-The folders are just drawers. The meaning rides in a few short labels at the top of every note, so a note keeps what it means even when it moves. Touch any label below to see what it marks.
+The meaning rides in a few short labels at the top of every note, so a note keeps what it means even when it moves.
 
 <VaultLayoutAnatomy />
 
-A note in a life-area folder also names its life-area in the header (`domain:`), and `check` complains when the folder and the field disagree. That covers the shipped set (identity, health, finances, work, life) and any life-area you add yourself, once you name it under `## Domains` in `vault/_folders.md`.
+A note in a life-area folder also names that area in the header (`domain:`), and `check` complains when the folder and the field disagree. That covers the shipped set and any area you add yourself, once you name it under `## Domains` in `vault/_folders.md`.
 
 ## A folder you share
 
-Some things belong to more than one person: the flat, the bills, the dates you both need. A **mount** is a folder inside `vault/` holding a tree that is kept somewhere else, usually a small shared repo two people each check out at the same path. Name it under `## Mounts` in `vault/_folders.md` and `check` stops asking its notes to link into your graph, because their graph lives on the other side. A mount can carry its own `_folders.md`, and then its folders are checked by its own rules, and it keeps its own snapshots in `<mount>/_raw/`.
+Some things belong to more than one person: the flat, the bills, the dates you both need. A **mount** is a folder inside `vault/` holding a tree kept somewhere else, usually a small shared repo two people check out at the same path. Name it under `## Mounts` in `vault/_folders.md` and `check` stops asking its notes to link into your graph, because their graph lives on the other side. A mount can carry its own `_folders.md`, so its folders follow its rules, and its snapshots sit in `<mount>/_raw/`.
 
-Sharing a note is moving it. `imprnt vault move life/flat household/life` puts the note in the shared folder, deletes the private copy, rewrites every link that pointed at it, and prints who can read it now. There is no copy verb, on purpose: two copies of one fact drift apart, and the one in the shared folder is the one the other person reads. The move refuses a note whose `source:` points into your private `raw/`, and one whose links to people or organizations have no answer inside the mount, because both are dead ends for everyone but you. Afterwards `check` watches the same boundary and reports it to you, the only person who can see what the link meant: `seam-leak` for a shared note whose link resolves only in your vault, `seam-dead-source` for one still pointing at your private snapshots.
+Sharing a note is moving it. `imprnt vault move life/flat household/life` puts the note in the shared folder, deletes the private copy, rewrites every link to it, and prints who can read it now. There is no copy verb, on purpose: two copies of one fact drift apart. The move refuses a note whose `source:` points into your private `raw/`, or whose links to people or organizations have no answer inside the mount. Afterwards `check` reports `seam-leak` for a shared note whose link resolves only in your vault, and `seam-dead-source` for one still pointing at your private snapshots.
 
 ## Tags grow on their own
 
