@@ -99,22 +99,45 @@ test.skipIf(!gate.ok)(
   `RUN-09 a second hub for the same machine refuses itself: it exits non-zero saying so, writes one refused.second_hub line naming the machine, installs nothing, and the hub that was already there keeps the same pid throughout (SPEC §6, D7, L11)${gateSuffix(gate)}`,
   async () => {
     const machine = thisMachine();
+    const entryId = fixture.entryId("single");
+    const unit = `imprnt-hub-${entryId}`;
     const it = await stageHub(cluster, {
       hub: { tick_seconds: TICK, restart_delay_seconds: 1 },
       machines: [machine],
-      // No entries at all: what is under test is the second process, and a hub
-      // with nothing to install cannot be accused of having installed it.
-      run: [],
+      // ONE REAL ENTRY, because "it installed nothing" has to be a sentence
+      // that could have come out false (VERIFY-CODEX row 8). With no entries at
+      // all the census either side of the second hub is identical whatever that
+      // hub did, refusing or reconciling, so the assertion was about a box with
+      // nothing on it rather than about a hub that stopped before its tick. The
+      // first hub installs this one, and the census is taken AFTER it has, so
+      // what the second hub is measured against is a box that already changed
+      // once and must not change again.
+      run: [
+        {
+          id: entryId,
+          kind: "runner",
+          machine: machine.id,
+          schedule: "always",
+          memory_limit_mb: 64,
+          child_memory_limit_mb: 64,
+        },
+      ],
     });
     let first: ReadyProcess | null = null;
     try {
-      const unitsBefore = (await fixture.listWatched()).sort();
-
       first = await startHub(it.registryFile, machine.id, fixture.unitDir());
       expect(pidAlive(first.pid)).toBe(true);
-      // Past its first tick, so the one that is running is really running.
-      await Bun.sleep(TICK * 2000);
+      // Past its first tick, and its tick is what installs the entry, so the
+      // one that is running is really running AND has really done its work.
+      await until(
+        "the first hub installed the entry it was given",
+        async () => (await fixture.listWatched()).some((name) => name.startsWith(unit)),
+        60_000,
+        async () => (await fixture.listWatched()).join(", "),
+      );
       expect(pidAlive(first.pid)).toBe(true);
+      const unitsBefore = (await fixture.listWatched()).sort();
+      expect(unitsBefore.some((name) => name.startsWith(unit))).toBe(true);
 
       const before = await it.read.ledger({ stream: "refusal" });
 
@@ -145,7 +168,11 @@ test.skipIf(!gate.ok)(
       expect(before.map((row) => row.seq)).not.toContain(refusals[0].seq);
 
       // --- NOTHING OF THE OS MOVED. The refusal happens before the first tick,
-      //     so the second hub touched no unit on its way out.
+      //     so the second hub touched no unit on its way out, and the box it is
+      //     measured against is one the FIRST hub already installed into: a
+      //     second hub that reconciled before refusing would have had a unit to
+      //     act on and a stale one to tear down, and this is the census that
+      //     would show it.
       expect((await fixture.listWatched()).sort()).toEqual(unitsBefore);
 
       // --- and the hub that was already there is untouched: the same process,
@@ -178,6 +205,95 @@ test.skipIf(!gate.ok)(
       }
     } finally {
       if (first) await first.stop();
+      await it.stop();
+    }
+  },
+  SLOW,
+);
+
+test.skipIf(!gate.ok)(
+  `RUN-09 two hubs for one machine started in the SAME INSTANT settle to one: both are launched with neither having connected yet, exactly one comes up and exactly one leaves with refused.second_hub, one unit is on the box and it is the survivor's, and the survivor is still running afterwards (SPEC §6, D7, L11)${gateSuffix(gate)}`,
+  async () => {
+    // WHY SEQUENTIAL WAS NOT ENOUGH (VERIFY-CODEX row 8). The check above waits
+    // for the first hub to be up before starting the second, so the racy
+    // implementation this replaced (count the backends with this name, then
+    // carry on) passes it: by the time the second counts, the first is there to
+    // be counted. The shape it cannot survive is two starts in the same instant,
+    // where both count zero and both go on, and that is what this stages: both
+    // promises are in flight before either is awaited.
+    const machine = thisMachine();
+    const entryId = fixture.entryId("race");
+    const unit = `imprnt-hub-${entryId}`;
+    const it = await stageHub(cluster, {
+      hub: { tick_seconds: TICK, restart_delay_seconds: 1 },
+      machines: [machine],
+      run: [
+        {
+          id: entryId,
+          kind: "runner",
+          machine: machine.id,
+          schedule: "always",
+          memory_limit_mb: 64,
+          child_memory_limit_mb: 64,
+        },
+      ],
+    });
+    let alive: ReadyProcess | null = null;
+    try {
+      const unitsBefore = (await fixture.listWatched()).sort();
+      expect(unitsBefore.some((name) => name.startsWith(unit))).toBe(false);
+
+      // BOTH IN FLIGHT AT ONCE. Neither is awaited until both have been asked
+      // for, so nothing in the test orders them.
+      const one = startHub(it.registryFile, machine.id, fixture.unitDir());
+      const two = startHub(it.registryFile, machine.id, fixture.unitDir());
+      const settled = await Promise.allSettled([one, two]);
+
+      const up = settled.filter((r) => r.status === "fulfilled");
+      const out = settled.filter((r) => r.status === "rejected");
+      // --- EXACTLY ONE OF EACH. Two up is the bug this exists for; two down is
+      //     a machine that can never start a hub at all.
+      expect(`${up.length} up, ${out.length} refused`).toBe("1 up, 1 refused");
+      alive = (up[0] as PromiseFulfilledResult<ReadyProcess>).value;
+      // Whichever lost says why, in the words the refusal uses.
+      const why = String((out[0] as PromiseRejectedResult).reason?.message ?? "");
+      expect(why.toLowerCase()).toContain("hub");
+      expect(why).toContain(machine.id);
+
+      // --- AND IT SAID SO IN THE STORE, once. Two lines would mean both
+      //     refused and one started anyway.
+      await until(
+        "the hub that lost wrote its refusal",
+        async () =>
+          (await it.read.ledger({ stream: "refusal", kind: "refused.second_hub" })).length >= 1,
+        15_000,
+        async () => JSON.stringify(await it.read.ledger({ stream: "refusal" })),
+      );
+      const refusals = await it.read.ledger({ stream: "refusal", kind: "refused.second_hub" });
+      expect(refusals.length).toBe(1);
+      expect(refusals[0].actor).toBe("hub");
+      expect(refusals[0].subject).toBe(machine.id);
+
+      // --- ONE HUB'S WORK ON THE BOX. The survivor installs the entry, and the
+      //     count of units under the watch prefix grows by exactly what one hub
+      //     installs: two hubs reconciling the same machine is what this rule
+      //     exists to prevent and what a census of the box can see.
+      await until(
+        "the surviving hub installed the entry",
+        async () => (await fixture.listWatched()).some((name) => name.startsWith(unit)),
+        60_000,
+        async () => (await fixture.listWatched()).join(", "),
+      );
+      expect(pidAlive(alive.pid)).toBe(true);
+
+      // --- and it is still there a tick later, so the survivor is a hub that
+      //     is running rather than one that also fell over.
+      await Bun.sleep(TICK * 2000);
+      expect(pidAlive(alive.pid)).toBe(true);
+      expect((await it.read.ledger({ stream: "refusal", kind: "refused.second_hub" })).length).toBe(1);
+    } finally {
+      if (alive) await alive.stop();
+      await fixture.removeAll();
       await it.stop();
     }
   },
