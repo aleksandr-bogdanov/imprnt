@@ -1,6 +1,6 @@
 import { appendChatLine } from "../chatlog.ts";
 import { stamp } from "../records/stamps.ts";
-import { readSheet } from "../records/statesheet.ts";
+import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import { agentsFor, languageOf, thresholdsFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry } from "../registry/load.ts";
 import { TURN_PROGRESS_SHEET, type ProgressRow } from "../runner/progress.ts";
@@ -35,6 +35,27 @@ interface ProgressLine {
 
 /** How long `post` waits for those totals before it goes ahead anyway. */
 const TOTALS_WAIT_MS = 5000;
+
+/**
+ * REVIEW S5. Which platform message the progress line of an open turn IS.
+ *
+ * The door's own sheet, one row per message id, written when the line is posted
+ * and removed when the totals land on it. Without it the id lived only in the
+ * memory of the process that posted it, so a door started again mid-turn found
+ * the runner's `turn_progress` row still there, thought a line was owed, and
+ * posted a SECOND one: the first was left frozen in the chat at whatever second
+ * count it had, never edited to its totals, and the person read two lines about
+ * one turn. The clock half of the same restart already worked, because a `clock`
+ * ledger row is what a restarted door reads to know it has already spoken.
+ */
+const PROGRESS_SHEET = "door_progress";
+
+interface ProgressOnDisk {
+  post_id: string;
+  chat: string;
+  agent: string;
+  started_at: string;
+}
 
 /**
  * An in-process poke, so one task of a door can tell another that something
@@ -530,6 +551,17 @@ export async function runDoor(options: {
               }),
             });
             line.platformId = made.id;
+            // Written down before anything else can happen to this door, so a
+            // door started again mid-turn edits this message rather than
+            // posting a second one beside it.
+            if (made.id !== null) {
+              await putRow(store, PROGRESS_SHEET, row.id, {
+                post_id: made.id,
+                chat: agent.chat,
+                agent: agent.id,
+                started_at: new Date(line.startedAt).toISOString(),
+              });
+            }
           } catch {
             // Nothing else waits on the line, and the reply still goes.
           }
@@ -573,6 +605,9 @@ export async function runDoor(options: {
             // Said as loudly as the platform allows, and the reply follows.
           }
         }
+        // The turn is over, so the row is gone: a thing that is gone leaves no
+        // line behind (L17), and the next door has nothing stale to inherit.
+        await removeRow(store, PROGRESS_SHEET, id).catch(() => {});
         line.finished();
       }
     };
@@ -587,6 +622,34 @@ export async function runDoor(options: {
         for (const key of await readSpokenClocks(store, { agent: agent.id })) {
           spoken.add(key);
           spokenAt.set(key, Date.now());
+        }
+        // The progress lines a door before this one posted. One that belongs to
+        // a turn still open is INHERITED, and one whose turn has ended is swept:
+        // the door that posted it died before it could edit its totals, so
+        // nobody will, and the row would otherwise stand for ever.
+        for (const row of (await readSheet(store, PROGRESS_SHEET)) as unknown as {
+          id: string;
+          data: ProgressOnDisk;
+        }[]) {
+          if (String(row.data.agent) !== agent.id) continue;
+          const still = open.find((one) => one.id === row.id);
+          if (!still) {
+            await removeRow(store, PROGRESS_SHEET, row.id).catch(() => {});
+            continue;
+          }
+          let finished: () => void = () => {};
+          const totals = new Promise<void>((resolve) => {
+            finished = () => resolve();
+          });
+          const startedAt = Date.parse(String(row.data.started_at));
+          own.progress.set(row.id, {
+            platformId: String(row.data.post_id),
+            actions: 0,
+            lastAction: "",
+            startedAt: Number.isNaN(startedAt) ? Date.now() : startedAt,
+            totals,
+            finished,
+          });
         }
       } finally {
         own.attended();

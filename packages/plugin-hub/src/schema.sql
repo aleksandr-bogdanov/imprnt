@@ -320,7 +320,14 @@ grant update (delivered_at) on outbox to hub_door;
 -- for one outage row is an expected race and the primary key is what settles
 -- it, so the runner claims with `claimRow` and never with `appendRow`, whose
 -- refusal path writes as actor `hub` on the caller's own connection.
-grant select, insert, update on state_row to hub_door;
+-- REVIEW S5. The door keeps the platform message id of the progress line it
+-- posted on a sheet of its own (`door_progress`), so a door started again
+-- mid-turn EDITS the line it inherits rather than posting a second one beside
+-- it. It carries `delete` for that sheet alone: a thing that is gone leaves no
+-- line behind (L17), and a door that could only add rows would leave one per
+-- turn for ever. `door_cursor` and `door_progress` are the door's own sheets
+-- and nothing else writes them.
+grant select, insert, update, delete on state_row to hub_door;
 grant select, insert, update, delete on state_row to hub_runner;
 
 -- The hub keeps the measured peaks and, later, the findings. One row per id,
