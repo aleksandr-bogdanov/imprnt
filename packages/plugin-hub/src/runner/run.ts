@@ -632,6 +632,19 @@ export async function runRunner(options: {
       // told once about the CAUSE rather than once about every message of
       // theirs that is waiting on it.
       if (end.refused) {
+        // THE NEXT TURN GETS A LOOP THAT IS THERE (REVIEW M1). The adapter ends
+        // a refused turn itself and closes the child, because no retry fixes a
+        // dead credential and this runner owns the retry clock (D-118). Without
+        // this line the handle the retry feeds is a handle onto a process that
+        // is gone: measured in bun 1.3.14, writing to a killed child's stdin
+        // returns normally and discards the bytes, so the second turn never
+        // ends, the await below it has no bound, and the agent's whole serving
+        // loop stops there. The household reads one notice and then hears
+        // nothing at all, which is the silence this phase is named after.
+        //
+        // `spawn` closes the old handle and clears this flag, so the retry
+        // starts a fresh session the way a changed preset already does.
+        own.killed = true;
         const every = retrySeconds(about.registry);
         const retryAt =
           end.refused.cause === "window" && reading?.resets_at
