@@ -23,6 +23,7 @@ import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
+import { writeProgress } from "./progress.ts";
 import {
   clearOutage,
   maxRankFor,
@@ -77,9 +78,17 @@ interface Live {
 /** The turn that is open right now. One message per turn, never two. */
 interface OpenTurn {
   id: string;
+  person: string;
+  agent: string;
   tail: boolean;
   acked: boolean;
   started: boolean;
+  /** D-124. What the loop has done so far, and when it started doing it. */
+  actions: number;
+  lastAction: string;
+  startedAt: string;
+  /** When the sheet was last written, for the throttle that is a TIME. */
+  wroteAt: number;
   finish(end: TurnEnd): void;
 }
 
@@ -94,6 +103,32 @@ function setting(registry: Registry, key: string): number {
 function retrySeconds(registry: Registry): number {
   const said = readSetting(registry, "hub.outage_retry_seconds");
   return typeof said === "number" && said > 0 ? said : 300;
+}
+
+/** D-124. The open turn, as the sheet the door reads it off. */
+function progressOf(open: {
+  id: string;
+  person: string;
+  agent: string;
+  actions: number;
+  lastAction: string;
+  startedAt: string;
+}): {
+  messageId: string;
+  person: string;
+  agent: string;
+  actions: number;
+  lastAction: string;
+  startedAt: string;
+} {
+  return {
+    messageId: open.id,
+    person: open.person,
+    agent: open.agent,
+    actions: open.actions,
+    lastAction: open.lastAction,
+    startedAt: open.startedAt,
+  };
 }
 
 /** D-121. The credential this agent's outage is keyed by, from the agent in hand. */
@@ -375,6 +410,8 @@ export async function runRunner(options: {
      * runner that has never met one issues no delete on a healthy turn.
      */
     let sawOutage = false;
+    /** The standing outage's own `since`, so a loser writes the same key. */
+    let outageSince = "";
 
     /** RUN-18. One notice per person, and never a second one for the same outage. */
     const sayOutage = async (
@@ -407,18 +444,31 @@ export async function runRunner(options: {
      * count and the line it produces.
      */
     const sayCatchUp = async (registry: Registry, credential: string): Promise<void> => {
-      const waiting = await waitingPerPerson(store, registry, credential);
+      // The count comes first, then the clear, then the lines, and only then
+      // does the caller settle. Every runner that lived through the outage
+      // writes them, not only the one that won the delete: a loser that wrote
+      // nothing would settle its own reply into the chat BETWEEN the winner's
+      // delete and the winner's lines, and the person would read the answer
+      // above "it works again". The key is the same for all of them, so the
+      // second write lands nothing.
+      const waiting = sawOutage
+        ? await waitingPerPerson(store, registry, credential)
+        : null;
       const cleared = await clearOutage(store, { credential });
-      if (!cleared) return;
+      // A runner that restarted through the outage remembers nothing, and the
+      // row it deletes here is how it finds out there was one at all.
+      const since = cleared?.since ?? (sawOutage ? outageSince : "");
+      if (!since) return;
+      const counts = waiting ?? (await waitingPerPerson(store, registry, credential));
       for (const who of peopleOn(registry, credential)) {
         await appendNotice(store, {
           person: who.person,
           agent: who.agent,
           body: catchUpNotice(
             languageOf(registry, who.person) as Language,
-            waiting.get(who.person) ?? 0,
+            counts.get(who.person) ?? 0,
           ),
-          noticeKey: noticeKey("outage-over", credential, cleared.since, who.person),
+          noticeKey: noticeKey("outage-over", credential, since, who.person),
         });
       }
     };
@@ -491,7 +541,20 @@ export async function runRunner(options: {
       const ended = new Promise<TurnEnd>((resolve) => {
         finish = resolve;
       });
-      turn = { id: message.id, tail: about.tail, acked: false, started: false, finish };
+      turn = {
+        id: message.id,
+        person: agent.person,
+        agent: agent.id,
+        tail: about.tail,
+        acked: false,
+        started: false,
+        actions: 0,
+        lastAction: "",
+        startedAt: new Date().toISOString(),
+        wroteAt: 0,
+        finish,
+      };
+      const opened = turn;
       await own.session!.feed(message);
       // The agent is SERVED from here: its session is up and it has been handed
       // the tail of its own log. What the loop answers to that tail can take as
@@ -590,16 +653,26 @@ export async function runRunner(options: {
           retryAt,
         });
         sawOutage = true;
+        outageSince = standing.since;
         await sayOutage(about.registry, credential, standing);
         return;
       }
 
+      // D-124's last write: the totals, before the settle that takes the row
+      // away, so the door's own line ends with them (L6). It goes in HERE and
+      // not beside the settle on purpose: the write commits and announces
+      // itself, and everything below it is what gives the door the room to read
+      // it before the settling transaction removes the row.
+      if (opened.started) await writeProgress(store, progressOf(opened));
+
       // It works again. The catch-up goes in BEFORE the reply, so a person
-      // reads "it stopped", then "it works again", then their answers.
-      if (sawOutage) {
-        await sayCatchUp(about.registry, credential);
-        sawOutage = false;
-      }
+      // reads "it stopped", then "it works again", then their answers. It is
+      // asked on EVERY successful turn and not only when this runner remembers
+      // an outage, because a runner restarted through one remembers nothing and
+      // would otherwise leave the row standing and the household never told.
+      await sayCatchUp(about.registry, credential);
+      sawOutage = false;
+      outageSince = "";
 
       await settleTurn(store, {
         inboundId: message.id,
@@ -630,11 +703,31 @@ export async function runRunner(options: {
         open.acked = true;
         write(() => stamp(store, { messageId: open.id, kind: "acked", actor: "runner" }));
       });
-      session.onProgress(() => {
+      session.onProgress((event) => {
         const open = turn;
-        if (!open || open.tail || open.started) return;
-        open.started = true;
-        write(() => stamp(store, { messageId: open.id, kind: "started", actor: "runner" }));
+        if (!open || open.tail) return;
+        if (!open.started) {
+          open.started = true;
+          open.startedAt = new Date().toISOString();
+          write(() => stamp(store, { messageId: open.id, kind: "started", actor: "runner" }));
+          // One write at `started`, which is what gives the door a line to post
+          // for a turn that never calls a tool at all (MSG-10's own case).
+          open.wroteAt = Date.now();
+          write(() => writeProgress(store, progressOf(open)));
+        }
+        if (event.kind !== "action") return;
+        open.actions += 1;
+        open.lastAction = event.text;
+        // D-124. THROTTLED BY TIME AND NEVER PER ACTION. A per-action rule
+        // makes the store's write rate, the notification rate and the
+        // platform's edit rate a function of how many tools a turn calls, and a
+        // turn can call two hundred. Both platforms rate-limit edits. The
+        // cadence is the hub's own, so no second setting exists to be the same
+        // number.
+        const every = setting(registry, "hub.tick_seconds") * 1000;
+        if (Date.now() - open.wroteAt < every) return;
+        open.wroteAt = Date.now();
+        write(() => writeProgress(store, progressOf(open)));
       });
       session.onTurnEnd((end) => turn?.finish(end));
 
@@ -723,6 +816,7 @@ export async function runRunner(options: {
                 runner: options.runner,
                 retryAt: until,
               });
+              outageSince = standing.since;
               await sayOutage(registry, credential, standing);
             }
             // A row that arrived during the hold is put on the same reset, and

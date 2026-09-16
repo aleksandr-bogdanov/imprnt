@@ -128,9 +128,18 @@ test(
            data jsonb not null
          )`,
       );
+      // SECURITY DEFINER, and the reason is a platform fact rather than a
+      // preference (BUILD-NOTES 13). A PL/pgSQL trigger function runs as the
+      // INVOKING role, and the role that writes this sheet is `hub_runner`,
+      // which holds no grant on a table this check created as the superuser.
+      // Without it every `putRow` on `turn_progress` is refused with
+      // "permission denied for table check_progress_writes", the runner writes
+      // no progress at all, and the check fails against a correct build. The
+      // search path is pinned the way `src/schema.sql`'s own definer function
+      // pins it.
       await it.read.sql(
         `create or replace function check_count_progress_writes() returns trigger
-         language plpgsql as $$
+         language plpgsql security definer set search_path = public as $$
          begin
            insert into check_progress_writes (data) values (new.data);
            return null;

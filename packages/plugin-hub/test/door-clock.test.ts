@@ -554,11 +554,23 @@ test(
       // `startedAt + answered_seconds`, which is outside this bound because
       // the door was started well into the message's clock. The slack is the
       // restart's own settle.
+      // THE SLACK IS 600 ms AND NOT 1500, and it is a measurement rather than
+      // a preference (BUILD-NOTES 14). This bound and the staging guard under
+      // it pull in opposite directions: the guard needs the restart to be at
+      // least `slack` into the message's own clock, or a fresh full timeout
+      // from startup would land INSIDE the bound and the check would stop
+      // discriminating. Everything before the restart is the second message's
+      // own one-second acked clock plus two process stops, and that measures
+      // 1120 to 1160 ms on this Mac across four runs, so a 1500 ms guard
+      // cannot be met by any build. 600 sits strictly between the door's real
+      // latency on an expiry (one read, one diary row, one post: about 100 ms
+      // here) and that 1120, which is what the pair needs.
+      const SLACK_MS = 600;
       const deadline = receivedAt + ANSWERED_SECONDS * 1000;
-      expect(startedAt).toBeGreaterThan(receivedAt + 1500);
-      if (late.at > deadline + 1500) {
+      expect(startedAt).toBeGreaterThan(receivedAt + SLACK_MS);
+      if (late.at > deadline + SLACK_MS) {
         throw new Error(
-          `the clock line landed ${late.at - deadline} ms past the message's own deadline, and the restarted door was started ${startedAt - receivedAt} ms into that clock: a door that armed a fresh ${ANSWERED_SECONDS} s from its own startup lands here, and one that read received_at does not`,
+          `the clock line landed ${late.at - deadline} ms past the message's own deadline, and the restarted door was started ${startedAt - receivedAt} ms into that clock: a door that armed a fresh ${ANSWERED_SECONDS} s from its own startup lands ${startedAt - receivedAt} ms past that deadline, which is outside this ${SLACK_MS} ms bound, and one that read received_at does not`,
         );
       }
       void readyAt;

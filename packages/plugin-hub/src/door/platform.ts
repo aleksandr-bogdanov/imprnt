@@ -20,6 +20,15 @@ export interface PlatformPull {
 export interface Platform {
   readonly name: string;
   /**
+   * D-125. How long ONE typing call shows for, from the platform's own
+   * documentation: Telegram's `sendChatAction` sets the status "for 5 seconds
+   * or less" and Discord's typing indicator "expires after 10 seconds". The
+   * door refreshes inside whichever it is, so the status never lapses, and a
+   * door that read a number of its own would show a person a dead chat on
+   * whichever platform it guessed wrong about.
+   */
+  readonly typingSeconds: number;
+  /**
    * A long wait: it returns when a message arrives or when `timeoutMs` passes.
    * That is what Telegram's own long poll does, and it is what keeps the door
    * waiting rather than ticking.
@@ -29,6 +38,14 @@ export interface Platform {
     cursor: string | null;
     timeoutMs: number;
   }): Promise<PlatformPull>;
-  post(options: { chat: string; text: string }): Promise<void>;
-  typing?(options: { chat: string }): Promise<void>;
+  /** The id is the platform's own, and it is what an edit needs. */
+  post(options: { chat: string; text: string }): Promise<{ id: string | null }>;
+  /** The progress line is ONE message the door overwrites as the work goes. */
+  edit(options: { chat: string; id: string; text: string }): Promise<void>;
+  /**
+   * REQUIRED. "A turn open with no typing shown" is forbidden (SPEC §2), and a
+   * platform that cannot show it is refused by `runDoor` at start rather than
+   * silently serving a person who sees nothing.
+   */
+  typing(options: { chat: string }): Promise<void>;
 }
