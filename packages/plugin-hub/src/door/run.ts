@@ -1,7 +1,17 @@
 import { appendChatLine } from "../chatlog.ts";
+import {
+  dueTrigger,
+  encodeHarvestBody,
+  harvestRowId,
+  lastMidnight,
+  nextMidnight,
+  type HarvestBody,
+} from "../harvest/row.ts";
+import { readWatermark, type Watermark } from "../harvest/sheet.ts";
+import { isDemand, newestLine, readSlice } from "../harvest/slice.ts";
 import { stamp } from "../records/stamps.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
-import { agentsFor, languageOf, thresholdsFor } from "../registry/entries.ts";
+import { agentsFor, harvestFor, languageOf, thresholdsFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry } from "../registry/load.ts";
 import { TURN_PROGRESS_SHEET, type ProgressRow } from "../runner/progress.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
@@ -124,11 +134,21 @@ interface Served {
   /** Resolves once `attend` has done its one read at connect. */
   attending: Promise<void>;
   attended(): void;
+  /** Resolves once the harvest task has done its one read at connect. */
+  harvesting: Promise<void>;
+  harvested(): void;
   /** The progress line of each open turn, by message id. */
   progress: Map<string, ProgressLine>;
   /** Rows this door wrote down itself, handed to `attend` with no read. */
   arrivals: OpenTurnRow[];
   arrived: Nudge;
+  /**
+   * D-147. The demand phrases `read` has pulled and not yet acted on, handed to
+   * the harvest task through the same shape `arrivals` already is, so the one
+   * writer of a harvest row stays one function.
+   */
+  demands: string[];
+  demanded: Nudge;
 }
 
 /**
@@ -201,6 +221,32 @@ export async function runDoor(options: {
       }
 
       for (const message of pulled.messages) {
+        // D-146. A message that IS the phrase is addressed to the machinery,
+        // not to the agent, so it becomes a harvest and never work. L1's "every
+        // human message is on disk" is honoured twice over: the line is
+        // appended here exactly as every `in` line is, and the harvest row
+        // carries the exact bytes the person typed. What it does NOT become is
+        // a message the agent answers with a sentence about harvesting.
+        //
+        // The append is unconditional here rather than gated on a fresh row,
+        // because there is no row: a platform that redelivered a demand after
+        // the cursor moved would write the line twice, which is the cost of
+        // having no id to meet, and it is smaller than losing the record of a
+        // phrase a person typed.
+        if (isDemand(message.text)) {
+          await appendChatLine(
+            { stateDir, person: agent.person, agent: agent.id },
+            {
+              at: message.at,
+              direction: "in",
+              from: agent.person,
+              text: message.text,
+            },
+          );
+          own.demands.push(message.text);
+          own.demanded.wake();
+          continue;
+        }
         const id = inboundId(
           options.platform.name,
           message.chat,
@@ -743,6 +789,170 @@ export async function runDoor(options: {
     }
   };
 
+  /**
+   * D-144. The FOURTH task per agent, and the only thing in the door that knows
+   * what a quiet period is.
+   *
+   * A task of its own rather than work folded into `post` or `attend`, for
+   * D-126's reason with two more windows behind it: five shipped checks count
+   * every statement a door issues inside a window, and two of them require
+   * ZERO. So what this costs is said out loud.
+   *
+   * ONE statement at connect, ZERO per pass, and one read plus one insert when
+   * a row is actually owed. Each pass reads two FILES: the registry, which is
+   * how a changed knob lands with nothing restarted (D-161), and the chat log.
+   * The door already parses the registry once a tick in `supervise`, so this is
+   * a second parse of a file the process is already reading.
+   */
+  const harvesting = async (agent: AgentEntry, own: Served): Promise<void> => {
+    const chat = { stateDir, person: agent.person, agent: agent.id };
+    const key = { person: agent.person, agent: agent.id };
+    /** What a runner has SETTLED for this chat, or null when nothing has. */
+    let settled: Watermark | null = null;
+    try {
+      // The one read at connect, which D-85 permits and which `attend` and
+      // `readSpokenClocks` already do. `runDoor` waits on it before it hands
+      // back a handle, so "ready" means this task has spoken to the store and a
+      // check that plants lines and then starts a door is deterministic rather
+      // than raced. It lands before readiness and therefore outside every
+      // statement window a caller opens afterwards.
+      settled = await readWatermark(store, key);
+    } catch {
+      // A store that would not answer at connect is one the other three tasks
+      // are already failing on, and this task's next pass asks again.
+    } finally {
+      own.harvested();
+    }
+    /**
+     * The `until` of the last row THIS TASK wrote, and nothing else.
+     *
+     * It starts empty because a door that has just come up has asked for
+     * nothing yet (BUILD-NOTES 1). D-149 names what that costs and calls it
+     * ordinary: a bound behind the real watermark overcounts, so a restarted
+     * door can write one row whose slice the runner then recomputes from the
+     * sheet and finds smaller, or empty, and settles with no model turn. The
+     * alternative, arming the bound from the watermark, makes a restarted door
+     * measure a slice it has never been asked about against the household's
+     * minimum, which is the one thing the watermark cannot tell it.
+     */
+    let bound: string | null = null;
+
+    while (!stopping && !own.leaving) {
+      let sleepMs = timeoutMs;
+      try {
+        const asked = own.demands.splice(0);
+        // D-161. Re-read per pass, so the harvester, the quiet timeout, the
+        // minimum slice and the report switch all land with nothing restarted.
+        const settings = harvestFor(loadRegistry(options.registryFile), agent.person);
+        if (settings === null) {
+          // D-137. This person's chats are not harvested at all, and `check`
+          // says so rather than this task complaining once a tick.
+          await Promise.race([
+            Bun.sleep(timeoutMs),
+            own.demanded.wait(),
+            stopped,
+            own.left,
+          ]);
+          continue;
+        }
+
+        const now = new Date();
+        const seen = await readSlice({ ...chat, from: bound, until: now.toISOString() });
+        const newest = await newestLine({ ...chat, now });
+
+        let reason: HarvestBody["reason"] | null = null;
+        let until = now.toISOString();
+        let said: string | undefined;
+        if (asked.length > 0) {
+          // D-146. A demand is not a deadline: it fires at once and the
+          // minimum is ignored, because a person who typed a phrase at the
+          // machinery is owed an answer whatever the slice turns out to hold.
+          reason = "demand";
+          said = asked[asked.length - 1];
+        } else {
+          const trigger = dueTrigger({
+            newest: newest?.at ?? null,
+            oldest: seen[0]?.at ?? null,
+            count: seen.length,
+            quietMinutes: settings.quiet_minutes,
+            minMessages: settings.min_messages,
+            now,
+          });
+          if (trigger === "backstop") {
+            // L19's "over yesterday". A backstop that ran to `now` would
+            // swallow today's still-live conversation into yesterday's slice.
+            reason = "backstop";
+            until = new Date(lastMidnight(now)).toISOString();
+          } else if (trigger === "quiet") {
+            reason = "quiet";
+          }
+        }
+
+        if (reason !== null) {
+          // D-145. On firing, and only then, the watermark is read, and `from`
+          // comes from IT rather than from the cached bound: the bound is what
+          // this door believes and the sheet is what a runner has settled.
+          settled = await readWatermark(store, key);
+          const from = settled?.at ?? null;
+          const slice = await readSlice({ ...chat, from, until });
+          const body: HarvestBody = {
+            from,
+            until,
+            reason,
+            lines: slice.length,
+            ...(said === undefined ? {} : { said }),
+          };
+          await store.sql.begin(async (tx) =>
+            enqueueInbound(
+              { ...store, sql: tx as unknown as Store["sql"] },
+              {
+                id: harvestRowId(agent.id, until),
+                person: agent.person,
+                agent: agent.id,
+                body: encodeHarvestBody(body),
+                kind: "harvest",
+              },
+            ),
+          );
+          bound = until;
+        }
+
+        // D-144. The bound this task sleeps on, and the rule inside it is what
+        // stops a hot loop nothing else in the suite could see. A QUIET
+        // DEADLINE CONTRIBUTES ONLY WHILE IT IS IN THE FUTURE: a chat sitting
+        // permanently under its minimum is the ordinary case, its deadline
+        // passed long ago, and `attend`'s own `Math.max(0, due - Date.now())`
+        // would be zero for ever there. `attend` cannot spin because a clock it
+        // has spoken about leaves `clocksOf`, and this task has no equivalent
+        // for "I looked and there was too little to say", so a deadline that
+        // has passed with nothing fired hands the next wake to the tick. It
+        // issues no statement, so no statement window sees the failure.
+        let due = timeoutMs;
+        const quietAt =
+          newest === null
+            ? null
+            : Date.parse(newest.at) + settings.quiet_minutes * 60_000;
+        if (quietAt !== null && quietAt > Date.now()) {
+          due = Math.min(due, quietAt - Date.now());
+        }
+        const midnight = nextMidnight(now) - Date.now();
+        if (midnight > 0) due = Math.min(due, midnight);
+        sleepMs = Math.max(50, due + 50);
+      } catch {
+        // A pass that could not finish is a pass, exactly as `supervise` says
+        // of a tick. It writes no diary line: the door holds two insert
+        // policies on `ledger_event` and a third for a failure `check` already
+        // reports (`harvest-stale`) would be a fence widened for nothing.
+      }
+      await Promise.race([
+        Bun.sleep(sleepMs),
+        own.demanded.wait(),
+        stopped,
+        own.left,
+      ]);
+    }
+  };
+
   const served = new Map<string, Served>();
 
   const serve = (agent: AgentEntry): void => {
@@ -754,6 +964,10 @@ export async function runDoor(options: {
     const attending = new Promise<void>((resolve) => {
       attended = () => resolve();
     });
+    let harvested: () => void = () => {};
+    const waitingToHarvest = new Promise<void>((resolve) => {
+      harvested = () => resolve();
+    });
     const it: Served = {
       leaving: false,
       left,
@@ -761,15 +975,24 @@ export async function runDoor(options: {
       done: Promise.resolve(),
       attending,
       attended,
+      harvesting: waitingToHarvest,
+      harvested,
       progress: new Map<string, ProgressLine>(),
       arrivals: [],
       arrived: nudge(),
+      demands: [],
+      demanded: nudge(),
     };
     served.set(agent.id, it);
     it.done = Promise.allSettled([
       read(agent, it),
       post(agent, it),
       attend(agent, it),
+      // The same outer `finally` `attend` carries, and for the same reason: a
+      // throw before the connect read is swallowed by `allSettled`, so without
+      // it a door that could not start would HANG its caller instead of saying
+      // so. Resolving twice is free.
+      harvesting(agent, it).finally(() => it.harvested()),
     ]).then(() => {});
   };
 
@@ -783,11 +1006,12 @@ export async function runDoor(options: {
   };
 
   for (const agent of agentsFor(registry, { door: options.door })) serve(agent);
-  // Ready means ATTENDING, so a caller handed this door is handed one whose
-  // clocks are armed and whose connect read has landed. Without it the read
-  // rides into whatever window the caller opens next, which is what
-  // test/door-clock.test.ts's restart budget counts (BUILD-NOTES 12).
+  // Ready means ATTENDING AND HARVESTING, so a caller handed this door is
+  // handed one whose clocks are armed and whose two connect reads have landed.
+  // Without it a read rides into whatever window the caller opens next, which
+  // is what test/door-clock.test.ts's restart budget counts (BUILD-NOTES 12).
   await Promise.all([...served.values()].map((it) => it.attending));
+  await Promise.all([...served.values()].map((it) => it.harvesting));
 
   const supervise = (async () => {
     while (!stopping) {

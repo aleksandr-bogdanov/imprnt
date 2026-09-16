@@ -58,6 +58,30 @@ export function watermarkRow(args: {
 }
 
 /**
+ * One sheet row's data, whichever of the two encodings it was written in.
+ *
+ * MEASURED 2026-09-16, and it is the same platform fact `src/check/run.ts`'s
+ * `fieldOf` already records for a diary detail. `putRow` binds a JS OBJECT, and
+ * this client sends that as a jsonb object: `jsonb_typeof` answers `object` and
+ * the read comes back as an object. A writer that binds an ALREADY SERIALISED
+ * string (`$2::jsonb` with `JSON.stringify(...)` as the parameter, which is how
+ * a check plants a row by hand) stores a jsonb SCALAR STRING whose contents are
+ * the object: `jsonb_typeof` answers `string` and the read comes back as a
+ * string. A reader that understood only one of them would report a watermark
+ * that is really there as absent, and a watermark read as absent is a slice
+ * harvested again from the beginning.
+ */
+function sheetData<T>(raw: unknown): T | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "string") return raw as T;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * How far this chat has been harvested, or null when nothing has been.
  *
  * NO ROW MEANS NOTHING HARVESTED, which is a different fact from a harvest that
@@ -73,7 +97,12 @@ export async function readWatermark(
   const rows = (await store.sql`select data from state_row
                                 where sheet = ${HARVEST_SHEET}
                                   and id = ${watermarkId(where.person, where.agent)}`) as unknown as {
-    data: Watermark;
+    data: unknown;
   }[];
-  return rows.length === 0 ? null : rows[0].data;
+  return rows.length === 0 ? null : sheetData<Watermark>(rows[0].data);
+}
+
+/** The same unwrapping, for a reader that has the whole sheet in hand. */
+export function watermarkOf(data: unknown): Watermark | null {
+  return sheetData<Watermark>(data);
 }
