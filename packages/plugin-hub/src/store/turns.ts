@@ -31,6 +31,16 @@ export interface OpenTurnRow {
  * turn has opened, so the row's own `state` comes back and `attend` branches on
  * it. One read serves two rules with two different state sets, and a build that
  * treated "open" as one set would get one of them wrong.
+ *
+ * D-143. A PERSON'S OWN MESSAGE AND NEVER MACHINERY. Every consumer of this
+ * read is about a person's wait: the typing, the progress line and all three
+ * clock lines, and `readStampRows` and `readStampMetrics` already select
+ * `kind = 'human'` for exactly that reason. Without the filter a `harvest` row
+ * sits at `received` from the moment the door writes it until the runner claims
+ * it, and the door arms the acked clock on it and posts `[door] still waiting:
+ * the loop has not accepted this message. 45 s so far.` into a person's chat
+ * about a row nobody sent. The filter lives HERE and not in `clockDeadlines`,
+ * because the read is the one thing all three rules share.
  */
 export async function readOpenTurns(
   store: StoreLike,
@@ -40,6 +50,7 @@ export async function readOpenTurns(
     select id, person, agent, received_at, state, claimed_by
     from inbound
     where agent = ${where.agent}
+      and kind = 'human'
       and state in ('received', 'acked', 'started')
     order by received_at, id`) as unknown as OpenTurnRow[];
 }

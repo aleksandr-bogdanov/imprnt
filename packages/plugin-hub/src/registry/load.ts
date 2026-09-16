@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { isAbsolute, resolve, sep } from "node:path";
 
 /**
  * The registry is the only place a setting lives. Every setting the code reads
@@ -96,6 +97,18 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "how long a runner waits before it tries a credential that refused a turn again",
     required: false,
   },
+  // D-140. Which binary files a harvested note is a HOUSEHOLD FACT and not a
+  // thing for code to guess: one box's is a package build, another's predates
+  // the `vault` verb, and the monorepo's own runs under bun with no build step.
+  // The hub cannot import core (the plugin contract), so the apply is a child
+  // process and the command is a setting, read with a fallback the way
+  // `hub.job_grace_seconds` already is.
+  {
+    key: "hub.imprnt",
+    type: "string",
+    what: "the command the runner spawns to file a harvested note",
+    required: false,
+  },
   // 03b item 2. Where the store's own process writes its pid, and what the
   // machine's service manager calls it. Every standard install writes a pid
   // file, so the hub reads that rather than guessing at a process tree, and the
@@ -188,6 +201,22 @@ export interface PersonEntry {
   delivered_seconds?: number;
   /** D-108. The language this person reads the door's own lines in. */
   language?: string;
+  /**
+   * D-137. The harvest, this person's own, and the same spread-never-set rule.
+   *
+   * `harvester` names the preset a slice of their chats is read under, and its
+   * ABSENCE means this person's chats are not harvested at all: `check` says
+   * `harvest-undeclared` and the hub runs, because a household that has not
+   * chosen a harvester is not a household whose file is broken.
+   *
+   * `vault` names the directory holding `vault/` and `raw/`, which is what
+   * `imprnt init` scaffolds and what the apply is pointed at.
+   */
+  harvester?: string;
+  vault?: string;
+  harvest_quiet_minutes?: number;
+  harvest_min_messages?: number;
+  harvest_report?: boolean;
 }
 
 /**
@@ -232,6 +261,28 @@ export const STAMP_THRESHOLD_DEFAULTS = {
 } as const;
 
 export const DEFAULT_LANGUAGE = "en";
+
+/**
+ * D-138. What a person who names only a harvester is harvested on.
+ *
+ * L19's own words: "Defaults ship per model so a plan login can run a strong
+ * model on every slice and a per-token key runs a cheaper preset with a larger
+ * minimum slice." So the minimum slice is derived from the HARVESTER preset's
+ * `paid` and never from the agent's, because the cost the ruling is talking
+ * about is the harvest's own. 20 is L19's second cost figure, the size at which
+ * a per-token harvest is worth paying for.
+ *
+ * A default in code is allowed here and forbidden for the window (D-110), and
+ * the two are different questions: L10's Forbidden names a window threshold and
+ * names no harvest knob, while L19's Forbidden is a harvest cost that cannot be
+ * changed in the registry, which a default the file overrides is not. This is
+ * D-108's argument for the four stamp thresholds, cited rather than re-made.
+ */
+export const HARVEST_DEFAULTS = {
+  quiet_minutes: 30,
+  report: true,
+  min_messages: { plan: 1, key: 20 },
+} as const;
 
 /** D-110. The three window thresholds, percent, on a `paid = "plan"` preset. */
 const WINDOW_KEYS = ["window_pause_at", "window_notice_at", "window_hold_at"] as const;
@@ -724,13 +775,119 @@ export function loadRegistry(file: string): Registry {
       }
     }
 
-    // Spread, never set: a file that carries none of the five leaves an entry
+    // D-137 to D-139. The harvest, this person's own. Five more optional
+    // fields on the same spread-never-set rule, and seven refusals that each
+    // name their key and their line. A key the file does not carry has no line
+    // of its own, so its refusal names the line of the entry it belongs to,
+    // which is the convention every absent-key refusal above already uses.
+    const tree = typeof entry.tree === "string" ? entry.tree : "";
+    const harvester = entry.harvester;
+    const vault = entry.vault;
+    const namesHarvester = harvester !== undefined && harvester !== null;
+    const namesVault = vault !== undefined && vault !== null;
+    if (namesHarvester) {
+      if (typeof harvester !== "string" || !(harvester in presets)) {
+        refuse(
+          `${where}.harvester`,
+          here,
+          `${id} is harvested by ${describe(harvester)}, which this file defines no ` +
+            `preset for, and nothing can harvest through a preset that is not there`,
+        );
+      }
+      // Nothing can file into a vault the file does not name, so the two travel
+      // together in both directions.
+      if (!namesVault) {
+        refuse(
+          `${where}.vault`,
+          here,
+          `${id} is harvested by ${harvester} and names no vault, and a harvested ` +
+            `note is filed into the directory holding vault/ and raw/`,
+        );
+      }
+    } else if (namesVault) {
+      // SPEC §6's "a setting nothing in production reads", which D-110 already
+      // refused once for a window field on a preset paid for by a key.
+      refuse(
+        `${where}.vault`,
+        lines.get(`${where}.vault`) ?? here,
+        `${id} names a vault and no harvester, so nothing in production would ever ` +
+          `read it: what fills a vault is the harvest`,
+      );
+    }
+    if (namesVault) {
+      const atVault = lines.get(`${where}.vault`) ?? here;
+      if (typeof vault !== "string" || vault === "" || !isAbsolute(vault)) {
+        refuse(
+          `${where}.vault`,
+          atVault,
+          `${id} has vault ${describe(vault)}, and it must be an absolute path: a ` +
+            `relative one is a different vault in every directory a process starts in`,
+        );
+      }
+      // CONTAINMENT IS CHECKED AND EXISTENCE IS NOT (D-139). Whether a path
+      // exists is a question about a MACHINE and one file loads on three of
+      // them, while whether one path lies inside another is string arithmetic
+      // decidable from the file alone. It matters concretely: the harvester's
+      // session runs in the agent's own box, the box fences the person's tree
+      // (L7), and a vault outside it is a vault the loop cannot read, so every
+      // person link the model wrote would be an orphan and nobody would be told.
+      // A person with no tree runs unboxed already (`check` says
+      // `agent-unboxed`) and may name any absolute path.
+      if (tree !== "") {
+        const inside = resolve(vault as string);
+        const fence = resolve(tree);
+        if (inside !== fence && !inside.startsWith(fence + sep)) {
+          refuse(
+            `${where}.vault`,
+            atVault,
+            `${id} has vault ${describe(vault)}, which is outside their tree ${tree}, ` +
+              `and the box the harvester's session runs in fences that tree`,
+          );
+        }
+      }
+    }
+    for (const field of ["harvest_quiet_minutes", "harvest_min_messages"] as const) {
+      const value = entry[field];
+      if (value === undefined || value === null) continue;
+      if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+        refuse(
+          `${where}.${field}`,
+          lines.get(`${where}.${field}`) ?? here,
+          `${id} has ${field} ${describe(value)}, and it is a whole number above ` +
+            `zero: a quiet period of zero is a chat that is always quiet and a ` +
+            `minimum of zero is a slice of nothing`,
+        );
+      }
+    }
+    const reports = entry.harvest_report;
+    if (reports !== undefined && reports !== null && typeof reports !== "boolean") {
+      refuse(
+        `${where}.harvest_report`,
+        lines.get(`${where}.harvest_report`) ?? here,
+        `${id} has harvest_report ${describe(reports)}, and whether a line comes ` +
+          `back is a true or a false`,
+      );
+    }
+    const harvest: Record<string, unknown> = {
+      ...(namesHarvester ? { harvester: harvester as string } : {}),
+      ...(namesVault ? { vault: vault as string } : {}),
+      ...(typeof entry.harvest_quiet_minutes === "number"
+        ? { harvest_quiet_minutes: entry.harvest_quiet_minutes }
+        : {}),
+      ...(typeof entry.harvest_min_messages === "number"
+        ? { harvest_min_messages: entry.harvest_min_messages }
+        : {}),
+      ...(typeof reports === "boolean" ? { harvest_report: reports } : {}),
+    };
+
+    // Spread, never set: a file that carries none of the ten leaves an entry
     // of exactly `id` and `tree`, which is the shape a shipped check asserts.
     people.push({
       id: id as string,
-      tree: typeof entry.tree === "string" ? entry.tree : "",
+      tree,
       ...clocks,
       ...(typeof speaks === "string" ? { language: speaks } : {}),
+      ...harvest,
     });
   });
   const knownPerson = new Set(people.map((person) => person.id));
