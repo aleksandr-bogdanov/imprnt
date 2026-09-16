@@ -338,15 +338,64 @@ test(
     expect(transient.end.refused ?? null).toBeNull();
     expect(transient.end.text).toBe("an answer after a wobble");
 
-    // --- control (b): the other branch of the same reading. A 429 is the
-    //     plan's allowance and not a dead credential, so the cause is `window`.
-    const throttled = await driveTurn({
-      lines: [INIT, apiRetry(429)],
-      cliOptions: { holdMs: 60_000 },
-      boundMs: 8000,
+    // --- control (b): A 429 IS PASSED OVER TOO, exactly as the 503 above is
+    //     (D-118 as amended after the separate review, and BUILD-NOTES 27).
+    //     This control used to assert that a 429 ENDED the turn with cause
+    //     `window`, which was the contract's letter and is the thing the review
+    //     overturned: "no retry fixes it" is an argument about a dead
+    //     credential, a 429 is the provider asking the loop to wait, and the
+    //     CLI's own backoff is what waits. Ending the turn on the first one
+    //     killed the child, opened the household-wide outage and told every
+    //     person on that credential the plan's allowance was gone, over one
+    //     transient throttle.
+    //
+    //     Driven inline rather than through `driveTurn`, because what is bound
+    //     is that NO turn end arrives and `driveTurn` exists to insist that one
+    //     does.
+    {
+      const { claudeCode } = await seam("src/adapters/claude-code.ts");
+      const session = (await (claudeCode as { start: Function }).start({
+        preset: PRESET,
+        sessionId: null,
+        wrap: fakeClaudeCli([INIT, apiRetry(429)], { holdMs: 60_000 }),
+      })) as AdapterSession & { pid: number | null };
+      const ends: Ended[] = [];
+      session.onTurnEnd((end) => ends.push(end as Ended));
+      await session.feed({ id: "m1", text: "a turn the provider asked to wait for" });
+      await Bun.sleep(3000);
+      // The turn is still open, so the loop is still the one retrying it.
+      expect(ends.length).toBe(0);
+      // AND THE CHILD IS STILL THERE, which is what lets the CLI's own backoff
+      // run at all.
+      expect(childGone(Number(session.pid))).toBe(false);
+      await session.close();
+    }
+
+    // --- control (c): what DOES say the window is gone, on the unmeasured
+    //     route. A `result` that ends the turn with `is_error` and names a rate
+    //     limit is cause `window`, and it is read off the event's `error` field
+    //     as well as its text (04-BRIEF: "whose text OR `error` names a rate
+    //     limit"), because a result carrying the sentence in `error` beside
+    //     `terminal_reason: "api_error"` would otherwise be read as a dead
+    //     login and tell a household to go and log in again.
+    const usedUp = await driveTurn({
+      lines: [
+        INIT,
+        {
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          terminal_reason: "api_error",
+          error: "rate limit reached for this plan",
+          result: "",
+          num_turns: 1,
+          usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
+          total_cost_usd: 0,
+        },
+      ],
     });
-    expect(throttled.end.refused?.cause).toBe("window");
-    expect(throttled.end.text).toBe("");
+    expect(usedUp.end.refused?.cause).toBe("window");
+    expect(usedUp.end.text).toBe("");
   },
   SLOW,
 );

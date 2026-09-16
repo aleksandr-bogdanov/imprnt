@@ -89,6 +89,18 @@ function namesARateLimit(said: string): boolean {
   return /rate[ _-]?limit|usage limit|quota|too many requests/i.test(said);
 }
 
+/**
+ * What the loop said about the end of a turn: its own text AND its `error`
+ * field, because 04-BRIEF's words are "any `result` with `is_error: true` whose
+ * text OR `error` names a rate limit". A `result` carrying the sentence in
+ * `error` while `terminal_reason` is `api_error` would otherwise be read as a
+ * dead login, and the login notice is the one that tells a human to go and log
+ * in again.
+ */
+function endingWords(event: Record<string, unknown>): string {
+  return `${String(event.result ?? "")} ${String(event.error ?? "")}`.trim();
+}
+
 async function open(options: {
   preset: Preset;
   sessionId: string | null;
@@ -211,16 +223,24 @@ async function open(options: {
     // 2188, 4969, 8302, 18484 and 35294 ms and rising, ten attempts, and writes
     // no `result` meanwhile. No retry fixes a dead credential and the RUNNER
     // owns the retry clock (L10 rule 3), so the adapter ends the turn on the
-    // FIRST one and closes the child rather than holding a person's message
+    // FIRST 401 and closes the child rather than holding a person's message
     // open for minutes.
     //
-    // A 503 is passed over: a transient upstream failure is the loop's own to
-    // retry and is not an outage.
+    // EVERY OTHER STATUS IS PASSED OVER, 429 as much as 503 (D-118 as amended
+    // after the review). "No retry fixes it" is an argument about a dead
+    // credential. A 429 is the provider asking the loop to wait and the CLI's
+    // own backoff is what waits, so ending the turn on the first one shipped a
+    // household-wide hold on one transient throttle: the child killed, the
+    // outage opened with cause `window`, and every person on that credential
+    // told the plan's allowance was gone. What says a window is really used up
+    // is the `utilization` the loop reports (D-119) and a `result` that ends
+    // the turn naming a rate limit. A retry line is neither.
     if (event.type === "system" && event.subtype === "api_retry") {
-      const status = event.error_status;
-      if (status !== 401 && status !== 429) return;
-      const said = String(event.error ?? (status === 401 ? "authentication_failed" : status));
-      refuse({ cause: status === 401 ? "login" : "window", said }, { ...event });
+      if (event.error_status !== 401) return;
+      refuse(
+        { cause: "login", said: String(event.error ?? "authentication_failed") },
+        { ...event },
+      );
       void shut();
       return;
     }
@@ -269,7 +289,7 @@ async function open(options: {
       if (event.is_error === true) {
         const refusal: TurnRefusal = seen
           ? { cause: seen.cause, said: said || seen.said }
-          : namesARateLimit(said)
+          : namesARateLimit(endingWords(event))
             ? { cause: "window", said }
             : event.terminal_reason === "api_error"
               ? { cause: "login", said }
