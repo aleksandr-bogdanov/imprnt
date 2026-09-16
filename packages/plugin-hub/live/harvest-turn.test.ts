@@ -45,7 +45,14 @@
 // `seam()` call before a single token is spent.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -133,7 +140,16 @@ test.skipIf(!GATE_16.ok)(
     const { HARVEST_SHEET } = await seam("src/harvest/sheet.ts");
 
     const db = await freshDatabase(cluster);
-    const dir = await scratchDir("hub-live-harvest-");
+    // THE REAL PATH, and BUILD-NOTES 10 has the measurement. macOS hands out
+    // scratch directories under `/var/folders/...`, which is a symlink to
+    // `/private/var/folders/...`, and a sandbox profile's
+    // `(subpath "/var/folders/...")` matches nothing because the kernel
+    // resolves the path first. This person's `tree` IS this directory, so a
+    // box drawn around the unresolved spelling denies the loop everything and
+    // the real child dies at startup with `An unknown error occurred`. It is
+    // the same fact `test/helpers/trees.ts` records for the boxed live check,
+    // which is why that one works and this one did not.
+    const dir = realpathSync(await scratchDir("hub-live-harvest-"));
     let vault: ScratchVault | null = null;
     let door: { stop(): Promise<void> } | null = null;
     let runner: { stop(): Promise<void> } | null = null;
