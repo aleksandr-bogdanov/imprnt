@@ -35,7 +35,7 @@
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { startCluster, seam, until, type Cluster } from "./helpers/cluster.ts";
-import { fakeClaudeCli } from "./helpers/fake-cli.ts";
+import { fakeClaudeCli, healthyResult } from "./helpers/fake-cli.ts";
 import { childGone } from "./helpers/scripted-adapter.ts";
 import {
   AGENT,
@@ -67,20 +67,6 @@ const RETRY_401 = {
   error: "authentication_failed",
 };
 
-function healthyResult(text: string): Record<string, unknown> {
-  return {
-    type: "result",
-    subtype: "success",
-    is_error: false,
-    terminal_reason: "stop",
-    result: text,
-    num_turns: 1,
-    session_id: "a-session",
-    usage: { input_tokens: 12, output_tokens: 7, cache_read_input_tokens: 3 },
-    total_cost_usd: 0,
-  };
-}
-
 beforeAll(async () => {
   cluster = await startCluster();
 });
@@ -101,7 +87,6 @@ afterAll(async () => {
  */
 function realLoopOver(
   scripts: Record<string, unknown>[][],
-  hold: number[],
 ): { adapter: Adapter; pids(): number[]; starts(): number } {
   const pids: number[] = [];
   return {
@@ -112,7 +97,7 @@ function realLoopOver(
         const nth = Math.min(pids.length, scripts.length - 1);
         const session = (await (claudeCode as { start: Function }).start({
           ...options,
-          wrap: fakeClaudeCli(scripts[nth], { holdMs: hold[nth] ?? 0 }),
+          wrap: fakeClaudeCli(scripts[nth]),
         })) as AdapterSession;
         pids.push(Number(session.pid ?? 0));
         return session;
@@ -151,16 +136,13 @@ test(
     const { runRunner } = await seam("src/runner/run.ts");
 
     const it = await stage();
-    const loop = realLoopOver(
-      [
-        // Turn one: the measured refused-credential wire, and then silence, the
-        // way the real CLI is silent between its rising retries.
-        [INIT, RETRY_401],
-        // Turn two: the credential works again.
-        [INIT, healthyResult(ANSWER)],
-      ],
-      [60_000, 0],
-    );
+    const loop = realLoopOver([
+      // Turn one: the measured refused-credential wire, and then silence, the
+      // way the real CLI is silent between its rising retries.
+      [INIT, RETRY_401],
+      // Turn two: the credential works again.
+      [INIT, healthyResult(ANSWER)],
+    ]);
     let runner: { stop(): Promise<void> } | null = null;
 
     try {
@@ -260,7 +242,7 @@ test(
     //     on the first child, opens no outage, tells nobody anything, and never
     //     starts a second loop.
     const fine = await stage();
-    const healthy = realLoopOver([[INIT, healthyResult(ANSWER)]], [0]);
+    const healthy = realLoopOver([[INIT, healthyResult(ANSWER)]]);
     let second: { stop(): Promise<void> } | null = null;
     try {
       await insertInbound(cluster, fine.db, {

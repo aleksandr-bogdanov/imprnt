@@ -113,12 +113,14 @@ export interface FakePlatform {
   typings(): TypingRecord[];
   /** Every edit the door made, in order. */
   edits(): EditRecord[];
-  /** While on, every post is refused and the caller sees the error. */
+  /**
+   * While on, every post is refused and the caller sees the error.
+   *
+   * Posts alone: an edit and a typing call each had a switch of their own and
+   * no check ever turned either on, so what they bought was two flags that were
+   * always false and two branches nothing could reach.
+   */
   holdPosts(on: boolean): void;
-  /** While on, every edit is refused. */
-  holdEdits(on: boolean): void;
-  /** While on, every typing call is refused. */
-  holdTyping(on: boolean): void;
 }
 
 export class PlatformRefused extends Error {
@@ -155,8 +157,6 @@ export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
   const typingLog: TypingRecord[] = [];
   const editLog: EditRecord[] = [];
   let refusing = false;
-  let refusingEdits = false;
-  let refusingTyping = false;
   let nextPostId = 1;
   let served = -1;
   let nextId = 1;
@@ -246,21 +246,11 @@ export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
         text: where.text,
         at: Date.now(),
       });
-      if (refusingEdits) {
-        throw new PlatformRefused(
-          `${options.name} refused an edit of ${where.id} in ${where.chat}`,
-        );
-      }
     },
   };
 
   const typing = async (where: { chat: string }): Promise<void> => {
     typingLog.push({ chat: where.chat, at: Date.now() });
-    if (refusingTyping) {
-      throw new PlatformRefused(
-        `${options.name} refused a typing call for ${where.chat}`,
-      );
-    }
   };
 
   // The cast is the whole of `noTyping`: the object really has no `typing`
@@ -297,12 +287,6 @@ export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
     edits: () => editLog.map((e) => ({ ...e })),
     holdPosts(on) {
       refusing = on;
-    },
-    holdEdits(on) {
-      refusingEdits = on;
-    },
-    holdTyping(on) {
-      refusingTyping = on;
     },
   };
 }

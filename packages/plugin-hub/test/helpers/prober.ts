@@ -42,8 +42,6 @@ export interface CredentialProber {
 export interface FakeProber extends CredentialProber {
   /** Every entry this prober was asked to open, in order, as it was handed. */
   calls(): CredentialEntry[];
-  /** Every entry whose secrets were asked for. */
-  secretCalls(): CredentialEntry[];
   /** Change one answer mid-run, which is how a check binds the clear. */
   setAnswer(id: string, health: CredentialHealth): void;
 }
@@ -66,7 +64,6 @@ export function fakeProber(
   secrets: Record<string, string[]> = {},
 ): FakeProber {
   const asked: CredentialEntry[] = [];
-  const askedSecrets: CredentialEntry[] = [];
   const said: Record<string, CredentialHealth> = { ...answers };
   return {
     async open(entry) {
@@ -81,11 +78,9 @@ export function fakeProber(
       );
     },
     async secrets(entry) {
-      askedSecrets.push({ ...entry });
       return [...(secrets[entry.id] ?? secrets[entry.file] ?? [])];
     },
     calls: () => asked.map((one) => ({ ...one })),
-    secretCalls: () => askedSecrets.map((one) => ({ ...one })),
     setAnswer(id, health) {
       said[id] = health;
     },

@@ -714,12 +714,9 @@ export async function runDoor(options: {
         const ripe = clocksOf(open).filter((clock) => clock.at <= Date.now());
         if (ripe.length === 0) continue;
         open = await readOpenTurns(store, { agent: agent.id });
-        const here = new Map(open.map((row) => [row.id, row]));
         for (const clock of clocksOf(open)) {
           if (clock.at > Date.now()) continue;
-          const row = here.get(clock.row.id);
-          if (!row) continue;
-          await sayExpired(row, clock.stamp);
+          await sayExpired(clock.row, clock.stamp);
         }
         retune();
       }

@@ -26,7 +26,6 @@ export const MACHINERY_LINES: Record<Language, string> = {
   ru: "[дверь]",
 };
 
-/** One line a person reads, opened by the marker that says who is speaking. */
 function says(language: Language, sentence: string): string {
   return `${MACHINERY_LINES[language]} ${sentence}`;
 }

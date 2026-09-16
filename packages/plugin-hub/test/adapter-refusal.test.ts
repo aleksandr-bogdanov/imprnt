@@ -60,7 +60,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
-import { fakeClaudeCli } from "./helpers/fake-cli.ts";
+import { fakeClaudeCli, healthyResult } from "./helpers/fake-cli.ts";
 import { claudeGate, gateSuffix, announceGate } from "./helpers/claude-gate.ts";
 import { childGone, createScriptedAdapter } from "./helpers/scripted-adapter.ts";
 import type { AdapterSession, TurnEnd } from "../src/adapters/types.ts";
@@ -144,20 +144,6 @@ const HEALTHY_RATE_LIMIT = {
   },
 };
 
-function healthyResult(text: string): Record<string, unknown> {
-  return {
-    type: "result",
-    subtype: "success",
-    is_error: false,
-    terminal_reason: "stop",
-    result: text,
-    num_turns: 1,
-    session_id: "a-session",
-    usage: { input_tokens: 12, output_tokens: 7, cache_read_input_tokens: 3 },
-    total_cost_usd: 0,
-  };
-}
-
 function apiRetry(status: number): Record<string, unknown> {
   return {
     type: "system",
@@ -185,7 +171,6 @@ interface Driven {
  */
 async function driveTurn(options: {
   lines?: Record<string, unknown>[];
-  cliOptions?: { holdMs?: number; delayMs?: number };
   /**
    * Variables the CHILD is started with, set through the production `wrap`
    * hook as an `env VAR=value` prefix on its own argv.
@@ -223,7 +208,7 @@ async function driveTurn(options: {
       preset: options.preset ?? PRESET,
       sessionId: null,
       ...(options.lines
-        ? { wrap: fakeClaudeCli(options.lines, options.cliOptions ?? {}) }
+        ? { wrap: fakeClaudeCli(options.lines) }
         : envPrefix
           ? { wrap: envPrefix }
           : {}),
@@ -311,7 +296,6 @@ test(
     // attempt is 1153 ms away and the tenth is minutes away.
     const driven = await driveTurn({
       lines: [INIT, apiRetry(401)],
-      cliOptions: { holdMs: 60_000 },
       boundMs: 8000,
       keepOpen: true,
     });
@@ -357,7 +341,7 @@ test(
       const session = (await (claudeCode as { start: Function }).start({
         preset: PRESET,
         sessionId: null,
-        wrap: fakeClaudeCli([INIT, apiRetry(429)], { holdMs: 60_000 }),
+        wrap: fakeClaudeCli([INIT, apiRetry(429)]),
       })) as AdapterSession & { pid: number | null };
       const ends: Ended[] = [];
       session.onTurnEnd((end) => ends.push(end as Ended));

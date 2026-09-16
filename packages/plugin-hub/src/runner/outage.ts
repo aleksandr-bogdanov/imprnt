@@ -142,7 +142,6 @@ export function noticeKey(
   return `${kind}:${credential}:${since}:${person}`;
 }
 
-/** The percent this reading is, as a whole number a person reads. */
 export function percentOf(window: { utilization: number }): number {
   return Math.round(window.utilization * 100);
 }

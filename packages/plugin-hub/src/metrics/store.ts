@@ -1,4 +1,5 @@
 import { POSTGRES_PEAK_ID, readPeaks } from "../hub/peak.ts";
+import { percentileOf } from "./stamps.ts";
 import { appendChunks } from "../store/outbox.ts";
 import { enqueueInbound } from "../store/inbound.ts";
 import { stamp } from "../records/stamps.ts";
@@ -28,15 +29,6 @@ export interface StoreNumbers {
 
 /** Commits sampled either side of the forced checkpoint. */
 const SAMPLES_EACH_SIDE = 40;
-
-function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
-  const at = p * (sorted.length - 1);
-  const below = Math.floor(at);
-  const above = Math.ceil(at);
-  if (below === above) return sorted[below];
-  return sorted[below] + (at - below) * (sorted[above] - sorted[below]);
-}
 
 async function walPosition(store: StoreLike): Promise<string> {
   const [row] = (await store.sql.unsafe(
@@ -157,8 +149,8 @@ export async function measureStore(
     // No messages, no per-message figure. Nothing is divided by zero and
     // nothing is guessed.
     wal_bytes_per_message: options.messages === 0 ? 0 : written / options.messages,
-    commit_ms_p50: percentile(ordered, 0.5),
-    commit_ms_p99: percentile(ordered, 0.99),
+    commit_ms_p50: percentileOf(ordered, 0.5) ?? 0,
+    commit_ms_p99: percentileOf(ordered, 0.99) ?? 0,
     peak_bytes: postgres === null ? null : postgres.bytes,
     how:
       postgres === null

@@ -98,7 +98,7 @@ select s.scope, s.id, w.name as win, s.metric,
  * household can reproduce by hand is worth more than two ulps, and the server
  * still does the ordering and the grouping.
  */
-function percentileOf(sorted: number[], p: number): number | null {
+export function percentileOf(sorted: number[], p: number): number | null {
   if (sorted.length === 0) return null;
   const at = p * (sorted.length - 1);
   const below = Math.floor(at);

@@ -17,19 +17,25 @@
 // (03b item 10): a check that spawned whatever the PATH happened to carry would
 // be measuring the box rather than the loop.
 
-/** What the script does between the lines it was given. */
-export interface FakeCliOptions {
-  /** Milliseconds between one planted line and the next. Zero by default. */
-  delayMs?: number;
-  /**
-   * Milliseconds the script stays silent AFTER its last line, before it would
-   * say anything more. It says nothing more in any case: the hold is how a
-   * check keeps a turn open with no `result` ever written, which is the shape a
-   * refused key produces.
-   */
-  holdMs?: number;
-  /** Replay the user line the way `--replay-user-messages` does. On by default. */
-  replay?: boolean;
+/**
+ * A healthy `result`, the measured shape of one, for the checks that need a
+ * turn that ends well beside the ones that do not.
+ *
+ * One copy, in the helper both files already import, because two identical
+ * fixtures are two places for a measured shape to drift.
+ */
+export function healthyResult(text: string): Record<string, unknown> {
+  return {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    terminal_reason: "stop",
+    result: text,
+    num_turns: 1,
+    session_id: "a-session",
+    usage: { input_tokens: 12, output_tokens: 7, cache_read_input_tokens: 3 },
+    total_cost_usd: 0,
+  };
 }
 
 /**
@@ -42,38 +48,21 @@ export interface FakeCliOptions {
  */
 export function fakeClaudeCli(
   lines: Record<string, unknown>[],
-  options: FakeCliOptions = {},
 ): (argv: string[]) => string[] {
   const planted = JSON.stringify(JSON.stringify(lines));
-  const delay = Number(options.delayMs ?? 0);
-  const hold = Number(options.holdMs ?? 0);
-  const replay = options.replay === false ? "false" : "true";
   const script = `
 const LINES = JSON.parse(${planted});
-const DELAY = ${delay};
-const HOLD = ${hold};
-const REPLAY = ${replay};
 
 function say(event) {
   process.stdout.write(JSON.stringify(event) + "\\n");
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function turn(raw) {
+function turn(raw) {
   let fed = null;
   try { fed = JSON.parse(raw); } catch (error) { fed = null; }
   const content = fed && fed.message ? fed.message.content : "";
-  if (REPLAY) {
-    say({ type: "user", isReplay: true, message: { role: "user", content: content } });
-  }
-  for (const one of LINES) {
-    if (DELAY > 0) await sleep(DELAY);
-    say(one);
-  }
-  if (HOLD > 0) await sleep(HOLD);
+  say({ type: "user", isReplay: true, message: { role: "user", content: content } });
+  for (const one of LINES) say(one);
 }
 
 let buffer = "";
@@ -85,13 +74,15 @@ process.stdin.on("data", (chunk) => {
     const line = buffer.slice(0, cut);
     buffer = buffer.slice(cut + 1);
     cut = buffer.indexOf("\\n");
-    if (line.trim() !== "") void turn(line);
+    if (line.trim() !== "") turn(line);
   }
 });
 
 // The real CLI stays up for the whole session and the adapter's close() is what
 // ends it, so this one does too. A script that exited after its lines would
-// close the stream under a reader that is still being asserted about.
+// close the stream under a reader that is still being asserted about, and it is
+// also what keeps a turn OPEN with no result event ever written, which is the
+// shape a refused key produces: the script simply says nothing more.
 setInterval(() => {}, 1000000000);
 `;
   return () => [process.execPath, "-e", script];
