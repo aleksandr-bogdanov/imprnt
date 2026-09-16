@@ -6,6 +6,8 @@ export type WakeReason = "notified" | "deadline" | "timeout";
 
 export const WORK_CHANNEL = "hub_work";
 export const OUTBOX_CHANNEL = "hub_outbox";
+/** D-114. A turn opened, or the progress of one moved. The payload is the person. */
+export const TURN_CHANNEL = "hub_turn";
 
 export interface EligibleRow {
   id: string;
@@ -328,6 +330,26 @@ export async function openOutboxWaiter(
 ): Promise<Waiter> {
   return await openWaiter(store, {
     channel: OUTBOX_CHANNEL,
+    wakesOn: options.person,
+    deadline: async () => null,
+  });
+}
+
+/**
+ * The door's second waiter: one person, and no deadline, because a turn opening
+ * is a commit and not a time.
+ *
+ * D-126. It is a SECOND connection per agent, said plainly here so the cost is a
+ * decision and not a surprise. One waiter listening on two channels was the
+ * alternative, and it would change `openWaiter`, which is the one piece three
+ * shipped statement-count windows sit on.
+ */
+export async function openTurnWaiter(
+  store: StoreLike,
+  options: { person: string },
+): Promise<Waiter> {
+  return await openWaiter(store, {
+    channel: TURN_CHANNEL,
     wakesOn: options.person,
     deadline: async () => null,
   });

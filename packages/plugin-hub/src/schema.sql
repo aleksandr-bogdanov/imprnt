@@ -71,22 +71,56 @@ create table inbound (
   retry_at       timestamptz,
   constraint inbound_state_is_a_stamp
     check (state in ('received', 'acked', 'started', 'answered', 'delivered')),
+  -- REVIEW S6. `measure` is the sixth and it is not work: it is what the
+  -- store's own measuring tool writes to weigh a message, and it is rank 1 like
+  -- every other kind nobody is waiting on. It exists so those rows are
+  -- invisible to every reader that asks about a person's messages, all of which
+  -- select on `kind = 'human'`, in the window before the tool takes them away
+  -- again and afterwards for a caller that could not.
   constraint inbound_kind_is_known
-    check (kind in ('human', 'report', 'triage', 'room', 'harvest'))
+    check (kind in ('human', 'report', 'triage', 'room', 'harvest', 'measure'))
 );
 
 create index inbound_by_agent on inbound (agent, state);
 
 -- One row per reply chunk. The runner writes them, the door marks them
 -- delivered once the platform accepted them.
+--
+-- D-113. A NOTICE is a row here too, and it is the one thing on this table with
+-- no message on it: a household-wide cause (a dead login, a used-up plan
+-- window) is one line per person and not an apology per row, so it hangs on
+-- nothing. `kind` defaults to `reply`, which is what keeps every shipped insert
+-- (`insert into outbox (inbound_id, seq_in_reply, body)`) legal unchanged.
+--
+-- `notice_key unique` is the WHOLE of the one-notice arithmetic (D-122). The
+-- pair above stops constraining a notice at all, because NULLs are distinct in
+-- a unique index, so this is what makes a second runner's write, a restart's
+-- write and a same-tick sibling's write all land nothing.
 create table outbox (
   id           bigserial primary key,
-  inbound_id   text not null references inbound (id),
+  kind         text not null default 'reply',
+  inbound_id   text references inbound (id),
+  person       text,
+  agent        text,
+  notice_key   text unique,
   seq_in_reply int not null,
   body         text not null,
   written_at   timestamptz not null default now(),
   delivered_at timestamptz,
-  unique (inbound_id, seq_in_reply)
+  unique (inbound_id, seq_in_reply),
+  constraint outbox_kind_is_known check (kind in ('reply', 'notice')),
+  constraint outbox_kind_is_whole
+    check (
+      (kind = 'reply'
+        and inbound_id is not null
+        and notice_key is null)
+      or
+      (kind = 'notice'
+        and inbound_id is null
+        and person is not null
+        and agent is not null
+        and notice_key is not null)
+    )
 );
 
 -- State sheet storage. One row per id, edited in place, removed when the thing
@@ -116,15 +150,28 @@ create trigger ledger_event_append_only
 -- it every stamp fails with permission denied. The flag is what lets the guard
 -- below tell this write apart from a hand-written one, and it is local to the
 -- statement.
+--
+-- D-114. It is also source one of `hub_turn`: a turn OPENS at `acked` and ENDS
+-- at `answered`, and nothing else in the store fires at the start of one. The
+-- person comes back from the update this function already runs, so the channel
+-- costs one notify and no second read.
 create function hub_derive_inbound_state() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare
+  whose text;
 begin
   if new.stream = 'inbound'
      and new.kind in ('received', 'acked', 'started', 'answered', 'delivered')
   then
     perform set_config('hub.deriving', 'on', true);
-    update inbound set state = new.kind where id = new.subject;
+    update inbound set state = new.kind where id = new.subject
+      returning person into whose;
     perform set_config('hub.deriving', 'off', true);
+    if whose is not null
+       and new.kind in ('acked', 'started', 'answered')
+    then
+      perform pg_notify('hub_turn', whose);
+    end if;
   end if;
   return null;
 end $$;
@@ -167,17 +214,40 @@ create trigger inbound_notify_work
 -- transaction, so the door hears about a reply at the commit that made it
 -- postable and never before. The payload is the person, because the door filters
 -- to the agents it serves and the outbox row does not carry a door.
+--
+-- D-113. A notice carries its own person, because there is no message to read
+-- one off. The coalesce is what lets one trigger serve both rows.
 create function hub_notify_out() returns trigger
 language plpgsql as $$
 begin
   perform pg_notify('hub_outbox',
-                    (select person from inbound where id = new.inbound_id));
+                    coalesce(new.person,
+                             (select person from inbound where id = new.inbound_id)));
   return null;
 end $$;
 
 create trigger outbox_notify_out
   after insert on outbox
   for each row execute function hub_notify_out();
+
+-- D-114, source two. The runner writes the open turn's progress onto a sheet
+-- while the turn runs, and the door edits one platform message as the count
+-- grows. The write is an upsert, so this fires on INSERT OR UPDATE: a trigger
+-- that fired on the insert alone would wake the door once and leave the person
+-- reading the first count for the rest of the turn.
+create function hub_notify_turn_progress() returns trigger
+language plpgsql as $$
+begin
+  if new.data ->> 'person' is not null then
+    perform pg_notify('hub_turn', new.data ->> 'person');
+  end if;
+  return null;
+end $$;
+
+create trigger state_row_notify_turn
+  after insert or update on state_row
+  for each row when (new.sheet = 'turn_progress')
+  execute function hub_notify_turn_progress();
 
 -- The fence. One owner per table, and inside the diary one owner per event kind,
 -- because the door and the runner each own their own steps of a message.
@@ -194,6 +264,15 @@ create policy ledger_event_door_stamps on ledger_event
   for insert to hub_door
   with check (actor = 'door' and stream = 'inbound'
               and kind in ('received', 'delivered'));
+
+-- D-116. A clock running out is a line the door writes, and it is not a stamp.
+-- A SECOND policy rather than a widening of the one above: PostgreSQL ORs
+-- permissive policies, so this is purely additive, and the fence
+-- test/msg-stamps.test.ts binds in both directions stays readable as the one
+-- sentence it is.
+create policy ledger_event_door_clock on ledger_event
+  for insert to hub_door
+  with check (actor = 'door' and stream = 'clock' and kind = 'expired');
 
 create policy ledger_event_runner_stamps on ledger_event
   for insert to hub_runner
@@ -240,10 +319,22 @@ grant usage on sequence outbox_id_seq to hub_runner;
 grant select on outbox to hub_door;
 grant update (delivered_at) on outbox to hub_door;
 
--- The door keeps its platform cursor on a state sheet, so it writes here. The
--- runner only reads.
-grant select, insert, update on state_row to hub_door;
-grant select on state_row to hub_runner;
+-- The door keeps its platform cursor on a state sheet, so it writes here.
+--
+-- D-115. The runner writes three of its own now: the household's outage, the
+-- household's window reading, and the open turn's progress. Two runners racing
+-- for one outage row is an expected race and the primary key is what settles
+-- it, so the runner claims with `claimRow` and never with `appendRow`, whose
+-- refusal path writes as actor `hub` on the caller's own connection.
+-- REVIEW S5. The door keeps the platform message id of the progress line it
+-- posted on a sheet of its own (`door_progress`), so a door started again
+-- mid-turn EDITS the line it inherits rather than posting a second one beside
+-- it. It carries `delete` for that sheet alone: a thing that is gone leaves no
+-- line behind (L17), and a door that could only add rows would leave one per
+-- turn for ever. `door_cursor` and `door_progress` are the door's own sheets
+-- and nothing else writes them.
+grant select, insert, update, delete on state_row to hub_door;
+grant select, insert, update, delete on state_row to hub_runner;
 
 -- The hub keeps the measured peaks and, later, the findings. One row per id,
 -- edited in place, and a thing that is gone leaves no line behind.

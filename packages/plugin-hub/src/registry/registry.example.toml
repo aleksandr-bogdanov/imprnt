@@ -15,6 +15,11 @@ give_up_after = 5
 give_up_window_seconds = 300
 job_grace_seconds = 300
 silent_runner_hours = 6
+# How long a runner waits before it tries a credential that refused a turn
+# again. A refused login or a used-up plan window holds every row and the
+# runners retry on their own on this interval, so nothing is handed to a person
+# as could not answer.
+outage_retry_seconds = 300
 
 # Where the store's own process is, so the hub can measure it without guessing
 # at a process tree. Every standard install writes a pid file: this is Debian's,
@@ -36,22 +41,57 @@ os = "macos"
 
 # A person, and the tree that is the boundary. Each agent's box reaches its own
 # person's tree and the one shared zone above, and nothing else.
+# The four clocks are this person's own and the language is the one the door
+# writes its own lines in. All five are optional: a person who sets none is
+# measured against 30, 60, 900 and 60 seconds and reads English.
 [[people]]
 id = "p1"
 tree = "/var/lib/imprnt-hub/p1"
+language = "en"
+acked_seconds = 30
+started_seconds = 60
+answered_seconds = 900
+delivered_seconds = 60
 
 [[people]]
 id = "p2"
 tree = "/var/lib/imprnt-hub/p2"
+language = "ru"
+acked_seconds = 30
+started_seconds = 60
+answered_seconds = 900
+delivered_seconds = 60
+
+# A credential has one owner and one place, and every agent that uses it points
+# at that file. `check` opens every one of them and asks whether it still works.
+[[credentials]]
+id = "household-claude"
+kind = "claude-login"
+file = "/var/lib/imprnt-hub/credentials/claude.json"
+owner = "household"
+
+[[credentials]]
+id = "telegram-bot"
+kind = "telegram"
+file = "/etc/imprnt-hub/telegram.token"
+owner = "household"
 
 # A preset is a bundle of settings. Its id is derived from these five, so a
 # changed setting is a different preset and an id is never typed here.
+# The window thresholds are settings here and never numbers in code: at
+# window_pause_at percent proactive work pauses, at window_notice_at one line
+# goes into each person's chat, and at window_hold_at every row waits for the
+# reset. An agent on a per-token key has no window and carries none of the three.
 [presets.daily]
 adapter = "claude-code"
 model = "a-model-name"
 provider = "anthropic"
 effort = "medium"
 paid = "plan"
+credential = "household-claude"
+window_pause_at = 85
+window_notice_at = 95
+window_hold_at = 100
 
 # An agent is a person, a preset, a chat, and the pieces that serve it.
 [[agents]]
