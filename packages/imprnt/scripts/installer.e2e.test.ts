@@ -64,7 +64,8 @@ beforeAll(() => {
   const packed = sh("npm", ["pack", "--pack-destination", tmp], PKG).trim().split("\n").pop()!;
   tarball = join(tmp, packed);
   sh("npm", ["install", "-g", "--prefix", prefix, "--no-audit", "--no-fund", tarball], tmp);
-});
+  // A cold CI runner takes longer than bun's 5 s hook default for the pack and the global install.
+}, 120_000);
 
 test("the tarball ships the runtime and only the runtime", () => {
   const listing = sh("tar", ["-tzf", tarball], PKG);
