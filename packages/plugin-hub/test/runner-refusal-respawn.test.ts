@@ -166,10 +166,33 @@ test(
         async () =>
           `inbound=${JSON.stringify(await it.read.inbound())} starts=${loop.starts()}`,
       );
+      // EACH OF THE THREE IS WAITED FOR ON ITS OWN, because the contract does
+      // not put them in one transaction and this check may not assume it does.
+      // D-121 scopes `refuseTurn` to the diary line, the released claim and the
+      // recorded retry. The outage row is `claimRow`'s own statement, because
+      // two runners race for it and the primary key is what settles that
+      // (D-115), and the notice is `appendNotice`'s, because its unique key is
+      // what makes one outage one line per person (D-122). A reader woken by
+      // the diary line therefore lands between them on any box slow enough,
+      // and the hub box is: this asserted them straight after the ledger line
+      // and failed there twice, deterministically, about 350 ms in
+      // (BUILD-NOTES 34).
+      await until(
+        "the household's outage row was opened",
+        async () => (await it.read.outageSheet()).length >= 1,
+        20_000,
+        async () => JSON.stringify(await it.read.outageSheet()),
+      );
       const sheet = await it.read.outageSheet();
       expect(sheet.length).toBe(1);
       expect(sheet[0].id).toBe(CREDENTIAL);
       expect(sheet[0].data.cause).toBe("login");
+      await until(
+        "the person was told once",
+        async () => (await it.read.noticeRows()).length >= 1,
+        20_000,
+        async () => JSON.stringify(await it.read.noticeRows()),
+      );
       const notices = await it.read.noticeRows();
       expect(notices.length).toBe(1);
       expect(notices[0].person).toBe(PERSON);

@@ -241,7 +241,11 @@ async function open(options: {
         { cause: "login", said: String(event.error ?? "authentication_failed") },
         { ...event },
       );
-      void shut();
+      // Fire and forget, so the reader this is running inside is not held on a
+      // process exit, and CAUGHT, because a fire-and-forget promise that
+      // rejects is an unhandled rejection with nobody to report it to. Killing
+      // a child that has already gone is the ordinary case here.
+      void shut().catch(() => {});
       return;
     }
     if (event.type === "user" && event.isReplay === true && pending) {
