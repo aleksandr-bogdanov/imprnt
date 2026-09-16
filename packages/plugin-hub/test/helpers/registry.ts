@@ -78,7 +78,22 @@ export interface PersonSpec {
   started_seconds?: number;
   answered_seconds?: number;
   delivered_seconds?: number;
-  [key: string]: string | number | undefined;
+  /**
+   * D-137. The five harvest fields, this person's own. Each one is OPTIONAL and
+   * renders nothing when the spec names none, so a spec written before phase 5
+   * produces the file it produces today, byte for byte.
+   *
+   * `harvest_report` is why the index signature below admits a boolean. It was
+   * `string | number | undefined`, so `harvest_report = false` could not be
+   * rendered at all and a check that asked for one would have asserted against
+   * a file that said nothing.
+   */
+  harvester?: string;
+  vault?: string;
+  harvest_quiet_minutes?: number;
+  harvest_min_messages?: number;
+  harvest_report?: boolean;
+  [key: string]: string | number | boolean | undefined;
 }
 
 /**
@@ -124,14 +139,25 @@ const HUB_DEFAULTS: Record<string, string | number> = {
   claim_lease_seconds: 300,
 };
 
-function value(v: string | number): string {
+/**
+ * One TOML value.
+ *
+ * A number renders bare, a string renders JSON-quoted, and a BOOLEAN renders as
+ * TOML's own bare words `true` and `false`. The boolean branch is written out
+ * rather than left to `String` or to `JSON.stringify` landing on the right
+ * answer by accident: phase 5's `harvest_report` is the first false a check
+ * ever asks this helper to write, and a quoted `"false"` is a string the loader
+ * would refuse.
+ */
+function value(v: string | number | boolean): string {
+  if (typeof v === "boolean") return v ? "true" : "false";
   return typeof v === "number" ? String(v) : JSON.stringify(v);
 }
 
 function table(lines: string[], entries: Record<string, unknown>): void {
   for (const [key, raw] of Object.entries(entries)) {
     if (raw === undefined) continue;
-    lines.push(`${key} = ${value(raw as string | number)}`);
+    lines.push(`${key} = ${value(raw as string | number | boolean)}`);
   }
 }
 

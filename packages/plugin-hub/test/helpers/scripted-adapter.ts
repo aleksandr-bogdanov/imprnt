@@ -84,6 +84,20 @@ export interface FedMessage {
   id: string;
   text: string;
   at: number;
+  /**
+   * WHICH SESSION this message was fed into, one-based in `starts()` order.
+   *
+   * The second seat's finding on check 9: without it every session appends to
+   * one log, so a runner that opens an unused fresh harvester session and feeds
+   * the slice into the RESIDENT agent session is indistinguishable from one
+   * that does it properly. Counting feeds cannot tell them apart, and neither
+   * can counting starts. The session identity is what makes the pair of
+   * observations a discriminator.
+   *
+   * It is added, never substituted, so every shipped check that reads `id`,
+   * `text` or `at` reads exactly what it reads today.
+   */
+  session: number;
 }
 
 export interface StartRecord {
@@ -92,6 +106,17 @@ export interface StartRecord {
   at: number;
   /** 03b item 1. Whether the runner handed this start a boxing hook. */
   wrapped?: boolean;
+  /**
+   * D-150. The directory this session was started in, or null when the caller
+   * named none.
+   *
+   * A harvest turn runs in the person's VAULT ROOT rather than in the agent's
+   * tree, because that is where `imprnt init` wrote the filing rules as the
+   * directory's own CLAUDE.md. A fixture that did not record the cwd could not
+   * say which directory the loop was really started in, so check 9 would have
+   * nothing to assert.
+   */
+  cwd: string | null;
 }
 
 /** 03b item 1. One real child spawn, as the adapter really made it. */
@@ -164,6 +189,19 @@ export interface ScriptedOptions {
   refusals?: number;
   /** D-119. The window every turn of this loop reports, until it is changed. */
   window?: WindowReading;
+  /**
+   * Phase 5. What this loop answers, given the message it was fed.
+   *
+   * A harvest turn's reply is an envelope of notes, and `scriptedReply` can
+   * only say `reply to <text>`. With this UNSET the turn end is byte for byte
+   * what it is today, which is what keeps every phase 2, 3 and 4 check
+   * behaving exactly as it does now.
+   *
+   * It is read at the moment the turn ENDS, so `setAnswer` reaches the next
+   * turn, and it does not touch the progress event: a scripted loop still
+   * streams `reply to <text>` as it works, and only the answer changes.
+   */
+  answer?: (fed: { id: string; text: string }) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +417,17 @@ export interface ScriptedAdapter {
   fed(): FedMessage[];
   /** Every start or resume the runner asked for. */
   starts(): StartRecord[];
+  /**
+   * Every session that was CLOSED, by its one-based `starts()` index.
+   *
+   * The second seat's finding on C, and it is right: counting starts cannot
+   * tell a runner that closes each harvester session from one that leaks it and
+   * opens another, and `close` is a method this fixture implements, so there is
+   * nothing to stop it recording the call. D-150 says the harvester's session
+   * is closed when the turn ends, so nothing of it survives to the next
+   * harvest, and this is what makes that assertable.
+   */
+  closes(): number[];
   /** The session opening. Not progress, and it reaches no handler. */
   openSession(): void;
   /** When the session opening happened, for an ordering assertion. */
@@ -402,6 +451,12 @@ export interface ScriptedAdapter {
   setRefusal(refusal: TurnRefusal | null): void;
   /** The window every turn from here on reports, or null for none at all. */
   setWindow(window: WindowReading | null): void;
+  /**
+   * What this loop answers from the next turn on, or null to go back to
+   * `reply to <the fed text>`. A check that drives two harvests with two
+   * different replies changes it between them.
+   */
+  setAnswer(answer: ((fed: { id: string; text: string }) => string) | null): void;
   /** The numbers this loop reports right now. A check asserts them exactly. */
   readonly usage: AdapterUsage;
   lacks: readonly string[];
@@ -431,11 +486,16 @@ export function createScriptedAdapter(
   // carries today plus two nulls, and every phase 2 and phase 3 check behaves
   // as it does now.
   let window: WindowReading | null = options.window ?? null;
+  // Phase 5. Null means `scriptedReply`, which is what every shipped check gets.
+  let answer: ((fed: { id: string; text: string }) => string) | null =
+    options.answer ?? null;
   let countdown = options.refusals ?? 0;
   let standing: TurnRefusal | null = countdown > 0 ? { ...SCRIPTED_REFUSAL } : null;
 
   const fedLog: FedMessage[] = [];
   const startLog: StartRecord[] = [];
+  /** One-based `starts()` indices of the sessions that were closed, in order. */
+  const closeLog: number[] = [];
   const children: HeldChild[] = [];
   const spawnLog: SpawnRecord[] = [];
   let openedAt: number | null = null;
@@ -454,6 +514,8 @@ export function createScriptedAdapter(
     progress: ((event: AdapterProgress) => void)[];
     end: ((end: TurnEnd) => void)[];
     sessionId: string | null;
+    /** One-based, in `starts()` order, so a fed message names its session. */
+    nth: number;
   }
 
   let current: Live | null = null;
@@ -507,7 +569,13 @@ export function createScriptedAdapter(
     const end: ScriptedTurnEnd = {
       // D-118: the text is empty whenever a refusal is set, so a runner that
       // ignored the field would write an empty chunk rather than an apology.
-      text: refused ? "" : scriptedReply(ending.text),
+      // A REFUSAL STILL WINS over `answer`: a loop that would not answer says
+      // nothing, whatever a fixture would have had it say.
+      text: refused
+        ? ""
+        : answer
+          ? answer({ id: ending.id, text: ending.text })
+          : scriptedReply(ending.text),
       session_id: ending.live.sessionId,
       usage: { ...usage, window } as ScriptedUsage,
       refused,
@@ -541,8 +609,9 @@ export function createScriptedAdapter(
   const openOne = (
     sessionId: string | null,
     wrap?: (argv: string[]) => string[],
+    nth = 0,
   ): ChildSession => {
-    const live: Live = { receipt: [], progress: [], end: [], sessionId };
+    const live: Live = { receipt: [], progress: [], end: [], sessionId, nth };
     current = live;
     // 03b item 1. The adapter is BOX-AGNOSTIC: it imports nothing from
     // `src/box/`, knows no tool name, and spawns whatever the hook it was
@@ -578,7 +647,12 @@ export function createScriptedAdapter(
         return lacks;
       },
       async feed(message: { id: string; text: string }): Promise<void> {
-        fedLog.push({ id: message.id, text: message.text, at: Date.now() });
+        fedLog.push({
+          id: message.id,
+          text: message.text,
+          at: Date.now(),
+          session: live.nth,
+        });
         turns.set(live, { id: message.id, text: message.text, live });
         // The verbs are asynchronous in every real loop, so nothing lands
         // inside the caller's own call stack here either.
@@ -594,6 +668,9 @@ export function createScriptedAdapter(
         live.end.push(handler);
       },
       async close(): Promise<void> {
+        // Recorded BEFORE the teardown, and only once per session however often
+        // a caller asks, so a double close is not a second session closed.
+        if (live.nth > 0 && !closeLog.includes(live.nth)) closeLog.push(live.nth);
         live.receipt.length = 0;
         live.progress.length = 0;
         live.end.length = 0;
@@ -617,11 +694,15 @@ export function createScriptedAdapter(
         preset: where.preset ?? null,
         at: Date.now(),
         wrapped: typeof where.wrap === "function",
+        // D-150. The directory the caller asked for, exactly, and null when it
+        // asked for none. The runner passes `cwd` only when the box has one.
+        cwd: where.cwd ?? null,
       });
       opened += 1;
       return openOne(
         where.sessionId ?? options.sessionId ?? `scripted-session-${opened}`,
         where.wrap,
+        opened,
       );
     },
   };
@@ -632,6 +713,7 @@ export function createScriptedAdapter(
     spawns: () => spawnLog.map((one) => ({ ...one, argv: [...one.argv] })),
     fed: () => fedLog.map((f) => ({ ...f })),
     starts: () => startLog.map((s) => ({ ...s })),
+    closes: () => [...closeLog],
     openSession() {
       openedAt = Date.now();
     },
@@ -682,6 +764,9 @@ export function createScriptedAdapter(
     },
     setWindow(next) {
       window = next;
+    },
+    setAnswer(next) {
+      answer = next;
     },
     get usage() {
       return usage;
