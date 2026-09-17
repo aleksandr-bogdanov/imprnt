@@ -22,24 +22,29 @@ export async function claimNext(
   // everything, 0 is rank-0 only. Claiming nothing at all is the caller's
   // decision and it never reaches this statement.
   const maxRank = who.maxRank ?? 1;
-  const rows = (await store.sql`
-    update inbound
-       set claimed_by = ${who.runner},
-           claim_deadline = now() + make_interval(secs => ${who.leaseMs / 1000})
-     where id = (
-       select id from inbound
-        where agent = ${who.agent}
-          and log_ready
-          and rank <= ${maxRank}
-          and state not in ('answered', 'delivered')
-          and (claimed_by is null or claimed_by = ${who.runner}
-               or (claim_deadline is not null and claim_deadline <= now()))
-          and (retry_at is null or retry_at <= now())
-        order by rank, received_at, id
-        limit 1
-        for update skip locked
-     )
-    returning id, person, agent, body, kind, rank, received_at, state, source,
-              claimed_by, claim_deadline, retry_at`) as unknown as EligibleRow[];
-  return rows.length === 0 ? null : rows[0];
+  // Keep concurrent fleet queries off the same client connection until each
+  // result has settled; releasing capacity must not strand an in-flight read.
+  const connection = await store.sql.reserve();
+  try {
+    const rows = (await connection`
+      update inbound
+         set claimed_by = ${who.runner},
+             claim_deadline = now() + make_interval(secs => ${who.leaseMs / 1000})
+       where id = (
+         select id from inbound
+          where agent = ${who.agent}
+            and log_ready
+            and rank <= ${maxRank}
+            and state not in ('answered', 'delivered')
+            and (claimed_by is null or claimed_by = ${who.runner}
+                 or (claim_deadline is not null and claim_deadline <= now()))
+            and (retry_at is null or retry_at <= now())
+          order by rank, received_at, id
+          limit 1
+          for update skip locked
+       )
+      returning id, person, agent, body, kind, rank, received_at, state, source,
+                claimed_by, claim_deadline, retry_at`) as unknown as EligibleRow[];
+    return rows.length === 0 ? null : rows[0];
+  } finally { connection.release(); }
 }

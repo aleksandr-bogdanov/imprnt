@@ -417,7 +417,9 @@ export async function runRunner(options: {
   const capacity = new Set<() => void>();
   const harvestSessions = new Map<AdapterSession, Live>();
   const readings = new Map<AdapterSession, number>();
+  let capacityVersion = 0;
   const capacityChanged = () => {
+    capacityVersion++;
     for (const wake of capacity) wake();
     capacity.clear();
   };
@@ -1258,17 +1260,25 @@ export async function runRunner(options: {
         const residentHarvest = agentsFor(registry, { runner: options.runner })
           .filter(one => lifetimeFor(registry, one.id).mode === "resident" && !lifetimeFor(registry, one.id).sleeping)
           .map(one => one.id);
-        const [next] = await store.sql`select kind, exists (
-          select 1 from inbound h where h.agent in (select jsonb_array_elements_text(${JSON.stringify(residentHarvest)}::text::jsonb)) and h.kind = 'harvest'
-            and h.log_ready and h.state not in ('answered', 'delivered') and h.claimed_by is null
-            and (h.retry_at is null or h.retry_at <= now())
-        ) as harvest_waiting from inbound where agent = ${agent.id}
-          and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
-          and (retry_at is null or retry_at <= now())
-          order by rank, received_at, id limit 1`;
+        const observedCapacity = capacityVersion;
+        const connection = await store.sql.reserve();
+        let next;
+        try {
+          [next] = await connection`select kind, exists (
+            select 1 from inbound h where h.agent in (select jsonb_array_elements_text(${JSON.stringify(residentHarvest)}::text::jsonb)) and h.kind = 'harvest'
+              and h.log_ready and h.state not in ('answered', 'delivered') and h.claimed_by is null
+              and (h.retry_at is null or h.retry_at <= now())
+          ) as harvest_waiting from inbound where agent = ${agent.id}
+            and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
+            and (retry_at is null or retry_at <= now())
+            order by rank, received_at, id limit 1`;
+        } finally { connection.release(); }
         // Give an already waiting resident harvest its extra child before a
         // cold session. Capacity release, rather than a queue poll, wakes us.
         if (next && next.kind !== "harvest" && next.harvest_waiting && !own.session) {
+          // The harvest can start while this read is in flight. Its capacity
+          // signal must not be lost before this task subscribes to it.
+          if (capacityVersion !== observedCapacity) continue;
           let wake!: () => void;
           const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
           try { await Promise.race([available, stopped, own.left]); }

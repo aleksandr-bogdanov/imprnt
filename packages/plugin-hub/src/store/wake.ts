@@ -59,18 +59,21 @@ async function untilNextDeadline(
   store: StoreLike,
   agent: string,
 ): Promise<number | null> {
-  const [row] = (await store.sql`
-    select ceil(extract(epoch from (min(due) - now())) * 1000)::bigint as ms
-    from (
-      select retry_at as due from inbound
-       where agent = ${agent} and retry_at is not null and retry_at > now()
-         and log_ready and state not in ('answered', 'delivered')
-      union all
-      select claim_deadline as due from inbound
-       where agent = ${agent} and claim_deadline is not null and claim_deadline > now()
-         and log_ready and state not in ('answered', 'delivered')
-    ) deadlines`) as { ms: string | null }[];
-  return row.ms === null ? null : Number(row.ms);
+  const connection = await store.sql.reserve();
+  try {
+    const [row] = (await connection`
+      select ceil(extract(epoch from (min(due) - now())) * 1000)::bigint as ms
+      from (
+        select retry_at as due from inbound
+         where agent = ${agent} and retry_at is not null and retry_at > now()
+           and log_ready and state not in ('answered', 'delivered')
+        union all
+        select claim_deadline as due from inbound
+         where agent = ${agent} and claim_deadline is not null and claim_deadline > now()
+           and log_ready and state not in ('answered', 'delivered')
+      ) deadlines`) as { ms: string | null }[];
+    return row.ms === null ? null : Number(row.ms);
+  } finally { connection.release(); }
 }
 
 /**
@@ -235,7 +238,12 @@ async function openWaiter(
 
       if (lost) {
         try {
-          listener = await open();
+          const reopened = await open();
+          if (closed) {
+            await reopened.close();
+            return "timeout";
+          }
+          listener = reopened;
           lost = false;
           pending = false;
           // The caller's last read ran with nothing listening, so it is sent
@@ -248,6 +256,7 @@ async function openWaiter(
         pending = false;
         return "notified";
       }
+      if (closed) return "timeout";
 
       let settle: (reason: WakeReason) => void = () => {};
       const woken = new Promise<WakeReason>((resolve) => {
