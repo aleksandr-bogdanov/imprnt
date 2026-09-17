@@ -21,16 +21,19 @@
 // one line on stderr, and `test.skipIf`. A closed gate is never a silent pass.
 //
 // Each check asks for its OWN number, and that number is the oldest line it
-// plants plus the time it takes to run, because a run that starts four minutes
-// before a midnight and takes six minutes crosses it. Both halves are stated at
-// the call site. A check is therefore skipped for a few minutes a day and never
-// fails there and never lies there.
+// plants plus the time it takes to run. Before the NEXT midnight, every check
+// needs the same fifteen-minute margin: the full suite takes about twelve
+// minutes on the slowest machine, and a file can load before its checks run.
+
+const BEFORE = 15;
 
 export interface ClockGate {
   ok: boolean;
   reason: string;
   /** Minutes since the last UTC midnight at the moment the gate was asked. */
   sinceMidnight: number;
+  /** Minutes until the next UTC midnight at the moment the gate was asked. */
+  untilMidnight: number;
   /** What the check said it needs, for the record and the message. */
   needs: number;
 }
@@ -45,20 +48,25 @@ export function lastMidnightUtc(now: number): number {
  * Whether this moment is too close to a UTC midnight for a trigger check.
  *
  * `minutes` is the check's own need: the age of the oldest line it plants, plus
- * the wall time the check takes, so the whole of it runs inside one UTC day.
+ * the wall time the check takes. BEFORE leaves room for the whole suite before
+ * the next midnight, independently of that check's need after the last one.
  */
 export function clockGate(minutes: number, now = Date.now()): ClockGate {
   const since = (now - lastMidnightUtc(now)) / 60_000;
-  const ok = since >= minutes;
+  const until = 24 * 60 - since;
+  const ok = since >= minutes && until >= BEFORE;
+  const timing = `${Math.floor(since)} min past the last UTC midnight, ` +
+    `${Math.floor(until)} min until the next UTC midnight, need ${minutes} min, BEFORE ${BEFORE} min`;
   return {
     ok,
     sinceMidnight: Math.floor(since),
+    untilMidnight: Math.floor(until),
     needs: minutes,
     reason: ok
       ? ""
-      : `it is ${Math.floor(since)} min past a UTC midnight and this check needs ${minutes}: ` +
-        "the daily backstop is asked first and ignores the minimum, so a line planted " +
-        "before that midnight is owed a backstop and no quiet assertion here can hold",
+      : `${since < minutes ? "after-midnight need" : "before-midnight margin"} shut the gate: ${timing}; ` +
+        "the daily backstop is asked first and ignores the minimum, so planted lines " +
+        "before a midnight crossed by the suite can owe a backstop instead of the intended trigger",
   };
 }
 
@@ -72,7 +80,8 @@ export function announceClock(gate: ClockGate, what: string): void {
   process.stderr.write(
     `[clock-gate] ${what}: ${
       gate.ok
-        ? `open, ${gate.sinceMidnight} min past the last UTC midnight and it needs ${gate.needs}`
+        ? `open, ${gate.sinceMidnight} min past the last UTC midnight, ` +
+          `${gate.untilMidnight} min until the next UTC midnight, need ${gate.needs} min, BEFORE ${BEFORE} min`
         : `SKIPPED, ${gate.reason}`
     }\n`,
   );
