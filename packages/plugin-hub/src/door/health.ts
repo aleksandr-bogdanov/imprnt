@@ -6,10 +6,10 @@ import type { StoreLike } from "../store/connect.ts";
 import { chatUnreadable, deliveryFailed, deliveryUncertain, finding, type Language } from "./lines.ts";
 import { classifyPlatformError, prepareReply, type PlatformFailure } from "./reply.ts";
 
-export async function recordOperationFailure(store: StoreLike, operation: string, door: string, chat: string, failure: PlatformFailure): Promise<void> {
+export async function recordOperationFailure(store: StoreLike, operation: string, door: string, chat: string, failure: PlatformFailure, actor: "door" | "hub" = "door"): Promise<void> {
   const target = `${door}/${chat}`;
   process.stderr.write(finding("en", { code: failure.code, target, cause: failure.cause }) + "\n");
-  await appendEntry(store, { stream: "operation", subject: target, kind: "failed", actor: "door",
+  await appendEntry(store, { stream: actor === "hub" ? "machine" : "operation", subject: target, kind: "failed", actor,
     detail: { operation, target, ...failure, at: new Date().toISOString() } });
 }
 

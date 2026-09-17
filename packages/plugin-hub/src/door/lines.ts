@@ -405,3 +405,24 @@ export function mediaKind(language: Language, kind: string): string {
 export function emptyMessageLine(language: Language): string {
   return language === "ru" ? "(пустое сообщение)" : "(empty message)";
 }
+
+export function syncCause(language: Language, code: string): string {
+  const causes: Record<string, [string, string]> = {
+    path: ["repository path is missing or invalid", "путь репозитория отсутствует или неверен"],
+    person: ["repository is outside the person's tree", "репозиторий вне дерева человека"],
+    locked: ["repository is already being synchronized", "репозиторий уже синхронизируется"],
+    dirty: ["repository has uncommitted changes", "в репозитории есть несохранённые изменения"],
+    branch: ["repository is on the wrong branch", "в репозитории выбрана другая ветка"],
+    remote: ["configured remote is absent", "указанный удалённый репозиторий отсутствует"],
+    fetch: ["fetch failed", "не удалось получить изменения"],
+    conflict: ["rebase failed; inspect conflicts before retrying", "перебазирование не удалось; проверьте конфликты перед повтором"],
+    push: ["push failed", "не удалось отправить изменения"],
+  };
+  return (causes[code] ?? ["operation failed", "операция не удалась"])[language === "ru" ? 1 : 0];
+}
+
+export function syncRepair(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "устраните указанную причину в {target} и повторите синхронизацию."
+    : "repair the reported cause in {target} and run sync again.", values);
+}

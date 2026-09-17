@@ -77,7 +77,7 @@ const say=(phase,code)=>appendFileSync(${JSON.stringify(log)},JSON.stringify({pi
 say('start');
 if(verb==='rebase' && control.delay) await Bun.sleep(control.delay);
 let code;
-if(control.fail===verb && (!control.path || cwd===control.path)) { console.error('synthetic '+verb+' refusal'); code=73; }
+if(control.fail && control.fail===verb && (!control.path || cwd===control.path)) { console.error('synthetic '+verb+' refusal'); code=73; }
 else if(control.noPush && verb==='push') code=0;
 else { const child=Bun.spawn([${JSON.stringify(real)},'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','tag.gpgsign=false','-c','user.name=p1','-c','user.email=p1@example.invalid',...args],{stdin:'inherit',stdout:'inherit',stderr:'inherit'}); code=await child.exited; }
 say('end',code); process.exit(code);

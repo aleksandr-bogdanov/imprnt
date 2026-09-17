@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { appendEntry } from "../records/diary.ts";
 import { diffUnits, seenUnits, wantedState } from "../os/diff.ts";
 import { entryIdOf, unitName } from "../os/names.ts";
@@ -10,6 +9,7 @@ import { loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
 import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.ts";
 import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
+import { programForKind } from "./program.ts";
 
 /**
  * The hub: one process per machine, ours, unsandboxed, and the only thing that
@@ -42,8 +42,6 @@ export class HubRefused extends Error {
     this.name = "HubRefused";
   }
 }
-
-const KINDS: Record<string, string> = { door: "door", runner: "runner" };
 
 function setting(registry: unknown, key: string, fallback: number): number {
   const found = readSetting(registry, key);
@@ -144,13 +142,10 @@ export async function runHub(options: {
     await appendEntry(store, { stream: "machine", subject, kind, actor: "hub", detail });
   };
 
-  const scriptFor = (entry: RunEntry): string =>
-    join(import.meta.dir, "..", "entry", `${KINDS[entry.kind] ?? "hub"}.ts`);
-
   const contextFor = (registry: unknown, entry: RunEntry): RenderContext => ({
     machine: options.machine,
     execPath: process.execPath,
-    entryScript: scriptFor(entry),
+    entryScript: programForKind(entry.kind),
     registryFile: options.registryFile,
     restartDelaySeconds: setting(registry, "hub.restart_delay_seconds", 1),
     giveUpAfter: setting(registry, "hub.give_up_after", 5),

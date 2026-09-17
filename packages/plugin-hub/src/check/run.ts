@@ -1,5 +1,5 @@
 import { checkLoopSource } from "../adapters/index.ts";
-import { finding as findingLine } from "../door/lines.ts";
+import { finding as findingLine, syncRepair } from "../door/lines.ts";
 import { dirname } from "node:path";
 import {
   diffUnits,
@@ -551,6 +551,16 @@ export async function runCheck(options: {
   }
 
   // --- the sheet: one row per finding id, and a fixed one leaves NO line ---
+  for (const row of await readSheet(options.store, "sync")) {
+    if (!entries.some(entry => entry.id === row.id && entry.kind === "sync")) continue;
+    for (const repo of (row.data.repositories ?? []) as { id: string; status: string; cause?: string }[]) {
+      if (repo.status !== "failed") continue;
+      const target = `${row.id}/${repo.id}`;
+      findings.push({ id: findingId(machine, "sync-failed", target), kind: "sync-failed", subject: target, machine,
+        says: findingLine("en", { code: "sync-failed", target, cause: repo.cause }),
+        fix: syncRepair("en", { target }) });
+    }
+  }
   for (const row of await readSheet(options.store, "agent_health")) {
     if (row.data.status !== "retry" || !listAgents(registry).some(agent => agent.id === row.id &&
       runEntriesFor(registry, machine).some(entry => entry.id === agent.runner))) continue;
