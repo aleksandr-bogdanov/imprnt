@@ -68,6 +68,11 @@ for (const osName of ["linux", "macos"] as const) {
     const { catchUpHarvest } = await seam("src/migrate/harvest.ts")
 
     const repos = ["p1-vault", "p2-vault", "shared"].map(id => localRepository(f.dir, id))
+    const sharedPath = join(repos[0].path, "shared")
+    fixtureGit(f.dir, "clone", repos[2].remote, sharedPath)
+    repos[2].path = sharedPath
+    const exclude = join(repos[0].path, ".git", "info", "exclude")
+    writeFileSync(exclude, readFileSync(exclude, "utf8") + "\n/shared/\n")
     const vault = await scratchVault(repos[1].path)
     cleanups.push(() => vault.remove())
     const shim = writeImprntShim(f.dir)
