@@ -34,11 +34,15 @@
 // check is built on.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { appendFileSync, mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { seam, startCluster, until, type Cluster } from "./helpers/cluster.ts";
-import { stageHarvest, type HarvestStage } from "./helpers/harvest-stage.ts";
+import {
+  plantLine,
+  stageHarvest,
+  type ChatLine,
+  type HarvestStage,
+} from "./helpers/harvest-stage.ts";
 import {
   AGENT,
   AGENT2,
@@ -46,7 +50,6 @@ import {
   DOOR,
   PERSON,
   RUNNER,
-  chatLogFile,
   insertInbound,
   scratchDir,
   superStore,
@@ -82,25 +85,6 @@ The bank said the monthly card fee goes from nine to eleven in October.`;
 
 function envelope(...notes: string[]): string {
   return notes.map((one) => `=== NOTE ===\n${one}\n=== END ===`).join("\n\n");
-}
-
-interface ChatLine {
-  at: string;
-  direction: "in" | "out";
-  from: string;
-  text: string;
-}
-
-function plant(stage: HarvestStage, line: ChatLine, person = PERSON, agent = AGENT): ChatLine {
-  const file = chatLogFile({
-    stateDir: stage.hub.stateDir,
-    person,
-    agent,
-    at: new Date(line.at),
-  });
-  mkdirSync(dirname(file), { recursive: true });
-  appendFileSync(file, JSON.stringify(line) + "\n", "utf8");
-  return line;
 }
 
 async function plantHarvestRow(
@@ -151,8 +135,8 @@ test(
       const now = Date.now();
       const at = (minutesAgo: number) =>
         new Date(now - minutesAgo * 60_000).toISOString();
-      plant(stage, { at: at(30), direction: "in", from: PERSON, text: "the bank raised the card fee" });
-      plant(stage, { at: at(29), direction: "in", from: PERSON, text: "from nine to eleven in October" });
+      plantLine(stage, { at: at(30), direction: "in", from: PERSON, text: "the bank raised the card fee" });
+      plantLine(stage, { at: at(29), direction: "in", from: PERSON, text: "from nine to eleven in October" });
 
       it.scripted.setAnswer(() => envelope(NOTE_FEE));
       runner = await (runRunner as Function)({
@@ -273,8 +257,8 @@ test.skipIf(!GATE_M2.ok)(
       const now = Date.now();
       const at = (minutesAgo: number) =>
         new Date(now - minutesAgo * 60_000).toISOString();
-      plant(stage, { at: at(5), direction: "in", from: PERSON, text: "банк поднял плату за карту" });
-      plant(stage, { at: at(4), direction: "in", from: PERSON, text: "с девяти до одиннадцати в октябре" });
+      plantLine(stage, { at: at(5), direction: "in", from: PERSON, text: "банк поднял плату за карту" });
+      plantLine(stage, { at: at(4), direction: "in", from: PERSON, text: "с девяти до одиннадцати в октябре" });
 
       it.scripted.setAnswer(() => envelope(NOTE_FEE));
       door = await (runDoor as Function)({

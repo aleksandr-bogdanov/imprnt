@@ -53,8 +53,6 @@ export interface ScratchVault {
   vaultDir: string;
   /** `<root>/raw`, the sibling `applyStaged` resolves its snapshots under. */
   rawDir: string;
-  /** The scratch `XDG_CONFIG_HOME` this init registered itself in. */
-  configHome: string;
   remove(): Promise<void>;
 }
 
@@ -106,10 +104,27 @@ export async function scratchVault(
     root,
     vaultDir,
     rawDir,
-    configHome,
     async remove() {
       await rm(root, { recursive: true, force: true }).catch(() => {});
       await rm(configHome, { recursive: true, force: true }).catch(() => {});
     },
   };
+}
+
+/**
+ * The slug the CLI derives from an H1, computed by the TEST from the vault
+ * contract's own rule: kebab-case, at most sixty characters.
+ *
+ * THREE CHECKS WROTE THIS OUT AND THE THREE COPIES WERE BYTE-IDENTICAL, which
+ * is three places for one rule to drift. It stays a test ORACLE and imports
+ * nothing from `src/` or from the vault CLI: a slug asked of the code under
+ * test would agree with a build that derived it any way at all, and the path a
+ * note lands at has to be one the check worked out rather than one it was told.
+ */
+export function slugOf(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
 }

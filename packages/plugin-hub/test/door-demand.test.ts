@@ -31,16 +31,19 @@
 // every line is planted with a chosen `at` in the past.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
 import { seam, startCluster, until, type Cluster } from "./helpers/cluster.ts";
-import { stageHarvest, type HarvestStage } from "./helpers/harvest-stage.ts";
+import {
+  plantLine,
+  stageHarvest,
+  type ChatLine,
+  type HarvestStage,
+} from "./helpers/harvest-stage.ts";
 import {
   AGENT,
   CHAT,
   DOOR,
   PERSON,
-  chatLogFile,
   chatLogLines,
 } from "./helpers/hub-fixture.ts";
 import { announceClock, clockGate, clockSuffix } from "./helpers/clock-gate.ts";
@@ -65,25 +68,6 @@ const KEY_HARVESTER: Record<string, string> = {
   effort: "low",
   paid: "key",
 };
-
-interface ChatLine {
-  at: string;
-  direction: "in" | "out";
-  from: string;
-  text: string;
-}
-
-function plant(stage: HarvestStage, line: ChatLine): ChatLine {
-  const file = chatLogFile({
-    stateDir: stage.hub.stateDir,
-    person: PERSON,
-    agent: AGENT,
-    at: new Date(line.at),
-  });
-  mkdirSync(dirname(file), { recursive: true });
-  appendFileSync(file, JSON.stringify(line) + "\n", "utf8");
-  return line;
-}
 
 /** Every `harvest` row on the table right now, oldest first. */
 async function harvestRows(stage: HarvestStage): Promise<Record<string, unknown>[]> {
@@ -153,8 +137,8 @@ test.skipIf(!GATE_M3.ok)(
       const now = Date.now();
       const at = (minutesAgo: number) =>
         new Date(now - minutesAgo * 60_000).toISOString();
-      plant(stage, { at: at(5), direction: "in", from: PERSON, text: "the dentist moved it" });
-      plant(stage, { at: at(4), direction: "in", from: PERSON, text: "and the gym is cancelled" });
+      plantLine(stage, { at: at(5), direction: "in", from: PERSON, text: "the dentist moved it" });
+      plantLine(stage, { at: at(4), direction: "in", from: PERSON, text: "and the gym is cancelled" });
 
       const whole = readFileSync(it.registryFile, "utf8");
       door = await (runDoor as Function)({
@@ -240,7 +224,7 @@ test.skipIf(!GATE_S3.ok)(
       const lines: ChatLine[] = [];
       for (let i = 0; i < 21; i++) {
         lines.push(
-          plant(stage, {
+          plantLine(stage, {
             at: new Date(now - 5 * 60_000 + i * 1000).toISOString(),
             direction: "in",
             from: PERSON,

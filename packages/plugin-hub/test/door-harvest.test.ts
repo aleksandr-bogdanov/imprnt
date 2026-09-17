@@ -61,7 +61,6 @@ import {
   announceClock,
   clockGate,
   clockSuffix,
-  lastMidnightUtc,
 } from "./helpers/clock-gate.ts";
 
 let cluster: Cluster;
@@ -916,15 +915,10 @@ test.skipIf(!GATE_8.ok)(
       const rowsFor = async (agent: string) =>
         (await harvestRows(it)).filter((row) => row.agent === agent);
 
-      /** Deliver one message into one chat and wait for the door to read it. */
-      const say = async (chat: string, text: string): Promise<void> => {
-        it.fake.deliver({ chat, text });
-      };
-
       // -------------------------------------------------------------
       // The first person's chat, in English.
       // -------------------------------------------------------------
-      await say(CHAT, "harvest this");
+      it.fake.deliver({ chat: CHAT, text: "harvest this" });
       await until(
         "the phrase produced one harvest row at once",
         async () => (await rowsFor(AGENT)).length === 1,
@@ -970,7 +964,7 @@ test.skipIf(!GATE_8.ok)(
       // -------------------------------------------------------------
       // The second person's chat, in Russian.
       // -------------------------------------------------------------
-      await say(`${CHAT}1`, "сохрани важное");
+      it.fake.deliver({ chat: `${CHAT}1`, text: "сохрани важное" });
       await until(
         "the Russian phrase produced one harvest row at once",
         async () => (await rowsFor(AGENT2)).length === 1,
@@ -997,7 +991,7 @@ test.skipIf(!GATE_8.ok)(
       //    that works in one language is a trap for a bilingual household and
       //    neither is a plausible ordinary message. The line that comes BACK
       //    is in that person's own language, which is check 13's.
-      await say(`${CHAT}1`, "harvest this");
+      it.fake.deliver({ chat: `${CHAT}1`, text: "harvest this" });
       await until(
         "the English phrase harvested the Russian person's chat too",
         async () => (await rowsFor(AGENT2)).length === 2,
@@ -1021,8 +1015,7 @@ test.skipIf(!GATE_8.ok)(
       const beforeEn = (await rowsFor(AGENT)).length;
       const beforeRu = (await rowsFor(AGENT2)).length;
       const NEAR_MISSES: [string, string][] = [
-        // chat, text
-        [CHAT, "can you harvest this later?"],
+          [CHAT, "can you harvest this later?"],
         [CHAT, "harvest"],
         [CHAT, "harvest this one"],
         [CHAT, "please harvest this"],
@@ -1034,7 +1027,7 @@ test.skipIf(!GATE_8.ok)(
         [`${CHAT}1`, "что на ужин"],
       ];
       for (const [chat, text] of NEAR_MISSES) {
-        await say(chat, text);
+        it.fake.deliver({ chat, text });
         await until(
           `the near miss ${JSON.stringify(text)} became a human row`,
           async () =>

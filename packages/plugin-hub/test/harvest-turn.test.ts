@@ -35,18 +35,21 @@
 // preset id.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { appendFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { seam, startCluster, until, type Cluster } from "./helpers/cluster.ts";
 import { expectedPresetId } from "./helpers/preset-oracle.ts";
-import { stageHarvest, type HarvestStage } from "./helpers/harvest-stage.ts";
+import {
+  plantLine,
+  stageHarvest,
+  type ChatLine,
+  type HarvestStage,
+} from "./helpers/harvest-stage.ts";
 import {
   AGENT,
   DOOR,
   PERSON,
   RUNNER,
-  chatLogFile,
   insertInbound,
 } from "./helpers/hub-fixture.ts";
 import { TAIL_PREAMBLE } from "../src/chatlog.ts";
@@ -135,26 +138,6 @@ tags: [housing]
 
 Notice has to be given two months before the renewal date.`;
 
-interface ChatLine {
-  at: string;
-  direction: "in" | "out";
-  from: string;
-  text: string;
-}
-
-/** One chat line, written the way the door writes one. */
-function plant(stage: HarvestStage, line: ChatLine): ChatLine {
-  const file = chatLogFile({
-    stateDir: stage.hub.stateDir,
-    person: PERSON,
-    agent: AGENT,
-    at: new Date(line.at),
-  });
-  mkdirSync(dirname(file), { recursive: true });
-  appendFileSync(file, JSON.stringify(line) + "\n", "utf8");
-  return line;
-}
-
 /** A harvest row, planted as the DOOR role, exactly as `enqueueInbound` writes one. */
 async function plantHarvestRow(
   stage: HarvestStage,
@@ -207,12 +190,12 @@ test(
       const now = Date.now();
       const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
       const slice = [
-        plant(stage, { at: at(30), direction: "in", from: PERSON, text: "the bank raised the card fee" }),
-        plant(stage, { at: at(29), direction: "out", from: AGENT, text: "from nine to eleven, in October" }),
-        plant(stage, { at: at(28), direction: "in", from: PERSON, text: "and the lease notice is two months" }),
-        plant(stage, { at: at(27), direction: "in", from: PERSON, text: "remind me before March" }),
+        plantLine(stage, { at: at(30), direction: "in", from: PERSON, text: "the bank raised the card fee" }),
+        plantLine(stage, { at: at(29), direction: "out", from: AGENT, text: "from nine to eleven, in October" }),
+        plantLine(stage, { at: at(28), direction: "in", from: PERSON, text: "and the lease notice is two months" }),
+        plantLine(stage, { at: at(27), direction: "in", from: PERSON, text: "remind me before March" }),
       ];
-      const doorLine = plant(stage, {
+      const doorLine = plantLine(stage, {
         at: at(26),
         direction: "out",
         from: DOOR,
@@ -380,7 +363,7 @@ test(
       //     third start over a slice with nothing in it would be demanding that
       //     a correct build break the contract. So there is something new to
       //     harvest, and only then is a third session owed.
-      const afterFirst = plant(stage, {
+      const afterFirst = plantLine(stage, {
         at: new Date(now + 500).toISOString(),
         direction: "in",
         from: PERSON,
@@ -555,8 +538,8 @@ test(
       const now = Date.now();
       const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
       const slice = [
-        plant(stage, { at: at(30), direction: "in", from: PERSON, text: "the bank raised the card fee" }),
-        plant(stage, { at: at(29), direction: "in", from: PERSON, text: "and the lease notice is two months" }),
+        plantLine(stage, { at: at(30), direction: "in", from: PERSON, text: "the bank raised the card fee" }),
+        plantLine(stage, { at: at(29), direction: "in", from: PERSON, text: "and the lease notice is two months" }),
       ];
       const lastLine = slice[slice.length - 1];
 
@@ -613,7 +596,7 @@ test(
       //     2000, and the watermark does not move.
       const beforeRefusal = (await watermark())!.data;
       it.scripted.setAnswer(() => "I had a look and here is what I think about all of it.");
-      plant(stage, { at: at(20), direction: "in", from: PERSON, text: "one more thing worth keeping" });
+      plantLine(stage, { at: at(20), direction: "in", from: PERSON, text: "one more thing worth keeping" });
       const badRow = await plantHarvestRow(stage, {
         from: lastLine.at,
         until: new Date(now + 1000).toISOString(),
@@ -706,7 +689,7 @@ test(
       //     and a wide `until`, which is exactly what a backstop written before
       //     the quiet row settled would carry.
       it.scripted.setAnswer(() => envelope(NOTE_FEE));
-      plant(stage, { at: at(10), direction: "in", from: PERSON, text: "and the card fee is eleven now" });
+      plantLine(stage, { at: at(10), direction: "in", from: PERSON, text: "and the card fee is eleven now" });
       const overlapUntil = new Date(now + 30_000).toISOString();
       const feedBefore = it.scripted.fed().length;
       const firstOverlap = await plantHarvestRow(stage, {
@@ -780,8 +763,8 @@ test(
       const now = Date.now();
       const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
       const slice = [
-        plant(stage, { at: at(30), direction: "in", from: PERSON, text: "the bank raised the card fee" }),
-        plant(stage, { at: at(29), direction: "in", from: PERSON, text: "and the lease notice is two months" }),
+        plantLine(stage, { at: at(30), direction: "in", from: PERSON, text: "the bank raised the card fee" }),
+        plantLine(stage, { at: at(29), direction: "in", from: PERSON, text: "and the lease notice is two months" }),
       ];
 
       // The criterion's own query, written out here exactly as 05-CONTEXT pins

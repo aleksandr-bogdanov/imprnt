@@ -49,7 +49,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
 import { writeHangingImprntShim, writeImprntShim } from "./helpers/imprnt-shim.ts";
-import { scratchVault } from "./helpers/scratch-vault.ts";
+import { scratchVault, slugOf } from "./helpers/scratch-vault.ts";
 
 /** The tests' own copy of the answer shape, never imported from the build. */
 interface ApplyResult {
@@ -61,19 +61,6 @@ interface ApplyResult {
 }
 
 const SLOW = 90_000;
-
-/**
- * The slug the CLI derives from an H1, computed by the TEST from the vault
- * contract's own rule (kebab-case, at most sixty characters), so the path a
- * note lands at is one this check worked out rather than one it was told.
- */
-function slugOf(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-}
 
 function note(args: { title: string; type?: string; domain?: string; body: string }): string {
   const front = [

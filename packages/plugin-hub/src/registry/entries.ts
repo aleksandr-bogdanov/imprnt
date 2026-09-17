@@ -128,9 +128,18 @@ export interface HarvestSettings {
  * The minimum slice's default comes off the HARVESTER preset's `paid` rather
  * than the agent's, because the cost L19 is talking about is the harvest's own:
  * a plan login can run a strong model on every slice, and a per-token key waits
- * for a bigger one. A preset the file somehow does not carry is read as a plan,
- * which is the smaller number and therefore the one that harvests rather than
- * the one that quietly stops.
+ * for a bigger one.
+ *
+ * THE MISSING-PRESET FALLBACK IS REACHABLE AND THE ROUTE WAS MEASURED. The
+ * loader refuses a `harvester` naming a preset the file does not define, so it
+ * looks unreachable, and it is not: that refusal asks `harvester in presets`,
+ * and `in` walks the prototype, so a file saying `harvester = "constructor"`
+ * loads and this line indexes `Object.prototype.constructor`, whose `paid` is
+ * undefined. Measured here. It is read as a plan, which is the smaller minimum
+ * and therefore the one that harvests rather than the one that quietly stops,
+ * and the turn that follows refuses on an adapter nobody registered rather than
+ * filing anything. Closing the hole is `Object.hasOwn` in the loader, in two
+ * places, and it is a behaviour change with its own check rather than a cut.
  */
 export function harvestFor(registry: unknown, personId: string): HarvestSettings | null {
   const it = loaded(registry, "harvestFor");

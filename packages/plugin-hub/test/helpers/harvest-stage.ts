@@ -27,13 +27,14 @@
 // a registry and a database, and every check starts the real door and the real
 // runner itself.
 
+import { appendFileSync, mkdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Cluster } from "./cluster.ts";
 import { writeImprntShim } from "./imprnt-shim.ts";
 import { scratchVault, type ScratchVault } from "./scratch-vault.ts";
-import { stageHub, type StageOptions, type StagedHub } from "./hub-fixture.ts";
+import { AGENT, PERSON, chatLogFile, stageHub, type StageOptions, type StagedHub } from "./hub-fixture.ts";
 import type { PersonSpec, PresetSpec } from "./registry.ts";
 
 /**
@@ -153,3 +154,30 @@ export async function stageHarvest(
   }
 }
 
+/** One line of a chat log, as the door writes one. */
+export interface ChatLine {
+  at: string;
+  direction: "in" | "out";
+  from: string;
+  text: string;
+}
+
+/**
+ * Plant one line into this stage's chat log, exactly as the door appends one.
+ *
+ * Four checks wrote this out and the four copies were byte-identical, which is
+ * four places for the log's own shape to drift. The shape is phase 2's and is
+ * pinned by `chatLogFile`: one dated file per agent, one JSON object per line,
+ * dated by the LINE's own time in UTC.
+ */
+export function plantLine(stage: HarvestStage, line: ChatLine): ChatLine {
+  const file = chatLogFile({
+    stateDir: stage.hub.stateDir,
+    person: PERSON,
+    agent: AGENT,
+    at: new Date(line.at),
+  });
+  mkdirSync(dirname(file), { recursive: true });
+  appendFileSync(file, JSON.stringify(line) + "\n", "utf8");
+  return line;
+}

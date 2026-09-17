@@ -69,8 +69,6 @@ export function writeImprntShim(dir: string): string {
 export interface GatedImprnt {
   /** The path `hub.imprnt` names. */
   shim: string;
-  /** How many applies have reached the gate and not yet been let through. */
-  waiting(): number;
   /** The argv of each apply that reached the gate, in order. */
   seen(): string[];
   /** Let every apply through, the ones waiting and the ones still to come. */
@@ -115,7 +113,6 @@ export function writeGatedImprntShim(dir: string): GatedImprnt {
 
   return {
     shim,
-    waiting: () => (existsSync(join(gate, "go")) ? 0 : markers().length),
     seen: () => markers().sort(),
     open() {
       writeFileSync(join(gate, "go"), "go\n", "utf8");

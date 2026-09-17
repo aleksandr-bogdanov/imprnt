@@ -25,10 +25,10 @@
 // `src/runner/settle.ts` is on disk and does not carry it.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   lockTable,
   seam,
@@ -39,34 +39,20 @@ import {
   type HeldLock,
 } from "./helpers/cluster.ts";
 import { writeGatedImprntShim, type GatedImprnt } from "./helpers/imprnt-shim.ts";
-import { stageHarvest, type HarvestStage } from "./helpers/harvest-stage.ts";
-import { AGENT, PERSON, RUNNER, chatLogFile, insertInbound } from "./helpers/hub-fixture.ts";
+import {
+  plantLine,
+  stageHarvest,
+  type ChatLine,
+  type HarvestStage,
+} from "./helpers/harvest-stage.ts";
+import { slugOf } from "./helpers/scratch-vault.ts";
+import { AGENT, PERSON, RUNNER, insertInbound } from "./helpers/hub-fixture.ts";
 
 let cluster: Cluster;
 
 const SLOW = 120_000;
 /** Short, so a refused row's retry lands inside this check's own bound. */
 const RETRY_SECONDS = 2;
-
-interface ChatLine {
-  at: string;
-  direction: "in" | "out";
-  from: string;
-  text: string;
-}
-
-/**
- * The slug the CLI derives from an H1, computed by the TEST from the vault
- * contract's own rule, so the path a note lands at is one this check worked out
- * rather than one it was told.
- */
-function slugOf(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-}
 
 const FEE_TITLE = "Card fee rises in October";
 const LEASE_TITLE = "Lease notice period is two months";
@@ -113,26 +99,14 @@ function envelope(...notes: string[]): string {
   return notes.map((one) => `=== NOTE ===\n${one}\n=== END ===`).join("\n\n");
 }
 
-function plant(stage: HarvestStage, line: ChatLine): ChatLine {
-  const file = chatLogFile({
-    stateDir: stage.hub.stateDir,
-    person: PERSON,
-    agent: AGENT,
-    at: new Date(line.at),
-  });
-  mkdirSync(dirname(file), { recursive: true });
-  appendFileSync(file, JSON.stringify(line) + "\n", "utf8");
-  return line;
-}
-
 /** Four person lines, so `notes` and `lines` disagree on purpose. */
 function plantSlice(stage: HarvestStage, now: number): ChatLine[] {
   const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
   return [
-    plant(stage, { at: at(40), direction: "in", from: PERSON, text: "the bank raised the card fee" }),
-    plant(stage, { at: at(39), direction: "out", from: AGENT, text: "from nine to eleven, in October" }),
-    plant(stage, { at: at(38), direction: "in", from: PERSON, text: "and the lease notice is two months" }),
-    plant(stage, { at: at(37), direction: "in", from: PERSON, text: "before the renewal date" }),
+    plantLine(stage, { at: at(40), direction: "in", from: PERSON, text: "the bank raised the card fee" }),
+    plantLine(stage, { at: at(39), direction: "out", from: AGENT, text: "from nine to eleven, in October" }),
+    plantLine(stage, { at: at(38), direction: "in", from: PERSON, text: "and the lease notice is two months" }),
+    plantLine(stage, { at: at(37), direction: "in", from: PERSON, text: "before the renewal date" }),
   ];
 }
 
@@ -666,7 +640,7 @@ test(
         "utf8",
       );
       it.scripted.setAnswer(() => envelope(NOTE_FEE_DIFFERENT));
-      const later = plant(stage, {
+      const later = plantLine(stage, {
         at: new Date(now - 10 * 60_000).toISOString(),
         direction: "in",
         from: PERSON,

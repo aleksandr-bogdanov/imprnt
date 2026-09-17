@@ -741,6 +741,27 @@ export async function runRunner(options: {
       const staged = stageDirFor(stateDir, agent.person, row.id);
       const settings = harvestFor(registry, agent.person);
       const every = retrySeconds(registry);
+      /**
+       * D-156. Every way a harvest ends badly, in one place.
+       *
+       * The row goes back on its own recorded retry with a diary line that says
+       * `refused.harvest` and not `refused.outage`, so a household reading its
+       * own diary can tell a dead login from a note the vault would not take,
+       * and no outage is opened and no notice is written: the outage line says
+       * "Messages are waiting and nothing is lost", and that sentence is false
+       * when what is waiting is proactive work nobody asked for.
+       */
+      const refuse = async (said: string): Promise<void> => {
+        await refuseTurn(store, {
+          inboundId: row.id,
+          runner: options.runner,
+          agent: agent.id,
+          cause: "other",
+          said,
+          retryAt: new Date(Date.now() + every * 1000).toISOString(),
+          kind: "refused.harvest",
+        });
+      };
       let body: HarvestBody;
       try {
         body = decodeHarvestBody(row.body);
@@ -752,15 +773,7 @@ export async function runRunner(options: {
         // being answered because of a row nobody sent is the silence this phase
         // exists to close. `check`'s `harvest-stale` is the household-facing
         // half when it never clears.
-        await refuseTurn(store, {
-          inboundId: row.id,
-          runner: options.runner,
-          agent: agent.id,
-          cause: "other",
-          said: `this harvest row's body is not readable: ${(error as Error).message}`,
-          retryAt: new Date(Date.now() + every * 1000).toISOString(),
-          kind: "refused.harvest",
-        });
+        await refuse(`this harvest row's body is not readable: ${(error as Error).message}`);
         return;
       }
 
@@ -827,15 +840,7 @@ export async function runRunner(options: {
       // the household had already paid for a model turn. Zero model cost, and
       // the row comes back when the disk does.
       if (!existsSync(settings.vault)) {
-        await refuseTurn(store, {
-          inboundId: row.id,
-          runner: options.runner,
-          agent: agent.id,
-          cause: "other",
-          said: `no vault at ${settings.vault} on this machine`,
-          retryAt: new Date(Date.now() + every * 1000).toISOString(),
-          kind: "refused.harvest",
-        });
+        await refuse(`no vault at ${settings.vault} on this machine`);
         return;
       }
 
@@ -960,18 +965,6 @@ export async function runRunner(options: {
           runner: options.runner,
         });
       }
-
-      const refuse = async (said: string): Promise<void> => {
-        await refuseTurn(store, {
-          inboundId: row.id,
-          runner: options.runner,
-          agent: agent.id,
-          cause: "other",
-          said,
-          retryAt: new Date(Date.now() + every * 1000).toISOString(),
-          kind: "refused.harvest",
-        });
-      };
 
       // D-156. A refused harvest turn opens NO outage and writes NO notice.
       if (end.refused) {

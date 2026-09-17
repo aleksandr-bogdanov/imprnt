@@ -24,7 +24,6 @@ export interface ApplyResult {
   /** The line that classified it, or the whole output when none did. */
   said: string;
   exit: number;
-  /** The staged file this was about. */
   file: string;
 }
 
@@ -114,7 +113,6 @@ export function stageSlug(rowId: string): string {
   return rowId.replace(/[^A-Za-z0-9._-]/g, "-");
 }
 
-/** `<state_dir>/<person>/harvest/<stageSlug(rowId)>`. */
 export function stageDirFor(stateDir: string, person: string, rowId: string): string {
   return join(stateDir, person, "harvest", stageSlug(rowId));
 }

@@ -40,7 +40,7 @@ import {
   type ReadyProcess,
 } from "./helpers/cluster.ts";
 import { writeGatedImprntShim } from "./helpers/imprnt-shim.ts";
-import { scratchVault, type ScratchVault } from "./helpers/scratch-vault.ts";
+import { scratchVault, slugOf, type ScratchVault } from "./helpers/scratch-vault.ts";
 import { stageHarvest, type HarvestStage } from "./helpers/harvest-stage.ts";
 import { announceClock, clockGate, clockSuffix } from "./helpers/clock-gate.ts";
 import {
@@ -91,14 +91,6 @@ const RU_NOTHING = "[дверь] в этот раз сохранять нече�
 
 const FEE_TITLE = "Card fee rises in October";
 const LEASE_TITLE = "Lease notice period is two months";
-
-function slugOf(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-}
 
 const FEE_SLUG = `finances/${slugOf(FEE_TITLE)}`;
 const LEASE_SLUG = `life/${slugOf(LEASE_TITLE)}`;

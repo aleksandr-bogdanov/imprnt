@@ -216,13 +216,7 @@ test(
       // And removing the outage row left the harvest rows alone.
       expect(((await (readSheet as Function)(runner, HARVEST_SHEET)) as unknown[]).length).toBe(2);
     } finally {
-      const { closeStore } = await seam("src/store/connect.ts").catch(() => ({
-        closeStore: undefined,
-      }));
-      for (const one of opened) {
-        if (typeof closeStore === "function") await (closeStore as Function)(one).catch(() => {});
-        else await one.close().catch(() => {});
-      }
+      for (const one of opened) await one.close().catch(() => {});
       await it.stop();
     }
   },
