@@ -404,3 +404,14 @@ revoke all on function hub_door_notice(text, text, text, text, jsonb, integer) f
 grant execute on function hub_door_notice(text, text, text, text, jsonb, integer) to hub_door;
 
 insert into schema_version (version) values (2);
+
+create policy ledger_event_control_request on ledger_event
+  for insert to hub_door, hub_hub
+  with check (stream = 'control' and kind = 'recovery.requested'
+    and actor = case current_user when 'hub_door' then 'door' else 'hub' end);
+create policy ledger_event_control_applied on ledger_event
+  for insert to hub_runner, hub_hub
+  with check (stream = 'control' and kind in ('recovery.applied', 'recovery.refused')
+    and actor = case current_user when 'hub_runner' then 'runner' else 'hub' end);
+
+insert into schema_version (version) values (3);

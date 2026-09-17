@@ -1,16 +1,15 @@
+import { recordOperationFailure as recordFailure } from "../diagnostics.ts";
 import { appendEntry } from "../records/diary.ts";
 import { putRow, readSheet } from "../records/statesheet.ts";
 import { agentsFor, languageOf } from "../registry/entries.ts";
 import type { AgentEntry, Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
-import { chatUnreadable, deliveryFailed, deliveryUncertain, finding, type Language } from "./lines.ts";
+import { chatUnreadable, deliveryFailed, deliveryUncertain, type Language } from "./lines.ts";
 import { classifyPlatformError, prepareReply, type PlatformFailure } from "./reply.ts";
 
 export async function recordOperationFailure(store: StoreLike, operation: string, door: string, chat: string, failure: PlatformFailure, actor: "door" | "hub" = "door"): Promise<void> {
-  const target = `${door}/${chat}`;
-  process.stderr.write(finding("en", { code: failure.code, target, cause: failure.cause }) + "\n");
-  await appendEntry(store, { stream: actor === "hub" ? "machine" : "operation", subject: target, kind: "failed", actor,
-    detail: { operation, target, ...failure, at: new Date().toISOString() } });
+  await recordFailure(store, { operation, target: `${door}/${chat}`, actor,
+    error: { code: failure.code, message: [failure.cause, failure.detail].filter(Boolean).join(": ") } });
 }
 
 export async function doorHealth(store: StoreLike, door: string) {

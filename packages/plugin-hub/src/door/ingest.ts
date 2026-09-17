@@ -1,3 +1,6 @@
+import { appendChatLineOnce } from "../chatlog.ts";
+import { recordOperationFailure } from "../diagnostics.ts";
+import { requestRecovery } from "../hub/control.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import { encodeHarvestBody } from "../harvest/row.ts";
 import { readWatermark } from "../harvest/sheet.ts";
@@ -7,7 +10,7 @@ import { readSetting, type AgentEntry, type Registry } from "../registry/load.ts
 import type { StoreLike } from "../store/connect.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { writeCursor } from "./cursor.ts";
-import { emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
+import { controlUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
 import { saveMedia, type SavedMedia } from "./media.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
 
@@ -22,6 +25,30 @@ export async function acceptBatch(options: {
   for (const message of batch.messages) {
     if (message.chat !== agent.chat || !message.sender_id || !senderAllowed(registry, agent.person, door, message.sender_id)) continue;
     const sender = message.sender_id;
+    if (/^\/(recover|восстановить)(?:\s|$)/i.test(message.text)) {
+      const id = `recover:${inboundId(platform.name, message.chat, message.platform_message_id)}`;
+      await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id, at: message.at, direction: "in", from: message.from, text: message.text,
+      });
+      const target = message.text.trim().split(/\s+/);
+      let text = controlUsage(language);
+      if (target.length === 2) {
+        try {
+          await requestRecovery(store, { id, registry, source: "chat", actor: sender, sender_id: sender,
+            person: agent.person, door, chat: agent.chat, target_kind: "agent", target_id: target[1] });
+          text = recoveryAccepted(language, { target: target[1] });
+        } catch (error) {
+          if (!["invalid-recovery-target", "recovery-not-authorized"].includes((error as Error).message)) throw error;
+          text = recoveryRefused(language, { target: target[1], cause: "access denied" });
+        }
+      }
+      await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id: id + ":notice", at: message.at, direction: "out", from: door, text,
+      });
+      try { await platform.post({ chat: agent.chat, text }); }
+      catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
+      continue;
+    }
     const demand = isDemand(message.text);
     const id = (demand ? "harvest-demand:" : "") + inboundId(platform.name, message.chat, message.platform_message_id);
     const lines: string[] = [];

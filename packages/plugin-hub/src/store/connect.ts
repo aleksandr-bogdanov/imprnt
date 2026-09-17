@@ -54,7 +54,9 @@ const SAYS_OK_EARLY: [string, string[]][] = [
  * itself to the server there, the hub's advisory lock is held by that session,
  * and a waiting process still issues nothing at all.
  */
-const CONNECTIONS_PER_STORE = 8;
+// Keep concurrent statements separate while leaving room for doors, runners
+// and their notification connections in the same cluster.
+const CONNECTIONS_PER_STORE = 4;
 
 export async function openStore(options: { url: string }): Promise<Store> {
   const sql = new SQL(options.url, { max: CONNECTIONS_PER_STORE });

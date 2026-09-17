@@ -1,3 +1,4 @@
+import { userInfo } from "node:os";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { findingId, type Finding } from "./finding.ts";
 
@@ -12,6 +13,7 @@ import { findingId, type Finding } from "./finding.ts";
  * exists so the real box can be the extra control that produces neither.
  */
 export interface KernelView {
+  linger?: boolean;
   cmdline: string;        // the contents of the boot command line file, or the kernel's own line
   bootFile: string | null; // the boot file a household edits, or null where the box has none
   controllers: string[];  // the controllers the user slice delegates
@@ -98,12 +100,15 @@ export async function readKernelView(): Promise<KernelView | null> {
     ...bootCommandLine(),
     controllers: delegated(),
     earlyoom: earlyoomState(),
+    linger: existsSync(`/var/lib/systemd/linger/${userInfo().username}`),
   };
 }
 
 export function kernelFindings(view: KernelView | null, machine: string): Finding[] {
   if (!view) return [];
   const out: Finding[] = [];
+  if (view.linger === false) out.push({ id: findingId(machine, "user-linger"), kind: "user-linger", subject: machine, machine,
+    says: "user lingering is disabled", fix: "enable user lingering with loginctl enable-linger" });
   const words = ["cgroup_enable=memory", "cgroup_memory=1"];
   // The two words are a Raspberry Pi's way of switching the controller on, so
   // their absence is a finding only on a box that HAS the boot file they go in.

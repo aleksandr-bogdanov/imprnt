@@ -859,6 +859,7 @@ export async function serveAdapter(
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             streams.add(controller);
+            controller.enqueue(new TextEncoder().encode("\n"));
           },
         });
         return new Response(stream, {

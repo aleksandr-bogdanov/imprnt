@@ -12,6 +12,9 @@ const MIGRATIONS: Migration[] = [{
 }, {
   version: 2,
   sql: readFileSync(new URL("./migrations/002-door-health.sql", import.meta.url), "utf8"),
+}, {
+  version: 3,
+  sql: readFileSync(new URL("./migrations/003-control.sql", import.meta.url), "utf8"),
 }];
 
 /** DDL and its version commit together. A failed step can be retried unchanged. */

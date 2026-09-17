@@ -17,6 +17,7 @@ export interface PlatformFailure {
   kind: "permanent" | "transient" | "uncertain";
   code: string;
   cause: string;
+  detail?: string;
 }
 
 export function classifyPlatformError(error: unknown): PlatformFailure {
@@ -26,5 +27,5 @@ export function classifyPlatformError(error: unknown): PlatformFailure {
   const code = safeValue(data?.code ?? (status ? `http-${status}` : "platform-failed"));
   const detail = safeValue(data?.message ?? "operation failed");
   const cause = uncertain ? "delivery outcome unknown" : status === 403 ? "access denied" : status === 404 ? "chat missing" : status === 401 ? "login refused" : detail || "operation failed";
-  return { kind: uncertain ? "uncertain" : [400, 401, 403, 404].includes(status) ? "permanent" : "transient", code, cause };
+  return { kind: uncertain ? "uncertain" : [400, 401, 403, 404].includes(status) ? "permanent" : "transient", code, cause, detail };
 }

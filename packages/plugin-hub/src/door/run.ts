@@ -203,6 +203,13 @@ export async function runDoor(options: {
   });
 
   try {
+    // Only an explicit operator recovery releases terminal delivery failures.
+    // The door keeps its own delivery authority; the hub only restarts it.
+    await store.sql`update outbox set delivery_state='pending', attempts=0, retry_at=null, failure=null
+      where delivery_state='failed' and route->>'door'=${options.door}
+        and exists (select 1 from state_row where sheet='control'
+          and data->>'target_kind'='door' and data->>'target_id'=${options.door}
+          and data->>'status'='pending')`;
     const pending = await store.sql`select id from inbound where not log_ready and source->>'door' = ${options.door}`;
     for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id) });
     for (const agent of agentsFor(registry, { door: options.door })) {
@@ -285,14 +292,19 @@ export async function runDoor(options: {
       }
       try {
         const accepted = accepting.then(async () => {
-          cursor = await acceptBatch({ store, registry: registryThisTick(), stateDir,
-            door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor,
-            received(id) {
-              own.arrivals.push({ id, person: agent.person, agent: agent.id,
-                received_at: new Date(), state: "received", claimed_by: null });
-              own.arrived.wake();
-            },
-          });
+          // Keep acceptance and its cursor on one connection until the batch
+          // completes, separate from concurrent posting and clock reads.
+          const connection = await store.sql.reserve();
+          try {
+            cursor = await acceptBatch({ store: { ...store, sql: connection as unknown as Store["sql"] }, registry: registryThisTick(), stateDir,
+              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor,
+              received(id) {
+                own.arrivals.push({ id, person: agent.person, agent: agent.id,
+                  received_at: new Date(), state: "received", claimed_by: null });
+                own.arrived.wake();
+              },
+            });
+          } finally { connection.release(); }
         });
         accepting = accepted.catch(() => {});
         await accepted;

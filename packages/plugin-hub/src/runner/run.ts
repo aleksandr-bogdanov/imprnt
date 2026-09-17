@@ -1,3 +1,4 @@
+import { watchControls } from "../hub/control.ts";
 import { prepareReply } from "../door/reply.ts";
 import type { InboundSource } from "../store/inbound.ts";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -24,6 +25,7 @@ import {
   outageNotice,
   windowNotice,
   type Language,
+  finding,
   safeValue,
 } from "../door/lines.ts";
 import {
@@ -1376,6 +1378,7 @@ export async function runRunner(options: {
       retries.set(agent.id, Date.parse(retryAt));
       await writes;
       const cause = safeValue(`${(error as Error).name}: ${(error as Error).message}`);
+      process.stderr.write(finding("en", { code: "child-exit", target: agent.id, cause }) + "\n");
       await store.sql.begin(async tx => {
         const inside = { ...store, sql: tx as unknown as Store["sql"] };
         if (claimed) await clearProgress(inside, claimed);
@@ -1516,6 +1519,7 @@ export async function runRunner(options: {
   // startup work lands before anything that was waiting on it starts watching.
   await Promise.all([...live.values()].map((it) => it.serving));
 
+  const recovering = new Set<string>();
   const supervise = (async () => {
     while (!stopping) {
       await Promise.race([Bun.sleep(setting(first, "hub.tick_seconds") * 1000), stopped]);
@@ -1530,7 +1534,7 @@ export async function runRunner(options: {
       }
       try {
         const wanted = agentsFor(registry, { runner: options.runner });
-        for (const agent of wanted) if (!live.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
+        for (const agent of wanted) if (!live.has(agent.id) && !recovering.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
         for (const id of [...live.keys()]) {
           if (!wanted.some((agent) => agent.id === id)) await drop(id);
         }
@@ -1542,22 +1546,32 @@ export async function runRunner(options: {
   })();
 
   const recovered = new Set<string>();
-  return {
-    runner: options.runner,
-    async recoverAgent(request) {
-      if (recovered.has(request.id)) return;
-      const registry = loadRegistry(options.registryFile);
-      const agent = agentsFor(registry, { runner: options.runner }).find(one => one.id === request.agent);
-      if (!agent) throw new Error("unknown-agent");
-      recovered.add(request.id);
+  const recoverAgent = async (request: { id: string; agent: string }) => {
+    if (recovered.has(request.id)) return;
+    const registry = loadRegistry(options.registryFile);
+    const agent = agentsFor(registry, { runner: options.runner }).find(one => one.id === request.agent);
+    if (!agent) throw new Error("unknown-agent");
+    recovering.add(agent.id);
+    try {
       await drop(agent.id);
-      await store.sql`update inbound set claimed_by = null, claim_deadline = null where agent = ${agent.id} and claimed_by = ${options.runner}`;
+      await store.sql`update inbound set claimed_by = null, claim_deadline = null, retry_at = null
+        where agent = ${agent.id} and (claimed_by = ${options.runner} or claimed_by is null)
+          and state not in ('answered', 'delivered')`;
       retries.delete(agent.id);
       serve(agent);
-    },
+      recovered.add(request.id);
+    } finally { recovering.delete(agent.id); }
+  };
+  const controls = await watchControls(store, "runner", data => data.target_kind === "agent" &&
+    agentsFor(loadRegistry(options.registryFile), { runner: options.runner }).some(a => a.id === data.target_id),
+    async data => { await recoverAgent({ id: String(data.id), agent: String(data.target_id) }); });
+  return {
+    runner: options.runner,
+    recoverAgent,
     async stop() {
       stopping = true;
       release();
+      await controls.close();
       await supervise;
       await Promise.allSettled([...live.values()].map((it) => it.done));
       if (peakBytes > 0) await appendEntry(store, { stream: "memory", subject: options.runner,
