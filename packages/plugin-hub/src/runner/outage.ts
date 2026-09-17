@@ -185,3 +185,19 @@ export function readingStands(
   if (!window) return false;
   return window.resets_at === null || Date.parse(window.resets_at) > now.getTime();
 }
+
+/** Shared failures require evidence from the selected source. */
+export function classifyRefusal(input: {
+  credential: string;
+  refused: { cause: string };
+  evidence: unknown;
+  thresholds: WindowThresholds | null;
+}): { scope: "local" | "credential" } {
+  const evidence = input.evidence as Record<string, unknown> | null;
+  if (evidence?.credential !== input.credential) return { scope: "local" };
+  const login = input.refused.cause === "login" && evidence.kind === "authenticated-response" && evidence.status === 401;
+  const window = input.refused.cause === "window" && input.thresholds !== null && evidence.kind === "plan-window" &&
+    typeof evidence.utilization === "number" && Number.isFinite(evidence.utilization) &&
+    evidence.utilization * 100 >= input.thresholds!.hold_at;
+  return { scope: login || window ? "credential" : "local" };
+}

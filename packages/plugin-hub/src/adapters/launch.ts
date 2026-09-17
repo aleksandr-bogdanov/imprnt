@@ -106,7 +106,7 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   if (fragment) argv.push("--append-system-prompt-file", fragment);
   if (ordinary) argv.push("--dangerously-skip-permissions");
   else argv.push("--allowedTools", "Read,Glob,Grep");
-  return { ...boxed, argv, env };
+  return { ...boxed, argv, env, credentialId: credential.id };
 }
 
 /** Offline capability evidence; no real login or model request enters this probe. */

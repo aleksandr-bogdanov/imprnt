@@ -139,6 +139,9 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
   // other route to the same cause.
   let seen: TurnRefusal | null = null;
   let closed = false;
+  let terminal!: (cause: unknown) => void;
+  const exited = new Promise<unknown>(resolve => { terminal = resolve; });
+  void child.exited.then(code => terminal({ cause: "child-exited", code }));
   const resolved = new Set<string>();
   let primary: string | null = null;
 
@@ -250,7 +253,7 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
       if (event.error_status !== 401) return;
       refuse(
         { cause: "login", said: String(event.error ?? "authentication_failed") },
-        { ...event },
+        { ...event, evidence: { kind: "authenticated-response", status: 401, credential: options.credentialId } },
       );
       // Fire and forget, so the reader this is running inside is not held on a
       // process exit, and CAUGHT, because a fire-and-forget promise that
@@ -296,6 +299,9 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
         window,
         raw: {
           ...reported,
+          evidence: seen?.cause === "login" ? { kind: "authenticated-response", status: 401, credential: options.credentialId }
+            : event.is_error !== true ? { kind: "authenticated-response", status: 200, credential: options.credentialId }
+            : window ? { kind: "plan-window", utilization: window.utilization, credential: options.credentialId } : null,
           ...(modelUsage ? { modelUsage } : {}),
           num_turns: event.num_turns,
           result: event.result,
@@ -341,11 +347,14 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
         }
       }
     } catch {
-      // The loop went away, which is what closing it looks like from here.
+      terminal({ cause: "stream-failed" });
+    } finally {
+      terminal({ cause: "stream-ended" });
     }
   })();
 
   return {
+    exited,
     get sessionId() {
       return sessionId;
     },

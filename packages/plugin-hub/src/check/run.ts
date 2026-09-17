@@ -551,6 +551,12 @@ export async function runCheck(options: {
   }
 
   // --- the sheet: one row per finding id, and a fixed one leaves NO line ---
+  for (const row of await readSheet(options.store, "agent_health")) {
+    if (row.data.status !== "retry" || !listAgents(registry).some(agent => agent.id === row.id &&
+      runEntriesFor(registry, machine).some(entry => entry.id === agent.runner))) continue;
+    findings.push({ id: findingId(machine, "agent-retry", row.id), kind: "agent-retry", subject: row.id, machine,
+      fix: `imprnt hub recover <registry> agent:${row.id}`, says: findingLine("en", { code: "agent-retry", target: row.id, cause: String(row.data.cause ?? "task failed") }) });
+  }
   const standing = new Set(findings.map((finding) => finding.id));
   for (const finding of findings) {
     await putRow(options.store, CHECK_SHEET, finding.id, { ...finding });

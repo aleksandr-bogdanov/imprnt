@@ -25,7 +25,7 @@ export async function loopLaunch(input: LoopLaunchInput) {
     await probeLoopCapabilities();
     return makeLoopLaunch(input);
   }
-  if ([input.agent.fragment, input.agent.settings, input.agent.mcp, input.agent.tools, input.credential]
+  if ([input.agent.fragment, input.agent.settings, input.agent.mcp, input.agent.tools]
       .some(value => value !== undefined)) throw new Error("loop-configuration-unsupported");
   return input.box.tree ? sessionBox(input) : {};
 }

@@ -67,6 +67,8 @@ export interface TurnEnd {
 }
 
 export interface AdapterSession {
+  /** Legacy adapters may omit this; production process adapters always report it. */
+  readonly exited?: Promise<unknown>;
   readonly sessionId: string | null;
   /**
    * The process id of the child this loop is, when the hub has one to watch.
@@ -96,6 +98,7 @@ export interface Adapter {
   start(options: {
     preset: Preset;
     sessionId: string | null;
+    credentialId?: string;
     cwd?: string;
     argv?: string[];
     env?: Record<string, string | undefined>;

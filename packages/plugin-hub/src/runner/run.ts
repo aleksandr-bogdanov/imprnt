@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { adapterFor, loopLaunch } from "../adapters/index.ts";
 import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
@@ -13,6 +13,7 @@ import { readWatermark, watermarkRow } from "../harvest/sheet.ts";
 import { readSlice } from "../harvest/slice.ts";
 import { thisOs } from "../os/index.ts";
 import { appendEntry } from "../records/diary.ts";
+import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import { stamp } from "../records/stamps.ts";
 import {
   catchUpNotice,
@@ -21,9 +22,12 @@ import {
   outageNotice,
   windowNotice,
   type Language,
+  safeValue,
 } from "../door/lines.ts";
 import {
   agentsFor,
+  lifetimeFor,
+  runnerLimitsFor,
   filingRulesFor,
   harvestFor,
   languageOf,
@@ -44,9 +48,11 @@ import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
-import { writeProgress } from "./progress.ts";
+import { clearProgress, writeProgress } from "./progress.ts";
 import {
   clearOutage,
+  classifyRefusal,
+  readOutage,
   maxRankFor,
   noticeKey,
   openOutage,
@@ -67,6 +73,7 @@ import {
 export interface RunnerHandle {
   runner: string;
   stop(): Promise<void>;
+  recoverAgent(request: { id: string; agent: string }): Promise<void>;
 }
 
 /**
@@ -82,6 +89,7 @@ export interface RunnerHandle {
  */
 interface Live {
   agent: AgentEntry;
+  reserved: boolean;
   /** The loop the agent is talking to, for the memory watch to read and kill. */
   session: AdapterSession | null;
   /** The watch killed this child, so the next turn starts a new session first. */
@@ -308,6 +316,11 @@ async function launchFor(registry: Registry, agent: AgentEntry, presetName: stri
  * parenthesis, which is the only parse of that file that is not a guess.
  */
 function childrenOf(pid: number): number[] {
+  if (process.platform === "darwin") {
+    const result = Bun.spawnSync(["ps", "-axo", "pid=,ppid="], { stdout: "pipe", stderr: "ignore" });
+    return result.stdout.toString().trim().split("\n").map(line => line.trim().split(/\s+/).map(Number))
+      .filter(row => row[1] === pid).map(row => row[0]);
+  }
   try {
     const listed = readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim();
     if (listed !== "") {
@@ -392,21 +405,80 @@ export async function runRunner(options: {
     release = () => resolve("stopped");
   });
 
+  const retries = new Map<string, number>();
+  for (const row of await readSheet(store, "agent_health")) {
+    const due = Date.parse(String(row.data.retry_at));
+    if (Number.isFinite(due)) retries.set(row.id, due);
+  }
+  let reservations = 0;
+  let measuredBytes = 0;
+  let peakBytes = 0;
+  const capacity = new Set<() => void>();
+  const harvestSessions = new Map<AdapterSession, Live>();
+  const readings = new Map<AdapterSession, number>();
+  const capacityChanged = () => {
+    for (const wake of capacity) wake();
+    capacity.clear();
+  };
+  const releaseCapacity = () => {
+    reservations--;
+    measuredBytes = [...readings.values()].reduce((sum, bytes) => sum + bytes, 0);
+    capacityChanged();
+  };
+  const admitChild = async (registry: Registry, own: Live, reserve = true): Promise<boolean> => {
+    const entry = listRunEntries(registry).find(one => one.id === options.runner);
+    const limits = entry ? runnerLimitsFor(registry, options.runner) : { max_active_children: 4, child_memory_budget_mb: 2048 };
+    const limitMb = entry?.child_memory_limit_mb ?? limits.child_memory_budget_mb;
+    // Reserve the smaller per-child ceiling where possible; a ceiling equal
+    // to the fleet budget shares that budget across its declared slots. The
+    // monitor also enforces actual aggregate use, including descendants.
+    const reserveMb = limitMb < limits.child_memory_budget_mb ? limitMb : limits.child_memory_budget_mb / limits.max_active_children;
+    let recorded = false;
+    while (!stopping && !own.leaving) {
+      if (reservations < limits.max_active_children && Math.max(reservations * reserveMb, measuredBytes / 1048576) + reserveMb <= limits.child_memory_budget_mb) {
+        if (reserve) reservations++;
+        return true;
+      }
+      own.settle();
+      if (!recorded) {
+        recorded = true;
+        await appendEntry(store, { stream: "runner", subject: own.agent.id, kind: "admission.wait", actor: "runner",
+          detail: { cause: "admission", children: reservations, reserved_mb: reservations * reserveMb, peak_bytes: peakBytes } });
+        continue;
+      }
+      let wake!: () => void;
+      const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
+      try { await Promise.race([available, stopped, own.left]); }
+      finally { capacity.delete(wake); }
+    }
+    return false;
+  };
+  const failedSession = (session: AdapterSession): Promise<never> => session.exited
+    ? session.exited.then(exit => { throw new Error(safeValue((exit as { cause?: string })?.cause ?? "child-exited")); })
+    : new Promise<never>(() => {});
+  const preflight = (registry: Registry, agent: AgentEntry) => {
+    const entries = listRunEntries(registry);
+    if (entries.find(one => one.id === agent.door) && entries.find(one => one.id === agent.door)?.machine !== entries.find(one => one.id === agent.runner)?.machine)
+      throw new Error("agent-state-unavailable");
+    for (const path of [stateDir, join(stateDir, agent.person), join(stateDir, agent.person, "chatlog"), join(stateDir, agent.person, "chatlog", agent.id)]) {
+      try {
+        if (!statSync(path).isDirectory()) throw new Error("not a directory");
+        accessSync(path, constants.R_OK | constants.X_OK);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("agent-state-unavailable");
+      }
+    }
+  };
+
   const runAgent = async (agent: AgentEntry, own: Live): Promise<void> => {
     let startedWith = "";
+    let lastWork = Date.now();
+    let claimed: string | null = null;
+    let unhealthy = retries.has(agent.id);
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
     /** This agent stopped claiming because the household's window is used up. */
     let heldByWindow = false;
-    /**
-     * This agent has refused a turn or held its rows since its last success, so
-     * an outage may be standing. It is what keeps the clear off the hot path: a
-     * runner that has never met one issues no delete on a healthy turn.
-     */
-    let sawOutage = false;
-    /** The standing outage's own `since`, so a loser writes the same key. */
-    let outageSince = "";
-
     /** RUN-18. One notice per person, and never a second one for the same outage. */
     const sayOutage = async (
       registry: Registry,
@@ -438,38 +510,20 @@ export async function runRunner(options: {
      * count and the line it produces.
      */
     const sayCatchUp = async (registry: Registry, credential: string): Promise<void> => {
-      // The count comes first, then the clear, then the lines, and only then
-      // does the caller settle. Every runner that lived through the outage
-      // writes them, not only the one that won the delete: a loser that wrote
-      // nothing would settle its own reply into the chat BETWEEN the winner's
-      // delete and the winner's lines, and the person would read the answer
-      // above "it works again". The key is the same for all of them, so the
-      // second write lands nothing.
-      // A runner RESTARTED through the outage remembers nothing, so it counts
-      // after its own clear rather than before it and can report one too few
-      // (REVIEW's note). The runner that lived through the outage counts first
-      // and its line is the one that lands, so this is the rarer of two rare
-      // paths and it is named rather than hidden.
-      const waiting = sawOutage
-        ? await waitingPerPerson(store, registry, credential)
-        : null;
-      const cleared = await clearOutage(store, { credential });
-      // A runner that restarted through the outage remembers nothing, and the
-      // row it deletes here is how it finds out there was one at all.
-      const since = cleared?.since ?? (sawOutage ? outageSince : "");
-      if (!since) return;
-      const counts = waiting ?? (await waitingPerPerson(store, registry, credential));
-      for (const who of peopleOn(registry, credential)) {
-        await appendNotice(store, {
-          person: who.person,
-          agent: who.agent,
-          body: catchUpNotice(
-            languageOf(registry, who.person) as Language,
-            counts.get(who.person) ?? 0,
-          ),
-          noticeKey: noticeKey("outage-over", credential, since, who.person),
-        });
-      }
+      await store.sql.begin(async tx => {
+        const inside = { ...store, sql: tx as unknown as Store["sql"] };
+        const waiting = await waitingPerPerson(inside, registry, credential);
+        const cleared = await clearOutage(inside, { credential });
+        if (!cleared) return;
+        for (const who of peopleOn(registry, credential)) {
+          await appendNotice(inside, {
+            person: who.person,
+            agent: who.agent,
+            body: catchUpNotice(languageOf(registry, who.person) as Language, waiting.get(who.person) ?? 0),
+            noticeKey: noticeKey("outage-over", credential, cleared.since, who.person),
+          });
+        }
+      });
     };
 
     /** RUN-19. One line per person at the notice threshold, keyed on the reset. */
@@ -554,13 +608,13 @@ export async function runRunner(options: {
         finish,
       };
       const opened = turn;
-      await own.session!.feed(message);
+      await Promise.race([own.session!.feed(message), stopped, own.left, failedSession(own.session!)]);
       // The agent is SERVED from here: its session is up and it has been handed
       // the tail of its own log. What the loop answers to that tail can take as
       // long as a loop takes, and a runner that reported itself ready only
       // after it would be a runner a service manager waits on for a model.
       if (about.tail) own.settle();
-      const end = await Promise.race([ended, stopped, own.left]);
+      const end = await Promise.race([ended, stopped, own.left, failedSession(own.session!)]);
       turn = null;
       if (end === "stopped") return;
 
@@ -633,19 +687,10 @@ export async function runRunner(options: {
       // told once about the CAUSE rather than once about every message of
       // theirs that is waiting on it.
       if (end.refused) {
-        // THE NEXT TURN GETS A LOOP THAT IS THERE (REVIEW M1). The adapter ends
-        // a refused turn itself and closes the child, because no retry fixes a
-        // dead credential and this runner owns the retry clock (D-118). Without
-        // this line the handle the retry feeds is a handle onto a process that
-        // is gone: measured in bun 1.3.14, writing to a killed child's stdin
-        // returns normally and discards the bytes, so the second turn never
-        // ends, the await below it has no bound, and the agent's whole serving
-        // loop stops there. The household reads one notice and then hears
-        // nothing at all, which is the silence this phase is named after.
-        //
-        // `spawn` closes the old handle and clears this flag, so the retry
-        // starts a fresh session the way a changed preset already does.
-        own.killed = true;
+        // Shared login failures may have closed the child. Local refusals
+        // keep a usable session and never announce a credential outage.
+        const scope = classifyRefusal({ credential, refused: end.refused, evidence: end.usage.raw.evidence, thresholds });
+        own.killed = scope.scope === "credential";
         const every = retrySeconds(about.registry);
         const retryAt =
           end.refused.cause === "window" && reading?.resets_at
@@ -659,6 +704,11 @@ export async function runRunner(options: {
           said: end.refused.said,
           retryAt,
         });
+        if (scope.scope === "local") {
+          unhealthy = true;
+          await putRow(store, "agent_health", agent.id, { status: "retry", cause: safeValue(end.refused.said), retry_at: retryAt });
+          return;
+        }
         const standing = await openOutage(store, {
           credential,
           cause: end.refused.cause,
@@ -666,8 +716,6 @@ export async function runRunner(options: {
           runner: options.runner,
           retryAt,
         });
-        sawOutage = true;
-        outageSince = standing.since;
         await sayOutage(about.registry, credential, standing);
         return;
       }
@@ -679,15 +727,16 @@ export async function runRunner(options: {
       // it before the settling transaction removes the row.
       if (opened.started) await writeProgress(store, progressOf(opened));
 
-      // It works again. The catch-up goes in BEFORE the reply, so a person
-      // reads "it stopped", then "it works again", then their answers. It is
-      // asked on EVERY successful turn and not only when this runner remembers
-      // an outage, because a runner restarted through one remembers nothing and
-      // would otherwise leave the row standing and the household never told.
-      await sayCatchUp(about.registry, credential);
-      sawOutage = false;
-      outageSince = "";
+      // Clear only with recovery evidence from this turn's selected source.
+      const outage = await readOutage(store, credential);
+      const evidence = end.usage.raw.evidence as Record<string, unknown> | undefined;
+      const authenticated = evidence?.kind === "authenticated-response" && evidence.credential === credential &&
+        typeof evidence.status === "number" && evidence.status >= 200 && evidence.status < 300;
+      if (outage && (outage.cause === "window" ? reading && thresholds && reading.utilization * 100 < thresholds.hold_at : authenticated)) {
+        await sayCatchUp(about.registry, credential);
+      }
 
+      if (unhealthy) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
       await settleTurn(store, {
         inboundId: message.id,
         chunks: [end.text],
@@ -892,6 +941,8 @@ export async function runRunner(options: {
       const session = await adapterFor(options.adapters, harvester.adapter).start({
         ...launch, preset: harvester, sessionId: null,
       });
+      harvestSessions.set(session, own);
+      capacityChanged();
       let end: TurnEnd | "stopped";
       try {
         let finish: (ending: TurnEnd) => void = () => {};
@@ -902,12 +953,14 @@ export async function runRunner(options: {
         // `answered`, so there is nothing for a receipt or a progress event to
         // do (D-155).
         session.onTurnEnd((ending) => finish(ending));
-        await session.feed({
+        await Promise.race([session.feed({
           id: row.id,
           text: harvestMessage({ language, lines, filingRules, vault: settings.vault }),
-        });
-        end = await Promise.race([ended, stopped, own.left]);
+        }), stopped, own.left, failedSession(session)]);
+        end = await Promise.race([ended, stopped, own.left, failedSession(session)]);
       } finally {
+        harvestSessions.delete(session);
+        readings.delete(session);
         await session.close().catch(() => {});
       }
       if (end === "stopped") return;
@@ -1024,8 +1077,9 @@ export async function runRunner(options: {
     };
 
     const spawn = async (preset: Preset, registry: Registry): Promise<void> => {
+      preflight(registry, agent);
       const adapter = adapterFor(options.adapters, preset.adapter);
-      if (own.session) await own.session.close().catch(() => {});
+      if (own.session) { readings.delete(own.session); await own.session.close().catch(() => {}); }
       const launch = await launchFor(registry, agent, agent.preset, "ordinary");
       own.session = await adapter.start({
         preset,
@@ -1093,7 +1147,13 @@ export async function runRunner(options: {
       // already exists. Opened after the read, that notification is emitted to
       // nobody and the row waits for the tick.
       waiter = await openWorkWaiter(store, { agent: agent.id });
-      await spawn(getPreset(first, agent.preset), first);
+      const initial = loadRegistry(options.registryFile);
+      preflight(initial, agent);
+      if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping) {
+        if (!await admitChild(initial, own)) return;
+        own.reserved = true;
+        await spawn(getPreset(initial, agent.preset), initial);
+      }
       // An agent whose log had no tail to feed is served the moment its session
       // is up, and this is where that one settles.
       own.settle();
@@ -1124,6 +1184,18 @@ export async function runRunner(options: {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
         const registry = loadRegistry(options.registryFile);
+        agent = listAgents(registry).find(one => one.id === agent.id) ?? agent;
+        const lifetime = lifetimeFor(registry, agent.id);
+        if (own.session && (lifetime.sleeping || lifetime.mode === "on-demand" && Date.now() - lastWork >= lifetime.idle_seconds * 1000)) {
+          readings.delete(own.session);
+          await own.session.close();
+          own.session = null;
+          if (own.reserved) { own.reserved = false; releaseCapacity(); }
+        }
+        if (lifetime.sleeping) {
+          await Promise.race([Bun.sleep(setting(registry, "hub.tick_seconds") * 1000), stopped, own.left]);
+          continue;
+        }
         const sleep = async (): Promise<void> => {
           await Promise.race([
             waiter!
@@ -1131,6 +1203,7 @@ export async function runRunner(options: {
               .catch(() => "timeout" as const),
             stopped,
             own.left,
+            ...(own.session && !own.killed ? [failedSession(own.session)] : []),
           ]);
         };
 
@@ -1150,7 +1223,6 @@ export async function runRunner(options: {
               window?.resets_at ?? new Date(Date.now() + every * 1000).toISOString();
             if (!heldByWindow) {
               heldByWindow = true;
-              sawOutage = true;
               const standing = await openOutage(store, {
                 credential,
                 cause: "window",
@@ -1158,7 +1230,6 @@ export async function runRunner(options: {
                 runner: options.runner,
                 retryAt: until,
               });
-              outageSince = standing.since;
               await sayOutage(registry, credential, standing);
             }
             // A row that arrived during the hold is put on the same reset, and
@@ -1176,11 +1247,37 @@ export async function runRunner(options: {
             // this claim is about to let through, reporting a fresh one.
             if (readingStands(window)) {
               await sayCatchUp(registry, credential);
-              sawOutage = false;
             }
           }
         }
 
+        if (!own.reserved && !await admitChild(registry, own, false)) break;
+        const residentHarvest = agentsFor(registry, { runner: options.runner })
+          .filter(one => lifetimeFor(registry, one.id).mode === "resident" && !lifetimeFor(registry, one.id).sleeping)
+          .map(one => one.id);
+        const [next] = await store.sql`select kind, exists (
+          select 1 from inbound h where h.agent in (select jsonb_array_elements_text(${JSON.stringify(residentHarvest)}::text::jsonb)) and h.kind = 'harvest'
+            and h.log_ready and h.state not in ('answered', 'delivered') and h.claimed_by is null
+            and (h.retry_at is null or h.retry_at <= now())
+        ) as harvest_waiting from inbound where agent = ${agent.id}
+          and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
+          and (retry_at is null or retry_at <= now())
+          order by rank, received_at, id limit 1`;
+        // Give an already waiting resident harvest its extra child before a
+        // cold session. Capacity release, rather than a queue poll, wakes us.
+        if (next && next.kind !== "harvest" && next.harvest_waiting && !own.session) {
+          let wake!: () => void;
+          const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
+          try { await Promise.race([available, stopped, own.left]); }
+          finally { capacity.delete(wake); }
+          continue;
+        }
+        if (next && !own.reserved) {
+          if (!await admitChild(registry, own)) break;
+          own.reserved = true;
+        }
+        const extra = next?.kind === "harvest" && own.session !== null;
+        if (extra && !await admitChild(registry, own)) break;
         const row = await claimNext(store, {
           runner: options.runner,
           agent: agent.id,
@@ -1188,6 +1285,8 @@ export async function runRunner(options: {
           maxRank,
         });
         if (!row) {
+          if (extra) releaseCapacity();
+          if (!own.session && own.reserved) { own.reserved = false; releaseCapacity(); }
           await sleep();
           continue;
         }
@@ -1198,6 +1297,7 @@ export async function runRunner(options: {
         // machinery exists to keep, and pay the tail's tokens again every quiet
         // period. `claimNext`'s `returning` already carries the kind, so the
         // branch costs no read.
+        claimed = row.id;
         if (row.kind === "harvest") {
           // REVIEW M1. NOTHING A HARVEST DOES LEAVES THIS LOOP. `Bun.spawn`
           // throws SYNCHRONOUSLY on a command it cannot find (measured, bun
@@ -1228,6 +1328,10 @@ export async function runRunner(options: {
               ).toISOString(),
               kind: "refused.harvest",
             });
+          } finally {
+            claimed = null;
+            if (extra) releaseCapacity();
+            else if (!own.session && own.reserved) { own.reserved = false; releaseCapacity(); }
           }
           continue;
         }
@@ -1235,55 +1339,41 @@ export async function runRunner(options: {
         // A session carries the preset it was started with, so a changed one is
         // a new child, and so is one whose child the memory watch killed. The
         // runner process itself never restarts for either.
-        if (presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
+        if (!own.session || presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
         await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry });
+        claimed = null;
+        lastWork = Date.now();
       }
     } catch (error) {
       if (stopping || own.leaving) return;
-      // Loud, never a silent wait: a household that hears nothing all day has no
-      // way to tell a quiet agent from a broken one.
-      await appendEntry(store, {
-        stream: "refusal",
-        subject: agent.id,
-        kind: "refused.turn",
-        actor: "runner",
-        detail: {
-          adapter: (error as { adapter?: string }).adapter ?? null,
-          agent: agent.id,
-          error: `${(error as Error).name}: ${(error as Error).message}`,
-        },
+      const registry = loadRegistry(options.registryFile);
+      const retryAt = new Date(Date.now() + Number(readSetting(registry, "runner.task_retry_seconds") ?? 30) * 1000).toISOString();
+      retries.set(agent.id, Date.parse(retryAt));
+      await writes;
+      const cause = safeValue(`${(error as Error).name}: ${(error as Error).message}`);
+      await store.sql.begin(async tx => {
+        const inside = { ...store, sql: tx as unknown as Store["sql"] };
+        if (claimed) await clearProgress(inside, claimed);
+        await tx`update inbound set claimed_by = null, claim_deadline = null, retry_at = ${retryAt}::timestamptz
+          where agent = ${agent.id} and claimed_by = ${options.runner} and state not in ('answered', 'delivered')`;
+        await putRow(inside, "agent_health", agent.id, { status: "retry", cause, retry_at: retryAt });
+        await appendEntry(inside, { stream: "refusal", subject: agent.id, kind: "refused.turn", actor: "runner",
+          detail: { agent: agent.id, error: cause, retry_at: retryAt } });
       });
     } finally {
+      turn = null;
+      await writes;
+      if (claimed && own.leaving) await clearProgress(store, claimed);
       own.settle();
       if (waiter) await waiter.close();
-      const session = own.session;
+      if (own.session) { readings.delete(own.session); await own.session.close().catch(() => {}); }
       own.session = null;
-      if (session) {
-        if (stopping) {
-          await session.close().catch(() => {});
-        } else {
-          // The agent left the FILE while this runner kept running, which is
-          // RUN-09's routine operation and not a shutdown. A loop host shares
-          // state across the sessions it is serving, so closing one of them
-          // mid-life can disturb the agents that are still being served. What
-          // this agent owned exclusively is its child, and that is released
-          // here. The session handle itself is closed when the runner stops.
-          if (session.pid && session.pid > 0) {
-            try {
-              process.kill(session.pid, 9);
-            } catch {
-              // It went away on its own, which is the same outcome.
-            }
-          }
-          retired.push(session);
-        }
-      }
+      if (own.reserved) { own.reserved = false; releaseCapacity(); }
+      if (live.get(agent.id) === own) live.delete(agent.id);
     }
   };
 
   const live = new Map<string, Live>();
-  /** Sessions of agents that left the file. Closed when the runner stops. */
-  const retired: AdapterSession[] = [];
 
   const serve = (agent: AgentEntry): void => {
     let release: () => void = () => {};
@@ -1296,6 +1386,7 @@ export async function runRunner(options: {
     });
     const it: Live = {
       agent,
+      reserved: false,
       session: null,
       killed: false,
       boxed: false,
@@ -1330,23 +1421,16 @@ export async function runRunner(options: {
    * through the OS seam, which converts kilobytes to bytes at its own edge. It
    * touches no table, so a runner that is waiting still issues nothing.
    *
-   * A BOXED AGENT ON LINUX IS READ THROUGH ITS BOX. The pid the adapter hands
-   * up is `bwrap`'s and the loop is under it, so the reading is the largest of
-   * the wrapper and every process below it: a wrapper with nothing under it yet
-   * is still its own reading, so a loop that has not started is watched rather
-   * than skipped. The largest rather than the sum, because the limit is the one
-   * the unboxed path reads, a single process's resident size, and the box tool
-   * and its reaper are a megabyte between them. macOS is untouched: there
-   * `sandbox-exec` execs in place and the pid the runner holds IS the loop's
-   * (BUILD-NOTES 5), and an unboxed agent is untouched on both, so what the
-   * watch reads for the loops the checks exercise is the same number it was.
+   * Every descendant contributes to the limit on both supported platforms.
    */
   const watchChildren = async (registry: Registry): Promise<void> => {
     const own = listRunEntries(registry).find((entry) => entry.id === options.runner);
     const limitMb = own?.child_memory_limit_mb;
     if (!limitMb || limitMb <= 0) return;
-    for (const it of live.values()) {
-      const pid = it.session?.pid ?? null;
+    measuredBytes = 0;
+    for (const it of [...live.values(), ...[...harvestSessions].map(([session, owner]) => ({ ...owner, session, killed: false }))]) {
+      const session = it.session;
+      const pid = session?.pid ?? null;
       // A hosted loop has no local child for this hub to watch, and a child
       // already killed is not killed twice.
       if (!pid || pid <= 0 || it.killed) continue;
@@ -1356,20 +1440,26 @@ export async function runRunner(options: {
       } catch {
         continue;
       }
-      if (it.boxed && process.platform === "linux") {
+      {
         for (const under of descendantsOf(pid)) {
           try {
             const reading = (await os.memory(under)).current_bytes;
-            if (reading > bytes) bytes = reading;
+            bytes += reading;
           } catch {
             // It left while the tree was being read, and a process that is
             // gone is using nothing.
           }
         }
       }
-      if (bytes <= limitMb * 1024 * 1024) continue;
+      if (it.session !== session) continue;
+      readings.set(session!, bytes);
+      measuredBytes += bytes;
+      peakBytes = Math.max(peakBytes, measuredBytes);
+      const budgetMb = own?.child_memory_budget_mb ?? 2048;
+      if (bytes <= limitMb * 1024 * 1024 && measuredBytes <= budgetMb * 1024 * 1024) continue;
       it.killed = true;
       try {
+        for (const child of descendantsOf(pid).reverse()) { try { process.kill(child, 9); } catch {} }
         process.kill(pid, 9);
       } catch {
         // It went away between the reading and the signal, which is the same
@@ -1384,6 +1474,8 @@ export async function runRunner(options: {
           agent: it.agent.id,
           pid,
           reading_bytes: bytes,
+          peak_bytes: peakBytes,
+          aggregate_bytes: measuredBytes,
           limit_mb: limitMb,
           runner: options.runner,
         },
@@ -1391,7 +1483,9 @@ export async function runRunner(options: {
     }
   };
 
-  for (const agent of agentsFor(first, { runner: options.runner })) serve(agent);
+  for (const agent of agentsFor(first, { runner: options.runner })) {
+    if (Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
+  }
   // Ready means SERVING, so a caller that is handed this runner is handed one
   // whose agents are up and fed rather than one that is still starting, and its
   // startup work lands before anything that was waiting on it starts watching.
@@ -1411,7 +1505,7 @@ export async function runRunner(options: {
       }
       try {
         const wanted = agentsFor(registry, { runner: options.runner });
-        for (const agent of wanted) if (!live.has(agent.id)) serve(agent);
+        for (const agent of wanted) if (!live.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
         for (const id of [...live.keys()]) {
           if (!wanted.some((agent) => agent.id === id)) await drop(id);
         }
@@ -1422,14 +1516,27 @@ export async function runRunner(options: {
     }
   })();
 
+  const recovered = new Set<string>();
   return {
     runner: options.runner,
+    async recoverAgent(request) {
+      if (recovered.has(request.id)) return;
+      const registry = loadRegistry(options.registryFile);
+      const agent = agentsFor(registry, { runner: options.runner }).find(one => one.id === request.agent);
+      if (!agent) throw new Error("unknown-agent");
+      recovered.add(request.id);
+      await drop(agent.id);
+      await store.sql`update inbound set claimed_by = null, claim_deadline = null where agent = ${agent.id} and claimed_by = ${options.runner}`;
+      retries.delete(agent.id);
+      serve(agent);
+    },
     async stop() {
       stopping = true;
       release();
       await supervise;
       await Promise.allSettled([...live.values()].map((it) => it.done));
-      for (const session of retired) await session.close().catch(() => {});
+      if (peakBytes > 0) await appendEntry(store, { stream: "memory", subject: options.runner,
+        kind: "peak.children", actor: "runner", detail: { peak_bytes: peakBytes } });
       await store.close();
     },
   };
