@@ -5,7 +5,7 @@ import type { InboundSource } from "../store/inbound.ts";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { adapterFor, loopLaunch } from "../adapters/index.ts";
-import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
+import { AdapterMissing, type Adapter, type AdapterSession, type TurnEnd } from "../adapters/types.ts";
 import { credentialSource } from "../adapters/launch.ts";
 import { boxContextFor } from "../box/index.ts";
 import { readTail } from "../chatlog.ts";
@@ -1062,7 +1062,8 @@ export async function runRunner(options: {
           where agent = ${agent.id} and claimed_by = ${options.runner} and state not in ('answered', 'delivered')`;
         await putRow(inside, "agent_health", agent.id, { status: "retry", cause, retry_at: retryAt });
         await appendEntry(inside, { stream: "refusal", subject: agent.id, kind: "refused.turn", actor: "runner",
-          detail: { agent: agent.id, error: cause, retry_at: retryAt } });
+          detail: { agent: agent.id, error: cause, retry_at: retryAt,
+            ...(error instanceof AdapterMissing ? { adapter: safeValue(error.adapter) } : {}) } });
       });
     } finally {
       turn = null;

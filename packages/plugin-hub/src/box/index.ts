@@ -167,7 +167,7 @@ function profileText(ctx: BoxContext): string {
     if (path) lines.push(`(deny file-write* (subpath ${JSON.stringify(path)}))`);
   }
   if (ctx.sessionDir) lines.push(`(allow file-read* file-write* (subpath ${JSON.stringify(ctx.sessionDir)}))`);
-  for (const tree of [...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])]) {
+  for (const tree of new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])) {
     lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(tree)}))`);
   }
   return `${lines.join("\n")}\n`;
@@ -217,7 +217,7 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
           .filter((path): path is string => Boolean(path) && existsSync(path!))
           .flatMap(path => ["--ro-bind", path, path]),
         ...(ctx.sessionDir ? ["--bind", ctx.sessionDir, ctx.sessionDir] : []),
-        ...[...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])]
+        ...[...new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])]
           .flatMap(tree => ["--tmpfs", tree]),
         "--",
         ...argv,
