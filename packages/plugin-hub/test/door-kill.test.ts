@@ -38,6 +38,7 @@
 //
 // Red reason: import missing, src/door/run.ts.
 
+import { stageHub } from "./helpers/authorized-registry.ts";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
   startCluster,
@@ -58,7 +59,6 @@ import {
   PERSON,
   RUNNER,
   chatLogLines,
-  stageHub,
 } from "./helpers/hub-fixture.ts";
 
 let cluster: Cluster;

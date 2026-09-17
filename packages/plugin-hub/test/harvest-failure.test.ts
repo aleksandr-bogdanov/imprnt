@@ -33,6 +33,7 @@
 // THE LOOP IS SCRIPTED AND THE FILING IS REAL, the same split every phase 5
 // check is built on.
 
+import { authorizeFixture } from "./helpers/authorized-registry.ts";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -130,6 +131,7 @@ test(
       shim: nowhere,
     });
     const it = stage.hub;
+    authorizeFixture(it.registryFile);
     let runner: { stop(): Promise<void> } | null = null;
     try {
       const now = Date.now();
@@ -251,6 +253,7 @@ test.skipIf(!GATE_M2.ok)(
       ],
     });
     const it = stage.hub;
+    authorizeFixture(it.registryFile);
     let runner: { stop(): Promise<void> } | null = null;
     let door: { stop(): Promise<void> } | null = null;
     try {
@@ -386,6 +389,7 @@ test(
       harvest: { quiet_minutes: 600, min_messages: 99, report: false },
     });
     const it = stage.hub;
+    authorizeFixture(it.registryFile);
     let store: Awaited<ReturnType<typeof superStore>> | null = null;
     try {
       await insertInbound(cluster, it.db, { id: "m-human", body: "a human message" });

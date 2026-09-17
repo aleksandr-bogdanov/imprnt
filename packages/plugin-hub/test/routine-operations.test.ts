@@ -30,6 +30,7 @@
 // is neither pulled nor served without a restart. Check 10 import missing,
 // `src/hub/run.ts`.
 
+import { writeRegistry, stageHub } from "./helpers/authorized-registry.ts";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { readdirSync } from "node:fs";
 import {
@@ -56,11 +57,9 @@ import {
   RUNNER,
   insertInbound,
   plantChatLine,
-  stageHub,
   startHub,
 } from "./helpers/hub-fixture.ts";
 import {
-  writeRegistry,
   type AgentSpec,
   type PersonSpec,
   type RegistrySpec,

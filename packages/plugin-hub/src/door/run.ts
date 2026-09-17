@@ -12,10 +12,10 @@ import {
   type HarvestBody,
 } from "../harvest/row.ts";
 import { readWatermark, type Watermark } from "../harvest/sheet.ts";
-import { newestLine, readSlice } from "../harvest/slice.ts";
+import { isDemand, newestLine, readSlice } from "../harvest/slice.ts";
 import { stamp } from "../records/stamps.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
-import { agentsFor, harvestFor, languageOf, thresholdsFor } from "../registry/entries.ts";
+import { agentsFor, harvestFor, languageOf, senderAllowed, thresholdsFor } from "../registry/entries.ts";
 import {
   loadRegistry,
   readSetting,
@@ -25,7 +25,7 @@ import {
 import { getPreset } from "../registry/presets.ts";
 import { TURN_PROGRESS_SHEET, type ProgressRow } from "../runner/progress.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
-import { enqueueInbound } from "../store/inbound.ts";
+import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
 import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
 import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
@@ -275,7 +275,9 @@ export async function runDoor(options: {
     let capturing = activate && cursor === null;
     let first = true;
     while (!stopping && !own.leaving && !own.rebinding) {
-      const fresh = registryThisTick();
+      let fresh: Registry;
+      try { fresh = registryThisTick(); }
+      catch { fresh = parsedRegistry ?? registry; }
       const seconds = Number(readSetting(fresh, "door.read_retry_seconds"));
       const retry = Date.parse(String(health.health.get(agent.chat)?.retry_at ?? ""));
       if (retry > Date.now()) await Promise.race([Bun.sleep(retry - Date.now()), stopped, own.left]);
@@ -311,11 +313,26 @@ export async function runDoor(options: {
       }
       try {
         const accepted = accepting.then(async () => {
+          let current: Registry;
+          try { current = registryThisTick(); }
+          catch (error) {
+            // Preserve an authorized demand's diary during an incomplete save.
+            // Execution and acknowledgement still wait for a valid registry.
+            for (const message of pulled.batch.messages) {
+              if (message.chat !== agent.chat || !message.sender_id || !isDemand(message.text) ||
+                  !senderAllowed(fresh, agent.person, options.door, message.sender_id)) continue;
+              await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+                id: "harvest-demand:" + inboundId(options.platform.name, message.chat, message.platform_message_id),
+                at: message.at, direction: "in", from: message.from, text: message.text,
+              });
+            }
+            throw error;
+          }
           // Keep acceptance and its cursor on one connection until the batch
           // completes, separate from concurrent posting and clock reads.
           const connection = await ingress.sql.reserve();
           try {
-            cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: registryThisTick(), stateDir,
+            cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: current, stateDir,
               door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor,
               received(id) {
                 own.arrivals.push({ id, person: agent.person, agent: agent.id,
@@ -415,16 +432,20 @@ export async function runDoor(options: {
       }
     };
     const waiter = await openOutboxWaiter(store, { person: agent.person });
+    const attempt = async () => {
+      try { await deliver(); }
+      catch { retryAt = Date.now() + timeoutMs; }
+    };
     try {
       await healthReady;
-      await deliver();
+      await attempt();
       while (!stopping && !own.leaving) {
         const why = await Promise.race([
           waiter.wait(retryAt === null ? timeoutMs : Math.max(1, retryAt - Date.now())).catch(() => "timeout" as const),
           stopped, own.left,
         ]);
         if (why === "stopped" || stopping || own.leaving) return;
-        if (why === "notified" || retryAt !== null && retryAt <= Date.now()) await deliver();
+        if (why === "notified" || retryAt !== null && retryAt <= Date.now()) await attempt();
       }
     } finally { await waiter.close(); }
   };

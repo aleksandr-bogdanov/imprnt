@@ -30,6 +30,7 @@
 // Nothing here waits out a real quiet period and nothing waits for midnight:
 // every line is planted with a chosen `at` in the past.
 
+import { authorizeFixture } from "./helpers/authorized-registry.ts";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { seam, startCluster, until, type Cluster } from "./helpers/cluster.ts";
@@ -130,6 +131,7 @@ test.skipIf(!GATE_M3.ok)(
       harvest: { quiet_minutes: 600, min_messages: 99, report: false },
     });
     const it = stage.hub;
+    authorizeFixture(it.registryFile);
     let door: { stop(): Promise<void> } | null = null;
     // NO RUNNER: this check is about the door alone, and a runner would settle
     // the row and change what is on the table while the check is reading it.

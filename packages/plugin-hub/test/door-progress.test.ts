@@ -21,6 +21,7 @@
 // Red reason: import missing, `src/runner/progress.ts`, and export missing,
 // `Platform.edit` and `post`'s id.
 
+import { stageHub } from "./helpers/authorized-registry.ts";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { startCluster, seam, until, type Cluster } from "./helpers/cluster.ts";
 import {
@@ -30,7 +31,6 @@ import {
   PERSON,
   RUNNER,
   chatLogLines,
-  stageHub,
 } from "./helpers/hub-fixture.ts";
 
 let cluster: Cluster;

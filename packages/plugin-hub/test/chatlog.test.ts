@@ -15,6 +15,7 @@
 //
 // Red reason: import missing, src/chatlog.ts.
 
+import { stageHub } from "./helpers/authorized-registry.ts";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { existsSync } from "node:fs";
 import { startCluster, seam, until, type Cluster } from "./helpers/cluster.ts";
@@ -31,7 +32,6 @@ import {
   chatLogRawLines,
   outLineOnDisk,
   plantChatLine,
-  stageHub,
 } from "./helpers/hub-fixture.ts";
 
 let cluster: Cluster;
