@@ -79,7 +79,7 @@ for (const mode of ["complete", "refused-resume", "conflict", "outside-inventory
       ordering(await at())
       expect(await at()).toBeNull()
       // Firing the watermark write before the held apply is a scoped defect.
-      await h.hub.read.sql("insert into state_row (sheet, id, data) values ('harvest', 'p2/p2-lair', $1)", [JSON.stringify({ at: until })])
+      await h.hub.read.sql("insert into state_row (sheet, id, data) values ('harvest', 'p2/p2-lair', $1)", [{ at: until }])
       expect(() => ordering(until)).toThrow()
       const premature = await at()
       expect(() => ordering(premature)).toThrow()

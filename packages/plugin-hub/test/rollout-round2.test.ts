@@ -242,6 +242,7 @@ for (const script of ["convert-v2-chatlog", "convert-v2-registry", "handoff-v2",
       // Telegram-only conversion needs no authenticated channel lookup.
       const manifest = { ...f.registryManifest, source_registries: [f.sources[1].file], expected_agents: ["p2-lair"], bindings: [f.registryManifest.bindings[1]], people: [f.registryManifest.people[1]], repositories: [f.registryManifest.repositories[1]], checkout_root: join(f.dir, "checkout") }
       mkdirSync(manifest.checkout_root)
+      manifest.credentials = manifest.credentials.map((credential: any) => credential.id === "loop-login" ? { ...credential, owner: "household" } : credential)
       const file = privateJson(join(f.dir, "manifest.json"), manifest)
       expect(invoke([file]).exitCode).toBe(0)
       expect(JSON.parse(readFileSync(manifest.inventory, "utf8")).agents.map((a: any) => a.id)).toEqual(["p2-lair"])

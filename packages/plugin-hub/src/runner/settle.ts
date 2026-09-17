@@ -67,7 +67,7 @@ export interface TurnRecord {
  */
 export async function settleTurn(
   store: StoreLike,
-  turn: { inboundId: string; chunks: string[]; turn: TurnRecord; person?: string; source?: InboundSource | null },
+  turn: { inboundId: string; chunks: string[]; turn: TurnRecord; person?: string; source?: InboundSource | null; imported?: Record<string, unknown>; receipts?: ({ at: string } | null)[] },
 ): Promise<void> {
   await store.sql.begin(async (tx) => {
     const inside = { ...store, sql: tx as unknown as StoreLike["sql"] };
@@ -83,7 +83,13 @@ export async function settleTurn(
         noticeKey: `media:${turn.inboundId}:${key}`,
         route: { door: turn.source!.door, chat: turn.source!.chat } });
     }
-    await appendChunks(inside, turn.inboundId, turn.chunks);
+    if (turn.imported) {
+      await tx`select pg_advisory_xact_lock(hashtext(${turn.inboundId}))`;
+      const done = await tx`select 1 from ledger_event where subject=${turn.inboundId} and kind='imported'`;
+      if (done.length) return;
+      await appendEntry(inside, { stream: "turn", subject: turn.inboundId, kind: "imported", actor: "runner", detail: turn.imported });
+    }
+    await appendChunks(inside, turn.inboundId, turn.chunks, turn.receipts);
     await stamp(inside, {
       messageId: turn.inboundId,
       kind: "answered",

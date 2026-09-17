@@ -151,3 +151,15 @@ export function discord(options: {
     },
   };
 }
+
+/** Offline registry conversion resolves names through the same authenticated API. */
+export async function discordChannels(options: { guild: string; token_file: string }) {
+  const token = readFileSync(options.token_file, "utf8").trim();
+  const answer = await fetch(`${API}/guilds/${encodeURIComponent(options.guild)}/channels`, {
+    method: "GET", headers: { authorization: `Bot ${token}` }, signal: AbortSignal.timeout(ANSWER_WITHIN_MS),
+  });
+  if (!answer.ok) throw new Error(`channel lookup refused: ${answer.status}`);
+  const channels = await answer.json();
+  if (!Array.isArray(channels) || !channels.every(c => typeof c.id === "string" && typeof c.name === "string")) throw new Error("invalid channel response");
+  return channels as { id: string; name: string }[];
+}

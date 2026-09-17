@@ -112,7 +112,7 @@ function validLine(value: unknown): value is ChatLine {
 export async function appendChatLineOnce(
   args: { stateDir: string; person: string; agent: string },
   line: ChatLine & { id: string },
-): Promise<void> {
+): Promise<boolean> {
   if (!validLine(line) || !line.id) throw new Error("invalid chat log record");
   const file = chatLogPath({ ...args, at: new Date(line.at) });
   mkdirSync(dirname(file), { recursive: true });
@@ -154,5 +154,6 @@ export async function appendChatLineOnce(
       try { fsyncSync(directory); } finally { closeSync(directory); }
       if (path === root || dirname(path) === path) break;
     }
+    return !found;
   } finally { closeSync(fd); }
 }

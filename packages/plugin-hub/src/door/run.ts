@@ -1,3 +1,4 @@
+import { historyHarvestFrom } from "../registry/entries.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
 import { classifyPlatformError } from "./reply.ts";
 import { appendChatLine, appendChatLineOnce } from "../chatlog.ts";
@@ -201,6 +202,14 @@ export async function runDoor(options: {
   const store: Store = await openStore({
     url: storeUrlAs(String(readSetting(registry, "hub.store_url")), "hub_door"),
   });
+
+  const batch = (registry.data.hub as { cutover_batch?: string }).cutover_batch;
+  if (batch) {
+    try {
+      const rows = await store.sql`select data from state_row where sheet='cutover' and id=${batch}`;
+      if (!rows[0]?.data?.complete) throw new Error("cutover handoff batch incomplete");
+    } catch (error) { await store.close(); throw error; }
+  }
 
   try {
     // Only an explicit operator recovery releases terminal delivery failures.
@@ -897,7 +906,7 @@ export async function runDoor(options: {
         }
 
         const now = new Date();
-        const seen = await readSlice({ ...chat, from: bound, until: now.toISOString() });
+        const seen = await readSlice({ ...chat, from: historyHarvestFrom(fresh, agent.person, bound), until: now.toISOString() });
         const newest = await newestLine({ ...chat, now });
 
         let reason: HarvestBody["reason"] | null = null;
@@ -916,7 +925,7 @@ export async function runDoor(options: {
           // comes from IT rather than from the cached bound: the bound is what
           // this door believes and the sheet is what a runner has settled.
           settled = await readWatermark(store, key);
-          const from = settled?.at ?? null;
+          const from = historyHarvestFrom(fresh, agent.person, settled?.at ?? null);
           const slice = await readSlice({ ...chat, from, until });
           // REVIEW S3, D-145's second gate: "writes the row in one transaction
           // WHEN THE COUNT IS AT LEAST THE APPLICABLE MINIMUM". The count above

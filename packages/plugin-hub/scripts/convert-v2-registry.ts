@@ -1,0 +1,1 @@
+../src/entry/convert-v2-registry.ts

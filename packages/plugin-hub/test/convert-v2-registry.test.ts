@@ -53,6 +53,7 @@ test("ROLL-05 ROLL-30 imported inventory reaches loadRegistry and actual wrapped
       expect(JSON.parse(readFileSync(agent.settings, "utf8"))).toEqual({ permissions: { allow: source.allow, deny: source.deny } })
       const input: any = launchInput(f)
       Object.assign(input, { registry, agent, preset: registry.data.presets[agent.preset] })
+      input.sessionDir = join(f.stateDir, source.person, "sessions", agent.id, crypto.randomUUID())
       input.box = { ...input.box, agent: agent.id, person: source.person, tree: person.tree, otherTrees: [f.trees.person(source.person === "p1" ? "p2" : "p1").tree], stateRoot: join(f.stateDir, source.person), otherStateRoots: [join(f.stateDir, source.person === "p1" ? "p2" : "p1")] }
       const launch = await make(input)
       const capture = join(input.sessionDir, "import.json")

@@ -216,3 +216,10 @@ export function repositoriesFor(registry: unknown, entryId: string) {
     return { ...repository, required: repository.required ?? true };
   });
 }
+
+/** Imported history is excluded independently of the durable harvest watermark. */
+export function historyHarvestFrom(registry: unknown, person: string, from: string | null): string | null {
+  const exclusion = loaded(registry, "historyHarvestFrom").people.find(p => p.id === person)?.history_harvest_after;
+  if (!exclusion) return from;
+  return from === null || Date.parse(exclusion) > Date.parse(from) ? exclusion : from;
+}

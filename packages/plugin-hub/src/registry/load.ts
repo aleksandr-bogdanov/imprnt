@@ -945,7 +945,8 @@ export function loadRegistry(file: string): Registry {
       if (!entry.allowed_senders || typeof entry.allowed_senders !== "object" || Array.isArray(entry.allowed_senders))
         refuse(`${where}.allowed_senders`, here, "allowed_senders must be a door table");
       for (const [door, senders] of Object.entries(entry.allowed_senders as Record<string, unknown>)) {
-        if (!entries.some(e => e.id === door && e.kind === "door"))
+        if (!entries.some(e => e.id === door && e.kind === "door") &&
+            !(Array.isArray(parsed.agents) && parsed.agents.some(a => a && a.door === door && a.person === entry.id)))
           refuse(`${where}.allowed_senders`, here, "allowed_senders names an undeclared door");
         strings(senders, `${where}.allowed_senders`);
       }

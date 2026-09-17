@@ -33,10 +33,11 @@ export async function appendChunks(
   store: StoreLike,
   inboundId: string,
   texts: string[],
+  receipts?: ({ at: string } | null)[],
 ): Promise<void> {
   for (const [at, body] of texts.entries()) {
-    await store.sql`insert into outbox (inbound_id, seq_in_reply, body, route)
-                    values (${inboundId}, ${at + 1}, ${body},
+    await store.sql`insert into outbox (inbound_id, seq_in_reply, body, delivered_at, delivery_state, route)
+                    values (${inboundId}, ${at + 1}, ${body}, ${receipts?.[at]?.at ?? null}, ${receipts?.[at] ? "delivered" : "pending"},
                       (select case when source is null then null else
                         jsonb_build_object('door', source->>'door', 'chat', source->>'chat') end
                        from inbound where id = ${inboundId}))`;
