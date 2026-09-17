@@ -198,15 +198,15 @@ test(
       expect(refusal.line).toBe(lineOf(lines, 'id = "p1"'));
     }
 
-    // --- 3. a vault with NO harvester on that entry. SPEC §6's "a setting
-    //     nothing in production reads", which D-110 already refused once for a
-    //     window field on a key preset.
+    // --- 3. D-171 lets a vault supply filing rules without enabling harvest.
     {
       const lines = drop(base, 'harvester = "harvest"');
-      const refusal = refusalOf(write(lines));
-      expect(refusal.key).toContain("people[0]");
-      expect(refusal.key).toContain("vault");
-      expect(refusal.line).toBe(lineOf(lines, 'vault = "/var/lib/imprnt-hub/p1/vault-project"'));
+      const registry = loadRegistry(write(lines));
+      const { filingRulesFor, harvestFor } = await seam("src/registry/entries.ts");
+      expect((harvestFor as Function)(registry, "p1")).toBeNull();
+      expect((filingRulesFor as Function)(registry, "p1")).toBe(
+        "/var/lib/imprnt-hub/p1/vault-project/CLAUDE.md",
+      );
     }
 
     // --- 4. a vault that is not an absolute path. A relative path is resolved

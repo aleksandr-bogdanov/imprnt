@@ -31,10 +31,10 @@ function lineOf(lines: string[], needle: string, from = 0): number {
 
 // D-81 as phase 3b makes it: `child_memory_limit_mb` is required on every
 // `kind = "runner"` entry, whether or not the file declares its machines, so the
-// runner of the seven carries one. A fixture field: every line number this file
+// runner carries one. A fixture field: every line number this file
 // asserts is computed from the array it just built, so nothing below it moves.
-/** The seven kinds L13 names, each with a schedule and a memory limit. */
-const SEVEN: {
+/** D-171 supports four run kinds in 6a, each with a schedule and memory limit. */
+const SUPPORTED: {
   id: string;
   kind: string;
   schedule: string;
@@ -43,15 +43,14 @@ const SEVEN: {
 }[] = [
   { id: "door-telegram", kind: "door", schedule: "always", mb: 192 },
   { id: "runner-pi", kind: "runner", schedule: "always", mb: 512, childMb: 512 },
-  { id: "watch-bikes", kind: "watcher", schedule: "every 30m", mb: 128 },
+  { id: "hub-main", kind: "hub", schedule: "always", mb: 128 },
   { id: "vault-sync", kind: "sync", schedule: "every 15m", mb: 128 },
-  { id: "backup", kind: "backup", schedule: "hourly", mb: 256 },
-  { id: "transcriber", kind: "transcriber", schedule: "on demand", mb: 1024 },
-  { id: "board", kind: "board", schedule: "always", mb: 256 },
 ];
 
 function header(): string[] {
-  return ["[hub]", "tick_seconds = 5", ""];
+  return ["[hub]", "tick_seconds = 5", "", "[[people]]", 'id = "p1"', "",
+    "[[repositories]]", 'id = "vault"', 'person = "p1"',
+    'path = "/var/lib/imprnt-hub/p1/vault"', 'remote = "origin"', 'branch = "main"', ""];
 }
 
 function entry(e: {
@@ -67,6 +66,7 @@ function entry(e: {
     `kind = "${e.kind}"`,
     `schedule = "${e.schedule}"`,
   ];
+  if (e.kind === "sync") lines.push('repositories = ["vault"]');
   if (e.mb !== undefined) lines.push(`memory_limit_mb = ${e.mb}`);
   if (e.childMb !== undefined) lines.push(`child_memory_limit_mb = ${e.childMb}`);
   lines.push("");
@@ -78,7 +78,7 @@ test("RUN-01 a registry entry names each thing the hub runs with its schedule an
   const { listRunEntries } = await seam("src/registry/entries.ts");
   expect(typeof listRunEntries).toBe("function");
 
-  const lines = [...header(), ...SEVEN.flatMap(entry)];
+  const lines = [...header(), ...SUPPORTED.flatMap(entry)];
   const file = await scratch(lines);
 
   const entries = (await (listRunEntries as Function)(
@@ -88,10 +88,10 @@ test("RUN-01 a registry entry names each thing the hub runs with its schedule an
   // Compared both ways, so an entry the loader invented fails as well as one it
   // dropped. Nothing runs because it is on disk, and nothing on the list is lost.
   const got = entries.map((e) => e.id).sort();
-  const want = SEVEN.map((e) => e.id).sort();
+  const want = SUPPORTED.map((e) => e.id).sort();
   expect(got).toEqual(want);
 
-  for (const wanted of SEVEN) {
+  for (const wanted of SUPPORTED) {
     const found = entries.find((e) => e.id === wanted.id);
     expect(found).toBeDefined();
     expect(found!.kind).toBe(wanted.kind);
@@ -99,6 +99,16 @@ test("RUN-01 a registry entry names each thing the hub runs with its schedule an
     expect(typeof found!.memory_limit_mb).toBe("number");
     expect(found!.memory_limit_mb).toBeGreaterThan(0);
     expect(found!.memory_limit_mb).toBe(wanted.mb);
+  }
+
+  // Deferred kinds must refuse instead of silently joining the installed list.
+  for (const kind of ["watcher", "backup", "transcriber", "board"]) {
+    const deferred = await scratch([...header(), ...entry({ id: kind, kind, schedule: "always", mb: 128 })]);
+    try {
+      expect(() => (loadRegistry as Function)(deferred)).toThrow("unsupported-run-kind");
+    } finally {
+      await rm(dirname(deferred), { recursive: true, force: true });
+    }
   }
 
   await rm(dirname(file), { recursive: true, force: true });
@@ -111,9 +121,9 @@ test("RUN-01 an entry with no memory limit refuses the file and names its line (
   const broken = { id: "transcriber", kind: "transcriber", schedule: "on demand" };
   const lines = [
     ...header(),
-    ...entry(SEVEN[0]),
+    ...entry(SUPPORTED[0]),
     ...entry(broken),
-    ...entry(SEVEN[1]),
+    ...entry(SUPPORTED[1]),
   ];
   const file = await scratch(lines);
 
@@ -135,17 +145,17 @@ test("RUN-01 the registry is a state sheet: a second entry reusing an id refuses
   const { loadRegistry, RegistryRefused } = await seam("src/registry/load.ts");
   expect(typeof loadRegistry).toBe("function");
 
-  const duplicate = { ...SEVEN[0], schedule: "every 5m", mb: 64 };
+  const duplicate = { ...SUPPORTED[0], schedule: "every 5m", mb: 64 };
   const lines = [
     ...header(),
-    ...entry(SEVEN[0]),
-    ...entry(SEVEN[1]),
+    ...entry(SUPPORTED[0]),
+    ...entry(SUPPORTED[1]),
     ...entry(duplicate),
   ];
   const file = await scratch(lines);
 
-  const firstIdLine = lineOf(lines, `"${SEVEN[0].id}"`);
-  const secondIdLine = lineOf(lines, `"${SEVEN[0].id}"`, firstIdLine);
+  const firstIdLine = lineOf(lines, `"${SUPPORTED[0].id}"`);
+  const secondIdLine = lineOf(lines, `"${SUPPORTED[0].id}"`, firstIdLine);
   expect(secondIdLine).toBeGreaterThan(firstIdLine);
 
   let refusal: unknown;
@@ -158,7 +168,7 @@ test("RUN-01 the registry is a state sheet: a second entry reusing an id refuses
   expect(refusal).toBeInstanceOf(RegistryRefused as Function);
   // The line of the duplicate, not of the original. The first one is fine.
   expect((refusal as { line: number }).line).toBe(secondIdLine);
-  expect(String((refusal as Error).message)).toContain(SEVEN[0].id);
+  expect(String((refusal as Error).message)).toContain(SUPPORTED[0].id);
 
   await rm(dirname(file), { recursive: true, force: true });
 });

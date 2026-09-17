@@ -34,6 +34,8 @@
 // dead process and no turn end ever arrives.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { startCluster, seam, until, type Cluster } from "./helpers/cluster.ts";
 import { fakeClaudeCli, healthyResult } from "./helpers/fake-cli.ts";
 import { childGone } from "./helpers/scripted-adapter.ts";
@@ -81,9 +83,8 @@ afterAll(async () => {
  *
  * It is a shim over `claudeCode.start` and nothing else: what reads the wire is
  * the shipped adapter, and what the runner is handed is the shipped adapter's
- * own session. The runner supplies a `wrap` of its own only for a boxed agent
- * (a person with a tree), and these stages declare none, so this is the one
- * place a check can put a measured wire in front of a runner.
+ * own session. D-176 supplies a real person box and canonical synthetic login;
+ * the scripted wire is composed inside that production wrapper.
  */
 function realLoopOver(
   scripts: Record<string, unknown>[][],
@@ -97,7 +98,7 @@ function realLoopOver(
         const nth = Math.min(pids.length, scripts.length - 1);
         const session = (await (claudeCode as { start: Function }).start({
           ...options,
-          wrap: fakeClaudeCli(scripts[nth]),
+          wrap: (argv: string[]) => options.wrap!(fakeClaudeCli(scripts[nth])(argv)),
         })) as AdapterSession;
         pids.push(Number(session.pid ?? 0));
         return session;
@@ -113,20 +114,21 @@ async function stage(): Promise<StagedHub> {
     // Long, so a row that comes back can only have come back on the deadline
     // the row itself carries and never on the tick.
     hub: { tick_seconds: 30, outage_retry_seconds: RETRY_SECONDS },
-    people: [{ id: PERSON, language: "en" }],
-    credentials: [
-      {
-        id: CREDENTIAL,
-        kind: "claude-login",
-        file: "/var/lib/imprnt-hub/credentials/claude.json",
-        owner: "household",
-      },
-    ],
     preset: { credential: CREDENTIAL, adapter: "claude-code" },
-    registry: (base) => ({
-      ...base,
-      agents: (base.agents ?? []).map((agent) => ({ ...agent, runner: RUNNER })),
-    }),
+    registry: (base) => {
+      const root = String(base.hub!.state_dir);
+      const tree = join(root, "tree");
+      const file = join(root, "login", ".credentials.json");
+      mkdirSync(tree, { recursive: true });
+      mkdirSync(join(root, "login"), { recursive: true });
+      writeFileSync(file, JSON.stringify({ claudeAiOauth: { accessToken: "synthetic-login", scopes: ["user:inference"] } }), { mode: 0o600 });
+      return {
+        ...base,
+        people: [{ id: PERSON, language: "en", tree }],
+        credentials: [{ id: CREDENTIAL, kind: "claude-login", file, owner: "household" }],
+        agents: (base.agents ?? []).map((agent) => ({ ...agent, runner: RUNNER })),
+      };
+    },
   });
 }
 
