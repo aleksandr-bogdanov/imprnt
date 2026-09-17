@@ -31,6 +31,26 @@ export interface OpenTurnRow {
  * turn has opened, so the row's own `state` comes back and `attend` branches on
  * it. One read serves two rules with two different state sets, and a build that
  * treated "open" as one set would get one of them wrong.
+ *
+ * D-143, as amended in the review round. A ROW A HUMAN IS WAITING ON, AND NEVER
+ * MACHINERY. Every consumer of this read is about a person's wait: the typing,
+ * the progress line and all three clock lines. Without the filter a `harvest`
+ * row sits at `received` from the moment the door writes it until the runner
+ * claims it, and the door arms the acked clock on it and posts `[door] still
+ * waiting: the loop has not accepted this message. 45 s so far.` into a
+ * person's chat about a row nobody sent.
+ *
+ * THE SET IS RANK 0 AND NOT `human` ALONE, which is what the review corrected.
+ * SPEC §2 defines rank 0 in these words: "anything a human is waiting on (a
+ * human's message, a report on a job that answers a human's message)". A
+ * `report` is a person waiting for an answer as surely as their own message is,
+ * and it had typing, a progress line and all three clock lines before this
+ * filter existed. `kind in ('human', 'report')` rather than `rank = 0` because
+ * the two rank 0 kinds are named in the spec sentence this stands on, and a
+ * reader of the statement should see which rows it means.
+ *
+ * The filter lives HERE and not in `clockDeadlines`, because the read is the
+ * one thing all three rules share.
  */
 export async function readOpenTurns(
   store: StoreLike,
@@ -40,6 +60,7 @@ export async function readOpenTurns(
     select id, person, agent, received_at, state, claimed_by
     from inbound
     where agent = ${where.agent}
+      and kind in ('human', 'report')
       and state in ('received', 'acked', 'started')
     order by received_at, id`) as unknown as OpenTurnRow[];
 }

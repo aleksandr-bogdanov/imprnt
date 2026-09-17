@@ -122,6 +122,74 @@ export function windowNotice(language: Language, percent: number): string {
 }
 
 /**
+ * HARV-04, D-159. The one line back into a chat after a harvest, naming what
+ * was saved.
+ *
+ * THREE FORMS AND NOT ONE TEMPLATE WITH TWO SLOTS, for the same reason the
+ * outage sentences are three: "saved. Notes: . Already there..." with an empty
+ * list is a sentence about nothing, and the Russian twin reads worse still.
+ *
+ * THE COUNT IS NEVER GLUED TO A NOUN in either language. The LIST carries it,
+ * so `Заметки: finances/a, people/b` is correct for one note and for five and
+ * Russian number agreement never arises, which is D-105's own lesson from the
+ * catch-up line.
+ */
+export function harvestReport(
+  language: Language,
+  what: { notes: string[]; conflicts: string[] },
+): string {
+  // REVIEW S4. AN ENTRY THAT NAMES NOTHING IS NOT IN THE SENTENCE. The apply's
+  // classifier answers `note: ""` whenever a marker line carries no path at its
+  // own skip index, and one of those joined into the list renders
+  // `[door] saved. Notes: .`, which is the sentence about nothing these three
+  // forms exist to make unreachable. The caller drops them too, so this is the
+  // fence rather than the rule.
+  const kept = what.notes.filter((one) => one !== "");
+  const clashed = what.conflicts.filter((one) => one !== "");
+  // Nothing named on either side is a report about nothing, and the honest
+  // answer to that is the line that says so.
+  if (kept.length === 0 && clashed.length === 0) return harvestNothing(language);
+  const notes = kept.join(", ");
+  const conflicts = clashed.join(", ");
+  if (clashed.length === 0) {
+    return says(
+      language,
+      language === "ru" ? `сохранено. Заметки: ${notes}.` : `saved. Notes: ${notes}.`,
+    );
+  }
+  if (kept.length === 0) {
+    return says(
+      language,
+      language === "ru"
+        ? `ничего не сохранено. Уже есть с другим текстом, не перезаписано: ${conflicts}.`
+        : `nothing saved. Already there with different text, not overwritten: ${conflicts}.`,
+    );
+  }
+  return says(
+    language,
+    language === "ru"
+      ? `сохранено. Заметки: ${notes}. Уже есть с другим текстом, не перезаписано: ${conflicts}.`
+      : `saved. Notes: ${notes}. Already there with different text, not overwritten: ${conflicts}.`,
+  );
+}
+
+/**
+ * D-159. The answer to a harvest a person ASKED for that saved nothing.
+ *
+ * It is sent on a demand and never on a quiet harvest: the report says what was
+ * saved, and a person who typed a phrase at the machinery and got silence has
+ * no way to tell it worked from a hub that is broken.
+ */
+export function harvestNothing(language: Language): string {
+  return says(
+    language,
+    language === "ru"
+      ? "в этот раз сохранять нечего."
+      : "nothing worth keeping this time.",
+  );
+}
+
+/**
  * MSG-10. What the agent is doing, edited as it goes.
  *
  * A loop that reported no action at all gets the form that says only the

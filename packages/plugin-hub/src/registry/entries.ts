@@ -1,5 +1,6 @@
 import {
   DEFAULT_LANGUAGE,
+  HARVEST_DEFAULTS,
   loaded,
   STAMP_THRESHOLD_DEFAULTS,
   type AgentEntry,
@@ -103,6 +104,54 @@ export function thresholdsFor(registry: unknown, personId: string): StampThresho
     started_seconds: person?.started_seconds ?? STAMP_THRESHOLD_DEFAULTS.started_seconds,
     answered_seconds: person?.answered_seconds ?? STAMP_THRESHOLD_DEFAULTS.answered_seconds,
     delivered_seconds: person?.delivered_seconds ?? STAMP_THRESHOLD_DEFAULTS.delivered_seconds,
+  };
+}
+
+/** D-137. What harvests this person's chats, with the defaults filled in. */
+export interface HarvestSettings {
+  /** The preset name a slice of their chats is read under. */
+  harvester: string;
+  /** Absolute, the directory holding `vault/` and `raw/`. */
+  vault: string;
+  quiet_minutes: number;
+  min_messages: number;
+  report: boolean;
+}
+
+/**
+ * D-137, D-138. This person's harvest, or NULL when they name no harvester.
+ *
+ * Null is a real answer and not a missing one: a household that has not chosen
+ * a harvester still runs, nothing harvests that person's chats, and `check`
+ * says so (D-156). That is D-111's own shape for `credential-undeclared`.
+ *
+ * The minimum slice's default comes off the HARVESTER preset's `paid` rather
+ * than the agent's, because the cost L19 is talking about is the harvest's own:
+ * a plan login can run a strong model on every slice, and a per-token key waits
+ * for a bigger one.
+ *
+ * THE MISSING-PRESET FALLBACK IS REACHABLE AND THE ROUTE WAS MEASURED. The
+ * loader refuses a `harvester` naming a preset the file does not define, so it
+ * looks unreachable, and it is not: that refusal asks `harvester in presets`,
+ * and `in` walks the prototype, so a file saying `harvester = "constructor"`
+ * loads and this line indexes `Object.prototype.constructor`, whose `paid` is
+ * undefined. Measured here. It is read as a plan, which is the smaller minimum
+ * and therefore the one that harvests rather than the one that quietly stops,
+ * and the turn that follows refuses on an adapter nobody registered rather than
+ * filing anything. Closing the hole is `Object.hasOwn` in the loader, in two
+ * places, and it is a behaviour change with its own check rather than a cut.
+ */
+export function harvestFor(registry: unknown, personId: string): HarvestSettings | null {
+  const it = loaded(registry, "harvestFor");
+  const person = it.people.find((one) => one.id === personId);
+  if (!person?.harvester || !person.vault) return null;
+  const paid = it.presets[person.harvester]?.paid === "key" ? "key" : "plan";
+  return {
+    harvester: person.harvester,
+    vault: person.vault,
+    quiet_minutes: person.harvest_quiet_minutes ?? HARVEST_DEFAULTS.quiet_minutes,
+    min_messages: person.harvest_min_messages ?? HARVEST_DEFAULTS.min_messages[paid],
+    report: person.harvest_report ?? HARVEST_DEFAULTS.report,
   };
 }
 

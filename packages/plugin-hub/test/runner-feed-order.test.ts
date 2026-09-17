@@ -211,10 +211,20 @@ test(
           stateDir: second.stateDir,
           text: "what was said yesterday",
         });
+        // THE RANK 1 KIND HERE IS `room` AND WAS `harvest` (BUILD-NOTES 7).
+        // SPEC §2's rank 1 is "watcher triage, rooms, harvest", so any of the
+        // three is the proactive row this half needs, and what it needs of it
+        // is that the runner feeds it to the agent's own session AFTER the
+        // human row. Phase 5 gives `harvest` a meaning of its own: a row of
+        // that kind is served by a session of the harvester's, is fed a slice
+        // rather than its own body, and reaches no chat at all, which is
+        // exactly the behaviour D-162 names as the one phase 5 removes. Nothing
+        // about the ORDER this half asserts changed, and `room` is the rank 1
+        // kind no phase has claimed.
         await insertInbound(cluster, second.db, {
-          id: "m-harvest",
+          id: "m-room",
           body: "yesterday is worth filing",
-          kind: "harvest",
+          kind: "room",
           receivedAt: ago(5),
           as: "superuser",
         });

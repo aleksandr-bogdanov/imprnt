@@ -132,6 +132,15 @@ export interface StoreReader {
   noticeRows(): Promise<NoticeRow[]>;
   /** Phase 4. The `outage` sheet, which is one row per credential id. */
   outageSheet(): Promise<{ sheet: string; id: string; data: Record<string, unknown> }[]>;
+  /**
+   * D-141. The `harvest` sheet, which is one row per chat, id `<person>/<agent>`.
+   *
+   * `updated_at` comes back with it, because check 11 asserts the watermark
+   * landed inside the settling transaction rather than in one of its own.
+   */
+  harvestSheet(): Promise<
+    { sheet: string; id: string; data: Record<string, unknown>; updated_at: Date }[]
+  >;
   sheet(name: string): Promise<{ sheet: string; id: string; data: Record<string, unknown> }[]>;
   sql(query: string, values?: unknown[]): Promise<Record<string, unknown>[]>;
   pid(): Promise<number>;
@@ -205,6 +214,17 @@ export function storeReader(cluster: Cluster, database: string): StoreReader {
         sheet: string;
         id: string;
         data: Record<string, unknown>;
+      }[];
+    },
+    async harvestSheet() {
+      return (await rows(
+        `select sheet, id, data, updated_at from state_row
+         where sheet = 'harvest' order by id`,
+      )) as unknown as {
+        sheet: string;
+        id: string;
+        data: Record<string, unknown>;
+        updated_at: Date;
       }[];
     },
     async sheet(name) {
@@ -378,6 +398,28 @@ export interface StageOptions {
   platform?: { typingSeconds?: number; noTyping?: boolean };
   /** 03b item 2. The `[store]` section, absent unless a check asks for one. */
   store?: StoreSpec;
+  // Phase 5. Both ABSENT from the default spec, so no person carries a
+  // harvester and no `[hub] imprnt` line appears unless a check asks.
+  /**
+   * D-137. The five harvest fields on the DEFAULT person's entry.
+   *
+   * A stage that names no people declares one for `p1` carrying these and no
+   * tree, exactly as `language` already does, and a stage that names its own
+   * people gets them on the entry for `p1` where that entry says none.
+   */
+  harvest?: {
+    harvester?: string;
+    vault?: string;
+    quiet_minutes?: number;
+    min_messages?: number;
+    report?: boolean;
+  };
+  /**
+   * D-140. `hub.imprnt`, the command the runner spawns to file a harvested
+   * note. A check points it at the shim of `test/helpers/imprnt-shim.ts`, which
+   * is what makes every check in phase 5 drive the REAL apply.
+   */
+  imprnt?: string;
 }
 
 export async function stageHub(
@@ -405,22 +447,53 @@ export async function stageHub(
     adapter = await serveAdapter(scripted);
   }
 
-  // The default person, declared only when a stage asked for a language. An
-  // absent option renders no `[[people]]` table at all, which is the file every
-  // phase 2 check loads today.
-  const people: PersonSpec[] | undefined =
-    options.language === undefined
-      ? options.people
-      : options.people === undefined
-        ? [{ id: PERSON, language: options.language }]
-        : options.people.map((one) =>
-            one.id === PERSON && one.language === undefined
-              ? { ...one, language: options.language }
-              : one,
-          );
+  // The default person, declared only when a stage asked for a language or for
+  // a harvest. An absent option renders no `[[people]]` table at all, which is
+  // the file every phase 2 check loads today.
+  //
+  // D-137. The harvest fields travel the same road `language` already travels,
+  // and each one is filled in ONLY where the entry says nothing, so a check
+  // that writes its own people keeps every value it wrote.
+  const onDefault: PersonSpec = {
+    id: PERSON,
+    ...(options.language === undefined ? {} : { language: options.language }),
+    ...(options.harvest?.harvester === undefined
+      ? {}
+      : { harvester: options.harvest.harvester }),
+    ...(options.harvest?.vault === undefined ? {} : { vault: options.harvest.vault }),
+    ...(options.harvest?.quiet_minutes === undefined
+      ? {}
+      : { harvest_quiet_minutes: options.harvest.quiet_minutes }),
+    ...(options.harvest?.min_messages === undefined
+      ? {}
+      : { harvest_min_messages: options.harvest.min_messages }),
+    ...(options.harvest?.report === undefined
+      ? {}
+      : { harvest_report: options.harvest.report }),
+  };
+  const declares = Object.keys(onDefault).length > 1;
+  const people: PersonSpec[] | undefined = !declares
+    ? options.people
+    : options.people === undefined
+      ? [onDefault]
+      : options.people.map((one) => {
+          if (one.id !== PERSON) return one;
+          const filled: PersonSpec = { ...one };
+          for (const [key, said] of Object.entries(onDefault)) {
+            if (key !== "id" && filled[key] === undefined) filled[key] = said;
+          }
+          return filled;
+        });
 
   const base: RegistrySpec = {
-    hub: { store_url: storeUrl, state_dir: dir, ...(options.hub ?? {}) },
+    hub: {
+      store_url: storeUrl,
+      state_dir: dir,
+      // D-140. Absent unless a check asks, so the default stage's `[hub]` is
+      // the one every shipped check already loads.
+      ...(options.imprnt === undefined ? {} : { imprnt: options.imprnt }),
+      ...(options.hub ?? {}),
+    },
     ...(options.store ? { store: options.store } : {}),
     ...(options.machines ? { machines: options.machines } : {}),
     ...(people ? { people } : {}),
