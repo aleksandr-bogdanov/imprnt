@@ -1,3 +1,5 @@
+import { checkLoopSource } from "../adapters/index.ts";
+import { finding as findingLine } from "../door/lines.ts";
 import { dirname } from "node:path";
 import {
   diffUnits,
@@ -528,6 +530,24 @@ export async function runCheck(options: {
       says: `the preset ${name} runs on a plan and names no credential, so nothing can open the login it runs on: what the file does not name cannot be checked`,
       fix: `add credential = "<an id>" to [presets.${name}] in ${options.registryFile}, and a [[credentials]] entry carrying that id, its kind, its file and its owner`,
     });
+  }
+
+  if (!options.credentials) {
+    const presets = new Set(mine.map(agent => agent.preset));
+    for (const agent of mine) {
+      const harvest = harvestFor(registry, agent.person);
+      if (harvest) presets.add(harvest.harvester);
+    }
+    for (const preset of presets) {
+      try { await checkLoopSource(registry, preset); }
+      catch {
+        const kind = "credential-source-unsupported";
+        findings.push({ id: findingId(machine, kind, preset), kind, subject: preset, machine,
+          says: findingLine("en", { code: kind, target: preset, cause: "invalid configuration" }),
+          fix: findingLine("en", { code: "credential-source", target: preset, cause: "invalid configuration" }),
+        });
+      }
+    }
   }
 
   // --- the sheet: one row per finding id, and a fixed one leaves NO line ---

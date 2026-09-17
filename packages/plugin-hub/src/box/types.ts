@@ -13,6 +13,9 @@ export interface BoxContext {
   person: string;
   tree: string;            // this person's vault tree
   sharedZone: string;      // one zone, every person, from hub.shared_zone
+  sessionDir?: string;
+  purpose?: string;
+  readPaths?: string[];
   stateRoot?: string;
   otherStateRoots?: string[];
   otherTrees: string[];    // every other declared person's tree

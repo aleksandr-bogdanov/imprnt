@@ -53,6 +53,8 @@ export interface AdapterUsage {
    * Claude Code adapter always sets it, null included, and check 9 binds that.
    */
   window?: WindowReading | null;
+  resolved_model_ids?: string[];
+  primary_model_id?: string | null;
   raw: Record<string, unknown>;
 }
 
@@ -95,6 +97,8 @@ export interface Adapter {
     preset: Preset;
     sessionId: string | null;
     cwd?: string;
+    argv?: string[];
+    env?: Record<string, string | undefined>;
     /**
      * 03b item 1. The runner's boxing hook, applied to whatever argv this loop
      * would otherwise spawn. The adapter spawns `wrap(argv)` when it is given

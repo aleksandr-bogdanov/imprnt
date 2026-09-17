@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { adapterFor } from "../adapters/index.ts";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { adapterFor, loopLaunch } from "../adapters/index.ts";
 import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
-import { boxCommand, boxContextFor } from "../box/index.ts";
+import { credentialSource } from "../adapters/launch.ts";
+import { boxContextFor } from "../box/index.ts";
 import { readTail } from "../chatlog.ts";
 import { applyNote, stageDirFor, stageNotes } from "../harvest/apply.ts";
 import { parseHarvestReply, SAID_CAP } from "../harvest/parse.ts";
@@ -23,6 +24,7 @@ import {
 } from "../door/lines.ts";
 import {
   agentsFor,
+  filingRulesFor,
   harvestFor,
   languageOf,
   listAgents,
@@ -275,48 +277,15 @@ async function sayWhichServer(
   });
 }
 
-/**
- * The agent's box, ready to hand to a loop (03b item 1, D-92, D-93).
- *
- * The RUNNER decides the boxing, because the box is derived from the registry
- * and the registry is what the runner already reads. The loop is handed a hook
- * and spawns what comes back, so a new adapter inherits the fence without
- * knowing a box exists.
- *
- * THE PROFILE IS WRITTEN HERE, before the hook is handed over. `boxCommand`
- * computes the path and the text and writes nothing, and `sandbox-exec` refuses
- * to start on a profile it cannot open, so a wiring that forgot the write gets
- * a child that never runs.
- *
- * A person with no tree is UNBOXED and is not a refusal: whether a person has a
- * tree is a question about a machine, not about the file (D-93), so the agent
- * runs and `check` reports `agent-unboxed` about it.
- */
-function boxFor(
-  registry: Registry,
-  agentId: string,
-): { wrap: (argv: string[]) => string[]; cwd: string | undefined } | null {
-  if (process.platform !== "darwin" && process.platform !== "linux") return null;
-  let ctx;
-  try {
-    ctx = boxContextFor(registry, agentId);
-  } catch {
-    // An agent the registry no longer carries is one this runner is dropping.
-    return null;
-  }
-  if (ctx.tree === "") return null;
-  const ready = boxCommand([], ctx);
-  if (ready.profile) {
-    mkdirSync(dirname(ready.profile.path), { recursive: true });
-    writeFileSync(ready.profile.path, ready.profile.text, "utf8");
-  }
-  return {
-    wrap: (argv: string[]) => boxCommand(argv, ctx).argv,
-    // The agent WORKS in its own tree, which is the directory the box is drawn
-    // around. A declared tree that is not on this machine yet is left alone
-    // rather than made a spawn that cannot start.
-    cwd: existsSync(ctx.tree) ? ctx.tree : undefined,
-  };
+/** Configuration and filesystem work happen only when a session starts. */
+async function launchFor(registry: Registry, agent: AgentEntry, presetName: string, purpose: "ordinary" | "harvest") {
+  const stateDir = String(readSetting(registry, "hub.state_dir") ?? "");
+  const credential = credentialOfPreset(registry, presetName);
+  return loopLaunch({ registry, agent, preset: getPreset(registry, presetName), purpose,
+    ...(credential ? { credential: credentialSource(registry, presetName) } : {}),
+    sessionDir: join(stateDir, agent.person, "sessions", agent.id, crypto.randomUUID()),
+    box: boxContextFor(registry, agent.id),
+  });
 }
 
 /**
@@ -615,8 +584,10 @@ export async function runRunner(options: {
         }),
         plan_usage: end.usage.plan_usage,
         raw_usage: end.usage.raw,
+        resolved_model_ids: end.usage.resolved_model_ids ?? [],
+        primary_model_id: end.usage.primary_model_id ?? null,
         session_id: end.session_id,
-        lacks: [...own.session!.lacks],
+        lacks: [...own.session!.lacks, ...(end.usage.resolved_model_ids?.length ? [] : ["resolved_model"])],
         tail: about.tail,
       };
 
@@ -804,8 +775,10 @@ export async function runRunner(options: {
           : null,
         plan_usage: what.end?.usage.plan_usage ?? null,
         raw_usage: what.end?.usage.raw ?? {},
+        resolved_model_ids: what.end?.usage.resolved_model_ids ?? [],
+        primary_model_id: what.end?.usage.primary_model_id ?? null,
         session_id: what.end?.session_id ?? null,
-        lacks: [...(what.lacks ?? [])],
+        lacks: [...(what.lacks ?? []), ...(what.end?.usage.resolved_model_ids?.length ? [] : ["resolved_model"])],
         tail: false,
         harvest: what.harvest,
       });
@@ -913,19 +886,11 @@ export async function runRunner(options: {
       }
 
       const last = lines[lines.length - 1];
-      const box = boxFor(registry, agent.id);
+      const rulesPath = filingRulesFor(registry, agent.person);
+      const filingRules = rulesPath ? readFileSync(rulesPath, "utf8") : "";
+      const launch = await launchFor(registry, agent, settings.harvester, "harvest");
       const session = await adapterFor(options.adapters, harvester.adapter).start({
-        preset: harvester,
-        // What makes it FRESH, which is SPEC §4's "a harvester that sees chat
-        // context" read from the other side: a resumed session IS chat context.
-        sessionId: null,
-        ...(box ? { wrap: box.wrap } : {}),
-        // D-150. `imprnt init` writes the vault contract as the project root's
-        // own CLAUDE.md, so a loop started there loads the filing rules the way
-        // any agent working in a vault does. That is L19's "given the vault's
-        // filing rules" delivered by the vault rather than by a prompt that
-        // restates them.
-        cwd: settings.vault,
+        ...launch, preset: harvester, sessionId: null,
       });
       let end: TurnEnd | "stopped";
       try {
@@ -939,7 +904,7 @@ export async function runRunner(options: {
         session.onTurnEnd((ending) => finish(ending));
         await session.feed({
           id: row.id,
-          text: harvestMessage({ language, lines }),
+          text: harvestMessage({ language, lines, filingRules, vault: settings.vault }),
         });
         end = await Promise.race([ended, stopped, own.left]);
       } finally {
@@ -1061,13 +1026,13 @@ export async function runRunner(options: {
     const spawn = async (preset: Preset, registry: Registry): Promise<void> => {
       const adapter = adapterFor(options.adapters, preset.adapter);
       if (own.session) await own.session.close().catch(() => {});
-      const box = boxFor(registry, agent.id);
+      const launch = await launchFor(registry, agent, agent.preset, "ordinary");
       own.session = await adapter.start({
         preset,
         sessionId: null,
-        ...(box ? { wrap: box.wrap, ...(box.cwd ? { cwd: box.cwd } : {}) } : {}),
+        ...launch,
       });
-      own.boxed = box !== null;
+      own.boxed = "wrap" in launch;
       // A child the watch killed is a session that is gone, and this is where
       // it comes back: before the next turn, with the runner never restarting.
       own.killed = false;

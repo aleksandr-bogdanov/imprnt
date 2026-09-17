@@ -41,6 +41,8 @@ export interface TurnRecord {
   price: Price | null;
   plan_usage: Record<string, unknown> | null;
   raw_usage: Record<string, unknown>;
+  resolved_model_ids?: string[];
+  primary_model_id?: string | null;
   session_id: string | null;
   lacks: string[];
   tail: boolean;
