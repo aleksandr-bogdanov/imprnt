@@ -59,6 +59,7 @@ async function supportedExample(): Promise<string> {
 
 interface OutOfProcess {
   ok: boolean;
+  argv: string[];
   key?: string;
   value?: unknown;
   error?: string;
@@ -77,9 +78,11 @@ async function readSettingOutOfProcess(
   const script = `
     import { loadRegistry, readSetting, SETTING_FIELDS } from ${JSON.stringify(hubPath("src/registry/load.ts"))};
     const key = SETTING_FIELDS.find(f => f.type === "integer" || f.type === "number").key;
-    console.log(JSON.stringify({ ok: true, key, value: readSetting(loadRegistry(${JSON.stringify(file)}), key) }));
+    console.log(JSON.stringify({ ok: true, argv: process.argv.slice(2), key, value: readSetting(loadRegistry(${JSON.stringify(file)}), key) }));
   `;
-  const proc = Bun.spawn([process.execPath, "-e", script, ...extraArgv], {
+  const scriptFile = join(dirname(file), "read-setting.ts");
+  await Bun.write(scriptFile, script);
+  const proc = Bun.spawn([process.execPath, scriptFile, ...extraArgv], {
     cwd: hubPath("."),
     env: { ...process.env, ...env },
     stdout: "pipe",
@@ -216,15 +219,17 @@ test("RUN-07 no behaviour switch on the command line or in an environment variab
     env[name] = String(override);
   }
 
-  const poisoned = await readSettingOutOfProcess(env, [
+  const poisonedArgv = [
     `--${key}=${override}`,
     `--${key}`,
     String(override),
     `--${leaf}=${override}`,
     `--${leaf.replace(/_/g, "-")}=${override}`,
-  ]);
+  ];
+  const poisoned = await readSettingOutOfProcess(env, poisonedArgv);
 
   expect(poisoned.ok).toBe(true);
+  expect(poisoned.argv).toEqual(poisonedArgv);
   // The file's value, not the environment's and not the command line's.
   expect(poisoned.value).toBe(fromFile);
 });
