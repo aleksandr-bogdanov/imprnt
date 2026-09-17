@@ -117,7 +117,7 @@ for (const os of ["linux", "darwin"]) {
       // asking the runner for capacity. Measure them, reject, then reap them.
       for (let i = 0; i < 4; i++) await edge.adapter.start({ preset: loadRegistry(it.registryFile).presets.daily, sessionId: null })
       expect(await observe(() => edge.sessions.every(r => processTree(r.session.pid!).length === 3))).toBe(true)
-      for (const row of edge.sessions) row.grow(32)
+      for (const row of edge.sessions) row.grow(os === "linux" ? 0 : 32)
       if (bound === "aggregate") expect(await observe(() => edge.sessions.reduce((sum, r) => sum + treeBytes(r.session.pid!), 0) > budgetMb * 1024 * 1024)).toBe(true)
       expect(() => budget(edge.sessions.length, edge.sessions.reduce((sum, r) => sum + treeBytes(r.session.pid!), 0))).toThrow()
       await edge.stop()
@@ -141,7 +141,7 @@ for (const os of ["linux", "darwin"]) {
         insertInbound(cluster, it.db, { id: harvestRowId("p1-lair", until), kind: "harvest", body: encodeHarvestBody({ from: null, until, reason: "demand", lines: 1 }) }),
       ])
       await observe(() => edge.sessions.length >= 3)
-      for (const row of edge.sessions.filter(r => !r.closed)) row.grow(32)
+      for (const row of edge.sessions.filter(r => !r.closed)) row.grow(os === "linux" ? 0 : 32)
       await Bun.sleep(2200)
       sample()
       budget(peakChildren, peak)

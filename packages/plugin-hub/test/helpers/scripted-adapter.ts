@@ -228,6 +228,7 @@ export function growFileFor(pid: number): string {
 const HOLDER = `
 const fs = require("fs");
 const os = require("os");
+const parent = process.ppid;
 const file = os.tmpdir() + "/hub-child-" + process.pid + ".grow";
 // 03b item 1. One line on stdout before anything else: what this child could
 // read of the path it was pointed at. Outside a box it reads it; inside one it
@@ -247,7 +248,7 @@ const held = [];
 setInterval(() => {
   // A child whose parent went away is a leak, and a suite that leaks one of
   // these leaks the memory it was told to hold.
-  if (process.ppid === 1) process.exit(0);
+  if (process.ppid !== parent) process.exit(0);
   let want = 0;
   try { want = Number(fs.readFileSync(file, "utf8").trim()) || 0; } catch (e) {}
   while (held.length * 16 < want) {

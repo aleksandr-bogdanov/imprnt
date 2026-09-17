@@ -83,7 +83,7 @@ async function stageTwoMachines(): Promise<StagedHub> {
         person: PERSON2,
         preset: "daily",
         chat: `${CHAT}1`,
-        door: DOOR,
+        door: "door-mac",
         runner: RUNNER2,
       },
     ],
