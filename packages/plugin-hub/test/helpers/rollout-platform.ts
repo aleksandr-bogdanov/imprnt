@@ -1,0 +1,79 @@
+// A fetched-batch edge for D-166 and D-173. Store and cursor work stays in src/.
+import { createFakePlatform } from "./fake-platform.ts"
+
+export interface RolloutMedia {
+  kind: "voice" | "photo" | "file" | "sticker" | "video"
+  remote_id: string
+  name: string
+  mime: string | null
+  bytes: number | null
+  caption: string | null
+}
+
+export interface RolloutMessage {
+  platform_message_id: string
+  chat: string
+  sender_id: string
+  from: string
+  text: string
+  at: string
+  media: RolloutMedia[]
+}
+
+export function rolloutPlatform(name: "telegram" | "discord") {
+  const base = createFakePlatform({ name })
+  const batches: { messages: RolloutMessage[], cursor: string }[] = []
+  const pulls: { chat: string, cursor: string | null }[] = []
+  const downloads: string[] = []
+  const files = new Map<string, Uint8Array>()
+  let readError: Error | null = null
+  let postError: Error | null = null
+  const postAttempts: { chat: string, text: string }[] = []
+  const platform = {
+    ...base.platform,
+    async pull(where: { chat: string, cursor: string | null, timeoutMs: number }) {
+      pulls.push({ chat: where.chat, cursor: where.cursor })
+      if (readError) throw readError
+      const after = BigInt(where.cursor ?? "0")
+      const next = batches.find(batch => BigInt(batch.cursor) > after)
+      // Even replayed HTTP responses yield to the event loop.
+      // An ignored batch must not starve the test's bounded observation timer.
+      await Bun.sleep(1)
+      if (next) return {
+        messages: next.messages.filter(message => message.chat === where.chat),
+        cursor: next.cursor,
+      }
+      await Bun.sleep(Math.min(where.timeoutMs, 20))
+      return { messages: [], cursor: where.cursor }
+    },
+    async post(where: { chat: string, text: string }) {
+      postAttempts.push({ ...where })
+      if (postError) throw postError
+      return base.platform.post(where)
+    },
+    async fetchMedia(media: RolloutMedia) {
+      downloads.push(media.remote_id)
+      const bytes = files.get(media.remote_id)
+      if (!bytes) throw new Error("synthetic-media-unavailable")
+      return new Response(bytes)
+    },
+  }
+  return {
+    platform,
+    batch(messages: RolloutMessage[], cursor: string) {
+      if (!/^\d+$/.test(cursor)) throw new Error("invalid synthetic cursor")
+      if (batches.length && BigInt(cursor) <= BigInt(batches.at(-1)!.cursor)) {
+        throw new Error("synthetic cursor must increase")
+      }
+      batches.push({ messages: structuredClone(messages), cursor })
+    },
+    file(id: string, bytes: Uint8Array) { files.set(id, bytes.slice()) },
+    readError(error: Error | null) { readError = error },
+    postError(error: Error | null) { postError = error },
+    pulls: () => structuredClone(pulls),
+    downloads: () => [...downloads],
+    attempts: () => structuredClone(postAttempts),
+    posts: base.posts,
+    edits: base.edits,
+  }
+}
