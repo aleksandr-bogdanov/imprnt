@@ -211,6 +211,9 @@ export async function runDoor(options: {
     } catch (error) { await store.close(); throw error; }
   }
 
+  // A successful projection is already fsynced. Keep that knowledge only for
+  // pending chunks in this process; a restarted door repairs them all again.
+  const projected = new Set<number>();
   try {
     // Only an explicit operator recovery releases terminal delivery failures.
     // The door keeps its own delivery authority; the hub only restarts it.
@@ -228,6 +231,7 @@ export async function runDoor(options: {
           id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
           from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
         });
+        projected.add(chunk.id);
       }
     }
   } catch {
@@ -352,10 +356,13 @@ export async function runDoor(options: {
           continue;
         }
         if (!chunk.route) await store.sql`update outbox set route = ${route}::jsonb where id = ${chunk.id} and route is null`;
-        await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
-          id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
-          from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
-        });
+        if (!projected.has(chunk.id)) {
+          await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
+            id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
+            from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
+          });
+          projected.add(chunk.id);
+        }
         if (chunk.kind === "reply" && chunk.inbound_id !== null) {
           const line = own.progress.get(chunk.inbound_id);
           if (line) await Promise.race([line.totals, Bun.sleep(TOTALS_WAIT_MS)]);
@@ -367,6 +374,7 @@ export async function runDoor(options: {
         if (Number(chunk.attempts) >= maxAttempts) {
           const failure = chunk.failure ?? { kind: "uncertain" as const, code: "send-interrupted", cause: "delivery outcome unknown" };
           await store.sql`update outbox set delivery_state = 'failed', retry_at = null, failure = ${failure}::jsonb where id = ${chunk.id}`;
+          projected.delete(chunk.id);
           await recordOperationFailure(store, "post", options.door, route.chat, failure);
           await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
             agent, chat: route.chat, health: health.health, key: `delivery-failed:${chunk.id}`, failure, operation: "post", seconds });
@@ -383,17 +391,22 @@ export async function runDoor(options: {
         } catch (error) {
           const failure = classifyPlatformError(error);
           const terminal = failure.kind === "permanent" || attempts >= maxAttempts;
+          // The pre-send durable stamp may itself have waited on storage.
+          // Space retries from the observed failure, not that earlier write.
+          const retry = terminal ? null : new Date(Date.now() + seconds * 1000).toISOString();
           await store.sql`update outbox set delivery_state = ${terminal ? "failed" : "pending"},
-            retry_at = ${terminal ? null : next}::timestamptz, failure = ${failure}::jsonb where id = ${chunk.id}`;
+            retry_at = ${retry}::timestamptz, failure = ${failure}::jsonb where id = ${chunk.id}`;
+          if (terminal) projected.delete(chunk.id);
           await recordOperationFailure(store, "post", options.door, route.chat, failure);
           if (terminal) await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
             agent, chat: route.chat, health: health.health, key: `delivery-failed:${chunk.id}`,
             failure, operation: "post", seconds });
-          else retryAt = Math.min(retryAt ?? Infinity, Date.parse(next));
+          else retryAt = Math.min(retryAt ?? Infinity, Date.parse(retry!));
           blocked.add(group);
           continue;
         }
         await markDelivered(store, chunk.id);
+        projected.delete(chunk.id);
         if (chunk.inbound_id !== null) posted.add(chunk.inbound_id);
       }
       for (const id of posted) if (!blocked.has(id)) {
