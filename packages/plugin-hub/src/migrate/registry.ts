@@ -20,7 +20,9 @@ export async function convertV2Registry(manifest: any, platformLookup: (request:
   const run: any[] = manifest.run ? structuredClone(manifest.run) : [];
   const machine = manifest.machines[0]?.id;
   const addRun = (entry: any) => { if (!run.some(r => r.id === entry.id)) run.push({ schedule: "always", memory_limit_mb: 512, machine, ...entry }); };
-  for (const m of manifest.machines) addRun({ id: `hub-${m.id}`, kind: "hub", machine: m.id });
+  for (const m of manifest.machines) {
+    if (!run.some(r => r.kind === "hub" && r.machine === m.id)) addRun({ id: `hub-${m.id}`, kind: "hub", machine: m.id });
+  }
   const channels = new Map<string, { id: string; name: string }[]>();
   for (const path of manifest.source_registries) {
     const source = JSON.parse(readFileSync(absolute(path), "utf8"));
@@ -66,7 +68,9 @@ export async function convertV2Registry(manifest: any, platformLookup: (request:
     }
   }
   if (JSON.stringify(agents.map(a => a.id).sort()) !== JSON.stringify([...manifest.expected_agents].sort())) throw new Error("agent inventory is incomplete");
-  for (const repo of manifest.repositories) addRun({ id: `sync-${repo.id}`, kind: "sync", schedule: "hourly", repositories: [repo.id] });
+  for (const repo of manifest.repositories) {
+    if (!run.some(r => r.kind === "sync" && r.repositories?.includes(repo.id))) addRun({ id: `sync-${repo.id}`, kind: "sync", schedule: "hourly", repositories: [repo.id] });
+  }
   const selectedCredentials = new Set(Object.values(presets).map((preset: any) => preset.credential));
   const credentials = manifest.credentials.filter((credential: any) => selectedCredentials.has(credential.id) ||
     run.some(entry => entry.kind === "door" && entry.platform === credential.kind && entry.token_file === credential.file));
