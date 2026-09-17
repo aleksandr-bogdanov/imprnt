@@ -17,7 +17,7 @@ async function migrator() {
 
 test("ROLL-18 ROLL-20 D-172 ordered migrations preserve old records and rerun twice", async () => {
   const f = await rolloutDatabase(cluster, true)
-  const before = await f.sql`select * from outbox order by id`
+  const before = await f.sql`select * from outbox order by id /* before migration */`
   const migrate = await migrator()
   await migrate(f.store())
   await migrate(f.store())
@@ -70,8 +70,8 @@ test("ROLL-20 ROLL-18 D-172 fresh schema defaults match migration and delivery s
   expect(pending).toEqual({ route: null, delivery_state: "pending", attempts: 0, retry_at: null, failure: null })
   await f.sql`update outbox set delivery_state = 'failed', attempts = 1, failure = '{"code":"access-denied"}' where seq_in_reply = 2`
   expect((await f.sql`select delivered_at from outbox where seq_in_reply = 2`)[0].delivered_at).toBeNull()
-  await expect(f.sql`update outbox set delivery_state = 'invented' where seq_in_reply = 2`).rejects.toThrow()
-  await expect(f.sql`update outbox set attempts = -1 where seq_in_reply = 2`).rejects.toThrow()
+  await expect(f.sql`update outbox set delivery_state = 'invented' where seq_in_reply = 2`.execute()).rejects.toThrow()
+  await expect(f.sql`update outbox set attempts = -1 where seq_in_reply = 2`.execute()).rejects.toThrow()
 })
 
 for (const role of ["hub_door", "hub_runner", "hub_agent", "hub_hub"]) {
@@ -89,7 +89,7 @@ for (const role of ["hub_door", "hub_runner", "hub_agent", "hub_hub"]) {
     await runner`update inbound set claimed_by = 'runner-pi' where id = 'old-input'`
     for (const stamp of ["acked", "started", "answered"]) {
       await runner`insert into ledger_event (stream, subject, kind, actor) values ('inbound', 'old-input', ${stamp}, 'runner')`
-      if (role !== "hub_runner") await expect(sql`insert into ledger_event (stream, subject, kind, actor) values ('inbound', 'old-input', ${stamp}, 'runner')`).rejects.toThrow()
+      if (role !== "hub_runner") await expect(sql`insert into ledger_event (stream, subject, kind, actor) values ('inbound', 'old-input', ${stamp}, 'runner')`.execute()).rejects.toThrow()
     }
     // A legacy row may acquire a route once before its first attempt.
     await door`update outbox set route = '{"door":"door-fake","chat":"0000000000"}' where seq_in_reply = 2`
@@ -97,23 +97,23 @@ for (const role of ["hub_door", "hub_runner", "hub_agent", "hub_hub"]) {
     await door`update outbox set delivery_state = 'failed' , attempts = 1, retry_at = null, failure = '{"code":"access-denied"}' where seq_in_reply = 2`
     await door`update outbox set delivered_at = now(), delivery_state = 'delivered' where seq_in_reply = 1`
     if (role !== "hub_door") {
-      await expect(sql`update inbound set log_ready = false where id = 'old-input'`).rejects.toThrow()
-      await expect(sql`update outbox set delivery_state = 'pending', attempts = 0, retry_at = now(), failure = null where seq_in_reply = 2`).rejects.toThrow()
-      await expect(sql`update outbox set delivered_at = now() where seq_in_reply = 2`).rejects.toThrow()
+      await expect(sql`update inbound set log_ready = false where id = 'old-input'`.execute()).rejects.toThrow()
+      await expect(sql`update outbox set delivery_state = 'pending', attempts = 0, retry_at = now(), failure = null where seq_in_reply = 2`.execute()).rejects.toThrow()
+      await expect(sql`update outbox set delivered_at = now() where seq_in_reply = 2`.execute()).rejects.toThrow()
     }
     if (role !== "hub_runner") {
-      await expect(sql`update inbound set claimed_by = 'runner-mac' where id = 'old-input'`).rejects.toThrow()
-      await expect(sql`insert into outbox (inbound_id, seq_in_reply, body) values ('old-input', 3, 'forged')`).rejects.toThrow()
+      await expect(sql`update inbound set claimed_by = 'runner-mac' where id = 'old-input'`.execute()).rejects.toThrow()
+      await expect(sql`insert into outbox (inbound_id, seq_in_reply, body) values ('old-input', 3, 'forged')`.execute()).rejects.toThrow()
     }
     // Source identity is immutable after acceptance, including for the runner.
-    await expect(sql`update inbound set source = '{"sender_id":"p2"}' where id = 'old-input'`).rejects.toThrow()
-    await expect(sql`update inbound set body = 'forged' where id = 'old-input'`).rejects.toThrow()
-    await expect(sql`update inbound set state = 'answered' where id = 'old-input'`).rejects.toThrow()
-    await expect(sql`update outbox set body = 'forged' where seq_in_reply = 2`).rejects.toThrow()
+    await expect(sql`update inbound set source = '{"sender_id":"p2"}' where id = 'old-input'`.execute()).rejects.toThrow()
+    await expect(sql`update inbound set body = 'forged' where id = 'old-input'`.execute()).rejects.toThrow()
+    await expect(sql`update inbound set state = 'answered' where id = 'old-input'`.execute()).rejects.toThrow()
+    await expect(sql`update outbox set body = 'forged' where seq_in_reply = 2`.execute()).rejects.toThrow()
     // Populate a pinned accepted route through the owner on insertion, then
     // demand refusal even for a runner trying to redirect an existing reply.
     await runner`insert into outbox (inbound_id, seq_in_reply, body, route) values ('old-input', 4, 'routed', '{"door":"door-fake","chat":"0000000000"}')`
-    await expect(sql`update outbox set route = '{"door":"door-fake","chat":"1000000001"}' where seq_in_reply = 4`).rejects.toThrow()
+    await expect(sql`update outbox set route = '{"door":"door-fake","chat":"1000000001"}' where seq_in_reply = 4`.execute()).rejects.toThrow()
     expect((await f.sql`select route from outbox where seq_in_reply = 4`)[0].route.chat).toBe("0000000000")
   })
 }

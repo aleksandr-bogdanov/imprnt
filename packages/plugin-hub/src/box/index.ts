@@ -101,6 +101,9 @@ export function boxContextFor(registry: unknown, agentId: string): BoxContext {
   const person = personOf(registry, agentId);
   const zone = readSetting(registry, "hub.shared_zone");
   return {
+    stateRoot: join(String(readSetting(registry, "hub.state_dir") ?? ""), agent.person),
+    otherStateRoots: listPeople(registry).filter(one => one.id !== agent.person)
+      .map(one => join(String(readSetting(registry, "hub.state_dir") ?? ""), one.id)),
     agent: agentId,
     person: agent.person,
     tree: person?.tree ?? "",

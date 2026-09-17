@@ -43,7 +43,7 @@ export async function readEligible(
            claimed_by, claim_deadline, retry_at
     from inbound
     where agent = ${where.agent}
-      and state not in ('answered', 'delivered')
+      and log_ready and state not in ('answered', 'delivered')
       and (claimed_by is null or (claim_deadline is not null and claim_deadline <= now()))
       and (retry_at is null or retry_at <= now())
     order by rank, received_at, id`) as unknown as EligibleRow[];
@@ -62,11 +62,11 @@ async function untilNextDeadline(
     from (
       select retry_at as due from inbound
        where agent = ${agent} and retry_at is not null and retry_at > now()
-         and state not in ('answered', 'delivered')
+         and log_ready and state not in ('answered', 'delivered')
       union all
       select claim_deadline as due from inbound
        where agent = ${agent} and claim_deadline is not null and claim_deadline > now()
-         and state not in ('answered', 'delivered')
+         and log_ready and state not in ('answered', 'delivered')
     ) deadlines`) as { ms: string | null }[];
   return row.ms === null ? null : Number(row.ms);
 }

@@ -1,5 +1,6 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dlopen, FFIType } from "bun:ffi";
+import { appendFileSync, closeSync, existsSync, fsyncSync, ftruncateSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 /**
  * The chat log is the record. The door appends every message in both directions
@@ -8,6 +9,7 @@ import { dirname, join } from "node:path";
  * session is fed from.
  */
 export interface ChatLine {
+  id?: string;
   at: string;
   direction: "in" | "out";
   from: string;
@@ -91,4 +93,66 @@ export async function readTail(args: {
     rendered.shift();
   }
   return rendered.length === 0 ? "" : [TAIL_PREAMBLE, ...rendered].join("\n");
+}
+
+const fileLocks = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
+  flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+});
+
+function validLine(value: unknown): value is ChatLine {
+  if (!value || typeof value !== "object") return false;
+  const line = value as ChatLine;
+  return typeof line.at === "string" && Number.isFinite(Date.parse(line.at)) &&
+    (line.direction === "in" || line.direction === "out") &&
+    typeof line.from === "string" && typeof line.text === "string" &&
+    (line.id === undefined || (typeof line.id === "string" && line.id !== ""));
+}
+
+/** A kernel lock dies with its owner, including a writer killed before fsync. */
+export async function appendChatLineOnce(
+  args: { stateDir: string; person: string; agent: string },
+  line: ChatLine & { id: string },
+): Promise<void> {
+  if (!validLine(line) || !line.id) throw new Error("invalid chat log record");
+  const file = chatLogPath({ ...args, at: new Date(line.at) });
+  mkdirSync(dirname(file), { recursive: true });
+  const fd = openSync(file, "a+", 0o600);
+  try {
+    const deadline = Date.now() + 10000;
+    while (fileLocks.symbols.flock(fd, 2 | 4) !== 0) {
+      if (Date.now() >= deadline) throw new Error("chat log lock timed out");
+      await Bun.sleep(10);
+    }
+    const bytes = readFileSync(file, "utf8");
+    const records = bytes.split("\n");
+    let offset = 0;
+    let truncate: number | null = null;
+    let found = false;
+    for (const [index, raw] of records.entries()) {
+      const last = index === records.length - 1;
+      if (last && raw === "") break;
+      let record: unknown;
+      try { record = JSON.parse(raw); }
+      catch {
+        if (!last) throw new Error("malformed complete chat log record");
+        truncate = offset;
+        break;
+      }
+      if (!validLine(record)) throw new Error("invalid complete chat log record");
+      if (record.id === line.id) found = true;
+      offset += Buffer.byteLength(raw) + 1;
+    }
+    if (truncate !== null) ftruncateSync(fd, truncate);
+    const end = truncate === null ? bytes : Buffer.from(bytes).subarray(0, truncate).toString();
+    if (end !== "" && !end.endsWith("\n")) writeSync(fd, "\n");
+    if (!found) writeSync(fd, JSON.stringify(line) + "\n");
+    fsyncSync(fd);
+    // Persist newly created ancestors too, before readiness can expose the row.
+    const root = resolve(args.stateDir);
+    for (let path = resolve(dirname(file)); ; path = dirname(path)) {
+      const directory = openSync(path, "r");
+      try { fsyncSync(directory); } finally { closeSync(directory); }
+      if (path === root || dirname(path) === path) break;
+    }
+  } finally { closeSync(fd); }
 }

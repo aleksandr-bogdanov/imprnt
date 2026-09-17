@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   DEFAULT_LANGUAGE,
   HARVEST_DEFAULTS,
@@ -130,16 +132,6 @@ export interface HarvestSettings {
  * a plan login can run a strong model on every slice, and a per-token key waits
  * for a bigger one.
  *
- * THE MISSING-PRESET FALLBACK IS REACHABLE AND THE ROUTE WAS MEASURED. The
- * loader refuses a `harvester` naming a preset the file does not define, so it
- * looks unreachable, and it is not: that refusal asks `harvester in presets`,
- * and `in` walks the prototype, so a file saying `harvester = "constructor"`
- * loads and this line indexes `Object.prototype.constructor`, whose `paid` is
- * undefined. Measured here. It is read as a plan, which is the smaller minimum
- * and therefore the one that harvests rather than the one that quietly stops,
- * and the turn that follows refuses on an adapter nobody registered rather than
- * filing anything. Closing the hole is `Object.hasOwn` in the loader, in two
- * places, and it is a behaviour change with its own check rather than a cut.
  */
 export function harvestFor(registry: unknown, personId: string): HarvestSettings | null {
   const it = loaded(registry, "harvestFor");
@@ -178,4 +170,49 @@ export function credentialOf(registry: unknown, agentId: string): string {
     );
   }
   return credentialOfPreset(it, agent.preset) ?? `preset:${agent.preset}`;
+}
+
+/** D-171. Launch sources are explicit even when the registry omits them. */
+export function launchFor(registry: unknown, agentId: string) {
+  const agent = loaded(registry, "launchFor").agents.find(one => one.id === agentId);
+  if (!agent) throw new TypeError(`unknown agent: ${agentId}`);
+  return {
+    fragment: agent.fragment ?? null,
+    tools: agent.tools === undefined ? null : [...agent.tools],
+    settings: agent.settings ? JSON.parse(readFileSync(agent.settings, "utf8")) : {},
+    mcp: agent.mcp ? JSON.parse(readFileSync(agent.mcp, "utf8")) : { mcpServers: {} },
+  };
+}
+
+export function lifetimeFor(registry: unknown, agentId: string) {
+  const agent = loaded(registry, "lifetimeFor").agents.find(one => one.id === agentId);
+  if (!agent) throw new TypeError(`unknown agent: ${agentId}`);
+  return { mode: agent.mode ?? "resident", sleeping: agent.sleeping ?? false, idle_seconds: agent.idle_seconds ?? 300 };
+}
+
+export function filingRulesFor(registry: unknown, personId: string): string | null {
+  const person = loaded(registry, "filingRulesFor").people.find(one => one.id === personId);
+  return person?.filing_rules ?? (person?.vault ? join(person.vault, "CLAUDE.md") : null);
+}
+
+export function senderAllowed(registry: unknown, personId: string, door: string, sender: string): boolean {
+  const person = loaded(registry, "senderAllowed").people.find(one => one.id === personId);
+  const senders = person?.allowed_senders;
+  return senders && Object.hasOwn(senders, door) ? senders[door].includes(sender) : false;
+}
+
+export function runnerLimitsFor(registry: unknown, runnerId: string) {
+  const entry = loaded(registry, "runnerLimitsFor").run.find(one => one.id === runnerId && one.kind === "runner");
+  if (!entry) throw new TypeError(`unknown runner: ${runnerId}`);
+  return { max_active_children: entry.max_active_children ?? 4, child_memory_budget_mb: entry.child_memory_budget_mb ?? 2048 };
+}
+
+export function repositoriesFor(registry: unknown, entryId: string) {
+  const it = loaded(registry, "repositoriesFor");
+  const entry = it.run.find(one => one.id === entryId);
+  if (!entry) throw new TypeError(`unknown entry: ${entryId}`);
+  return (entry.repositories ?? []).map(id => {
+    const repository = it.repositories.find(one => one.id === id)!;
+    return { ...repository, required: repository.required ?? true };
+  });
 }

@@ -8,7 +8,11 @@ import type { StoreLike } from "./connect.ts";
  * household-wide cause and hangs on nothing, so it carries its own person and
  * agent and its `inbound_id` is null.
  */
+export interface ReplyRoute { door: string; chat: string }
+
 export interface PendingChunk {
+  written_at: Date;
+  route: ReplyRoute | null;
   id: number;
   kind: "reply" | "notice";
   inbound_id: string | null;
@@ -25,8 +29,11 @@ export async function appendChunks(
   texts: string[],
 ): Promise<void> {
   for (const [at, body] of texts.entries()) {
-    await store.sql`insert into outbox (inbound_id, seq_in_reply, body)
-                    values (${inboundId}, ${at + 1}, ${body})`;
+    await store.sql`insert into outbox (inbound_id, seq_in_reply, body, route)
+                    values (${inboundId}, ${at + 1}, ${body},
+                      (select case when source is null then null else
+                        jsonb_build_object('door', source->>'door', 'chat', source->>'chat') end
+                       from inbound where id = ${inboundId}))`;
   }
 }
 
@@ -46,12 +53,12 @@ export async function appendChunks(
  */
 export async function appendNotice(
   store: StoreLike,
-  notice: { person: string; agent: string; body: string; noticeKey: string },
+  notice: { person: string; agent: string; body: string; noticeKey: string; route?: ReplyRoute },
 ): Promise<boolean> {
   const landed = (await store.sql`
-    insert into outbox (kind, inbound_id, seq_in_reply, body, person, agent, notice_key)
+    insert into outbox (kind, inbound_id, seq_in_reply, body, person, agent, notice_key, route)
     values ('notice', null, 1, ${notice.body}, ${notice.person}, ${notice.agent},
-            ${notice.noticeKey})
+            ${notice.noticeKey}, ${notice.route ?? null}::jsonb)
     on conflict (notice_key) do nothing
     returning id`) as unknown as { id: number }[];
   return landed.length > 0;
@@ -77,17 +84,18 @@ export async function readPendingChunks(
   where: { agent: string },
 ): Promise<PendingChunk[]> {
   return (await store.sql`
-    select o.id, o.kind, o.inbound_id, o.seq_in_reply, o.body,
+    select o.id, o.kind, o.inbound_id, o.seq_in_reply, o.body, o.written_at, o.route,
            coalesce(o.person, i.person) as person,
            coalesce(o.agent, i.agent) as agent
     from outbox o
     left join inbound i on i.id = o.inbound_id
     where coalesce(o.agent, i.agent) = ${where.agent}
       and o.delivered_at is null
+      and o.delivery_state = 'pending'
       and (o.kind = 'notice' or i.state not in ('acked', 'started'))
     order by o.id`) as unknown as PendingChunk[];
 }
 
 export async function markDelivered(store: StoreLike, chunkId: number): Promise<void> {
-  await store.sql`update outbox set delivered_at = now() where id = ${chunkId}`;
+  await store.sql`update outbox set delivered_at = now(), delivery_state = 'delivered' where id = ${chunkId}`;
 }

@@ -29,6 +29,7 @@ export async function claimNext(
      where id = (
        select id from inbound
         where agent = ${who.agent}
+          and log_ready
           and rank <= ${maxRank}
           and state not in ('answered', 'delivered')
           and (claimed_by is null or claimed_by = ${who.runner}
