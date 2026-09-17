@@ -259,6 +259,12 @@ export async function runDoor(options: {
     }
   };
 
+  // Bun can dispatch an already queued pool query into a reserved connection's
+  // transaction. Ingress therefore owns a pool that posting and clocks never
+  // use, as well as serializing batches from the chats this door serves.
+  let ingress: Store;
+  try { ingress = await openStore({ url: store.url }); }
+  catch (error) { await store.close(); throw error; }
   let accepting: Promise<void> = Promise.resolve();
   const read = async (agent: AgentEntry, own: Served, activate = false): Promise<void> => {
     let cursor = await readCursor(store, options.door, agent.chat);
@@ -303,9 +309,9 @@ export async function runDoor(options: {
         const accepted = accepting.then(async () => {
           // Keep acceptance and its cursor on one connection until the batch
           // completes, separate from concurrent posting and clock reads.
-          const connection = await store.sql.reserve();
+          const connection = await ingress.sql.reserve();
           try {
-            cursor = await acceptBatch({ store: { ...store, sql: connection as unknown as Store["sql"] }, registry: registryThisTick(), stateDir,
+            cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: registryThisTick(), stateDir,
               door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor,
               received(id) {
                 own.arrivals.push({ id, person: agent.person, agent: agent.id,
@@ -1114,6 +1120,7 @@ export async function runDoor(options: {
       release();
       await supervise;
       await Promise.allSettled([...served.values()].flatMap((it) => [it.done, it.readDone]));
+      await ingress.close();
       await store.close();
     },
   };
