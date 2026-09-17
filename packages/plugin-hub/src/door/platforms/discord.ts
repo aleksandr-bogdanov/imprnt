@@ -50,7 +50,7 @@ export function discord(options: {
   const sources = new WeakMap<MediaRef, string>();
   const headers = { authorization: `Bot ${token}`, "content-type": "application/json" };
   const refuse = async (what: string, answer: Response): Promise<never> => {
-    throw new Error(`discord refused ${what}: ${answer.status} ${await answer.text()}`);
+    throw Object.assign(new Error(`discord refused ${what}: ${answer.status} ${await answer.text()}`), { status: answer.status });
   };
 
   return {
@@ -124,7 +124,7 @@ export function discord(options: {
         headers,
         body: JSON.stringify({ content: text }),
         signal: AbortSignal.timeout(ANSWER_WITHIN_MS),
-      });
+      }).catch(error => { throw Object.assign(error, { sent: true }); });
       if (!answer.ok) await refuse("a post", answer);
       // The message object Discord answers with, whose `id` a PATCH needs.
       const made = (await answer.json()) as { id?: unknown };

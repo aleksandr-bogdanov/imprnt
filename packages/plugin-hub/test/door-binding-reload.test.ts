@@ -30,7 +30,7 @@ afterAll(async () => { await cluster?.stop() })
 
 for (const known of [false, true]) {
   test(`ROLL-23 existing-ID chat edit during pull and reply uses ${known ? "saved cursor" : "new high-water mark"} without redirect or duplicate`, async () => {
-    const it = await rolloutStage(cluster, "telegram", { servers: true, machines: [{ id: "mac", os: process.platform === "darwin" ? "macos" : "linux" }], agents: [], adapter: { answer: text => "answer: " + text } })
+    const it = await rolloutStage(cluster, "telegram", { servers: true, machines: [{ id: "mac", os: process.platform === "darwin" ? "macos" : "linux" }], agents: [], adapter: { answer: ({ text }) => "answer: " + text } })
     const edge = deliveryEdge()
     let door: ReadyProcess | undefined
     let runner: ReadyProcess | undefined

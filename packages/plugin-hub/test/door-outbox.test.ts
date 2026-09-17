@@ -291,6 +291,7 @@ test(
     expect(typeof runDoor).toBe("function");
 
     const it = await stage();
+    await Bun.write(it.registryFile, (await Bun.file(it.registryFile).text()) + "\n[door]\ndelivery_retry_seconds = 1\n");
     let handle: { stop(): Promise<void> } | null = null;
     const runner = cluster.connectAs("hub_runner", it.db) as unknown as Conn;
 

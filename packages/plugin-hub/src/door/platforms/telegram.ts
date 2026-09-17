@@ -65,7 +65,7 @@ export function telegram(options: {
     });
     const said = (await answer.json()) as Record<string, unknown>;
     if (said.ok !== true) {
-      throw new Error(`telegram refused ${method}: ${String(said.description)}`);
+      throw Object.assign(new Error(`telegram refused ${method}: ${String(said.description)}`), { status: Number(said.error_code ?? answer.status) });
     }
     return said;
   };
@@ -130,7 +130,12 @@ export function telegram(options: {
       });
     },
     async post({ chat, text }) {
-      const said = await call("sendMessage", { chat_id: chat, text }, 0);
+      let said: Record<string, unknown>;
+      try { said = await call("sendMessage", { chat_id: chat, text }, 0); }
+      catch (error) {
+        if (!(error as { status?: number }).status) Object.assign(error as object, { sent: true });
+        throw error;
+      }
       const made = said.result as { message_id?: unknown } | undefined;
       // `sendMessage` returns the `Message` it sent, and `message_id` is what
       // `editMessageText` takes. The door keeps it so the progress line is one

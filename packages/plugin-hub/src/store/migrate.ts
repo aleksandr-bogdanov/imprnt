@@ -9,6 +9,9 @@ export interface Migration {
 const MIGRATIONS: Migration[] = [{
   version: 1,
   sql: readFileSync(new URL("./migrations/001-rollout.sql", import.meta.url), "utf8"),
+}, {
+  version: 2,
+  sql: readFileSync(new URL("./migrations/002-door-health.sql", import.meta.url), "utf8"),
 }];
 
 /** DDL and its version commit together. A failed step can be retried unchanged. */

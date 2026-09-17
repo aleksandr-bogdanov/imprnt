@@ -1,3 +1,4 @@
+import { prepareReply } from "../door/reply.ts";
 import type { InboundSource } from "../store/inbound.ts";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -130,6 +131,12 @@ interface OpenTurn {
 
 function setting(registry: Registry, key: string): number {
   return Number(readSetting(registry, key));
+}
+
+function noticeRoute(registry: Registry, id: string) {
+  const agent = listAgents(registry).find(one => one.id === id)!;
+  const door = (registry.data.run as { id: string; platform?: string }[]).find(one => one.id === agent.door);
+  return { route: { door: agent.door, chat: agent.chat }, platform: door?.platform ?? "discord", language: languageOf(registry, agent.person) };
 }
 
 /**
@@ -493,6 +500,7 @@ export async function runRunner(options: {
         await appendNotice(store, {
           person: who.person,
           agent: who.agent,
+          ...noticeRoute(registry, who.agent),
           body: outageNotice(
             languageOf(registry, who.person) as Language,
             outage.cause,
@@ -522,6 +530,7 @@ export async function runRunner(options: {
           await appendNotice(inside, {
             person: who.person,
             agent: who.agent,
+            ...noticeRoute(registry, who.agent),
             body: catchUpNotice(languageOf(registry, who.person) as Language, waiting.get(who.person) ?? 0),
             noticeKey: noticeKey("outage-over", credential, cleared.since, who.person),
           });
@@ -540,6 +549,7 @@ export async function runRunner(options: {
         await appendNotice(store, {
           person: who.person,
           agent: who.agent,
+          ...noticeRoute(registry, who.agent),
           body: windowNotice(languageOf(registry, who.person) as Language, percent),
           noticeKey: noticeKey(
             "window-notice",
@@ -744,7 +754,7 @@ export async function runRunner(options: {
         inboundId: message.id,
         person: agent.person,
         source: about.source,
-        chunks: [end.text],
+        chunks: prepareReply(end.text, about.source?.log_id.split(":")[0] ?? noticeRoute(about.registry, agent.id).platform, languageOf(about.registry, agent.person)),
         turn: record,
       });
     };
@@ -887,6 +897,8 @@ export async function runRunner(options: {
           agent: agent.id,
           body: said,
           noticeKey: `harvest:${row.id}`,
+          ...noticeRoute(registry, agent.id),
+          ...(row.source ? { route: { door: row.source.door, chat: row.source.chat } } : {}),
         });
       };
 
