@@ -201,7 +201,10 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
             "CollectMode=inactive-or-failed",
             "",
             "[Timer]",
+            // A fresh service has no last activation to anchor its cadence.
+            `OnActiveSec=${every}`,
             `OnUnitActiveSec=${every}`,
+            "AccuracySec=1s",
             `Unit=${name}.service`,
             "",
             "[Install]",
