@@ -312,16 +312,23 @@ export const policy = {
 export const protectedWindows = ["test/door-typing.test.ts", "test/door-outbox.test.ts", "test/door-clock.test.ts", "test/runner-drain.test.ts", "test/wait-idle.test.ts", "test/check-silence.test.ts"] as const
 export const deferred = ["ROLL-19", "ROLL-27", "ROLL-28", "ROLL-32"]
 export type Evidence = { result: "pass" | "fail" | "skip" | "missing", observed: "pass" | "fail" | "skip" | "missing", record: string, origin: string, facts: Record<string, unknown> }
-export type RequirementEvidence = { status: string, evidence: Record<string, Evidence | null>, forbidden: string | null, controls: { plan: string, red: string | null, green: string | null }[] }
+export type RequirementEvidence = { deferred?: Record<string, { status: "DEFERRED", gate: string }>, status: string, evidence: Record<string, Evidence | null>, forbidden: string | null, controls: { plan: string, red: string | null, green: string | null }[] }
 export type Manifest = { version: number, status: string, synthetic: boolean, requirements: Record<string, RequirementEvidence>, deferred: string[], windows: Record<string, Record<string, Evidence | null>>, ownerProcedure: string }
 const same = (a: string[], b: string[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
 function passed(e: Evidence | null | undefined) { return e?.result === "pass" && e.observed === "pass" && Boolean(e.record?.trim()) }
-export function requirementIssues(id: string, row: RequirementEvidence | undefined): string[] {
+export function requirementIssues(id: string, row: RequirementEvidence | undefined, acceptance = false): string[] {
   const p = policy[id as keyof typeof policy]
   if (!p || !row) return [`${id}: missing requirement`]
   const issues: string[] = []
   for (const gate of p.gates) {
     const e = row.evidence[gate]
+    const pending = row.deferred?.[gate]
+    if (pending) {
+      if (acceptance || !(gate === "owner-cutover" || gate.startsWith("live-login/")) ||
+          pending.status !== "DEFERRED" || !pending.gate?.trim() || e != null || row.status === "accepted")
+        issues.push(`${id}: invalid deferred ${gate} evidence`)
+      continue
+    }
     if (!passed(e)) { issues.push(`${id}: missing passing ${gate} evidence`); continue }
     const origin = gate.split("/")[0]
     if (e!.origin !== origin) issues.push(`${id}: wrong provenance for ${gate}`)
@@ -341,6 +348,9 @@ export function requirementIssues(id: string, row: RequirementEvidence | undefin
       if (id === "ROLL-31" && !(f.allRequiredRemotes === true && f.freshStamps === true && f.beforeRetirement === true)) issues.push(`${id}: required remote proofs before retirement required`)
       if (id === "ROLL-03" && !(f.fullSecondHistory === true && f.realApply === true && f.watermarkAtBound === true && f.realDemandReport === true && f.ownerHistoryExcluded === true)) issues.push(`${id}: full second-person catch-up and actual demand apply required`)
     }
+  }
+  for (const gate of Object.keys(row.deferred ?? {})) {
+    if (!(p.gates as readonly string[]).includes(gate)) issues.push(`${id}: unknown deferred gate ${gate}`)
   }
   if (row.forbidden !== p.forbidden) issues.push(`${id}: Forbidden binding changed`)
   if (!same(row.controls.map(c => c.plan), [...p.plans])) issues.push(`${id}: owning plan control links missing`)
@@ -363,6 +373,7 @@ export function manifestIssues(m: Manifest): string[] {
 }
 export function serializeAccepted(m: Manifest) {
   const issues = manifestIssues(m)
+  for (const id of Object.keys(policy)) issues.push(...requirementIssues(id, m.requirements[id], true))
   if (m.synthetic) issues.push("synthetic evidence cannot close cutover")
   if (issues.length) throw new Error(issues.join("\n"))
   return JSON.stringify({ ...m, status: "accepted" })
@@ -384,6 +395,22 @@ export function proveEvidenceValidator() {
   assert.throws(() => serializeAccepted(good), /synthetic evidence/)
   // Serialization positive control remains in memory and carries no real claims.
   assert.equal(JSON.parse(serializeAccepted({...good, synthetic:false})).status, "accepted")
+  const closure = structuredClone(good)
+  for (const [id, p] of Object.entries(policy)) for (const gate of p.gates) {
+    if (gate !== "owner-cutover" && !gate.startsWith("live-login/")) continue
+    closure.requirements[id].evidence[gate] = null
+    ;(closure.requirements[id].deferred ??= {})[gate] = { status: "DEFERRED", gate: "requires owner action" }
+  }
+  assert.deepEqual(manifestIssues(closure), [])
+  assert.throws(() => serializeAccepted({...closure, synthetic:false}))
+  for (const [id, row] of Object.entries(closure.requirements)) for (const gate of Object.keys(row.deferred ?? {})) {
+    const missing = structuredClone(closure)
+    delete missing.requirements[id].deferred![gate]
+    assert(requirementIssues(id, missing.requirements[id]).length > 0)
+    const unnamed = structuredClone(closure)
+    unnamed.requirements[id].deferred![gate].gate = ""
+    assert(requirementIssues(id, unnamed.requirements[id]).length > 0)
+  }
   let mutations = 0
   const reject = (change: (m: Manifest) => void) => {
     const bad = structuredClone(good)

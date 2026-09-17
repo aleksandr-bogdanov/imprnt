@@ -4,7 +4,7 @@ import { hubPath } from "./helpers/cluster.ts"
 import { policy, protectedWindows, completeEvidenceFixture, requirementIssues, manifestIssues, serializeAccepted, proveEvidenceValidator, type Manifest } from "./helpers/rollout-evidence.ts"
 
 beforeAll(proveEvidenceValidator)
-const read = () => JSON.parse(readFileSync(hubPath(".planning/phases/HUB-06-the-rollout/ACCEPTANCE-06-09.json"), "utf8")) as Manifest
+const read = () => JSON.parse(readFileSync(hubPath("test/fixtures/rollout-acceptance.json"), "utf8")) as Manifest
 
 // These are acceptance-readiness checks. Reading an open gate executes no login,
 // phone, service-manager or owner action. Red means evidence is still owed.
