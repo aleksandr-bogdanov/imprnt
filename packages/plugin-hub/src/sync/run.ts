@@ -10,7 +10,7 @@ import { readSetting, type Registry, type RunEntry } from "../registry/load.ts";
 import { openStore, storeUrlAs, type StoreLike } from "../store/connect.ts";
 
 async function git(path: string, args: string[], code: string): Promise<string> {
-  const child = Bun.spawn(["git", "-C", path, ...args], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  const child = Bun.spawn(["git", "-C", path, ...args], { env: process.env, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
   const [out, status] = await Promise.all([new Response(child.stdout).text(), child.exited]);
   // Git diagnostics can contain credential-bearing remote URLs.
   if (status !== 0) throw new Error(code);
