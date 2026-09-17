@@ -397,3 +397,11 @@ export function harvestDone(language: Language, values: LineValues = {}): string
     : "harvest: {person}: complete through {until}.", values);
   return sentence;
 }
+
+export function mediaKind(language: Language, kind: string): string {
+  return language === "ru" ? WORDS[kind] : kind;
+}
+
+export function emptyMessageLine(language: Language): string {
+  return language === "ru" ? "(пустое сообщение)" : "(empty message)";
+}

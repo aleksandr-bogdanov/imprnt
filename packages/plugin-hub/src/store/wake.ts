@@ -1,3 +1,4 @@
+import type { InboundSource } from "./inbound.ts";
 import type { StoreLike } from "./connect.ts";
 import { listenForWork, type Listener } from "./listen.ts";
 
@@ -10,6 +11,7 @@ export const OUTBOX_CHANNEL = "hub_outbox";
 export const TURN_CHANNEL = "hub_turn";
 
 export interface EligibleRow {
+  source?: InboundSource | null;
   id: string;
   person: string;
   agent: string;

@@ -3,7 +3,19 @@
  * here, and a door that needed to know which one it was talking to would be a
  * door with a branch in it.
  */
+export interface MediaRef {
+  kind: "voice" | "photo" | "file" | "sticker" | "video";
+  remote_id: string;
+  name: string;
+  mime: string | null;
+  bytes: number | null;
+  caption: string | null;
+}
+
 export interface PlatformMessage {
+  /** Missing identity is refused at acceptance, including older transports. */
+  sender_id?: string;
+  media?: MediaRef[];
   platform_message_id: string;
   chat: string;
   from: string;
@@ -19,6 +31,7 @@ export interface PlatformPull {
 
 export interface Platform {
   readonly name: string;
+  fetchMedia?(media: MediaRef): Promise<Response>;
   /**
    * D-125. How long ONE typing call shows for, from the platform's own
    * documentation: Telegram's `sendChatAction` sets the status "for 5 seconds

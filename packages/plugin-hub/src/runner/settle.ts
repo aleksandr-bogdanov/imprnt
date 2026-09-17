@@ -1,9 +1,10 @@
+import type { InboundSource } from "../store/inbound.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { HARVEST_SHEET } from "../harvest/sheet.ts";
 import { appendEntry } from "../records/diary.ts";
 import { stamp } from "../records/stamps.ts";
 import { putRow } from "../records/statesheet.ts";
-import { appendChunks } from "../store/outbox.ts";
+import { appendChunks, appendNotice } from "../store/outbox.ts";
 import { clearProgress } from "./progress.ts";
 import type { Price } from "../registry/presets.ts";
 
@@ -66,10 +67,22 @@ export interface TurnRecord {
  */
 export async function settleTurn(
   store: StoreLike,
-  turn: { inboundId: string; chunks: string[]; turn: TurnRecord },
+  turn: { inboundId: string; chunks: string[]; turn: TurnRecord; person?: string; source?: InboundSource | null },
 ): Promise<void> {
   await store.sql.begin(async (tx) => {
     const inside = { ...store, sql: tx as unknown as StoreLike["sql"] };
+    // Keep outbox authorship with the runner; accepted media carries the door's
+    // localized notices, and replay meets the same unique keys.
+    const notices = new Set<string>();
+    for (const media of turn.source?.media ?? []) {
+      for (const body of (media as { notices?: string[] }).notices ?? []) notices.add(body);
+    }
+    for (const body of notices) {
+      const key = new Bun.CryptoHasher("sha256").update(body).digest("hex");
+      await appendNotice(inside, { person: turn.person!, agent: turn.turn.agent, body,
+        noticeKey: `media:${turn.inboundId}:${key}`,
+        route: { door: turn.source!.door, chat: turn.source!.chat } });
+    }
     await appendChunks(inside, turn.inboundId, turn.chunks);
     await stamp(inside, {
       messageId: turn.inboundId,

@@ -39,7 +39,7 @@ export async function claimNext(
         limit 1
         for update skip locked
      )
-    returning id, person, agent, body, kind, rank, received_at, state,
+    returning id, person, agent, body, kind, rank, received_at, state, source,
               claimed_by, claim_deadline, retry_at`) as unknown as EligibleRow[];
   return rows.length === 0 ? null : rows[0];
 }

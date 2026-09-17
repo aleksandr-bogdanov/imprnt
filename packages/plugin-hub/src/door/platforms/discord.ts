@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { Platform, PlatformMessage } from "../platform.ts";
+import type { MediaRef, Platform, PlatformMessage } from "../platform.ts";
 
 /**
  * The transport, narrowed to what this file calls. It is NOT `typeof fetch`,
@@ -34,6 +34,8 @@ const ANSWER_WITHIN_MS = 10_000;
 interface Message {
   id: string;
   content: string;
+  attachments?: { id: string; filename: string; content_type?: string; size?: number; url: string }[];
+  sticker_items?: { id: string; name: string; format_type: number }[];
   timestamp: string;
   author: { id: string; username?: string; bot?: boolean };
 }
@@ -45,6 +47,7 @@ export function discord(options: {
 }): Platform {
   const token = readFileSync(options.tokenFile, "utf8").trim();
   const send: Send = options.fetch ?? ((input, init) => fetch(input, init));
+  const sources = new WeakMap<MediaRef, string>();
   const headers = { authorization: `Bot ${token}`, "content-type": "application/json" };
   const refuse = async (what: string, answer: Response): Promise<never> => {
     throw new Error(`discord refused ${what}: ${answer.status} ${await answer.text()}`);
@@ -59,30 +62,61 @@ export function discord(options: {
       for (;;) {
         const where = new URL(`${API}/channels/${chat}/messages`);
         where.searchParams.set("limit", "50");
-        if (cursor !== null) where.searchParams.set("after", cursor);
+        where.searchParams.set("after", cursor ?? "0");
         const answer = await send(where, {
           headers,
           signal: AbortSignal.timeout(timeoutMs + ANSWER_WITHIN_MS),
         });
         if (!answer.ok) await refuse("a channel read", answer);
         // Newest first on the wire, and the door reads a conversation forwards.
-        const read = ((await answer.json()) as Message[]).reverse();
-
-        const messages: PlatformMessage[] = read
-          .filter((message) => message.author.bot !== true && message.content !== "")
-          .map((message) => ({
-            platform_message_id: message.id,
-            chat,
-            from: message.author.username ?? message.author.id,
-            text: message.content,
-            at: new Date(message.timestamp).toISOString(),
-          }));
-        if (messages.length > 0) {
-          return { messages, cursor: read[read.length - 1].id };
+        const read = ((await answer.json()) as Message[]).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1);
+        const messages: PlatformMessage[] = [];
+        for (const message of read) {
+          if (message.author.bot) continue;
+          const media: MediaRef[] = [];
+          for (const item of message.attachments ?? []) {
+            const mime = item.content_type ?? null;
+            const ref: MediaRef = {
+              kind: mime?.startsWith("image/") ? "photo" : mime?.startsWith("audio/") ? "voice" : mime?.startsWith("video/") ? "video" : "file",
+              remote_id: item.id, name: item.filename, mime, bytes: item.size ?? null, caption: null,
+            };
+            sources.set(ref, item.url);
+            media.push(ref);
+          }
+          for (const item of message.sticker_items ?? []) {
+            const ext = item.format_type === 3 ? "json" : item.format_type === 4 ? "gif" : "png";
+            const ref: MediaRef = { kind: "sticker", remote_id: item.id, name: item.name,
+              mime: ext === "json" ? "application/json" : `image/${ext}`, bytes: null, caption: null };
+            sources.set(ref, `https://cdn.discordapp.com/stickers/${item.id}.${ext}`);
+            media.push(ref);
+          }
+          if (!message.content && !media.length) continue;
+          messages.push({ platform_message_id: message.id, chat, sender_id: message.author.id,
+            from: message.author.username ?? message.author.id, text: message.content,
+            at: new Date(message.timestamp).toISOString(), media });
         }
+        if (read.length > 0) return { messages, cursor: read[read.length - 1].id };
         if (Date.now() >= deadline) return { messages: [], cursor };
         await Bun.sleep(Math.min(READ_AGAIN_MS, deadline - Date.now()));
       }
+    },
+    async fetchMedia(media) {
+      let target = sources.get(media);
+      for (let redirects = 0; redirects <= 5; redirects++) {
+        if (!target) throw new Error("media-source-missing");
+        const url = new URL(target);
+        if (url.protocol !== "https:" || url.port || url.username || url.password ||
+            !["cdn.discordapp.com", "media.discordapp.net"].includes(url.hostname)) {
+          throw new Error("media-destination-refused");
+        }
+        const response = await send(url, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+        if (response.status < 300 || response.status >= 400) return response;
+        const location = response.headers.get("location");
+        await response.body?.cancel();
+        if (!location) throw new Error("media-redirect-missing");
+        target = new URL(location, url).href;
+      }
+      throw new Error("media-redirect-limit");
     },
     async post({ chat, text }) {
       const answer = await send(`${API}/channels/${chat}/messages`, {

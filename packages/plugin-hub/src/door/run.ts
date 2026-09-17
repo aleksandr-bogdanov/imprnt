@@ -1,4 +1,5 @@
 import { appendChatLine } from "../chatlog.ts";
+import { projectInbound } from "../chatlog/project.ts";
 import {
   dueTrigger,
   encodeHarvestBody,
@@ -8,7 +9,7 @@ import {
   type HarvestBody,
 } from "../harvest/row.ts";
 import { readWatermark, type Watermark } from "../harvest/sheet.ts";
-import { isDemand, newestLine, readSlice } from "../harvest/slice.ts";
+import { newestLine, readSlice } from "../harvest/slice.ts";
 import { stamp } from "../records/stamps.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import { agentsFor, harvestFor, languageOf, thresholdsFor } from "../registry/entries.ts";
@@ -21,12 +22,13 @@ import {
 import { getPreset } from "../registry/presets.ts";
 import { TURN_PROGRESS_SHEET, type ProgressRow } from "../runner/progress.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
-import { enqueueInbound, inboundId } from "../store/inbound.ts";
+import { enqueueInbound } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
 import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
 import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
+import { acceptBatch } from "./ingest.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
-import { readCursor, writeCursor } from "./cursor.ts";
+import { readCursor } from "./cursor.ts";
 import { clockLine, progressLine, progressTotals, type Language } from "./lines.ts";
 import type { Platform } from "./platform.ts";
 
@@ -148,13 +150,6 @@ interface Served {
   /** Rows this door wrote down itself, handed to `attend` with no read. */
   arrivals: OpenTurnRow[];
   arrived: Nudge;
-  /**
-   * D-147. The demand phrases `read` has pulled and not yet acted on, handed to
-   * the harvest task through the same shape `arrivals` already is, so the one
-   * writer of a harvest row stays one function.
-   */
-  demands: string[];
-  demanded: Nudge;
 }
 
 /**
@@ -200,12 +195,22 @@ export async function runDoor(options: {
     url: storeUrlAs(String(readSetting(registry, "hub.store_url")), "hub_door"),
   });
 
+  try {
+    const pending = await store.sql`select id from inbound where not log_ready and source->>'door' = ${options.door}`;
+    for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id) });
+  } catch {
+    await store.close();
+    throw new Error("ingress-projection-repair-failed");
+  }
+
   let stopping = false;
   let release: () => void = () => {};
   const stopped = new Promise<"stopped">((resolve) => {
     release = () => resolve("stopped");
   });
 
+  // An ignored route must not overtake another route's accepted batch.
+  let accepting: Promise<void> = Promise.resolve();
   const read = async (agent: AgentEntry, own: Served): Promise<void> => {
     let cursor = await readCursor(store, options.door, agent.chat);
     while (!stopping && !own.leaving) {
@@ -226,76 +231,22 @@ export async function runDoor(options: {
         continue;
       }
 
-      for (const message of pulled.messages) {
-        // D-146. A message that IS the phrase is addressed to the machinery,
-        // not to the agent, so it becomes a harvest and never work. L1's "every
-        // human message is on disk" is honoured twice over: the line is
-        // appended here exactly as every `in` line is, and the harvest row
-        // carries the exact bytes the person typed. What it does NOT become is
-        // a message the agent answers with a sentence about harvesting.
-        //
-        // The append is unconditional here rather than gated on a fresh row,
-        // because there is no row: a platform that redelivered a demand after
-        // the cursor moved would write the line twice, which is the cost of
-        // having no id to meet, and it is smaller than losing the record of a
-        // phrase a person typed.
-        if (isDemand(message.text)) {
-          await appendChatLine(
-            { stateDir, person: agent.person, agent: agent.id },
-            {
-              at: message.at,
-              direction: "in",
-              from: agent.person,
-              text: message.text,
+      try {
+        const accepted = accepting.then(async () => {
+          cursor = await acceptBatch({ store, registry: registryThisTick(), stateDir,
+            door: options.door, agent, platform: options.platform, batch: pulled, cursor,
+            received(id) {
+              own.arrivals.push({ id, person: agent.person, agent: agent.id,
+                received_at: new Date(), state: "received", claimed_by: null });
+              own.arrived.wake();
             },
-          );
-          own.demands.push(message.text);
-          own.demanded.wake();
-          continue;
-        }
-        const id = inboundId(
-          options.platform.name,
-          message.chat,
-          message.platform_message_id,
-        );
-        const fresh = await store.sql.begin(async (tx) =>
-          enqueueInbound(
-            { ...store, sql: tx as unknown as Store["sql"] },
-            { id, person: agent.person, agent: agent.id, body: message.text },
-          ),
-        );
-        // Only a row this pull created gets a line. A redelivery that wrote
-        // nothing would otherwise put a second message in the diary that
-        // nobody sent.
-        if (fresh) {
-          // D-127. The door arms a clock per message it KNOWS ABOUT, and it
-          // knows about this one because it just wrote it: nothing announces a
-          // `received` row on `hub_turn`, so `attend` is told here rather than
-          // finding out on some later wake that happened to read the table.
-          own.arrivals.push({
-            id,
-            person: agent.person,
-            agent: agent.id,
-            received_at: new Date(),
-            state: "received",
-            claimed_by: null,
           });
-          own.arrived.wake();
-          await appendChatLine(
-            { stateDir, person: agent.person, agent: agent.id },
-            {
-              at: message.at,
-              direction: "in",
-              from: agent.person,
-              text: message.text,
-            },
-          );
-        }
-      }
-
-      if (pulled.messages.length > 0 && pulled.cursor !== null) {
-        cursor = pulled.cursor;
-        await writeCursor(store, options.door, agent.chat, cursor);
+        });
+        accepting = accepted.catch(() => {});
+        await accepted;
+      } catch {
+        console.error("ingress: accepted batch remains unacknowledged");
+        await Promise.race([Bun.sleep(timeoutMs), stopped, own.left]);
       }
     }
   };
@@ -875,15 +826,6 @@ export async function runDoor(options: {
     while (!stopping && !own.leaving) {
       let sleepMs = timeoutMs;
       try {
-        // REVIEW M3. READ, NEVER TAKE. Everything below this line can throw,
-        // and a pass that throws is caught and the loop goes on, which is right
-        // for a pass and wrong for the queue: a demand spliced off here and
-        // lost to a half-written registry lives nowhere else, and the person's
-        // phrase produces no row and no line back for ever. SPEC §6 says the
-        // installer, the web board and an editor all edit that file, so a
-        // half-written one is an ordinary moment rather than an accident. The
-        // queue is cleared only after the row is on the table.
-        const asked = own.demands.slice();
         // D-161. Re-read per tick, so the harvester, the quiet timeout, the
         // minimum slice and the report switch all land with nothing restarted.
         const fresh = registryThisTick();
@@ -891,17 +833,8 @@ export async function runDoor(options: {
         if (settings === null) {
           // D-137. This person's chats are not harvested at all, and `check`
           // says so rather than this task complaining once a tick.
-          //
-          // The demand IS dropped here, and that is deliberate: nothing in the
-          // hub can ever serve a phrase typed at a person whose file names no
-          // harvester, and a queue that kept every one of them would grow for
-          // as long as the household kept typing. `check` reports
-          // `harvest-undeclared` for that person, which is the line a household
-          // can act on.
-          own.demands.splice(0, asked.length);
           await Promise.race([
             Bun.sleep(timeoutMs),
-            own.demanded.wait(),
             stopped,
             own.left,
           ]);
@@ -914,31 +847,14 @@ export async function runDoor(options: {
 
         let reason: HarvestBody["reason"] | null = null;
         let until = now.toISOString();
-        let said: string | undefined;
-        if (asked.length > 0) {
-          // D-146. A demand is not a deadline: it fires at once and the
-          // minimum is ignored, because a person who typed a phrase at the
-          // machinery is owed an answer whatever the slice turns out to hold.
-          reason = "demand";
-          said = asked[asked.length - 1];
-        } else {
-          const trigger = dueTrigger({
-            newest: newest?.at ?? null,
-            oldest: seen[0]?.at ?? null,
-            count: seen.length,
-            quietMinutes: settings.quiet_minutes,
-            minMessages: settings.min_messages,
-            now,
-          });
-          if (trigger === "backstop") {
-            // L19's "over yesterday". A backstop that ran to `now` would
-            // swallow today's still-live conversation into yesterday's slice.
-            reason = "backstop";
-            until = new Date(lastMidnight(now)).toISOString();
-          } else if (trigger === "quiet") {
-            reason = "quiet";
-          }
-        }
+        const trigger = dueTrigger({
+          newest: newest?.at ?? null, oldest: seen[0]?.at ?? null, count: seen.length,
+          quietMinutes: settings.quiet_minutes, minMessages: settings.min_messages, now,
+        });
+        if (trigger === "backstop") {
+          reason = "backstop";
+          until = new Date(lastMidnight(now)).toISOString();
+        } else if (trigger === "quiet") reason = "quiet";
 
         if (reason !== null) {
           // D-145. On firing, and only then, the watermark is read, and `from`
@@ -973,7 +889,6 @@ export async function runDoor(options: {
               until,
               reason,
               lines: slice.length,
-              ...(said === undefined ? {} : { said }),
             };
             await store.sql.begin(async (tx) =>
               enqueueInbound(
@@ -987,11 +902,6 @@ export async function runDoor(options: {
                 },
               ),
             );
-            // REVIEW M3. The demands this pass acted on, and only those: the
-            // queue is push-only and in order, so the first `asked.length` of
-            // it are the ones read at the top. One that arrived while this pass
-            // ran is still there for the next.
-            own.demands.splice(0, asked.length);
           }
           // The bound moves either way. A pass that looked and found too few
           // has ASKED about those lines, and leaving the bound behind would
@@ -1029,7 +939,6 @@ export async function runDoor(options: {
       }
       await Promise.race([
         Bun.sleep(sleepMs),
-        own.demanded.wait(),
         stopped,
         own.left,
       ]);
@@ -1063,8 +972,6 @@ export async function runDoor(options: {
       progress: new Map<string, ProgressLine>(),
       arrivals: [],
       arrived: nudge(),
-      demands: [],
-      demanded: nudge(),
     };
     served.set(agent.id, it);
     it.done = Promise.allSettled([

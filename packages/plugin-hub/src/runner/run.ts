@@ -1,3 +1,4 @@
+import type { InboundSource } from "../store/inbound.ts";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { adapterFor, loopLaunch } from "../adapters/index.ts";
@@ -588,7 +589,7 @@ export async function runRunner(options: {
 
     const oneTurn = async (
       message: { id: string; text: string },
-      about: { preset: Preset; tail: boolean; registry: Registry },
+      about: { preset: Preset; tail: boolean; registry: Registry; source?: InboundSource | null },
     ): Promise<void> => {
       let finish: (end: TurnEnd) => void = () => {};
       const ended = new Promise<TurnEnd>((resolve) => {
@@ -739,6 +740,8 @@ export async function runRunner(options: {
       if (unhealthy) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
       await settleTurn(store, {
         inboundId: message.id,
+        person: agent.person,
+        source: about.source,
         chunks: [end.text],
         turn: record,
       });
@@ -1340,7 +1343,7 @@ export async function runRunner(options: {
         // a new child, and so is one whose child the memory watch killed. The
         // runner process itself never restarts for either.
         if (!own.session || presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
-        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry });
+        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source });
         claimed = null;
         lastWork = Date.now();
       }
