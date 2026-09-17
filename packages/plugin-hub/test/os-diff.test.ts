@@ -77,8 +77,8 @@ function stage(): { dir: string; registryFile: string } {
     run: [
       { id: "door-fake", kind: "door", machine: "pi", platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 },
       { id: "runner-pi", kind: "runner", machine: "pi", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 512 },
-      { id: "watch-bikes", kind: "watcher", machine: "pi", schedule: "every 30m", memory_limit_mb: 128 },
-      { id: "transcriber", kind: "transcriber", machine: "pi", schedule: "on demand", memory_limit_mb: 1024 },
+      { id: "watch-bikes", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "every 30m", memory_limit_mb: 128 },
+      { id: "transcriber", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "on demand", memory_limit_mb: 1024 },
     ],
   };
   return { dir, registryFile: writeRegistry(dir, spec) };

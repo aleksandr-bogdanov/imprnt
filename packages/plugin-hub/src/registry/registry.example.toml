@@ -56,6 +56,7 @@ os = "macos"
 # harvester and twenty on a per-token key, and a line back.
 [[people]]
 id = "p1"
+allowed_senders = { "door-telegram" = [] }
 tree = "/var/lib/imprnt-hub/p1"
 language = "en"
 acked_seconds = 30
@@ -87,7 +88,7 @@ harvest_report = false
 [[credentials]]
 id = "household-claude"
 kind = "claude-login"
-file = "/var/lib/imprnt-hub/credentials/claude.json"
+file = "/var/lib/imprnt-hub/credentials/.credentials.json"
 owner = "household"
 
 [[credentials]]
@@ -166,36 +167,29 @@ memory_limit_mb = 512
 child_memory_limit_mb = 2048
 
 [[run]]
-id = "watch-bikes"
-machine = "pi"
-kind = "watcher"
-schedule = "every 30m"
-memory_limit_mb = 128
-
-[[run]]
 id = "vault-sync"
 machine = "pi"
 kind = "sync"
+repositories = ["p1-vault"]
 schedule = "every 15m"
 memory_limit_mb = 128
 
-[[run]]
-id = "backup"
-machine = "pi"
-kind = "backup"
-schedule = "hourly"
-memory_limit_mb = 256
+
 
 [[run]]
-id = "transcriber"
+id = "hub-pi"
+kind = "hub"
 machine = "pi"
-kind = "transcriber"
-schedule = "on demand"
-memory_limit_mb = 1024
-
-[[run]]
-id = "board"
-machine = "pi"
-kind = "board"
 schedule = "always"
-memory_limit_mb = 256
+memory_limit_mb = 128
+
+[[repositories]]
+id = "p1-vault"
+person = "p1"
+path = "/var/lib/imprnt-hub/p1/vault-project"
+remote = "origin"
+branch = "main"
+required = true
+
+[install]
+admin_argv = ["sudo", "-n", "-u", "postgres", "psql"]

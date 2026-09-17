@@ -1,2 +1,3 @@
 import { command } from "./command.ts";
-process.exit(await command(["install", ...process.argv.slice(2)]));
+const [registry, ...args] = process.argv.slice(2);
+process.exit(await command(["install", registry, ...(args.length ? args : ["database"])]));

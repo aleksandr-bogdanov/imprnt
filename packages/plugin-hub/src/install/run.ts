@@ -8,21 +8,30 @@ import type { OsSeam } from "../os/types.ts";
 import { programForKind } from "../hub/program.ts";
 import { openStore, storeUrlAs } from "../store/connect.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
+import { standardFor } from "./standard.ts";
 
-export async function runInstall(options: { registryFile: string; stage?: string; target?: string; os?: OsSeam }) {
+export async function runInstall(options: { registryFile: string; stage?: string; target?: string; os?: OsSeam; dry?: boolean }) {
   const registry = loadRegistry(options.registryFile);
   const entries = listRunEntries(registry);
   for (const entry of entries) programForKind(entry.kind);
   const stage = options.stage ?? "all";
   if (!["all", "database", "services", "entry"].includes(stage)) throw new Error("unknown-stage");
   const url = String(readSetting(registry, "hub.store_url"));
+  const standard = standardFor(process.platform);
+  if (options.dry) {
+    process.stdout.write(`install: dry run for ${options.registryFile}; no changes.\n` +
+      `install: the standard install is ${standard.install.join(" ")}; pid file ${standard.pidFile}, unit ${standard.unit}.\n` +
+      (standard.service ? `install: ${standard.service.join(" ")}; would not run that service command when postgres already answers.\n` :
+        `install: would start no service of its own; apt-get creates and starts ${standard.unit}.\n`));
+    return { stage, result: "dry" };
+  }
   if (stage === "database" || stage === "all") {
     const argv = readSetting(registry, "install.admin_argv") as string[];
     if (!Array.isArray(argv) || !argv.length) throw new Error("install-admin-required");
     const database = decodeURIComponent(new URL(url).pathname.slice(1));
     if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(database)) throw new Error("invalid-database");
     const ask = (db: string, args: string[]) => {
-      const result = Bun.spawnSync([...argv, "-X", "-v", "ON_ERROR_STOP=1", "-At", "-d", db, ...args], { stdout: "pipe", stderr: "pipe" });
+      const result = Bun.spawnSync([...argv, "-X", "-v", "ON_ERROR_STOP=1", "-At", "-d", db, ...args], { env: process.env, stdout: "pipe", stderr: "pipe" });
       if (result.exitCode !== 0) throw new Error(result.stderr.toString());
       return result.stdout.toString().trim();
     };
@@ -39,8 +48,10 @@ export async function runInstall(options: { registryFile: string; stage?: string
     const text = readFileSync(options.registryFile, "utf8");
     if (!/^\s*\[\s*store\s*\]/m.test(text)) {
       const data = ask(database, ["-c", "show data_directory"]);
-      writeFileSync(options.registryFile, `${text.trimEnd()}\n\n[store]\npid_file = ${JSON.stringify(join(data, "postmaster.pid"))}\n`);
+      const external = ask(database, ["-c", "show external_pid_file"]);
+      writeFileSync(options.registryFile, `${text.trimEnd()}\n\n[store]\npid_file = ${JSON.stringify(external || join(data, "postmaster.pid"))}\nunit = ${JSON.stringify(standard.unit)}\n`);
     }
+    process.stdout.write("install: postgres schema ready; existing store settings unchanged.\n");
     if (stage === "database") return { stage, result: "done" };
   }
   const machines = listMachines(registry);

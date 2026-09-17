@@ -101,12 +101,12 @@ function stage(): { dir: string; registryFile: string; unitDir: string } {
         memory_limit_mb: MEMORY_MB,
         child_memory_limit_mb: 512,
       },
-      { id: "watch-bikes", kind: "watcher", machine: "pi", schedule: "every 30m", memory_limit_mb: 128 },
-      { id: "backup", kind: "backup", machine: "pi", schedule: "hourly", memory_limit_mb: 256 },
-      { id: "transcriber", kind: "transcriber", machine: "pi", schedule: "on demand", memory_limit_mb: 1024 },
+      { id: "watch-bikes", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "every 30m", memory_limit_mb: 128 },
+      { id: "backup", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "hourly", memory_limit_mb: 256 },
+      { id: "transcriber", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "on demand", memory_limit_mb: 1024 },
       // The collision fence's own subject: an entry id that renders to a live
       // v2 unit name under the WATCH prefix and must not under the RENDER one.
-      { id: "board", kind: "board", machine: "pi", schedule: "always", memory_limit_mb: 256 },
+      { id: "board", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "always", memory_limit_mb: 256 },
     ],
   };
   return { dir, registryFile: writeRegistry(dir, spec), unitDir };

@@ -39,11 +39,17 @@ import { test, expect, beforeAll, afterAll } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { hubPath, startCluster, until, type Cluster } from "./helpers/cluster.ts";
+import { hubPath, pgBin, startCluster, until, type Cluster } from "./helpers/cluster.ts";
 import { scratchDir } from "./helpers/hub-fixture.ts";
-import { writeRegistry } from "./helpers/registry.ts";
+import { writeRegistry as write } from "./helpers/registry.ts";
 import { osGate, announceGate, thisMachine } from "./helpers/os-gate.ts";
 import { unitFixture, type UnitFixture } from "./helpers/units.ts";
+
+function writeRegistry(...args: Parameters<typeof write>) {
+  const file = write(...args);
+  writeFileSync(file, readFileSync(file, "utf8") + `\n[install]\nadmin_argv = ${JSON.stringify([pgBin("psql"), "-h", "127.0.0.1", "-p", String(cluster.port), "-U", cluster.superuser])}\n`);
+  return file;
+}
 
 const SLOW = 180_000;
 const SCRIPT = "src/entry/install.ts";
@@ -58,7 +64,8 @@ let foreignBefore: string[] = [];
 
 beforeAll(async () => {
   announceGate(gate, "03b item 2, the install script");
-  cluster = await startCluster();
+  const dir = await scratchDir("hub-install-postgres-");
+  cluster = await startCluster({ settings: process.platform === "linux" ? { external_pid_file: `'${join(dir, "postgresql-fixture.pid")}'` } : {} });
   if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 

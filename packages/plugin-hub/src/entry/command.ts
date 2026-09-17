@@ -15,7 +15,7 @@ export async function command(args: string[]): Promise<number> {
   const usage = () => { process.stderr.write(cliUsage("en") + "\n"); return 2; };
   if (!registryFile || !["check", "status", "metrics", "install", "recover"].includes(verb) || rest.length) return usage();
   if (verb !== "install" && extra || verb === "metrics" && target || verb === "recover" && !/^(agent|door):[^:]+$/.test(target ?? "")) return usage();
-  if (verb === "install" && (target && !["database", "services", "entry"].includes(target) || target === "database" && extra || ["services", "entry"].includes(target) && !extra)) return usage();
+  if (verb === "install" && (target && !["database", "services", "entry", "--dry"].includes(target) || ["database", "--dry"].includes(target) && extra || ["services", "entry"].includes(target) && !extra)) return usage();
   try {
     const registry = loadRegistry(registryFile);
     const machines = listMachines(registry);
@@ -23,7 +23,7 @@ export async function command(args: string[]): Promise<number> {
     if (["check", "status"].includes(verb) && (!machine || !machines.some(m => m.id === machine))) return usage();
     if (verb === "install") {
       if (!target && (machines.length !== 1 || listRunEntries(registry).filter(e => e.kind === "hub").length !== 1)) return usage();
-      await runInstall({ registryFile, stage: target, target: extra });
+      await runInstall({ registryFile, stage: target === "--dry" ? "database" : target, target: extra, ...(target === "--dry" ? { dry: true } : {}) });
       process.stdout.write(operation("en", { operation: "install", target: extra ?? target ?? "all", result: "done" }) + "\n");
       return 0;
     }
