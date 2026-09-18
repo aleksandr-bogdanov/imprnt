@@ -80,7 +80,7 @@ test(
     expect(nameA).not.toBe(nameB);
 
     // ONE adapter object, registered twice under two names it does not know.
-    const scripted = createScriptedAdapter({ name: nameA, lacks: ["stream"] });
+    const scripted = createScriptedAdapter({ name: nameA, lacks: ["stream"], usage: { input_tokens: 1234, cached_input_tokens: 900, output_tokens: 210, plan_usage: null, raw: {}, resolved_model_ids: ["fixture-model"] } });
 
     const runs: {
       reply: string;

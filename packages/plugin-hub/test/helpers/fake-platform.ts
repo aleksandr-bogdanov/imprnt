@@ -269,6 +269,8 @@ export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
           message.platform_message_id ?? String(90000 + nextId++),
         chat: message.chat ?? CHAT,
         from: message.from ?? "p1",
+        sender_id: "fixture-sender",
+        media: [],
         text: message.text,
         at,
       };

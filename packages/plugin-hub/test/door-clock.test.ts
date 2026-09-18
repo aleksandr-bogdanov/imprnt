@@ -129,6 +129,8 @@ test(
       probe: (post) =>
         probeDir.value === "" ? null : outLineOnDisk({ stateDir: probeDir.value })(post),
     });
+    await Bun.write(it.registryFile, (await Bun.file(it.registryFile).text())
+      .replaceAll("[[people]]", '[[people]]\nallowed_senders = { "door-fake" = ["fixture-sender"] }'));
     probeDir.value = it.stateDir;
     let door: { stop(): Promise<void> } | null = null;
     let runner: { stop(): Promise<void> } | null = null;
@@ -264,6 +266,8 @@ test(
         },
       ],
     });
+    await Bun.write(quick.registryFile, (await Bun.file(quick.registryFile).text())
+      .replaceAll("[[people]]", '[[people]]\nallowed_senders = { "door-fake" = ["fixture-sender"] }'));
     let door2: { stop(): Promise<void> } | null = null;
     let runner2: { stop(): Promise<void> } | null = null;
     try {
@@ -336,6 +340,8 @@ test(
         { id: AGENT3, person: PERSON3, preset: "daily", chat: CHAT3, door: DOOR, runner: RUNNER2 },
       ],
     });
+    await Bun.write(it.registryFile, (await Bun.file(it.registryFile).text())
+      .replaceAll("[[people]]", '[[people]]\nallowed_senders = { "door-fake" = ["fixture-sender"] }'));
     // One loop per runner, for the reason test/runner-outage.test.ts gives.
     const second = createScriptedAdapter({ name: it.adapterName });
     let door: { stop(): Promise<void> } | null = null;
@@ -464,6 +470,8 @@ test(
         },
       ],
     });
+    await Bun.write(it.registryFile, (await Bun.file(it.registryFile).text())
+      .replaceAll("[[people]]", '[[people]]\nallowed_senders = { "door-fake" = ["fixture-sender"] }'));
     let door: ReadyProcess | null = null;
     let runner: { stop(): Promise<void> } | null = null;
 

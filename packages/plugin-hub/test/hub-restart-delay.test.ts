@@ -51,9 +51,9 @@ let foreignBefore: string[] = [];
 let dir: string;
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "check 6, a killed listed process is back");
   dir = mkdtempSync(join(tmpdir(), "hub-delay-"));
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {
@@ -152,7 +152,7 @@ test.skipIf(!gate.ok)(
       machines: [machine],
       run: [
         { id: residentId, kind: "runner", machine: machine.id, schedule: "always", memory_limit_mb: 64, child_memory_limit_mb: 64 },
-        { id: onDemandId, kind: "transcriber", machine: machine.id, schedule: "on demand", memory_limit_mb: 64 },
+        { id: onDemandId, kind: "runner", child_memory_limit_mb: 2048, machine: machine.id, schedule: "on demand", memory_limit_mb: 64 },
       ],
     });
 

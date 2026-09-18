@@ -46,7 +46,8 @@ const SAYS_OK_EARLY: [string, string[]][] = [
  * ONE agent never did. It is not the statement text, not the prepared
  * statement's name and not a transaction boundary: the same two statements
  * driven by hand in either order never cross, and a pool above one never
- * crosses at all, because two statements in flight are then two connections.
+ * crossed in that probe. Saturated fleet work still reserves each connection
+ * until its result has settled.
  *
  * The hub's own tasks are genuinely concurrent (a runner's agents, a door's
  * read and post and attend), so this is a floor rather than a tuning knob. What
@@ -54,7 +55,9 @@ const SAYS_OK_EARLY: [string, string[]][] = [
  * itself to the server there, the hub's advisory lock is held by that session,
  * and a waiting process still issues nothing at all.
  */
-const CONNECTIONS_PER_STORE = 8;
+// Keep concurrent statements separate while leaving room for doors, runners
+// and their notification connections in the same cluster.
+const CONNECTIONS_PER_STORE = 4;
 
 export async function openStore(options: { url: string }): Promise<Store> {
   const sql = new SQL(options.url, { max: CONNECTIONS_PER_STORE });

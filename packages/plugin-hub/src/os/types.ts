@@ -46,6 +46,7 @@ export interface UnitState {
 
 export interface RenderContext {
   machine: string;
+  stateDir?: string;
   execPath: string;        // the interpreter, supplied, never discovered here
   entryScript: string;     // src/entry/<kind>.ts, absolute
   registryFile: string;

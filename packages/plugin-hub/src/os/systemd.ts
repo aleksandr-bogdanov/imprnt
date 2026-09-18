@@ -112,6 +112,10 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
     ]);
     return { code: await proc.exited, out, err };
   };
+  const perform = async (args: string[]) => {
+    const result = await ask(args);
+    if (result.code !== 0) throw new Error(`${args.join(" ")}: ${result.err || result.out}`);
+  };
   const service = (entryId: string) => `${unitName(entryId)}.service`;
   const timer = (entryId: string) => timerName(entryId);
 
@@ -145,6 +149,8 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
       const argv = [ctx.execPath, "run", ctx.entryScript, ctx.registryFile, entry.id];
       const unit = [
         "[Unit]",
+        "After=network-online.target",
+        "Wants=network-online.target",
         `Description=imprnt hub ${entry.kind} ${entry.id} on ${ctx.machine}`,
         // D-96. The give-up pair, which launchd has no equivalent of at all.
         `StartLimitIntervalSec=${ctx.giveUpWindowSeconds}`,
@@ -165,6 +171,8 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
         "CollectMode=inactive-or-failed",
         "",
         "[Service]",
+        "StandardOutput=journal",
+        "StandardError=journal",
         `ExecStart=${argv.map(argument).join(" ")}`,
         // Only a resident asks to be kept alive. A scheduled service is started
         // by its timer and an on-demand one by a person, so neither carries
@@ -193,7 +201,10 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
             "CollectMode=inactive-or-failed",
             "",
             "[Timer]",
+            // A fresh service has no last activation to anchor its cadence.
+            `OnActiveSec=${every}`,
             `OnUnitActiveSec=${every}`,
+            "AccuracySec=1s",
             `Unit=${name}.service`,
             "",
             "[Install]",
@@ -212,7 +223,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
         writeFileSync(file.path, file.text, "utf8");
         written.push(file.path);
       }
-      await ask(["--user", "daemon-reload"]);
+      await perform(["--user", "daemon-reload"]);
       // Enabling is what PINS the unit: without it systemd forgets a unit that
       // ran and went inactive, and "the manager's own record says it ran" stops
       // being answerable. The symlink is the manager's own, in its own wants
@@ -220,13 +231,13 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
       for (const file of files) {
         const name = file.path.slice(file.path.lastIndexOf("/") + 1);
         if (!file.text.split("\n").some((line) => line.trim() === "[Install]")) continue;
-        await ask(
+        await perform(
           name.endsWith(".timer")
             ? ["--user", "enable", "--now", name]
             : ["--user", "enable", name],
         );
       }
-      await ask(["--user", "daemon-reload"]);
+      await perform(["--user", "daemon-reload"]);
       return written;
     },
 
@@ -256,7 +267,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
 
     async start(entryId: string): Promise<void> {
       // D-102. The program runs NOW. Enabling a cadence is install's job.
-      await ask(["--user", "start", service(entryId)]);
+      await perform(["--user", "start", service(entryId)]);
     },
 
     async stop(entryId: string): Promise<void> {
@@ -265,7 +276,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
     },
 
     async restart(entryId: string): Promise<void> {
-      await ask(["--user", "restart", service(entryId)]);
+      await perform(["--user", "restart", service(entryId)]);
     },
 
     async list(): Promise<UnitState[]> {

@@ -1,29 +1,31 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { adapterFor } from "../adapters/index.ts";
-import type { Adapter, AdapterSession, TurnEnd } from "../adapters/types.ts";
-import { boxCommand, boxContextFor } from "../box/index.ts";
+import { executeHarvest } from "../harvest/execute.ts";
+import { watchControls } from "../hub/control.ts";
+import { prepareReply } from "../door/reply.ts";
+import type { InboundSource } from "../store/inbound.ts";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { adapterFor, loopLaunch } from "../adapters/index.ts";
+import { AdapterMissing, type Adapter, type AdapterSession, type TurnEnd } from "../adapters/types.ts";
+import { credentialSource } from "../adapters/launch.ts";
+import { boxContextFor } from "../box/index.ts";
 import { readTail } from "../chatlog.ts";
-import { applyNote, stageDirFor, stageNotes } from "../harvest/apply.ts";
-import { parseHarvestReply, SAID_CAP } from "../harvest/parse.ts";
-import { harvestMessage } from "../harvest/prompt.ts";
-import { decodeHarvestBody, type HarvestBody } from "../harvest/row.ts";
-import { readWatermark, watermarkRow } from "../harvest/sheet.ts";
-import { readSlice } from "../harvest/slice.ts";
+import { SAID_CAP } from "../harvest/parse.ts";
 import { thisOs } from "../os/index.ts";
-import { appendEntry } from "../records/diary.ts";
+import { appendEntry, type NewEntry } from "../records/diary.ts";
+import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import { stamp } from "../records/stamps.ts";
 import {
   catchUpNotice,
-  harvestNothing,
-  harvestReport,
   outageNotice,
   windowNotice,
   type Language,
+  finding,
+  safeValue,
 } from "../door/lines.ts";
 import {
   agentsFor,
-  harvestFor,
+  lifetimeFor,
+  runnerLimitsFor,
   languageOf,
   listAgents,
   listRunEntries,
@@ -42,9 +44,11 @@ import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
-import { writeProgress } from "./progress.ts";
+import { clearProgress, writeProgress } from "./progress.ts";
 import {
   clearOutage,
+  classifyRefusal,
+  readOutage,
   maxRankFor,
   noticeKey,
   openOutage,
@@ -56,15 +60,14 @@ import {
 } from "./outage.ts";
 import {
   refuseTurn,
-  settleHarvest,
   settleTurn,
-  type HarvestRecord,
   type TurnRecord,
 } from "./settle.ts";
 
 export interface RunnerHandle {
   runner: string;
   stop(): Promise<void>;
+  recoverAgent(request: { id: string; agent: string }): Promise<void>;
 }
 
 /**
@@ -80,6 +83,7 @@ export interface RunnerHandle {
  */
 interface Live {
   agent: AgentEntry;
+  reserved: boolean;
   /** The loop the agent is talking to, for the memory watch to read and kill. */
   session: AdapterSession | null;
   /** The watch killed this child, so the next turn starts a new session first. */
@@ -119,6 +123,12 @@ interface OpenTurn {
 
 function setting(registry: Registry, key: string): number {
   return Number(readSetting(registry, key));
+}
+
+function noticeRoute(registry: Registry, id: string) {
+  const agent = listAgents(registry).find(one => one.id === id)!;
+  const door = (registry.data.run as { id: string; platform?: string }[]).find(one => one.id === agent.door);
+  return { route: { door: agent.door, chat: agent.chat }, platform: door?.platform ?? "discord", language: languageOf(registry, agent.person) };
 }
 
 /**
@@ -275,48 +285,15 @@ async function sayWhichServer(
   });
 }
 
-/**
- * The agent's box, ready to hand to a loop (03b item 1, D-92, D-93).
- *
- * The RUNNER decides the boxing, because the box is derived from the registry
- * and the registry is what the runner already reads. The loop is handed a hook
- * and spawns what comes back, so a new adapter inherits the fence without
- * knowing a box exists.
- *
- * THE PROFILE IS WRITTEN HERE, before the hook is handed over. `boxCommand`
- * computes the path and the text and writes nothing, and `sandbox-exec` refuses
- * to start on a profile it cannot open, so a wiring that forgot the write gets
- * a child that never runs.
- *
- * A person with no tree is UNBOXED and is not a refusal: whether a person has a
- * tree is a question about a machine, not about the file (D-93), so the agent
- * runs and `check` reports `agent-unboxed` about it.
- */
-function boxFor(
-  registry: Registry,
-  agentId: string,
-): { wrap: (argv: string[]) => string[]; cwd: string | undefined } | null {
-  if (process.platform !== "darwin" && process.platform !== "linux") return null;
-  let ctx;
-  try {
-    ctx = boxContextFor(registry, agentId);
-  } catch {
-    // An agent the registry no longer carries is one this runner is dropping.
-    return null;
-  }
-  if (ctx.tree === "") return null;
-  const ready = boxCommand([], ctx);
-  if (ready.profile) {
-    mkdirSync(dirname(ready.profile.path), { recursive: true });
-    writeFileSync(ready.profile.path, ready.profile.text, "utf8");
-  }
-  return {
-    wrap: (argv: string[]) => boxCommand(argv, ctx).argv,
-    // The agent WORKS in its own tree, which is the directory the box is drawn
-    // around. A declared tree that is not on this machine yet is left alone
-    // rather than made a spawn that cannot start.
-    cwd: existsSync(ctx.tree) ? ctx.tree : undefined,
-  };
+/** Configuration and filesystem work happen only when a session starts. */
+async function launchFor(registry: Registry, agent: AgentEntry, presetName: string, purpose: "ordinary" | "harvest") {
+  const stateDir = String(readSetting(registry, "hub.state_dir") ?? "");
+  const credential = credentialOfPreset(registry, presetName);
+  return loopLaunch({ registry, agent, preset: getPreset(registry, presetName), purpose,
+    ...(credential ? { credential: credentialSource(registry, presetName) } : {}),
+    sessionDir: join(stateDir, agent.person, "sessions", agent.id, crypto.randomUUID()),
+    box: boxContextFor(registry, agent.id),
+  });
 }
 
 /**
@@ -339,6 +316,11 @@ function boxFor(
  * parenthesis, which is the only parse of that file that is not a guess.
  */
 function childrenOf(pid: number): number[] {
+  if (process.platform === "darwin") {
+    const result = Bun.spawnSync(["ps", "-axo", "pid=,ppid="], { stdout: "pipe", stderr: "ignore" });
+    return result.stdout.toString().trim().split("\n").map(line => line.trim().split(/\s+/).map(Number))
+      .filter(row => row[1] === pid).map(row => row[0]);
+  }
   try {
     const listed = readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim();
     if (listed !== "") {
@@ -423,21 +405,90 @@ export async function runRunner(options: {
     release = () => resolve("stopped");
   });
 
+  const retries = new Map<string, number>();
+  for (const row of await readSheet(store, "agent_health")) {
+    const due = Date.parse(String(row.data.retry_at));
+    if (Number.isFinite(due)) retries.set(row.id, due);
+  }
+  let reservations = 0;
+  let measuredBytes = 0;
+  let peakBytes = 0;
+  const capacity = new Set<() => void>();
+  const harvestSessions = new Map<AdapterSession, Live>();
+  const readings = new Map<AdapterSession, number>();
+  let capacityVersion = 0;
+  const capacityChanged = () => {
+    capacityVersion++;
+    for (const wake of capacity) wake();
+    capacity.clear();
+  };
+  const releaseCapacity = () => {
+    reservations--;
+    measuredBytes = [...readings.values()].reduce((sum, bytes) => sum + bytes, 0);
+    capacityChanged();
+  };
+  const appendRunnerEntry = async (entry: NewEntry): Promise<number> => {
+    // Standalone writes share the pool with concurrent claims and waits.
+    // Hold their connection until the returning row has been consumed too.
+    const connection = await store.sql.reserve();
+    try {
+      return await appendEntry({ ...store, sql: connection as unknown as Store["sql"] }, entry);
+    } finally { connection.release(); }
+  };
+  const admitChild = async (registry: Registry, own: Live, reserve = true): Promise<boolean> => {
+    const entry = listRunEntries(registry).find(one => one.id === options.runner);
+    const limits = entry ? runnerLimitsFor(registry, options.runner) : { max_active_children: 4, child_memory_budget_mb: 2048 };
+    const limitMb = entry?.child_memory_limit_mb ?? limits.child_memory_budget_mb;
+    // Reserve the smaller per-child ceiling where possible; a ceiling equal
+    // to the fleet budget shares that budget across its declared slots. The
+    // monitor also enforces actual aggregate use, including descendants.
+    const reserveMb = limitMb < limits.child_memory_budget_mb ? limitMb : limits.child_memory_budget_mb / limits.max_active_children;
+    let recorded = false;
+    while (!stopping && !own.leaving) {
+      if (reservations < limits.max_active_children && Math.max(reservations * reserveMb, measuredBytes / 1048576) + reserveMb <= limits.child_memory_budget_mb) {
+        if (reserve) reservations++;
+        return true;
+      }
+      own.settle();
+      if (!recorded) {
+        recorded = true;
+        await appendRunnerEntry({ stream: "runner", subject: own.agent.id, kind: "admission.wait", actor: "runner",
+          detail: { cause: "admission", children: reservations, reserved_mb: reservations * reserveMb, peak_bytes: peakBytes } });
+        continue;
+      }
+      let wake!: () => void;
+      const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
+      try { await Promise.race([available, stopped, own.left]); }
+      finally { capacity.delete(wake); }
+    }
+    return false;
+  };
+  const failedSession = (session: AdapterSession): Promise<never> => session.exited
+    ? session.exited.then(exit => { throw new Error(safeValue((exit as { cause?: string })?.cause ?? "child-exited")); })
+    : new Promise<never>(() => {});
+  const preflight = (registry: Registry, agent: AgentEntry) => {
+    const entries = listRunEntries(registry);
+    if (entries.find(one => one.id === agent.door) && entries.find(one => one.id === agent.door)?.machine !== entries.find(one => one.id === agent.runner)?.machine)
+      throw new Error("agent-state-unavailable");
+    for (const path of [stateDir, join(stateDir, agent.person), join(stateDir, agent.person, "chatlog"), join(stateDir, agent.person, "chatlog", agent.id)]) {
+      try {
+        if (!statSync(path).isDirectory()) throw new Error("not a directory");
+        accessSync(path, constants.R_OK | constants.X_OK);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("agent-state-unavailable");
+      }
+    }
+  };
+
   const runAgent = async (agent: AgentEntry, own: Live): Promise<void> => {
     let startedWith = "";
+    let lastWork = Date.now();
+    let claimed: string | null = null;
+    let unhealthy = retries.has(agent.id);
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
     /** This agent stopped claiming because the household's window is used up. */
     let heldByWindow = false;
-    /**
-     * This agent has refused a turn or held its rows since its last success, so
-     * an outage may be standing. It is what keeps the clear off the hot path: a
-     * runner that has never met one issues no delete on a healthy turn.
-     */
-    let sawOutage = false;
-    /** The standing outage's own `since`, so a loser writes the same key. */
-    let outageSince = "";
-
     /** RUN-18. One notice per person, and never a second one for the same outage. */
     const sayOutage = async (
       registry: Registry,
@@ -449,6 +500,7 @@ export async function runRunner(options: {
         await appendNotice(store, {
           person: who.person,
           agent: who.agent,
+          ...noticeRoute(registry, who.agent),
           body: outageNotice(
             languageOf(registry, who.person) as Language,
             outage.cause,
@@ -469,38 +521,21 @@ export async function runRunner(options: {
      * count and the line it produces.
      */
     const sayCatchUp = async (registry: Registry, credential: string): Promise<void> => {
-      // The count comes first, then the clear, then the lines, and only then
-      // does the caller settle. Every runner that lived through the outage
-      // writes them, not only the one that won the delete: a loser that wrote
-      // nothing would settle its own reply into the chat BETWEEN the winner's
-      // delete and the winner's lines, and the person would read the answer
-      // above "it works again". The key is the same for all of them, so the
-      // second write lands nothing.
-      // A runner RESTARTED through the outage remembers nothing, so it counts
-      // after its own clear rather than before it and can report one too few
-      // (REVIEW's note). The runner that lived through the outage counts first
-      // and its line is the one that lands, so this is the rarer of two rare
-      // paths and it is named rather than hidden.
-      const waiting = sawOutage
-        ? await waitingPerPerson(store, registry, credential)
-        : null;
-      const cleared = await clearOutage(store, { credential });
-      // A runner that restarted through the outage remembers nothing, and the
-      // row it deletes here is how it finds out there was one at all.
-      const since = cleared?.since ?? (sawOutage ? outageSince : "");
-      if (!since) return;
-      const counts = waiting ?? (await waitingPerPerson(store, registry, credential));
-      for (const who of peopleOn(registry, credential)) {
-        await appendNotice(store, {
-          person: who.person,
-          agent: who.agent,
-          body: catchUpNotice(
-            languageOf(registry, who.person) as Language,
-            counts.get(who.person) ?? 0,
-          ),
-          noticeKey: noticeKey("outage-over", credential, since, who.person),
-        });
-      }
+      await store.sql.begin(async tx => {
+        const inside = { ...store, sql: tx as unknown as Store["sql"] };
+        const waiting = await waitingPerPerson(inside, registry, credential);
+        const cleared = await clearOutage(inside, { credential });
+        if (!cleared) return;
+        for (const who of peopleOn(registry, credential)) {
+          await appendNotice(inside, {
+            person: who.person,
+            agent: who.agent,
+            ...noticeRoute(registry, who.agent),
+            body: catchUpNotice(languageOf(registry, who.person) as Language, waiting.get(who.person) ?? 0),
+            noticeKey: noticeKey("outage-over", credential, cleared.since, who.person),
+          });
+        }
+      });
     };
 
     /** RUN-19. One line per person at the notice threshold, keyed on the reset. */
@@ -514,6 +549,7 @@ export async function runRunner(options: {
         await appendNotice(store, {
           person: who.person,
           agent: who.agent,
+          ...noticeRoute(registry, who.agent),
           body: windowNotice(languageOf(registry, who.person) as Language, percent),
           noticeKey: noticeKey(
             "window-notice",
@@ -565,7 +601,7 @@ export async function runRunner(options: {
 
     const oneTurn = async (
       message: { id: string; text: string },
-      about: { preset: Preset; tail: boolean; registry: Registry },
+      about: { preset: Preset; tail: boolean; registry: Registry; source?: InboundSource | null },
     ): Promise<void> => {
       let finish: (end: TurnEnd) => void = () => {};
       const ended = new Promise<TurnEnd>((resolve) => {
@@ -585,13 +621,13 @@ export async function runRunner(options: {
         finish,
       };
       const opened = turn;
-      await own.session!.feed(message);
+      await Promise.race([own.session!.feed(message), stopped, own.left, failedSession(own.session!)]);
       // The agent is SERVED from here: its session is up and it has been handed
       // the tail of its own log. What the loop answers to that tail can take as
       // long as a loop takes, and a runner that reported itself ready only
       // after it would be a runner a service manager waits on for a model.
       if (about.tail) own.settle();
-      const end = await Promise.race([ended, stopped, own.left]);
+      const end = await Promise.race([ended, stopped, own.left, failedSession(own.session!)]);
       turn = null;
       if (end === "stopped") return;
 
@@ -615,8 +651,10 @@ export async function runRunner(options: {
         }),
         plan_usage: end.usage.plan_usage,
         raw_usage: end.usage.raw,
+        resolved_model_ids: end.usage.resolved_model_ids ?? [],
+        primary_model_id: end.usage.primary_model_id ?? null,
         session_id: end.session_id,
-        lacks: [...own.session!.lacks],
+        lacks: [...own.session!.lacks, ...(end.usage.resolved_model_ids?.length ? [] : ["resolved_model"])],
         tail: about.tail,
       };
 
@@ -647,7 +685,7 @@ export async function runRunner(options: {
       // The tail's own answer is not a reply to anybody, so it is recorded and
       // dropped. Only a turn fed from an inbound row reaches the outbox.
       if (about.tail) {
-        await appendEntry(store, {
+        await appendRunnerEntry({
           stream: "turn",
           subject: agent.id,
           kind: "turn",
@@ -662,19 +700,10 @@ export async function runRunner(options: {
       // told once about the CAUSE rather than once about every message of
       // theirs that is waiting on it.
       if (end.refused) {
-        // THE NEXT TURN GETS A LOOP THAT IS THERE (REVIEW M1). The adapter ends
-        // a refused turn itself and closes the child, because no retry fixes a
-        // dead credential and this runner owns the retry clock (D-118). Without
-        // this line the handle the retry feeds is a handle onto a process that
-        // is gone: measured in bun 1.3.14, writing to a killed child's stdin
-        // returns normally and discards the bytes, so the second turn never
-        // ends, the await below it has no bound, and the agent's whole serving
-        // loop stops there. The household reads one notice and then hears
-        // nothing at all, which is the silence this phase is named after.
-        //
-        // `spawn` closes the old handle and clears this flag, so the retry
-        // starts a fresh session the way a changed preset already does.
-        own.killed = true;
+        // Shared login failures may have closed the child. Local refusals
+        // keep a usable session and never announce a credential outage.
+        const scope = classifyRefusal({ credential, refused: end.refused, evidence: end.usage.raw.evidence, thresholds });
+        own.killed = scope.scope === "credential";
         const every = retrySeconds(about.registry);
         const retryAt =
           end.refused.cause === "window" && reading?.resets_at
@@ -688,6 +717,11 @@ export async function runRunner(options: {
           said: end.refused.said,
           retryAt,
         });
+        if (scope.scope === "local") {
+          unhealthy = true;
+          await putRow(store, "agent_health", agent.id, { status: "retry", cause: safeValue(end.refused.said), retry_at: retryAt });
+          return;
+        }
         const standing = await openOutage(store, {
           credential,
           cause: end.refused.cause,
@@ -695,8 +729,6 @@ export async function runRunner(options: {
           runner: options.runner,
           retryAt,
         });
-        sawOutage = true;
-        outageSince = standing.since;
         await sayOutage(about.registry, credential, standing);
         return;
       }
@@ -708,18 +740,21 @@ export async function runRunner(options: {
       // it before the settling transaction removes the row.
       if (opened.started) await writeProgress(store, progressOf(opened));
 
-      // It works again. The catch-up goes in BEFORE the reply, so a person
-      // reads "it stopped", then "it works again", then their answers. It is
-      // asked on EVERY successful turn and not only when this runner remembers
-      // an outage, because a runner restarted through one remembers nothing and
-      // would otherwise leave the row standing and the household never told.
-      await sayCatchUp(about.registry, credential);
-      sawOutage = false;
-      outageSince = "";
+      // Clear only with recovery evidence from this turn's selected source.
+      const outage = await readOutage(store, credential);
+      const evidence = end.usage.raw.evidence as Record<string, unknown> | undefined;
+      const authenticated = evidence?.kind === "authenticated-response" && evidence.credential === credential &&
+        typeof evidence.status === "number" && evidence.status >= 200 && evidence.status < 300;
+      if (outage && (outage.cause === "window" ? reading && thresholds && reading.utilization * 100 < thresholds.hold_at : authenticated)) {
+        await sayCatchUp(about.registry, credential);
+      }
 
+      if (unhealthy) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
       await settleTurn(store, {
         inboundId: message.id,
-        chunks: [end.text],
+        person: agent.person,
+        source: about.source,
+        chunks: prepareReply(end.text, about.source?.log_id.split(":")[0] ?? noticeRoute(about.registry, agent.id).platform, languageOf(about.registry, agent.person)),
         turn: record,
       });
     };
@@ -737,337 +772,24 @@ export async function runRunner(options: {
      * therefore no typing, no progress line and no clock line about a row
      * nobody sent (D-155, and D-143 is its belt and braces).
      */
-    const harvestTurn = async (row: EligibleRow, registry: Registry): Promise<void> => {
-      const staged = stageDirFor(stateDir, agent.person, row.id);
-      const settings = harvestFor(registry, agent.person);
-      const every = retrySeconds(registry);
-      /**
-       * D-156. Every way a harvest ends badly, in one place.
-       *
-       * The row goes back on its own recorded retry with a diary line that says
-       * `refused.harvest` and not `refused.outage`, so a household reading its
-       * own diary can tell a dead login from a note the vault would not take,
-       * and no outage is opened and no notice is written: the outage line says
-       * "Messages are waiting and nothing is lost", and that sentence is false
-       * when what is waiting is proactive work nobody asked for.
-       */
-      const refuse = async (said: string): Promise<void> => {
-        await refuseTurn(store, {
-          inboundId: row.id,
-          runner: options.runner,
-          agent: agent.id,
-          cause: "other",
-          said,
-          retryAt: new Date(Date.now() + every * 1000).toISOString(),
-          kind: "refused.harvest",
-        });
-      };
-      let body: HarvestBody;
-      try {
-        body = decodeHarvestBody(row.body);
-      } catch (error) {
-        // A body no reader can decode is a row the door did not write, so there
-        // is nothing here to harvest and nothing to guess at. It is REFUSED
-        // rather than thrown: a throw out of this function ends the whole
-        // serving loop for this agent, and a person whose messages stopped
-        // being answered because of a row nobody sent is the silence this phase
-        // exists to close. `check`'s `harvest-stale` is the household-facing
-        // half when it never clears.
-        await refuse(`this harvest row's body is not readable: ${(error as Error).message}`);
-        return;
-      }
-
-      /** The parts of the record that are true whatever the turn did. */
-      const recordOf = (
-        preset: Preset,
-        what: {
-          harvest: HarvestRecord;
-          end?: TurnEnd;
-          lacks?: readonly string[];
-        },
-      ): TurnRecord => ({
-        agent: agent.id,
-        runner: options.runner,
-        preset: settings?.harvester ?? agent.preset,
-        preset_id: presetId(preset),
-        preset_settings: { ...preset },
-        input_tokens: what.end?.usage.input_tokens ?? null,
-        cached_input_tokens: what.end?.usage.cached_input_tokens ?? null,
-        output_tokens: what.end?.usage.output_tokens ?? null,
-        price: what.end
-          ? priceFor(registry, {
-              model: preset.model,
-              at: new Date(),
-              paid: preset.paid,
-              usage: what.end.usage,
-            })
-          : null,
-        plan_usage: what.end?.usage.plan_usage ?? null,
-        raw_usage: what.end?.usage.raw ?? {},
-        session_id: what.end?.session_id ?? null,
-        lacks: [...(what.lacks ?? [])],
-        tail: false,
-        harvest: what.harvest,
-      });
-
-      // D-137. This person's chats are not harvested any more, and a row
-      // written before the setting was taken out would otherwise sit there for
-      // ever. It is settled with nothing harvested rather than refused: there
-      // is nothing to retry.
-      if (settings === null) {
-        await settleHarvest(store, {
-          inboundId: row.id,
-          turn: recordOf(getPreset(registry, agent.preset), {
-            harvest: {
-              from: body.from,
-              until: body.until,
-              reason: body.reason,
-              lines: 0,
-              notes: [],
-              conflicts: [],
-              staged,
-            },
-          }),
-          watermark: null,
-        });
-        return;
-      }
-
-      // D-150. A VAULT ROOT THAT IS NOT ON THIS MACHINE REFUSES BEFORE ANY
-      // SESSION STARTS. `boxFor`'s own shape for a tree that is not here is
-      // `cwd: undefined`, and copying it would start a loop with no cwd, have
-      // it read nothing, and then die on the CLI's `no vault at <dir>` after
-      // the household had already paid for a model turn. Zero model cost, and
-      // the row comes back when the disk does.
-      if (!existsSync(settings.vault)) {
-        await refuse(`no vault at ${settings.vault} on this machine`);
-        return;
-      }
-
-      const harvester = getPreset(registry, settings.harvester);
-      const language = languageOf(registry, agent.person) as Language;
-      /**
-       * D-159. Whether a line is owed for this harvest at all.
-       *
-       * A demand ALWAYS answers, whatever the setting says, and that is the
-       * ruling's own sentence: a person who typed a phrase at the machinery and
-       * got silence has no way to tell it worked from a hub that is broken.
-       */
-      const owed = settings.report || body.reason === "demand";
-      const say = async (said: string): Promise<void> => {
-        await appendNotice(store, {
-          person: agent.person,
-          agent: agent.id,
-          body: said,
-          noticeKey: `harvest:${row.id}`,
-        });
-      };
-
-      // D-149. THE SLICE IS COMPUTED FROM THE SHEET AND NEVER FROM THE ROW'S
-      // OWN `from`: the row records what the door believed when it wrote it and
-      // the sheet is what a runner has really settled. That is what makes "a
-      // slice harvested twice" impossible by arithmetic rather than by a lock:
-      // one agent has one runner and one open turn, so two rows for one chat
-      // run one after the other and the second computes its slice after the
-      // first advanced the watermark.
-      const watermark = await readWatermark(store, {
-        person: agent.person,
-        agent: agent.id,
-      });
-      const lines = await readSlice({
-        stateDir,
-        person: agent.person,
-        agent: agent.id,
-        from: watermark?.at ?? null,
-        until: body.until,
-      });
-      const base = {
-        from: watermark?.at ?? null,
-        until: body.until,
-        reason: body.reason,
-        lines: lines.length,
-        staged,
-      };
-
-      // D-149. An empty slice costs NO MODEL TURN: no session, no message, and
-      // no watermark, because nothing was harvested. It still writes its `turn`
-      // line, or criterion 2's query is vacuously true for the case it exists
-      // to cover.
-      if (lines.length === 0) {
-        // REVIEW M2. A DEMAND STILL ANSWERS HERE, and this is the branch that
-        // used to return in silence. It is reachable in ordinary use rather
-        // than in an edge case: `readSlice` drops every line that IS the
-        // phrase, so typing it, letting it file and typing it again with
-        // nothing said in between leaves a slice that is empty by
-        // construction, and the first demand in a chat whose only other lines
-        // are the door's own machinery is the same shape.
-        if (body.reason === "demand") await say(harvestNothing(language));
-        await settleHarvest(store, {
-          inboundId: row.id,
-          turn: recordOf(harvester, {
-            harvest: { ...base, notes: [], conflicts: [] },
-          }),
-          watermark: null,
-        });
-        return;
-      }
-
-      const last = lines[lines.length - 1];
-      const box = boxFor(registry, agent.id);
-      const session = await adapterFor(options.adapters, harvester.adapter).start({
-        preset: harvester,
-        // What makes it FRESH, which is SPEC §4's "a harvester that sees chat
-        // context" read from the other side: a resumed session IS chat context.
-        sessionId: null,
-        ...(box ? { wrap: box.wrap } : {}),
-        // D-150. `imprnt init` writes the vault contract as the project root's
-        // own CLAUDE.md, so a loop started there loads the filing rules the way
-        // any agent working in a vault does. That is L19's "given the vault's
-        // filing rules" delivered by the vault rather than by a prompt that
-        // restates them.
-        cwd: settings.vault,
-      });
-      let end: TurnEnd | "stopped";
-      try {
-        let finish: (ending: TurnEnd) => void = () => {};
-        const ended = new Promise<TurnEnd>((resolve) => {
-          finish = resolve;
-        });
-        // The ONLY handler. A harvest writes no stamp between `received` and
-        // `answered`, so there is nothing for a receipt or a progress event to
-        // do (D-155).
-        session.onTurnEnd((ending) => finish(ending));
-        await session.feed({
-          id: row.id,
-          text: harvestMessage({ language, lines }),
-        });
-        end = await Promise.race([ended, stopped, own.left]);
-      } finally {
-        await session.close().catch(() => {});
-      }
-      if (end === "stopped") return;
-
-      // D-156. A harvest turn DOES record the window it reported, under the
-      // HARVESTER's own credential, because on the common household the
-      // harvester and the agents share one plan login and that is how the
-      // household learns its allowance moved. It writes no window NOTICE, for
-      // the same reason it opens no outage: the notice says "Messages are
-      // waiting and nothing is lost", and that sentence is false when what is
-      // waiting is proactive work nobody asked for.
-      const reading = end.usage.window ?? null;
-      if (reading) {
-        await recordWindow(store, {
-          credential:
-            credentialOfPreset(registry, settings.harvester) ??
-            `preset:${settings.harvester}`,
-          utilization: reading.utilization,
-          resetsAt: reading.resets_at,
-          runner: options.runner,
-        });
-      }
-
-      // D-156. A refused harvest turn opens NO outage and writes NO notice.
-      if (end.refused) {
-        await refuse(end.refused.said);
-        return;
-      }
-
-      const reply = parseHarvestReply(end.text);
-      if (reply.kind === "unreadable") {
-        await refuse(reply.said);
-        return;
-      }
-
-      const notes: string[] = [];
-      const conflicts: string[] = [];
-      if (reply.kind === "notes") {
-        const files = await stageNotes({
-          stateDir,
-          person: agent.person,
-          rowId: row.id,
-          notes: reply.notes,
-        });
-        // IN ORDER, and a refusal stops the row here: the notes before it are
-        // on disk, the watermark does not move, and the staging directory is
-        // left for a human to read. L19: "a crash means a re-run, never a lost
-        // fact."
-        for (const file of files) {
-          const result = await applyNote({
-            imprnt: String(readSetting(registry, "hub.imprnt") ?? "imprnt"),
-            vault: settings.vault,
-            file,
-          });
-          if (result.outcome === "refused") {
-            await refuse(result.said);
-            return;
-          }
-          // D-153. A conflict COUNTS AS LANDED: the vault's own contradiction
-          // workflow recorded it in `_needs-review.md`, nothing about the slice
-          // is lost, and re-running the model on the same slice produces the
-          // same conflict for ever, so a watermark that stood still would
-          // harvest that chat every quiet period until a human intervened.
-          // REVIEW S4. ONLY A PATH THE CLI REALLY NAMED. `classifyApply`
-          // answers `note: ""` whenever a marker line carries no token at its
-          // own skip index, and an empty entry joined into the report line
-          // renders `[door] saved. Notes: .`, a sentence about nothing. It
-          // would go into the turn record as an empty string too, which is a
-          // note nobody can look up.
-          if (result.note === "") continue;
-          // D-153. A conflict COUNTS AS LANDED: the vault's own contradiction
-          // workflow recorded it in `_needs-review.md`, nothing about the slice
-          // is lost, and re-running the model on the same slice produces the
-          // same conflict for ever, so a watermark that stood still would
-          // harvest that chat every quiet period until a human intervened.
-          if (result.outcome === "conflict") conflicts.push(result.note);
-          else notes.push(result.note);
-        }
-      }
-
-      // D-159. The line back, written BEFORE the settle, so a person reads it
-      // and then the next answers. It is keyed on the harvest ROW, so a second
-      // attempt at one harvest meets its own key and a second harvest of the
-      // same chat gets its own line.
-      if (owed) {
-        const said =
-          notes.length > 0 || conflicts.length > 0
-            ? harvestReport(language, { notes, conflicts })
-            : body.reason === "demand"
-              ? harvestNothing(language)
-              : null;
-        if (said !== null) await say(said);
-      }
-
-      // D-141, D-154. The watermark is the LAST HARVESTED LINE's own time and
-      // never the row's `until`, and it lands with the settle or not at all.
-      await settleHarvest(store, {
-        inboundId: row.id,
-        turn: recordOf(harvester, {
-          harvest: { ...base, notes, conflicts },
-          end,
-          lacks: session.lacks,
-        }),
-        watermark: watermarkRow({
-          person: agent.person,
-          agent: agent.id,
-          at: last.at,
-          row: row.id,
-          harvestedAt: new Date().toISOString(),
-          notes: notes.length,
-          lines: lines.length,
-        }),
-      });
-    };
+    const harvestTurn = (row: EligibleRow, registry: Registry) => executeHarvest({
+      store, registry, agent, row, runner: options.runner, stateDir, adapters: options.adapters,
+      stopped: Promise.race([stopped, own.left]),
+      opened: session => { harvestSessions.set(session, own); capacityChanged(); },
+      closed: session => { harvestSessions.delete(session); readings.delete(session); },
+    });
 
     const spawn = async (preset: Preset, registry: Registry): Promise<void> => {
+      preflight(registry, agent);
       const adapter = adapterFor(options.adapters, preset.adapter);
-      if (own.session) await own.session.close().catch(() => {});
-      const box = boxFor(registry, agent.id);
+      if (own.session) { readings.delete(own.session); await own.session.close().catch(() => {}); }
+      const launch = await launchFor(registry, agent, agent.preset, "ordinary");
       own.session = await adapter.start({
         preset,
         sessionId: null,
-        ...(box ? { wrap: box.wrap, ...(box.cwd ? { cwd: box.cwd } : {}) } : {}),
+        ...launch,
       });
-      own.boxed = box !== null;
+      own.boxed = "wrap" in launch;
       // A child the watch killed is a session that is gone, and this is where
       // it comes back: before the next turn, with the runner never restarting.
       own.killed = false;
@@ -1128,7 +850,13 @@ export async function runRunner(options: {
       // already exists. Opened after the read, that notification is emitted to
       // nobody and the row waits for the tick.
       waiter = await openWorkWaiter(store, { agent: agent.id });
-      await spawn(getPreset(first, agent.preset), first);
+      const initial = loadRegistry(options.registryFile);
+      preflight(initial, agent);
+      if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping) {
+        if (!await admitChild(initial, own)) return;
+        own.reserved = true;
+        await spawn(getPreset(initial, agent.preset), initial);
+      }
       // An agent whose log had no tail to feed is served the moment its session
       // is up, and this is where that one settles.
       own.settle();
@@ -1159,6 +887,18 @@ export async function runRunner(options: {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
         const registry = loadRegistry(options.registryFile);
+        agent = listAgents(registry).find(one => one.id === agent.id) ?? agent;
+        const lifetime = lifetimeFor(registry, agent.id);
+        if (own.session && (lifetime.sleeping || lifetime.mode === "on-demand" && Date.now() - lastWork >= lifetime.idle_seconds * 1000)) {
+          readings.delete(own.session);
+          await own.session.close();
+          own.session = null;
+          if (own.reserved) { own.reserved = false; releaseCapacity(); }
+        }
+        if (lifetime.sleeping) {
+          await Promise.race([Bun.sleep(setting(registry, "hub.tick_seconds") * 1000), stopped, own.left]);
+          continue;
+        }
         const sleep = async (): Promise<void> => {
           await Promise.race([
             waiter!
@@ -1166,6 +906,7 @@ export async function runRunner(options: {
               .catch(() => "timeout" as const),
             stopped,
             own.left,
+            ...(own.session && !own.killed ? [failedSession(own.session)] : []),
           ]);
         };
 
@@ -1185,7 +926,6 @@ export async function runRunner(options: {
               window?.resets_at ?? new Date(Date.now() + every * 1000).toISOString();
             if (!heldByWindow) {
               heldByWindow = true;
-              sawOutage = true;
               const standing = await openOutage(store, {
                 credential,
                 cause: "window",
@@ -1193,7 +933,6 @@ export async function runRunner(options: {
                 runner: options.runner,
                 retryAt: until,
               });
-              outageSince = standing.since;
               await sayOutage(registry, credential, standing);
             }
             // A row that arrived during the hold is put on the same reset, and
@@ -1211,18 +950,60 @@ export async function runRunner(options: {
             // this claim is about to let through, reporting a fresh one.
             if (readingStands(window)) {
               await sayCatchUp(registry, credential);
-              sawOutage = false;
             }
           }
         }
 
+        if (!own.reserved && !await admitChild(registry, own, false)) break;
+        const residentHarvest = agentsFor(registry, { runner: options.runner })
+          .filter(one => lifetimeFor(registry, one.id).mode === "resident" && !lifetimeFor(registry, one.id).sleeping)
+          .map(one => one.id);
+        const observedCapacity = capacityVersion;
+        const connection = await store.sql.reserve();
+        let next;
+        try {
+          [next] = await connection`select id, kind, exists (
+            select 1 from inbound h where h.agent in (select jsonb_array_elements_text(${JSON.stringify(residentHarvest)}::text::jsonb)) and h.kind = 'harvest'
+              and h.log_ready and h.state not in ('answered', 'delivered') and h.claimed_by is null
+              and (h.retry_at is null or h.retry_at <= now())
+          ) as harvest_waiting from inbound where agent = ${agent.id}
+            and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
+            and (claimed_by is null or claimed_by = ${options.runner}
+                 or (claim_deadline is not null and claim_deadline <= now()))
+            and (retry_at is null or retry_at <= now())
+            order by rank, received_at, id limit 1`;
+        } finally { connection.release(); }
+        // Capacity belongs to this selected row. A later arrival must go
+        // through selection and reservation before it can start a child.
+        if (!next) { await sleep(); continue; }
+        // Give an already waiting resident harvest its extra child before a
+        // cold session. Capacity release, rather than a queue poll, wakes us.
+        if (next && next.kind !== "harvest" && next.harvest_waiting && !own.session) {
+          // The harvest can start while this read is in flight. Its capacity
+          // signal must not be lost before this task subscribes to it.
+          if (capacityVersion !== observedCapacity) continue;
+          let wake!: () => void;
+          const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
+          try { await Promise.race([available, stopped, own.left]); }
+          finally { capacity.delete(wake); }
+          continue;
+        }
+        if (next && !own.reserved) {
+          if (!await admitChild(registry, own)) break;
+          own.reserved = true;
+        }
+        const extra = next?.kind === "harvest" && own.session !== null;
+        if (extra && !await admitChild(registry, own)) break;
         const row = await claimNext(store, {
           runner: options.runner,
           agent: agent.id,
           leaseMs: setting(registry, "hub.claim_lease_seconds") * 1000,
           maxRank,
+          rowId: next.id,
         });
         if (!row) {
+          if (extra) releaseCapacity();
+          if (!own.session && own.reserved) { own.reserved = false; releaseCapacity(); }
           await sleep();
           continue;
         }
@@ -1233,6 +1014,7 @@ export async function runRunner(options: {
         // machinery exists to keep, and pay the tail's tokens again every quiet
         // period. `claimNext`'s `returning` already carries the kind, so the
         // branch costs no read.
+        claimed = row.id;
         if (row.kind === "harvest") {
           // REVIEW M1. NOTHING A HARVEST DOES LEAVES THIS LOOP. `Bun.spawn`
           // throws SYNCHRONOUSLY on a command it cannot find (measured, bun
@@ -1263,6 +1045,10 @@ export async function runRunner(options: {
               ).toISOString(),
               kind: "refused.harvest",
             });
+          } finally {
+            claimed = null;
+            if (extra) releaseCapacity();
+            else if (!own.session && own.reserved) { own.reserved = false; releaseCapacity(); }
           }
           continue;
         }
@@ -1270,55 +1056,43 @@ export async function runRunner(options: {
         // A session carries the preset it was started with, so a changed one is
         // a new child, and so is one whose child the memory watch killed. The
         // runner process itself never restarts for either.
-        if (presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
-        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry });
+        if (!own.session || presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
+        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source });
+        claimed = null;
+        lastWork = Date.now();
       }
     } catch (error) {
       if (stopping || own.leaving) return;
-      // Loud, never a silent wait: a household that hears nothing all day has no
-      // way to tell a quiet agent from a broken one.
-      await appendEntry(store, {
-        stream: "refusal",
-        subject: agent.id,
-        kind: "refused.turn",
-        actor: "runner",
-        detail: {
-          adapter: (error as { adapter?: string }).adapter ?? null,
-          agent: agent.id,
-          error: `${(error as Error).name}: ${(error as Error).message}`,
-        },
+      const registry = loadRegistry(options.registryFile);
+      const retryAt = new Date(Date.now() + Number(readSetting(registry, "runner.task_retry_seconds") ?? 30) * 1000).toISOString();
+      retries.set(agent.id, Date.parse(retryAt));
+      await writes;
+      const cause = safeValue(`${(error as Error).name}: ${(error as Error).message}`);
+      process.stderr.write(finding("en", { code: "child-exit", target: agent.id, cause }) + "\n");
+      await store.sql.begin(async tx => {
+        const inside = { ...store, sql: tx as unknown as Store["sql"] };
+        if (claimed) await clearProgress(inside, claimed);
+        await tx`update inbound set claimed_by = null, claim_deadline = null, retry_at = ${retryAt}::timestamptz
+          where agent = ${agent.id} and claimed_by = ${options.runner} and state not in ('answered', 'delivered')`;
+        await putRow(inside, "agent_health", agent.id, { status: "retry", cause, retry_at: retryAt });
+        await appendEntry(inside, { stream: "refusal", subject: agent.id, kind: "refused.turn", actor: "runner",
+          detail: { agent: agent.id, error: cause, retry_at: retryAt,
+            ...(error instanceof AdapterMissing ? { adapter: safeValue(error.adapter) } : {}) } });
       });
     } finally {
+      turn = null;
+      await writes;
+      if (claimed && own.leaving) await clearProgress(store, claimed);
       own.settle();
       if (waiter) await waiter.close();
-      const session = own.session;
+      if (own.session) { readings.delete(own.session); await own.session.close().catch(() => {}); }
       own.session = null;
-      if (session) {
-        if (stopping) {
-          await session.close().catch(() => {});
-        } else {
-          // The agent left the FILE while this runner kept running, which is
-          // RUN-09's routine operation and not a shutdown. A loop host shares
-          // state across the sessions it is serving, so closing one of them
-          // mid-life can disturb the agents that are still being served. What
-          // this agent owned exclusively is its child, and that is released
-          // here. The session handle itself is closed when the runner stops.
-          if (session.pid && session.pid > 0) {
-            try {
-              process.kill(session.pid, 9);
-            } catch {
-              // It went away on its own, which is the same outcome.
-            }
-          }
-          retired.push(session);
-        }
-      }
+      if (own.reserved) { own.reserved = false; releaseCapacity(); }
+      if (live.get(agent.id) === own) live.delete(agent.id);
     }
   };
 
   const live = new Map<string, Live>();
-  /** Sessions of agents that left the file. Closed when the runner stops. */
-  const retired: AdapterSession[] = [];
 
   const serve = (agent: AgentEntry): void => {
     let release: () => void = () => {};
@@ -1331,6 +1105,7 @@ export async function runRunner(options: {
     });
     const it: Live = {
       agent,
+      reserved: false,
       session: null,
       killed: false,
       boxed: false,
@@ -1365,23 +1140,16 @@ export async function runRunner(options: {
    * through the OS seam, which converts kilobytes to bytes at its own edge. It
    * touches no table, so a runner that is waiting still issues nothing.
    *
-   * A BOXED AGENT ON LINUX IS READ THROUGH ITS BOX. The pid the adapter hands
-   * up is `bwrap`'s and the loop is under it, so the reading is the largest of
-   * the wrapper and every process below it: a wrapper with nothing under it yet
-   * is still its own reading, so a loop that has not started is watched rather
-   * than skipped. The largest rather than the sum, because the limit is the one
-   * the unboxed path reads, a single process's resident size, and the box tool
-   * and its reaper are a megabyte between them. macOS is untouched: there
-   * `sandbox-exec` execs in place and the pid the runner holds IS the loop's
-   * (BUILD-NOTES 5), and an unboxed agent is untouched on both, so what the
-   * watch reads for the loops the checks exercise is the same number it was.
+   * Every descendant contributes to the limit on both supported platforms.
    */
   const watchChildren = async (registry: Registry): Promise<void> => {
     const own = listRunEntries(registry).find((entry) => entry.id === options.runner);
     const limitMb = own?.child_memory_limit_mb;
     if (!limitMb || limitMb <= 0) return;
-    for (const it of live.values()) {
-      const pid = it.session?.pid ?? null;
+    measuredBytes = 0;
+    for (const it of [...live.values(), ...[...harvestSessions].map(([session, owner]) => ({ ...owner, session, killed: false }))]) {
+      const session = it.session;
+      const pid = session?.pid ?? null;
       // A hosted loop has no local child for this hub to watch, and a child
       // already killed is not killed twice.
       if (!pid || pid <= 0 || it.killed) continue;
@@ -1391,26 +1159,25 @@ export async function runRunner(options: {
       } catch {
         continue;
       }
-      if (it.boxed && process.platform === "linux") {
+      {
         for (const under of descendantsOf(pid)) {
           try {
             const reading = (await os.memory(under)).current_bytes;
-            if (reading > bytes) bytes = reading;
+            bytes += reading;
           } catch {
             // It left while the tree was being read, and a process that is
             // gone is using nothing.
           }
         }
       }
-      if (bytes <= limitMb * 1024 * 1024) continue;
-      it.killed = true;
-      try {
-        process.kill(pid, 9);
-      } catch {
-        // It went away between the reading and the signal, which is the same
-        // outcome by another route.
-      }
-      await appendEntry(store, {
+      if (it.session !== session) continue;
+      readings.set(session!, bytes);
+      measuredBytes += bytes;
+      peakBytes = Math.max(peakBytes, measuredBytes);
+      const budgetMb = own?.child_memory_budget_mb ?? 2048;
+      if (bytes <= limitMb * 1024 * 1024 && measuredBytes <= budgetMb * 1024 * 1024) continue;
+      // Commit the enforcement record before a child exit can be observed.
+      await appendRunnerEntry({
         stream: "memory",
         subject: it.agent.id,
         kind: "killed.child",
@@ -1419,19 +1186,32 @@ export async function runRunner(options: {
           agent: it.agent.id,
           pid,
           reading_bytes: bytes,
+          peak_bytes: peakBytes,
+          aggregate_bytes: measuredBytes,
           limit_mb: limitMb,
           runner: options.runner,
         },
       });
+      it.killed = true;
+      try {
+        for (const child of descendantsOf(pid).reverse()) { try { process.kill(child, 9); } catch {} }
+        process.kill(pid, 9);
+      } catch {
+        // It went away between the reading and the signal, which is the same
+        // outcome by another route.
+      }
     }
   };
 
-  for (const agent of agentsFor(first, { runner: options.runner })) serve(agent);
+  for (const agent of agentsFor(first, { runner: options.runner })) {
+    if (Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
+  }
   // Ready means SERVING, so a caller that is handed this runner is handed one
   // whose agents are up and fed rather than one that is still starting, and its
   // startup work lands before anything that was waiting on it starts watching.
   await Promise.all([...live.values()].map((it) => it.serving));
 
+  const recovering = new Set<string>();
   const supervise = (async () => {
     while (!stopping) {
       await Promise.race([Bun.sleep(setting(first, "hub.tick_seconds") * 1000), stopped]);
@@ -1446,7 +1226,7 @@ export async function runRunner(options: {
       }
       try {
         const wanted = agentsFor(registry, { runner: options.runner });
-        for (const agent of wanted) if (!live.has(agent.id)) serve(agent);
+        for (const agent of wanted) if (!live.has(agent.id) && !recovering.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
         for (const id of [...live.keys()]) {
           if (!wanted.some((agent) => agent.id === id)) await drop(id);
         }
@@ -1457,14 +1237,37 @@ export async function runRunner(options: {
     }
   })();
 
+  const recovered = new Set<string>();
+  const recoverAgent = async (request: { id: string; agent: string }) => {
+    if (recovered.has(request.id)) return;
+    const registry = loadRegistry(options.registryFile);
+    const agent = agentsFor(registry, { runner: options.runner }).find(one => one.id === request.agent);
+    if (!agent) throw new Error("unknown-agent");
+    recovering.add(agent.id);
+    try {
+      await drop(agent.id);
+      await store.sql`update inbound set claimed_by = null, claim_deadline = null, retry_at = null
+        where agent = ${agent.id} and (claimed_by = ${options.runner} or claimed_by is null)
+          and state not in ('answered', 'delivered')`;
+      retries.delete(agent.id);
+      serve(agent);
+      recovered.add(request.id);
+    } finally { recovering.delete(agent.id); }
+  };
+  const controls = await watchControls(store, "runner", data => data.target_kind === "agent" &&
+    agentsFor(loadRegistry(options.registryFile), { runner: options.runner }).some(a => a.id === data.target_id),
+    async data => { await recoverAgent({ id: String(data.id), agent: String(data.target_id) }); });
   return {
     runner: options.runner,
+    recoverAgent,
     async stop() {
       stopping = true;
       release();
+      await controls.close();
       await supervise;
       await Promise.allSettled([...live.values()].map((it) => it.done));
-      for (const session of retired) await session.close().catch(() => {});
+      if (peakBytes > 0) await appendRunnerEntry({ stream: "memory", subject: options.runner,
+        kind: "peak.children", actor: "runner", detail: { peak_bytes: peakBytes } });
       await store.close();
     },
   };

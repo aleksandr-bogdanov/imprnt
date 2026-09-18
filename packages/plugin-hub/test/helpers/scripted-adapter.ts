@@ -228,6 +228,8 @@ export function growFileFor(pid: number): string {
 const HOLDER = `
 const fs = require("fs");
 const os = require("os");
+const parent = process.ppid;
+if (parent === 1 && process.pid !== 2) process.exit(0);
 const file = os.tmpdir() + "/hub-child-" + process.pid + ".grow";
 // 03b item 1. One line on stdout before anything else: what this child could
 // read of the path it was pointed at. Outside a box it reads it; inside one it
@@ -247,7 +249,7 @@ const held = [];
 setInterval(() => {
   // A child whose parent went away is a leak, and a suite that leaks one of
   // these leaks the memory it was told to hold.
-  if (process.ppid === 1) process.exit(0);
+  if (process.ppid !== parent) process.exit(0);
   let want = 0;
   try { want = Number(fs.readFileSync(file, "utf8").trim()) || 0; } catch (e) {}
   while (held.length * 16 < want) {
@@ -270,6 +272,7 @@ export interface BoxProbe {
 
 export interface HeldChild {
   pid: number;
+  exited: Promise<number>;
   /** The argv this child was really spawned with, boxed or not (03b item 1). */
   argv: string[];
   /** What the child reported about `probePath`, once it has said it. */
@@ -337,9 +340,23 @@ export function spawnHolder(options: HolderOptions = {}): HeldChild {
   }
   return {
     pid: proc.pid,
+    exited: proc.exited,
     argv: [...argv],
     boxProbe: () => (said ? { ...said } : null),
     kill() {
+      if (options.wrap && proc.exitCode === null) {
+        const table = Bun.spawnSync(["ps", "-axo", "pid=,ppid="], { stdout: "pipe", stderr: "pipe" });
+        if (table.exitCode !== 0) throw new Error("fixture process tree could not be read");
+        const rows = table.stdout.toString().trim().split("\n").map(line => line.trim().split(/\s+/).map(Number));
+        const own = new Set([proc.pid]);
+        for (let size = -1; size !== own.size;) {
+          size = own.size;
+          for (const [pid, parent] of rows) if (own.has(parent)) own.add(pid);
+        }
+        for (const pid of [...own].reverse()) {
+          try { process.kill(pid, 9); } catch {}
+        }
+      }
       try {
         proc.kill(9);
       } catch {
@@ -675,7 +692,7 @@ export function createScriptedAdapter(
         live.progress.length = 0;
         live.end.length = 0;
         turns.delete(live);
-        if (held) held.kill();
+        if (held) { held.kill(); await held.exited; }
       },
     };
   };
@@ -859,6 +876,7 @@ export async function serveAdapter(
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             streams.add(controller);
+            controller.enqueue(new TextEncoder().encode("\n"));
           },
         });
         return new Response(stream, {

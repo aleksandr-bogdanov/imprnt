@@ -51,9 +51,9 @@ let foreignBefore: string[] = [];
 let dir: string;
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "checks 4 and 5, the real service manager");
   dir = mkdtempSync(join(tmpdir(), "hub-osreal-"));
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {
@@ -291,7 +291,7 @@ test.skipIf(!gate.ok)(
     const machine = thisMachine();
     const registryFile = stage([
       { id: residentId, kind: "runner", machine: machine.id, schedule: "always", memory_limit_mb: 64, child_memory_limit_mb: 64 },
-      { id: scheduledId, kind: "watcher", machine: machine.id, schedule: "every 30m", memory_limit_mb: 64 },
+      { id: scheduledId, kind: "runner", child_memory_limit_mb: 2048, machine: machine.id, schedule: "every 30m", memory_limit_mb: 64 },
     ]);
     const script = scratchScript("alive2.ts", ALIVE);
     const os = (thisOs as Function)({ unitDir: fixture.unitDir() }) as {

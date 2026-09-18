@@ -35,9 +35,9 @@ let foreignBefore: string[] = [];
 let cluster: Cluster;
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "check 8, the restart request and its two refusals");
   cluster = await startCluster();
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {

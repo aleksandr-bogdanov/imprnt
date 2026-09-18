@@ -215,7 +215,7 @@ test(
         "claim_lease_seconds = 300",
         "",
         "[presets.daily]",
-        'adapter = "claude-code"',
+        'adapter = "scripted"',
         'model = "a-model-name"',
         'provider = "a-provider"',
         'effort = "medium"',

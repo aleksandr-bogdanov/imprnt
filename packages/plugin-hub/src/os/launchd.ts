@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, chmodSync, closeSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RunEntry } from "../registry/load.ts";
@@ -111,6 +111,10 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
       const argv = [ctx.execPath, "run", ctx.entryScript, ctx.registryFile, entry.id];
       const every = wanted === "scheduled" ? scheduleSeconds(entry.schedule) : null;
       const body = [
+        ...(ctx.stateDir ? [
+          "  <key>StandardOutPath</key>", `  <string>${xml(join(ctx.stateDir, "service-log", `${entry.id}.out.log`))}</string>`,
+          "  <key>StandardErrorPath</key>", `  <string>${xml(join(ctx.stateDir, "service-log", `${entry.id}.err.log`))}</string>`,
+        ] : []),
         "  <key>Label</key>",
         `  <string>${xml(label)}</string>`,
         "  <key>ProgramArguments</key>",
@@ -134,6 +138,13 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
     async install(files: UnitFile[]): Promise<string[]> {
       const written: string[] = [];
       for (const file of files) {
+        for (const match of file.text.matchAll(/<key>Standard(?:Out|Error)Path<\/key>\s*<string>([^<]+)<\/string>/g)) {
+          const path = match[1].replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+          mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+          chmodSync(dirname(path), 0o700);
+          closeSync(openSync(path, "a", 0o600));
+          chmodSync(path, 0o600);
+        }
         mkdirSync(dirname(file.path), { recursive: true });
         writeFileSync(file.path, file.text, "utf8");
         written.push(file.path);
@@ -145,7 +156,8 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
         // A job already in the domain carries the plist it was loaded with, so a
         // changed one only takes effect once it has been unloaded.
         await ask(["bootout", `gui/${uid()}/${label}`]);
-        await ask(["bootstrap", `gui/${uid()}`, file.path]);
+        const retried = await ask(["bootstrap", `gui/${uid()}`, file.path]);
+        if (retried.code !== 0) throw new Error(`install: ${label}: ${retried.err}`);
       }
       return written;
     },
@@ -162,7 +174,8 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
     async start(entryId: string): Promise<void> {
       // D-102. The program runs NOW, and on a job that is already running this
       // does nothing at all (measured).
-      await ask(["kickstart", `gui/${uid()}/${unitName(entryId)}`]);
+      const result = await ask(["kickstart", `gui/${uid()}/${unitName(entryId)}`]);
+      if (result.code !== 0) throw new Error(`start: ${entryId}: ${result.err}`);
     },
 
     async stop(entryId: string): Promise<void> {
@@ -173,7 +186,8 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
     },
 
     async restart(entryId: string): Promise<void> {
-      await ask(["kickstart", "-k", `gui/${uid()}/${unitName(entryId)}`]);
+      const result = await ask(["kickstart", "-k", `gui/${uid()}/${unitName(entryId)}`]);
+      if (result.code !== 0) throw new Error(`restart: ${entryId}: ${result.err}`);
     },
 
     async list(): Promise<UnitState[]> {

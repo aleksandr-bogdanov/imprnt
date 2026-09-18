@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { Platform, PlatformMessage } from "../platform.ts";
+import type { MediaRef, Platform, PlatformMessage } from "../platform.ts";
 
 /**
  * The transport, narrowed to what this file calls. It is NOT `typeof fetch`,
@@ -16,12 +16,20 @@ type Send = (input: string | URL | Request, init?: RequestInit) => Promise<Respo
  *
  * The token is read once, from the file the registry names.
  */
+interface FileRef {
+  file_id: string; file_name?: string; mime_type?: string; file_size?: number;
+  width?: number; height?: number;
+}
+
 interface Update {
   update_id: number;
   message?: {
     message_id: number;
     date: number;
     text?: string;
+    caption?: string;
+    voice?: FileRef; audio?: FileRef; photo?: FileRef[]; document?: FileRef;
+    sticker?: FileRef; video?: FileRef; video_note?: FileRef;
     chat: { id: number | string };
     from?: { id: number | string; username?: string };
   };
@@ -57,7 +65,7 @@ export function telegram(options: {
     });
     const said = (await answer.json()) as Record<string, unknown>;
     if (said.ok !== true) {
-      throw new Error(`telegram refused ${method}: ${String(said.description)}`);
+      throw Object.assign(new Error(`telegram refused ${method}: ${String(said.description)}`), { status: Number(said.error_code ?? answer.status) });
     }
     return said;
   };
@@ -70,7 +78,7 @@ export function telegram(options: {
       const said = await call(
         "getUpdates",
         {
-          ...(cursor === null ? {} : { offset: Number(cursor) + 1 }),
+          ...(cursor === null ? {} : { offset: Number(cursor) }),
           timeout: Math.floor(timeoutMs / 1000),
           allowed_updates: ["message"],
         },
@@ -81,7 +89,21 @@ export function telegram(options: {
       for (const update of updates) {
         const message = update.message;
         if (!message || String(message.chat.id) !== chat) continue;
+        const media: MediaRef[] = [];
+        const photo = message.photo?.reduce((largest, item) =>
+          (item.file_size ?? (item.width ?? 0) * (item.height ?? 0)) >
+          (largest.file_size ?? (largest.width ?? 0) * (largest.height ?? 0)) ? item : largest);
+        const files: [FileRef | undefined, MediaRef["kind"]][] = [
+          [message.voice, "voice"], [message.audio, "voice"], [photo, "photo"],
+          [message.document, message.document?.mime_type?.startsWith("image/") ? "photo" : "file"],
+          [message.sticker, "sticker"], [message.video, "video"], [message.video_note, "voice"],
+        ];
+        for (const [file, kind] of files) if (file) media.push({
+          kind, remote_id: file.file_id, name: file.file_name ?? kind,
+          mime: file.mime_type ?? null, bytes: file.file_size ?? null, caption: message.caption ?? null,
+        });
         messages.push({
+          sender_id: String(message.from?.id ?? ""), media,
           platform_message_id: String(message.message_id),
           chat: String(message.chat.id),
           from: String(message.from?.username ?? message.from?.id ?? ""),
@@ -94,11 +116,26 @@ export function telegram(options: {
         cursor:
           updates.length === 0
             ? cursor
-            : String(updates[updates.length - 1].update_id),
+            : String(Math.max(...updates.map(update => update.update_id)) + 1),
       };
     },
+    async fetchMedia(media) {
+      const said = await call("getFile", { file_id: media.remote_id }, 0);
+      const path = (said.result as { file_path?: string }).file_path;
+      if (!path || path.split("/").some(part => part === "..") || !/^[\w./-]+$/.test(path)) {
+        throw new Error("media-path-refused");
+      }
+      return send(`https://api.telegram.org/file/bot${token}/${path}`, {
+        redirect: "error", signal: AbortSignal.timeout(30_000),
+      });
+    },
     async post({ chat, text }) {
-      const said = await call("sendMessage", { chat_id: chat, text }, 0);
+      let said: Record<string, unknown>;
+      try { said = await call("sendMessage", { chat_id: chat, text }, 0); }
+      catch (error) {
+        if (!(error as { status?: number }).status) Object.assign(error as object, { sent: true });
+        throw error;
+      }
       const made = said.result as { message_id?: unknown } | undefined;
       // `sendMessage` returns the `Message` it sent, and `message_id` is what
       // `editMessageText` takes. The door keeps it so the progress line is one

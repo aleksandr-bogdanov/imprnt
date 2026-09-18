@@ -1,3 +1,5 @@
+import { checkLoopSource } from "../adapters/index.ts";
+import { finding as findingLine, syncRepair } from "../door/lines.ts";
 import { dirname } from "node:path";
 import {
   diffUnits,
@@ -530,7 +532,58 @@ export async function runCheck(options: {
     });
   }
 
+  if (!options.credentials) {
+    const presets = new Set(mine.map(agent => agent.preset));
+    for (const agent of mine) {
+      const harvest = harvestFor(registry, agent.person);
+      if (harvest) presets.add(harvest.harvester);
+    }
+    for (const preset of presets) {
+      try { await checkLoopSource(registry, preset); }
+      catch {
+        const kind = "credential-source-unsupported";
+        findings.push({ id: findingId(machine, kind, preset), kind, subject: preset, machine,
+          says: findingLine("en", { code: kind, target: preset, cause: "invalid configuration" }),
+          fix: findingLine("en", { code: "credential-source", target: preset, cause: "invalid configuration" }),
+        });
+      }
+    }
+  }
+
   // --- the sheet: one row per finding id, and a fixed one leaves NO line ---
+  for (const row of await readSheet(options.store, "sync")) {
+    if (!entries.some(entry => entry.id === row.id && entry.kind === "sync")) continue;
+    for (const repo of (row.data.repositories ?? []) as { id: string; status: string; cause?: string }[]) {
+      if (repo.status !== "failed") continue;
+      const target = `${row.id}/${repo.id}`;
+      findings.push({ id: findingId(machine, "sync-failed", target), kind: "sync-failed", subject: target, machine,
+        says: findingLine("en", { code: "sync-failed", target, cause: repo.cause }),
+        fix: syncRepair("en", { target }) });
+    }
+  }
+  for (const row of await readSheet(options.store, "agent_health")) {
+    if (row.data.status !== "retry" || !listAgents(registry).some(agent => agent.id === row.id &&
+      runEntriesFor(registry, machine).some(entry => entry.id === agent.runner))) continue;
+    findings.push({ id: findingId(machine, "agent-retry", row.id), kind: "agent-retry", subject: row.id, machine,
+      fix: `imprnt hub recover <registry> agent:${row.id}`, says: findingLine("en", { code: "agent-retry", target: row.id, cause: String(row.data.cause ?? "task failed") }) });
+  }
+  for (const row of await readSheet(options.store, "door_health")) {
+    if (!row.data.cause || !entries.some(entry => entry.id === row.data.door)) continue;
+    const target = `${row.data.door}/${row.data.chat}`;
+    findings.push({ id: findingId(machine, "chat-unreadable", target), kind: "chat-unreadable", subject: target, machine,
+      says: findingLine("en", { code: row.data.code, target, cause: row.data.cause }),
+      fix: `imprnt hub recover <registry> door:${row.data.door}` });
+  }
+  const failedDeliveries = await options.store.sql`select o.id, o.route, o.failure, coalesce(o.agent, i.agent) as agent
+    from outbox o left join inbound i on i.id = o.inbound_id where o.delivery_state = 'failed'`;
+  for (const row of failedDeliveries) {
+    const door = row.route?.door ?? listAgents(registry).find(agent => agent.id === row.agent)?.door;
+    if (!entries.some(entry => entry.id === door)) continue;
+    const target = `${door}/${row.route?.chat ?? row.agent}`;
+    findings.push({ id: findingId(machine, "delivery-failed", String(row.id)), kind: "delivery-failed", subject: target, machine,
+      says: findingLine("en", { code: row.failure?.code ?? "delivery-failed", target, cause: row.failure?.cause ?? "operation failed" }),
+      fix: `imprnt hub recover <registry> door:${door}` });
+  }
   const standing = new Set(findings.map((finding) => finding.id));
   for (const finding of findings) {
     await putRow(options.store, CHECK_SHEET, finding.id, { ...finding });

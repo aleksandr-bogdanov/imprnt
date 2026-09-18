@@ -1,15 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { appendEntry } from "../records/diary.ts";
 import { diffUnits, seenUnits, wantedState } from "../os/diff.ts";
 import { entryIdOf, unitName } from "../os/names.ts";
 import { thisOs } from "../os/index.ts";
 import type { OsSeam, RenderContext, WantedUnit } from "../os/types.ts";
-import { listMachines, runEntriesFor } from "../registry/entries.ts";
+import { listMachines, listRunEntries, runEntriesFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
 import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
 import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.ts";
 import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
+import { watchControls } from "./control.ts";
+import { recordOperationFailure } from "../diagnostics.ts";
+import { programForKind } from "./program.ts";
 
 /**
  * The hub: one process per machine, ours, unsandboxed, and the only thing that
@@ -42,8 +44,6 @@ export class HubRefused extends Error {
     this.name = "HubRefused";
   }
 }
-
-const KINDS: Record<string, string> = { door: "door", runner: "runner" };
 
 function setting(registry: unknown, key: string, fallback: number): number {
   const found = readSetting(registry, key);
@@ -144,14 +144,12 @@ export async function runHub(options: {
     await appendEntry(store, { stream: "machine", subject, kind, actor: "hub", detail });
   };
 
-  const scriptFor = (entry: RunEntry): string =>
-    join(import.meta.dir, "..", "entry", `${KINDS[entry.kind] ?? "hub"}.ts`);
-
   const contextFor = (registry: unknown, entry: RunEntry): RenderContext => ({
     machine: options.machine,
     execPath: process.execPath,
-    entryScript: scriptFor(entry),
+    entryScript: programForKind(entry.kind),
     registryFile: options.registryFile,
+    stateDir: String(readSetting(registry, "hub.state_dir")),
     restartDelaySeconds: setting(registry, "hub.restart_delay_seconds", 1),
     giveUpAfter: setting(registry, "hub.give_up_after", 5),
     giveUpWindowSeconds: setting(registry, "hub.give_up_window_seconds", 300),
@@ -180,10 +178,13 @@ export async function runHub(options: {
         (file) => !existsSync(file.path) || readFileSync(file.path, "utf8") !== file.text,
       );
       if (!changed) continue;
-      const written = await os.install(files);
+      let written: string[];
+      try { written = await os.install(files); }
+      catch (error) { await recordOperationFailure(store, { operation: "install", target: entry.id, error }); continue; }
       await say("unit.installed", entry.id, { entry: entry.id, machine: options.machine, files: written });
       if (wantedState(entry) === "running") {
-        await os.start(entry.id);
+        try { await os.start(entry.id); }
+        catch (error) { await recordOperationFailure(store, { operation: "start", target: entry.id, error }); continue; }
         started.add(entry.id);
         await say("unit.started", entry.id, { entry: entry.id, machine: options.machine });
       }
@@ -195,20 +196,22 @@ export async function runHub(options: {
       state: wantedState(entry),
       entry,
     }));
-    const difference = diffUnits({ wanted, found: await seenUnits(os, entries) });
+    const elsewhere = new Set(listRunEntries(registry).filter(e => listMachines(registry).length > 1 && e.machine !== options.machine).map(e => e.id));
+    const found = (await seenUnits(os, entries)).filter(unit => !elsewhere.has(entryIdOf(unit.name) ?? ""));
+    const difference = diffUnits({ wanted, found });
 
     for (const one of difference.missing) {
       if (one.state !== "running" || started.has(one.id)) continue;
-      await os.start(one.id);
+      try { await os.start(one.id); }
+      catch (error) { await recordOperationFailure(store, { operation: "start", target: one.id, error }); continue; }
       await say("unit.started", one.id, { entry: one.id, machine: options.machine });
     }
 
     for (const unit of difference.stale) {
       const id = entryIdOf(unit.name);
       if (id === null) continue;
-      await os.stop(id);
-      await say("unit.stopped", id, { entry: id, machine: options.machine, unit: unit.name });
       await os.remove(id);
+      await say("unit.stopped", id, { entry: id, machine: options.machine, unit: unit.name });
       await say("unit.removed", id, { entry: id, machine: options.machine, unit: unit.name });
     }
 
@@ -294,6 +297,12 @@ export async function runHub(options: {
     }
   };
 
+  const controls = await watchControls(store, "hub", data => data.target_kind === "door" &&
+    runEntriesFor(loadRegistry(options.registryFile), options.machine).some(e => e.id === data.target_id && e.kind === "door"), async data => {
+      try { await os.restart(String(data.target_id)); }
+      catch (error) { await recordOperationFailure(store, { operation: "restart", target: String(data.target_id), error }); throw error; }
+    });
+
   const tick = setting(first, "hub.tick_seconds", 5) * 1000;
   const loop = (async () => {
     while (!stopping) {
@@ -314,6 +323,7 @@ export async function runHub(options: {
       stopping = true;
       release();
       await loop;
+      await controls.close();
       await store.close();
     },
   };

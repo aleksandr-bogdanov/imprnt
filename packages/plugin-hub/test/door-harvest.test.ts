@@ -29,6 +29,7 @@
 // pulled message as a human row and nothing anywhere compares a text to a
 // phrase.
 
+import { writeRegistry, stageHub } from "./helpers/authorized-registry.ts";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -53,10 +54,9 @@ import {
   RUNNER,
   chatLogFile,
   chatLogLines,
-  stageHub,
   type StagedHub,
 } from "./helpers/hub-fixture.ts";
-import { writeRegistry, type PersonSpec, type PresetSpec } from "./helpers/registry.ts";
+import { type PersonSpec, type PresetSpec } from "./helpers/registry.ts";
 import {
   announceClock,
   clockGate,

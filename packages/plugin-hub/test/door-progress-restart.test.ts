@@ -21,6 +21,7 @@
 // read it, and `lineDueAt` is satisfied again from the surviving
 // `turn_progress` sheet, so the restarted door posts a second line.
 
+import { stageHub } from "./helpers/authorized-registry.ts";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
   startCluster,
@@ -30,7 +31,7 @@ import {
   type Cluster,
   type ReadyProcess,
 } from "./helpers/cluster.ts";
-import { AGENT, CHAT, DOOR, PERSON, RUNNER, stageHub } from "./helpers/hub-fixture.ts";
+import { AGENT, CHAT, DOOR, PERSON, RUNNER } from "./helpers/hub-fixture.ts";
 
 let cluster: Cluster;
 

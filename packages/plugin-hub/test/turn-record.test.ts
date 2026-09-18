@@ -56,6 +56,7 @@ function turnFor(turns: LedgerRow[], subject: string): LedgerRow {
 
 // Deliberately odd numbers, including a zero and a large one.
 const ODD_USAGE: AdapterUsage = {
+  resolved_model_ids: ["fixture-model"],
   input_tokens: 0,
   cached_input_tokens: 7,
   output_tokens: 123_456_789,

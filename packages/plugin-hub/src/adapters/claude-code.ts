@@ -1,4 +1,3 @@
-import type { Preset } from "../registry/presets.ts";
 import type {
   Adapter,
   AdapterProgress,
@@ -101,13 +100,11 @@ function endingWords(event: Record<string, unknown>): string {
   return `${String(event.result ?? "")} ${String(event.error ?? "")}`.trim();
 }
 
-async function open(options: {
-  preset: Preset;
-  sessionId: string | null;
-  cwd?: string;
-  wrap?: (argv: string[]) => string[];
-}): Promise<AdapterSession> {
-  const args = ["claude", ...FLAGS, "--model", options.preset.model, "--effort", options.preset.effort];
+async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSession> {
+  const args = options.argv ? [...options.argv] : ["claude", ...FLAGS, "--model", options.preset.model, "--effort", options.preset.effort];
+  if (args.includes("--dangerously-skip-permissions") && !options.wrap) {
+    throw new Error("box-required");
+  }
   if (options.sessionId) args.push("--resume", options.sessionId);
 
   // 03b item 1. Whatever the runner handed over, applied to this loop's own
@@ -120,6 +117,7 @@ async function open(options: {
     stdout: "pipe",
     stderr: "inherit",
     cwd: options.cwd,
+    env: options.env,
   });
 
   const receipts: ((messageId: string) => void)[] = [];
@@ -141,6 +139,11 @@ async function open(options: {
   // other route to the same cause.
   let seen: TurnRefusal | null = null;
   let closed = false;
+  let terminal!: (cause: unknown) => void;
+  const exited = new Promise<unknown>(resolve => { terminal = resolve; });
+  void child.exited.then(code => terminal({ cause: "child-exited", code }));
+  const resolved = new Set<string>();
+  let primary: string | null = null;
 
   /**
    * Let the child go, once. The adapter itself calls this on a refused
@@ -166,6 +169,8 @@ async function open(options: {
   const settle = (end: TurnEnd) => {
     seen = null;
     for (const listener of ends) listener(end);
+    resolved.clear();
+    primary = null;
   };
 
   /**
@@ -187,12 +192,21 @@ async function open(options: {
         output_tokens: null,
         plan_usage: planUsage,
         window,
+        resolved_model_ids: [...resolved].sort(),
+        primary_model_id: primary,
         raw,
       },
     });
   };
 
   const handle = (event: Record<string, unknown>) => {
+    const inner = event.event as Record<string, unknown> | undefined;
+    const message = (event.type === "assistant" ? event.message
+      : event.type === "stream_event" && inner?.type === "message_start" ? inner.message : null) as { model?: unknown } | null;
+    if (typeof message?.model === "string" && message.model !== "") {
+      resolved.add(message.model);
+      if (!event.parent_tool_use_id) primary = message.model;
+    }
     if (event.type === "rate_limit_event") {
       const info = event.rate_limit_info as Record<string, unknown> | undefined;
       planUsage = (info?.unifiedWindows as Record<string, unknown>) ?? info ?? null;
@@ -239,7 +253,7 @@ async function open(options: {
       if (event.error_status !== 401) return;
       refuse(
         { cause: "login", said: String(event.error ?? "authentication_failed") },
-        { ...event },
+        { ...event, evidence: { kind: "authenticated-response", status: 401, credential: options.credentialId } },
       );
       // Fire and forget, so the reader this is running inside is not held on a
       // process exit, and CAUGHT, because a fire-and-forget promise that
@@ -271,7 +285,13 @@ async function open(options: {
     if (event.type === "result") {
       const reported = (event.usage ?? {}) as Record<string, unknown>;
       sessionId = (event.session_id as string) ?? sessionId;
+      const modelUsage = event.modelUsage;
+      if (modelUsage && typeof modelUsage === "object" && !Array.isArray(modelUsage)) {
+        for (const model of Object.keys(modelUsage)) if (model) resolved.add(model);
+      }
       const usage: AdapterUsage = {
+        resolved_model_ids: [...resolved].sort(),
+        primary_model_id: primary,
         input_tokens: numberOrNull(reported.input_tokens),
         cached_input_tokens: numberOrNull(reported.cache_read_input_tokens),
         output_tokens: numberOrNull(reported.output_tokens),
@@ -279,6 +299,10 @@ async function open(options: {
         window,
         raw: {
           ...reported,
+          evidence: seen?.cause === "login" ? { kind: "authenticated-response", status: 401, credential: options.credentialId }
+            : event.is_error !== true ? { kind: "authenticated-response", status: 200, credential: options.credentialId }
+            : window ? { kind: "plan-window", utilization: window.utilization, credential: options.credentialId } : null,
+          ...(modelUsage ? { modelUsage } : {}),
           num_turns: event.num_turns,
           result: event.result,
           total_cost_usd: event.total_cost_usd,
@@ -323,11 +347,14 @@ async function open(options: {
         }
       }
     } catch {
-      // The loop went away, which is what closing it looks like from here.
+      terminal({ cause: "stream-failed" });
+    } finally {
+      terminal({ cause: "stream-ended" });
     }
   })();
 
   return {
+    exited,
     get sessionId() {
       return sessionId;
     },

@@ -61,7 +61,14 @@ function goodLines(): string[] {
     'id = "p2"',
     'tree = "/var/lib/imprnt-hub/p2"',
     "",
+    "[[credentials]]",
+    'id = "test-login"',
+    'kind = "claude-login"',
+    'file = "/var/lib/imprnt-hub/credentials/.credentials.json"',
+    'owner = "household"',
+    "",
     "[presets.daily]",
+    'credential = "test-login"',
     'adapter = "claude-code"',
     'model = "a-model-name"',
     'provider = "a-provider"',
@@ -232,6 +239,10 @@ test(
     expect(typeof listPeople).toBe("function");
     expect(typeof runEntriesFor).toBe("function");
     expect(typeof personOf).toBe("function");
+
+    // D-171 requires the production preset's explicit credential.
+    const absentLogin = refusalOf(write(base.filter(line => line !== 'credential = "test-login"')));
+    expect(absentLogin.key).toBe("presets.daily.credential");
 
     const registry = loadRegistry(write(base));
     expect((listMachines as Function)(registry)).toEqual([

@@ -40,7 +40,7 @@ import { renderSlice, type SliceLine } from "./slice.ts";
  *   reaches the vault, which is SPEC §2's "an agent produces text, delivery is
  *   machinery" applied to filing.
  */
-export const HARVEST_PROMPT = `You are the harvester. You read one slice of a chat and file what is worth keeping into the vault this session is running in, through the filing rules its CLAUDE.md carries.
+export const HARVEST_PROMPT = `You are the harvester. You read one slice of a chat and file what is worth keeping into the declared vault, through the filing rules supplied below.
 
 Answer with NOTES ONLY, in this envelope:
 
@@ -83,6 +83,8 @@ export function harvestPrompt(language: "en" | "ru"): string {
 export function harvestMessage(args: {
   language: "en" | "ru";
   lines: SliceLine[];
+  filingRules?: string;
+  vault?: string;
 }): string {
-  return `${harvestPrompt(args.language)}\n\n${renderSlice(args.lines)}`;
+  return `${harvestPrompt(args.language)}${args.filingRules === undefined ? "" : `\n\nFiling rules${args.vault ? ` for ${args.vault}` : ""}:\n${args.filingRules}`}\n\n${renderSlice(args.lines)}`;
 }

@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
+import { ADAPTERS } from "../adapters/index.ts";
 
 /**
  * The registry is the only place a setting lives. Every setting the code reads
@@ -10,10 +11,19 @@ import { isAbsolute, resolve, sep } from "node:path";
  */
 export interface SettingField {
   key: string;
-  type: "integer" | "string" | "boolean";
+  type: "integer" | "string" | "boolean" | "array";
   what: string;
   required?: boolean;
 }
+
+const ROLLOUT_DEFAULTS: Record<string, number> = {
+  "door.media_max_bytes": 20971520,
+  "door.delivery_retry_seconds": 30,
+  "door.delivery_max_attempts": 5,
+  "door.read_retry_seconds": 30,
+  "door.read_timeout_seconds": 60,
+  "runner.task_retry_seconds": 30,
+};
 
 export const SETTING_FIELDS: SettingField[] = [
   {
@@ -128,6 +138,9 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "what this machine's service manager calls the store, for a person to look up",
     required: false,
   },
+  ...Object.keys(ROLLOUT_DEFAULTS).map(key => ({ key, type: "integer" as const, what: key, required: false })),
+  { key: "hub.cutover_batch", type: "string", what: "the reviewed migration batch", required: false },
+  { key: "install.admin_argv", type: "array", what: "the explicit database administrator command", required: false },
 ];
 
 export class RegistryRefused extends Error {
@@ -173,6 +186,9 @@ export interface RunEntry {
   machine: string;
   /** D-81. The limit the RUNNER enforces on its model child, not its own. */
   child_memory_limit_mb?: number;
+  max_active_children?: number;
+  child_memory_budget_mb?: number;
+  repositories?: string[];
 }
 
 /** D-76. A machine the household has. `os` is in the file, never process.platform. */
@@ -217,6 +233,9 @@ export interface PersonEntry {
   harvest_quiet_minutes?: number;
   harvest_min_messages?: number;
   harvest_report?: boolean;
+  allowed_senders?: Record<string, string[]>;
+  history_harvest_after?: string;
+  filing_rules?: string;
 }
 
 /**
@@ -299,7 +318,23 @@ export interface PresetEntry {
   provider: string;
 }
 
+export interface RepositoryEntry {
+  id: string;
+  person: string;
+  path: string;
+  remote: string;
+  branch: string;
+  required?: boolean;
+}
+
 export interface AgentEntry {
+  fragment?: string;
+  settings?: string;
+  mcp?: string;
+  tools?: string[];
+  mode?: "resident" | "on-demand";
+  sleeping?: boolean;
+  idle_seconds?: number;
   id: string;
   person: string;
   preset: string;
@@ -338,6 +373,7 @@ export class Registry {
     machines: MachineEntry[] = [],
     people: PersonEntry[] = [],
     credentials: CredentialEntry[] = [],
+    readonly repositories: RepositoryEntry[] = [],
   ) {
     this.file = file;
     this.data = data;
@@ -409,6 +445,7 @@ function valueAt(data: Record<string, unknown>, key: string): unknown {
 }
 
 function typeOfValue(value: unknown): string {
+  if (Array.isArray(value)) return "array";
   if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
   return typeof value;
 }
@@ -443,6 +480,40 @@ export function loadRegistry(file: string): Registry {
     const said = String((error as Error).message);
     const at = /line (\d+)/i.exec(said);
     throw new RegistryRefused(file, at ? Number(at[1]) : 0, "", `this is not readable TOML: ${said}`);
+  }
+
+  const refuse = (key: string, fallback: number, reason: string): never => {
+    throw new RegistryRefused(file, lines.get(key) ?? fallback, key, reason);
+  };
+  const positive = (value: unknown, key: string) => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0)
+      refuse(key, 0, `${key} must be a positive integer`);
+  };
+  const strings = (value: unknown, key: string, empty = true) => {
+    if (!Array.isArray(value) || (!empty && value.length === 0) ||
+        value.some(v => typeof v !== "string" || v.trim() === ""))
+      refuse(key, 0, `${key} must contain nonempty strings`);
+  };
+  const readable = (value: unknown, key: string) => {
+    if (typeof value !== "string" || !isAbsolute(value))
+      refuse(key, 0, `${key} must be an absolute readable file`);
+    try {
+      if (!statSync(value as string).isFile()) throw new Error();
+      accessSync(value as string, constants.R_OK);
+    } catch { refuse(key, 0, `${key} must be an absolute readable file`); }
+  };
+  for (const key of Object.keys(ROLLOUT_DEFAULTS)) {
+    const value = valueAt(parsed, key);
+    if (value !== undefined) positive(value, key);
+  }
+  const batch = valueAt(parsed, "hub.cutover_batch");
+  if (batch !== undefined && (typeof batch !== "string" || !/^[A-Za-z0-9_-]+$/.test(batch)))
+    refuse("hub.cutover_batch", 0, "hub.cutover_batch must be a nonempty batch ID");
+  const admin = valueAt(parsed, "install.admin_argv");
+  if (admin !== undefined) {
+    strings(admin, "install.admin_argv", false);
+    if ((admin as string[]).some(arg => /password\s*=|:\/\/[^/\s]*:[^/\s]*@/i.test(arg)))
+      refuse("install.admin_argv", 0, "install.admin_argv must not contain password literals");
   }
 
   for (const field of SETTING_FIELDS) {
@@ -535,6 +606,10 @@ export function loadRegistry(file: string): Registry {
       }
     }
 
+    for (const key of ["max_active_children", "child_memory_budget_mb"]) {
+      if (entry[key] !== undefined) positive(entry[key], `${at}.${key}`);
+    }
+    if (entry.kind === "sync") strings(entry.repositories, `${at}.repositories`, false);
     const limit = entry.memory_limit_mb;
     if (limit === undefined || limit === null) {
       throw new RegistryRefused(
@@ -552,6 +627,9 @@ export function loadRegistry(file: string): Registry {
         `${id} has memory_limit_mb ${describe(limit)}, and it must be a whole number of megabytes above zero`,
       );
     }
+
+    if (!["hub", "door", "runner", "sync"].includes(entry.kind as string))
+      refuse(`${at}.kind`, here, `unsupported-run-kind: ${entry.kind}`);
 
     const machine = entry.machine;
     if (machine === undefined || machine === null || machine === "") {
@@ -614,15 +692,13 @@ export function loadRegistry(file: string): Registry {
       schedule: entry.schedule as string,
       memory_limit_mb: limit,
       machine: typeof machine === "string" && machine !== "" ? machine : (machines[0]?.id ?? ""),
+      ...Object.fromEntries(["max_active_children", "child_memory_budget_mb", "repositories"]
+        .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
   });
 
-  const refuse = (key: string, fallback: number, reason: string): never => {
-    throw new RegistryRefused(file, lines.get(key) ?? fallback, key, reason);
-  };
-
-  const presets: Record<string, PresetEntry> = {};
+  const presets: Record<string, PresetEntry> = Object.create(null);
   for (const [name, table] of Object.entries(
     (parsed.presets ?? {}) as Record<string, Record<string, unknown>>,
   )) {
@@ -786,7 +862,7 @@ export function loadRegistry(file: string): Registry {
     const namesHarvester = harvester !== undefined && harvester !== null;
     const namesVault = vault !== undefined && vault !== null;
     if (namesHarvester) {
-      if (typeof harvester !== "string" || !(harvester in presets)) {
+      if (typeof harvester !== "string" || !Object.hasOwn(presets, harvester)) {
         refuse(
           `${where}.harvester`,
           here,
@@ -794,8 +870,8 @@ export function loadRegistry(file: string): Registry {
             `preset for, and nothing can harvest through a preset that is not there`,
         );
       }
-      // Nothing can file into a vault the file does not name, so the two travel
-      // together in both directions.
+      // A harvester requires a vault; a vault can also supply filing rules
+      // without enabling harvest.
       if (!namesVault) {
         refuse(
           `${where}.vault`,
@@ -804,15 +880,6 @@ export function loadRegistry(file: string): Registry {
             `note is filed into the directory holding vault/ and raw/`,
         );
       }
-    } else if (namesVault) {
-      // SPEC §6's "a setting nothing in production reads", which D-110 already
-      // refused once for a window field on a preset paid for by a key.
-      refuse(
-        `${where}.vault`,
-        lines.get(`${where}.vault`) ?? here,
-        `${id} names a vault and no harvester, so nothing in production would ever ` +
-          `read it: what fills a vault is the harvest`,
-      );
     }
     if (namesVault) {
       const atVault = lines.get(`${where}.vault`) ?? here;
@@ -868,7 +935,25 @@ export function loadRegistry(file: string): Registry {
           `back is a true or a false`,
       );
     }
+    if (entry.filing_rules !== undefined) readable(entry.filing_rules, `${where}.filing_rules`);
+    if (entry.history_harvest_after !== undefined &&
+        (typeof entry.history_harvest_after !== "string" ||
+         !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(entry.history_harvest_after) ||
+         !Number.isFinite(Date.parse(entry.history_harvest_after))))
+      refuse(`${where}.history_harvest_after`, here, "history_harvest_after must be a UTC instant");
+    if (entry.allowed_senders !== undefined) {
+      if (!entry.allowed_senders || typeof entry.allowed_senders !== "object" || Array.isArray(entry.allowed_senders))
+        refuse(`${where}.allowed_senders`, here, "allowed_senders must be a door table");
+      for (const [door, senders] of Object.entries(entry.allowed_senders as Record<string, unknown>)) {
+        if (!entries.some(e => e.id === door && e.kind === "door") &&
+            !(Array.isArray(parsed.agents) && parsed.agents.some(a => a && a.door === door && a.person === entry.id)))
+          refuse(`${where}.allowed_senders`, here, "allowed_senders names an undeclared door");
+        strings(senders, `${where}.allowed_senders`);
+      }
+    }
     const harvest: Record<string, unknown> = {
+      ...Object.fromEntries(["filing_rules", "history_harvest_after", "allowed_senders"]
+        .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(namesHarvester ? { harvester: harvester as string } : {}),
       ...(namesVault ? { vault: vault as string } : {}),
       ...(typeof entry.harvest_quiet_minutes === "number"
@@ -958,14 +1043,16 @@ export function loadRegistry(file: string): Registry {
   });
 
   // D-111. A preset points at its login by id, and a typo is otherwise an agent
-  // reading a login nobody owns. Naming NONE is a `check` finding and never a
-  // refusal, which is what keeps every shipped fixture loading.
+  // reading a login nobody owns. Fake adapters may omit a credential;
+  // production presets are checked after the structural references below.
   const declaredCredential = new Set(credentials.map((one) => one.id));
   for (const [name, table] of Object.entries(
     (parsed.presets ?? {}) as Record<string, Record<string, unknown>>,
   )) {
     const named = table.credential;
-    if (named === undefined || named === null) continue;
+    if (named === undefined || named === null) {
+      continue;
+    }
     if (typeof named !== "string" || !declaredCredential.has(named)) {
       refuse(
         `presets.${name}.credential`,
@@ -991,7 +1078,7 @@ export function loadRegistry(file: string): Registry {
         );
       }
     }
-    if (!((entry.preset as string) in presets)) {
+    if (!(typeof entry.preset === "string" && Object.hasOwn(presets, entry.preset))) {
       refuse(
         `${where}.preset`,
         here,
@@ -1007,7 +1094,22 @@ export function loadRegistry(file: string): Registry {
         `${entry.id} names the person ${entry.person}, which this file does not declare`,
       );
     }
+    for (const key of ["fragment", "settings", "mcp"]) {
+      if (entry[key] !== undefined) readable(entry[key], `${where}.${key}`);
+    }
+    if (entry.tools !== undefined) {
+      strings(entry.tools, `${where}.tools`);
+      if (new Set(entry.tools as string[]).size !== (entry.tools as string[]).length)
+        refuse(`${where}.tools`, here, "tools must be unique");
+    }
+    if (entry.mode !== undefined && !["resident", "on-demand"].includes(entry.mode as string))
+      refuse(`${where}.mode`, here, "mode must be resident or on-demand");
+    if (entry.sleeping !== undefined && typeof entry.sleeping !== "boolean")
+      refuse(`${where}.sleeping`, here, "sleeping must be boolean");
+    if (entry.idle_seconds !== undefined) positive(entry.idle_seconds, `${where}.idle_seconds`);
     agents.push({
+      ...Object.fromEntries(["fragment", "settings", "mcp", "tools", "mode", "sleeping", "idle_seconds"]
+        .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       id: entry.id as string,
       person: entry.person as string,
       preset: entry.preset as string,
@@ -1050,6 +1152,36 @@ export function loadRegistry(file: string): Registry {
     rates.push(entry as unknown as RateEntry);
   });
 
+  for (const [name, table] of Object.entries(
+    (parsed.presets ?? {}) as Record<string, Record<string, unknown>>,
+  )) {
+    if (Object.hasOwn(ADAPTERS, String(table.adapter)) && table.credential === undefined)
+      refuse(`presets.${name}.credential`, lines.get(`presets.${name}`) ?? 0,
+        "production presets require a declared credential");
+  }
+
+  const repositories: RepositoryEntry[] = [];
+  if (parsed.repositories !== undefined && !Array.isArray(parsed.repositories))
+    refuse("repositories", 0, "repositories must be a list");
+  for (const [nth, entry] of ((parsed.repositories ?? []) as Record<string, unknown>[]).entries()) {
+    const where = `repositories[${nth}]`;
+    for (const key of ["id", "person", "path", "remote", "branch"]) {
+      if (typeof entry[key] !== "string" || (entry[key] as string).trim() === "")
+        refuse(`${where}.${key}`, 0, `${key} must be a nonempty string`);
+    }
+    if (!knownPerson.has(entry.person as string)) refuse(`${where}.person`, 0, "repository person is undeclared");
+    if (!isAbsolute(entry.path as string)) refuse(`${where}.path`, 0, "repository path must be absolute");
+    if (repositories.some(r => r.id === entry.id)) refuse(`${where}.id`, 0, "repository id is duplicated");
+    if (entry.required !== undefined && typeof entry.required !== "boolean")
+      refuse(`${where}.required`, 0, "required must be boolean");
+    repositories.push(entry as unknown as RepositoryEntry);
+  }
+  entries.forEach((entry, nth) => {
+    for (const id of entry.repositories ?? []) {
+      if (!repositories.some(r => r.id === id)) refuse(`run[${nth}].repositories`, 0, "repository is undeclared");
+    }
+  });
+
   return new Registry(
     file,
     parsed,
@@ -1060,6 +1192,7 @@ export function loadRegistry(file: string): Registry {
     machines,
     people,
     credentials,
+    repositories,
   );
 }
 
@@ -1068,5 +1201,5 @@ export function readSetting(registry: unknown, key: string): unknown {
   const name = settingKey(key);
   const field = SETTING_FIELDS.find((f) => f.key === name);
   if (!field) throw new UnknownSetting(key);
-  return valueAt(it.data, name);
+  return valueAt(it.data, name) ?? ROLLOUT_DEFAULTS[name];
 }

@@ -35,7 +35,7 @@
 // preset id.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { seam, startCluster, until, type Cluster } from "./helpers/cluster.ts";
 import { expectedPresetId } from "./helpers/preset-oracle.ts";
@@ -69,7 +69,7 @@ const SLOW = 120_000;
  * `--apply` keeps verbatim and records as the manifest's raw entry, and a
  * Russian slice filed as English notes.
  */
-const PINNED_PROMPT = `You are the harvester. You read one slice of a chat and file what is worth keeping into the vault this session is running in, through the filing rules its CLAUDE.md carries.
+const PINNED_PROMPT = `You are the harvester. You read one slice of a chat and file what is worth keeping into the declared vault, through the filing rules supplied below.
 
 Answer with NOTES ONLY, in this envelope:
 
@@ -165,7 +165,7 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 
 test(
-  "HARV-01 and HARV-04 a harvest turn is a FRESH session under the harvester's own preset in the person's vault root, fed exactly one message that is the pinned prompt plus the rendered slice, never the tail, and the agent's resident session is not touched (SPEC §4, L19, L2, D-148, D-150, D-155)",
+  "HARV-01 and HARV-04 a harvest turn is a FRESH session under the harvester's own preset in an isolated session directory, fed explicit filing rules and exactly one message that is the pinned prompt plus the rendered slice, never the tail, and the agent's resident session is not touched (SPEC §4, L19, L2, D-148, D-150, D-155)",
   async () => {
     const { runRunner } = await seam("src/runner/run.ts");
 
@@ -286,12 +286,9 @@ test(
         expectedPresetId(stage.agentPreset),
       );
 
-      // --- 4. its cwd is the person's VAULT ROOT, exactly, computed by the
-      //     test from the registry's own value. That is what makes the loop
-      //     load the vault contract as its CLAUDE.md, which is L19's "given the
-      //     vault's filing rules" delivered by the vault rather than by a
-      //     prompt that restates them.
-      expect(harvester.cwd).toBe(stage.vault.root);
+      // --- 4. D-176 isolates automatic discovery in a fresh session cwd.
+      expect(harvester.cwd!.startsWith(realpathSync(join(it.stateDir, PERSON, "sessions", AGENT)) + "/")).toBe(true);
+      expect(harvester.cwd).not.toBe(stage.vault.root);
       expect(existsSync(join(stage.vault.root, "CLAUDE.md"))).toBe(true);
 
       // --- 5. IT WAS WRAPPED, so the harvester runs in the agent's own box.
@@ -307,7 +304,9 @@ test(
       //     copy of the prompt and its own render of the four lines it planted.
       const fedAfter = it.scripted.fed().slice(fedBefore);
       expect(fedAfter.length).toBe(1);
-      expect(fedAfter[0].text).toBe(messageFor("en", slice));
+      expect(fedAfter[0].text).toBe(
+        `${promptFor("en")}\n\nFiling rules for ${stage.vault.root}:\n${readFileSync(join(stage.vault.root, "CLAUDE.md"), "utf8")}\n\n${renderLines(slice)}`,
+      );
 
       // --- 6b. AND IT WENT INTO THE SECOND SESSION, not into the resident
       //     one. The second seat's finding: a count of feeds and a count of
@@ -399,7 +398,9 @@ test(
       // was not reused and the new slice is the new slice.
       const secondFeed = it.scripted.fed().filter((one) => one.session === 3);
       expect(secondFeed.length).toBe(1);
-      expect(secondFeed[0].text).toBe(messageFor("en", [afterFirst]));
+      expect(secondFeed[0].text).toBe(
+        `${promptFor("en")}\n\nFiling rules for ${stage.vault.root}:\n${readFileSync(join(stage.vault.root, "CLAUDE.md"), "utf8")}\n\n${renderLines([afterFirst])}`,
+      );
       // ONE CLOSE PER HARVEST SESSION, and the agent's own still open. Two
       // harvests, two closed sessions, and the resident one untouched.
       expect(it.scripted.closes().sort()).toEqual([2, 3]);

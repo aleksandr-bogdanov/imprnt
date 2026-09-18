@@ -1,4 +1,8 @@
-import { appendChatLine } from "../chatlog.ts";
+import { historyHarvestFrom } from "../registry/entries.ts";
+import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
+import { classifyPlatformError } from "./reply.ts";
+import { appendChatLine, appendChatLineOnce } from "../chatlog.ts";
+import { projectInbound } from "../chatlog/project.ts";
 import {
   dueTrigger,
   encodeHarvestBody,
@@ -11,7 +15,7 @@ import { readWatermark, type Watermark } from "../harvest/sheet.ts";
 import { isDemand, newestLine, readSlice } from "../harvest/slice.ts";
 import { stamp } from "../records/stamps.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
-import { agentsFor, harvestFor, languageOf, thresholdsFor } from "../registry/entries.ts";
+import { agentsFor, harvestFor, languageOf, senderAllowed, thresholdsFor } from "../registry/entries.ts";
 import {
   loadRegistry,
   readSetting,
@@ -25,6 +29,7 @@ import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
 import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
 import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
+import { acceptBatch } from "./ingest.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
 import { readCursor, writeCursor } from "./cursor.ts";
 import { clockLine, progressLine, progressTotals, type Language } from "./lines.ts";
@@ -132,6 +137,11 @@ export interface DoorHandle {
  * the door's outbox wait still issues nothing at all.
  */
 interface Served {
+  agent: AgentEntry;
+  rebinding: boolean;
+  readDone: Promise<void>;
+  reading: Promise<void>;
+  readied(): void;
   leaving: boolean;
   /** Resolves when this agent alone is asked to leave. */
   left: Promise<"stopped">;
@@ -148,13 +158,6 @@ interface Served {
   /** Rows this door wrote down itself, handed to `attend` with no read. */
   arrivals: OpenTurnRow[];
   arrived: Nudge;
-  /**
-   * D-147. The demand phrases `read` has pulled and not yet acted on, handed to
-   * the harvest task through the same shape `arrivals` already is, so the one
-   * writer of a harvest row stays one function.
-   */
-  demands: string[];
-  demanded: Nudge;
 }
 
 /**
@@ -200,199 +203,251 @@ export async function runDoor(options: {
     url: storeUrlAs(String(readSetting(registry, "hub.store_url")), "hub_door"),
   });
 
+  const batch = (registry.data.hub as { cutover_batch?: string }).cutover_batch;
+  if (batch) {
+    try {
+      const rows = await store.sql`select data from state_row where sheet='cutover' and id=${batch}`;
+      if (!rows[0]?.data?.complete) throw new Error("cutover handoff batch incomplete");
+    } catch (error) { await store.close(); throw error; }
+  }
+
+  // A successful projection is already fsynced. Keep that knowledge only for
+  // pending chunks in this process; a restarted door repairs them all again.
+  const projected = new Set<number>();
+  try {
+    // Only an explicit operator recovery releases terminal delivery failures.
+    // The door keeps its own delivery authority; the hub only restarts it.
+    await store.sql`update outbox set delivery_state='pending', attempts=0, retry_at=null, failure=null
+      where delivery_state='failed' and route->>'door'=${options.door}
+        and exists (select 1 from state_row where sheet='control'
+          and data->>'target_kind'='door' and data->>'target_id'=${options.door}
+          and data->>'status'='pending')`;
+    const pending = await store.sql`select id from inbound where not log_ready and source->>'door' = ${options.door}`;
+    for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id) });
+    for (const agent of agentsFor(registry, { door: options.door })) {
+      for (const chunk of await readPendingChunks(store, { agent: agent.id })) {
+        if (chunk.route && chunk.route.door !== options.door) continue;
+        await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
+          id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
+          from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
+        });
+        projected.add(chunk.id);
+      }
+    }
+  } catch {
+    await store.close();
+    throw new Error("chatlog-projection-repair-failed");
+  }
+
   let stopping = false;
   let release: () => void = () => {};
   const stopped = new Promise<"stopped">((resolve) => {
     release = () => resolve("stopped");
   });
 
-  const read = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const health = await doorHealth(store, options.door);
+  for (const agent of agentsFor(registry, { door: options.door })) await health.initialize(agent);
+  let releaseHealth!: () => void;
+  const healthReady = new Promise<void>(resolve => { releaseHealth = resolve; });
+  const sayReadFailure = async (agent: AgentEntry) => {
+    const data = health.health.get(agent.chat);
+    if (data?.status !== "failed" || data.notice_key) return;
+    const key = `chat-read:${options.door}:${agent.chat}:${data.since}`;
+    const sent = await routeNotice(store, { registry: registryThisTick(), door: options.door,
+      platform: options.platform.name, agent, chat: agent.chat, health: health.health, key,
+      failure: { kind: "transient", code: String(data.code), cause: String(data.cause) },
+      operation: "read", seconds: Number(readSetting(registryThisTick(), "door.read_retry_seconds")) });
+    if (sent) {
+      data.notice_key = key;
+      await putRow(store, "door_health", `${options.door}/${agent.chat}`, data);
+    }
+  };
+
+  // Bun can dispatch an already queued pool query into a reserved connection's
+  // transaction. Ingress therefore owns a pool that posting and clocks never
+  // use, as well as serializing batches from the chats this door serves.
+  let ingress: Store;
+  try { ingress = await openStore({ url: store.url }); }
+  catch (error) { await store.close(); throw error; }
+  let accepting: Promise<void> = Promise.resolve();
+  const read = async (agent: AgentEntry, own: Served, activate = false): Promise<void> => {
     let cursor = await readCursor(store, options.door, agent.chat);
-    while (!stopping && !own.leaving) {
+    let capturing = activate && cursor === null;
+    let first = true;
+    while (!stopping && !own.leaving && !own.rebinding) {
+      let fresh: Registry;
+      try { fresh = registryThisTick(); }
+      catch { fresh = parsedRegistry ?? registry; }
+      const seconds = Number(readSetting(fresh, "door.read_retry_seconds"));
+      const retry = Date.parse(String(health.health.get(agent.chat)?.retry_at ?? ""));
+      if (retry > Date.now()) await Promise.race([Bun.sleep(retry - Date.now()), stopped, own.left]);
+      if (stopping || own.leaving || own.rebinding) return;
+      let expired: Promise<void> = Promise.resolve();
+      const timer = setTimeout(() => {
+        expired = health.failed(agent.chat, Object.assign(new Error("operation failed"), { code: "read-timeout" }), seconds)
+          .then(() => sayReadFailure(agent)).finally(() => own.readied());
+      }, Number(readSetting(fresh, "door.read_timeout_seconds")) * 1000);
       const pulled = await Promise.race([
-        options.platform
-          .pull({ chat: agent.chat, cursor, timeoutMs })
-          .catch(() => null),
-        stopped,
-        own.left,
+        options.platform.pull({ chat: agent.chat, cursor, timeoutMs: first ? 0 : timeoutMs })
+          .then(batch => ({ batch }), error => ({ error })), stopped, own.left,
       ]);
-      // An agent that left the file is a chat this door no longer pulls, so
-      // anything said in it after that is never read and never written down.
+      clearTimeout(timer);
+      await expired;
       if (pulled === "stopped" || stopping || own.leaving) return;
-      if (pulled === null) {
-        // The platform is unreachable. Nothing announces its return, so this is
-        // the one wait on a clock, and it touches no table.
-        await Promise.race([Bun.sleep(timeoutMs), stopped, own.left]);
+      if ("error" in pulled) {
+        await health.failed(agent.chat, pulled.error, seconds);
+        await sayReadFailure(agent);
+        own.readied();
+        first = false;
         continue;
       }
-
-      for (const message of pulled.messages) {
-        // D-146. A message that IS the phrase is addressed to the machinery,
-        // not to the agent, so it becomes a harvest and never work. L1's "every
-        // human message is on disk" is honoured twice over: the line is
-        // appended here exactly as every `in` line is, and the harvest row
-        // carries the exact bytes the person typed. What it does NOT become is
-        // a message the agent answers with a sentence about harvesting.
-        //
-        // The append is unconditional here rather than gated on a fresh row,
-        // because there is no row: a platform that redelivered a demand after
-        // the cursor moved would write the line twice, which is the cost of
-        // having no id to meet, and it is smaller than losing the record of a
-        // phrase a person typed.
-        if (isDemand(message.text)) {
-          await appendChatLine(
-            { stateDir, person: agent.person, agent: agent.id },
-            {
-              at: message.at,
-              direction: "in",
-              from: agent.person,
-              text: message.text,
-            },
-          );
-          own.demands.push(message.text);
-          own.demanded.wake();
-          continue;
+      await health.succeeded(agent.chat);
+      if (capturing) {
+        const boundary = pulled.batch.cursor;
+        if (boundary === null || boundary === cursor) capturing = false;
+        else {
+          cursor = boundary;
+          await writeCursor(store, options.door, agent.chat, cursor);
         }
-        const id = inboundId(
-          options.platform.name,
-          message.chat,
-          message.platform_message_id,
-        );
-        const fresh = await store.sql.begin(async (tx) =>
-          enqueueInbound(
-            { ...store, sql: tx as unknown as Store["sql"] },
-            { id, person: agent.person, agent: agent.id, body: message.text },
-          ),
-        );
-        // Only a row this pull created gets a line. A redelivery that wrote
-        // nothing would otherwise put a second message in the diary that
-        // nobody sent.
-        if (fresh) {
-          // D-127. The door arms a clock per message it KNOWS ABOUT, and it
-          // knows about this one because it just wrote it: nothing announces a
-          // `received` row on `hub_turn`, so `attend` is told here rather than
-          // finding out on some later wake that happened to read the table.
-          own.arrivals.push({
-            id,
-            person: agent.person,
-            agent: agent.id,
-            received_at: new Date(),
-            state: "received",
-            claimed_by: null,
-          });
-          own.arrived.wake();
-          await appendChatLine(
-            { stateDir, person: agent.person, agent: agent.id },
-            {
-              at: message.at,
-              direction: "in",
-              from: agent.person,
-              text: message.text,
-            },
-          );
-        }
+        continue;
       }
-
-      if (pulled.messages.length > 0 && pulled.cursor !== null) {
-        cursor = pulled.cursor;
-        await writeCursor(store, options.door, agent.chat, cursor);
+      try {
+        const accepted = accepting.then(async () => {
+          let current: Registry;
+          try { current = registryThisTick(); }
+          catch (error) {
+            // Preserve an authorized demand's diary during an incomplete save.
+            // Execution and acknowledgement still wait for a valid registry.
+            for (const message of pulled.batch.messages) {
+              if (message.chat !== agent.chat || !message.sender_id || !isDemand(message.text) ||
+                  !senderAllowed(fresh, agent.person, options.door, message.sender_id)) continue;
+              await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+                id: "harvest-demand:" + inboundId(options.platform.name, message.chat, message.platform_message_id),
+                at: message.at, direction: "in", from: message.from, text: message.text,
+              });
+            }
+            throw error;
+          }
+          // Keep acceptance and its cursor on one connection until the batch
+          // completes, separate from concurrent posting and clock reads.
+          const connection = await ingress.sql.reserve();
+          try {
+            cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: current, stateDir,
+              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor,
+              received(id) {
+                own.arrivals.push({ id, person: agent.person, agent: agent.id,
+                  received_at: new Date(), state: "received", claimed_by: null });
+                own.arrived.wake();
+              },
+            });
+          } finally { connection.release(); }
+        });
+        accepting = accepted.catch(() => {});
+        await accepted;
+      } catch {
+        console.error("ingress: accepted batch remains unacknowledged");
+        await Promise.race([Bun.sleep(timeoutMs), stopped, own.left]);
       }
+      own.readied();
+      first = false;
     }
   };
 
   const post = async (agent: AgentEntry, own: Served): Promise<void> => {
-    // Which chunks already have their line on disk, so a post the platform
-    // refused is tried again with no second line: the chat log is a diary and
-    // not a record of attempts. A delivered chunk leaves the set, which is what
-    // keeps it the size of what is in flight.
-    const logged = new Set<number>();
-    let owed = false;
-
+    let retryAt: number | null = null;
     const deliver = async (): Promise<void> => {
+      retryAt = null;
       const pending = await readPendingChunks(store, { agent: agent.id });
-      const refused = new Set<string>();
+      const blocked = new Set<string>();
       const posted = new Set<string>();
-      let anyRefused = false;
       for (const chunk of pending) {
         if (stopping || own.leaving) return;
-        // D-113. A NOTICE has no message on it, so none of the per-message
-        // bookkeeping below is about it: it is not half of a reply, it holds
-        // nothing else back, and there is nothing to stamp delivered.
-        if (chunk.inbound_id !== null && refused.has(chunk.inbound_id)) continue;
-        if (!logged.has(chunk.id)) {
-          await appendChatLine(
-            { stateDir, person: chunk.person, agent: chunk.agent },
-            {
-              at: new Date().toISOString(),
-              direction: "out",
-              // D-129. A machinery line is the DOOR speaking, so the tail
-              // renders `<door id>: [door] ...` and the next spawned session
-              // reads exactly what the chat holds, marked as machinery twice
-              // over. A reply chunk keeps the agent and nothing about it
-              // changes.
-              from: chunk.kind === "notice" ? options.door : chunk.agent,
-              text: chunk.body,
-            },
-          );
-          logged.add(chunk.id);
+        const group = chunk.inbound_id ?? chunk.notice_key!.replace(/:part:\d+$/, "");
+        if (blocked.has(group)) continue;
+        const route = chunk.route ?? { door: options.door, chat: agent.chat };
+        if (route.door !== options.door) continue;
+        const due = chunk.retry_at ? new Date(chunk.retry_at).getTime() : 0;
+        if (due > Date.now()) {
+          retryAt = Math.min(retryAt ?? Infinity, due);
+          blocked.add(group);
+          continue;
         }
-        // L6's "ending with the totals": the progress line is edited to them
-        // BEFORE the reply is posted. `attend` and this task are woken by the
-        // same settling commit, so without this wait the two race and a person
-        // reads the answer above a line still saying "working".
+        if (!chunk.route) await store.sql`update outbox set route = ${route}::jsonb where id = ${chunk.id} and route is null`;
+        if (!projected.has(chunk.id)) {
+          await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
+            id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
+            from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
+          });
+          projected.add(chunk.id);
+        }
         if (chunk.kind === "reply" && chunk.inbound_id !== null) {
           const line = own.progress.get(chunk.inbound_id);
-          if (line) {
-            await Promise.race([line.totals, Bun.sleep(TOTALS_WAIT_MS)]);
-          }
+          if (line) await Promise.race([line.totals, Bun.sleep(TOTALS_WAIT_MS)]);
         }
+        const fresh = registryThisTick();
+        const seconds = Number(readSetting(fresh, "door.delivery_retry_seconds"));
+        const attempts = Number(chunk.attempts) + 1;
+        const maxAttempts = Number(readSetting(fresh, "door.delivery_max_attempts"));
+        if (Number(chunk.attempts) >= maxAttempts) {
+          const failure = chunk.failure ?? { kind: "uncertain" as const, code: "send-interrupted", cause: "delivery outcome unknown" };
+          await store.sql`update outbox set delivery_state = 'failed', retry_at = null, failure = ${failure}::jsonb where id = ${chunk.id}`;
+          projected.delete(chunk.id);
+          await recordOperationFailure(store, "post", options.door, route.chat, failure);
+          await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
+            agent, chat: route.chat, health: health.health, key: `delivery-failed:${chunk.id}`, failure, operation: "post", seconds });
+          blocked.add(group);
+          continue;
+        }
+        // If this process dies during the send, restart retains an honest
+        // unknown receipt and the same bounded retry deadline.
+        const next = new Date(Date.now() + seconds * 1000).toISOString();
+        await store.sql`update outbox set attempts = ${attempts}, retry_at = ${next}::timestamptz,
+          failure = '{"kind":"uncertain","code":"send-interrupted","cause":"delivery outcome unknown"}'::jsonb where id = ${chunk.id}`;
         try {
-          await options.platform.post({ chat: agent.chat, text: chunk.body });
-        } catch {
-          // The rest of this reply waits with it, so a person never reads the
-          // second half of an answer before the first.
-          if (chunk.inbound_id !== null) refused.add(chunk.inbound_id);
-          anyRefused = true;
+          await options.platform.post({ chat: route.chat, text: chunk.body });
+        } catch (error) {
+          const failure = classifyPlatformError(error);
+          const terminal = failure.kind === "permanent" || attempts >= maxAttempts;
+          // The pre-send durable stamp may itself have waited on storage.
+          // Space retries from the observed failure, not that earlier write.
+          const retry = terminal ? null : new Date(Date.now() + seconds * 1000).toISOString();
+          await store.sql`update outbox set delivery_state = ${terminal ? "failed" : "pending"},
+            retry_at = ${retry}::timestamptz, failure = ${failure}::jsonb where id = ${chunk.id}`;
+          if (terminal) projected.delete(chunk.id);
+          await recordOperationFailure(store, "post", options.door, route.chat, failure);
+          if (terminal) await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
+            agent, chat: route.chat, health: health.health, key: `delivery-failed:${chunk.id}`,
+            failure, operation: "post", seconds });
+          else retryAt = Math.min(retryAt ?? Infinity, Date.parse(retry!));
+          blocked.add(group);
           continue;
         }
         await markDelivered(store, chunk.id);
-        logged.delete(chunk.id);
+        projected.delete(chunk.id);
         if (chunk.inbound_id !== null) posted.add(chunk.inbound_id);
       }
-      for (const id of posted) {
-        if (!refused.has(id)) {
-          await stamp(store, { messageId: id, kind: "delivered", actor: "door" });
-        }
+      for (const id of posted) if (!blocked.has(id)) {
+        const [row] = await store.sql`select 1 from outbox where inbound_id = ${id} and delivered_at is null limit 1`;
+        if (!row) await stamp(store, { messageId: id, kind: "delivered", actor: "door" });
       }
-      owed = anyRefused;
     };
-
-    // The LISTEN is opened before the first read and held across every wait,
-    // so a settle that commits between a read and the wait after it is
-    // announced to a listener that already exists. Opened after the read, it
-    // would miss exactly that commit, and this door never re-reads on a bare
-    // timeout to recover from one.
     const waiter = await openOutboxWaiter(store, { person: agent.person });
+    const attempt = async () => {
+      try { await deliver(); }
+      catch { retryAt = Date.now() + timeoutMs; }
+    };
     try {
-      // Once on connect, because a reply settled while this door was down is on
-      // disk with nothing left to announce it.
-      await deliver();
+      await healthReady;
+      await attempt();
       while (!stopping && !own.leaving) {
         const why = await Promise.race([
-          waiter.wait(timeoutMs).catch(() => "timeout" as const),
-          stopped,
-          own.left,
+          waiter.wait(retryAt === null ? timeoutMs : Math.max(1, retryAt - Date.now())).catch(() => "timeout" as const),
+          stopped, own.left,
         ]);
         if (why === "stopped" || stopping || own.leaving) return;
-        // The notification is what says there is something to post. The bound
-        // running out says nothing, and reading the table on it would be the
-        // timer the store exists to avoid. A refused post is the one thing owed
-        // to the clock, because nothing will announce the platform's return.
-        if (why === "notified" || owed) await deliver();
+        if (why === "notified" || retryAt !== null && retryAt <= Date.now()) await attempt();
       }
-    } finally {
-      await waiter.close();
-    }
+    } finally { await waiter.close(); }
   };
 
   /**
@@ -875,15 +930,6 @@ export async function runDoor(options: {
     while (!stopping && !own.leaving) {
       let sleepMs = timeoutMs;
       try {
-        // REVIEW M3. READ, NEVER TAKE. Everything below this line can throw,
-        // and a pass that throws is caught and the loop goes on, which is right
-        // for a pass and wrong for the queue: a demand spliced off here and
-        // lost to a half-written registry lives nowhere else, and the person's
-        // phrase produces no row and no line back for ever. SPEC §6 says the
-        // installer, the web board and an editor all edit that file, so a
-        // half-written one is an ordinary moment rather than an accident. The
-        // queue is cleared only after the row is on the table.
-        const asked = own.demands.slice();
         // D-161. Re-read per tick, so the harvester, the quiet timeout, the
         // minimum slice and the report switch all land with nothing restarted.
         const fresh = registryThisTick();
@@ -891,17 +937,8 @@ export async function runDoor(options: {
         if (settings === null) {
           // D-137. This person's chats are not harvested at all, and `check`
           // says so rather than this task complaining once a tick.
-          //
-          // The demand IS dropped here, and that is deliberate: nothing in the
-          // hub can ever serve a phrase typed at a person whose file names no
-          // harvester, and a queue that kept every one of them would grow for
-          // as long as the household kept typing. `check` reports
-          // `harvest-undeclared` for that person, which is the line a household
-          // can act on.
-          own.demands.splice(0, asked.length);
           await Promise.race([
             Bun.sleep(timeoutMs),
-            own.demanded.wait(),
             stopped,
             own.left,
           ]);
@@ -909,43 +946,26 @@ export async function runDoor(options: {
         }
 
         const now = new Date();
-        const seen = await readSlice({ ...chat, from: bound, until: now.toISOString() });
+        const seen = await readSlice({ ...chat, from: historyHarvestFrom(fresh, agent.person, bound), until: now.toISOString() });
         const newest = await newestLine({ ...chat, now });
 
         let reason: HarvestBody["reason"] | null = null;
         let until = now.toISOString();
-        let said: string | undefined;
-        if (asked.length > 0) {
-          // D-146. A demand is not a deadline: it fires at once and the
-          // minimum is ignored, because a person who typed a phrase at the
-          // machinery is owed an answer whatever the slice turns out to hold.
-          reason = "demand";
-          said = asked[asked.length - 1];
-        } else {
-          const trigger = dueTrigger({
-            newest: newest?.at ?? null,
-            oldest: seen[0]?.at ?? null,
-            count: seen.length,
-            quietMinutes: settings.quiet_minutes,
-            minMessages: settings.min_messages,
-            now,
-          });
-          if (trigger === "backstop") {
-            // L19's "over yesterday". A backstop that ran to `now` would
-            // swallow today's still-live conversation into yesterday's slice.
-            reason = "backstop";
-            until = new Date(lastMidnight(now)).toISOString();
-          } else if (trigger === "quiet") {
-            reason = "quiet";
-          }
-        }
+        const trigger = dueTrigger({
+          newest: newest?.at ?? null, oldest: seen[0]?.at ?? null, count: seen.length,
+          quietMinutes: settings.quiet_minutes, minMessages: settings.min_messages, now,
+        });
+        if (trigger === "backstop") {
+          reason = "backstop";
+          until = new Date(lastMidnight(now)).toISOString();
+        } else if (trigger === "quiet") reason = "quiet";
 
         if (reason !== null) {
           // D-145. On firing, and only then, the watermark is read, and `from`
           // comes from IT rather than from the cached bound: the bound is what
           // this door believes and the sheet is what a runner has settled.
           settled = await readWatermark(store, key);
-          const from = settled?.at ?? null;
+          const from = historyHarvestFrom(fresh, agent.person, settled?.at ?? null);
           const slice = await readSlice({ ...chat, from, until });
           // REVIEW S3, D-145's second gate: "writes the row in one transaction
           // WHEN THE COUNT IS AT LEAST THE APPLICABLE MINIMUM". The count above
@@ -973,7 +993,6 @@ export async function runDoor(options: {
               until,
               reason,
               lines: slice.length,
-              ...(said === undefined ? {} : { said }),
             };
             await store.sql.begin(async (tx) =>
               enqueueInbound(
@@ -987,11 +1006,6 @@ export async function runDoor(options: {
                 },
               ),
             );
-            // REVIEW M3. The demands this pass acted on, and only those: the
-            // queue is push-only and in order, so the first `asked.length` of
-            // it are the ones read at the top. One that arrived while this pass
-            // ran is still there for the next.
-            own.demands.splice(0, asked.length);
           }
           // The bound moves either way. A pass that looked and found too few
           // has ASKED about those lines, and leaving the bound behind would
@@ -1029,7 +1043,6 @@ export async function runDoor(options: {
       }
       await Promise.race([
         Bun.sleep(sleepMs),
-        own.demanded.wait(),
         stopped,
         own.left,
       ]);
@@ -1051,7 +1064,10 @@ export async function runDoor(options: {
     const waitingToHarvest = new Promise<void>((resolve) => {
       harvested = () => resolve();
     });
+    let readied!: () => void;
+    const reading = new Promise<void>(resolve => { readied = resolve; });
     const it: Served = {
+      agent: { ...agent }, rebinding: false, readDone: Promise.resolve(), reading, readied,
       leaving: false,
       left,
       release,
@@ -1063,12 +1079,11 @@ export async function runDoor(options: {
       progress: new Map<string, ProgressLine>(),
       arrivals: [],
       arrived: nudge(),
-      demands: [],
-      demanded: nudge(),
     };
+    agent = it.agent;
     served.set(agent.id, it);
+    it.readDone = read(agent, it).finally(() => it.readied());
     it.done = Promise.allSettled([
-      read(agent, it),
       post(agent, it),
       attend(agent, it),
       // The same outer `finally` `attend` carries, and for the same reason: a
@@ -1085,10 +1100,13 @@ export async function runDoor(options: {
     served.delete(id);
     it.leaving = true;
     it.release();
-    await it.done.catch(() => {});
+    await Promise.allSettled([it.done, it.readDone]);
   };
 
   for (const agent of agentsFor(registry, { door: options.door })) serve(agent);
+  await Promise.all([...served.values()].map(it => it.reading));
+  for (const it of served.values()) await sayReadFailure(it.agent);
+  releaseHealth();
   // Ready means ATTENDING AND HARVESTING, so a caller handed this door is
   // handed one whose clocks are armed and whose two connect reads have landed.
   // Without it a read rides into whatever window the caller opens next, which
@@ -1108,7 +1126,18 @@ export async function runDoor(options: {
       }
       try {
         const wanted = agentsFor(fresh, { door: options.door });
-        for (const agent of wanted) if (!served.has(agent.id)) serve(agent);
+        for (const agent of wanted) {
+          const it = served.get(agent.id);
+          if (!it) { await health.initialize(agent); serve(agent); }
+          else if (it.agent.chat !== agent.chat || it.agent.person !== agent.person) {
+            it.rebinding = true;
+            await it.readDone;
+            Object.assign(it.agent, agent);
+            await health.initialize(agent);
+            it.rebinding = false;
+            it.readDone = read(it.agent, it, true);
+          }
+        }
         for (const id of [...served.keys()]) {
           if (!wanted.some((agent) => agent.id === id)) await drop(id);
         }
@@ -1124,7 +1153,8 @@ export async function runDoor(options: {
       stopping = true;
       release();
       await supervise;
-      await Promise.allSettled([...served.values()].map((it) => it.done));
+      await Promise.allSettled([...served.values()].flatMap((it) => [it.done, it.readDone]));
+      await ingress.close();
       await store.close();
     },
   };

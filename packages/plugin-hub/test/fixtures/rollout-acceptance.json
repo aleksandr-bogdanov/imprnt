@@ -1,0 +1,1308 @@
+{
+  "version": 1,
+  "status": "open",
+  "synthetic": false,
+  "requirements": {
+    "ROLL-01": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "owner-cutover": null
+      },
+      "forbidden": null,
+      "controls": [],
+      "deferred": {
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    },
+    "ROLL-02": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "owner-cutover": null
+      },
+      "forbidden": null,
+      "controls": [],
+      "deferred": {
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    },
+    "ROLL-03": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt; PLAN-09-LINUX-RECHECK.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "live-login/linux": null,
+        "live-login/macos": null,
+        "owner-cutover": null
+      },
+      "forbidden": null,
+      "controls": [],
+      "deferred": {
+        "live-login/linux": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on linux"
+        },
+        "live-login/macos": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on macos"
+        },
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    },
+    "ROLL-04": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "two implementations of a control verb",
+      "controls": [
+        {
+          "plan": "06-07",
+          "red": "FOCUSED-RED-06-07-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-05": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-3-rehearsal-traced-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Integrated synthetic rehearsal completed all 103 expectations: installation, conversion, sync, handoff, bounded harvest, delivery, recovery, live route edit and demand; Linux run observed with filesystem syscall tracing. Separate timing failures remain recorded; no live or owner acceptance claim."
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-3-rehearsal-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Integrated synthetic rehearsal completed all 103 expectations: installation, conversion, sync, handoff, bounded harvest, delivery, recovery, live route edit and demand; Linux run observed with filesystem syscall tracing. Separate timing failures remain recorded; no live or owner acceptance claim."
+          }
+        },
+        "owner-cutover": null
+      },
+      "forbidden": null,
+      "controls": [],
+      "deferred": {
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    },
+    "ROLL-06": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt; PLAN-09-LINUX-RECHECK.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "live-login/linux": null,
+        "live-login/macos": null
+      },
+      "forbidden": null,
+      "controls": [],
+      "deferred": {
+        "live-login/linux": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on linux"
+        },
+        "live-login/macos": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on macos"
+        }
+      }
+    },
+    "ROLL-07": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-SYNC-FIX-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "native/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-TIMER-FIX-linux.txt",
+          "origin": "native",
+          "facts": {
+            "os": "linux",
+            "scope": "Owned native service, kernel or OS-seam checks; no unattended reboot claim"
+          }
+        },
+        "native/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-09-mac.txt",
+          "origin": "native",
+          "facts": {
+            "os": "macos",
+            "scope": "Native owned-unit, kernel-box and child-memory checks; no unattended reboot claim"
+          }
+        }
+      },
+      "forbidden": null,
+      "controls": [],
+      "deferred": {}
+    },
+    "ROLL-08": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim",
+            "earlierStorageDelay": "PLAN-09-LINUX-DELIVERY-FINAL-WAITS.txt"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "an unchanged permanently refused answer retried forever.",
+      "controls": [
+        {
+          "plan": "06-05",
+          "red": "FOCUSED-RED-06-05-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-09": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-LINUX-RECHECK.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "native/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "native",
+          "facts": {
+            "os": "linux",
+            "scope": "Owned native service, kernel or OS-seam checks; no unattended reboot claim"
+          }
+        },
+        "native/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-09-mac.txt",
+          "origin": "native",
+          "facts": {
+            "os": "macos",
+            "scope": "Native owned-unit, kernel-box and child-memory checks; no unattended reboot claim"
+          }
+        }
+      },
+      "forbidden": "an open turn waiting forever on a dead child.",
+      "controls": [
+        {
+          "plan": "06-03",
+          "red": "FOCUSED-RED-06-03-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-10": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "a finished agent task counted as serving.",
+      "controls": [
+        {
+          "plan": "06-03",
+          "red": "FOCUSED-RED-06-03-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-11": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim",
+            "earlierStorageDelay": "PLAN-09-LINUX-DELIVERY-FINAL-WAITS.txt"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "acknowledging an accepted message before its durable write.",
+      "controls": [
+        {
+          "plan": "06-04",
+          "red": "FOCUSED-RED-06-04-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-12": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt and PLAN-09-TIMER-FIX-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "native/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-TIMER-FIX-linux.txt",
+          "origin": "native",
+          "facts": {
+            "os": "linux",
+            "scope": "Owned native service, kernel or OS-seam checks; no unattended reboot claim"
+          }
+        },
+        "native/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-09-mac.txt",
+          "origin": "native",
+          "facts": {
+            "os": "macos",
+            "scope": "Native owned-unit, kernel-box and child-memory checks; no unattended reboot claim"
+          }
+        },
+        "owner-cutover": null
+      },
+      "forbidden": "a hub that needs an open terminal to keep running.",
+      "controls": [
+        {
+          "plan": "06-07",
+          "red": "FOCUSED-RED-06-07-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    },
+    "ROLL-13": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "live-login/linux": null,
+        "live-login/macos": null
+      },
+      "forbidden": "a copied credential or an undeclared fallback login.",
+      "controls": [
+        {
+          "plan": "06-02",
+          "red": "FOCUSED-RED-06-02-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {
+        "live-login/linux": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on linux"
+        },
+        "live-login/macos": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on macos"
+        }
+      }
+    },
+    "ROLL-14": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-2-candidate-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "os": "linux",
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic children measured through native process-tree APIs; no live-login or person-box acceptance claim",
+            "peakBytes": [
+              375144448,
+              251297792
+            ],
+            "idleBaselineBytes": [
+              121192448,
+              123224064
+            ]
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-2-projection-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "os": "macos",
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic children measured through native process-tree APIs; no live-login or person-box acceptance claim"
+          }
+        },
+        "native/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-2-candidate-linux.txt",
+          "origin": "native",
+          "facts": {
+            "os": "linux",
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic children measured through native process-tree APIs; no live-login or person-box acceptance claim",
+            "peakBytes": [
+              375144448,
+              251297792
+            ],
+            "idleBaselineBytes": [
+              121192448,
+              123224064
+            ]
+          }
+        },
+        "native/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-2-projection-mac.txt",
+          "origin": "native",
+          "facts": {
+            "os": "macos",
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic children measured through native process-tree APIs; no live-login or person-box acceptance claim"
+          }
+        },
+        "live-login/linux": null,
+        "live-login/macos": null,
+        "owner-cutover": null
+      },
+      "forbidden": "an idle on-demand agent holding a model child indefinitely.",
+      "controls": [
+        {
+          "plan": "06-03",
+          "red": "FOCUSED-RED-06-03-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {
+        "live-login/linux": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on linux"
+        },
+        "live-login/macos": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on macos"
+        },
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    },
+    "ROLL-15": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "an empty allowlist granting access or a display name granting authority.",
+      "controls": [
+        {
+          "plan": "06-04",
+          "red": "FOCUSED-RED-06-04-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-16": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "native/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "native",
+          "facts": {
+            "os": "linux",
+            "scope": "Owned native service, kernel or OS-seam checks; no unattended reboot claim"
+          }
+        },
+        "native/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-09-mac.txt",
+          "origin": "native",
+          "facts": {
+            "os": "macos",
+            "scope": "Native owned-unit, kernel-box and child-memory checks; no unattended reboot claim"
+          }
+        }
+      },
+      "forbidden": "private chat logs or inbox files outside the enforced person boundary.",
+      "controls": [
+        {
+          "plan": "06-02",
+          "red": "FOCUSED-RED-06-02-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-17": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "falling back to the hub program for another run kind.",
+      "controls": [
+        {
+          "plan": "06-07",
+          "red": "FOCUSED-RED-06-07-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-18": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-3-rehearsal-traced-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Integrated synthetic rehearsal completed all 103 expectations: installation, conversion, sync, handoff, bounded harvest, delivery, recovery, live route edit and demand; Linux run observed with filesystem syscall tracing. Separate timing failures remain recorded; no live or owner acceptance claim."
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-3-rehearsal-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Integrated synthetic rehearsal completed all 103 expectations: installation, conversion, sync, handoff, bounded harvest, delivery, recovery, live route edit and demand; Linux run observed with filesystem syscall tracing. Separate timing failures remain recorded; no live or owner acceptance claim."
+          }
+        },
+        "owner-cutover": null
+      },
+      "forbidden": "old completed instructions replayed as new work or an owed reply silently abandoned.",
+      "controls": [
+        {
+          "plan": "06-08",
+          "red": "FOCUSED-RED-06-08-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    },
+    "ROLL-20": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim",
+            "earlierStorageDelay": "PLAN-09-LINUX-DELIVERY-FINAL-WAITS.txt"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "a committed message permanently absent from the tail or a reply duplicated in it after restart.",
+      "controls": [
+        {
+          "plan": "06-01",
+          "red": "FOCUSED-RED-06-01-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        },
+        {
+          "plan": "06-05",
+          "red": "FOCUSED-RED-06-05-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-21": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "owner-cutover": null
+      },
+      "forbidden": "a door declared healthy solely because its process or token is healthy.",
+      "controls": [
+        {
+          "plan": "06-05",
+          "red": "FOCUSED-RED-06-05-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    },
+    "ROLL-22": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "native/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "native",
+          "facts": {
+            "os": "linux",
+            "scope": "Owned native service, kernel or OS-seam checks; no unattended reboot claim"
+          }
+        },
+        "native/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-09-mac.txt",
+          "origin": "native",
+          "facts": {
+            "os": "macos",
+            "scope": "Native owned-unit, kernel-box and child-memory checks; no unattended reboot claim"
+          }
+        }
+      },
+      "forbidden": "restarting the asker's unit or healthy sibling agents to recover one agent.",
+      "controls": [
+        {
+          "plan": "06-07",
+          "red": "FOCUSED-RED-06-07-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-23": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "a routine binding edit waiting on a process restart.",
+      "controls": [
+        {
+          "plan": "06-03",
+          "red": "FOCUSED-RED-06-03-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        },
+        {
+          "plan": "06-05",
+          "red": "FOCUSED-RED-06-05-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-24": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt; PLAN-09-LINUX-RECHECK.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "live-login/linux": null,
+        "live-login/macos": null
+      },
+      "forbidden": "ambient account configuration silently changing an agent's behavior.",
+      "controls": [
+        {
+          "plan": "06-02",
+          "red": "FOCUSED-RED-06-02-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {
+        "live-login/linux": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on linux"
+        },
+        "live-login/macos": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on macos"
+        }
+      }
+    },
+    "ROLL-25": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "a local error reported as a household credential outage.",
+      "controls": [
+        {
+          "plan": "06-03",
+          "red": "FOCUSED-RED-06-03-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-26": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        }
+      },
+      "forbidden": "a skipped-only batch pinning the saved cursor indefinitely.",
+      "controls": [
+        {
+          "plan": "06-04",
+          "red": "FOCUSED-RED-06-04-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-29": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim",
+            "earlierStorageDelay": "PLAN-09-LINUX-DELIVERY-FINAL-WAITS.txt"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "native/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt",
+          "origin": "native",
+          "facts": {
+            "os": "linux",
+            "scope": "Owned native service, kernel or OS-seam checks; no unattended reboot claim"
+          }
+        },
+        "native/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-09-mac.txt",
+          "origin": "native",
+          "facts": {
+            "os": "macos",
+            "scope": "Native owned-unit, kernel-box and child-memory checks; no unattended reboot claim"
+          }
+        }
+      },
+      "forbidden": "discarding the only diagnostic cause of a failed operation.",
+      "controls": [
+        {
+          "plan": "06-07",
+          "red": "FOCUSED-RED-06-07-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {}
+    },
+    "ROLL-30": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-FOCUSED-linux.txt; PLAN-09-LINUX-RECHECK.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "live-login/linux": null,
+        "live-login/macos": null,
+        "owner-cutover": null
+      },
+      "forbidden": "using permission bypass without the person box or giving the harvester write tools.",
+      "controls": [
+        {
+          "plan": "06-02",
+          "red": "FOCUSED-RED-06-02-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        },
+        {
+          "plan": "06-08",
+          "red": "FOCUSED-RED-06-08-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {
+        "live-login/linux": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on linux"
+        },
+        "live-login/macos": {
+          "status": "DEFERRED",
+          "gate": "requires declared live login and private inputs on macos"
+        },
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    },
+    "ROLL-31": {
+      "status": "open",
+      "evidence": {
+        "automated/linux": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "PLAN-09-SYNC-FIX-linux.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "Owning automated checks on synthetic inputs; no live or owner acceptance claim"
+          }
+        },
+        "automated/macos": {
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "origin": "automated",
+          "facts": {
+            "scope": "focused automated checks; synthetic transports and model children"
+          }
+        },
+        "owner-cutover": null
+      },
+      "forbidden": "a sync stamp written when a required repository failed.",
+      "controls": [
+        {
+          "plan": "06-06",
+          "red": "FOCUSED-RED-06-06-mac.txt",
+          "green": "GREEN-FOCUSED-09-mac.txt (owning focused checks pass; acceptance remains open)"
+        }
+      ],
+      "deferred": {
+        "owner-cutover": {
+          "status": "DEFERRED",
+          "gate": "requires owner execution and confirmation of D-186"
+        }
+      }
+    }
+  },
+  "deferred": [
+    "ROLL-19",
+    "ROLL-27",
+    "ROLL-28",
+    "ROLL-32"
+  ],
+  "windows": {
+    "test/door-typing.test.ts": {
+      "linux": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "linux",
+          "unchanged": true
+        }
+      },
+      "macos": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "GREEN-FOCUSED-06-09-mac.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "macos",
+          "unchanged": true
+        }
+      }
+    },
+    "test/door-outbox.test.ts": {
+      "linux": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "linux",
+          "unchanged": true
+        }
+      },
+      "macos": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "GREEN-FOCUSED-06-09-mac.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "macos",
+          "unchanged": true
+        }
+      }
+    },
+    "test/door-clock.test.ts": {
+      "linux": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "linux",
+          "unchanged": true
+        }
+      },
+      "macos": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "GREEN-FOCUSED-06-09-mac.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "macos",
+          "unchanged": true
+        }
+      }
+    },
+    "test/runner-drain.test.ts": {
+      "linux": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "linux",
+          "unchanged": true
+        }
+      },
+      "macos": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "GREEN-FOCUSED-06-09-mac.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "macos",
+          "unchanged": true
+        }
+      }
+    },
+    "test/wait-idle.test.ts": {
+      "linux": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "linux",
+          "unchanged": true
+        }
+      },
+      "macos": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "GREEN-FOCUSED-06-09-mac.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "macos",
+          "unchanged": true
+        }
+      }
+    },
+    "test/check-silence.test.ts": {
+      "linux": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "PLAN-09-DELIVERY-FINAL-linux.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "linux",
+          "unchanged": true
+        }
+      },
+      "macos": {
+        "result": "pass",
+        "observed": "pass",
+        "record": "GREEN-FOCUSED-06-09-mac.txt",
+        "origin": "automated",
+        "facts": {
+          "os": "macos",
+          "unchanged": true
+        }
+      }
+    }
+  },
+  "ownerProcedure": "06-CONTEXT.md#d-186-owner-cutover-procedure"
+}

@@ -112,6 +112,7 @@ export async function readSlice(args: {
   /** The watermark's `at`, exclusive. Null reaches back `SLICE_MAX_DAYS`. */
   from: string | null;
   until: string;
+  includeFrom?: boolean;
 }): Promise<SliceLine[]> {
   const untilMs = Date.parse(args.until);
   const fromMs =
@@ -120,7 +121,7 @@ export async function readSlice(args: {
   return walk(where, fromMs, untilMs)
     .filter((line) => {
       const at = Date.parse(line.at);
-      return at > fromMs && at <= untilMs && spoken(line, args.person, args.agent);
+      return (at > fromMs || (args.includeFrom && at === fromMs)) && at <= untilMs && spoken(line, args.person, args.agent);
     })
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }

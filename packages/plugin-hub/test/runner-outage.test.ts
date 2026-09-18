@@ -144,6 +144,11 @@ async function stageOutage(options: { refusals: number; declare?: boolean }): Pr
     [RUNNER_PI]: createScriptedAdapter({ name: it.adapterName, refusals: options.refusals }),
     [RUNNER_MAC]: createScriptedAdapter({ name: it.adapterName, refusals: options.refusals }),
   };
+  for (const loop of Object.values(loops)) {
+    loop.setUsage({ input_tokens: null, cached_input_tokens: null, output_tokens: null,
+      plan_usage: null, raw: { evidence: { kind: "authenticated-response", status: options.refusals > 0 ? 401 : 200,
+        credential: declare ? CREDENTIAL : "preset:daily" } } });
+  }
   return { it, loops };
 }
 
@@ -469,6 +474,10 @@ test(
 
       // --- the loop works again. Both runners find out by trying, which is
       //     the retry L10 rule 3 names.
+      for (const loop of Object.values(staged.loops)) {
+        loop.setUsage({ input_tokens: 12, cached_input_tokens: 3, output_tokens: 7,
+          plan_usage: null, raw: { evidence: { kind: "authenticated-response", status: 200, credential: CREDENTIAL } } });
+      }
       staged.loops[RUNNER_PI].setRefusal(null);
       staged.loops[RUNNER_MAC].setRefusal(null);
 

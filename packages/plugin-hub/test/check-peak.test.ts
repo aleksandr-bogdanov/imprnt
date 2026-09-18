@@ -58,9 +58,9 @@ const fixture: UnitFixture = unitFixture();
 let foreignBefore: string[] = [];
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "check 13b, the hub records a resident's peak on its own tick");
   cluster = await startCluster();
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {
@@ -110,8 +110,8 @@ test(
       run: [
         { id: "door-fake", kind: "door", machine: "pi", platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 },
         { id: "runner-test", kind: "runner", machine: "pi", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 512 },
-        { id: "watch-bikes", kind: "watcher", machine: "pi", schedule: "every 30m", memory_limit_mb: 128 },
-        { id: "transcriber", kind: "transcriber", machine: "pi", schedule: "on demand", memory_limit_mb: 1024 },
+        { id: "watch-bikes", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "every 30m", memory_limit_mb: 128 },
+        { id: "transcriber", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "on demand", memory_limit_mb: 1024 },
         { id: "runner-mac", kind: "runner", machine: "mac", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048 },
       ],
     });
@@ -348,6 +348,15 @@ test.skipIf(!gate.ok)(
       );
       const pid = livePid(unit)!;
       expect(pidAlive(pid)).toBe(true);
+
+      await until(
+        "the resident opened its own store before its loaded process is measured",
+        async () => (await it.read.sql(
+          "select application_name from pg_stat_activity where application_name = $1",
+          [entryId],
+        )).length > 0,
+        90_000,
+      );
 
       // THE TEST'S OWN READING, through `ps`, of the process the MANAGER named.
       // Nothing of the hub's is involved in it.

@@ -46,7 +46,7 @@ import {
   type ReadyProcess,
 } from "./helpers/cluster.ts";
 import { cpuSeconds } from "./helpers/cpu.ts";
-import { DOOR, RUNNER, plantChatLine, stageHub } from "./helpers/hub-fixture.ts";
+import { DOOR, PERSON, RUNNER, plantChatLine, stageHub } from "./helpers/hub-fixture.ts";
 
 const SLOW = 120_000;
 /** The window. Long enough that a 100 ms poll doing real work shows up. */
@@ -85,7 +85,11 @@ afterAll(async () => {
 test(
   "D-70 a door and a runner that are waiting are ASLEEP: after a message has gone the whole way, neither process advances its processor time by a third of a second over a three second window, while a process that really polls is over that bound in the same window read by the same probe (SPEC §2, D-70, STORE-01)",
   async () => {
-    const it = await stageHub(cluster, { servers: true, hub: { tick_seconds: 1 } });
+    const it = await stageHub(cluster, { servers: true, hub: { tick_seconds: 1 },
+      people: [{ id: PERSON }],
+    });
+    await Bun.write(it.registryFile, (await Bun.file(it.registryFile).text())
+      .replaceAll("[[people]]", '[[people]]\nallowed_senders = { "door-fake" = ["fixture-sender"] }'));
     let door: ReadyProcess | null = null;
     let runner: ReadyProcess | null = null;
     // The control: a process that wakes ten times a second and does work each

@@ -234,3 +234,217 @@ export function progressTotals(
       : `done. Tool calls: ${actions}, time: ${what.seconds} s.`,
   );
 }
+
+/** D-183. Interpolated data cannot introduce another line or expose a credential. */
+export function safeValue(value: unknown): string {
+  return String(value ?? "").split(/[\r\n]/, 1)[0]
+    .replace(/(?:authorization\s*:|bearer\s|(?:token|password|signature|secret)\s*[=:]).*/i, "")
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/[\u0000-\u001f\u007f]/g, "").trim();
+}
+
+const WORDS: Record<string, string> = {
+  voice: "голосовое сообщение", photo: "фото", file: "файл", sticker: "стикер", video: "видео",
+  install: "установка", recover: "восстановление", sync: "синхронизация", convert: "перенос",
+  done: "готово", refused: "отклонено", failed: "ошибка", waiting: "ожидание",
+  running: "работает", stopped: "остановлен", scheduled: "по расписанию", missing: "отсутствует", unknown: "неизвестно",
+  "access denied": "доступ запрещён", "chat missing": "чат отсутствует", "login refused": "вход отклонён",
+  "invalid configuration": "неверная конфигурация", "child exited": "процесс модели завершился",
+  "memory limit reached": "достигнут предел памяти", "task failed": "ошибка задачи",
+  "state unavailable on this machine": "данные недоступны на этой машине",
+  "delivery outcome unknown": "результат доставки неизвестен", "retry limit reached": "достигнут предел повторов",
+  "operation failed": "операция не выполнена",
+};
+
+type LineValues = Record<string, unknown>;
+function interpolate(language: Language, template: string, values: LineValues): string {
+  return template.replace(/\{(\w+)\}/g, (_, key: string) => {
+    const value = safeValue(values[key]);
+    return language === "ru" && ["kind", "cause", "operation", "result", "wanted", "seen"].includes(key) && Object.hasOwn(WORDS, value)
+      ? WORDS[value] : value;
+  });
+}
+
+export function voicePending(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "голосовые сообщения пока не расшифровываются, напишите текстом."
+    : "voice notes are not transcribed yet, please type it.", values);
+  return says(language, sentence);
+}
+
+export function mediaFailed(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "не удалось сохранить {kind}. Отправьте ещё раз."
+    : "I could not save {kind}. Please send it again.", values);
+  return says(language, sentence);
+}
+
+export function emptyAnswer(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "агент вернул пустой ответ. Попробуйте ещё раз."
+    : "the agent returned an empty answer. Please try again.", values);
+  return says(language, sentence);
+}
+
+export function deliveryFailed(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "не удалось доставить ответ в {chat}: {cause}. Нужно восстановление."
+    : "I could not deliver the answer in {chat}: {cause}. Recovery is needed.", values);
+  return says(language, sentence);
+}
+
+export function deliveryUncertain(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "доставка в {chat} не подтверждена: {cause}. Проверьте чат перед повтором."
+    : "delivery in {chat} is unconfirmed: {cause}. Check the chat before retrying.", values);
+  return says(language, sentence);
+}
+
+export function chatUnreadable(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "не могу прочитать {chat}: {cause}. Повторю через {seconds} с."
+    : "I cannot read {chat}: {cause}. I will retry in {seconds} s.", values);
+  return says(language, sentence);
+}
+
+export function chatRestored(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "чат {chat} снова доступен для чтения."
+    : "I can read {chat} again.", values);
+  return says(language, sentence);
+}
+
+export function agentRetry(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "агент {agent} остановился: {cause}. Повторю через {seconds} с."
+    : "{agent} stopped: {cause}. I will retry in {seconds} s.", values);
+  return says(language, sentence);
+}
+
+export function recoveryAccepted(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "запрошено восстановление {target}."
+    : "recovery requested for {target}.", values);
+  return says(language, sentence);
+}
+
+export function recoveryDone(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "восстановление {target} завершено."
+    : "recovery completed for {target}.", values);
+  return says(language, sentence);
+}
+
+export function recoveryRefused(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "восстановление {target} отклонено: {cause}."
+    : "recovery refused for {target}: {cause}.", values);
+  return says(language, sentence);
+}
+
+export function controlUsage(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "напишите /восстановить и идентификатор агента."
+    : "use /recover followed by an agent ID.", values);
+  return says(language, sentence);
+}
+
+export function operation(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "{operation}: {target}: {result}."
+    : "{operation}: {target}: {result}.", values);
+  return sentence;
+}
+
+export function finding(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "{code}: {target}: {cause}."
+    : "{code}: {target}: {cause}.", values);
+  return sentence;
+}
+
+export function status(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "{id}: ожидается {wanted}, наблюдается {seen}, pid {pid}."
+    : "{id}: wanted {wanted}, seen {seen}, pid {pid}.", values);
+  return sentence;
+}
+
+export function checkClean(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "проверка: замечаний нет."
+    : "check: no findings.", values);
+  return sentence;
+}
+
+export function cliUsage(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "использование: imprnt hub <команда> <реестр> [цель]"
+    : "usage: imprnt hub <verb> <registry> [target]", values);
+  return sentence;
+}
+
+export function installPlan(language: Language, values: LineValues): string {
+  return interpolate(language, language === "ru"
+    ? "установка: пробный запуск для {registry}; изменений нет.\nустановка: стандартная команда {install}; файл pid {pid}, служба {unit}."
+    : "install: dry run for {registry}; no changes.\ninstall: the standard install is {install}; pid file {pid}, unit {unit}.", values);
+}
+
+export function installServicePlan(language: Language, values: LineValues): string {
+  return interpolate(language, values.service
+    ? language === "ru"
+      ? "установка: {service}; эта команда не выполняется, если postgres уже отвечает."
+      : "install: {service}; would not run that service command when postgres already answers."
+    : language === "ru"
+      ? "установка: отдельная служба не запускается; apt-get создаёт и запускает {unit}."
+      : "install: would start no service of its own; apt-get creates and starts {unit}.", values);
+}
+
+export function installDatabaseReady(language: Language): string {
+  return language === "ru"
+    ? "установка: схема postgres готова; существующие настройки хранилища не изменены."
+    : "install: postgres schema ready; existing store settings unchanged.";
+}
+
+export function conversionDone(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "перенос: записей добавлено {count}, уже были {skipped}."
+    : "conversion: {count} records written, {skipped} already present.", values);
+  return sentence;
+}
+
+export function harvestDone(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "сохранение: {person}: завершено по {until}."
+    : "harvest: {person}: complete through {until}.", values);
+  return sentence;
+}
+
+export function mediaKind(language: Language, kind: string): string {
+  return language === "ru" ? WORDS[kind] : kind;
+}
+
+export function emptyMessageLine(language: Language): string {
+  return language === "ru" ? "(пустое сообщение)" : "(empty message)";
+}
+
+export function syncCause(language: Language, code: string): string {
+  const causes: Record<string, [string, string]> = {
+    path: ["repository path is missing or invalid", "путь репозитория отсутствует или неверен"],
+    person: ["repository is outside the person's tree", "репозиторий вне дерева человека"],
+    locked: ["repository is already being synchronized", "репозиторий уже синхронизируется"],
+    dirty: ["repository has uncommitted changes", "в репозитории есть несохранённые изменения"],
+    branch: ["repository is on the wrong branch", "в репозитории выбрана другая ветка"],
+    remote: ["configured remote is absent", "указанный удалённый репозиторий отсутствует"],
+    fetch: ["fetch failed", "не удалось получить изменения"],
+    conflict: ["rebase failed; inspect conflicts before retrying", "перебазирование не удалось; проверьте конфликты перед повтором"],
+    push: ["push failed", "не удалось отправить изменения"],
+  };
+  return (causes[code] ?? ["operation failed", "операция не удалась"])[language === "ru" ? 1 : 0];
+}
+
+export function syncRepair(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "устраните указанную причину в {target} и повторите синхронизацию."
+    : "repair the reported cause in {target} and run sync again.", values);
+}

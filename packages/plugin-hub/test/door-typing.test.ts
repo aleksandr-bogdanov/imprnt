@@ -75,6 +75,8 @@ test(
       hub: { tick_seconds: 2 },
       platform: { typingSeconds: 2 },
     });
+    await Bun.write(it.registryFile, (await Bun.file(it.registryFile).text())
+      .replaceAll("[[people]]", '[[people]]\nallowed_senders = { "door-fake" = ["fixture-sender"] }'));
     const seconds = it.fake.platform.typingSeconds;
     expect(seconds).toBeGreaterThan(0);
     let door: { stop(): Promise<void> } | null = null;

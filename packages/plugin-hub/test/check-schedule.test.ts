@@ -38,9 +38,9 @@ const fixture: UnitFixture = unitFixture();
 let foreignBefore: string[] = [];
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   cluster = await startCluster();
   announceGate(gate, "check 21, timer enabled is not job ran");
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {
@@ -101,9 +101,9 @@ test(
       run: [
         { id: "door-fake", kind: "door", machine: "pi", platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 },
         { id: "runner-test", kind: "runner", machine: "pi", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 512 },
-        { id: "watch-bikes", kind: "watcher", machine: "pi", schedule: "every 30m", memory_limit_mb: 128 },
-        { id: "backup", kind: "backup", machine: "pi", schedule: "hourly", memory_limit_mb: 256 },
-        { id: "transcriber", kind: "transcriber", machine: "pi", schedule: "on demand", memory_limit_mb: 1024 },
+        { id: "watch-bikes", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "every 30m", memory_limit_mb: 128 },
+        { id: "backup", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "hourly", memory_limit_mb: 256 },
+        { id: "transcriber", kind: "runner", child_memory_limit_mb: 2048, machine: "pi", schedule: "on demand", memory_limit_mb: 1024 },
       ],
     });
     const store = await superStore(cluster, it.db);
@@ -220,7 +220,7 @@ test.skipIf(!gate.ok)(
       run: [
         { id: "door-fake", kind: "door", machine: machine.id, platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 },
         { id: "runner-test", kind: "runner", machine: machine.id, schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 512 },
-        { id: entryId, kind: "watcher", machine: machine.id, schedule: "every 30m", memory_limit_mb: 64 },
+        { id: entryId, kind: "runner", child_memory_limit_mb: 2048, machine: machine.id, schedule: "every 30m", memory_limit_mb: 64 },
       ],
     });
     const store = await superStore(cluster, it.db);

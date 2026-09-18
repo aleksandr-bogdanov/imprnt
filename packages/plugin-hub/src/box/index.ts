@@ -1,3 +1,4 @@
+import { existsSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { listAgents, listPeople, personOf } from "../registry/entries.ts";
@@ -101,6 +102,9 @@ export function boxContextFor(registry: unknown, agentId: string): BoxContext {
   const person = personOf(registry, agentId);
   const zone = readSetting(registry, "hub.shared_zone");
   return {
+    stateRoot: join(String(readSetting(registry, "hub.state_dir") ?? ""), agent.person),
+    otherStateRoots: listPeople(registry).filter(one => one.id !== agent.person)
+      .map(one => join(String(readSetting(registry, "hub.state_dir") ?? ""), one.id)),
     agent: agentId,
     person: agent.person,
     tree: person?.tree ?? "",
@@ -134,7 +138,7 @@ function profileText(ctx: BoxContext): string {
     '(allow file-read* (literal "/"))',
     ...MAC_SYSTEM.map((path) => `(allow file-read* (subpath "${path}"))`),
     ...macTools().map((path) => `(allow file-read* (subpath "${path}"))`),
-    ...MAC_LOGIN.map((path) => `(allow file-read* (subpath "${path}"))`),
+    ...(ctx.sessionDir ? [] : MAC_LOGIN).map((path) => `(allow file-read* (subpath "${path}"))`),
     // A scratch directory is not anybody's vault and every tool expects one.
     '(allow file-read* file-write* (subpath "/private/tmp"))',
     '(allow file-read* file-write* (subpath "/dev"))',
@@ -142,9 +146,12 @@ function profileText(ctx: BoxContext): string {
     // path a person's own files are under.
     "(allow file-read-metadata)",
   ];
+  // State stays readable, but only the isolated session is writable.
+  if (ctx.stateRoot) lines.push(`(allow file-read* (subpath ${JSON.stringify(ctx.stateRoot)}))`);
+  for (const path of ctx.readPaths ?? []) lines.push(`(allow file-read* (subpath ${JSON.stringify(path)}))`);
   // The agent WORKS in its own tree, so that one is read AND write.
-  if (ctx.tree !== "") lines.push(`(allow file-read* file-write* (subpath "${ctx.tree}"))`);
-  if (ctx.sharedZone !== "") lines.push(`(allow file-read* (subpath "${ctx.sharedZone}"))`);
+  if (ctx.tree !== "") lines.push(`(allow file-read* file-write* (subpath ${JSON.stringify(ctx.tree)}))`);
+  if (ctx.sharedZone !== "") lines.push(`(allow file-read* (subpath ${JSON.stringify(ctx.sharedZone)}))`);
   lines.push(
     "(allow process-exec process-fork)",
     "(allow sysctl-read)",
@@ -156,15 +163,19 @@ function profileText(ctx: BoxContext): string {
   // Last, because the sandbox takes the last matching rule: every other
   // person's tree is denied by name, whatever a broader allow above said, and
   // the deny covers writing as well as reading.
-  for (const tree of ctx.otherTrees) {
-    lines.push(`(deny file-read* file-write* (subpath "${tree}"))`);
+  for (const path of [ctx.stateRoot, ...(ctx.purpose === "harvest" ? [ctx.tree] : [])]) {
+    if (path) lines.push(`(deny file-write* (subpath ${JSON.stringify(path)}))`);
+  }
+  if (ctx.sessionDir) lines.push(`(allow file-read* file-write* (subpath ${JSON.stringify(ctx.sessionDir)}))`);
+  for (const tree of new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])) {
+    lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(tree)}))`);
   }
   return `${lines.join("\n")}\n`;
 }
 
 function profilePath(ctx: BoxContext): string {
   const mark = new Bun.CryptoHasher("sha256")
-    .update([ctx.agent, ctx.tree, ctx.sharedZone].join("|"))
+    .update([ctx.agent, ctx.tree, ctx.sharedZone, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? [])].join("|"))
     .digest("hex")
     .slice(0, 12);
   return join(tmpdir(), `imprnt-hub-box-${ctx.agent}-${mark}.sb`);
@@ -184,6 +195,11 @@ function profilePath(ctx: BoxContext): string {
  * fenced there. The tree, its files and its origin are fenced on both.
  */
 export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): BoxedCommand {
+  const canonical = (path: string) => path && existsSync(path) ? realpathSync(path) : path;
+  ctx = { ...ctx, tree: canonical(ctx.tree), sharedZone: canonical(ctx.sharedZone),
+    stateRoot: ctx.stateRoot && canonical(ctx.stateRoot), sessionDir: ctx.sessionDir && canonical(ctx.sessionDir),
+    otherTrees: ctx.otherTrees.map(canonical), otherStateRoots: ctx.otherStateRoots?.map(canonical),
+    readPaths: ctx.readPaths?.map(canonical) };
   const flavour = flavourOf(ctx, platform);
   if (flavour === "linux") {
     return {
@@ -197,7 +213,12 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         "/",
         "--proc",
         "/proc",
-        ...ctx.otherTrees.flatMap((tree) => ["--tmpfs", tree]),
+        ...[ctx.stateRoot, ...(ctx.purpose === "harvest" ? [ctx.tree] : [])]
+          .filter((path): path is string => Boolean(path) && existsSync(path!))
+          .flatMap(path => ["--ro-bind", path, path]),
+        ...(ctx.sessionDir ? ["--bind", ctx.sessionDir, ctx.sessionDir] : []),
+        ...[...new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])]
+          .flatMap(tree => ["--tmpfs", tree]),
         "--",
         ...argv,
       ],
@@ -211,20 +232,12 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         "/usr/bin/sandbox-exec",
         "-f",
         profile.path,
-        // THE BOX PUTS THE COMMAND WHERE IT CAN SEE. MEASURED, 03b item 1: a
-        // process whose working directory the profile denies dies at startup
-        // with "An unknown error occurred" the moment it reads anything
-        // relative to it, and a caller that spawned it from its own directory
-        // has no way to know that is what happened. `sandbox-exec` execs in
-        // place and cannot change directory, so the change is the first thing
-        // the boxed argv does, and `exec` means the pid the caller holds is
-        // still the command's. bwrap has this for free: `--dev-bind / /` keeps
-        // every directory readable, including the one it inherited.
+        // Enter the selected session directory when launch preparation supplied it.
         "/bin/sh",
         "-c",
-        'cd "$1" 2>/dev/null || cd /; shift; exec "$@"',
+        ctx.sessionDir ? 'cd "$1" || exit; shift; exec "$@"' : 'cd "$1" 2>/dev/null || cd /; shift; exec "$@"',
         "sh",
-        ctx.tree === "" ? "/" : ctx.tree,
+        ctx.sessionDir ?? (ctx.tree === "" ? "/" : ctx.tree),
         ...argv,
       ],
       profile,

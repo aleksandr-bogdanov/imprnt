@@ -53,6 +53,8 @@ export interface AdapterUsage {
    * Claude Code adapter always sets it, null included, and check 9 binds that.
    */
   window?: WindowReading | null;
+  resolved_model_ids?: string[];
+  primary_model_id?: string | null;
   raw: Record<string, unknown>;
 }
 
@@ -65,6 +67,8 @@ export interface TurnEnd {
 }
 
 export interface AdapterSession {
+  /** Legacy adapters may omit this; production process adapters always report it. */
+  readonly exited?: Promise<unknown>;
   readonly sessionId: string | null;
   /**
    * The process id of the child this loop is, when the hub has one to watch.
@@ -94,7 +98,10 @@ export interface Adapter {
   start(options: {
     preset: Preset;
     sessionId: string | null;
+    credentialId?: string;
     cwd?: string;
+    argv?: string[];
+    env?: Record<string, string | undefined>;
     /**
      * 03b item 1. The runner's boxing hook, applied to whatever argv this loop
      * would otherwise spawn. The adapter spawns `wrap(argv)` when it is given

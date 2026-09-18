@@ -26,6 +26,19 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
+      - name: Hub kernel box prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Hub real-binary refusal prerequisite
+        run: |
+          curl -fsSL https://claude.ai/install.sh -o "$RUNNER_TEMP/claude-install.sh"
+          bash "$RUNNER_TEMP/claude-install.sh" 2.1.275
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/claude" --version
       - name: typecheck + test + build (Turbo)
         run: bunx turbo run typecheck test build
       - name: dependency audit (non-blocking)

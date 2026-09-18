@@ -487,13 +487,16 @@ test(
     let pi3: { stop(): Promise<void> } | null = null;
     let mac3: { stop(): Promise<void> } | null = null;
     try {
-      const reset = new Date(natural.resetsAt).getTime();
+      pi3 = await startRunner(natural, RUNNER_PI);
+      mac3 = await startRunner(natural, RUNNER_MAC);
+      // Arm the same six-second reset after setup, when the first turn can
+      // actually report it. Database and runner startup are not this window.
+      const reset = Date.now() + 6000;
+      natural.resetsAt = new Date(reset).toISOString();
       natural.loops[RUNNER_PI].setWindow({
         utilization: 0.9,
         resets_at: natural.resetsAt,
       });
-      pi3 = await startRunner(natural, RUNNER_PI);
-      mac3 = await startRunner(natural, RUNNER_MAC);
 
       // One turn carries the household past its hold threshold.
       await plant(natural.it, "n-human-1", "human");

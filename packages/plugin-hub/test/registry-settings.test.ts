@@ -48,8 +48,15 @@ async function scratch(body: string): Promise<string> {
 
 const SHIPPED = "src/registry/registry.example.toml";
 
+// The cutover field is optional in the shipped bootstrap example.
+async function supportedExample(): Promise<string> {
+  return (await Bun.file(hubPath(SHIPPED)).text())
+    .replace("[hub]", '[hub]\ncutover_batch = "fixture-batch"');
+}
+
 interface OutOfProcess {
   ok: boolean;
+  argv: string[];
   key?: string;
   value?: unknown;
   error?: string;
@@ -64,8 +71,15 @@ async function readSettingOutOfProcess(
   env: Record<string, string>,
   extraArgv: string[],
 ): Promise<OutOfProcess> {
-  const runner = hubPath("test/helpers/read-setting-subprocess.ts");
-  const proc = Bun.spawn([process.execPath, "run", runner, ...extraArgv], {
+  const file = await scratch(await supportedExample());
+  const script = `
+    import { loadRegistry, readSetting, SETTING_FIELDS } from ${JSON.stringify(hubPath("src/registry/load.ts"))};
+    const key = SETTING_FIELDS.find(f => f.type === "integer" || f.type === "number").key;
+    console.log(JSON.stringify({ ok: true, argv: process.argv.slice(2), key, value: readSetting(loadRegistry(${JSON.stringify(file)}), key) }));
+  `;
+  const scriptFile = join(dirname(file), "read-setting.ts");
+  await Bun.write(scriptFile, script);
+  const proc = Bun.spawn([process.execPath, scriptFile, ...extraArgv], {
     cwd: hubPath("."),
     env: { ...process.env, ...env },
     stdout: "pipe",
@@ -76,6 +90,7 @@ async function readSettingOutOfProcess(
     new Response(proc.stderr).text(),
   ]);
   await proc.exited;
+  await rm(dirname(file), { recursive: true, force: true });
 
   const line = out.trim().split("\n").filter(Boolean).pop();
   if (!line) {
@@ -100,18 +115,20 @@ test("[partial] RUN-06 every setting the code reads has a field in the file: the
 
   // Direction one: every setting the code declares it reads resolves from the
   // shipped file.
-  const registry = (loadRegistry as Function)(hubPath(SHIPPED));
+  const file = await scratch(await supportedExample());
+  const registry = (loadRegistry as Function)(file);
+  await rm(dirname(file), { recursive: true, force: true });
   for (const field of fields) {
     const value = (readSetting as Function)(registry, field.key);
     expect(value).toBeDefined();
-    expect(String(typeof value)).toBe(field.type === "integer" ? "number" : field.type);
+    expect(Array.isArray(value) ? "array" : typeof value).toBe(field.type === "integer" ? "number" : field.type);
   }
 
   // Direction two, the negative. Take the shipped file, delete the line
   // carrying one declared field, and the load must be refused. Without this a
   // one-field catalogue satisfies the check while the file drifts away from it,
   // which is the hole the second seat named.
-  const shipped = await Bun.file(hubPath(SHIPPED)).text();
+  const shipped = await supportedExample();
   const leaf = fields[0].key.split(".").pop()!;
   const lines = shipped.split("\n");
   const drop = lines.findIndex((l) => new RegExp(`^\\s*${leaf}\\s*=`).test(l));
@@ -199,15 +216,17 @@ test("RUN-07 no behaviour switch on the command line or in an environment variab
     env[name] = String(override);
   }
 
-  const poisoned = await readSettingOutOfProcess(env, [
+  const poisonedArgv = [
     `--${key}=${override}`,
     `--${key}`,
     String(override),
     `--${leaf}=${override}`,
     `--${leaf.replace(/_/g, "-")}=${override}`,
-  ]);
+  ];
+  const poisoned = await readSettingOutOfProcess(env, poisonedArgv);
 
   expect(poisoned.ok).toBe(true);
+  expect(poisoned.argv).toEqual(poisonedArgv);
   // The file's value, not the environment's and not the command line's.
   expect(poisoned.value).toBe(fromFile);
 });
