@@ -517,7 +517,7 @@
           "origin": "automated",
           "facts": {
             "os": "linux",
-            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic model children inside the native person box; no live-login acceptance claim",
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic children measured through native process-tree APIs; no live-login or person-box acceptance claim",
             "peakBytes": [
               375144448,
               251297792
@@ -535,7 +535,7 @@
           "origin": "automated",
           "facts": {
             "os": "macos",
-            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic model children inside the native person box; no live-login acceptance claim"
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic children measured through native process-tree APIs; no live-login or person-box acceptance claim"
           }
         },
         "native/linux": {
@@ -545,7 +545,7 @@
           "origin": "native",
           "facts": {
             "os": "linux",
-            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic model children inside the native person box; no live-login acceptance claim",
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic children measured through native process-tree APIs; no live-login or person-box acceptance claim",
             "peakBytes": [
               375144448,
               251297792
@@ -563,7 +563,7 @@
           "origin": "native",
           "facts": {
             "os": "macos",
-            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic model children inside the native person box; no live-login acceptance claim"
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic children measured through native process-tree APIs; no live-login or person-box acceptance claim"
           }
         },
         "live-login/linux": null,
