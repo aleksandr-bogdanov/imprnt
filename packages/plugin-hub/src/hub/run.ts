@@ -210,9 +210,8 @@ export async function runHub(options: {
     for (const unit of difference.stale) {
       const id = entryIdOf(unit.name);
       if (id === null) continue;
-      await os.stop(id);
-      await say("unit.stopped", id, { entry: id, machine: options.machine, unit: unit.name });
       await os.remove(id);
+      await say("unit.stopped", id, { entry: id, machine: options.machine, unit: unit.name });
       await say("unit.removed", id, { entry: id, machine: options.machine, unit: unit.name });
     }
 
