@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, rmSync } from "node:fs"
 import { createScriptedAdapter, childGone, growChild, growFileFor, residentBytes } from "./scripted-adapter.ts"
 import type { Adapter, AdapterSession } from "../../src/adapters/types.ts"
 import type { StagedHub } from "./hub-fixture.ts"
+import { toml } from "../../src/migrate/files.ts"
 
 export async function observe(predicate: () => boolean | Promise<boolean>, milliseconds = 3500) {
   const end = performance.now() + milliseconds
@@ -26,7 +27,13 @@ export function editAgent(file: string, id: string, fields: Record<string, strin
     }
     return block
   })
-  if (!found) throw new Error("synthetic agent missing")
+  if (!found) {
+    const data = Bun.TOML.parse(text) as { agents?: Record<string, unknown>[] }
+    const agent = data.agents?.find(row => row.id === id)
+    if (!agent) throw new Error("synthetic agent missing")
+    Object.assign(agent, fields)
+    text = toml(data)
+  }
   writeFileSync(file, text)
 }
 

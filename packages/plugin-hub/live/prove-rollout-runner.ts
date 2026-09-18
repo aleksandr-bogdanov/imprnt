@@ -5,6 +5,7 @@ import { fakeClaudeCli } from "../test/helpers/fake-cli.ts"
 import { childGone, residentBytes } from "../test/helpers/scripted-adapter.ts"
 import { existsSync } from "node:fs"
 import { nativeWrap } from "../test/helpers/rollout-loop.ts"
+import { toml } from "../src/migrate/files.ts"
 
 export async function proveRolloutRunner() {
   const f = rolloutFixture()
@@ -17,6 +18,12 @@ export async function proveRolloutRunner() {
     const loaded = Bun.TOML.parse(await Bun.file(f.file).text()) as any
     assert.equal(loaded.agents[0].preset, "alternate")
     assert.equal(loaded.agents[0].sleeping, true)
+    assert.throws(() => editAgent(f.file, "missing", { sleeping: false }))
+    await Bun.write(f.file, toml(loaded))
+    editAgent(f.file, "p1-lair", { chat: "replacement-chat" })
+    const edited = Bun.TOML.parse(await Bun.file(f.file).text())
+    loaded.agents[0].chat = "replacement-chat"
+    assert.deepEqual(edited, loaded)
     assert.throws(() => editAgent(f.file, "missing", { sleeping: false }))
     edge.failStarts(1)
     await assert.rejects(edge.adapter.start({ preset, sessionId: null }), /task-start/)
