@@ -37,7 +37,7 @@ export async function runInstall(options: { registryFile: string; stage?: string
     };
     if (!ask("postgres", ["-c", `select 1 from pg_database where datname = '${database}'`])) ask("postgres", ["-c", `create database "${database}"`]);
     if (!ask(database, ["-c", "select to_regclass('public.ledger_event')"])) {
-      ask(database, ["-f", join(import.meta.dir, "../schema.sql")]);
+      ask(database, ["--single-transaction", "-f", join(import.meta.dir, "../schema.sql")]);
     } else {
       ask(database, ["-c", "create table if not exists schema_version (version integer primary key)"]);
       for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"]] as const) {
