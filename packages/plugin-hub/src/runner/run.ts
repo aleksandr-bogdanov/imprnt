@@ -852,6 +852,26 @@ export async function runRunner(options: {
       waiter = await openWorkWaiter(store, { agent: agent.id });
       const initial = loadRegistry(options.registryFile);
       preflight(initial, agent);
+      // RUN-19 AFTER A RESTART. The hold outlives the process that opened it:
+      // the rows keep the window's reset as their `retry_at`, and only the way
+      // out of the hold clears it. A loop that started with the flag false
+      // would find the window already fine, never take that way out, and leave
+      // the rows waiting out a reset that no longer means anything (phase 4's
+      // own residue). The household's open window outage is the hold as the
+      // store keeps it, so it is read back ONCE, here, and the first wake below
+      // then releases or keeps holding exactly as it would for a loop that had
+      // never stopped. An agent on a per-token key has no window and pays no
+      // statement for it.
+      //
+      // One gap stays named rather than closed: a sibling runner that saw the
+      // window come back first has already cleared the outage and released
+      // only its own agents' rows, so a loop starting after that reads no hold
+      // and its rows wait for their reset. A loop that never stopped keeps its
+      // flag through the sibling's clear and does not have the gap.
+      if (windowThresholds(initial, agent.preset)) {
+        const standing = await readOutage(store, credentialFor(initial, agent));
+        heldByWindow = standing?.cause === "window";
+      }
       if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping) {
         if (!await admitChild(initial, own)) return;
         own.reserved = true;
