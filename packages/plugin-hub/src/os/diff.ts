@@ -138,4 +138,28 @@ export function resetCommand(flavour: "systemd" | "launchd" | string, unit: stri
   return `systemctl --user reset-failed ${unit}`;
 }
 
+/** A path as one shell word, quoted only when it must be. */
+function shellWord(text: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The command that takes away a hub unit FILE no registry entry declares
+ * (REVIEW S6), per flavour. It finishes the removal a dead hub started, in the
+ * hub's own order with the stop brought forward: the manager lets go of the
+ * unit, the file goes, and on systemd the manager re-reads its directory. The
+ * steps are joined so each runs whatever the one before it said, because the
+ * usual reason this file exists is that the manager has already forgotten the
+ * unit and would refuse the first step. The whole string is the contract
+ * (D-105), and nothing here or anywhere else runs it (L13).
+ */
+export function removeFileCommand(flavour: string, path: string): string {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  if (flavour === "launchd") {
+    const uid = process.getuid?.() ?? -1;
+    return `launchctl bootout gui/${uid}/${name.replace(/\.plist$/, "")}; rm -f ${shellWord(path)}`;
+  }
+  return `systemctl --user disable --now ${name}; rm -f ${shellWord(path)}; systemctl --user daemon-reload`;
+}
+
 export { isOurs, isWatched };

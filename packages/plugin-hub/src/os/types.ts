@@ -91,6 +91,14 @@ export interface OsSeam {
   stop(entryId: string): Promise<void>;
   restart(entryId: string): Promise<void>;
   list(): Promise<UnitState[]>;                              // everything under SCAN_PREFIX
+  /**
+   * REVIEW S6. Every unit FILE in this seam's unit directory under the RENDER
+   * prefix, as absolute paths. Read from the directory and never from the
+   * manager, because the file it exists to find is one the manager has no
+   * record of. Optional, so a seam a check assembles by hand may leave it out,
+   * and a seam without it reports no file rather than failing the run.
+   */
+  unitFiles?(): Promise<string[]>;
   show(entryId: string): Promise<UnitState | null>;
   memory(pid: number): Promise<MemoryReading>;               // stateless: it accumulates nothing
   available(): Promise<{ ok: boolean; reason: string }>;      // the gate
