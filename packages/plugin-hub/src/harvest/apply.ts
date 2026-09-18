@@ -66,6 +66,18 @@ const MARKERS: { marker: string; outcome: ApplyOutcome; exit: number | null; ski
 const REFUSALS = ["no such staged note:", "no vault at "];
 
 /**
+ * Terminal escape sequences: CSI (colour, cursor), OSC (titles, links) and the
+ * two-byte ones.
+ *
+ * Measured on 2026-09-18 under bun 1.3.14: with FORCE_COLOR set, bun paints
+ * every `console.error` line of the CLI red, so the conflict line arrives as
+ * `ESC[0m ESC[31m  ! <folder>/<slug> ...` and no longer starts with its
+ * marker. `applyNote` hands the child an environment that cannot colour, and
+ * this is the second half: a CLI that colours regardless is still read.
+ */
+const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
+
+/**
  * What the CLI said, read from its own bytes. PURE: no clock, no filesystem.
  *
  * UNKNOWN IS REFUSED, WHATEVER THE EXIT CODE, and that is the rule rather than
@@ -81,7 +93,10 @@ export function classifyApply(
   output: string,
   exit: number,
 ): { outcome: ApplyOutcome; note: string; said: string } {
-  for (const raw of output.split("\n")) {
+  // The colour comes out before any marker is looked for, and `said` carries
+  // the plain text too, because it lands in a diary a household reads.
+  const plain = output.replace(ESCAPES, "");
+  for (const raw of plain.split("\n")) {
     const line = raw.trim();
     if (line === "") continue;
     if (REFUSALS.some((said) => line.startsWith(said))) {
@@ -98,7 +113,7 @@ export function classifyApply(
     }
     return { outcome: found.outcome, note, said: line };
   }
-  return { outcome: "refused", note: "", said: output };
+  return { outcome: "refused", note: "", said: plain };
 }
 
 /**
@@ -153,9 +168,17 @@ export async function applyNote(args: {
   timeoutMs?: number;
 }): Promise<ApplyResult> {
   const bound = args.timeoutMs ?? APPLY_TIMEOUT_MS;
+  // AN ENVIRONMENT THAT CANNOT COLOUR, for this child only. The outcome is
+  // read from the marker at the start of a line, and a runner started from a
+  // shell that exports FORCE_COLOR would otherwise hand it on and have every
+  // conflict read as a refusal. FORCE_COLOR is taken OUT rather than set to
+  // something: bun paints under an empty one too, and it wins over NO_COLOR
+  // (both measured on 2026-09-18). Everything else is inherited, because the
+  // CLI is a normal program and needs a normal environment.
+  const { FORCE_COLOR: _colour, ...inherited } = process.env;
   const child = Bun.spawn(
     [args.imprnt, "ingest", "--apply", args.file, "--vault", join(args.vault, "vault")],
-    { stdout: "pipe", stderr: "pipe", stdin: "ignore" },
+    { stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...inherited, NO_COLOR: "1" } },
   );
   let killed = false;
   // SIGKILL and not a polite signal. A CLI that is hung on a lock may well be
