@@ -145,21 +145,21 @@
       "status": "open",
       "evidence": {
         "automated/linux": {
-          "result": "fail",
-          "observed": "fail",
-          "record": "PLAN-09-LINUX-RECHECK.txt",
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-3-rehearsal-traced-linux.txt",
           "origin": "automated",
           "facts": {
-            "scope": "Integrated rehearsal holder exits in PID namespace"
+            "scope": "Integrated synthetic rehearsal completed all 103 expectations: installation, conversion, sync, handoff, bounded harvest, delivery, recovery, live route edit and demand; Linux run observed with filesystem syscall tracing. Separate timing failures remain recorded; no live or owner acceptance claim."
           }
         },
         "automated/macos": {
-          "result": "fail",
-          "observed": "fail",
-          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-3-rehearsal-mac.txt",
           "origin": "automated",
           "facts": {
-            "scope": "Integrated rehearsal stops at the post-recovery health assertion, test/rollout-rehearsal.test.ts:247"
+            "scope": "Integrated synthetic rehearsal completed all 103 expectations: installation, conversion, sync, handoff, bounded harvest, delivery, recovery, live route edit and demand; Linux run observed with filesystem syscall tracing. Separate timing failures remain recorded; no live or owner acceptance claim."
           }
         },
         "owner-cutover": null
@@ -713,21 +713,21 @@
       "status": "open",
       "evidence": {
         "automated/linux": {
-          "result": "fail",
-          "observed": "fail",
-          "record": "PLAN-09-LINUX-RECHECK.txt",
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-3-rehearsal-traced-linux.txt",
           "origin": "automated",
           "facts": {
-            "scope": "Integrated rehearsal holder exits in PID namespace"
+            "scope": "Integrated synthetic rehearsal completed all 103 expectations: installation, conversion, sync, handoff, bounded harvest, delivery, recovery, live route edit and demand; Linux run observed with filesystem syscall tracing. Separate timing failures remain recorded; no live or owner acceptance claim."
           }
         },
         "automated/macos": {
-          "result": "fail",
-          "observed": "fail",
-          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-3-rehearsal-mac.txt",
           "origin": "automated",
           "facts": {
-            "scope": "Integrated rehearsal stops at the post-recovery health assertion, test/rollout-rehearsal.test.ts:247"
+            "scope": "Integrated synthetic rehearsal completed all 103 expectations: installation, conversion, sync, handoff, bounded harvest, delivery, recovery, live route edit and demand; Linux run observed with filesystem syscall tracing. Separate timing failures remain recorded; no live or owner acceptance claim."
           }
         },
         "owner-cutover": null
