@@ -323,7 +323,7 @@ export async function runDoor(options: {
                   !senderAllowed(fresh, agent.person, options.door, message.sender_id)) continue;
               await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
                 id: "harvest-demand:" + inboundId(options.platform.name, message.chat, message.platform_message_id),
-                at: message.at, direction: "in", from: message.from, text: message.text,
+                at: message.at, direction: "in", from: agent.person, text: message.text,
               });
             }
             throw error;
