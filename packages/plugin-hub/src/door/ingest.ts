@@ -10,6 +10,7 @@ import { readSetting, type AgentEntry, type Registry } from "../registry/load.ts
 import type { StoreLike } from "../store/connect.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { writeCursor } from "./cursor.ts";
+import { recordDeniedSender } from "./denied.ts";
 import { controlUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
 import { saveMedia, type SavedMedia } from "./media.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
@@ -23,7 +24,14 @@ export async function acceptBatch(options: {
   const { store, registry, stateDir, door, agent, platform, batch } = options;
   const language = languageOf(registry, agent.person);
   for (const message of batch.messages) {
-    if (message.chat !== agent.chat || !message.sender_id || !senderAllowed(registry, agent.person, door, message.sender_id)) continue;
+    if (message.chat !== agent.chat || !message.sender_id) continue;
+    if (!senderAllowed(registry, agent.person, door, message.sender_id)) {
+      // D-183. Refused with no reply and nothing saved, and counted without
+      // its content, so an allowlist that names the wrong id is visible.
+      await recordDeniedSender(store, { door, chat: message.chat, sender_id: message.sender_id,
+        person: agent.person, agent: agent.id, at: message.at });
+      continue;
+    }
     const sender = message.sender_id;
     if (/^\/(recover|восстановить)(?:\s|$)/i.test(message.text)) {
       const id = `recover:${inboundId(platform.name, message.chat, message.platform_message_id)}`;

@@ -36,6 +36,7 @@ import {
 } from "./credentials.ts";
 import { findingId, type Finding } from "./finding.ts";
 import { harvestFindings, readHarvestState } from "./harvest.ts";
+import { allowlistFindings, deniedSenderFindings, readDeniedSenders } from "./senders.ts";
 import { readStampRows, stampFindings } from "./stamps.ts";
 import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
@@ -368,7 +369,11 @@ export async function runCheck(options: {
   // --- an agent that cannot be boxed, because the tree is the boundary -----
   //     (03b item 1, D-92, D-93). A finding and never a refusal: whether a
   //     person has a tree is a question about a machine and not about the file,
-  //     so the registry loads and the agent runs, unfenced, loudly.
+  //     so the registry loads. Since D-176 the launch takes the box as an input
+  //     and refuses one with no tree before any child exists, for a turn and
+  //     for a harvest alike, and the runner retries that refusal for ever. So
+  //     the agent never starts and never answers, and the sentence says that
+  //     rather than naming a fence that no longer has anything inside it.
   const ownRunners = new Set(
     entries.filter((entry) => entry.kind === "runner").map((entry) => entry.id),
   );
@@ -380,12 +385,11 @@ export async function runCheck(options: {
     // the narrow reading, where a file carrying no `[[people]]` table was
     // silent, on the argument that half the fixtures would otherwise carry a
     // row. That is an argument about the fixtures. What `check` is being asked
-    // is whether this machine's agents run inside a box, and the answer for an
-    // agent whose person the file never mentions is no, exactly as loudly as
-    // for one whose entry omits the field: the runner wraps nothing either way
-    // (`boxFor` returns null on an empty tree) and the other people's trees on
-    // that box are open to it. The two differ only in the line a household has
-    // to add, so the finding says which.
+    // is whether this machine's agents can run inside a box, and the answer for
+    // an agent whose person the file never mentions is no, exactly as loudly as
+    // for one whose entry omits the field: the box context carries an empty
+    // tree either way and the launch refuses it. The two differ only in the
+    // line a household has to add, so the finding says which.
     if (person !== null && person.tree !== "") continue;
     const declared = person !== null;
     findings.push({
@@ -394,8 +398,8 @@ export async function runCheck(options: {
       subject: agent.id,
       machine,
       says: declared
-        ? `${agent.id} runs unboxed, because the person ${agent.person} declares no tree and the tree is what the box fences`
-        : `${agent.id} runs unboxed, because ${options.registryFile} carries no [[people]] entry for ${agent.person} at all, and the tree on that entry is what the box fences`,
+        ? `${agent.id} cannot start and will not answer anyone, because the person ${agent.person} declares no tree and an agent is only launched inside the box that tree fences`
+        : `${agent.id} cannot start and will not answer anyone, because ${options.registryFile} carries no [[people]] entry for ${agent.person} at all, and an agent is only launched inside the box that entry's tree fences`,
       fix: declared
         ? `give ${agent.person} a tree in ${options.registryFile}, as tree = "/var/lib/imprnt-hub/${agent.person}" under that [[people]] entry`
         : `add a [[people]] entry for ${agent.person} to ${options.registryFile}, carrying tree = "/var/lib/imprnt-hub/${agent.person}"`,
@@ -490,7 +494,7 @@ export async function runCheck(options: {
         chats:
           stateDir === ""
             ? []
-            : await readHarvestState(options.store, { stateDir, agents: mine, now }),
+            : await readHarvestState(options.store, { stateDir, agents: mine, now, registry }),
         settings: (person) => harvestFor(registry, person),
         people: [...new Set(mine.map((agent) => agent.person))],
         machine,
@@ -601,6 +605,23 @@ export async function runCheck(options: {
       says: findingLine("en", { code: row.data.code, target, cause: row.data.cause }),
       fix: `imprnt hub recover <registry> door:${row.data.door}` });
   }
+  // --- a refused sender, and an agent that refuses everyone (D-173, D-183) --
+  //     A refused message never becomes an inbound row, so no stamp finding
+  //     can see it. The door records each refused sender on the sheet this
+  //     reads, and the allowlist itself is read off the file. The refusal is
+  //     this machine's when its door is, and the allowlist is a question about
+  //     an agent, so it goes with the `mine` set like the others.
+  findings.push(
+    ...deniedSenderFindings({
+      denied: await readDeniedSenders(options.store),
+      registry,
+      doors: new Set(entries.filter((entry) => entry.kind === "door").map((entry) => entry.id)),
+      machine,
+      registryFile: options.registryFile,
+      now,
+    }),
+    ...allowlistFindings({ agents: mine, registry, machine, registryFile: options.registryFile }),
+  );
   const failedDeliveries = await options.store.sql`select o.id, o.route, o.failure, coalesce(o.agent, i.agent) as agent
     from outbox o left join inbound i on i.id = o.inbound_id where o.delivery_state = 'failed'`;
   for (const row of failedDeliveries) {
