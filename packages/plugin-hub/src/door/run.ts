@@ -1,7 +1,7 @@
 import { historyHarvestFrom } from "../registry/entries.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
 import { classifyPlatformError } from "./reply.ts";
-import { appendChatLine, appendChatLineOnce } from "../chatlog.ts";
+import { appendChatLineOnce } from "../chatlog.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import {
   dueTrigger,
@@ -578,9 +578,16 @@ export async function runDoor(options: {
       spokenAt.set(key, Date.now());
       // L2's "before sending", the same order a reply chunk is written in, so
       // the next spawned session reads exactly what the person read.
-      await appendChatLine(
+      //
+      // D-172. The id is the message and the clock, which is what makes the
+      // line unique: one (message, stamp) pair is said once (D-126). A door
+      // killed after this append and before the diary row below leaves no
+      // record that it spoke, so the door that replaces it says the clock
+      // again, and the id is what keeps that replay out of the chat log.
+      await appendChatLineOnce(
         { stateDir, person: row.person, agent: row.agent },
         {
+          id: `clock:${row.id}:${stamp}`,
           at: new Date().toISOString(),
           direction: "out",
           // D-129. A machinery line is the DOOR speaking.
