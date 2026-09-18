@@ -4,11 +4,49 @@ import { historyHarvestFrom } from "../registry/entries.ts";
 import { ADAPTERS } from "../adapters/index.ts";
 import type { Adapter } from "../adapters/types.ts";
 import { executeHarvest } from "../harvest/execute.ts";
-import { readWatermark } from "../harvest/sheet.ts";
+import { readWatermark, type Watermark } from "../harvest/sheet.ts";
 import { readSetting, type Registry } from "../registry/load.ts";
 import { openStore, storeUrlAs } from "../store/connect.ts";
 import type { EligibleRow } from "../store/wake.ts";
 import { historyInventoryPath } from "./chatlog.ts";
+
+/**
+ * A history catch-up asked to cover a chat that an ordinary harvest reached
+ * first.
+ *
+ * The ordinary first slice reaches back `SLICE_MAX_DAYS` and no further, and
+ * every later harvest starts at the watermark. So once an ordinary harvest has
+ * moved the watermark past the start of the converted history, a catch-up from
+ * there reaches none of the older lines, and reporting it complete would call
+ * an empty range a finished history. A watermark this command wrote itself is
+ * a resume and is not refused.
+ */
+export class CatchUpRefused extends Error {
+  readonly chat: string;
+  readonly from: string;
+  readonly watermark: string;
+  readonly row: string;
+
+  constructor(chat: string, from: string, mark: Watermark) {
+    const by = mark.row ? `harvest row ${mark.row}` : "a harvest that was not a history catch-up";
+    super(
+      `${chat} was already harvested through ${mark.at} by ${by} before this history catch-up ran. ` +
+        `The catch-up would start there instead of at ${from}, so older lines were not harvested and it would not reach them`,
+    );
+    this.name = "CatchUpRefused";
+    this.chat = chat;
+    this.from = from;
+    this.watermark = mark.at;
+    this.row = String(mark.row ?? "");
+  }
+}
+
+/** Refuse a chat whose watermark an ordinary harvest moved past `from`. */
+function refuseAhead(person: string, agent: string, from: string, mark: Watermark | null): void {
+  if (!mark || Date.parse(mark.at) <= Date.parse(from)) return;
+  if (String(mark.row ?? "").startsWith(`catchup:${person}:${agent}:`)) return;
+  throw new CatchUpRefused(`${person}/${agent}`, from, mark);
+}
 
 export async function catchUpHarvest(registry: Registry, person: string, from: string, until: string, edges?: { adapters: Record<string, Adapter> }) {
   if (!registry.people.some(p => p.id === person) && !registry.agents.some(a => a.person === person)) throw new Error("unknown person");
@@ -33,12 +71,15 @@ export async function catchUpHarvest(registry: Registry, person: string, from: s
   const store = await openStore({ url: storeUrlAs(String(readSetting(registry, "hub.store_url")), "hub_runner") });
   const slices: { from: string; until: string; lines: number }[] = [];
   try {
+    // Every chat is checked before any is harvested, so a refusal files nothing.
+    for (const agent of agents) refuseAhead(person, agent.id, from, await readWatermark(store, { person, agent: agent.id }));
     for (const agent of agents) {
       const lock = await store.sql.reserve();
       try {
         const [held] = await lock`select pg_try_advisory_lock(hashtext(${`catchup:${person}/${agent.id}`})) as held`;
         if (!held.held) throw new Error("historical harvest already running");
         let mark = await readWatermark(store, { person, agent: agent.id });
+        refuseAhead(person, agent.id, from, mark);
         let lower = mark && mark.at > from ? mark.at : from;
         while (lower < until || (!mark && lower === until)) {
           const day = new Date(lower); day.setUTCHours(24, 0, 0, 0);
