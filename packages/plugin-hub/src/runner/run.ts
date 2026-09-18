@@ -1162,14 +1162,7 @@ export async function runRunner(options: {
       peakBytes = Math.max(peakBytes, measuredBytes);
       const budgetMb = own?.child_memory_budget_mb ?? 2048;
       if (bytes <= limitMb * 1024 * 1024 && measuredBytes <= budgetMb * 1024 * 1024) continue;
-      it.killed = true;
-      try {
-        for (const child of descendantsOf(pid).reverse()) { try { process.kill(child, 9); } catch {} }
-        process.kill(pid, 9);
-      } catch {
-        // It went away between the reading and the signal, which is the same
-        // outcome by another route.
-      }
+      // Commit the enforcement record before a child exit can be observed.
       await appendEntry(store, {
         stream: "memory",
         subject: it.agent.id,
@@ -1185,6 +1178,14 @@ export async function runRunner(options: {
           runner: options.runner,
         },
       });
+      it.killed = true;
+      try {
+        for (const child of descendantsOf(pid).reverse()) { try { process.kill(child, 9); } catch {} }
+        process.kill(pid, 9);
+      } catch {
+        // It went away between the reading and the signal, which is the same
+        // outcome by another route.
+      }
     }
   };
 
