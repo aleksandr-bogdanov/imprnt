@@ -99,6 +99,7 @@ export function controlledAdapter(name = "controlled-" + crypto.randomUUID(), de
           finish(cause)
         },
         grow(mb: number) {
+          if (mb === 0) return
           const pids = descendants ? processTree(base.pid!).slice(1) : [base.pid!]
           if (pids.length === 0) throw new Error("synthetic descendants have not started")
           for (const pid of pids) { owned.add(pid); growChild(pid, mb) }

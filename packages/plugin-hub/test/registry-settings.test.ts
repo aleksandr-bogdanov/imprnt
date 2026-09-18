@@ -48,13 +48,10 @@ async function scratch(body: string): Promise<string> {
 
 const SHIPPED = "src/registry/registry.example.toml";
 
-// D-171 defers these services; retain every setting from the old example.
+// The cutover field is optional in the shipped bootstrap example.
 async function supportedExample(): Promise<string> {
-  return (await Bun.file(hubPath(SHIPPED)).text()).split(/(?=^\[\[run\]\])/m)
-    .filter(block => !/^kind = "(?:watcher|backup|transcriber|board)"$/m.test(block)).join("")
-    .replace("[hub]", '[hub]\ncutover_batch = "fixture-batch"')
-    .replace('kind = "sync"', 'kind = "sync"\nrepositories = ["vault"]') +
-    '\n[[repositories]]\nid = "vault"\nperson = "p1"\npath = "/var/lib/imprnt-hub/p1/vault"\nremote = "origin"\nbranch = "main"\n\n[install]\nadmin_argv = ["psql"]\n';
+  return (await Bun.file(hubPath(SHIPPED)).text())
+    .replace("[hub]", '[hub]\ncutover_batch = "fixture-batch"');
 }
 
 interface OutOfProcess {

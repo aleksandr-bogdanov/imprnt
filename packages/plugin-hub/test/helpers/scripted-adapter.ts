@@ -229,6 +229,7 @@ const HOLDER = `
 const fs = require("fs");
 const os = require("os");
 const parent = process.ppid;
+if (parent === 1 && process.pid !== 2) process.exit(0);
 const file = os.tmpdir() + "/hub-child-" + process.pid + ".grow";
 // 03b item 1. One line on stdout before anything else: what this child could
 // read of the path it was pointed at. Outside a box it reads it; inside one it
