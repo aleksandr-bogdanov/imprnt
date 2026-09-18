@@ -898,8 +898,8 @@ export function loadRegistry(file: string): Registry {
       // session runs in the agent's own box, the box fences the person's tree
       // (L7), and a vault outside it is a vault the loop cannot read, so every
       // person link the model wrote would be an orphan and nobody would be told.
-      // A person with no tree runs unboxed already (`check` says
-      // `agent-unboxed`) and may name any absolute path.
+      // A person with no tree has no box, so their agents cannot start at all
+      // (`check` says so as `agent-unboxed`), and may name any absolute path.
       if (tree !== "") {
         const inside = resolve(vault as string);
         const fence = resolve(tree);

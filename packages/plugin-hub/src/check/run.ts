@@ -368,7 +368,11 @@ export async function runCheck(options: {
   // --- an agent that cannot be boxed, because the tree is the boundary -----
   //     (03b item 1, D-92, D-93). A finding and never a refusal: whether a
   //     person has a tree is a question about a machine and not about the file,
-  //     so the registry loads and the agent runs, unfenced, loudly.
+  //     so the registry loads. Since D-176 the launch takes the box as an input
+  //     and refuses one with no tree before any child exists, for a turn and
+  //     for a harvest alike, and the runner retries that refusal for ever. So
+  //     the agent never starts and never answers, and the sentence says that
+  //     rather than naming a fence that no longer has anything inside it.
   const ownRunners = new Set(
     entries.filter((entry) => entry.kind === "runner").map((entry) => entry.id),
   );
@@ -380,12 +384,11 @@ export async function runCheck(options: {
     // the narrow reading, where a file carrying no `[[people]]` table was
     // silent, on the argument that half the fixtures would otherwise carry a
     // row. That is an argument about the fixtures. What `check` is being asked
-    // is whether this machine's agents run inside a box, and the answer for an
-    // agent whose person the file never mentions is no, exactly as loudly as
-    // for one whose entry omits the field: the runner wraps nothing either way
-    // (`boxFor` returns null on an empty tree) and the other people's trees on
-    // that box are open to it. The two differ only in the line a household has
-    // to add, so the finding says which.
+    // is whether this machine's agents can run inside a box, and the answer for
+    // an agent whose person the file never mentions is no, exactly as loudly as
+    // for one whose entry omits the field: the box context carries an empty
+    // tree either way and the launch refuses it. The two differ only in the
+    // line a household has to add, so the finding says which.
     if (person !== null && person.tree !== "") continue;
     const declared = person !== null;
     findings.push({
@@ -394,8 +397,8 @@ export async function runCheck(options: {
       subject: agent.id,
       machine,
       says: declared
-        ? `${agent.id} runs unboxed, because the person ${agent.person} declares no tree and the tree is what the box fences`
-        : `${agent.id} runs unboxed, because ${options.registryFile} carries no [[people]] entry for ${agent.person} at all, and the tree on that entry is what the box fences`,
+        ? `${agent.id} cannot start and will not answer anyone, because the person ${agent.person} declares no tree and an agent is only launched inside the box that tree fences`
+        : `${agent.id} cannot start and will not answer anyone, because ${options.registryFile} carries no [[people]] entry for ${agent.person} at all, and an agent is only launched inside the box that entry's tree fences`,
       fix: declared
         ? `give ${agent.person} a tree in ${options.registryFile}, as tree = "/var/lib/imprnt-hub/${agent.person}" under that [[people]] entry`
         : `add a [[people]] entry for ${agent.person} to ${options.registryFile}, carrying tree = "/var/lib/imprnt-hub/${agent.person}"`,
