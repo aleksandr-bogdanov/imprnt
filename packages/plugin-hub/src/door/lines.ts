@@ -384,6 +384,28 @@ export function cliUsage(language: Language, values: LineValues = {}): string {
   return sentence;
 }
 
+export function installPlan(language: Language, values: LineValues): string {
+  return interpolate(language, language === "ru"
+    ? "установка: пробный запуск для {registry}; изменений нет.\nустановка: стандартная команда {install}; файл pid {pid}, служба {unit}."
+    : "install: dry run for {registry}; no changes.\ninstall: the standard install is {install}; pid file {pid}, unit {unit}.", values);
+}
+
+export function installServicePlan(language: Language, values: LineValues): string {
+  return interpolate(language, values.service
+    ? language === "ru"
+      ? "установка: {service}; эта команда не выполняется, если postgres уже отвечает."
+      : "install: {service}; would not run that service command when postgres already answers."
+    : language === "ru"
+      ? "установка: отдельная служба не запускается; apt-get создаёт и запускает {unit}."
+      : "install: would start no service of its own; apt-get creates and starts {unit}.", values);
+}
+
+export function installDatabaseReady(language: Language): string {
+  return language === "ru"
+    ? "установка: схема postgres готова; существующие настройки хранилища не изменены."
+    : "install: postgres schema ready; existing store settings unchanged.";
+}
+
 export function conversionDone(language: Language, values: LineValues = {}): string {
   const sentence = interpolate(language, language === "ru"
     ? "перенос: записей добавлено {count}, уже были {skipped}."

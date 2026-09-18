@@ -9,6 +9,7 @@ import { programForKind } from "../hub/program.ts";
 import { openStore, storeUrlAs } from "../store/connect.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { standardFor } from "./standard.ts";
+import { installDatabaseReady, installPlan, installServicePlan } from "../door/lines.ts";
 
 export async function runInstall(options: { registryFile: string; stage?: string; target?: string; os?: OsSeam; dry?: boolean }) {
   const registry = loadRegistry(options.registryFile);
@@ -19,10 +20,9 @@ export async function runInstall(options: { registryFile: string; stage?: string
   const url = String(readSetting(registry, "hub.store_url"));
   const standard = standardFor(process.platform);
   if (options.dry) {
-    process.stdout.write(`install: dry run for ${options.registryFile}; no changes.\n` +
-      `install: the standard install is ${standard.install.join(" ")}; pid file ${standard.pidFile}, unit ${standard.unit}.\n` +
-      (standard.service ? `install: ${standard.service.join(" ")}; would not run that service command when postgres already answers.\n` :
-        `install: would start no service of its own; apt-get creates and starts ${standard.unit}.\n`));
+    const values = { registry: options.registryFile, install: standard.install.join(" "),
+      pid: standard.pidFile, unit: standard.unit, service: standard.service?.join(" ") ?? "" };
+    process.stdout.write(installPlan("en", values) + "\n" + installServicePlan("en", values) + "\n");
     return { stage, result: "dry" };
   }
   if (stage === "database" || stage === "all") {
@@ -51,7 +51,7 @@ export async function runInstall(options: { registryFile: string; stage?: string
       const external = ask(database, ["-c", "show external_pid_file"]);
       writeFileSync(options.registryFile, `${text.trimEnd()}\n\n[store]\npid_file = ${JSON.stringify(external || join(data, "postmaster.pid"))}\nunit = ${JSON.stringify(standard.unit)}\n`);
     }
-    process.stdout.write("install: postgres schema ready; existing store settings unchanged.\n");
+    process.stdout.write(installDatabaseReady("en") + "\n");
     if (stage === "database") return { stage, result: "done" };
   }
   const machines = listMachines(registry);
