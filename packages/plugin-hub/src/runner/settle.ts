@@ -191,6 +191,8 @@ export async function refuseTurn(
      * would not take, and `ledger_event_runner_turn` already permits it: that
      * policy constrains the STREAM and not the kind, so no schema object
      * changes. Absent means the outage this function was written for.
+     * D-177 adds `refused.local`, a refusal with no verified evidence against
+     * the shared credential, which opens no outage and holds one agent only.
      */
     kind?: string;
   },
