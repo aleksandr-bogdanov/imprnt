@@ -7,9 +7,10 @@ import { chatLogPath } from "../chatlog.ts";
  *
  * Two filters, and each is a rule rather than a hope. A machinery line is the
  * door speaking (D-129), and the probe measured the loop ignoring one once,
- * which is not the same as it never reading one. The demand phrase is a message
- * addressed to the machinery, and feeding it back to the harvester as
- * conversation would teach it that the household talks to itself.
+ * which is not the same as it never reading one. The demand phrase and the
+ * recovery command are messages addressed to the machinery, and feeding them
+ * back to the harvester as conversation would teach it that the household
+ * talks to itself.
  */
 export interface SliceLine {
   /** ISO, the line's own. An `in` line's clock is the platform's. */
@@ -49,6 +50,18 @@ export function isDemand(text: string): boolean {
   const said = String(text ?? "").trim().toLowerCase();
   if (said === "") return false;
   return Object.values(DEMAND_PHRASES).some((phrase) => said === phrase);
+}
+
+/**
+ * D-178. A recovery command, `/recover <agent>` or `/восстановить <agent>`, the
+ * way the door recognises one: the verb at the very start of the message, in
+ * any case, followed by whitespace or by nothing. The door routes a message
+ * that matches to the recovery control and never to the agent, and the slice
+ * drops it for the same reason it drops a demand, so the two must be one rule.
+ * Untrimmed on purpose, because the door does not trim either.
+ */
+export function isRecoveryCommand(text: string): boolean {
+  return /^\/(recover|восстановить)(?:\s|$)/i.test(String(text ?? ""));
 }
 
 /** The UTC day a line's own time falls in, as a millisecond anchor. */
@@ -94,9 +107,13 @@ function walk(
   return out;
 }
 
-/** Whose lines a harvest reads: this chat's two speakers and nobody else. */
+/**
+ * Whose lines a harvest reads: this chat's two speakers and nobody else, less
+ * the two messages a person addresses to the machinery rather than to anybody.
+ */
 function spoken(line: SliceLine, person: string, agent: string): boolean {
-  return (line.from === person || line.from === agent) && !isDemand(line.text);
+  return (line.from === person || line.from === agent) && !isDemand(line.text) &&
+    !isRecoveryCommand(line.text);
 }
 
 /**

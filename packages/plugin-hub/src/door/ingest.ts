@@ -4,7 +4,7 @@ import { requestRecovery } from "../hub/control.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import { encodeHarvestBody } from "../harvest/row.ts";
 import { readWatermark } from "../harvest/sheet.ts";
-import { isDemand, readSlice } from "../harvest/slice.ts";
+import { isDemand, isRecoveryCommand, readSlice } from "../harvest/slice.ts";
 import { languageOf, senderAllowed } from "../registry/entries.ts";
 import { readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -33,7 +33,7 @@ export async function acceptBatch(options: {
       continue;
     }
     const sender = message.sender_id;
-    if (/^\/(recover|восстановить)(?:\s|$)/i.test(message.text)) {
+    if (isRecoveryCommand(message.text)) {
       const id = `recover:${inboundId(platform.name, message.chat, message.platform_message_id)}`;
       await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
         id, at: message.at, direction: "in", from: agent.person, text: message.text,
