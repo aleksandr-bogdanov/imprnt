@@ -36,6 +36,7 @@ import {
 } from "./credentials.ts";
 import { findingId, type Finding } from "./finding.ts";
 import { harvestFindings, readHarvestState } from "./harvest.ts";
+import { allowlistFindings, deniedSenderFindings, readDeniedSenders } from "./senders.ts";
 import { readStampRows, stampFindings } from "./stamps.ts";
 import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
@@ -604,6 +605,23 @@ export async function runCheck(options: {
       says: findingLine("en", { code: row.data.code, target, cause: row.data.cause }),
       fix: `imprnt hub recover <registry> door:${row.data.door}` });
   }
+  // --- a refused sender, and an agent that refuses everyone (D-173, D-183) --
+  //     A refused message never becomes an inbound row, so no stamp finding
+  //     can see it. The door records each refused sender on the sheet this
+  //     reads, and the allowlist itself is read off the file. The refusal is
+  //     this machine's when its door is, and the allowlist is a question about
+  //     an agent, so it goes with the `mine` set like the others.
+  findings.push(
+    ...deniedSenderFindings({
+      denied: await readDeniedSenders(options.store),
+      registry,
+      doors: new Set(entries.filter((entry) => entry.kind === "door").map((entry) => entry.id)),
+      machine,
+      registryFile: options.registryFile,
+      now,
+    }),
+    ...allowlistFindings({ agents: mine, registry, machine, registryFile: options.registryFile }),
+  );
   const failedDeliveries = await options.store.sql`select o.id, o.route, o.failure, coalesce(o.agent, i.agent) as agent
     from outbox o left join inbound i on i.id = o.inbound_id where o.delivery_state = 'failed'`;
   for (const row of failedDeliveries) {
