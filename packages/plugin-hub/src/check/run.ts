@@ -490,7 +490,7 @@ export async function runCheck(options: {
         chats:
           stateDir === ""
             ? []
-            : await readHarvestState(options.store, { stateDir, agents: mine, now }),
+            : await readHarvestState(options.store, { stateDir, agents: mine, now, registry }),
         settings: (person) => harvestFor(registry, person),
         people: [...new Set(mine.map((agent) => agent.person))],
         machine,

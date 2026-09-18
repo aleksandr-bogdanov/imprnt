@@ -4,7 +4,7 @@ import { chatLogPath } from "../chatlog.ts";
 import { HARVEST_SHEET, watermarkId, watermarkOf } from "../harvest/sheet.ts";
 import { readSlice } from "../harvest/slice.ts";
 import { readSheet } from "../records/statesheet.ts";
-import type { HarvestSettings } from "../registry/entries.ts";
+import { historyHarvestFrom, type HarvestSettings } from "../registry/entries.ts";
 import type { AgentEntry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { findingId, type Finding } from "./finding.ts";
@@ -41,10 +41,16 @@ export interface ChatHarvestState {
  * machinery lines and the demand phrase dropped. A finding that counted a clock
  * line would report a chat as unharvested for ever, because a harvest would
  * never take that line and the watermark would never pass it.
+ *
+ * THE SLICE STARTS WHERE EVERY HARVEST STARTS (D-171, D-181): the later of the
+ * watermark and the person's `history_harvest_after`. Imported history before
+ * that bound is excluded from every harvest on purpose, so counting it would
+ * keep this finding red for as long as a first slice reaches back, about a
+ * chat that is working exactly as the cutover intends.
  */
 export async function readHarvestState(
   store: StoreLike,
-  args: { stateDir: string; agents: AgentEntry[]; now: Date },
+  args: { stateDir: string; agents: AgentEntry[]; now: Date; registry: unknown },
 ): Promise<ChatHarvestState[]> {
   const sheet = new Map(
     (await readSheet(store, HARVEST_SHEET)).map((row) => [row.id, watermarkOf(row.data)]),
@@ -61,7 +67,7 @@ export async function readHarvestState(
       try {
         lines = await readSlice({
           ...where,
-          from: watermark,
+          from: historyHarvestFrom(args.registry, agent.person, watermark),
           until: args.now.toISOString(),
         });
       } catch {
