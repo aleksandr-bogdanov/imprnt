@@ -349,6 +349,15 @@ test.skipIf(!gate.ok)(
       const pid = livePid(unit)!;
       expect(pidAlive(pid)).toBe(true);
 
+      await until(
+        "the resident opened its own store before its loaded process is measured",
+        async () => (await it.read.sql(
+          "select application_name from pg_stat_activity where application_name = $1",
+          [entryId],
+        )).length > 0,
+        90_000,
+      );
+
       // THE TEST'S OWN READING, through `ps`, of the process the MANAGER named.
       // Nothing of the hub's is involved in it.
       const mine = residentBytes(pid);
