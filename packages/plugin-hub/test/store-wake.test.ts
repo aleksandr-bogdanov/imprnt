@@ -209,41 +209,44 @@ test(
       close(): Promise<void>;
     };
     const held = await producer.reserve();
-    const heldPid = await backendPid(held);
+    try {
+      const heldPid = await backendPid(held);
 
-    let settled: string | null = null;
-    const waiting = (waitForWork as Function)(store, {
-      agent: AGENT,
-      timeoutMs: 20000,
-    }).then((reason: string) => {
-      settled = reason;
-      return reason;
-    });
+      let settled: string | null = null;
+      const waiting = (waitForWork as Function)(store, {
+        agent: AGENT,
+        timeoutMs: 20000,
+      }).then((reason: string) => {
+        settled = reason;
+        return reason;
+      });
 
-    // The window opens after the waiter has settled, as above.
-    await Bun.sleep(SETTLE_MS);
-    const watch = await statementWatch(cluster, [heldPid]);
+      // The window opens after the waiter has settled, as above.
+      await Bun.sleep(SETTLE_MS);
+      const watch = await statementWatch(cluster, [heldPid]);
 
-    await held.unsafe("begin");
-    await insertEligible(held, "m-uncommitted");
-    await Bun.sleep(2500);
+      await held.unsafe("begin");
+      await insertEligible(held, "m-uncommitted");
+      await Bun.sleep(2500);
 
-    // Nothing has woken, and nothing has been looking.
-    expect(settled).toBeNull();
-    await assertSilent(watch, "the insert was uncommitted");
+      // Nothing has woken, and nothing has been looking.
+      expect(settled).toBeNull();
+      await assertSilent(watch, "the insert was uncommitted");
 
-    const committed = Date.now();
-    await held.unsafe("commit");
-    const reason = await waiting;
-    const latency = Date.now() - committed;
+      const committed = Date.now();
+      await held.unsafe("commit");
+      const reason = await waiting;
+      const latency = Date.now() - committed;
 
-    expect(reason).toBe("notified");
-    // The commit is what woke it, not a tick that happened to land after it.
-    expect(latency).toBeLessThan(1000);
+      expect(reason).toBe("notified");
+      // The commit is what woke it, not a tick that happened to land after it.
+      expect(latency).toBeLessThan(1000);
 
-    await held.release();
-    await producer.close();
-    await (closeStore as Function)(store);
+    } finally {
+      await held.release();
+      await producer.close();
+      await (closeStore as Function)(store);
+    }
   },
   SLOW,
 );
