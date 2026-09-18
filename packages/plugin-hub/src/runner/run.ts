@@ -11,7 +11,7 @@ import { boxContextFor } from "../box/index.ts";
 import { readTail } from "../chatlog.ts";
 import { SAID_CAP } from "../harvest/parse.ts";
 import { thisOs } from "../os/index.ts";
-import { appendEntry } from "../records/diary.ts";
+import { appendEntry, type NewEntry } from "../records/diary.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import { stamp } from "../records/stamps.ts";
 import {
@@ -427,6 +427,14 @@ export async function runRunner(options: {
     measuredBytes = [...readings.values()].reduce((sum, bytes) => sum + bytes, 0);
     capacityChanged();
   };
+  const appendRunnerEntry = async (entry: NewEntry): Promise<number> => {
+    // Standalone writes share the pool with concurrent claims and waits.
+    // Hold their connection until the returning row has been consumed too.
+    const connection = await store.sql.reserve();
+    try {
+      return await appendEntry({ ...store, sql: connection as unknown as Store["sql"] }, entry);
+    } finally { connection.release(); }
+  };
   const admitChild = async (registry: Registry, own: Live, reserve = true): Promise<boolean> => {
     const entry = listRunEntries(registry).find(one => one.id === options.runner);
     const limits = entry ? runnerLimitsFor(registry, options.runner) : { max_active_children: 4, child_memory_budget_mb: 2048 };
@@ -444,7 +452,7 @@ export async function runRunner(options: {
       own.settle();
       if (!recorded) {
         recorded = true;
-        await appendEntry(store, { stream: "runner", subject: own.agent.id, kind: "admission.wait", actor: "runner",
+        await appendRunnerEntry({ stream: "runner", subject: own.agent.id, kind: "admission.wait", actor: "runner",
           detail: { cause: "admission", children: reservations, reserved_mb: reservations * reserveMb, peak_bytes: peakBytes } });
         continue;
       }
@@ -677,7 +685,7 @@ export async function runRunner(options: {
       // The tail's own answer is not a reply to anybody, so it is recorded and
       // dropped. Only a turn fed from an inbound row reaches the outbox.
       if (about.tail) {
-        await appendEntry(store, {
+        await appendRunnerEntry({
           stream: "turn",
           subject: agent.id,
           kind: "turn",
@@ -1169,7 +1177,7 @@ export async function runRunner(options: {
       const budgetMb = own?.child_memory_budget_mb ?? 2048;
       if (bytes <= limitMb * 1024 * 1024 && measuredBytes <= budgetMb * 1024 * 1024) continue;
       // Commit the enforcement record before a child exit can be observed.
-      await appendEntry(store, {
+      await appendRunnerEntry({
         stream: "memory",
         subject: it.agent.id,
         kind: "killed.child",
@@ -1258,7 +1266,7 @@ export async function runRunner(options: {
       await controls.close();
       await supervise;
       await Promise.allSettled([...live.values()].map((it) => it.done));
-      if (peakBytes > 0) await appendEntry(store, { stream: "memory", subject: options.runner,
+      if (peakBytes > 0) await appendRunnerEntry({ stream: "memory", subject: options.runner,
         kind: "peak.children", actor: "runner", detail: { peak_bytes: peakBytes } });
       await store.close();
     },
