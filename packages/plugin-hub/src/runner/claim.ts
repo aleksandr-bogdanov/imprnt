@@ -6,6 +6,7 @@ import type { EligibleRow } from "../store/wake.ts";
  *
  * One statement, so two runners racing for the same row cannot both take it.
  * Feed order is the table's: rank first, then oldest, then the id.
+ * A planned row can be claimed only while it is still next in that order.
  *
  * A row already claimed by THIS runner is its own to redo. A runner that is
  * claiming is a runner that has just started or has just settled, so it was not
@@ -33,7 +34,6 @@ export async function claimNext(
        where id = (
          select id from inbound
           where agent = ${who.agent}
-            and (${who.rowId ?? null}::text is null or id = ${who.rowId ?? null})
             and log_ready
             and rank <= ${maxRank}
             and state not in ('answered', 'delivered')
@@ -44,6 +44,7 @@ export async function claimNext(
           limit 1
           for update skip locked
        )
+         and (${who.rowId ?? null}::text is null or id = ${who.rowId ?? null})
       returning id, person, agent, body, kind, rank, received_at, state, source,
                 claimed_by, claim_deadline, retry_at`) as unknown as EligibleRow[];
     return rows.length === 0 ? null : rows[0];
