@@ -63,10 +63,10 @@ const fixture: UnitFixture = unitFixture();
 let foreignBefore: string[] = [];
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "03b item 2, the install script");
   const dir = await scratchDir("hub-install-postgres-");
   cluster = await startCluster({ settings: process.platform === "linux" ? { external_pid_file: `'${join(dir, "postgresql-fixture.pid")}'` } : {} });
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {

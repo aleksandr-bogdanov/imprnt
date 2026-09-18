@@ -51,9 +51,9 @@ let foreignBefore: string[] = [];
 let dir: string;
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "checks 4 and 5, the real service manager");
   dir = mkdtempSync(join(tmpdir(), "hub-osreal-"));
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {

@@ -341,8 +341,11 @@ export async function startCluster(options: StartOptions = {}): Promise<Cluster>
     } catch {
       // the log may not exist if the server never started
     }
-    started.delete(dataDir);
-    await rm(root, { recursive: true, force: true });
+    const stopped = await run(pgBin("pg_ctl"), ["-D", dataDir, "-m", "immediate", "-w", "-t", "10", "stop"]);
+    if (stopped.code === 0 || !existsSync(join(dataDir, "postmaster.pid"))) {
+      started.delete(dataDir);
+      await rm(root, { recursive: true, force: true });
+    }
     throw new Error(
       `pg_ctl start failed (prefix ${pgPrefix()}): ${start.stderr || start.stdout}\n${log}`,
     );

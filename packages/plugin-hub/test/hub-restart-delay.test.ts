@@ -51,9 +51,9 @@ let foreignBefore: string[] = [];
 let dir: string;
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "check 6, a killed listed process is back");
   dir = mkdtempSync(join(tmpdir(), "hub-delay-"));
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {

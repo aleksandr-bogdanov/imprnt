@@ -58,9 +58,9 @@ const fixture: UnitFixture = unitFixture();
 let foreignBefore: string[] = [];
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "check 13b, the hub records a resident's peak on its own tick");
   cluster = await startCluster();
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {

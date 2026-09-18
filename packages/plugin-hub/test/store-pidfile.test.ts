@@ -71,9 +71,9 @@ let foreignBefore: string[] = [];
 const spares: HeldChild[] = [];
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "03b item 2, the hub reads Postgres's pid from the declared file");
   cluster = await startCluster();
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {

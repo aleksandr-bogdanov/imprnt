@@ -39,9 +39,9 @@ const fixture: UnitFixture = unitFixture();
 let foreignBefore: string[] = [];
 
 beforeAll(async () => {
+  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
   announceGate(gate, "03b item 8, one hub per machine");
   cluster = await startCluster();
-  if (gate.ok) foreignBefore = (await fixture.foreignWatched()).sort();
 });
 
 afterAll(async () => {
