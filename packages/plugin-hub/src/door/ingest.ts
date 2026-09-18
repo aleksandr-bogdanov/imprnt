@@ -28,7 +28,7 @@ export async function acceptBatch(options: {
     if (/^\/(recover|восстановить)(?:\s|$)/i.test(message.text)) {
       const id = `recover:${inboundId(platform.name, message.chat, message.platform_message_id)}`;
       await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
-        id, at: message.at, direction: "in", from: message.from, text: message.text,
+        id, at: message.at, direction: "in", from: agent.person, text: message.text,
       });
       const target = message.text.trim().split(/\s+/);
       let text = controlUsage(language);
