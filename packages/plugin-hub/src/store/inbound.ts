@@ -6,6 +6,7 @@ export interface InboundSource {
   door: string;
   chat: string;
   sender_id: string;
+  from?: string;
   text: string;
   media?: unknown[];
 }

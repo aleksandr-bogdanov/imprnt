@@ -75,7 +75,7 @@ export async function acceptBatch(options: {
       const slice = await readSlice({ ...context, from, until });
       body = encodeHarvestBody({ from, until, reason: "demand", lines: slice.length, said: message.text });
     }
-    const source = { log_id: id, at: message.at, door, chat: message.chat, sender_id: sender,
+    const source = { log_id: id, at: message.at, door, chat: message.chat, sender_id: sender, from: message.from,
       text: demand ? message.text : text, ...(saved.length ? { media: saved } : {}) };
     const fresh = await store.sql.begin(async sql => enqueueInbound({ ...store, sql: sql as unknown as StoreLike["sql"] }, {
       id, person: agent.person, agent: agent.id, body, kind: demand ? "harvest" : "human",
