@@ -82,4 +82,3 @@ export function standardFor(platform: string): Standard {
     unit: `postgresql@${version}-${cluster}.service`,
   };
 }
-
