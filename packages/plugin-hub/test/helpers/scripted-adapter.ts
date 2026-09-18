@@ -344,6 +344,19 @@ export function spawnHolder(options: HolderOptions = {}): HeldChild {
     argv: [...argv],
     boxProbe: () => (said ? { ...said } : null),
     kill() {
+      if (options.wrap && proc.exitCode === null) {
+        const table = Bun.spawnSync(["ps", "-axo", "pid=,ppid="], { stdout: "pipe", stderr: "pipe" });
+        if (table.exitCode !== 0) throw new Error("fixture process tree could not be read");
+        const rows = table.stdout.toString().trim().split("\n").map(line => line.trim().split(/\s+/).map(Number));
+        const own = new Set([proc.pid]);
+        for (let size = -1; size !== own.size;) {
+          size = own.size;
+          for (const [pid, parent] of rows) if (own.has(parent)) own.add(pid);
+        }
+        for (const pid of [...own].reverse()) {
+          try { process.kill(pid, 9); } catch {}
+        }
+      }
       try {
         proc.kill(9);
       } catch {
