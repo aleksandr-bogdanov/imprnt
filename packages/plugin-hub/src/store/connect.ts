@@ -36,27 +36,34 @@ const SAYS_OK_EARLY: [string, string[]][] = [
 ];
 
 /**
- * How many connections one store holds.
+ * How many connections one store holds, and why it is more than one.
  *
- * MEASURED 2026-09-16, and the reason it is not 1 (BUILD-NOTES 8). With a pool
- * of one, two of a process's own tasks that have statements in flight at the
- * same moment get each other's result rows: a runner serving TWO agents read
- * back a `ledger_event.seq` from the other agent's diary write as the value of
- * its own `returning data` column, reproducibly, and the same runner serving
- * ONE agent never did. It is not the statement text, not the prepared
- * statement's name and not a transaction boundary: the same two statements
- * driven by hand in either order never cross, and a pool above one never
- * crossed in that probe. Saturated fleet work still reserves each connection
- * until its result has settled.
+ * REPRODUCED 2026-09-19 by `test/store-crossing.test.ts`, which carries the
+ * whole mechanism. Bun's Postgres client hands every answer on a connection to
+ * the oldest statement queued there, and it writes a statement it has already
+ * prepared at once while a statement new to that connection waits for the
+ * connection to go idle. On a busy connection the prepared one overtakes, so
+ * the new one is handed its answer and the one that overtook is never answered.
+ * That is the outage claim that read its `since` as undefined in phase 4, and
+ * the diary append with no `seq` in phase 6.
  *
- * The hub's own tasks are genuinely concurrent (a runner's agents, a door's
- * read and post and attend), so this is a floor rather than a tuning knob. What
- * stays true of one connection stays true of the first: the process names
- * itself to the server there, the hub's advisory lock is held by that session,
- * and a waiting process still issues nothing at all.
+ * A wider pool does not prevent it. The pool only doubles up on a connection
+ * once every connection is busy, so four connections cross at a higher load
+ * than one and cross all the same. What the width buys is the aftermath: with
+ * one connection every later statement of the process waits forever behind the
+ * lost one, and with more than one the pool routes around the wedged connection
+ * and the store keeps answering. That is the floor the check holds, and it is
+ * why claims, deadline reads and the runner's own diary writes each reserve a
+ * connection for their statement. Neither `prepare: false` (it sends a jsonb
+ * parameter as "[object Object]") nor the client's pipelining switch set from
+ * inside the process removes the cause.
+ *
+ * Four rather than eight because a 40-connection cluster refused a hub, two
+ * doors, a runner and their listeners at eight. What stays true of one
+ * connection stays true of the first: the process names itself to the server
+ * there, the hub's advisory lock is held by that session, and a waiting process
+ * still issues nothing at all.
  */
-// Keep concurrent statements separate while leaving room for doors, runners
-// and their notification connections in the same cluster.
 const CONNECTIONS_PER_STORE = 4;
 
 export async function openStore(options: { url: string }): Promise<Store> {
