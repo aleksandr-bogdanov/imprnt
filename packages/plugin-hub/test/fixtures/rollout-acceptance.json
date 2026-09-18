@@ -511,41 +511,59 @@
       "status": "open",
       "evidence": {
         "automated/linux": {
-          "result": "fail",
-          "observed": "fail",
-          "record": "PLAN-09-LINUX-RECHECK.txt",
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-2-candidate-linux.txt",
           "origin": "automated",
           "facts": {
-            "scope": "Fleet fixture trees exceed the unchanged per-agent limit"
+            "os": "linux",
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic model children inside the native person box; no live-login acceptance claim",
+            "peakBytes": [
+              375144448,
+              251297792
+            ],
+            "idleBaselineBytes": [
+              121192448,
+              123224064
+            ]
           }
         },
         "automated/macos": {
           "result": "pass",
           "observed": "pass",
-          "record": "GREEN-FOCUSED-06-09-mac.txt",
+          "record": "GREEN-RUN-2-projection-mac.txt",
           "origin": "automated",
           "facts": {
-            "scope": "focused automated checks; synthetic transports and model children"
+            "os": "macos",
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic model children inside the native person box; no live-login acceptance claim"
           }
         },
         "native/linux": {
-          "result": "fail",
-          "observed": "fail",
-          "record": "PLAN-09-LINUX-RECHECK.txt",
+          "result": "pass",
+          "observed": "pass",
+          "record": "GREEN-RUN-2-candidate-linux.txt",
           "origin": "native",
           "facts": {
             "os": "linux",
-            "scope": "Descendant monitor passes; fleet fixture exceeds per-agent limit"
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic model children inside the native person box; no live-login acceptance claim",
+            "peakBytes": [
+              375144448,
+              251297792
+            ],
+            "idleBaselineBytes": [
+              121192448,
+              123224064
+            ]
           }
         },
         "native/macos": {
           "result": "pass",
           "observed": "pass",
-          "record": "GREEN-FOCUSED-09-mac.txt",
+          "record": "GREEN-RUN-2-projection-mac.txt",
           "origin": "native",
           "facts": {
             "os": "macos",
-            "scope": "Native owned-unit, kernel-box and child-memory checks; no unattended reboot claim"
+            "scope": "Original safe-sleep, descendant monitor, children and aggregate fleet checks pass; synthetic model children inside the native person box; no live-login acceptance claim"
           }
         },
         "live-login/linux": null,
