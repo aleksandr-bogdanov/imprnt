@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, chmodSync, closeSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, chmodSync, closeSync, openSync, readdirSync, rmSync, writeFileSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RunEntry } from "../registry/load.ts";
 import { scheduleSeconds, wantedState } from "./diff.ts";
-import { SCAN_PREFIX, unitName } from "./names.ts";
+import { SCAN_PREFIX, isOurs, unitName } from "./names.ts";
 import type { MemoryReading, OsSeam, RenderContext, UnitFile, UnitState } from "./types.ts";
 
 /**
@@ -216,6 +216,26 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
         );
       }
       return out;
+    },
+
+    async unitFiles(): Promise<string[]> {
+      // REVIEW S6. The directory and nothing else, as on systemd: a plist the
+      // hub wrote and never bootstrapped, or one whose removal never finished,
+      // is in no domain, so `launchctl` has nothing to say about it. Only the
+      // RENDER prefix, because the owner's own jobs share this directory.
+      let found: Dirent[];
+      try {
+        found = readdirSync(unitDir, { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
+      return found
+        .filter((one) => !one.isDirectory())
+        .map((one) => one.name)
+        .filter((name) => name.endsWith(".plist") && isOurs(name))
+        .sort()
+        .map((name) => join(unitDir, name));
     },
 
     async show(entryId: string): Promise<UnitState | null> {

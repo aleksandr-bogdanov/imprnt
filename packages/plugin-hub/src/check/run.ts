@@ -1,8 +1,9 @@
 import { checkLoopSource } from "../adapters/index.ts";
 import { finding as findingLine, syncRepair } from "../door/lines.ts";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import {
   diffUnits,
+  removeFileCommand,
   resetCommand,
   seenUnits,
   startCommand,
@@ -17,6 +18,7 @@ import {
   listAgents,
   listCredentials,
   listPeople,
+  listRunEntries,
   personOf,
   runEntriesFor,
   thresholdsFor,
@@ -243,6 +245,31 @@ export async function runCheck(options: {
         says: `${unit.name} is loaded and no registry entry implies it, so nothing on the list asked for it`,
         // TEXT, and nothing here or anywhere else runs it (L13).
         fix: stopCommand(os.flavour, unit.name),
+      });
+    }
+
+    // REVIEW S6. A unit FILE under the hub's own prefix that no registry entry
+    // declares. `remove` disables, then deletes the files, then stops, so a hub
+    // that dies between the disable and the delete leaves a file that is
+    // enabled nowhere and that the manager may no longer list, and `seenUnits`
+    // above asks the manager only about entries the registry still carries. So
+    // this half reads the unit directory, through the seam, which is the one
+    // place that knows where it is. Declared means declared ANYWHERE in the
+    // file, which is the fence the hub's own reconcile draws around another
+    // machine's entries, so two hubs sharing one box never report each other.
+    const declaredIds = new Set(listRunEntries(registry).map((entry) => entry.id));
+    for (const path of (await os.unitFiles?.()) ?? []) {
+      const name = basename(path);
+      const id = entryIdOf(name);
+      if (id === null || declaredIds.has(id)) continue;
+      findings.push({
+        id: findingId(machine, "unit-file-orphaned", name),
+        kind: "unit-file-orphaned",
+        subject: name,
+        machine,
+        says: `${path} is a hub unit file and no registry entry declares ${id}, so it was left behind and nothing on the list asked for it`,
+        // TEXT, and nothing here or anywhere else runs it (L13).
+        fix: removeFileCommand(os.flavour, path),
       });
     }
 

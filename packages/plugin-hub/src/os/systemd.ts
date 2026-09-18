@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RunEntry } from "../registry/load.ts";
 import { scheduleSeconds, wantedState } from "./diff.ts";
-import { SCAN_PREFIX, timerName, unitName } from "./names.ts";
+import { SCAN_PREFIX, isOurs, timerName, unitName } from "./names.ts";
 import type { MemoryReading, OsSeam, RenderContext, UnitFile, UnitState } from "./types.ts";
 
 /**
@@ -310,6 +310,28 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
             result: null,
           },
       );
+    },
+
+    async unitFiles(): Promise<string[]> {
+      // REVIEW S6. The directory and nothing else. A hub that died between
+      // `remove`'s disable and its delete leaves a file enabled nowhere, and a
+      // unit nothing references can leave `list-units` altogether, so the
+      // manager is the one party that cannot be asked about it. Only the
+      // RENDER prefix: the live v2's files share this directory under the scan
+      // prefix and were never the hub's to write.
+      let found: Dirent[];
+      try {
+        found = readdirSync(unitDir, { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
+      return found
+        .filter((one) => !one.isDirectory())
+        .map((one) => one.name)
+        .filter((name) => (name.endsWith(".service") || name.endsWith(".timer")) && isOurs(name))
+        .sort()
+        .map((name) => join(unitDir, name));
     },
 
     async show(entryId: string): Promise<UnitState | null> {

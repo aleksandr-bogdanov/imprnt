@@ -4,7 +4,7 @@
  */
 export interface Finding {
   id: string;        // <machine>/<kind>:<subject>, or <machine>/<kind> with no subject
-  kind: string;      // unit-extra | unit-missing | job-stale | job-no-stamp | peak-missing
+  kind: string;      // unit-extra | unit-missing | unit-file-orphaned | job-stale | job-no-stamp | peak-missing
                      // | kernel-memory-cgroup | kernel-earlyoom | runner-silent | crash-loop
   subject: string;
   machine: string;
