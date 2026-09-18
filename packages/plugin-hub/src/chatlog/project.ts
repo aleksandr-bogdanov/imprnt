@@ -16,8 +16,11 @@ export async function projectInbound(
   if (row.log_ready) return;
   if (!row.source) throw new Error("inbound projection source missing");
   const source = row.source;
+  // The row's person, whose allowlist admitted the sender. The platform
+  // username in `source.from` is display only, and harvest and the tail know a
+  // speaker by registry id.
   await appendChatLineOnce({ stateDir: options.stateDir, person: row.person, agent: row.agent }, {
-    id: source.log_id, at: source.at, direction: "in", from: source.from ?? source.sender_id, text: source.text,
+    id: source.log_id, at: source.at, direction: "in", from: row.person, text: source.text,
   });
   await store.sql`update inbound set log_ready = true where id = ${options.inboundId} and not log_ready`;
 }

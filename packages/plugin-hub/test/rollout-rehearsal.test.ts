@@ -262,7 +262,7 @@ for (const osName of ["linux", "macos"] as const) {
     edges[1].batch([{platform_message_id:"10",chat:"1000000001",sender_id:"p2",from:"p2",text:"harvest this",at:new Date().toISOString(),media:[]}],"11")
     expect(await observe(async()=>(await read.sql("select * from inbound where kind='harvest' and id like 'harvest-demand:%'")).length===1,5000)).toBe(true)
     expect(await observe(()=>existsSync(join(vault.vaultDir,"life","demand-note.md")),10000)).toBe(true)
-    expect((await read.noticeRows()).some(r=>r.person==="p2" && /harvest|saved|сохран/i.test(r.body))).toBe(true)
+    expect(await observe(async()=>(await read.noticeRows()).some(r=>r.person==="p2" && /harvest|saved|сохран/i.test(r.body)),5000)).toBe(true)
     expect(transcript).not.toContain("harvest this")
     expect(process.pid).toBe(servicePid)
   })

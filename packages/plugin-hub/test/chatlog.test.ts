@@ -73,6 +73,9 @@ test(
           : outLineOnDisk({ stateDir: stateDirForProbe.value })(post),
     });
     stateDirForProbe.value = it.stateDir;
+    // The first post is refused on purpose, so the retry must come well inside
+    // the wait below rather than at the thirty second default spacing.
+    await Bun.write(it.registryFile, (await Bun.file(it.registryFile).text()) + "\n[door]\ndelivery_retry_seconds = 1\n");
     let door: { stop(): Promise<void> } | null = null;
     let runner: { stop(): Promise<void> } | null = null;
 
