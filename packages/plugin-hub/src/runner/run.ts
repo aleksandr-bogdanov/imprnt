@@ -954,15 +954,20 @@ export async function runRunner(options: {
         const connection = await store.sql.reserve();
         let next;
         try {
-          [next] = await connection`select kind, exists (
+          [next] = await connection`select id, kind, exists (
             select 1 from inbound h where h.agent in (select jsonb_array_elements_text(${JSON.stringify(residentHarvest)}::text::jsonb)) and h.kind = 'harvest'
               and h.log_ready and h.state not in ('answered', 'delivered') and h.claimed_by is null
               and (h.retry_at is null or h.retry_at <= now())
           ) as harvest_waiting from inbound where agent = ${agent.id}
             and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
+            and (claimed_by is null or claimed_by = ${options.runner}
+                 or (claim_deadline is not null and claim_deadline <= now()))
             and (retry_at is null or retry_at <= now())
             order by rank, received_at, id limit 1`;
         } finally { connection.release(); }
+        // Capacity belongs to this selected row. A later arrival must go
+        // through selection and reservation before it can start a child.
+        if (!next) { await sleep(); continue; }
         // Give an already waiting resident harvest its extra child before a
         // cold session. Capacity release, rather than a queue poll, wakes us.
         if (next && next.kind !== "harvest" && next.harvest_waiting && !own.session) {
@@ -986,6 +991,7 @@ export async function runRunner(options: {
           agent: agent.id,
           leaseMs: setting(registry, "hub.claim_lease_seconds") * 1000,
           maxRank,
+          rowId: next.id,
         });
         if (!row) {
           if (extra) releaseCapacity();

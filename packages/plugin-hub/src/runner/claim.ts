@@ -14,7 +14,7 @@ import type { EligibleRow } from "../store/wake.ts";
  */
 export async function claimNext(
   store: StoreLike,
-  who: { runner: string; agent: string; leaseMs: number; maxRank?: number },
+  who: { runner: string; agent: string; leaseMs: number; maxRank?: number; rowId?: string },
 ): Promise<EligibleRow | null> {
   // D-123. The pause is a WHERE clause on the statement the runner already
   // runs, not a second query: at the household's own pause threshold proactive
@@ -33,6 +33,7 @@ export async function claimNext(
        where id = (
          select id from inbound
           where agent = ${who.agent}
+            and (${who.rowId ?? null}::text is null or id = ${who.rowId ?? null})
             and log_ready
             and rank <= ${maxRank}
             and state not in ('answered', 'delivered')
