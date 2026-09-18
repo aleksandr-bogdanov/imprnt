@@ -104,6 +104,7 @@ for (const os of ["linux", "darwin"]) {
     for (let i = 1; i <= 17; i++) editAgent(it.registryFile, `p1-lair-${i}`, { mode: "on-demand", idle_seconds: 1 })
     writeFileSync(it.registryFile, readFileSync(it.registryFile, "utf8").replace('id = "runner-pi"\n', `id = "runner-pi"\nmax_active_children = ${maxChildren}\nchild_memory_budget_mb = ${budgetMb}\n`))
     const edge = controlledAdapter(it.adapterName, true)
+    edge.onStart(row => row.loop.setAnswer(() => "nothing"))
     edge.hold(m => m.id === "human-a" || m.id === "human-b" || m.id.startsWith("harvest:"))
     let runner: Awaited<ReturnType<typeof runRunner>> | undefined
     let sampler: ReturnType<typeof setInterval> | undefined
@@ -181,7 +182,7 @@ for (const os of ["linux", "darwin"]) {
       try {
         const stopped = runner?.stop() ?? Promise.resolve()
         let done = false
-        void stopped.then(() => { done = true })
+        void stopped.then(() => { done = true }, () => { done = true })
         await Promise.race([stopped, Bun.sleep(2000)])
         if (!done) {
           // Shutdown can strand a LISTEN connection while a wait is opening.

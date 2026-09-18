@@ -272,6 +272,7 @@ export interface BoxProbe {
 
 export interface HeldChild {
   pid: number;
+  exited: Promise<number>;
   /** The argv this child was really spawned with, boxed or not (03b item 1). */
   argv: string[];
   /** What the child reported about `probePath`, once it has said it. */
@@ -339,6 +340,7 @@ export function spawnHolder(options: HolderOptions = {}): HeldChild {
   }
   return {
     pid: proc.pid,
+    exited: proc.exited,
     argv: [...argv],
     boxProbe: () => (said ? { ...said } : null),
     kill() {
@@ -677,7 +679,7 @@ export function createScriptedAdapter(
         live.progress.length = 0;
         live.end.length = 0;
         turns.delete(live);
-        if (held) held.kill();
+        if (held) { held.kill(); await held.exited; }
       },
     };
   };
