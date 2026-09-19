@@ -54,6 +54,13 @@ interface ProgressLine {
   finished(): void;
 }
 
+/**
+ * IMP-160. The health code of a chat whose fetched batch the door could not
+ * accept twice in a row. A successful read does not clear it, an accepted batch
+ * does.
+ */
+const ACCEPT_FAILED = "accept-failed";
+
 /** How long `post` waits for those totals before it goes ahead anyway. */
 const TOTALS_WAIT_MS = 5000;
 
@@ -249,14 +256,15 @@ export async function runDoor(options: {
   for (const agent of agentsFor(registry, { door: options.door })) await health.initialize(agent);
   let releaseHealth!: () => void;
   const healthReady = new Promise<void>(resolve => { releaseHealth = resolve; });
-  const sayReadFailure = async (agent: AgentEntry) => {
+  /** `seconds` is the retry that really follows: the read retry unless said otherwise. */
+  const sayReadFailure = async (agent: AgentEntry, seconds?: number) => {
     const data = health.health.get(agent.chat);
     if (data?.status !== "failed" || data.notice_key) return;
     const key = `chat-read:${options.door}:${agent.chat}:${data.since}`;
     const sent = await routeNotice(store, { registry: registryThisTick(), door: options.door,
       platform: options.platform.name, agent, chat: agent.chat, health: health.health, key,
       failure: { kind: "transient", code: String(data.code), cause: String(data.cause) },
-      operation: "read", seconds: Number(readSetting(registryThisTick(), "door.read_retry_seconds")) });
+      operation: "read", seconds: seconds ?? Number(readSetting(registryThisTick(), "door.read_retry_seconds")) });
     if (sent) {
       data.notice_key = key;
       await putRow(store, "door_health", `${options.door}/${agent.chat}`, data);
@@ -274,6 +282,9 @@ export async function runDoor(options: {
     let cursor = await readCursor(store, options.door, agent.chat);
     let capturing = activate && cursor === null;
     let first = true;
+    /** How many times in a row this chat's fetched batch could not be accepted. */
+    let refused = 0;
+    const acceptFailing = () => health.health.get(agent.chat)?.code === ACCEPT_FAILED;
     while (!stopping && !own.leaving && !own.rebinding) {
       let fresh: Registry;
       try { fresh = registryThisTick(); }
@@ -301,7 +312,10 @@ export async function runDoor(options: {
         first = false;
         continue;
       }
-      await health.succeeded(agent.chat);
+      // A read that worked says nothing about a batch that cannot be accepted.
+      // Clearing that here would open a fresh episode, and a fresh notice, on
+      // every replay, so only an accepted batch clears it (below).
+      if (!acceptFailing()) await health.succeeded(agent.chat);
       if (capturing) {
         const boundary = pulled.batch.cursor;
         if (boundary === null || boundary === cursor) capturing = false;
@@ -344,10 +358,27 @@ export async function runDoor(options: {
         });
         accepting = accepted.catch(() => {});
         await accepted;
-      } catch {
+        refused = 0;
+      } catch (error) {
         console.error("ingress: accepted batch remains unacknowledged");
+        // IMP-160. The same batch comes back on every replay, so a second
+        // refusal in a row is a failure that repeats, not a blip. It leaves the
+        // trace a read failure leaves: the chat's health row that `check`
+        // reports, the diary, and one notice per episode to a working chat of
+        // the same person. The retry is the replay one tick from now.
+        refused += 1;
+        if (refused >= 2 && !stopping && !own.leaving) {
+          try {
+            await health.failed(agent.chat, error, timeoutMs / 1000, { code: ACCEPT_FAILED, cause: "operation failed" });
+            await sayReadFailure(agent, timeoutMs / 1000);
+          } catch {
+            // The store that refused the batch may refuse this too. The next
+            // replay tries again.
+          }
+        }
         await Promise.race([Bun.sleep(timeoutMs), stopped, own.left]);
       }
+      if (refused === 0 && acceptFailing()) await health.succeeded(agent.chat).catch(() => {});
       own.readied();
       first = false;
     }
