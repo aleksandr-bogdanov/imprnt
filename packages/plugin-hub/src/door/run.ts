@@ -34,7 +34,7 @@ import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
 import { acceptBatch } from "./ingest.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
 import { readCursor, writeCursor } from "./cursor.ts";
-import { clockLine, progressLine, progressTotals, type Language } from "./lines.ts";
+import { clockLine, finding, progressLine, progressTotals, safeValue, type Language } from "./lines.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
 
 /**
@@ -162,6 +162,9 @@ interface Served {
   /** Resolves once the harvest task has done its one read at connect. */
   harvesting: Promise<void>;
   harvested(): void;
+  /** Resolves once `post` has made its first pass over the replies waiting. */
+  posting: Promise<void>;
+  posted(): void;
   /** The progress line of each open turn, by message id. */
   progress: Map<string, ProgressLine>;
   /** Rows this door wrote down itself, handed to `attend` with no read. */
@@ -533,13 +536,28 @@ export async function runDoor(options: {
       }
     };
     const waiter = await openOutboxWaiter(store, { person: agent.person });
+    // A pass that throws never rejects: the door's readiness waits on the first
+    // one, and a store that refuses it must not keep the door from starting.
+    // What refused is said once per run of failures, on stderr, because the
+    // store that refused the read may refuse a diary row too.
+    let failing = false;
     const attempt = async () => {
-      try { await deliver(); }
-      catch { retryAt = Date.now() + timeoutMs; }
+      try {
+        await deliver();
+        failing = false;
+      } catch (error) {
+        retryAt = Date.now() + timeoutMs;
+        if (!failing) {
+          process.stderr.write(finding("en", { code: "post:pass-failed", target: `${options.door}/${agent.id}`,
+            cause: safeValue((error as Error)?.message ?? error) }) + "\n");
+        }
+        failing = true;
+      }
     };
     try {
       await healthReady;
       await attempt();
+      own.posted();
       while (!stopping && !own.leaving) {
         const why = await Promise.race([
           waiter.wait(retryAt === null ? timeoutMs : Math.max(1, retryAt - Date.now())).catch(() => "timeout" as const),
@@ -1167,6 +1185,8 @@ export async function runDoor(options: {
     });
     let readied!: () => void;
     const reading = new Promise<void>(resolve => { readied = resolve; });
+    let posted!: () => void;
+    const posting = new Promise<void>(resolve => { posted = resolve; });
     const it: Served = {
       agent: { ...agent }, rebinding: false, readDone: Promise.resolve(), reading, readied,
       leaving: false,
@@ -1177,6 +1197,8 @@ export async function runDoor(options: {
       attended,
       harvesting: waitingToHarvest,
       harvested,
+      posting,
+      posted,
       progress: new Map<string, ProgressLine>(),
       arrivals: [],
       arrived: nudge(),
@@ -1185,7 +1207,10 @@ export async function runDoor(options: {
     served.set(agent.id, it);
     it.readDone = read(agent, it, activate).finally(() => it.readied());
     it.done = Promise.allSettled([
-      post(agent, it),
+      // Its waiter is opened outside the pass's own error handling, so a throw
+      // there would leave `posting` pending and the door's caller waiting for
+      // ever. Resolving twice is free.
+      post(agent, it).finally(() => it.posted()),
       attend(agent, it),
       // The same outer `finally` `attend` carries, and for the same reason: a
       // throw before the connect read is swallowed by `allSettled`, so without
@@ -1208,12 +1233,17 @@ export async function runDoor(options: {
   await Promise.all([...served.values()].map(it => it.reading));
   for (const it of served.values()) await sayReadFailure(it.agent);
   releaseHealth();
-  // Ready means ATTENDING AND HARVESTING, so a caller handed this door is
-  // handed one whose clocks are armed and whose two connect reads have landed.
+  // Ready means ATTENDING, HARVESTING AND POSTING, so a caller handed this door
+  // is handed one whose clocks are armed, whose two connect reads have landed
+  // and whose reply sender has made its first pass over the replies waiting.
   // Without it a read rides into whatever window the caller opens next, which
-  // is what test/door-clock.test.ts's restart budget counts (BUILD-NOTES 12).
+  // is what test/door-clock.test.ts's restart budget counts from 2 s after
+  // ready. The post task waits for `healthReady` before that pass, so this wait
+  // comes after `releaseHealth()` and never before it. It ends when the store
+  // refuses the pass too, because the pass catches its own failure.
   await Promise.all([...served.values()].map((it) => it.attending));
   await Promise.all([...served.values()].map((it) => it.harvesting));
+  await Promise.all([...served.values()].map((it) => it.posting));
 
   const supervise = (async () => {
     while (!stopping) {
