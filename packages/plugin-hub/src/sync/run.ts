@@ -1,11 +1,11 @@
-import { realpathSync } from "node:fs";
-import { relative, isAbsolute } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import { recordJobSuccess } from "../check/schedule.ts";
 import { syncCause } from "../door/lines.ts";
 import { recordOperationFailure } from "../door/health.ts";
 import { appendEntry } from "../records/diary.ts";
 import { putRow } from "../records/statesheet.ts";
-import { listPeople, listRunEntries, repositoriesFor } from "../registry/entries.ts";
+import { listPeople, listRepositories, listRunEntries, repositoriesFor } from "../registry/entries.ts";
 import { readSetting, type Registry, type RunEntry } from "../registry/load.ts";
 import { openStore, storeUrlAs, type StoreLike } from "../store/connect.ts";
 
@@ -20,6 +20,23 @@ async function git(path: string, args: string[], code: string): Promise<string> 
 function inside(root: string, path: string): boolean {
   const part = relative(root, path);
   return part === "" || (!isAbsolute(part) && part !== ".." && !part.startsWith("../"));
+}
+
+// The declared repositories checked out inside this one, relative to it. A
+// vault's mount is its own checkout, synced by whichever entry lists it on its
+// own branch, and the vault's status shows it as an untracked directory (or a
+// moved gitlink) that is not the vault's work. A declared path with no `.git`
+// of its own is left in, so an uncommitted file under it is still refused. The
+// test is the one the v2 sync used, and it spawns nothing while the lock is held.
+function nestedIn(path: string, registry: Registry): string[] {
+  const nested: string[] = [];
+  for (const other of listRepositories(registry)) {
+    try {
+      const real = realpathSync(other.path);
+      if (real !== path && inside(path, real) && existsSync(join(real, ".git"))) nested.push(relative(path, real));
+    } catch { /* absent: nothing to set aside */ }
+  }
+  return nested;
 }
 
 export async function runSync(entry: RunEntry, registry: Registry): Promise<void> {
@@ -46,7 +63,8 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           locked = row.held;
           if (!locked) throw new Error(code);
           code = "dirty";
-          if (await git(path, ["status", "--porcelain"], code)) throw new Error(code);
+          const nested = nestedIn(path, registry).map(one => `:(exclude,literal)${one}`);
+          if (await git(path, ["status", "--porcelain", "--", ".", ...nested], code)) throw new Error(code);
           code = "branch";
           if (await git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"], code) !== repo.branch) throw new Error(code);
           code = "remote";

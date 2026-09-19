@@ -9,6 +9,7 @@ import {
   type CredentialEntry,
   type MachineEntry,
   type PersonEntry,
+  type RepositoryEntry,
   type RunEntry,
 } from "./load.ts";
 import { credentialOfPreset } from "./presets.ts";
@@ -205,6 +206,11 @@ export function runnerLimitsFor(registry: unknown, runnerId: string) {
   const entry = loaded(registry, "runnerLimitsFor").run.find(one => one.id === runnerId && one.kind === "runner");
   if (!entry) throw new TypeError(`unknown runner: ${runnerId}`);
   return { max_active_children: entry.max_active_children ?? 4, child_memory_budget_mb: entry.child_memory_budget_mb ?? 2048 };
+}
+
+/** Every repository the file declares, whichever sync entry lists it. */
+export function listRepositories(registry: unknown): RepositoryEntry[] {
+  return loaded(registry, "listRepositories").repositories.map((entry) => ({ ...entry }));
 }
 
 export function repositoriesFor(registry: unknown, entryId: string) {

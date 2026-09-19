@@ -6,6 +6,8 @@ Install the database with `imprnt hub install <registry> database`. The registry
 
 Use `imprnt hub install <registry> services <hub-entry>` to install that machine's declared services, including its resident hub. `imprnt hub install <registry> entry <sync-entry>` installs just the selected entry and its schedule for sync rehearsal. On Linux the service account needs lingering enabled by the administrator with `loginctl enable-linger <service-account>`. macOS uses login agents; this does not provide startup before login.
 
+A repository checked out inside a vault, such as a shared mount, is declared as its own `[[repositories]]` entry with its own branch and is listed by a sync entry. The vault's sync then leaves that checkout out of its uncommitted-change check, and the mount is fetched, rebased and pushed as its own repository. A nested checkout the registry does not declare is never synced, and unless the vault ignores it, it still counts as the vault's uncommitted change.
+
 `imprnt hub recover <registry> agent:<id>` replaces the selected agent session and releases its claims without restarting its runner or siblings. Authorized chat senders can use `/recover <agent-id>` or `/восстановить <agent-id>` for an agent belonging to the same person. `imprnt hub recover <registry> door:<id>` requests an operator-only door restart that reads the current token file. Requests and applications are recorded in the control sheet and diary.
 
 Read failures and delivery failures retain their safe cause and route in state and diary. Failed install, start, and restart actions name their operation and target in the diary and service stderr. Child stderr inherits the service destination.
