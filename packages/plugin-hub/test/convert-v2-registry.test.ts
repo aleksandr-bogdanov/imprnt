@@ -1,5 +1,5 @@
 import { beforeAll, expect, test } from "bun:test"
-import { copyFileSync, readFileSync, writeFileSync, statSync, rmSync } from "node:fs"
+import { copyFileSync, existsSync, readFileSync, writeFileSync, statSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { loadRegistry, readSetting } from "../src/registry/load.ts"
 import { readStorePid } from "../src/hub/peak.ts"
@@ -147,4 +147,36 @@ test("D-186 steps 6 and 7 the promoted candidate keeps the active registry's ins
     expect(readSetting(promoted, "runner.task_retry_seconds")).toBe(7)
     expect(readStorePid(promoted)).toEqual(readStorePid(bootstrapped))
   } finally { await bootstrap?.stop(); f.stop(); await cluster.stop() }
+})
+
+test("ROLL-05 D-168 an instruction import anywhere in a fragment is refused naming the fragment and the import, and a handle is not an import", async () => {
+  const convert = await converter()
+  for (const [line, named] of [
+    ["Read @~/synthetic/rules.md before answering.", "@~/synthetic/rules.md"],
+    ["Follow the house rules (@../synthetic/house.md) first.", "@../synthetic/house.md"],
+    ["Load @/srv/synthetic/rules.md as well.", "@/srv/synthetic/rules.md"],
+    ["The master rules apply, see @synthetic-master.md.", "@synthetic-master.md"],
+    // The whole-line form v2 itself expanded, which was already refused without its name.
+    ["@./synthetic-relative.md", "@./synthetic-relative.md"],
+  ]) {
+    const f = migrationFixture()
+    try {
+      const fragment = f.sources[0].rendered
+      const rendered = readFileSync(fragment, "utf8")
+      // Control on the same path: a handle, an address and a metric in running text are not imports.
+      const plain = rendered + "Ask @synthetic_handle, or write to someone@example.invalid, serial@1 holds.\n"
+      writeFileSync(fragment, plain)
+      await convert(f.registryManifest, f.lookup)
+      const agent = loadRegistry(f.registryManifest.candidate).agents.find(a => a.id === "p1-lair")!
+      expect(readFileSync(agent.fragment!, "utf8")).toBe(plain)
+      rmSync(f.registryManifest.candidate)
+      rmSync(f.registryManifest.inventory)
+      writeFileSync(fragment, rendered + line + "\n")
+      const refusal = await convert(f.registryManifest, f.lookup).then(() => "converted", (error: Error) => error.message)
+      expect(refusal, `${line} must refuse`).toContain("import")
+      expect(refusal, "names the fragment").toContain(fragment)
+      expect(refusal, "names the import").toContain(named)
+      expect(existsSync(f.registryManifest.candidate), "no candidate is published").toBe(false)
+    } finally { f.stop() }
+  }
 })
