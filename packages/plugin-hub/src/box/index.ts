@@ -101,6 +101,28 @@ const MAC_LOGIN = [join(homedir(), "Library", "Keychains")];
  */
 const RUNTIME_MASKS = ["/run/user", "/run/dbus"];
 
+/**
+ * One more thing on a Linux host that hands a boxed command the machine, and a
+ * single file rather than a directory the loop can spare, so it is masked on its
+ * own.
+ *
+ * The docker socket: a connect to it needs nothing but membership of the group
+ * that owns it, and a container started through it can bind the host's root
+ * directory and write to it as root, which is a way out of the box and up to
+ * root in one step.
+ *
+ * A file mask is a bind over one directory entry: if whoever owns the file
+ * replaces it, the mask is lifted for boxes already running. So this stops an
+ * agent reaching these from inside a box, and a daemon that recreates its socket
+ * while a box is running opens it again until the next launch.
+ */
+function hostControlMasks(): string[] {
+  return [
+    "/run/docker.sock",
+    "/var/run/docker.sock",
+  ];
+}
+
 function flavourOf(ctx: BoxContext, platform?: string): string {
   return String(platform ?? process.platform);
 }
@@ -330,6 +352,11 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         // needs is there. The parent /run/user is masked rather than the per-uid
         // directory so the mask is the same on every box and needs no uid.
         ...RUNTIME_MASKS.flatMap(path => ["--tmpfs", path]),
+        // The docker socket and the X authority cookie, each covered with
+        // /dev/null. A path that is not on this box is skipped, and the two
+        // spellings of the socket are one path once the symlink is resolved.
+        ...[...new Set(hostControlMasks().filter(existsSync).map(canonical))]
+          .flatMap(path => ["--ro-bind", "/dev/null", path]),
         // Masks come after everything above, so nothing bound later uncovers one.
         ...secretMasks(ctx).flatMap(({ path, directory }) =>
           directory ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path]),

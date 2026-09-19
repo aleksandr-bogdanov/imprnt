@@ -83,11 +83,11 @@ test.skipIf(!(gate.ok && process.platform === "linux"))(
     const h = household();
     try {
       const probe = ["/bin/sh", "-c", [
-        `echo -n registry:; (echo rewritten > ${h.registryFixture}) 2>/dev/null && echo OK || echo DENIED`,
-        `echo -n unit:; (echo unit > ${h.unitDir}/injected.service) 2>/dev/null && echo OK || echo DENIED`,
-        `echo -n tree:; (echo x > ${h.tree}/w) 2>/dev/null && echo OK || echo DENIED`,
-        `echo -n session:; (echo x > ${h.sessionDir}/w) 2>/dev/null && echo OK || echo DENIED`,
-        `echo -n login:; (echo x > ${h.loginDir}/w) 2>/dev/null && echo OK || echo DENIED`,
+        `printf registry:; (echo rewritten > ${h.registryFixture}) 2>/dev/null && echo OK || echo DENIED`,
+        `printf unit:; (echo unit > ${h.unitDir}/injected.service) 2>/dev/null && echo OK || echo DENIED`,
+        `printf tree:; (echo x > ${h.tree}/w) 2>/dev/null && echo OK || echo DENIED`,
+        `printf session:; (echo x > ${h.sessionDir}/w) 2>/dev/null && echo OK || echo DENIED`,
+        `printf login:; (echo x > ${h.loginDir}/w) 2>/dev/null && echo OK || echo DENIED`,
       ].join("; ")];
       const { argv } = (boxCommand as Function)(probe, { ...h.ctx, platform: "linux" }, "linux") as { argv: string[] };
       const done = Bun.spawnSync(argv, { env: { PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
