@@ -16,7 +16,7 @@
 // so a box that simply broke every command is never mistaken for the fence.
 
 import { test, expect, beforeAll } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
@@ -91,6 +91,26 @@ test("the rendered Linux box covers the docker socket and the X authority cookie
     // Every mask lands before the command.
     const sep = argv.lastIndexOf("--");
     expect(argv.findIndex((a, i) => a === "--ro-bind" && argv[i + 1] === "/dev/null")).toBeLessThan(sep);
+  } finally {
+    if (saved === undefined) delete process.env.XAUTHORITY; else process.env.XAUTHORITY = saved;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a mask path the system will not resolve still renders a box", async () => {
+  const { boxCommand, boxContextFor } = await seam("src/box/index.ts");
+  const dir = mkdtempSync(join(tmpdir(), "hub-box-unresolvable-"));
+  const saved = process.env.XAUTHORITY;
+  try {
+    // A symlink whose target is not there: it is present to a check for
+    // existence and refuses to resolve, which is the shape of a socket some
+    // systems will not answer a resolve for. Rendering must not throw, because a
+    // box that cannot be rendered is a loop that cannot start at all.
+    const cookie = join(dir, "Xauthority");
+    symlinkSync(join(dir, "nowhere"), cookie);
+    process.env.XAUTHORITY = cookie;
+    const ctx = (boxContextFor as Function)(stage(dir).registry, "p1-lair");
+    expect(() => (boxCommand as Function)(["/bin/true"], { ...ctx, platform: "linux" }, "linux")).not.toThrow();
   } finally {
     if (saved === undefined) delete process.env.XAUTHORITY; else process.env.XAUTHORITY = saved;
     rmSync(dir, { recursive: true, force: true });

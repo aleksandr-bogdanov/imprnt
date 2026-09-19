@@ -315,7 +315,14 @@ function profilePath(ctx: BoxContext): string {
  * fenced there. The tree, its files and its origin are fenced on both.
  */
 export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): BoxedCommand {
-  const canonical = (path: string) => path && existsSync(path) ? realpathSync(path) : path;
+  // A path is resolved to what it really is, so two spellings of one file are
+  // one mask. A path the system will not resolve is used as it was written
+  // rather than throwing: some sockets refuse the call, and a box that cannot be
+  // rendered is a loop that cannot start.
+  const canonical = (path: string) => {
+    if (!path || !existsSync(path)) return path;
+    try { return realpathSync(path); } catch { return path; }
+  };
   ctx = { ...ctx, tree: canonical(ctx.tree), sharedZone: canonical(ctx.sharedZone),
     stateRoot: ctx.stateRoot && canonical(ctx.stateRoot), sessionDir: ctx.sessionDir && canonical(ctx.sessionDir),
     otherTrees: ctx.otherTrees.map(canonical), otherStateRoots: ctx.otherStateRoots?.map(canonical),
