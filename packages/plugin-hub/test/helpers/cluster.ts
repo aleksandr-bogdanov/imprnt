@@ -272,12 +272,18 @@ export interface StartOptions {
    * is on disk, which the store must refuse.
    */
   settings?: Record<string, string>;
+  /**
+   * Directory the cluster is created under, the system temporary directory
+   * when absent. A check whose windows must not include the disk's own sync
+   * latency passes a memory-backed directory here.
+   */
+  parent?: string;
 }
 
 /** initdb, start, and hand back a live throwaway cluster. */
 export async function startCluster(options: StartOptions = {}): Promise<Cluster> {
   const superuser = "hub_super";
-  const root = await mkdtemp(join(tmpdir(), "hub-pg-"));
+  const root = await mkdtemp(join(options.parent ?? tmpdir(), "hub-pg-"));
   const dataDir = join(root, "data");
   const socketDir = join(root, "sock");
   await Bun.write(join(socketDir, ".keep"), "");

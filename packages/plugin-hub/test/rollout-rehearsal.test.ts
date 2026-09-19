@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, statfsSync } from "node:fs"
 import { join } from "node:path"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
 import { serviceFixture, serviceOs } from "./helpers/rollout-service.ts"
@@ -26,6 +26,9 @@ import { proveRolloutCommand } from "../live/prove-rollout-command.ts"
 import { childGone } from "./helpers/scripted-adapter.ts"
 
 const clock = clockGate(3)
+function memoryRoom() {
+  try { const fs = statfsSync("/dev/shm"); return fs.bavail * fs.bsize >= 512 * 1024 * 1024 } catch { return false }
+}
 announceClock(clock, "06-09 demand after activation")
 // Cleanup is registered before any fixture is allocated, including unit files.
 const cleanups: (() => Promise<unknown> | unknown)[] = []
@@ -41,7 +44,10 @@ for (const osName of ["linux", "macos"] as const) {
   if (!native) console.error(`SKIP: 06-09 rehearsal requires ${osName === "macos" ? "macOS" : "Linux"}`)
   test.skipIf(!native || !clock.ok)(`ROLL-01/02/03/04/05/06/07/08/09/12/18/20/22/23/30/31 ${osName} integrated rehearsal${native ? "" : ` [SKIP: requires ${osName === "macos" ? "macOS" : "Linux"}]`}${clockSuffix(clock)}`, async () => {
     expect(boxGate().ok, "D-184 host kernel box prerequisite").toBe(true)
-    const cluster: Cluster = await startCluster()
+    // On the Linux box the install below spent 11 to 34 s in four of 25 runs waiting for Postgres to sync the SD
+    // card (IO:WALSync and IO:DataFileImmediateSync), which no window can measure. So the cluster lives in memory
+    // where there is room for it: it measured 48.5 MB at the end of the rehearsal, and /dev/shm is used only with 512 MB free.
+    const cluster: Cluster = await startCluster(memoryRoom() ? { parent: "/dev/shm" } : {})
     cleanups.push(() => cluster.stop())
     const bootstrap = await serviceFixture(cluster, true)
     cleanups.push(() => bootstrap.stop())
@@ -55,6 +61,7 @@ for (const osName of ["linux", "macos"] as const) {
 
     // First stage crosses the actual Node core -> package shim -> Bun boundary.
     // No plugin replacement, no implementation spy and no native manager call.
+    // The command watchdog is in helpers/rollout-command.ts. With the cluster in memory this install measured 309 to 352 ms in 13 runs on the Linux box.
     const installed = await command.run(["install", bootstrap.registryFile, "database"])
     expect(installed.code, `D-170 real core database dispatch must succeed (package hub.mjs ${existsSync(hubPath("hub.mjs")) ? "present" : "missing"})`).toBe(0)
     expect(os.calls).toEqual([])
@@ -134,6 +141,7 @@ for (const osName of ["linux", "macos"] as const) {
         const launch=await make(input)
         const capture=join(sessionDir,"launch.json")
         const session=await claudeCode.start({...launch,preset,sessionId:null,wrap:argv=>launch.wrap(captureCli(capture,f)(argv))})
+        // ending() waits 5000 ms. Measured max 82 ms over 124 turns in 31 runs on the Linux box.
         try {await ending(session)} finally {await session.close()}
         const got=JSON.parse(readFileSync(capture,"utf8"))
         const source=f.sources.find(s=>s.person===person.id)!
@@ -161,6 +169,7 @@ for (const osName of ["linux", "macos"] as const) {
     await (runInstall as Function)({registryFile,stage:"entry",target:bootstrap.ids.sync,os:os.os})
     expect(os.calls.every(c=>c.target===bootstrap.ids.sync)).toBe(true)
     const git = observeGit(f.dir)
+    // syncChild kills at 15000 ms. Measured max 2308 ms in 31 runs on the Linux box, once 10.4 s in an SD card stall.
     const sync = await syncChild({registryFile,id:bootstrap.ids.sync} as Parameters<typeof syncChild>[0],git.env)
     expect(sync.code,sync.err).toBe(0)
     remoteProof()
@@ -212,6 +221,7 @@ for (const osName of ["linux", "macos"] as const) {
       edges[i].file("synthetic-photo",new Uint8Array([11,22,33,44]))
       edges[i].batch([{platform_message_id:"6",chat:i?"1000000001":"0000000000",sender_id:i?"p2":"p1",from:i?"p2":"p1",text:"media rehearsal",at:new Date().toISOString(),media:[{kind:"photo",remote_id:"synthetic-photo",name:"fixture.png",mime:"image/png",bytes:4,caption:"synthetic caption"}]}],"7")
     }
+    // Measured max 2785 ms in 30 runs on the Linux box. Three times that is 8355, so 10000 stays.
     expect(await observe(async()=> (await read.outbox()).filter(r=>r.body.includes("synthetic long answer")).every(r=>r.delivered_at!==null) && edges.every(e=>e.posts().some(p=>p.text.includes("synthetic long answer"))),10000)).toBe(true)
     for(let i=0;i<2;i++) {
       const posts=edges[i].posts().filter(p=>p.text.includes("synthetic long answer"))
@@ -234,6 +244,7 @@ for (const osName of ["linux", "macos"] as const) {
     expect(edges[0].posts().some(p=>p.text==="already delivered")).toBe(false)
     model.hold(m=>m.text === "death during turn")
     edges[0].batch([{platform_message_id:"8",chat:"0000000000",sender_id:"p1",from:"p1",text:"death during turn",at:new Date().toISOString(),media:[]}],"9")
+    // Default 3500 ms window. Measured max 48 ms in 29 runs on the Linux box.
     expect(await observe(()=>model.sessions.some(r=>r.fed.some(m=>m.text==="death during turn")))).toBe(true)
     const target=model.sessions.findLast(r=>r.fed.some(m=>m.text==="death during turn"))!
     expect(target.session.pid).toBeGreaterThan(0)
@@ -242,26 +253,38 @@ for (const osName of ["linux", "macos"] as const) {
     const siblingPid=sibling.session.pid
     model.hold(()=>false)
     target.fail()
+    // Default 3500 ms window. Measured max 33 ms in 29 runs on the Linux box.
     expect(await observe(()=>childGone(target.session.pid!))).toBe(true)
-    expect(await observe(()=>edges[0].posts().some(p=>p.text==="reply to death during turn"),7000)).toBe(true)
+    // Measured max 3867 ms in 29 runs on the Linux box, a 1 s retry plus runner ticks. Three times that is 11601, rounded up.
+    expect(await observe(()=>edges[0].posts().some(p=>p.text==="reply to death during turn"),12000)).toBe(true)
     expect((await read.ledger({subject:"p1-lair"})).some(r=>r.kind==="refused.turn" && Number.isFinite(Date.parse(String(r.detail.retry_at))))).toBe(true)
     expect((await read.sheet("agent_health")).some(r=>r.id==="p1-lair")).toBe(false)
+    // The command watchdog is in helpers/rollout-command.ts. This recover measured max 269 ms in 29 runs on the Linux box.
     const recovery=await command.run(["recover",registryFile,"agent:p1-lair"])
     expect(recovery.code,recovery.err).toBe(0)
+    // Measured max 1341 ms in 29 runs on the Linux box. Three times that is 4023, so 7000 stays.
     expect(await observe(async()=>(await read.sheet("control")).some(r=>r.data.status==="applied"),7000)).toBe(true)
     expect(sibling.session.pid).toBe(siblingPid)
     expect(childGone(siblingPid!)).toBe(false)
     expect(process.pid).toBe(servicePid)
     const originalChat=registry.agents.find(a=>a.id==="p1-lair")!.chat
     editAgent(registryFile,"p1-lair",{chat:"1000000001"})
-    expect(await observe(()=>edges[0].pulls().some(p=>p.chat==="1000000001"),5000)).toBe(true)
+    // A chat the door holds no cursor for is read from the newest cursor on, so the door first walks
+    // this edge's cursor up without reading (src/door/run.ts:275) and a message sent during that walk
+    // is dropped as history. The walk ends at the pull from the newest cursor, "9".
+    // Measured max 1286 ms in 27 runs on the Linux box. Three times that is 3858, so 5000 stays.
+    expect(await observe(()=>edges[0].pulls().some(p=>p.chat==="1000000001" && p.cursor==="9"),5000)).toBe(true)
     edges[0].batch([{platform_message_id:"10",chat:"1000000001",sender_id:"p1",from:"p1",text:"after recovery and mapping",at:new Date().toISOString(),media:[]}],"11")
+    // Measured max 89 ms in 25 runs on the Linux box once the send waits for the walk. Three times that is 267, so 7000 stays.
     expect(await observe(()=>edges[0].posts().some(p=>p.chat==="1000000001" && p.text.includes("after recovery and mapping")),7000)).toBe(true)
     expect(edges[0].posts().some(p=>p.chat===originalChat && p.text.includes("after recovery and mapping"))).toBe(false)
     expect(os.calls.filter(c=>c.operation==="restart")).toEqual([])
     edges[1].batch([{platform_message_id:"10",chat:"1000000001",sender_id:"p2",from:"p2",text:"harvest this",at:new Date().toISOString(),media:[]}],"11")
-    expect(await observe(async()=>(await read.sql("select * from inbound where kind='harvest' and id like 'harvest-demand:%'")).length===1,5000)).toBe(true)
+    // Measured max 1807 ms in 25 runs on the Linux box. Three times that is 5421, rounded up.
+    expect(await observe(async()=>(await read.sql("select * from inbound where kind='harvest' and id like 'harvest-demand:%'")).length===1,6000)).toBe(true)
+    // Measured max 1494 ms in 25 runs on the Linux box. Three times that is 4482, so 10000 stays.
     expect(await observe(()=>existsSync(join(vault.vaultDir,"life","demand-note.md")),10000)).toBe(true)
+    // Measured max 28 ms in 25 runs on the Linux box. Three times that is 84, so 5000 stays.
     expect(await observe(async()=>(await read.noticeRows()).some(r=>r.person==="p2" && /harvest|saved|сохран/i.test(r.body)),5000)).toBe(true)
     expect(transcript).not.toContain("harvest this")
     expect(process.pid).toBe(servicePid)
