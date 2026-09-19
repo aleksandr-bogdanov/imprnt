@@ -505,6 +505,17 @@ export function syncCause(language: Language, code: string): string {
   return (causes[code] ?? ["operation failed", "операция не удалась"])[language === "ru" ? 1 : 0];
 }
 
+/**
+ * What to do about a batch the door fetched and could not accept. It is a
+ * refusal on this side, the store or the chat log, and the door replays the
+ * same batch every tick, so restarting it changes nothing.
+ */
+export function acceptRepair(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "устраните указанную причину в {target}: дверь повторяет ту же партию каждый тик, перезапуск не поможет."
+    : "repair the reported cause for {target}: the door replays the same batch every tick, and restarting it changes nothing.", values);
+}
+
 export function syncRepair(language: Language, values: LineValues = {}): string {
   return interpolate(language, language === "ru"
     ? "устраните указанную причину в {target} и повторите синхронизацию."

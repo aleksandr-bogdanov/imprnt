@@ -61,6 +61,15 @@ for (const blocked of [true, false]) {
       expect(first.data.cause).toBeTruthy()
       expect(first.data.retry_at).toBeTruthy()
       expect(JSON.stringify(await finding()), "check must report the chat whose batch is refused").toContain("accept-failed")
+      // A refused batch is not an unreadable chat, and a door restart replays
+      // the same batch into the same refusal. So it is its own finding, it
+      // carries what was really thrown instead of the wording the person is
+      // told, and it never tells the operator to recover the door.
+      const refused = (await finding())!
+      expect(refused.kind, "an acceptance failure is its own finding").toBe("accept-failed")
+      expect(refused.fix, "and never sends the operator to restart the door").not.toContain("recover")
+      expect(refused.fix).toContain("door-fake/1000000001")
+      expect(refused.says, "the finding carries the real error, which names the file").toContain(day)
       // Several more refused replays: one episode, one notice, one stable row.
       await Bun.sleep(3000)
       expect(edge.pulls().filter(pull => pull.chat === "1000000001").length).toBeGreaterThan(3)
