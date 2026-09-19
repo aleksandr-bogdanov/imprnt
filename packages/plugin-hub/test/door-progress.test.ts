@@ -32,6 +32,7 @@ import {
   RUNNER,
   chatLogLines,
 } from "./helpers/hub-fixture.ts";
+import { scriptedReply } from "./helpers/scripted-adapter.ts";
 
 let cluster: Cluster;
 
@@ -332,4 +333,127 @@ test(
     }
   },
   SLOW,
+);
+
+test(
+  "MSG-10 a message that arrives while a turn is worked on does not push the totals behind the reply: with the wait that arrival replaced already timed out, the answered stamp still wakes the door at once, so the totals edit lands before the reply and the reply never waits out the door's 5 s totals allowance (L6, D-126, BUILD-NOTES 168)",
+  async () => {
+    const { runDoor } = await seam("src/door/run.ts");
+    const { runRunner } = await seam("src/runner/run.ts");
+
+    // A TICK OF 20 SECONDS, because of the size of the delay this check has to
+    // see. The door's turn loop waits one tick at most, so a wake it hears late
+    // is late by under one tick, and a reply waits for its totals for at most
+    // 5 s (`TOTALS_WAIT_MS`). Only a tick well over 5 s lets a late wake outlast
+    // that allowance with margins no scheduler can flip.
+    const TICK_MS = 20_000;
+    /** How long a reply may wait for its totals, written out by the TEST. */
+    const TOTALS_ALLOWANCE_MS = 5000;
+    const it = await stageHub(cluster, { language: "en", hub: { tick_seconds: TICK_MS / 1000 } });
+    let door: { stop(): Promise<void> } | null = null;
+    let runner: { stop(): Promise<void> } | null = null;
+
+    const chat = () => it.fake.posts().filter((one) => one.chat === CHAT);
+
+    /**
+     * One held turn, measured. The progress line is posted one tick after the
+     * turn starts, and the door arms its next wait, bounded by one tick, as it
+     * posts it. With `interrupt` a second message arrives 15 s later, so the
+     * door drops that wait for the arrival and arms another in its place, and
+     * the dropped wait's own timer then goes off at 20 s. The turn is let end
+     * at 23 s, after that timer and 12 s before the live wait's bound.
+     */
+    const turn = async (text: string, interrupt: string | null) => {
+      const before = chat().length;
+      it.scripted.holdTurnEnd(true);
+      it.fake.deliver({ text });
+      await until(
+        "the progress line was posted",
+        () => chat().length >= before + 1,
+        TICK_MS + 40_000,
+        async () => `posts=${JSON.stringify(it.fake.posts())} inbound=${JSON.stringify(await it.read.inbound())}`,
+      );
+      const line = chat()[before];
+      expect(WORKING_NO_ACTIONS.test(line.text)).toBe(true);
+
+      if (interrupt !== null) {
+        await Bun.sleep(Math.max(0, line.at + 15_000 - Date.now()));
+        it.fake.deliver({ text: interrupt });
+        await until(
+          "the door wrote the second message down",
+          async () => (await it.read.inbound()).some((row) => row.body === interrupt),
+          4000,
+        );
+        // A FIXTURE GUARD, not the behaviour. The arrival has to win the race
+        // against the wait armed with the line, which means landing before
+        // that wait's own bound.
+        if (Date.now() >= line.at + TICK_MS) {
+          throw new Error("the second message landed after the wait it was meant to replace had already timed out, so this run staged nothing");
+        }
+      }
+
+      await Bun.sleep(Math.max(0, line.at + 23_000 - Date.now()));
+      const released = Date.now();
+      it.scripted.holdTurnEnd(false);
+      await until(
+        "the reply was posted",
+        () => chat().some((one) => one.text === scriptedReply(text)),
+        30_000,
+        async () => `posts=${JSON.stringify(it.fake.posts())} inbound=${JSON.stringify(await it.read.inbound())}`,
+      );
+      // Waited for on its own, so a build that posts the totals AFTER the reply
+      // is measured rather than timed out.
+      const totalsOf = () =>
+        it.fake.edits().find(
+          (one) => one.chat === CHAT && one.id === String(line.id) && TOTALS_NO_ACTIONS.test(one.text),
+        );
+      await until(
+        "the totals edit landed",
+        () => totalsOf() !== undefined,
+        TICK_MS + 20_000,
+        () => `edits=${JSON.stringify(it.fake.edits())}`,
+      );
+      const reply = chat().find((one) => one.text === scriptedReply(text))!;
+      return { released, reply: reply.at, totals: totalsOf()!.at };
+    };
+
+    try {
+      door = await (runDoor as Function)({
+        door: DOOR,
+        registryFile: it.registryFile,
+        platform: it.fake.platform,
+      });
+      // Up before any message, so its session's tail is empty and the held
+      // turn is the human message's.
+      runner = await (runRunner as Function)({
+        runner: RUNNER,
+        registryFile: it.registryFile,
+        adapters: { [it.adapterName]: it.scripted.adapter },
+      });
+
+      // THE CONTROL, the same turn with nothing arriving while it is worked
+      // on. The door hears the answered stamp at once, the totals go first and
+      // the reply follows without waiting out the allowance. It passes before
+      // and after the fix, which is what says the tick and the timings here are
+      // not what fails the case below.
+      const calm = await turn("a question on its own", null);
+      expect(calm.totals).toBeLessThanOrEqual(calm.reply);
+      expect(calm.reply - calm.released).toBeLessThan(TOTALS_ALLOWANCE_MS);
+
+      // THE DEFECT. A second message arrives mid-turn. The wait it replaced
+      // times out 5 s later into a promise nobody holds, and a waiter whose
+      // dropped timer disarms the live wait is deaf when the turn ends: the
+      // answered stamp is parked until the live wait's bound, the reply waits
+      // out its whole allowance and goes out first, and the totals edit
+      // follows it about 7 s later.
+      const busy = await turn("a question with a follow-up", "and one more thing");
+      expect(busy.totals).toBeLessThanOrEqual(busy.reply);
+      expect(busy.reply - busy.released).toBeLessThan(TOTALS_ALLOWANCE_MS);
+    } finally {
+      if (runner) await runner.stop();
+      if (door) await door.stop();
+      await it.stop();
+    }
+  },
+  180_000,
 );
