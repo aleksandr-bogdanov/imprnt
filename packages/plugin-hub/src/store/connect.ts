@@ -82,33 +82,49 @@ const SAYS_OK_EARLY: [string, string[]][] = [
 ];
 
 /**
- * How many connections one store holds, and why it is more than one.
+ * How many connections one store holds, and why it is still four.
  *
- * REPRODUCED 2026-09-19 by `test/store-crossing.test.ts`, which carries the
- * whole mechanism. Bun's Postgres client hands every answer on a connection to
- * the oldest statement queued there, and it writes a statement it has already
- * prepared at once while a statement new to that connection waits for the
- * connection to go idle. On a busy connection the prepared one overtakes, so
- * the new one is handed its answer and the one that overtook is never answered.
- * That is the outage claim that read its `since` as undefined in phase 4, and
- * the diary append with no `seq` in phase 6.
+ * THE CROSSING, reproduced 2026-09-19 by `test/store-crossing.test.ts`, which
+ * carries the whole mechanism. With its automatic pipelining on, Bun's Postgres
+ * client writes a statement it has already prepared at once, while a statement
+ * new to that connection waits for the connection to go idle, and it hands
+ * every answer to the oldest statement queued there. On a busy connection the
+ * prepared one overtakes, the new one is handed its answer, and the one that
+ * overtook is never answered. That is the outage claim that read its `since` as
+ * undefined in phase 4, and the diary append with no `seq` in phase 6. A wider
+ * pool never prevented it: four and eight connections crossed the same way once
+ * every connection was busy, and the width only decided whether the store kept
+ * answering afterwards.
  *
- * A wider pool does not prevent it. The pool only doubles up on a connection
- * once every connection is busy, so four connections cross at a higher load
- * than one and cross all the same. What the width buys is the aftermath: with
- * one connection every later statement of the process waits forever behind the
- * lost one, and with more than one the pool routes around the wedged connection
- * and the store keeps answering. That is the floor the check holds, and it is
- * why claims, deadline reads and the runner's own diary writes each reserve a
- * connection for their statement. Neither `prepare: false` (it sends a jsonb
- * parameter as "[object Object]") nor the client's pipelining switch set from
- * inside the process removes the cause.
+ * THE CAUSE IS OFF. Every process is started with `STARTED_WITH` and
+ * `openStore` refuses one that was not, so no connection pipelines and the
+ * check holds 0 crossings in N. The width was then measured again on what the
+ * hub itself needs, and it does not come down:
  *
- * Four rather than eight because a 40-connection cluster refused a hub, two
- * doors, a runner and their listeners at eight. What stays true of one
- * connection stays true of the first: the process names itself to the server
- * there, the hub's advisory lock is held by that session, and a waiting process
- * still issues nothing at all.
+ *   - At one, the v2 handoff and the history catch-up wedge. Each reserves a
+ *     connection for a session advisory lock and then runs its work through
+ *     the pool while holding it (`src/migrate/handoff.ts`,
+ *     `src/migrate/harvest.ts`), so the reservation is the whole pool and the
+ *     next statement waits forever. Every one of the 14 checks that ran in
+ *     `test/v2-work-handoff.test.ts` and `test/harvest-v2-catchup.test.ts`
+ *     failed, 13 of them by hanging to the 90 s bound.
+ *   - At two, a door wedges under load. `test/door-chat-health.test.ts` with
+ *     four cores kept busy hung to the 90 s bound in 4 of 8 runs, always in a
+ *     same-person route check, and once in a full suite run. The server showed
+ *     one door connection idle in a transaction with no lock waiting, so the
+ *     door was waiting on its own client, not on the database. It is the width
+ *     and not the switch: with the switch off the same runs hung in 3 of 8.
+ *     What exactly the door waited for was not pinned down.
+ *   - At three the same 8 runs were clean, and at four they were clean and so
+ *     was the full suite. Three is not taken: without the mechanism at two, 8
+ *     clean runs are a sample and not a floor, and a wedged door costs more
+ *     than the 35 MB it would save.
+ *
+ * So memory stays where it was: a backend after hub-shaped work costs about
+ * 5 MB PSS on the hub box, and a two-person household holds 7 stores, about
+ * 140 MB at four. What stays true of one connection stays true of the first:
+ * the process names itself to the server there, the hub's advisory lock is
+ * held by that session, and a waiting process still issues nothing at all.
  */
 const CONNECTIONS_PER_STORE = 4;
 
