@@ -23,6 +23,7 @@
 
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readFileSync, statSync, writeFileSync } from "node:fs"
+import { userInfo } from "node:os"
 import { join } from "node:path"
 import { SQL } from "bun"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
@@ -142,4 +143,64 @@ test("IMP-158 (c) install names the pg_hba.conf lines that still let a hub role 
     expect(said).toContain("pg_hba.conf")
     for (const line of trusted) expect(said).toMatch(new RegExp(`\\b${line}\\b`))
   } finally { await f.stop(); await open.stop() }
+}, SLOW)
+
+test("install names every pg_hba.conf shape that lets a hub role in without a password, and a role named after its own account", async () => {
+  // The cutover asks the operator to confirm that NO line, local or host, lets
+  // these roles in without a password. The check only ever looked at `trust`
+  // lines naming `all` or a role by name, so four shapes that reach the same
+  // roles went unsaid: the `samerole` and `sameuser` database keywords, a
+  // `+group` entry carrying a hub role, and `peer` or `ident`, which ask for the
+  // operating system account instead of a secret. Another process of the same
+  // account is that account, so a socket line plus a role named after it is a
+  // login to the store with nothing to steal.
+  //
+  // `pg_hba_file_rules` re-reads the file, so nothing here reloads the cluster
+  // and every helper keeps the way in it started with.
+  const open = await startCluster()
+  const f = await serviceFixture(open, true)
+  const admin = open.connect("postgres")
+  try {
+    const probe = serviceOs(f.dir, "systemd", Object.values(f.ids)).os
+    // The roles have to exist before a group can carry one, so the first run
+    // makes them and the runs below read a settled cluster.
+    await install(f.registryFile, probe)
+    await admin.unsafe("do $$ begin create role hub_friends nologin; exception when duplicate_object then null; end $$")
+    await admin.unsafe("grant hub_friends to hub_door")
+    const account = userInfo().username
+    await admin.unsafe(`do $$ begin create role "${account}" login; exception when duplicate_object then null; end $$`)
+
+    const hba = join(open.dataDir, "pg_hba.conf")
+    const quiet = [
+      `local all ${open.superuser} trust`,
+      `host all ${open.superuser} 127.0.0.1/32 trust`,
+      `host all ${open.superuser} ::1/128 trust`,
+    ]
+    // Control first: the same cluster, the same roles, none of the shapes. The
+    // install says nothing about the file or about the account's role.
+    writeFileSync(hba, [...quiet, "host all all 127.0.0.1/32 scram-sha-256", ""].join("\n"))
+    const control = await install(f.registryFile, probe)
+    expect(control, "no reachable rule, nothing said about the file").not.toContain("pg_hba.conf")
+    expect(control, "and nothing said about the account's role").not.toContain(account)
+
+    const reachable = [
+      ...quiet,
+      "local samerole hub_door trust",
+      "local sameuser all trust",
+      "host all +hub_friends 127.0.0.1/32 trust",
+      "local all all peer",
+      "host all all ::1/128 ident",
+      "host all all 127.0.0.1/32 scram-sha-256",
+      "",
+    ]
+    writeFileSync(hba, reachable.join("\n"))
+    const said = await install(f.registryFile, probe)
+    // 4 and 5 are the database keywords, 6 is the group carrying hub_door.
+    expect(said).toContain("without a password on line 4, 5, 6")
+    // 7 and 8 ask for the account rather than a secret, and their repair differs.
+    expect(said).toContain("over the socket on the operating system account alone, with no password, on line 7, 8")
+    expect(said, "the account's own role is named beside the rule that admits it").toContain(`a role named ${account}`)
+    // The one line that asks for a password is not among them.
+    expect(said).not.toContain("line 9")
+  } finally { await admin.close(); await f.stop(); await open.stop() }
 }, SLOW)
