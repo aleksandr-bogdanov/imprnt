@@ -74,7 +74,13 @@ export async function convertV2Registry(manifest: any, platformLookup: (request:
   const selectedCredentials = new Set(Object.values(presets).map((preset: any) => preset.credential));
   const credentials = manifest.credentials.filter((credential: any) => selectedCredentials.has(credential.id) ||
     run.some(entry => entry.kind === "door" && entry.platform === credential.kind && entry.token_file === credential.file));
-  const data = { hub: { ...manifest.hub, cutover_batch: manifest.batch_id }, machines: manifest.machines, credentials, people, presets, agents, run, repositories: manifest.repositories };
+  const data: Record<string, unknown> = { hub: { ...manifest.hub, cutover_batch: manifest.batch_id }, machines: manifest.machines, credentials, people, presets, agents, run, repositories: manifest.repositories };
+  // The candidate is promoted over the active registry, so every table of that file the
+  // conversion does not write ([install], [store], [runner], [door], [[rates]]) is carried
+  // unchanged. Dropping [install] would stop the next database install, and [store] is
+  // where the database install recorded the store's pid file. An unreadable active
+  // registry refuses, so a mistyped path cannot publish a candidate without them.
+  for (const [key, value] of Object.entries(loadRegistry(manifest.active_registry).data)) if (!(key in data)) data[key] = value;
   for (const file of files) {
     if (within(file.path, checkout) || manifest.fragment_roots.some((root: string) => within(file.path, root))) throw new Error("private destination is inside checkout or source");
   }

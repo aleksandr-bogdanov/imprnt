@@ -1,9 +1,11 @@
 import { beforeAll, expect, test } from "bun:test"
-import { readFileSync, writeFileSync, statSync, rmSync } from "node:fs"
+import { copyFileSync, readFileSync, writeFileSync, statSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { loadRegistry } from "../src/registry/load.ts"
+import { loadRegistry, readSetting } from "../src/registry/load.ts"
+import { readStorePid } from "../src/hub/peak.ts"
 import { claudeCode } from "../src/adapters/claude-code.ts"
-import { seam } from "./helpers/cluster.ts"
+import { seam, startCluster } from "./helpers/cluster.ts"
+import { serviceFixture } from "./helpers/rollout-service.ts"
 import { migrationFixture, privateJson, digest } from "./helpers/rollout-migration.ts"
 import { launchInput, launchSeam, captureCli, ending } from "./helpers/rollout-loop.ts"
 import { proveMigrationFixtures } from "../live/prove-rollout-migration.ts"
@@ -105,4 +107,44 @@ for (const fault of ["missing-agent", "unreadable-fragment", "unresolved-import"
     await expect(convert(manifest, f.lookup)).rejects.toThrow(/agent|fragment|import|JSON|channel|active|absolute|path|permission|allow|MCP|command/i)
     expect(readFileSync(f.file, "utf8")).toBe(active)
   } finally { f.stop() }
+})
+
+test("D-186 steps 6 and 7 the promoted candidate keeps the active registry's install and store tables, so a later database install still runs", async () => {
+  const cluster = await startCluster()
+  const f = migrationFixture()
+  let bootstrap: Awaited<ReturnType<typeof serviceFixture>> | undefined
+  try {
+    bootstrap = await serviceFixture(cluster, true)
+    const { runInstall } = await seam("src/install/run.ts") as { runInstall: (options: any) => Promise<any> }
+    const database = () => runInstall({ registryFile: bootstrap!.registryFile, stage: "database" })
+    // Step 6 writes [store] into the bootstrap registry the household uses.
+    await database()
+    // A setting the household put in the bootstrap registry by hand.
+    writeFileSync(bootstrap.registryFile, readFileSync(bootstrap.registryFile, "utf8") + "\n[runner]\ntask_retry_seconds = 7\n")
+    const bootstrapped = loadRegistry(bootstrap.registryFile)
+    const store = bootstrapped.data.store
+    expect(readStorePid(bootstrapped).pid, "the real cluster's pid file").toBeGreaterThan(0)
+    // Control on the same path: the unconverted registry installs again with no change.
+    const before = readFileSync(bootstrap.registryFile, "utf8")
+    await database()
+    expect(readFileSync(bootstrap.registryFile, "utf8")).toBe(before)
+    // Step 7 converts against that registry, and the reviewed candidate is promoted over it.
+    const manifest = structuredClone(f.registryManifest)
+    manifest.active_registry = bootstrap.registryFile
+    manifest.hub = { ...manifest.hub, store_url: (bootstrapped.data.hub as Record<string, unknown>).store_url }
+    // A mistyped active registry refuses rather than converting without its tables.
+    await expect((await converter())({ ...manifest, active_registry: `${bootstrap.registryFile}.mistyped` }, f.lookup)).rejects.toThrow(/cannot be read/)
+    expect(() => statSync(manifest.candidate), "no candidate is published").toThrow()
+    await (await converter())(manifest, f.lookup)
+    expect(readFileSync(bootstrap.registryFile, "utf8"), "the active registry is never overwritten").toBe(before)
+    copyFileSync(manifest.candidate, bootstrap.registryFile)
+    // A later migration runs against the promoted file and keeps one store declaration.
+    await database()
+    const promoted = loadRegistry(bootstrap.registryFile)
+    expect(promoted.agents.map(a => a.id).sort()).toEqual(["p1-lair", "p2-lair"])
+    expect(readSetting(promoted, "install.admin_argv")).toEqual(bootstrap.admin)
+    expect(promoted.data.store).toEqual(store)
+    expect(readSetting(promoted, "runner.task_retry_seconds")).toBe(7)
+    expect(readStorePid(promoted)).toEqual(readStorePid(bootstrapped))
+  } finally { await bootstrap?.stop(); f.stop(); await cluster.stop() }
 })
