@@ -92,6 +92,15 @@ function brewPrefix(): string {
  */
 const MAC_LOGIN = [join(homedir(), "Library", "Keychains")];
 
+/**
+ * The runtime sockets a boxed command must not reach on Linux: the user session
+ * bus and systemd's private socket (both under /run/user) and the system bus
+ * (/run/dbus). Either bus takes a start-a-unit call from this account, and that
+ * unit runs outside the box. Both directories exist on any box that has such a
+ * bus, so a fresh tmpfs over each empties them without a per-uid path.
+ */
+const RUNTIME_MASKS = ["/run/user", "/run/dbus"];
+
 function flavourOf(ctx: BoxContext, platform?: string): string {
   return String(platform ?? process.platform);
 }
@@ -271,7 +280,15 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         ...(ctx.sessionDir ? ["--bind", ctx.sessionDir, ctx.sessionDir] : []),
         ...[...new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])]
           .flatMap(tree => ["--tmpfs", tree]),
-        // IMP-158. After everything above, so nothing bound later uncovers one.
+        // A fresh empty tmpfs over the user runtime directory and the system
+        // bus directory. The user session bus and systemd's own private socket
+        // both live under /run/user, and a process that reaches either can ask
+        // this account's systemd to start a unit that then runs OUTSIDE the box.
+        // The loop's environment carries no runtime directory, so nothing it
+        // needs is there. The parent /run/user is masked rather than the per-uid
+        // directory so the mask is the same on every box and needs no uid.
+        ...RUNTIME_MASKS.flatMap(path => ["--tmpfs", path]),
+        // Masks come after everything above, so nothing bound later uncovers one.
         ...secretMasks(ctx).flatMap(({ path, directory }) =>
           directory ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path]),
         "--",

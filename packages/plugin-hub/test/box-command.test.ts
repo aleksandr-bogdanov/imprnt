@@ -217,11 +217,14 @@ test(
       // same /proc.
       expect(proc).toBeGreaterThan(devBind);
 
-      // One --tmpfs per other tree, over that tree.
       const tmpfsAt = argv
         .map((a, i) => (a === "--tmpfs" ? argv[i + 1] : null))
         .filter((a): a is string => a !== null);
-      expect(tmpfsAt).toEqual([p2.tree]);
+      // One --tmpfs per other tree, over that tree.
+      expect(tmpfsAt.filter((path) => !path.startsWith("/run/"))).toEqual([p2.tree]);
+      // The user runtime directory and the system bus directory are masked too.
+      expect(tmpfsAt).toContain("/run/user");
+      expect(tmpfsAt).toContain("/run/dbus");
 
       // No --unshare-net: the loop needs the model API and the tailnet, so a
       // network namespace here breaks the hub rather than fencing it.
@@ -308,7 +311,7 @@ test(
         const masked = build(PROBE, { ...withThree, platform: "linux" }, "linux");
         const masks = masked.argv
           .map((a, i) => (a === "--tmpfs" ? masked.argv[i + 1] : null))
-          .filter((a): a is string => a !== null)
+          .filter((a): a is string => a !== null && !a.startsWith("/run/"))
           .sort();
         expect(masks).toEqual(
           [three.trees.person("p2").tree, three.trees.person("p3").tree].sort(),
