@@ -5,6 +5,7 @@ import type { RunEntry } from "../registry/load.ts";
 import { scheduleSeconds, wantedState } from "./diff.ts";
 import { SCAN_PREFIX, isOurs, timerName, unitName } from "./names.ts";
 import type { MemoryReading, OsSeam, RenderContext, UnitFile, UnitState } from "./types.ts";
+import { STARTED_WITH } from "../store/connect.ts";
 
 /**
  * systemd, as the hub talks to it: `systemctl --user` and nothing else.
@@ -174,6 +175,9 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
         "StandardOutput=journal",
         "StandardError=journal",
         `ExecStart=${argv.map(argument).join(" ")}`,
+        // Every program the hub renders opens a store, and the store refuses a
+        // process started without these, which only the start can supply.
+        ...Object.entries(STARTED_WITH).map(([name, value]) => `Environment=${argument(`${name}=${value}`)}`),
         // Only a resident asks to be kept alive. A scheduled service is started
         // by its timer and an on-demand one by a person, so neither carries
         // Restart=always, or the transcriber is restarted forever.

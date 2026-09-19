@@ -5,6 +5,7 @@ import type { RunEntry } from "../registry/load.ts";
 import { scheduleSeconds, wantedState } from "./diff.ts";
 import { SCAN_PREFIX, isOurs, unitName } from "./names.ts";
 import type { MemoryReading, OsSeam, RenderContext, UnitFile, UnitState } from "./types.ts";
+import { STARTED_WITH } from "../store/connect.ts";
 
 /**
  * launchd, as the hub talks to it: `launchctl` in the per-user gui domain, which
@@ -121,6 +122,12 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
         "  <array>",
         ...argv.map((one) => `    <string>${xml(one)}</string>`),
         "  </array>",
+        // Every program the hub renders opens a store, and the store refuses a
+        // process started without these, which only the start can supply.
+        "  <key>EnvironmentVariables</key>",
+        "  <dict>",
+        ...Object.entries(STARTED_WITH).flatMap(([name, value]) => [`    <key>${xml(name)}</key>`, `    <string>${xml(value)}</string>`]),
+        "  </dict>",
         // A resident comes back at login and is kept alive. Nothing else is.
         "  <key>RunAtLoad</key>",
         wanted === "running" ? "  <true/>" : "  <false/>",

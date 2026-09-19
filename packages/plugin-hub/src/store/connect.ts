@@ -16,6 +16,52 @@ export class DurabilityRefused extends Error {
   }
 }
 
+/**
+ * The environment every process that opens a store is started with.
+ *
+ * Bun's Postgres client pipelines by default, and in Bun 1.3.14 that hands one
+ * statement another statement's answer (the mechanism is below, at the pool
+ * size). This switch turns the pipelining off, and Bun reads it ONCE, when the
+ * process starts: set from inside a running process it changes nothing, which
+ * `test/store-crossing.test.ts` measures. So it cannot be set here. It is set
+ * by whatever starts the process: the unit files `src/os/systemd.ts` and
+ * `src/os/launchd.ts` render, the `hub.mjs` launcher behind `imprnt hub`, and
+ * the package's `test` script.
+ */
+export const STARTED_WITH: Readonly<Record<string, string>> = Object.freeze({
+  BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING: "1",
+});
+
+/** A process started without `STARTED_WITH`, which the store will not serve. */
+export class PipeliningRefused extends Error {
+  readonly variable: string;
+
+  constructor(variable: string, value: string | undefined) {
+    // One line, because every command prints the first line of an error.
+    super(
+      `this process was started without ${variable}=1 (${value === undefined ? "it is unset" : `it is "${value}"`}), ` +
+        `and without it Bun's Postgres client can hand one statement the answer meant for another. ` +
+        `Start the process with ${variable}=1 in its environment, because setting it after the start does nothing.`,
+    );
+    this.name = "PipeliningRefused";
+    this.variable = variable;
+  }
+}
+
+/**
+ * The refusal, as a function, so it runs before a single connection is opened.
+ *
+ * It reads the environment, and it is not a behaviour switch (RUN-07): nothing
+ * about what the hub does depends on it, only whether the runtime underneath
+ * can be trusted to hand each statement its own answer.
+ */
+function refuseUnlessPipeliningIsOff(): void {
+  for (const [variable, wanted] of Object.entries(STARTED_WITH)) {
+    const value = process.env[variable];
+    if (value !== wanted) throw new PipeliningRefused(variable, value);
+  }
+}
+
 export interface Store {
   /** The Bun SQL client: a tagged template that also carries unsafe, begin and reserve. */
   sql: SQL;
@@ -67,6 +113,7 @@ const SAYS_OK_EARLY: [string, string[]][] = [
 const CONNECTIONS_PER_STORE = 4;
 
 export async function openStore(options: { url: string }): Promise<Store> {
+  refuseUnlessPipeliningIsOff();
   const sql = new SQL(options.url, { max: CONNECTIONS_PER_STORE });
   try {
     const [row] = (await sql.unsafe(
