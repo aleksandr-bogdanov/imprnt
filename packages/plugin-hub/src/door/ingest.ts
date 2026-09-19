@@ -46,7 +46,7 @@ export async function acceptBatch(options: {
       if (target.length === 2) {
         try {
           await requestRecovery(store, { id, registry, source: "chat", actor: sender, sender_id: sender,
-            person: agent.person, door, chat: agent.chat, target_kind: "agent", target_id: target[1] });
+            person: agent.person, door, chat: agent.chat, agent: agent.id, target_kind: "agent", target_id: target[1] });
           text = recoveryAccepted(language, { target: target[1] });
         } catch (error) {
           if (!["invalid-recovery-target", "recovery-not-authorized"].includes((error as Error).message)) throw error;
