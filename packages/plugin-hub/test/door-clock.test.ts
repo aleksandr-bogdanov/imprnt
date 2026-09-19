@@ -625,11 +625,24 @@ test(
         registryFile: it.registryFile,
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
+      // The two earlier messages are still this runner's to answer, and one
+      // delivered now waits behind both turns before it is acked. Against a
+      // one second acked clock that wait is a clock really running out on a
+      // slow runner, which drew a line and failed this control on CI (PR 31).
+      // So the control's message goes in once the backlog is answered, and
+      // what it shows is a message answered in time drawing nothing.
+      await until(
+        "the restarted runner answered the two earlier messages",
+        async () =>
+          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 2,
+        45_000,
+        async () => JSON.stringify(await it.read.inbound()),
+      );
       it.fake.deliver({ text: "a question answered while the new door watches" });
       await until(
         "the new message was answered and posted",
         async () =>
-          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 2,
+          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 3,
         45_000,
         async () => JSON.stringify(await it.read.inbound()),
       );
