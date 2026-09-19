@@ -1,8 +1,8 @@
 // Standalone helper proof, also imported before any plan-02 check uses it.
 import assert from "node:assert/strict"
-import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, chmodSync, mkdirSync, rmSync, lstatSync } from "node:fs"
 import { join, dirname } from "node:path"
-import { loopFixture, launchInput, captureCli, digest, stateFiles, fileProbe, controlledMcp, capabilityProbe, nativeWrap, ending, withAmbient } from "../test/helpers/rollout-loop.ts"
+import { loopFixture, launchInput, captureCli, digest, stateFiles, fileProbe, controlledMcp, capabilityProbe, nativeWrap, ending, withAmbient, scriptedClaude } from "../test/helpers/rollout-loop.ts"
 import { claudeCode } from "../src/adapters/claude-code.ts"
 import { fakeClaudeCli, healthyResult } from "../test/helpers/fake-cli.ts"
 import { boxGate } from "../test/helpers/box-gate.ts"
@@ -70,6 +70,48 @@ try {
   assert.equal(probe.version, "synthetic-version")
   assert.equal(probe.flags.length, 5)
   assert.equal(capabilityProbe("/nonexistent/synthetic-cli", {}).ok, false)
+  // The scripted `claude` the IMP-162 checks put in front of the probe: it
+  // answers what the probe asks, reads the canonical login only, hangs as told,
+  // and writes down every call, the killed ones included.
+  const canonical = join(f.dir, "scripted-login"), session = join(f.dir, "scripted-session")
+  for (const dir of [canonical, session]) mkdirSync(dir)
+  const tier = (value: string) => JSON.stringify({ claudeAiOauth: { accessToken: "synthetic", subscriptionType: value } })
+  writeFileSync(join(canonical, ".credentials.json"), tier("max"))
+  writeFileSync(join(session, ".credentials.json"), tier("poison"))
+  const scriptedEnv = { PATH: process.env.PATH, CLAUDE_SECURESTORAGE_CONFIG_DIR: canonical, CLAUDE_CONFIG_DIR: session }
+  for (const hang of ["never", "first", "always"] as const) {
+    const cli = scriptedClaude(hang)
+    try {
+      // A call that must answer gets a wait no loaded machine runs out of, and
+      // one that must hang a short one, since it hangs whatever it is given.
+      const ask = (args: string[], hangs = false) => Bun.spawnSync([cli.bin, ...args], { env: scriptedEnv, stdout: "pipe", stderr: "pipe", timeout: hangs ? 2000 : 30_000 })
+      const version = ask(["--version"]), help = ask(["--help"])
+      assert.equal(version.exitCode, 0)
+      assert.match(version.stdout.toString(), /\d+(?:\.\d+)+/)
+      for (const flag of ["--setting-sources", "--strict-mcp-config", "--settings", "--tools"]) assert.ok(help.stdout.toString().includes(flag))
+      const status = ["auth", "status", "--json"]
+      const first = ask(status, hang !== "never"), second = ask(status, hang === "always")
+      assert.equal(first.exitedDueToTimeout, hang !== "never")
+      assert.equal(second.exitedDueToTimeout, hang === "always")
+      if (hang !== "always") {
+        assert.deepEqual(JSON.parse(second.stdout.toString()), { loggedIn: true, subscriptionType: "max" })
+        rmSync(join(canonical, ".credentials.json"))
+        assert.deepEqual(JSON.parse(ask(status).stdout.toString()), { loggedIn: false })
+        writeFileSync(join(canonical, ".credentials.json"), tier("max"))
+      }
+      assert.equal(cli.auth(), hang === "always" ? 2 : 3)
+      assert.equal(cli.calls().length, cli.auth() + 2)
+      const inode = lstatSync(cli.bin).ino
+      cli.replace("never")
+      assert.notEqual(lstatSync(cli.bin).ino, inode)
+      const before = lstatSync(cli.bin), text = readFileSync(cli.bin, "utf8")
+      cli.rewrite()
+      assert.deepEqual([lstatSync(cli.bin).ino, lstatSync(cli.bin).size], [before.ino, before.size])
+      assert.notEqual(readFileSync(cli.bin, "utf8"), text)
+      assert.match(ask(["--version"]).stdout.toString(), /^2\.1\.1 /)
+    } finally { cli.stop() }
+    assert.equal(existsSync(cli.dir), false)
+  }
 } finally { endpoint.stop(); f.stop() }
 assert.equal(existsSync(f.dir), false)
-console.log("HELPER PASS plan-02: loaded synthetic registry, child argv/env/cwd/sources, poison detection, session write, unboxed direct/symlink probes, MCP receipts, capability probe, child and directory cleanup")
+console.log("HELPER PASS plan-02: loaded synthetic registry, child argv/env/cwd/sources, poison detection, session write, unboxed direct/symlink probes, MCP receipts, capability probe, scripted claude, child and directory cleanup")

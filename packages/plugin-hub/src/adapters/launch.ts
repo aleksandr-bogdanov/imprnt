@@ -114,8 +114,89 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   return { ...boxed, argv, env, credentialId: credential.id };
 }
 
+/** How the capability probe finds the CLI and how long one call to it may take. */
+export interface LoopProbeOptions { bin?: string; timeoutMs?: number }
+export const LOOP_PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * IMP-162. A probe call that did not answer within its wait, asked twice.
+ *
+ * A killed call leaves an empty answer, and an empty answer says nothing about
+ * what the CLI supports. So this is reported as the timeout it is, never as
+ * `credential-source-unsupported`: an operator told that a sound login source
+ * is unsupported goes looking for a problem that is not there.
+ */
+export class LoopProbeTimeout extends Error {
+  constructor(readonly call: string, readonly timeoutMs: number) {
+    super(`loop-probe-timeout: claude ${call} timed out after ${timeoutMs / 1000} s, twice`);
+    this.name = "LoopProbeTimeout";
+  }
+}
+
+/**
+ * IMP-162. The probe's answer, kept per binary and per login, in this process only.
+ *
+ * The probe proves a property of the installed CLI (D-176): that it selects the
+ * named login file, follows its atomic replacement and falls back to nothing.
+ * That answer cannot change while neither the binary nor the login does, so a
+ * launch probes again only when one of them is not the file probed last. The
+ * stamp is each file's own identity at nanosecond resolution: its real path,
+ * device, inode, size, mtime and ctime. An atomic replacement is a new inode
+ * (the signal ROLL-13 pins), an update that repoints a symlink moves the real
+ * path, and every write, rename or chmod moves ctime, which no program can set
+ * back.
+ *
+ * A stamp is trusted only once the file has SETTLED. Timestamps come from a
+ * coarse clock, one tick on Linux and a whole second on some filesystems, so a
+ * second write inside the tick of the first can leave every field a stat reports
+ * exactly as it was. A file whose ctime was already `LOOP_PROBE_SETTLED_MS` old
+ * when it was stamped is past its tick, and any later change lands at a later
+ * ctime. A file changed more recently than that is probed on every launch until
+ * it settles, which is Git's rule for a racily clean index entry. The rule leans
+ * on the wall clock moving forward, so a kept answer is dropped when the clock
+ * has stepped back since it was stamped.
+ *
+ * What is never kept is the login's own refusal. `validateCredentialSource` runs
+ * on every launch before the kept answer is read, so a login that is gone or of
+ * a shape the loop cannot select is refused however recently the binary was
+ * probed. Only a success is kept: a probe that failed or timed out is asked
+ * again on the next launch.
+ */
+export const LOOP_PROBE_SETTLED_MS = 3_000;
+const probed = new Map<string, { stamp: string; clock: number; answer: ReturnType<typeof probeLoopCapabilities> }>();
+
+/** The wall clock's lead over the monotonic one. It falls only when the wall clock steps back. */
+const clockLead = () => Date.now() - performance.now();
+
+function stampOf(file: string): string | null {
+  const real = realpathSync(file);
+  const seen = statSync(real, { bigint: true });
+  if (BigInt(Date.now()) - seen.ctimeMs < BigInt(LOOP_PROBE_SETTLED_MS)) return null;
+  return [real, seen.dev, seen.ino, seen.size, seen.mtimeNs, seen.ctimeNs].join(":");
+}
+
+export function loopCapabilitiesFor(credential: CredentialEntry, probe: LoopProbeOptions = {}) {
+  validateCredentialSource(credential);
+  const bin = probe.bin ?? "claude";
+  const key = [bin, credential.id, credential.file].join("\0");
+  let stamp: string | null = null;
+  try {
+    const executable = Bun.which(bin);
+    const both = executable ? [stampOf(executable), stampOf(credential.file)] : [null];
+    if (both.every(one => one !== null)) stamp = both.join("|");
+  } catch { stamp = null; }
+  const kept = probed.get(key), clock = clockLead();
+  // A second of slack keeps an ordinary clock slew from dropping a good answer.
+  if (stamp !== null && kept?.stamp === stamp && clock > kept.clock - 1_000) return kept.answer;
+  const answer = probeLoopCapabilities(bin, probe.timeoutMs);
+  if (stamp !== null) probed.set(key, { stamp, clock, answer });
+  else probed.delete(key);
+  answer.catch(() => { if (probed.get(key)?.answer === answer) probed.delete(key); });
+  return answer;
+}
+
 /** Offline capability evidence; no real login or model request enters this probe. */
-export async function probeLoopCapabilities(bin = "claude") {
+export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PROBE_TIMEOUT_MS) {
   const executable = Bun.which(bin);
   if (!executable) throw new Error("credential-source-unsupported");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hub-loop-capability-")));
@@ -134,9 +215,18 @@ export async function probeLoopCapabilities(bin = "claude") {
       sessionDir: join(root, "session"), purpose: "ordinary",
       box: { agent: "probe", person: "probe", tree: root, sharedZone: "", otherTrees: [] },
     });
-    const ask = (args: string[]) => Bun.spawnSync(launch.wrap([executable, ...args]), {
-      env: launch.env, cwd: launch.cwd, stdout: "pipe", stderr: "pipe", timeout: 10_000,
-    });
+    // IMP-162. A call that hangs is asked once more before the probe gives up:
+    // measured on the Linux box, `auth status` hung in 4 of 36 runs and answered
+    // in under half a second otherwise.
+    const ask = (args: string[]) => {
+      for (let attempt = 1; ; attempt++) {
+        const answer = Bun.spawnSync(launch.wrap([executable, ...args]), {
+          env: launch.env, cwd: launch.cwd, stdout: "pipe", stderr: "pipe", timeout: timeoutMs,
+        });
+        if (!answer.exitedDueToTimeout) return answer;
+        if (attempt === 2) throw new LoopProbeTimeout(args.join(" "), timeoutMs);
+      }
+    };
     const version = ask(["--version"]), help = ask(["--help"]);
     const flags = ["--setting-sources", "--strict-mcp-config", "--settings", "--tools"];
     if (version.exitCode !== 0 || help.exitCode !== 0 || flags.some(flag => !help.stdout.toString().includes(flag))) {
@@ -160,7 +250,8 @@ export async function probeLoopCapabilities(bin = "claude") {
     }
     return { version: version.stdout.toString().match(/\d+(?:\.\d+)+/)?.[0] ?? "unreported",
       credential_source: true, replacement: true, no_fallback: true, flags };
-  } catch {
+  } catch (error) {
+    if ((error as Error)?.name === "LoopProbeTimeout") throw error;
     throw new Error("credential-source-unsupported");
   } finally { rmSync(root, { recursive: true, force: true }); }
 }

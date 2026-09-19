@@ -1,5 +1,5 @@
 // Test infrastructure only. No loop policy is implemented here.
-import { mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync, rmSync, symlinkSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { rolloutFixture } from "./rollout-fixtures.ts"
 import { fakeClaudeCli, healthyResult } from "./fake-cli.ts"
@@ -189,4 +189,60 @@ export function capabilityProbe(bin: string, env: Record<string, string | undefi
   return { ok: version.exitCode === 0 && help.exitCode === 0,
     version: version.stdout.toString().trim(),
     flags: ["--settings", "--setting-sources", "--strict-mcp-config", "--append-system-prompt-file", "--tools"].filter(flag => help.stdout.toString().includes(flag)) }
+}
+
+/**
+ * An installed `claude` as the capability probe meets it (D-176, IMP-162).
+ *
+ * It answers the five calls `probeLoopCapabilities` makes the way the real CLI
+ * does: a version, a help text naming the isolation flags, and `auth status
+ * --json` read from the canonical login directory ONLY, never from the session
+ * store the probe poisons. `hang` makes `auth status` hang the way it was
+ * measured to on the Linux box: on its first call only, or on every call.
+ * Every invocation is written down before it answers, so a check counts probe
+ * calls, including the ones that were killed.
+ *
+ * It lives under /tmp because the probe runs it INSIDE the box, and /tmp is the
+ * one place both boxes let a command read and write that is nobody's tree.
+ */
+export type Hang = "never" | "first" | "always"
+export function scriptedClaude(hang: Hang = "never") {
+  const dir = realpathSync(mkdtempSync("/tmp/hub-scripted-claude-"))
+  const bin = join(dir, "claude"), log = join(dir, "calls")
+  writeFileSync(log, "")
+  const hangs = { never: "", first: '    [ "$n" -eq 1 ] && exec sleep 120', always: "    exec sleep 120" }
+  // Written aside and renamed in, so a replaced binary is a new file, as an update is.
+  const install = (mode: Hang) => {
+    writeFileSync(bin + ".next", [
+      "#!/bin/sh",
+      `log=${JSON.stringify(log)}`,
+      'printf \'%s\\n\' "$*" >> "$log"',
+      'case "$1" in',
+      "  --version) echo '2.1.0 (Claude Code)' ;;",
+      "  --help) echo 'Options: --settings --setting-sources --strict-mcp-config --tools' ;;",
+      "  auth)",
+      "    n=$(grep -c '^auth status' \"$log\")",
+      hangs[mode],
+      '    login="$CLAUDE_SECURESTORAGE_CONFIG_DIR/.credentials.json"',
+      '    if [ -f "$login" ]; then',
+      "      tier=$(sed -n 's/.*\"subscriptionType\":\"\\([a-z]*\\)\".*/\\1/p' \"$login\")",
+      "      printf '{\"loggedIn\":true,\"subscriptionType\":\"%s\"}\\n' \"$tier\"",
+      "    else",
+      "      echo '{\"loggedIn\":false}'",
+      "    fi ;;",
+      "  *) exit 2 ;;",
+      "esac",
+      "",
+    ].join("\n"), { mode: 0o755 })
+    renameSync(bin + ".next", bin)
+  }
+  install(hang)
+  const calls = () => readFileSync(log, "utf8").split("\n").filter(Boolean)
+  // The same file overwritten where it stands: same inode, same size, other bytes.
+  const rewrite = () => {
+    const text = readFileSync(bin, "utf8")
+    writeFileSync(bin, text.includes("2.1.0 (") ? text.replace("2.1.0 (", "2.1.1 (") : text.replace("2.1.1 (", "2.1.0 ("))
+  }
+  return { dir, bin, calls, auth: () => calls().filter(line => line.startsWith("auth status")).length,
+    replace: install, rewrite, stop() { rmSync(dir, { recursive: true, force: true }) } }
 }
