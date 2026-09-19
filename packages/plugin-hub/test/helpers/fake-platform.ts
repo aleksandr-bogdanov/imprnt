@@ -41,6 +41,8 @@ export interface DoorPlatform {
     cursor: string | null;
     timeoutMs: number;
   }): Promise<PlatformPull>;
+  /** D-178, IMP-163. Where a chat stands now, as a cursor, or null for nothing. */
+  highWater(options: { chat: string }): Promise<string | null>;
   post(options: { chat: string; text: string }): Promise<{ id: string | null }>;
   edit(options: { chat: string; id: string; text: string }): Promise<void>;
   typing(options: { chat: string }): Promise<void>;
@@ -216,6 +218,11 @@ export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
         });
       }
     },
+    async highWater(): Promise<string | null> {
+      // The cursor is an index into ONE queue for every chat, so where any
+      // chat stands is the last message this platform was handed.
+      return queue.length === 0 ? null : String(queue.length - 1);
+    },
     async post(where: { chat: string; text: string }): Promise<{ id: string | null }> {
       // Taken BEFORE the platform answers, so the attempt carries what was
       // true at the moment of the send rather than afterwards.
@@ -328,6 +335,10 @@ export async function servePlatform(
         });
         return Response.json(pulled);
       }
+      if (path === "/high-water") {
+        const asked = await body(request);
+        return Response.json({ mark: await fake.platform.highWater({ chat: String(asked.chat) }) });
+      }
       if (path === "/post") {
         const asked = await body(request);
         let made: { id: string | null };
@@ -422,6 +433,15 @@ export async function platformClient(url: string): Promise<DoorPlatform> {
       });
       if (!res.ok) throw new PlatformRefused(`pull failed: ${res.status}`);
       return (await res.json()) as PlatformPull;
+    },
+    async highWater(where) {
+      const res = await fetch(`${url}/high-water`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(where),
+      });
+      if (!res.ok) throw new PlatformRefused(`high-water read failed: ${res.status}`);
+      return ((await res.json()) as { mark: string | null }).mark;
     },
     async post(where) {
       const res = await fetch(`${url}/post`, {

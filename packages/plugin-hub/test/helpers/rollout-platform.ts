@@ -46,6 +46,12 @@ export function rolloutPlatform(name: "telegram" | "discord") {
       await Bun.sleep(Math.min(where.timeoutMs, 20))
       return { messages: [], cursor: where.cursor }
     },
+    async highWater(_where: { chat: string }) {
+      // One cursor across every chat, so where any chat stands is the newest batch.
+      if (readError) throw readError
+      await Bun.sleep(1)
+      return batches.length === 0 ? null : batches.at(-1)!.cursor
+    },
     async post(where: { chat: string, text: string }) {
       postAttempts.push({ ...where })
       if (postError) throw postError

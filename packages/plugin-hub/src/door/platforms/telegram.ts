@@ -119,6 +119,20 @@ export function telegram(options: {
             : String(Math.max(...updates.map(update => update.update_id)) + 1),
       };
     },
+    async highWater() {
+      // The offset is the BOT's, so where one chat stands is where the bot
+      // stands. "The negative offset can be specified to retrieve updates
+      // starting from -offset update from the end of the updates queue. All
+      // previous updates will be forgotten" (Bot API, getUpdates). Forgetting is
+      // what the door asks for here: it calls this only for a chat it has never
+      // read, once the reader before it has stopped, and a Telegram door has
+      // one reader (the registry refuses a second agent on it).
+      const said = await call("getUpdates", { offset: -1, limit: 1, timeout: 0, allowed_updates: ["message"] }, 0);
+      const updates = said.result as Update[];
+      return updates.length === 0
+        ? null
+        : String(Math.max(...updates.map(update => update.update_id)) + 1);
+    },
     async fetchMedia(media) {
       const said = await call("getFile", { file_id: media.remote_id }, 0);
       const path = (said.result as { file_path?: string }).file_path;

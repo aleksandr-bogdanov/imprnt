@@ -67,7 +67,10 @@ for (const name of ["telegram", "discord"] as const) {
       writeFileSync(it.registryFile, original.replace('door-fake = ["p1"]', 'door-fake = ["p2"]'))
       await Bun.sleep(1200)
       it.edge.batch([message("2", "old sender denied"), { ...message("3", "new sender accepted"), sender_id: "p2" }], "4")
-      expect(await observe(() => it.edge.pulls().some(p => p.cursor === "4"))).toBe(true)
+      // The reader of the chat that holds the batch's messages. The stage's other agent reads another
+      // chat through the same cursor and reaches "4" with nothing to accept, possibly before this one has
+      // committed its row.
+      expect(await observe(() => it.edge.pulls().some(p => p.chat === "1000000001" && p.cursor === "4"))).toBe(true)
       expect((await it.read.inbound()).map(row => row.id).sort(), "D-173 allowlist edit changes next accepted set").toEqual([`${name}:1000000001:1`, `${name}:1000000001:3`])
       expect(process.pid).toBe(pid)
     } finally { await door?.stop(); await it.stop() }

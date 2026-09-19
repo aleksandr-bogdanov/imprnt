@@ -275,9 +275,9 @@ for (const osName of ["linux", "macos"] as const) {
     expect(process.pid).toBe(servicePid)
     const originalChat=registry.agents.find(a=>a.id==="p1-lair")!.chat
     editAgent(registryFile,"p1-lair",{chat:"1000000001"})
-    // A chat the door holds no cursor for is read from the newest cursor on, so the door first walks
-    // this edge's cursor up without reading (src/door/run.ts:275) and a message sent during that walk
-    // is dropped as history. The walk ends at the pull from the newest cursor, "9".
+    // A chat the door holds no cursor for starts at the edge's newest cursor, "9", which the door asks
+    // the platform for once when it activates the chat and saves before its first pull (D-178, IMP-163).
+    // Everything sent after that is answered, so this waits for the door to be reading the new chat.
     // Measured max 1286 ms in 27 runs on the Linux box. Three times that is 3858, so 5000 stays.
     expect(await observe(()=>edges[0].pulls().some(p=>p.chat==="1000000001" && p.cursor==="9"),5000)).toBe(true)
     edges[0].batch([{platform_message_id:"10",chat:"1000000001",sender_id:"p1",from:"p1",text:"after recovery and mapping",at:new Date().toISOString(),media:[]}],"11")
