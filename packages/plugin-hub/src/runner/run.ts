@@ -716,6 +716,12 @@ export async function runRunner(options: {
           cause: end.refused.cause,
           said: end.refused.said,
           retryAt,
+          // D-156, D-177. The diary names the refusal for what it is: only a
+          // credential-scoped one opens an outage below, so only that one is
+          // written as `refused.outage`. A local one keeps one agent on a
+          // retry and nothing else, and a household counting its outages by
+          // this line would otherwise count one that never opened.
+          kind: scope.scope === "local" ? "refused.local" : "refused.outage",
         });
         if (scope.scope === "local") {
           unhealthy = true;
