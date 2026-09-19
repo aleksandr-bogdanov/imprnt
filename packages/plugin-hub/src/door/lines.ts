@@ -413,6 +413,28 @@ export function conversionDone(language: Language, values: LineValues = {}): str
   return sentence;
 }
 
+/** D-181b. What each one-off migration command takes, whole per command and language. */
+export type MigrationScript = "convert-v2-chatlog" | "convert-v2-registry" | "handoff-v2" | "harvest-v2";
+
+const MIGRATION_USAGE: Record<Language, Record<MigrationScript, string>> = {
+  en: {
+    "convert-v2-chatlog": "usage: bun run scripts/convert-v2-chatlog.ts <manifest>, one absolute path to the private version 1 chat log manifest.",
+    "convert-v2-registry": "usage: bun run scripts/convert-v2-registry.ts <manifest>, one absolute path to the private version 1 registry manifest.",
+    "handoff-v2": "usage: bun run scripts/handoff-v2.ts <manifest>, one absolute path to the private version 1 work manifest that names registry.",
+    "harvest-v2": "usage: bun run scripts/harvest-v2.ts <manifest>, one absolute path to a private version 1 manifest naming registry, person, from and until.",
+  },
+  ru: {
+    "convert-v2-chatlog": "использование: bun run scripts/convert-v2-chatlog.ts <манифест>, один абсолютный путь к закрытому манифесту журналов чатов версии 1.",
+    "convert-v2-registry": "использование: bun run scripts/convert-v2-registry.ts <манифест>, один абсолютный путь к закрытому манифесту реестра версии 1.",
+    "handoff-v2": "использование: bun run scripts/handoff-v2.ts <манифест>, один абсолютный путь к закрытому манифесту работы версии 1 с полем registry.",
+    "harvest-v2": "использование: bun run scripts/harvest-v2.ts <манифест>, один абсолютный путь к закрытому манифесту версии 1 с полями registry, person, from и until.",
+  },
+};
+
+export function migrationUsage(language: Language, script: MigrationScript): string {
+  return MIGRATION_USAGE[language][script];
+}
+
 export function harvestDone(language: Language, values: LineValues = {}): string {
   const sentence = interpolate(language, language === "ru"
     ? "сохранение: {person}: завершено по {until}."

@@ -216,3 +216,34 @@ test("L14 handoff uses door and runner roles for each actual mutation", async ()
     } finally { await h.stop(); await cluster.stop() }
   } finally { f.stop() }
 })
+
+for (const order of ["convert-first", "handoff-first"] as const) test(`ROLL-02 ROLL-18 a carried pending message v2 already logged lands in the chat log once, ${order} and each step run twice`, async () => {
+  const f = migrationFixture()
+  try {
+    const api = await handoff()
+    const { convertV2Chatlog } = await seam("src/migrate/chatlog.ts") as { convertV2Chatlog: (manifest: any) => Promise<any> }
+    const cluster = await startCluster()
+    const { h } = await stage(cluster, "telegram")
+    try {
+      const manifest = structuredClone(f.handoffManifest)
+      manifest.items.forEach((i: any) => { i.platform = "telegram" })
+      const item = (id: string) => manifest.items.find((i: any) => i.source_id === id)
+      // v2 logs an inbound row under its platform id as soon as its text is in, answered or not.
+      const tab = join(f.roots[0].root, `${manifest.freeze_at.slice(0, 10)}.log`)
+      const logged = (i: any) => [i.at, "p1", `telegram:${i.chat}:${i.source_id}`, JSON.stringify(i.text)].join("\t")
+      // Pending item 3 is the control: v2 had not logged it, so only the handoff writes it.
+      writeFileSync(tab, [logged(item("1")), logged(item("2"))].join("\n") + "\n")
+      const log = { ...f.logManifest, state_dir: h.stateDir, inventory: inventory([f.old, f.tab, tab]) }
+      const convert = () => convertV2Chatlog(log)
+      const apply = async () => api.applyHandoff(await api.prepareHandoff(manifest), { registryFile: h.registryFile })
+      const steps = order === "convert-first" ? [convert, apply] : [apply, convert]
+      for (const step of [...steps, ...steps]) await step()
+      const lines = Object.values(jsonlBytes(h.stateDir, "p1", "p1-lair")).join("").trim().split("\n").map(s => JSON.parse(s))
+      const said = (text: string) => lines.filter(r => r.text === text).map(r => r.id)
+      expect(said("pending synthetic three"), "control: carried by the handoff alone").toEqual(["telegram:0000000000:3"])
+      expect(said("pending synthetic two"), "one message, one id, one line").toEqual(["telegram:0000000000:2"])
+      expect(said("completed synthetic instruction"), "completed history is converted once under the same id").toEqual(["telegram:0000000000:1"])
+      expect((await h.read.sheet("cutover"))[0].data.complete).toBe(true)
+    } finally { await h.stop(); await cluster.stop() }
+  } finally { f.stop() }
+})

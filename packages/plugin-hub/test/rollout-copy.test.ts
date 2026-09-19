@@ -142,6 +142,30 @@ for (const [key, en, ru] of templates) {
   }
 }
 
+// D-181b. One pinned whole sentence per migration command, since each reads a different manifest.
+for (const [requirement, script, en, ru] of [
+  ["ROLL-02", "convert-v2-chatlog",
+    "usage: bun run scripts/convert-v2-chatlog.ts <manifest>, one absolute path to the private version 1 chat log manifest.",
+    "использование: bun run scripts/convert-v2-chatlog.ts <манифест>, один абсолютный путь к закрытому манифесту журналов чатов версии 1."],
+  ["ROLL-05", "convert-v2-registry",
+    "usage: bun run scripts/convert-v2-registry.ts <manifest>, one absolute path to the private version 1 registry manifest.",
+    "использование: bun run scripts/convert-v2-registry.ts <манифест>, один абсолютный путь к закрытому манифесту реестра версии 1."],
+  ["ROLL-18", "handoff-v2",
+    "usage: bun run scripts/handoff-v2.ts <manifest>, one absolute path to the private version 1 work manifest that names registry.",
+    "использование: bun run scripts/handoff-v2.ts <манифест>, один абсолютный путь к закрытому манифесту работы версии 1 с полем registry."],
+  ["ROLL-03", "harvest-v2",
+    "usage: bun run scripts/harvest-v2.ts <manifest>, one absolute path to a private version 1 manifest naming registry, person, from and until.",
+    "использование: bun run scripts/harvest-v2.ts <манифест>, один абсолютный путь к закрытому манифесту версии 1 с полями registry, person, from и until."],
+]) {
+  test(`${requirement} D-181b D-183 migrationUsage for ${script} is a whole en and ru sentence`, async () => {
+    const mod = await seam("src/door/lines.ts")
+    expect(typeof mod.migrationUsage, "D-183 missing template migrationUsage").toBe("function")
+    const render = mod.migrationUsage as (language: string, script: string) => string
+    expect(render("en", script)).toBe(en)
+    expect(render("ru", script)).toBe(ru)
+  })
+}
+
 for (const [kind, en, ru] of [
   ["voice", "voice", "голосовое сообщение"], ["photo", "photo", "фото"],
   ["file", "file", "файл"], ["sticker", "sticker", "стикер"], ["video", "video", "видео"],

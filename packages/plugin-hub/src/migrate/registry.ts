@@ -3,6 +3,26 @@ import { join, resolve } from "node:path";
 import { loadRegistry } from "../registry/load.ts";
 import { absolute, canonical, digest, toml, version, within, writePrivate } from "./files.ts";
 
+/**
+ * D-168. The first instruction import a fragment still holds, or null. v2 expanded an
+ * import only when it stood alone on its line, so a rendered fragment carries none, and
+ * a line that starts with `@` is refused as before. An `@` path inside running text was
+ * never expanded by v2 or by the loop, so an agent given it silently runs without what
+ * it names, and it is refused too. A path starts with `~`, holds a `/`, or names a `.md`
+ * file. A handle such as `@name`, an address or `serial@1` is text.
+ */
+export function instructionImport(text: string): string | null {
+  for (const line of text.split("\n")) {
+    const whole = /^\s*@(\S+)/.exec(line);
+    if (whole) return `@${whole[1]}`;
+    for (const [, token] of line.matchAll(/(?:^|[\s(\[{<"'])@([^\s)\]}>"'`]+)/g)) {
+      const target = token.replace(/[.,;:!?]+$/, "");
+      if (target.startsWith("~") || target.includes("/") || /\.md$/i.test(target)) return `@${target}`;
+    }
+  }
+  return null;
+}
+
 export async function convertV2Registry(manifest: any, platformLookup: (request: { guild: string; token_file: string }) => Promise<{ id: string; name: string }[]>) {
   version(manifest);
   const checkout = manifest.checkout_root ?? resolve(import.meta.dir, "../../../..");
@@ -45,7 +65,8 @@ export async function convertV2Registry(manifest: any, platformLookup: (request:
       if (!manifest.fragment_roots.some((root: string) => within(fragment, root))) throw new Error("fragment outside selected roots");
       let bytes: Buffer;
       try { bytes = readFileSync(fragment); } catch { throw new Error(`unreadable fragment: ${fragment}`); }
-      if (/^\s*@\S+/m.test(bytes.toString())) throw new Error("unresolved instruction import: select rendered fragment");
+      const unresolved = instructionImport(bytes.toString());
+      if (unresolved) throw new Error(`unresolved instruction import in ${fragment}: ${unresolved}, select the rendered fragment`);
       for (const key of ["allow", "deny", "tools"]) if (!Array.isArray(legacy[key]) || !legacy[key].every((v: any) => typeof v === "string" && v !== "")) throw new Error(`invalid permission or tools array: ${key}`);
       let chat = binding.chat;
       const platform = legacy.door?.platform ?? source.door?.platform;
@@ -74,7 +95,13 @@ export async function convertV2Registry(manifest: any, platformLookup: (request:
   const selectedCredentials = new Set(Object.values(presets).map((preset: any) => preset.credential));
   const credentials = manifest.credentials.filter((credential: any) => selectedCredentials.has(credential.id) ||
     run.some(entry => entry.kind === "door" && entry.platform === credential.kind && entry.token_file === credential.file));
-  const data = { hub: { ...manifest.hub, cutover_batch: manifest.batch_id }, machines: manifest.machines, credentials, people, presets, agents, run, repositories: manifest.repositories };
+  const data: Record<string, unknown> = { hub: { ...manifest.hub, cutover_batch: manifest.batch_id }, machines: manifest.machines, credentials, people, presets, agents, run, repositories: manifest.repositories };
+  // The candidate is promoted over the active registry, so every table of that file the
+  // conversion does not write ([install], [store], [runner], [door], [[rates]]) is carried
+  // unchanged. Dropping [install] would stop the next database install, and [store] is
+  // where the database install recorded the store's pid file. An unreadable active
+  // registry refuses, so a mistyped path cannot publish a candidate without them.
+  for (const [key, value] of Object.entries(loadRegistry(manifest.active_registry).data)) if (!(key in data)) data[key] = value;
   for (const file of files) {
     if (within(file.path, checkout) || manifest.fragment_roots.some((root: string) => within(file.path, root))) throw new Error("private destination is inside checkout or source");
   }

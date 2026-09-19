@@ -46,7 +46,9 @@ export async function runInstall(options: { registryFile: string; stage?: string
       }
     }
     const text = readFileSync(options.registryFile, "utf8");
-    if (!/^\s*\[\s*store\s*\]/m.test(text)) {
+    // Decided by what the registry declares, not by how it is spelled: a converted
+    // registry writes its store table inline, and a second header would break the file.
+    if (registry.data.store === undefined) {
       const data = ask(database, ["-c", "show data_directory"]);
       const external = ask(database, ["-c", "show external_pid_file"]);
       writeFileSync(options.registryFile, `${text.trimEnd()}\n\n[store]\npid_file = ${JSON.stringify(external || join(data, "postmaster.pid"))}\nunit = ${JSON.stringify(standard.unit)}\n`);

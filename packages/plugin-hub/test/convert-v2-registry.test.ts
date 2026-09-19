@@ -1,9 +1,11 @@
 import { beforeAll, expect, test } from "bun:test"
-import { readFileSync, writeFileSync, statSync, rmSync } from "node:fs"
+import { copyFileSync, existsSync, readFileSync, writeFileSync, statSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { loadRegistry } from "../src/registry/load.ts"
+import { loadRegistry, readSetting } from "../src/registry/load.ts"
+import { readStorePid } from "../src/hub/peak.ts"
 import { claudeCode } from "../src/adapters/claude-code.ts"
-import { seam } from "./helpers/cluster.ts"
+import { seam, startCluster } from "./helpers/cluster.ts"
+import { serviceFixture } from "./helpers/rollout-service.ts"
 import { migrationFixture, privateJson, digest } from "./helpers/rollout-migration.ts"
 import { launchInput, launchSeam, captureCli, ending } from "./helpers/rollout-loop.ts"
 import { proveMigrationFixtures } from "../live/prove-rollout-migration.ts"
@@ -105,4 +107,76 @@ for (const fault of ["missing-agent", "unreadable-fragment", "unresolved-import"
     await expect(convert(manifest, f.lookup)).rejects.toThrow(/agent|fragment|import|JSON|channel|active|absolute|path|permission|allow|MCP|command/i)
     expect(readFileSync(f.file, "utf8")).toBe(active)
   } finally { f.stop() }
+})
+
+test("D-186 steps 6 and 7 the promoted candidate keeps the active registry's install and store tables, so a later database install still runs", async () => {
+  const cluster = await startCluster()
+  const f = migrationFixture()
+  let bootstrap: Awaited<ReturnType<typeof serviceFixture>> | undefined
+  try {
+    bootstrap = await serviceFixture(cluster, true)
+    const { runInstall } = await seam("src/install/run.ts") as { runInstall: (options: any) => Promise<any> }
+    const database = () => runInstall({ registryFile: bootstrap!.registryFile, stage: "database" })
+    // Step 6 writes [store] into the bootstrap registry the household uses.
+    await database()
+    // A setting the household put in the bootstrap registry by hand.
+    writeFileSync(bootstrap.registryFile, readFileSync(bootstrap.registryFile, "utf8") + "\n[runner]\ntask_retry_seconds = 7\n")
+    const bootstrapped = loadRegistry(bootstrap.registryFile)
+    const store = bootstrapped.data.store
+    expect(readStorePid(bootstrapped).pid, "the real cluster's pid file").toBeGreaterThan(0)
+    // Control on the same path: the unconverted registry installs again with no change.
+    const before = readFileSync(bootstrap.registryFile, "utf8")
+    await database()
+    expect(readFileSync(bootstrap.registryFile, "utf8")).toBe(before)
+    // Step 7 converts against that registry, and the reviewed candidate is promoted over it.
+    const manifest = structuredClone(f.registryManifest)
+    manifest.active_registry = bootstrap.registryFile
+    manifest.hub = { ...manifest.hub, store_url: (bootstrapped.data.hub as Record<string, unknown>).store_url }
+    // A mistyped active registry refuses rather than converting without its tables.
+    await expect((await converter())({ ...manifest, active_registry: `${bootstrap.registryFile}.mistyped` }, f.lookup)).rejects.toThrow(/cannot be read/)
+    expect(() => statSync(manifest.candidate), "no candidate is published").toThrow()
+    await (await converter())(manifest, f.lookup)
+    expect(readFileSync(bootstrap.registryFile, "utf8"), "the active registry is never overwritten").toBe(before)
+    copyFileSync(manifest.candidate, bootstrap.registryFile)
+    // A later migration runs against the promoted file and keeps one store declaration.
+    await database()
+    const promoted = loadRegistry(bootstrap.registryFile)
+    expect(promoted.agents.map(a => a.id).sort()).toEqual(["p1-lair", "p2-lair"])
+    expect(readSetting(promoted, "install.admin_argv")).toEqual(bootstrap.admin)
+    expect(promoted.data.store).toEqual(store)
+    expect(readSetting(promoted, "runner.task_retry_seconds")).toBe(7)
+    expect(readStorePid(promoted)).toEqual(readStorePid(bootstrapped))
+  } finally { await bootstrap?.stop(); f.stop(); await cluster.stop() }
+})
+
+test("ROLL-05 D-168 an instruction import anywhere in a fragment is refused naming the fragment and the import, and a handle is not an import", async () => {
+  const convert = await converter()
+  for (const [line, named] of [
+    ["Read @~/synthetic/rules.md before answering.", "@~/synthetic/rules.md"],
+    ["Follow the house rules (@../synthetic/house.md) first.", "@../synthetic/house.md"],
+    ["Load @/srv/synthetic/rules.md as well.", "@/srv/synthetic/rules.md"],
+    ["The master rules apply, see @synthetic-master.md.", "@synthetic-master.md"],
+    // The whole-line form v2 itself expanded, which was already refused without its name.
+    ["@./synthetic-relative.md", "@./synthetic-relative.md"],
+  ]) {
+    const f = migrationFixture()
+    try {
+      const fragment = f.sources[0].rendered
+      const rendered = readFileSync(fragment, "utf8")
+      // Control on the same path: a handle, an address and a metric in running text are not imports.
+      const plain = rendered + "Ask @synthetic_handle, or write to someone@example.invalid, serial@1 holds.\n"
+      writeFileSync(fragment, plain)
+      await convert(f.registryManifest, f.lookup)
+      const agent = loadRegistry(f.registryManifest.candidate).agents.find(a => a.id === "p1-lair")!
+      expect(readFileSync(agent.fragment!, "utf8")).toBe(plain)
+      rmSync(f.registryManifest.candidate)
+      rmSync(f.registryManifest.inventory)
+      writeFileSync(fragment, rendered + line + "\n")
+      const refusal = await convert(f.registryManifest, f.lookup).then(() => "converted", (error: Error) => error.message)
+      expect(refusal, `${line} must refuse`).toContain("import")
+      expect(refusal, "names the fragment").toContain(fragment)
+      expect(refusal, "names the import").toContain(named)
+      expect(existsSync(f.registryManifest.candidate), "no candidate is published").toBe(false)
+    } finally { f.stop() }
+  }
 })

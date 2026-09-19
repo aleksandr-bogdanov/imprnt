@@ -24,6 +24,8 @@ export async function commandHarness(root: string) {
     async run(argv: string[], extra: Record<string,string> = {}) {
       writeFileSync(trace, "")
       const child = Bun.spawn([Bun.which("node")!, core, "hub", ...argv], { cwd, env: { ...env, ...extra }, stdout: "pipe", stderr: "pipe" })
+      // Rehearsal commands measured max 863 ms in 33 runs on the Linux box, so 10000 stays. Four installs that took 11 to 34 s
+      // were Postgres syncing an SD card, which is why the rehearsal keeps its cluster in memory.
       const timer = setTimeout(() => child.kill(9), 10000)
       try {
         const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
