@@ -6,6 +6,10 @@
 tick_seconds = 5
 store_url = "postgres://127.0.0.1:5432/hub"
 state_dir = "/var/lib/imprnt-hub"
+# Each store role's password, written by `imprnt install` and readable by the
+# account the hub runs as and by no agent's box. `secrets` under state_dir when
+# this line is absent.
+secrets_dir = "/var/lib/imprnt-hub/secrets"
 tail_hours = 24
 tail_tokens = 8000
 claim_lease_seconds = 300

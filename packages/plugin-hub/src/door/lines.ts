@@ -406,6 +406,24 @@ export function installDatabaseReady(language: Language): string {
     : "install: postgres schema ready; existing store settings unchanged.";
 }
 
+/** IMP-158. Roles that had no password, or one their file no longer matched, now have one. */
+export function installPasswordsSet(language: Language, values: { roles: string; dir: string; had: "none" | "other" }): string {
+  return interpolate(language, values.had === "none"
+    ? language === "ru"
+      ? "установка: у {roles} не было пароля. Теперь он есть, каждый в своём файле в {dir}."
+      : "install: {roles} had no password. Each has one now, in its own file in {dir}."
+    : language === "ru"
+      ? "установка: пароль {roles} не совпадал с файлом в {dir}. Пароль заменён, файл тоже."
+      : "install: {roles} did not match the password file in {dir}. Each has a new password and a new file.", values);
+}
+
+/** IMP-158. A pg_hba.conf rule that lets a hub role in with no password at all. */
+export function installTrustRemains(language: Language, values: { lines: string }): string {
+  return interpolate(language, language === "ru"
+    ? "установка: pg_hba.conf пускает роли хаба без пароля, строки {lines}. Замените trust на scram-sha-256 и перечитайте конфигурацию кластера."
+    : "install: pg_hba.conf lets the hub roles in without a password on line {lines}. Change trust to scram-sha-256 there and reload the cluster.", values);
+}
+
 export function conversionDone(language: Language, values: LineValues = {}): string {
   const sentence = interpolate(language, language === "ru"
     ? "перенос: записей добавлено {count}, уже были {skipped}."

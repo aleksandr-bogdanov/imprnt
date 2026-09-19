@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { loadRegistry, readSetting } from "../registry/load.ts";
 import { listAgents, listMachines, listRunEntries } from "../registry/entries.ts";
@@ -9,7 +10,74 @@ import { programForKind } from "../hub/program.ts";
 import { openStore, storeUrlAs } from "../store/connect.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { standardFor } from "./standard.ts";
-import { installDatabaseReady, installPlan, installServicePlan } from "../door/lines.ts";
+import { installDatabaseReady, installPasswordsSet, installPlan, installServicePlan, installTrustRemains } from "../door/lines.ts";
+import { HUB_ROLES, passwordFileOf, secretsDirOf } from "../store/secrets.ts";
+import { newPassword, scramMatches, scramVerifier } from "../store/scram.ts";
+
+type Ask = (db: string, args: string[]) => string;
+
+/** A file only the account running this can read, replaced whole or not at all. */
+function writeSecret(file: string, text: string): void {
+  const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}`;
+  writeFileSync(temp, `${text}\n`, { mode: 0o600, flag: "wx" });
+  chmodSync(temp, 0o600);
+  renameSync(temp, file);
+}
+
+function readSecret(file: string): string | null {
+  try {
+    return readFileSync(file, "utf8").trim();
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+/**
+ * IMP-158. Every hub role gets a password that only the account running the
+ * hub can read, so an agent's shell on the same loopback cannot be one.
+ *
+ * A role whose stored verifier was made from its file's password is left
+ * alone, which is what makes a second run a no-op. Any other role, whether an
+ * earlier install left it with no password or its file is gone or edited, gets
+ * a new one: the file is written first and the role second, so a run that dies
+ * between them leaves a mismatch the next run repairs rather than a role whose
+ * password nobody has. The server is handed the verifier, never the password,
+ * and on psql's standard input, never its argv.
+ */
+function givePasswords(ask: Ask, feed: (db: string, sql: string) => void, dir: string): { none: string[]; other: string[] } {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  const listed = HUB_ROLES.map((role) => `'${role}'`).join(", ");
+  const stored = new Map(ask("postgres", ["-c", `select rolname || ' ' || coalesce(rolpassword, '') from pg_authid where rolname in (${listed})`])
+    .split("\n").filter(Boolean).map((line) => [line.split(" ")[0], line.split(" ")[1] ?? ""] as const));
+  const none: string[] = [];
+  const other: string[] = [];
+  const statements: string[] = [];
+  for (const role of HUB_ROLES) {
+    const file = passwordFileOf(dir, role);
+    const verifier = stored.get(role) ?? "";
+    const kept = readSecret(file);
+    if (kept !== null && scramMatches(verifier, kept)) {
+      chmodSync(file, 0o600);
+      continue;
+    }
+    const password = newPassword();
+    writeSecret(file, password);
+    statements.push(`alter role ${role} password '${scramVerifier(password)}';`);
+    (verifier === "" ? none : other).push(role);
+  }
+  if (statements.length) feed("postgres", `begin;\n${statements.join("\n")}\ncommit;\n`);
+  return { none, other };
+}
+
+/** IMP-158. The pg_hba.conf lines that would let a hub role into this database with no password. */
+function trustedLines(ask: Ask, database: string): string[] {
+  const roles = ["all", ...HUB_ROLES].map((role) => `'${role}'`).join(", ");
+  return ask(database, ["-c", `select line_number from pg_hba_file_rules where error is null and auth_method = 'trust' ` +
+    `and database && array['all', '${database}']::text[] and user_name && array[${roles}]::text[] order by line_number`])
+    .split("\n").filter(Boolean);
+}
 
 export async function runInstall(options: { registryFile: string; stage?: string; target?: string; os?: OsSeam; dry?: boolean }) {
   const registry = loadRegistry(options.registryFile);
@@ -35,6 +103,10 @@ export async function runInstall(options: { registryFile: string; stage?: string
       if (result.exitCode !== 0) throw new Error(result.stderr.toString());
       return result.stdout.toString().trim();
     };
+    const feed = (db: string, sql: string) => {
+      const result = Bun.spawnSync([...argv, "-X", "-v", "ON_ERROR_STOP=1", "-At", "-d", db, "-f", "-"], { env: process.env, stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" });
+      if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+    };
     if (!ask("postgres", ["-c", `select 1 from pg_database where datname = '${database}'`])) ask("postgres", ["-c", `create database "${database}"`]);
     if (!ask(database, ["-c", "select to_regclass('public.ledger_event')"])) {
       ask(database, ["--single-transaction", "-f", join(import.meta.dir, "../schema.sql")]);
@@ -45,6 +117,13 @@ export async function runInstall(options: { registryFile: string; stage?: string
         ask(database, ["-c", `begin; ${readFileSync(join(import.meta.dir, "../store/migrations", file), "utf8")} insert into schema_version values (${version}); commit;`]);
       }
     }
+    const secrets = secretsDirOf(registry);
+    if (secrets === null) throw new Error("install-secrets-dir-required");
+    const given = givePasswords(ask, feed, secrets);
+    if (given.none.length) process.stdout.write(installPasswordsSet("en", { roles: given.none.join(", "), dir: secrets, had: "none" }) + "\n");
+    if (given.other.length) process.stdout.write(installPasswordsSet("en", { roles: given.other.join(", "), dir: secrets, had: "other" }) + "\n");
+    const trusted = trustedLines(ask, database);
+    if (trusted.length) process.stdout.write(installTrustRemains("en", { lines: trusted.join(", ") }) + "\n");
     const text = readFileSync(options.registryFile, "utf8");
     // Decided by what the registry declares, not by how it is spelled: a converted
     // registry writes its store table inline, and a second header would break the file.

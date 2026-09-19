@@ -43,6 +43,14 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "the directory the chat logs are written under",
     required: false,
   },
+  // IMP-158. Where each store role's password file is, which every box masks.
+  // Absent, it is `secrets` under hub.state_dir.
+  {
+    key: "hub.secrets_dir",
+    type: "string",
+    what: "the directory holding each store role's password, which no agent's box can read",
+    required: false,
+  },
   {
     key: "hub.tail_hours",
     type: "integer",
