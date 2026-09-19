@@ -1,4 +1,4 @@
-import { appendChatLineOnce } from "../chatlog.ts";
+import { appendChatLineOnce, type BadRecord } from "../chatlog.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { requestRecovery } from "../hub/control.ts";
 import { projectInbound } from "../chatlog/project.ts";
@@ -20,8 +20,11 @@ export async function acceptBatch(options: {
   store: StoreLike; registry: Registry; stateDir: string; door: string;
   agent: AgentEntry; platform: Platform; batch: PlatformPull; cursor: string | null;
   received?(id: string): void;
+  /** IMP-160. The door skips a bad complete chat log record and reports it. */
+  skipBad?(bad: BadRecord): void | Promise<void>;
 }): Promise<string | null> {
   const { store, registry, stateDir, door, agent, platform, batch } = options;
+  const skipBad = { skipBad: options.skipBad };
   const language = languageOf(registry, agent.person);
   for (const message of batch.messages) {
     if (message.chat !== agent.chat || !message.sender_id) continue;
@@ -37,7 +40,7 @@ export async function acceptBatch(options: {
       const id = `recover:${inboundId(platform.name, message.chat, message.platform_message_id)}`;
       await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
         id, at: message.at, direction: "in", from: agent.person, text: message.text,
-      });
+      }, skipBad);
       const target = message.text.trim().split(/\s+/);
       let text = controlUsage(language);
       if (target.length === 2) {
@@ -52,7 +55,7 @@ export async function acceptBatch(options: {
       }
       await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
         id: id + ":notice", at: message.at, direction: "out", from: door, text,
-      });
+      }, skipBad);
       try { await platform.post({ chat: agent.chat, text }); }
       catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
       continue;
@@ -89,7 +92,7 @@ export async function acceptBatch(options: {
       id, person: agent.person, agent: agent.id, body, kind: demand ? "harvest" : "human",
       source, log_ready: false,
     }));
-    await projectInbound(store, { stateDir, inboundId: id,
+    await projectInbound(store, { stateDir, inboundId: id, ...skipBad,
       ...(fresh ? { accepted: { person: agent.person, agent: agent.id, source } } : {}) });
     if (fresh && !demand) options.received?.(id);
   }

@@ -81,7 +81,12 @@ export async function readTail(args: {
     if (!existsSync(file)) continue;
     for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (raw.trim() === "") continue;
-      const line = JSON.parse(raw) as ChatLine;
+      // IMP-160. A record that is not a chat line is left out of the tail, the
+      // way the door leaves it out of the log it appends to and names it by
+      // file and line. Throwing here failed every spawn of this agent for good.
+      let line: unknown;
+      try { line = JSON.parse(raw); } catch { continue; }
+      if (!validLine(line)) continue;
       if (Date.parse(line.at) >= from) lines.push(line);
     }
   }
@@ -110,15 +115,31 @@ function validLine(value: unknown): value is ChatLine {
     (line.id === undefined || (typeof line.id === "string" && line.id !== ""));
 }
 
-/** A kernel lock dies with its owner, including a writer killed before fsync. */
+/** A complete record that is not a chat line, by its file and 1-based line. */
+export interface BadRecord { file: string; line: number }
+
+/**
+ * A kernel lock dies with its owner, including a writer killed before fsync.
+ *
+ * D-172 repairs only an incomplete LAST record, a write that never finished,
+ * by truncating it. A complete record that is not a chat line is history and
+ * is never truncated. By default it refuses the append, naming the file and the
+ * line. A caller that passes `skipBad` (the door, IMP-160) instead leaves those
+ * bytes where they are, does not count them as the record being appended, and
+ * is told the file and line once the lock is released, so one bad line cannot
+ * stop every message after it.
+ */
 export async function appendChatLineOnce(
   args: { stateDir: string; person: string; agent: string },
   line: ChatLine & { id: string },
+  options: { skipBad?(bad: BadRecord): void | Promise<void> } = {},
 ): Promise<boolean> {
   if (!validLine(line) || !line.id) throw new Error("invalid chat log record");
   const file = chatLogPath({ ...args, at: new Date(line.at) });
   mkdirSync(dirname(file), { recursive: true });
+  const skipped: BadRecord[] = [];
   const fd = openSync(file, "a+", 0o600);
+  let fresh: boolean;
   try {
     const deadline = Date.now() + 10000;
     while (fileLocks.symbols.flock(fd, 2 | 4) !== 0) {
@@ -130,18 +151,28 @@ export async function appendChatLineOnce(
     let offset = 0;
     let truncate: number | null = null;
     let found = false;
+    const refuse = (what: string, index: number): void => {
+      if (!options.skipBad) throw new Error(`${what} complete chat log record at ${file}:${index + 1}`);
+      skipped.push({ file, line: index + 1 });
+    };
     for (const [index, raw] of records.entries()) {
       const last = index === records.length - 1;
       if (last && raw === "") break;
       let record: unknown;
+      let parsed = true;
       try { record = JSON.parse(raw); }
       catch {
-        if (!last) throw new Error("malformed complete chat log record");
-        truncate = offset;
-        break;
+        if (last) {
+          truncate = offset;
+          break;
+        }
+        parsed = false;
+        refuse("malformed", index);
       }
-      if (!validLine(record)) throw new Error("invalid complete chat log record");
-      if (record.id === line.id) found = true;
+      if (parsed) {
+        if (!validLine(record)) refuse("invalid", index);
+        else if (record.id === line.id) found = true;
+      }
       offset += Buffer.byteLength(raw) + 1;
     }
     if (truncate !== null) ftruncateSync(fd, truncate);
@@ -156,6 +187,8 @@ export async function appendChatLineOnce(
       try { fsyncSync(directory); } finally { closeSync(directory); }
       if (path === root || dirname(path) === path) break;
     }
-    return !found;
+    fresh = !found;
   } finally { closeSync(fd); }
+  for (const bad of skipped) await options.skipBad!(bad);
+  return fresh;
 }

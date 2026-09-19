@@ -1,7 +1,8 @@
 import { historyHarvestFrom } from "../registry/entries.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
 import { classifyPlatformError } from "./reply.ts";
-import { appendChatLine, appendChatLineOnce } from "../chatlog.ts";
+import { appendChatLine, appendChatLineOnce, type BadRecord } from "../chatlog.ts";
+import { recordOperationFailure as recordDiagnostic } from "../diagnostics.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import {
   dueTrigger,
@@ -221,6 +222,18 @@ export async function runDoor(options: {
   // A successful projection is already fsynced. Keep that knowledge only for
   // pending chunks in this process; a restarted door repairs them all again.
   const projected = new Set<number>();
+  // IMP-160. One complete record in a day file that is not a chat line used to
+  // refuse every append to that file, and at start the whole door. The door
+  // skips it (its bytes stay, D-172 never truncates a complete record) and says
+  // where, once per file and line in this process: the diary and stderr.
+  const reportedBad = new Set<string>();
+  const skipBad = async (bad: BadRecord): Promise<void> => {
+    const where = `${bad.file}:${bad.line}`;
+    if (reportedBad.has(where)) return;
+    reportedBad.add(where);
+    await recordDiagnostic(store, { operation: "chatlog", target: where, actor: "door",
+      error: { code: "chatlog-bad-record", message: "a record that is not a chat line was skipped" } }).catch(() => {});
+  };
   try {
     // Only an explicit operator recovery releases terminal delivery failures.
     // The door keeps its own delivery authority; the hub only restarts it.
@@ -230,14 +243,14 @@ export async function runDoor(options: {
           and data->>'target_kind'='door' and data->>'target_id'=${options.door}
           and data->>'status'='pending')`;
     const pending = await store.sql`select id from inbound where not log_ready and source->>'door' = ${options.door}`;
-    for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id) });
+    for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id), skipBad });
     for (const agent of agentsFor(registry, { door: options.door })) {
       for (const chunk of await readPendingChunks(store, { agent: agent.id })) {
         if (chunk.route && chunk.route.door !== options.door) continue;
         await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
           id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
           from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
-        });
+        }, { skipBad });
         projected.add(chunk.id);
       }
     }
@@ -338,7 +351,7 @@ export async function runDoor(options: {
               await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
                 id: "harvest-demand:" + inboundId(options.platform.name, message.chat, message.platform_message_id),
                 at: message.at, direction: "in", from: agent.person, text: message.text,
-              });
+              }, { skipBad });
             }
             throw error;
           }
@@ -347,7 +360,7 @@ export async function runDoor(options: {
           const connection = await ingress.sql.reserve();
           try {
             cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: current, stateDir,
-              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor,
+              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor, skipBad,
               received(id) {
                 own.arrivals.push({ id, person: agent.person, agent: agent.id,
                   received_at: new Date(), state: "received", claimed_by: null });
@@ -408,7 +421,7 @@ export async function runDoor(options: {
           await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
             id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
             from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
-          });
+          }, { skipBad });
           projected.add(chunk.id);
         }
         if (chunk.kind === "reply" && chunk.inbound_id !== null) {
