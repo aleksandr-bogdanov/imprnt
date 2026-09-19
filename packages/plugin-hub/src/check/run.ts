@@ -18,6 +18,7 @@ import {
   harvestFor,
   listAgents,
   listCredentials,
+  listMachines,
   listPeople,
   listRunEntries,
   personOf,
@@ -568,6 +569,40 @@ export async function runCheck(options: {
       says: `the preset ${name} runs on a plan and names no credential, so nothing can open the login it runs on: what the file does not name cannot be checked`,
       fix: `add credential = "<an id>" to [presets.${name}] in ${options.registryFile}, and a [[credentials]] entry carrying that id, its kind, its file and its owner`,
     });
+  }
+
+  // --- a credential the box can only mask one file at a time on Linux --------
+  //     On Linux a single-file mask is a bind over one directory entry, and the
+  //     kernel lifts it if the host replaces the file by renaming a new one over
+  //     it. Where a masked credential has a directory to itself, the box masks
+  //     the whole directory, which a rename cannot lift. A credential that shares
+  //     a directory with the launched login cannot be masked that way, so an
+  //     agent steered by outside content could read it after a re-login. This
+  //     fires for nothing when there is one shared login and tokens live in the
+  //     secrets directory.
+  if (listMachines(registry).find((one) => one.id === machine)?.os === "linux") {
+    const loginByDir = new Map<string, string>();
+    for (const preset of new Set(mine.map((agent) => agent.preset))) {
+      const id = credentialOfPreset(registry, preset);
+      const login = id ? listCredentials(registry).find((one) => one.id === id) : undefined;
+      if (login) loginByDir.set(dirname(login.file), login.file);
+    }
+    const files = new Set([
+      ...listCredentials(registry).map((one) => one.file),
+      ...listRunEntries(registry).map((one) => (typeof one.token_file === "string" ? one.token_file : "")),
+    ]);
+    for (const file of files) {
+      if (file === "" || loginByDir.get(dirname(file)) === file) continue;
+      if (!loginByDir.has(dirname(file))) continue;
+      findings.push({
+        id: findingId(machine, "credential-file-mask", file),
+        kind: "credential-file-mask",
+        subject: file,
+        machine,
+        says: `${file} shares a directory with a launched model login on this Linux machine, so the box can only mask it one file at a time, and that mask is lifted if the file is replaced by a rename`,
+        fix: `move ${file} into the secrets directory, or give it a directory of its own, so the box masks the whole directory`,
+      });
+    }
   }
 
   if (!options.credentials) {

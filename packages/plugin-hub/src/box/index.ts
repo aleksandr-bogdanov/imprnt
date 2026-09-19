@@ -236,10 +236,9 @@ function profileText(ctx: BoxContext): string {
   for (const tree of new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])) {
     lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(tree)}))`);
   }
-  // IMP-158, last of all, so no allow above can hand one back: a token beside
-  // the model login sits under the login directory the launch grants. The
-  // match is by path at every access, so a file replaced by a rename stays
-  // denied here.
+  // Last of all, so no allow above can hand one back: a token beside the model
+  // login sits under the login directory the launch grants. The match is by path
+  // at every access, so a file replaced by a rename stays denied here.
   for (const { path } of secretMasks(ctx)) {
     lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(path)}))`);
   }

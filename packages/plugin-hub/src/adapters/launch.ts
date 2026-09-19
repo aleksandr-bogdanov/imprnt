@@ -89,11 +89,30 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   // the model CLI rotates its token in place there, so it is added to the box's
   // write paths rather than left to the read-only host.
   const same = (a: string, b: string) => a === b || existsSync(a) && existsSync(b) && realpathSync(a) === realpathSync(b);
-  input = { ...input, box: { ...input.box,
-    writePaths: [...(input.box.writePaths ?? []), dirname(credential.file)],
-    secretPaths: input.box.secretPaths?.filter(path => !same(path, credential.file)) } };
-  const boxed = sessionBox(input, [dirname(credential.file), credential.file, ...(fragment ? [fragment] : []), ...(mcpFile ? [mcpFile] : []),
-    ...(ambient ? [join(ambient, ".claude", "settings.json"), join(ambient, ".claude", "CLAUDE.md")] : [])]);
+  const writePaths = [...(input.box.writePaths ?? []), dirname(credential.file)];
+  const reads = [dirname(credential.file), credential.file, ...(fragment ? [fragment] : []), ...(mcpFile ? [mcpFile] : []),
+    ...(ambient ? [join(ambient, ".claude", "settings.json"), join(ambient, ".claude", "CLAUDE.md")] : [])];
+  // Every other credential file is masked. On Linux a single-file mask is a bind
+  // over one directory entry, and the kernel lifts it if the host later replaces
+  // the file by renaming a new one over it. So where a masked credential sits in
+  // a directory that holds nothing the loop reads or writes, the whole directory
+  // is masked instead, which a rename cannot lift. A credential sharing a
+  // directory with something the loop needs, the launched login above all, stays
+  // a single-file mask, and `check` reports that on Linux. The macOS box denies
+  // by path at every access, so a rename lifts nothing there and the file masks
+  // stand unchanged.
+  const kept = (input.box.secretPaths ?? []).filter(path => !same(path, credential.file));
+  const needs = [input.box.tree, input.box.sharedZone, input.box.stateRoot ?? "", input.sessionDir, ...reads, ...writePaths]
+    .filter(path => path !== "");
+  const holdsNeeded = (directory: string) =>
+    needs.some(path => same(path, directory) || path.startsWith(`${directory}/`));
+  const maskPaths = process.platform !== "linux" ? kept : [...new Set(kept.map(path => {
+    if (!existsSync(path) || !statSync(path).isFile()) return path;
+    const parent = dirname(path);
+    return holdsNeeded(parent) ? path : parent;
+  }))];
+  input = { ...input, box: { ...input.box, writePaths, secretPaths: maskPaths } };
+  const boxed = sessionBox(input, reads);
   const config = join(boxed.cwd, "config"), home = join(boxed.cwd, "home"), scratch = join(boxed.cwd, "tmp");
   for (const dir of [config, home, scratch]) mkdirSync(dir, { recursive: true, mode: 0o700 });
   // Only runtime plumbing is inherited; no ambient login, loader, or plugin variables.

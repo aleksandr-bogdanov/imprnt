@@ -37,9 +37,9 @@
 // Red reason: the box masks none of these paths.
 
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { pgBin, seam, startCluster, type Cluster } from "./helpers/cluster.ts"
 import { boxGate } from "./helpers/box-gate.ts"
 import { plantTrees } from "./helpers/trees.ts"
@@ -175,7 +175,15 @@ test("IMP-158 (b) a real launch keeps its own model login readable and masks the
     const argv = launch.wrap(["/bin/true"])
     if (argv[0] === "/usr/bin/bwrap") {
       expect(masksOf(argv, h.login.file)).toEqual([])
-      expect(masksOf(argv, h.otherLogin.file)).toEqual(["null"])
+      // The other login has a directory to itself, so the whole directory is
+      // masked with a tmpfs, which a file replaced by a rename cannot lift. The
+      // file itself carries no separate mask then.
+      expect(masksOf(argv, dirname(h.otherLogin.file))).toEqual(["tmpfs"])
+      expect(masksOf(argv, h.otherLogin.file)).toEqual([])
+      // A token in its own directory is masked the same durable way.
+      expect(masksOf(argv, dirname(h.apart.file))).toEqual(["tmpfs"])
+      // The token beside the launched login shares the login directory, which
+      // stays readable and writable, so it can only be masked one file at a time.
       expect(masksOf(argv, h.beside.file)).toEqual(["null"])
       expect(masksOf(argv, h.secrets)).toEqual(["tmpfs"])
     } else {
@@ -254,4 +262,41 @@ test(`IMP-158 (a) inside a real ${process.platform} box no hub role logs in and 
     process.stdout.write = quiet
     rmSync(h.root, { recursive: true, force: true })
   }
+}, SLOW)
+
+test(`inside a real ${process.platform} box a second login in its own directory stays unreadable when it is replaced by a rename, while the launched login stays readable and writable${gate.ok ? "" : ` [skipped: ${gate.reason}]`}`, async () => {
+  if (!gate.ok || process.platform !== "linux") {
+    process.stderr.write(`SKIP: the rename lift is a Linux question and needs a working box: ${gate.reason || "not linux"}\n`)
+    return
+  }
+  const h = household()
+  try {
+    const launch = await launchOf(h)
+    // A long-lived box that reads the other login and a launched-login probe on
+    // a loop, so the read after the rename lands while the box is running.
+    const script = [
+      `probe=${join(h.login.file, "..")}/rename-probe`,
+      `for i in $(seq 1 40); do`,
+      `  cat ${h.otherLogin.file} 2>/dev/null | tr -d "\\n"; echo " other $i";`,
+      `  (echo w > "$probe" 2>/dev/null && cat ${h.login.file} >/dev/null 2>&1 && echo "own-rw $i") || echo "own-denied $i";`,
+      `  sleep 0.25;`,
+      `done`,
+    ].join("\n")
+    const child = Bun.spawn(launch.wrap(["/bin/sh", "-c", script]), { env: launch.env, cwd: launch.cwd, stdout: "pipe", stderr: "pipe" })
+    await Bun.sleep(1500)
+    // Replace the other login by renaming a new file over it, the move that lifts
+    // a single-file mask.
+    const next = h.otherLogin.file + ".next"
+    writeFileSync(next, "REPLACED-VIA-RENAME", { mode: 0o600 })
+    renameSync(next, h.otherLogin.file)
+    const out = await new Response(child.stdout).text()
+    await child.exited
+    // The other login never reads, before or after the rename, because its whole
+    // directory is masked.
+    expect(out.includes("REPLACED-VIA-RENAME"), out).toBe(false)
+    expect(out.includes(JSON.parse(h.otherLogin.text).marker), out).toBe(false)
+    // The launched login stays readable and its directory writable throughout.
+    expect(out).toContain("own-rw")
+    expect(out.includes("own-denied")).toBe(false)
+  } finally { rmSync(h.root, { recursive: true, force: true }) }
 }, SLOW)
