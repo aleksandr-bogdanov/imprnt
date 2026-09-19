@@ -52,8 +52,14 @@ for (const name of ["telegram", "discord"] as const) test(`ROLL-18 ${name} froze
       expect(prepared.source_inventory).toEqual(manifest.source_inventory)
       expect(prepared.sources).toEqual(manifest.sources)
       // Refusal control: same door must start after the batch is complete.
+      // IMP-160: until then it waits and says why instead of exiting into the
+      // unit's start limit, so this control stops it while it waits.
       let refusal: unknown
-      try { door = await runDoor({ door: "door-fake", registryFile: h.registryFile, platform: edge.platform }) }
+      const abort = new AbortController()
+      const waiting = runDoor({ door: "door-fake", registryFile: h.registryFile, platform: edge.platform, signal: abort.signal })
+      expect(await observe(async () => (await h.read.ledger({ stream: "operation", subject: "door-fake" })).some(row => row.detail.code === "cutover-incomplete"))).toBe(true)
+      abort.abort()
+      try { door = await waiting }
       catch (error) { refusal = error }
       await door?.stop(); door = undefined
       expect(String(refusal)).toMatch(/cutover|handoff|batch/i)

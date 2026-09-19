@@ -190,7 +190,13 @@ for (const osName of ["linux", "macos"] as const) {
     for (let i=0;i<2;i++) {
       let early: Awaited<ReturnType<typeof runDoor>> | undefined
       try {
-        await expect(runDoor({door:manifest.bindings[i].door,registryFile,platform:edges[i].platform}).then(d=>{early=d;return d})).rejects.toThrow(/cutover|handoff|batch/i)
+        // IMP-160: before the handoff the door waits and says why instead of
+        // exiting into its unit's start limit, so this control stops it waiting.
+        const abort=new AbortController()
+        const waiting=runDoor({door:manifest.bindings[i].door,registryFile,platform:edges[i].platform,signal:abort.signal}).then(d=>{early=d;return d})
+        expect(await observe(async()=>(await read.ledger({stream:"operation",subject:manifest.bindings[i].door})).some(r=>r.detail.code==="cutover-incomplete"))).toBe(true)
+        abort.abort()
+        await expect(waiting).rejects.toThrow(/cutover|handoff|batch/i)
         expect(edges[i].pulls()).toHaveLength(0)
       } finally { await early?.stop() }
     }

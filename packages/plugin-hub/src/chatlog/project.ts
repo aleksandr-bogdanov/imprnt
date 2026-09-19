@@ -1,4 +1,4 @@
-import { appendChatLineOnce } from "../chatlog.ts";
+import { appendChatLineOnce, type BadRecord } from "../chatlog.ts";
 import type { StoreLike } from "../store/connect.ts";
 import type { InboundSource } from "../store/inbound.ts";
 
@@ -6,7 +6,9 @@ import type { InboundSource } from "../store/inbound.ts";
 export async function projectInbound(
   store: StoreLike,
   options: { stateDir: string; inboundId: string;
-    accepted?: { person: string; agent: string; source: InboundSource } },
+    accepted?: { person: string; agent: string; source: InboundSource };
+    /** IMP-160. Skip a complete record that is not a chat line, and say where. */
+    skipBad?(bad: BadRecord): void | Promise<void> },
 ): Promise<void> {
   // Fresh acceptance already knows the committed row. Replays read its original source.
   const row = options.accepted ? { ...options.accepted, log_ready: false } :
@@ -21,6 +23,6 @@ export async function projectInbound(
   // speaker by registry id.
   await appendChatLineOnce({ stateDir: options.stateDir, person: row.person, agent: row.agent }, {
     id: source.log_id, at: source.at, direction: "in", from: row.person, text: source.text,
-  });
+  }, { skipBad: options.skipBad });
   await store.sql`update inbound set log_ready = true where id = ${options.inboundId} and not log_ready`;
 }
