@@ -1,6 +1,6 @@
 // ROLL-07 and ROLL-31. D-180 requires actual remote commits and one success stamp.
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync, symlinkSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
 import { stageHub } from "./helpers/hub-fixture.ts"
@@ -428,3 +428,63 @@ test("L14 killed sync owner releases repository lock for the next process", asyn
 })
 
 import { observe } from "./helpers/rollout-runner.ts"
+
+// IMP-161. A vault holds its mount as a separate checkout, and the parent's
+// status lists it as an untracked directory. The converter gives the mount its
+// own sync entry, so the vault's entry does not name it.
+test("ROLL-31 a declared repository checked out inside a vault is synced on its own branch and is never the vault's uncommitted change", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const [vault, , mount] = f.repos
+    const own = f.addEntry()
+    fixtureGit(mount.path, "branch", "-m", "master")
+    fixtureGit(mount.path, "push", "origin", "master")
+    mount.branch = "master"
+    f.registry()
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    const outcome = async (id: string) => {
+      const row = (await f.read.sheet("sync")).find(one => one.id === id)!
+      return Object.fromEntries((row.data.repositories as { id: string; status: string; code?: string }[]).map(one => [one.id, one.code ?? one.status]))
+    }
+    // Control: the same path passes while the fixture still hides the mount.
+    const hidden = commitChange(vault.path, "hidden.txt")
+    expect((await syncChild(f, git.env, own)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", vault.remote, "rev-parse", "main")).toBe(hidden)
+    const exclude = join(vault.path, ".git", "info", "exclude")
+    writeFileSync(exclude, readFileSync(exclude, "utf8").replace("\n/shared/\n", "\n"))
+    expect(fixtureGit(vault.path, "status", "--porcelain")).toBe("?? shared/")
+    const vaultHead = commitChange(vault.path)
+    const mountHead = commitChange(mount.path, "nested.txt", "synthetic nested change\n")
+    const started = Date.now()
+    expect((await syncChild(f, git.env, own)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", vault.remote, "rev-parse", "main")).toBe(vaultHead)
+    expect(Date.parse(String((await f.read.sheet("job_success")).find(row => row.id === own)!.data.at))).toBeGreaterThanOrEqual(started)
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(await outcome(f.id)).toEqual({ "p1-vault": "success", "p2-vault": "success", shared: "success" })
+    expect(fixtureGit(f.root, "--git-dir", mount.remote, "rev-parse", "master")).toBe(mountHead)
+    expect(fixtureGit(mount.path, "symbolic-ref", "--short", "HEAD")).toBe("master")
+    expect(fixtureGit(vault.path, "symbolic-ref", "--short", "HEAD")).toBe("main")
+    // A real uncommitted change in the vault is still refused, next to the mount.
+    writeFileSync(join(vault.path, "draft.md"), "uncommitted owner draft\n")
+    commitChange(vault.path, "after.txt")
+    expect((await syncChild(f, git.env, own)).code).not.toBe(0)
+    expect(await outcome(own)).toEqual({ "p1-vault": "dirty" })
+    expect(fixtureGit(f.root, "--git-dir", vault.remote, "rev-parse", "main")).toBe(vaultHead)
+    rmSync(join(vault.path, "draft.md"))
+    // A declared path that is not its own checkout hides nothing under it.
+    const plain = join(vault.path, "notes")
+    mkdirSync(plain)
+    writeFileSync(join(plain, "loose.md"), "uncommitted loose note\n")
+    f.repos.push({ ...mount, id: "p1-notes", path: plain, branch: "main" })
+    f.registry()
+    expect((await syncChild(f, git.env, own)).code).not.toBe(0)
+    expect(await outcome(own)).toEqual({ "p1-vault": "dirty" })
+    rmSync(plain, { recursive: true })
+    // The mount's own uncommitted change is still refused by the mount's own entry.
+    writeFileSync(join(mount.path, "base.txt"), "uncommitted nested change\n")
+    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    expect(await outcome(f.id)).toEqual({ "p1-vault": "success", "p2-vault": "success", shared: "dirty" })
+    expect(fixtureGit(f.root, "--git-dir", vault.remote, "show", "main:after.txt")).toBe("synthetic local change")
+  } finally { await f.stop() }
+})
