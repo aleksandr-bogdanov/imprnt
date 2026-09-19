@@ -1,8 +1,9 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { listAgents, listPeople, personOf } from "../registry/entries.ts";
+import { listAgents, listCredentials, listPeople, listRunEntries, personOf } from "../registry/entries.ts";
 import { readSetting } from "../registry/load.ts";
+import { secretsDirOf } from "../store/secrets.ts";
 import type { BoxContext, BoxedCommand } from "./types.ts";
 
 export type { BoxContext, BoxedCommand } from "./types.ts";
@@ -95,6 +96,24 @@ function flavourOf(ctx: BoxContext, platform?: string): string {
   return String(platform ?? process.platform);
 }
 
+/**
+ * IMP-158. Every path in this household that holds a secret an agent must not
+ * read: the directory the store roles' passwords are in, every door's token
+ * file, and every declared credential file. The box shares the machine's
+ * network and, on Linux, the machine's whole filesystem, so a password or a
+ * token an agent could read is a store login or a bot it could post as, for
+ * any agent steered by outside content it read.
+ */
+function secretPathsOf(registry: unknown): string[] {
+  // Every door's token, including a door no agent is served by yet: it is a
+  // bot all the same, and a token is masked whether or not it is in use.
+  return [...new Set([
+    secretsDirOf(registry) ?? "",
+    ...listRunEntries(registry).map((one) => typeof one.token_file === "string" ? one.token_file : ""),
+    ...listCredentials(registry).map((one) => one.file),
+  ].filter((path) => path !== ""))];
+}
+
 /** Everything the box needs about one agent, read off the registry and nothing else. */
 export function boxContextFor(registry: unknown, agentId: string): BoxContext {
   const agent = listAgents(registry).find((one) => one.id === agentId);
@@ -116,7 +135,33 @@ export function boxContextFor(registry: unknown, agentId: string): BoxContext {
       .filter((one) => one.id !== agent.person)
       .map((one) => one.tree)
       .filter((tree) => tree !== ""),
+    secretPaths: secretPathsOf(registry),
   };
+}
+
+/**
+ * The secret paths this box masks, and how. A directory is covered whole, a
+ * file on its own. A path that is not there has nothing to read yet, and one
+ * that is a device (a fixture's `/dev/null` token) is not a secret. A path
+ * inside a masked directory is covered by that directory.
+ *
+ * On Linux a file is masked by binding `/dev/null` over it, and that mount sits
+ * on the file's directory entry: if the host later REPLACES the file by
+ * renaming a new one over it, the kernel lifts the mask in every box already
+ * running (measured on the hub box, bwrap 0.8). A file edited in place stays
+ * masked. A token kept inside the secrets directory is covered by the
+ * directory's mask and is safe from both.
+ */
+function secretMasks(ctx: BoxContext): { path: string; directory: boolean }[] {
+  const found: { path: string; directory: boolean }[] = [];
+  for (const path of ctx.secretPaths ?? []) {
+    if (!existsSync(path)) continue;
+    const kind = statSync(path);
+    if (!kind.isDirectory() && !kind.isFile()) continue;
+    found.push({ path, directory: kind.isDirectory() });
+  }
+  const directories = found.filter((one) => one.directory).map((one) => one.path);
+  return found.filter((one) => !directories.some((dir) => one.path !== dir && one.path.startsWith(`${dir}/`)));
 }
 
 /**
@@ -170,6 +215,13 @@ function profileText(ctx: BoxContext): string {
   for (const tree of new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])) {
     lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(tree)}))`);
   }
+  // IMP-158, last of all, so no allow above can hand one back: a token beside
+  // the model login sits under the login directory the launch grants. The
+  // match is by path at every access, so a file replaced by a rename stays
+  // denied here.
+  for (const { path } of secretMasks(ctx)) {
+    lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(path)}))`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -199,7 +251,7 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
   ctx = { ...ctx, tree: canonical(ctx.tree), sharedZone: canonical(ctx.sharedZone),
     stateRoot: ctx.stateRoot && canonical(ctx.stateRoot), sessionDir: ctx.sessionDir && canonical(ctx.sessionDir),
     otherTrees: ctx.otherTrees.map(canonical), otherStateRoots: ctx.otherStateRoots?.map(canonical),
-    readPaths: ctx.readPaths?.map(canonical) };
+    readPaths: ctx.readPaths?.map(canonical), secretPaths: ctx.secretPaths?.map(canonical) };
   const flavour = flavourOf(ctx, platform);
   if (flavour === "linux") {
     return {
@@ -219,6 +271,9 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         ...(ctx.sessionDir ? ["--bind", ctx.sessionDir, ctx.sessionDir] : []),
         ...[...new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])]
           .flatMap(tree => ["--tmpfs", tree]),
+        // IMP-158. After everything above, so nothing bound later uncovers one.
+        ...secretMasks(ctx).flatMap(({ path, directory }) =>
+          directory ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path]),
         "--",
         ...argv,
       ],

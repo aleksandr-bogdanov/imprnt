@@ -197,6 +197,8 @@ export interface RunEntry {
   max_active_children?: number;
   child_memory_budget_mb?: number;
   repositories?: string[];
+  /** A door's bot token file. IMP-158: every agent's box masks it. */
+  token_file?: string;
 }
 
 /** D-76. A machine the household has. `os` is in the file, never process.platform. */
@@ -700,7 +702,7 @@ export function loadRegistry(file: string): Registry {
       schedule: entry.schedule as string,
       memory_limit_mb: limit,
       machine: typeof machine === "string" && machine !== "" ? machine : (machines[0]?.id ?? ""),
-      ...Object.fromEntries(["max_active_children", "child_memory_budget_mb", "repositories"]
+      ...Object.fromEntries(["max_active_children", "child_memory_budget_mb", "repositories", "token_file"]
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });

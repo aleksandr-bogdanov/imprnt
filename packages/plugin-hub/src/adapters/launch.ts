@@ -1,4 +1,4 @@
-import { accessSync, constants, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { boxCommand, type BoxContext } from "../box/index.ts";
@@ -83,6 +83,11 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   const fragment = ordinary ? input.agent.fragment : undefined;
   if (fragment) accessSync(fragment, constants.R_OK);
   const ambient = process.env.HOME;
+  // IMP-158. The box masks every credential file, and this launch keeps the one
+  // login its loop runs on. Every other one, bot tokens and any other model
+  // login alike, stays masked.
+  const same = (a: string, b: string) => a === b || existsSync(a) && existsSync(b) && realpathSync(a) === realpathSync(b);
+  input = { ...input, box: { ...input.box, secretPaths: input.box.secretPaths?.filter(path => !same(path, credential.file)) } };
   const boxed = sessionBox(input, [dirname(credential.file), credential.file, ...(fragment ? [fragment] : []), ...(mcpFile ? [mcpFile] : []),
     ...(ambient ? [join(ambient, ".claude", "settings.json"), join(ambient, ".claude", "CLAUDE.md")] : [])]);
   const config = join(boxed.cwd, "config"), home = join(boxed.cwd, "home"), scratch = join(boxed.cwd, "tmp");
