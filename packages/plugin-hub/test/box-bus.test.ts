@@ -44,18 +44,30 @@ function stage(dir: string) {
 }
 
 test("the rendered Linux box masks the user runtime directory and the system bus directory with a tmpfs, after the pid namespace and among the last masks", async () => {
-  const { boxCommand, boxContextFor } = await seam("src/box/index.ts");
+  const { boxCommand, boxContextFor, RUNTIME_MASKS } = await seam("src/box/index.ts") as {
+    boxCommand: Function; boxContextFor: Function; RUNTIME_MASKS: string[];
+  };
   const dir = mkdtempSync(join(tmpdir(), "hub-box-bus-"));
   try {
-    const ctx = (boxContextFor as Function)(stage(dir).registry, "p1-lair");
-    const { argv } = (boxCommand as Function)(["/bin/true"], { ...ctx, platform: "linux" }, "linux") as { argv: string[] };
+    const ctx = boxContextFor(stage(dir).registry, "p1-lair");
+    const { argv } = boxCommand(["/bin/true"], { ...ctx, platform: "linux" }, "linux") as { argv: string[] };
     const tmpfsAt = (path: string) => argv.findIndex((a, i) => a === "--tmpfs" && argv[i + 1] === path);
     const proc = argv.findIndex((a, i) => a === "--proc" && argv[i + 1] === "/proc");
     const sep = argv.lastIndexOf("--");
-    for (const path of ["/run/user", "/run/dbus"]) {
-      expect(tmpfsAt(path), `${path} is masked`).toBeGreaterThan(-1);
-      expect(tmpfsAt(path), `${path} is masked after the pid namespace`).toBeGreaterThan(proc);
-      expect(tmpfsAt(path), `${path} is masked before the command`).toBeLessThan(sep);
+    // Both directories are named, so a build that dropped one is caught here
+    // wherever this runs.
+    expect([...RUNTIME_MASKS]).toEqual(["/run/user", "/run/dbus"]);
+    for (const path of RUNTIME_MASKS) {
+      if (existsSync(path)) {
+        expect(tmpfsAt(path), `${path} is masked`).toBeGreaterThan(-1);
+        expect(tmpfsAt(path), `${path} is masked after the pid namespace`).toBeGreaterThan(proc);
+        expect(tmpfsAt(path), `${path} is masked before the command`).toBeLessThan(sep);
+      } else {
+        // A machine without the directory must not be handed a mask for it:
+        // bwrap cannot make a mount point under the read-only host, so naming it
+        // would fail every boxed launch on that machine.
+        expect(tmpfsAt(path), `${path} is not on this machine, so it is not named`).toBe(-1);
+      }
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

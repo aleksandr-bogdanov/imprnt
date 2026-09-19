@@ -96,10 +96,17 @@ const MAC_LOGIN = [join(homedir(), "Library", "Keychains")];
  * The runtime sockets a boxed command must not reach on Linux: the user session
  * bus and systemd's private socket (both under /run/user) and the system bus
  * (/run/dbus). Either bus takes a start-a-unit call from this account, and that
- * unit runs outside the box. Both directories exist on any box that has such a
- * bus, so a fresh tmpfs over each empties them without a per-uid path.
+ * unit runs outside the box. A fresh tmpfs over each directory empties it, and
+ * the parent /run/user is covered rather than the per-uid directory inside it,
+ * so the mask is the same on every box and needs no uid.
+ *
+ * Each is used only where it exists. A machine with no such directory has
+ * nothing there to hide, and under the read-only host a boxed command cannot
+ * create one either. Naming a missing directory would be worse than useless:
+ * bwrap cannot make a mount point on a read-only root, so every boxed launch on
+ * a machine without it would fail outright.
  */
-const RUNTIME_MASKS = ["/run/user", "/run/dbus"];
+export const RUNTIME_MASKS = ["/run/user", "/run/dbus"];
 
 /**
  * Two more things on a Linux host that hand a boxed command the machine, each a
@@ -366,9 +373,9 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         // both live under /run/user, and a process that reaches either can ask
         // this account's systemd to start a unit that then runs OUTSIDE the box.
         // The loop's environment carries no runtime directory, so nothing it
-        // needs is there. The parent /run/user is masked rather than the per-uid
-        // directory so the mask is the same on every box and needs no uid.
-        ...RUNTIME_MASKS.flatMap(path => ["--tmpfs", path]),
+        // needs is there. Skipped where it is not there, for the same reason the
+        // other-tree masks are: nothing to hide, and no way to create it.
+        ...RUNTIME_MASKS.filter(existsSync).flatMap(path => ["--tmpfs", path]),
         // The docker socket and the X authority cookie, each covered with
         // /dev/null. A path that is not on this box is skipped, and the two
         // spellings of the socket are one path once the symlink is resolved.

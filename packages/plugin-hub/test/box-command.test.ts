@@ -26,7 +26,7 @@
 // Red reason: import missing, src/box/index.ts.
 
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
@@ -225,9 +225,14 @@ test(
         .filter((a): a is string => a !== null);
       // One --tmpfs per other tree, over that tree.
       expect(tmpfsAt.filter((path) => !path.startsWith("/run/"))).toEqual([p2.tree]);
-      // The user runtime directory and the system bus directory are masked too.
-      expect(tmpfsAt).toContain("/run/user");
-      expect(tmpfsAt).toContain("/run/dbus");
+      // The user runtime directory and the system bus directory are masked too,
+      // on a machine that has them. Naming one that is not there would fail
+      // every boxed launch, because bwrap cannot make a mount point under the
+      // read-only host.
+      for (const path of ["/run/user", "/run/dbus"]) {
+        if (existsSync(path)) expect(tmpfsAt).toContain(path);
+        else expect(tmpfsAt).not.toContain(path);
+      }
 
       // No --unshare-net: the loop needs the model API and the tailnet, so a
       // network namespace here breaks the hub rather than fencing it.
