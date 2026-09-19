@@ -51,6 +51,17 @@ export interface Platform {
     cursor: string | null;
     timeoutMs: number;
   }): Promise<PlatformPull>;
+  /**
+   * D-178, IMP-163. Where `chat` stands NOW, as a cursor: a pull from it
+   * returns only what arrives after this call. Null means nothing is there to
+   * skip, so a pull from no cursor already reads only new messages.
+   *
+   * The door asks it once, when an agent is remapped to a chat it has never
+   * read, and treats everything before the answer as history. It is the
+   * platform's own answer because only the platform knows what its cursor
+   * spans: Discord's is one channel, Telegram's is the whole bot.
+   */
+  highWater(options: { chat: string }): Promise<string | null>;
   /** The id is the platform's own, and it is what an edit needs. */
   post(options: { chat: string; text: string }): Promise<{ id: string | null }>;
   /** The progress line is ONE message the door overwrites as the work goes. */

@@ -34,7 +34,7 @@ import { acceptBatch } from "./ingest.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
 import { readCursor, writeCursor } from "./cursor.ts";
 import { clockLine, progressLine, progressTotals, type Language } from "./lines.ts";
-import type { Platform } from "./platform.ts";
+import type { Platform, PlatformPull } from "./platform.ts";
 
 /**
  * The one progress line this door posted for a message, while its turn is open.
@@ -331,6 +331,19 @@ export async function runDoor(options: {
   let accepting: Promise<void> = Promise.resolve();
   const read = async (agent: AgentEntry, own: Served, activate = false): Promise<void> => {
     let cursor = await readCursor(store, options.door, agent.chat);
+    // D-178, IMP-163. A route this door has never read starts at the
+    // platform's high-water mark, asked for ONCE at activation and saved before
+    // the first pull. What the chat held before it is history, and everything
+    // after it is served. The door used to find the mark by paging through the
+    // chat and skipping every page until one came back empty, so the boundary
+    // was wherever that walk ended, and a message a person sent during the walk
+    // was skipped as history with nothing said.
+    //
+    // One gap stays named rather than closed: a message sent between the edit
+    // and this call (the tick that notices the edit, then the old reader's last
+    // read) is below the mark and stays unanswered. Asking earlier would mean
+    // asking while the old reader still polls, which Telegram refuses for a bot
+    // and which would put a platform branch in this door.
     let capturing = activate && cursor === null;
     let first = true;
     /** How many times in a row this chat's fetched batch could not be accepted. */
@@ -349,9 +362,13 @@ export async function runDoor(options: {
         expired = health.failed(agent.chat, Object.assign(new Error("operation failed"), { code: "read-timeout" }), seconds)
           .then(() => sayReadFailure(agent)).finally(() => own.readied());
       }, Number(readSetting(fresh, "door.read_timeout_seconds")) * 1000);
+      // The mark is asked for under the same timeout, failure and retry a pull
+      // gets, because it is a read of the same chat.
+      const asking: Promise<{ mark: string | null } | { batch: PlatformPull }> = capturing
+        ? options.platform.highWater({ chat: agent.chat }).then(mark => ({ mark }))
+        : options.platform.pull({ chat: agent.chat, cursor, timeoutMs: first ? 0 : timeoutMs }).then(batch => ({ batch }));
       const pulled = await Promise.race([
-        options.platform.pull({ chat: agent.chat, cursor, timeoutMs: first ? 0 : timeoutMs })
-          .then(batch => ({ batch }), error => ({ error })), stopped, own.left,
+        asking.then(answer => answer, (error: unknown) => ({ error })), stopped, own.left,
       ]);
       clearTimeout(timer);
       await expired;
@@ -367,11 +384,12 @@ export async function runDoor(options: {
       // Clearing that here would open a fresh episode, and a fresh notice, on
       // every replay, so only an accepted batch clears it (below).
       if (!acceptFailing()) await health.succeeded(agent.chat);
-      if (capturing) {
-        const boundary = pulled.batch.cursor;
-        if (boundary === null || boundary === cursor) capturing = false;
-        else {
-          cursor = boundary;
+      if ("mark" in pulled) {
+        capturing = false;
+        // A null mark is a chat with nothing to skip, so there is nothing to
+        // save: a pull from no cursor already reads only what arrives from now.
+        if (pulled.mark !== null) {
+          cursor = pulled.mark;
           await writeCursor(store, options.door, agent.chat, cursor);
         }
         continue;
