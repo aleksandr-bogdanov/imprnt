@@ -98,6 +98,19 @@ test(
         async () => (await it.read.inbound()).length >= 1,
         30_000,
       );
+      // The row is visible before the door has finished accepting it: after
+      // the commit it still marks the chat log line written (`log_ready`) and
+      // then moves its read cursor in the `door_cursor` sheet. Those two writes
+      // are the delivery this setup made, not a timer, and on a slow runner the
+      // cursor write landed inside the window (CI, PR 31). So the window opens
+      // only once both are observed.
+      await until(
+        "the door finished accepting the message: its line is marked written and its cursor has moved",
+        async () =>
+          (await it.read.sql("select count(*)::int as n from inbound where log_ready"))[0].n === 1 &&
+          (await it.read.sheet("door_cursor")).some((row) => row.id === `${DOOR}/${CHAT}`),
+        30_000,
+      );
       // The statement window belongs HERE, with the door up and no runner:
       // the runner's own tick re-read (03b row 6, deliberately kept) would
       // otherwise be counted against the door. What is bound is that the door
