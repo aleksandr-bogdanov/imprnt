@@ -1,6 +1,7 @@
-import { loadRegistry, readSetting } from "../registry/load.ts";
+import { loadRegistry } from "../registry/load.ts";
 import { listMachines, listRunEntries } from "../registry/entries.ts";
-import { openStore, storeUrlAs } from "../store/connect.ts";
+import { openStore } from "../store/connect.ts";
+import { storeUrlFor } from "../store/secrets.ts";
 import { runCheck } from "../check/run.ts";
 import { readKernelView } from "../check/kernel.ts";
 import { thisOs } from "../os/index.ts";
@@ -32,7 +33,7 @@ export async function command(args: string[]): Promise<number> {
       for (const row of rows) process.stdout.write(status("en", { ...row, pid: row.pid ?? "unknown" }) + "\n");
       return rows.some(row => row.wanted !== row.seen) ? 1 : 0;
     }
-    const store = await openStore({ url: storeUrlAs(String(readSetting(registry, "hub.store_url")), "hub_hub") });
+    const store = await openStore({ url: storeUrlFor(registry, "hub_hub") });
     try {
       if (verb === "metrics") process.stdout.write(renderMetrics(await readStampMetrics(store)) + "\n");
       if (verb === "check") {

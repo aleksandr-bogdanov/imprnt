@@ -25,7 +25,8 @@ import {
 } from "../registry/load.ts";
 import { getPreset } from "../registry/presets.ts";
 import { TURN_PROGRESS_SHEET, type ProgressRow } from "../runner/progress.ts";
-import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
+import { openStore, type Store } from "../store/connect.ts";
+import { storeUrlFor } from "../store/secrets.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
 import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
@@ -248,7 +249,7 @@ export async function runDoor(options: {
   const stateDir = String(readSetting(registry, "hub.state_dir"));
   const timeoutMs = Number(readSetting(registry, "hub.tick_seconds")) * 1000;
   const store: Store = await openStore({
-    url: storeUrlAs(String(readSetting(registry, "hub.store_url")), "hub_door"),
+    url: storeUrlFor(registry, "hub_door"),
   });
 
   const batch = (registry.data.hub as { cutover_batch?: string }).cutover_batch;

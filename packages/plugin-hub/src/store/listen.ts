@@ -1,4 +1,5 @@
 import { connect, type Socket } from "bun";
+import { scramClient } from "./scram.ts";
 
 /**
  * A connection that does nothing but LISTEN.
@@ -21,6 +22,9 @@ export interface Listener {
 }
 
 const AUTH = 0x52;
+const SASL = 10;
+const SASL_CONTINUE = 11;
+const SASL_FINAL = 12;
 const ERROR_RESPONSE = 0x45;
 const READY_FOR_QUERY = 0x5a;
 const NOTIFICATION = 0x41;
@@ -59,6 +63,30 @@ function startup(user: string, database: string): Uint8Array {
   return message;
 }
 
+/** SASLInitialResponse: the mechanism chosen, and the client's first message. */
+function saslInitial(mechanism: string, data: string): Uint8Array {
+  const name = encoder.encode(`${mechanism}\0`);
+  const payload = encoder.encode(data);
+  const message = new Uint8Array(9 + name.length + payload.length);
+  const view = new DataView(message.buffer);
+  message[0] = 0x70;
+  view.setInt32(1, 8 + name.length + payload.length);
+  message.set(name, 5);
+  view.setInt32(5 + name.length, payload.length);
+  message.set(payload, 9 + name.length);
+  return message;
+}
+
+/** SASLResponse: the client's final message. */
+function saslResponse(data: string): Uint8Array {
+  const payload = encoder.encode(data);
+  const message = new Uint8Array(5 + payload.length);
+  message[0] = 0x70;
+  new DataView(message.buffer).setInt32(1, 4 + payload.length);
+  message.set(payload, 5);
+  return message;
+}
+
 function query(text: string): Uint8Array {
   const body = encoder.encode(`${text}\0`);
   const message = new Uint8Array(5 + body.length);
@@ -88,6 +116,9 @@ function place(url: string) {
     hostname: parsed.hostname || "127.0.0.1",
     port: Number(parsed.port || "5432"),
     user: decodeURIComponent(parsed.username),
+    // IMP-158. The role's own password, which a hub process put there from
+    // its file in the secrets directory. Empty on a store that trusts loopback.
+    password: decodeURIComponent(parsed.password),
     database: decodeURIComponent(parsed.pathname.replace(/^\//, "")),
   };
 }
@@ -109,6 +140,7 @@ export async function listenForWork(options: {
   const where = place(options.url);
 
   let buffer = new Uint8Array(0);
+  let scram: ReturnType<typeof scramClient> | null = null;
   let step: { resolve: () => void; reject: (error: Error) => void } | null = null;
   let closed = false;
   let ended = false;
@@ -121,7 +153,42 @@ export async function listenForWork(options: {
     else waiting.resolve();
   };
 
-  const read = (chunk: Uint8Array) => {
+  /**
+   * One authentication request. Trust says ok at once. Scram-sha-256 is three
+   * messages, and the last one is checked, so a server that cannot prove it
+   * holds this role's verifier is refused rather than taken on its word.
+   */
+  const authenticate = (socket: Socket, method: number, data: Uint8Array) => {
+    if (method === 0) return;
+    try {
+      if (method === SASL) {
+        const offered = decoder.decode(data).split("\0").filter(Boolean);
+        if (!offered.includes("SCRAM-SHA-256")) {
+          throw new ListenRefused(`this server offers ${offered.join(", ")}, and the notification connection speaks scram-sha-256`);
+        }
+        if (where.password === "") {
+          throw new ListenRefused("this server asks for a password, and the notification connection was given no password");
+        }
+        scram = scramClient(where.password);
+        socket.write(saslInitial("SCRAM-SHA-256", scram.first));
+      } else if (method === SASL_CONTINUE && scram) {
+        socket.write(saslResponse(scram.final(decoder.decode(data))));
+      } else if (method === SASL_FINAL && scram) {
+        if (!scram.verify(decoder.decode(data))) {
+          throw new ListenRefused("the server could not prove it holds this role's password");
+        }
+      } else {
+        throw new ListenRefused(
+          `this server asks for ${AUTH_METHODS[method] ?? `authentication method ${method}`}, ` +
+            `and the notification connection offers scram-sha-256 or a trusted login`,
+        );
+      }
+    } catch (error) {
+      settle(error instanceof ListenRefused ? error : new ListenRefused(String((error as Error).message ?? error)));
+    }
+  };
+
+  const read = (socket: Socket, chunk: Uint8Array) => {
     buffer = concat(buffer, chunk);
     while (buffer.length >= 5) {
       const length = new DataView(
@@ -136,14 +203,7 @@ export async function listenForWork(options: {
 
       if (type === AUTH) {
         const method = new DataView(body.buffer, body.byteOffset, 4).getInt32(0);
-        if (method !== 0) {
-          settle(
-            new ListenRefused(
-              `this server asks for ${AUTH_METHODS[method] ?? `authentication method ${method}`}, ` +
-                `and the notification connection only offers a trusted one`,
-            ),
-          );
-        }
+        authenticate(socket, method, body.subarray(4));
       } else if (type === ERROR_RESPONSE) {
         settle(new ListenRefused(errorText(body)));
       } else if (type === READY_FOR_QUERY) {
@@ -160,8 +220,8 @@ export async function listenForWork(options: {
     hostname: where.hostname,
     port: where.port,
     socket: {
-      data(_socket, chunk) {
-        read(chunk as unknown as Uint8Array);
+      data(socket, chunk) {
+        read(socket, chunk as unknown as Uint8Array);
       },
       close() {
         closed = true;

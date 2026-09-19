@@ -43,6 +43,14 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "the directory the chat logs are written under",
     required: false,
   },
+  // IMP-158. Where each store role's password file is, which every box masks.
+  // Absent, it is `secrets` under hub.state_dir.
+  {
+    key: "hub.secrets_dir",
+    type: "string",
+    what: "the directory holding each store role's password, which no agent's box can read",
+    required: false,
+  },
   {
     key: "hub.tail_hours",
     type: "integer",
@@ -189,6 +197,8 @@ export interface RunEntry {
   max_active_children?: number;
   child_memory_budget_mb?: number;
   repositories?: string[];
+  /** A door's bot token file. IMP-158: every agent's box masks it. */
+  token_file?: string;
 }
 
 /** D-76. A machine the household has. `os` is in the file, never process.platform. */
@@ -692,7 +702,7 @@ export function loadRegistry(file: string): Registry {
       schedule: entry.schedule as string,
       memory_limit_mb: limit,
       machine: typeof machine === "string" && machine !== "" ? machine : (machines[0]?.id ?? ""),
-      ...Object.fromEntries(["max_active_children", "child_memory_budget_mb", "repositories"]
+      ...Object.fromEntries(["max_active_children", "child_memory_budget_mb", "repositories", "token_file"]
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });

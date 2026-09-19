@@ -19,6 +19,12 @@ export interface BoxContext {
   stateRoot?: string;
   otherStateRoots?: string[];
   otherTrees: string[];    // every other declared person's tree
+  /**
+   * IMP-158. What no agent may read: the hub's secrets directory, every door's
+   * token file and every declared credential file. A launch takes out the one
+   * model login it runs on and nothing else.
+   */
+  secretPaths?: string[];
 }
 
 export interface BoxedCommand {

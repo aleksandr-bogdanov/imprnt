@@ -41,7 +41,8 @@ import {
   type Preset,
   type WindowThresholds,
 } from "../registry/presets.ts";
-import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
+import { openStore, type Store } from "../store/connect.ts";
+import { storeUrlFor } from "../store/secrets.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
@@ -396,7 +397,7 @@ export async function runRunner(options: {
     // D-85. The runner names itself to the server once, at connect, so a silent
     // runner is DERIVED from the server's own view of its clients and no
     // heartbeat is written on any tick.
-    url: storeUrlAs(String(readSetting(first, "hub.store_url")), "hub_runner", options.runner),
+    url: storeUrlFor(first, "hub_runner", options.runner),
   });
   await sayWhichServer(store, first, options.runner);
 

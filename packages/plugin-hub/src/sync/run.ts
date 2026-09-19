@@ -6,8 +6,9 @@ import { recordOperationFailure } from "../door/health.ts";
 import { appendEntry } from "../records/diary.ts";
 import { putRow } from "../records/statesheet.ts";
 import { listPeople, listRepositories, listRunEntries, repositoriesFor } from "../registry/entries.ts";
-import { readSetting, type Registry, type RunEntry } from "../registry/load.ts";
-import { openStore, storeUrlAs, type StoreLike } from "../store/connect.ts";
+import { type Registry, type RunEntry } from "../registry/load.ts";
+import { openStore, type StoreLike } from "../store/connect.ts";
+import { storeUrlFor } from "../store/secrets.ts";
 
 async function git(path: string, args: string[], code: string): Promise<string> {
   const child = Bun.spawn(["git", "-C", path, ...args], { env: process.env, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
@@ -42,7 +43,7 @@ function nestedIn(path: string, registry: Registry): string[] {
 export async function runSync(entry: RunEntry, registry: Registry): Promise<void> {
   const declared = listRunEntries(registry).find(one => one.id === entry?.id && one.kind === "sync");
   if (!declared) throw new Error("sync-entry-unknown");
-  const store = await openStore({ url: storeUrlAs(String(readSetting(registry, "hub.store_url")), "hub_hub", declared.id) });
+  const store = await openStore({ url: storeUrlFor(registry, "hub_hub", declared.id) });
   const results: { id: string; required: boolean; status: string; code?: string; cause?: string }[] = [];
   try {
     for (const repo of repositoriesFor(registry, declared.id)) {
