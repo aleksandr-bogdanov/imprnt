@@ -137,8 +137,14 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   return { ...boxed, argv, env, credentialId: credential.id };
 }
 
-/** How the capability probe finds the CLI and how long one call to it may take. */
-export interface LoopProbeOptions { bin?: string; timeoutMs?: number }
+/**
+ * How the capability probe finds the CLI, how long one call to it may take, and
+ * any extra path its box may write to. The probe's box is built here, not by a
+ * caller, so a CLI that records what it was asked has nowhere to write under the
+ * read-only host unless it is named: the checks use this to hand their scripted
+ * CLI its own directory.
+ */
+export interface LoopProbeOptions { bin?: string; timeoutMs?: number; writePaths?: string[] }
 export const LOOP_PROBE_TIMEOUT_MS = 10_000;
 
 /**
@@ -211,7 +217,7 @@ export function loopCapabilitiesFor(credential: CredentialEntry, probe: LoopProb
   const kept = probed.get(key), clock = clockLead();
   // A second of slack keeps an ordinary clock slew from dropping a good answer.
   if (stamp !== null && kept?.stamp === stamp && clock > kept.clock - 1_000) return kept.answer;
-  const answer = probeLoopCapabilities(bin, probe.timeoutMs);
+  const answer = probeLoopCapabilities(bin, probe.timeoutMs, probe.writePaths);
   if (stamp !== null) probed.set(key, { stamp, clock, answer });
   else probed.delete(key);
   answer.catch(() => { if (probed.get(key)?.answer === answer) probed.delete(key); });
@@ -219,7 +225,7 @@ export function loopCapabilitiesFor(credential: CredentialEntry, probe: LoopProb
 }
 
 /** Offline capability evidence; no real login or model request enters this probe. */
-export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PROBE_TIMEOUT_MS) {
+export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PROBE_TIMEOUT_MS, writePaths: string[] = []) {
   const executable = Bun.which(bin);
   if (!executable) throw new Error("credential-source-unsupported");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hub-loop-capability-")));
@@ -236,7 +242,7 @@ export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PRO
       credential: { id: "probe", owner: "probe", kind: "claude-login", file: source },
       agent: { id: "probe", person: "probe", preset: "probe", runner: "probe", door: "probe", chat: "probe" },
       sessionDir: join(root, "session"), purpose: "ordinary",
-      box: { agent: "probe", person: "probe", tree: root, sharedZone: "", otherTrees: [] },
+      box: { agent: "probe", person: "probe", tree: root, sharedZone: "", otherTrees: [], writePaths },
     });
     // IMP-162. A call that hangs is asked once more before the probe gives up:
     // measured on the Linux box, `auth status` hung in 4 of 36 runs and answered
