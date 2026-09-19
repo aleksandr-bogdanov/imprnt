@@ -1,6 +1,6 @@
 import { checkLoopSource } from "../adapters/index.ts";
 import type { LoopProbeOptions, LoopProbeTimeout } from "../adapters/launch.ts";
-import { finding as findingLine, syncRepair } from "../door/lines.ts";
+import { acceptRepair, finding as findingLine, syncRepair } from "../door/lines.ts";
 import { basename, dirname } from "node:path";
 import {
   diffUnits,
@@ -620,9 +620,20 @@ export async function runCheck(options: {
   for (const row of await readSheet(options.store, "door_health")) {
     if (!row.data.cause || !entries.some(entry => entry.id === row.data.door)) continue;
     const target = `${row.data.door}/${row.data.chat}`;
-    findings.push({ id: findingId(machine, "chat-unreadable", target), kind: "chat-unreadable", subject: target, machine,
-      says: findingLine("en", { code: row.data.code, target, cause: row.data.cause }),
-      fix: `imprnt hub recover <registry> door:${row.data.door}` });
+    // A chat the door could not READ is a platform failure and a restart is the
+    // move. A batch it fetched and could not ACCEPT is a refusal on this side,
+    // the store or the chat log file, and the door replays that same batch every
+    // tick, so telling the operator to restart the door sends them nowhere. The
+    // two are separate findings with separate advice.
+    //
+    // The row's `cause` for an acceptance failure is the fixed wording the
+    // person is told in their other chat, so the finding takes the row's
+    // `detail`, which is what was really thrown.
+    const accepting = row.data.code === "accept-failed";
+    const kind = accepting ? "accept-failed" : "chat-unreadable";
+    findings.push({ id: findingId(machine, kind, target), kind, subject: target, machine,
+      says: findingLine("en", { code: row.data.code, target, cause: accepting ? (row.data.detail ?? row.data.cause) : row.data.cause }),
+      fix: accepting ? acceptRepair("en", { target }) : `imprnt hub recover <registry> door:${row.data.door}` });
   }
   // --- a refused sender, and an agent that refuses everyone (D-173, D-183) --
   //     A refused message never becomes an inbound row, so no stamp finding

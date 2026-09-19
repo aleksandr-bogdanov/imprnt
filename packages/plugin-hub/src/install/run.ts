@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { loadRegistry, readSetting } from "../registry/load.ts";
 import { listAgents, listMachines, listRunEntries } from "../registry/entries.ts";
@@ -10,7 +11,7 @@ import { programForKind } from "../hub/program.ts";
 import { openStore } from "../store/connect.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { standardFor } from "./standard.ts";
-import { installDatabaseReady, installPasswordsSet, installPlan, installServicePlan, installTrustRemains } from "../door/lines.ts";
+import { installAccountRole, installDatabaseReady, installPasswordsSet, installPlan, installServicePlan, installSocketRemains, installTrustRemains } from "../door/lines.ts";
 import { HUB_ROLES, passwordFileOf, secretsDirOf, storeUrlFor } from "../store/secrets.ts";
 import { newPassword, scramMatches, scramVerifier } from "../store/scram.ts";
 
@@ -71,12 +72,52 @@ function givePasswords(ask: Ask, feed: (db: string, sql: string) => void, dir: s
   return { none, other };
 }
 
-/** IMP-158. The pg_hba.conf lines that would let a hub role into this database with no password. */
-function trustedLines(ask: Ask, database: string): string[] {
-  const roles = ["all", ...HUB_ROLES].map((role) => `'${role}'`).join(", ");
-  return ask(database, ["-c", `select line_number from pg_hba_file_rules where error is null and auth_method = 'trust' ` +
-    `and database && array['all', '${database}']::text[] and user_name && array[${roles}]::text[] order by line_number`])
+/**
+ * The name of the operating system account this install runs under, when it is
+ * plain enough to put in a query. A local `peer` rule admits that account as the
+ * Postgres role of the same name, so the name is part of what has to be checked.
+ */
+function accountName(): string | null {
+  const name = userInfo().username;
+  return /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(name) ? name : null;
+}
+
+/**
+ * The pg_hba.conf lines that would let one of these roles into this database
+ * with no password, by every shape that reaches them.
+ *
+ * `trust` asks for nothing. `peer` and `ident` ask for the operating system
+ * account instead of a secret, which is no secret at all to another process of
+ * the same account, and an ident map can point any account at any role. On the
+ * database side `samerole` and `sameuser` are keywords that can resolve to this
+ * database, and on the role side a `+group` entry admits every member of that
+ * group, so a hub role reached through one is reached.
+ *
+ * `kinds` picks which methods this call is about, because a trust line and a
+ * socket line are repaired differently and are reported apart.
+ */
+function passwordlessLines(ask: Ask, database: string, kinds: string[]): string[] {
+  const roles = HUB_ROLES.map((role) => `'${role}'`).join(", ");
+  const socket = kinds.includes("peer") || kinds.includes("ident");
+  const account = socket ? accountName() : null;
+  const named = ["all", ...HUB_ROLES, ...(account ? [account] : [])].map((role) => `'${role}'`).join(", ");
+  const methods = kinds.map((kind) => `'${kind}'`).join(", ");
+  return ask(database, ["-c", `select line_number from pg_hba_file_rules where error is null ` +
+    `and auth_method in (${methods}) ` +
+    `and database && array['all', 'samerole', 'sameuser', '${database}']::text[] ` +
+    `and (user_name && array[${named}]::text[] or exists (` +
+      `select 1 from unnest(user_name) as entry join pg_roles grp on grp.rolname = substr(entry, 2) ` +
+      `where entry like '+%' and exists (select 1 from pg_roles member where member.rolname in (${roles}) ` +
+      `and pg_has_role(member.oid, grp.oid, 'member')))) ` +
+    `order by line_number`])
     .split("\n").filter(Boolean);
+}
+
+/** Whether the cluster carries a login role named after this account. */
+function accountRole(ask: Ask, database: string): string | null {
+  const account = accountName();
+  if (account === null) return null;
+  return ask(database, ["-c", `select rolname from pg_roles where rolcanlogin and rolname = '${account}'`]).trim() || null;
 }
 
 export async function runInstall(options: { registryFile: string; stage?: string; target?: string; os?: OsSeam; dry?: boolean }) {
@@ -122,8 +163,16 @@ export async function runInstall(options: { registryFile: string; stage?: string
     const given = givePasswords(ask, feed, secrets);
     if (given.none.length) process.stdout.write(installPasswordsSet("en", { roles: given.none.join(", "), dir: secrets, had: "none" }) + "\n");
     if (given.other.length) process.stdout.write(installPasswordsSet("en", { roles: given.other.join(", "), dir: secrets, had: "other" }) + "\n");
-    const trusted = trustedLines(ask, database);
+    const trusted = passwordlessLines(ask, database, ["trust"]);
     if (trusted.length) process.stdout.write(installTrustRemains("en", { lines: trusted.join(", ") }) + "\n");
+    const overSocket = passwordlessLines(ask, database, ["peer", "ident"]);
+    if (overSocket.length) {
+      process.stdout.write(installSocketRemains("en", { lines: overSocket.join(", ") }) + "\n");
+      // Only beside such a rule, because a role of that name is a way in only
+      // while a rule admits the account it is named after.
+      const named = accountRole(ask, database);
+      if (named) process.stdout.write(installAccountRole("en", { role: named }) + "\n");
+    }
     const text = readFileSync(options.registryFile, "utf8");
     // Decided by what the registry declares, not by how it is spelled: a converted
     // registry writes its store table inline, and a second header would break the file.
