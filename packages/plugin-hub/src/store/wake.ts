@@ -189,6 +189,8 @@ async function openWaiter(
   options: {
     channel: string;
     wakesOn: string;
+    /** More payloads that wake it, read at each notification, so the caller may change the set. */
+    alsoWakesOn?: ReadonlySet<string>;
     deadline(): Promise<number | null>;
   },
 ): Promise<Waiter> {
@@ -203,7 +205,7 @@ async function openWaiter(
   let wake: ((reason: WakeReason) => void) | null = null;
 
   const arrived = (payload: string) => {
-    if (payload !== options.wakesOn) return;
+    if (payload !== options.wakesOn && !options.alsoWakesOn?.has(payload)) return;
     if (wake) wake("notified");
     else pending = true;
   };
@@ -351,14 +353,22 @@ export async function openWorkWaiter(
   });
 }
 
-/** The door's waiter: one person, and no deadline, the way a chunk has none. */
+/**
+ * The door's waiter: one person, and no deadline, the way a chunk has none.
+ *
+ * `also` holds more people whose announcements wake it. A reply is announced
+ * under the person of the message it answers, so an agent that now belongs to
+ * another person still has its answers to earlier messages announced under
+ * the earlier one. The set is the caller's and is read at each notification.
+ */
 export async function openOutboxWaiter(
   store: StoreLike,
-  options: { person: string },
+  options: { person: string; also?: ReadonlySet<string> },
 ): Promise<Waiter> {
   return await openWaiter(store, {
     channel: OUTBOX_CHANNEL,
     wakesOn: options.person,
+    alsoWakesOn: options.also,
     deadline: async () => null,
   });
 }

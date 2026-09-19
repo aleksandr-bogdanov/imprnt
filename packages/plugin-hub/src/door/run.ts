@@ -535,7 +535,31 @@ export async function runDoor(options: {
         if (!row) await stamp(store, { messageId: id, kind: "delivered", actor: "door" });
       }
     };
-    const waiter = await openOutboxWaiter(store, { person: agent.person });
+    // A reply is announced under the person of the message it answers, and a
+    // message keeps the person it came in under. So after this agent is given
+    // to another person, the answers to messages it took in before are
+    // announced under the earlier person, which this task would not hear on its
+    // own. It also hears every other person this agent still has an unanswered
+    // message under. Once a message is answered its reply is in the outbox,
+    // which the pass reads by agent, so that person drops out of the set.
+    //
+    // The set is read at the start of every pass while it may be non-empty, and
+    // on the first pass always, which also covers a door started after the
+    // move. Reading it BEFORE the pending replies is what closes the race with
+    // a settle: a message answered before this read has its reply seen by the
+    // read that follows, and one answered after it is announced to a person
+    // still in the set. An agent with nothing owed under anyone else pays one
+    // read per task start and nothing afterwards.
+    const owedUnder = new Set<string>();
+    let owedKnown = false;
+    const readOwed = async (): Promise<void> => {
+      const rows = await store.sql`select distinct person from inbound
+        where agent = ${agent.id} and person <> ${agent.person} and state in ('received', 'acked', 'started')`;
+      owedUnder.clear();
+      for (const row of rows) owedUnder.add(String(row.person));
+      owedKnown = true;
+    };
+    const waiter = await openOutboxWaiter(store, { person: agent.person, also: owedUnder });
     // A pass that throws never rejects: the door's readiness waits on the first
     // one, and a store that refuses it must not keep the door from starting.
     // What refused is said once per run of failures, on stderr, because the
@@ -543,6 +567,7 @@ export async function runDoor(options: {
     let failing = false;
     const attempt = async () => {
       try {
+        if (!owedKnown || owedUnder.size > 0) await readOwed();
         await deliver();
         failing = false;
       } catch (error) {
