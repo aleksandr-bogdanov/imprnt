@@ -151,18 +151,23 @@ for (const os of ["linux", "darwin"]) {
       expect(waiting.every(r => r.claimed_by === null)).toBe(true)
       clearInterval(sampler)
       // Sessions are up before the runner has finished with this burst: every
-      // other agent's loop still reads the window and records that it waits
-      // for capacity, one `admission.wait` row each, and on a slow runner the
-      // last of those can land after the sleep above. The window opens once
-      // every agent this runner serves either holds a row or has recorded its
-      // wait.
+      // idle agent's loop still reads the window on its next tick and records
+      // that it waits for capacity, one `admission.wait` row each, and on a
+      // slow runner the last of those can land after the sleep above. The
+      // window opens once every agent this runner serves holds a row, has
+      // recorded its wait, or has a row of its own still queued. That last
+      // one read its row on the insert's notification and yields to the
+      // waiting harvest with nothing to write (measured: p1-lair-1, once in
+      // twenty aggregate runs).
       const served = loadRegistry(it.registryFile).agents.filter(a => a.runner === "runner-pi").map(a => a.id)
       const unsettled = async () => {
-        const holding = new Set((await it.read.inbound()).filter(r => r.claimed_by !== null).map(r => r.agent))
+        const rows = await it.read.inbound()
+        const holding = new Set(rows.filter(r => r.claimed_by !== null).map(r => r.agent))
+        const queued = new Set(rows.filter(r => r.claimed_by === null).map(r => r.agent))
         const waiting = new Set((await it.read.ledger({ stream: "runner", kind: "admission.wait" })).map(r => r.subject))
-        return served.filter(a => !holding.has(a) && !waiting.has(a))
+        return served.filter(a => !holding.has(a) && !queued.has(a) && !waiting.has(a))
       }
-      await waitUntil("every agent holds a row or has recorded its wait for capacity", async () => (await unsettled()).length === 0, 15_000, async () => `still unsettled: ${(await unsettled()).join(", ")}`)
+      await waitUntil("every agent holds a row, has recorded its wait for capacity or has its row queued", async () => (await unsettled()).length === 0, 15_000, async () => `still unsettled: ${(await unsettled()).join(", ")}`)
       // No observer SQL or memory sampler inside this capacity-wait window.
       // The monitor is still free to read native memory on its own tick.
       await Bun.sleep(250)
