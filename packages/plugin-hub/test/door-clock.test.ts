@@ -34,6 +34,7 @@ import {
   seam,
   startReadySubprocess,
   statementWatch,
+  untilIssued,
   until,
   type Cluster,
   type ReadyProcess,
@@ -535,9 +536,16 @@ test(
       // (the second pass's finding). A fresh timer can be armed inside
       // `runDoor` BEFORE the ready line is printed, and a bound measured from
       // readiness leaves that timer room. This is measured from the spawn.
+      const settle = await statementWatch(cluster, [await it.read.pid()]);
       const startedAt = Date.now();
       door = await startDoor();
       const readyAt = Date.now();
+      // The restarted door is handed back ready once its read, clock and
+      // harvest tasks have landed their connect reads, and its post task's
+      // LISTEN and first read of pending replies can still be on their way.
+      // That read is the last statement of its start, so the window waits to
+      // see it.
+      await untilIssued(settle, "the restarted door's post task read its pending replies once", /from outbox o\b/, { after: /listen hub_outbox/ });
       await Bun.sleep(2000);
       const readerPid = await it.read.pid();
       const watch = await statementWatch(cluster, [readerPid]);
@@ -617,11 +625,24 @@ test(
         registryFile: it.registryFile,
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
+      // The two earlier messages are still this runner's to answer, and one
+      // delivered now waits behind both turns before it is acked. Against a
+      // one second acked clock that wait is a clock really running out on a
+      // slow runner, which drew a line and failed this control on CI (PR 31).
+      // So the control's message goes in once the backlog is answered, and
+      // what it shows is a message answered in time drawing nothing.
+      await until(
+        "the restarted runner answered the two earlier messages",
+        async () =>
+          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 2,
+        45_000,
+        async () => JSON.stringify(await it.read.inbound()),
+      );
       it.fake.deliver({ text: "a question answered while the new door watches" });
       await until(
         "the new message was answered and posted",
         async () =>
-          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 2,
+          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 3,
         45_000,
         async () => JSON.stringify(await it.read.inbound()),
       );

@@ -1,7 +1,11 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const child = spawn("bun", [fileURLToPath(new URL("./src/entry/command.ts", import.meta.url)), ...process.argv.slice(2)], { stdio: "inherit" });
+// The command opens a store, and the store refuses a process started without
+// this variable (src/store/connect.ts, STARTED_WITH). Bun reads it only at the
+// start, so this launcher is where `imprnt hub` supplies it.
+const env = { ...process.env, BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING: "1" };
+const child = spawn("bun", [fileURLToPath(new URL("./src/entry/command.ts", import.meta.url)), ...process.argv.slice(2)], { stdio: "inherit", env });
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => child.kill(signal));
 // A spawn that never started leaves no child to speak, so the shim says why.
 // It exits once the line is written, because a pipe on macOS writes later.

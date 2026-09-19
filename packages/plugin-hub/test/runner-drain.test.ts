@@ -24,6 +24,7 @@ import {
   startCluster,
   seam,
   statementWatch,
+  untilIssued,
   backendPid,
   until,
   type Cluster,
@@ -218,6 +219,9 @@ test(
       // One message answered, so the runner is settled and idle rather than
       // still coming up. A window opened over a starting runner would be
       // counting its connect, which D5 allows.
+      // Everything the runner says to the server from here, so the window can
+      // open after the last of what this message sets off.
+      const settle = await statementWatch(cluster, [ownerPid, doorPid, readerPid]);
       await asDoor("w-first", "the message that settles the runner");
       await until(
         "the first message was settled",
@@ -234,6 +238,12 @@ test(
           `refusals=${JSON.stringify(await it.read.ledger({ stream: "refusal" }))} ` +
           `runner=${JSON.stringify(await it.read.ledger({ stream: "runner" }))}`,
       );
+
+      // The reply is visible at the settle's commit, and the runner is not
+      // idle yet: it goes on to read the window and the next row, and then the
+      // nearest recorded deadline, which is the last thing it asks before it
+      // sleeps. The window waits to see that read.
+      await untilIssued(settle, "the runner read its next deadline after the settle, the last statement before it sleeps", /ceil\(extract\(epoch/, { after: /insert into outbox/ });
 
       // Nothing can announce the next row. The trigger is disabled BY NAME, so
       // the schema object is bound and cannot be renamed away.

@@ -31,6 +31,7 @@ import {
   freshDatabase,
   seam,
   statementWatch,
+  untilIssued,
   backendPid,
   type Cluster,
 } from "./helpers/cluster.ts";
@@ -117,13 +118,17 @@ test(
     // is new to any implementation, including one that snapshotted the ids it
     // had already seen. That is what kills the poll-for-new-ids escape.
     const started = Date.now();
+    const settle = await statementWatch(cluster, [ownerPid]);
     const waiting = (waitForWork as Function)(store, {
       agent: AGENT,
       timeoutMs: 6000,
     });
 
     // The window opens after the waiter has had time to LISTEN and read its
-    // eligible rows once. Everything counted after this is a timer.
+    // eligible rows once. Everything counted after this is a timer. Its LISTEN
+    // is the last thing it says on the way in, so the window waits to see it
+    // rather than trusting the settle to have been long enough.
+    await untilIssued(settle, "the waiter's LISTEN, the last statement of its way in", /listen hub_work/);
     await Bun.sleep(SETTLE_MS);
     const watch = await statementWatch(cluster, [ownerPid]);
 
@@ -213,6 +218,7 @@ test(
       const heldPid = await backendPid(held);
 
       let settled: string | null = null;
+      const settle = await statementWatch(cluster, [heldPid]);
       const waiting = (waitForWork as Function)(store, {
         agent: AGENT,
         timeoutMs: 20000,
@@ -222,6 +228,7 @@ test(
       });
 
       // The window opens after the waiter has settled, as above.
+      await untilIssued(settle, "the waiter's LISTEN, the last statement of its way in", /listen hub_work/);
       await Bun.sleep(SETTLE_MS);
       const watch = await statementWatch(cluster, [heldPid]);
 
@@ -324,6 +331,7 @@ test(
                'received', now() + interval '3000 milliseconds')`,
     );
 
+    const settle = await statementWatch(cluster, [ownerPid]);
     const waiting = (waitForWork as Function)(store, {
       agent: AGENT,
       timeoutMs: 20000,
@@ -331,6 +339,7 @@ test(
 
     // Window: after the waiter has read the nearest deadline once, and closed
     // well before that deadline arrives, so the wake itself is not counted.
+    await untilIssued(settle, "the waiter's LISTEN, the last statement of its way in", /listen hub_work/);
     await Bun.sleep(SETTLE_MS);
     const watch = await statementWatch(cluster, [ownerPid]);
     await Bun.sleep(1500);

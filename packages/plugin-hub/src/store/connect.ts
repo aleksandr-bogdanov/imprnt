@@ -16,6 +16,52 @@ export class DurabilityRefused extends Error {
   }
 }
 
+/**
+ * The environment every process that opens a store is started with.
+ *
+ * Bun's Postgres client pipelines by default, and in Bun 1.3.14 that hands one
+ * statement another statement's answer (the mechanism is below, at the pool
+ * size). This switch turns the pipelining off, and Bun reads it ONCE, when the
+ * process starts: set from inside a running process it changes nothing, which
+ * `test/store-crossing.test.ts` measures. So it cannot be set here. It is set
+ * by whatever starts the process: the unit files `src/os/systemd.ts` and
+ * `src/os/launchd.ts` render, the `hub.mjs` launcher behind `imprnt hub`, and
+ * the package's `test` script.
+ */
+export const STARTED_WITH: Readonly<Record<string, string>> = Object.freeze({
+  BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING: "1",
+});
+
+/** A process started without `STARTED_WITH`, which the store will not serve. */
+export class PipeliningRefused extends Error {
+  readonly variable: string;
+
+  constructor(variable: string, value: string | undefined) {
+    // One line, because every command prints the first line of an error.
+    super(
+      `this process was started without ${variable}=1 (${value === undefined ? "it is unset" : `it is "${value}"`}), ` +
+        `and without it Bun's Postgres client can hand one statement the answer meant for another. ` +
+        `Start the process with ${variable}=1 in its environment, because setting it after the start does nothing.`,
+    );
+    this.name = "PipeliningRefused";
+    this.variable = variable;
+  }
+}
+
+/**
+ * The refusal, as a function, so it runs before a single connection is opened.
+ *
+ * It reads the environment, and it is not a behaviour switch (RUN-07): nothing
+ * about what the hub does depends on it, only whether the runtime underneath
+ * can be trusted to hand each statement its own answer.
+ */
+function refuseUnlessPipeliningIsOff(): void {
+  for (const [variable, wanted] of Object.entries(STARTED_WITH)) {
+    const value = process.env[variable];
+    if (value !== wanted) throw new PipeliningRefused(variable, value);
+  }
+}
+
 export interface Store {
   /** The Bun SQL client: a tagged template that also carries unsafe, begin and reserve. */
   sql: SQL;
@@ -36,30 +82,54 @@ const SAYS_OK_EARLY: [string, string[]][] = [
 ];
 
 /**
- * How many connections one store holds.
+ * How many connections one store holds, and why it is still four.
  *
- * MEASURED 2026-09-16, and the reason it is not 1 (BUILD-NOTES 8). With a pool
- * of one, two of a process's own tasks that have statements in flight at the
- * same moment get each other's result rows: a runner serving TWO agents read
- * back a `ledger_event.seq` from the other agent's diary write as the value of
- * its own `returning data` column, reproducibly, and the same runner serving
- * ONE agent never did. It is not the statement text, not the prepared
- * statement's name and not a transaction boundary: the same two statements
- * driven by hand in either order never cross, and a pool above one never
- * crossed in that probe. Saturated fleet work still reserves each connection
- * until its result has settled.
+ * THE CROSSING, reproduced 2026-09-19 by `test/store-crossing.test.ts`, which
+ * carries the whole mechanism. With its automatic pipelining on, Bun's Postgres
+ * client writes a statement it has already prepared at once, while a statement
+ * new to that connection waits for the connection to go idle, and it hands
+ * every answer to the oldest statement queued there. On a busy connection the
+ * prepared one overtakes, the new one is handed its answer, and the one that
+ * overtook is never answered. That is the outage claim that read its `since` as
+ * undefined in phase 4, and the diary append with no `seq` in phase 6. A wider
+ * pool never prevented it: four and eight connections crossed the same way once
+ * every connection was busy, and the width only decided whether the store kept
+ * answering afterwards.
  *
- * The hub's own tasks are genuinely concurrent (a runner's agents, a door's
- * read and post and attend), so this is a floor rather than a tuning knob. What
- * stays true of one connection stays true of the first: the process names
- * itself to the server there, the hub's advisory lock is held by that session,
- * and a waiting process still issues nothing at all.
+ * THE CAUSE IS OFF. Every process is started with `STARTED_WITH` and
+ * `openStore` refuses one that was not, so no connection pipelines and the
+ * check holds 0 crossings in N. The width was then measured again on what the
+ * hub itself needs, and it does not come down:
+ *
+ *   - At one, the v2 handoff and the history catch-up wedge. Each reserves a
+ *     connection for a session advisory lock and then runs its work through
+ *     the pool while holding it (`src/migrate/handoff.ts`,
+ *     `src/migrate/harvest.ts`), so the reservation is the whole pool and the
+ *     next statement waits forever. Every one of the 14 checks that ran in
+ *     `test/v2-work-handoff.test.ts` and `test/harvest-v2-catchup.test.ts`
+ *     failed, 13 of them by hanging to the 90 s bound.
+ *   - At two, a door wedges under load. `test/door-chat-health.test.ts` with
+ *     four cores kept busy hung to the 90 s bound in 4 of 8 runs, always in a
+ *     same-person route check, and once in a full suite run. The server showed
+ *     one door connection idle in a transaction with no lock waiting, so the
+ *     door was waiting on its own client, not on the database. It is the width
+ *     and not the switch: with the switch off the same runs hung in 3 of 8.
+ *     What exactly the door waited for was not pinned down.
+ *   - At three the same 8 runs were clean, and at four they were clean and so
+ *     was the full suite. Three is not taken: without the mechanism at two, 8
+ *     clean runs are a sample and not a floor, and a wedged door costs more
+ *     than the 35 MB it would save.
+ *
+ * So memory stays where it was: a backend after hub-shaped work costs about
+ * 5 MB PSS on the hub box, and a two-person household holds 7 stores, about
+ * 140 MB at four. What stays true of one connection stays true of the first:
+ * the process names itself to the server there, the hub's advisory lock is
+ * held by that session, and a waiting process still issues nothing at all.
  */
-// Keep concurrent statements separate while leaving room for doors, runners
-// and their notification connections in the same cluster.
 const CONNECTIONS_PER_STORE = 4;
 
 export async function openStore(options: { url: string }): Promise<Store> {
+  refuseUnlessPipeliningIsOff();
   const sql = new SQL(options.url, { max: CONNECTIONS_PER_STORE });
   try {
     const [row] = (await sql.unsafe(

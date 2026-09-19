@@ -1,7 +1,7 @@
 // ROLL-08. The real runner settles and the real door delivers to a synthetic edge.
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test"
 import { appendFileSync } from "node:fs"
-import { startCluster, seam, until, statementWatch, type Cluster } from "./helpers/cluster.ts"
+import { startCluster, seam, until, statementWatch, untilIssued, type Cluster } from "./helpers/cluster.ts"
 import { stageHub } from "./helpers/hub-fixture.ts"
 import { rolloutPlatform } from "./helpers/rollout-platform.ts"
 import { runDoor } from "../src/door/run.ts"
@@ -151,6 +151,9 @@ for (const platform of ["telegram", "discord"] as const) for (const kind of ["pe
       const before = (await rows())[0]
       if (kind !== "permanent") expect(before.retry_at).toBeTruthy()
       await door.stop()
+      // Everything the restarted door says to the server, from before it
+      // starts, so the quiet window below can open after the last of it.
+      const settle = await statementWatch(cluster, [await it.read.pid()])
       door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: edge.platform })
       expect(await observe(async () => (await rows())[0].delivery_state === "failed", 6000), "D-174 refusal must terminate within configured attempt budget").toBe(true)
       const stopped = edge.sends.filter(row => row.text === "first part")
@@ -170,6 +173,25 @@ for (const platform of ["telegram", "discord"] as const) for (const kind of ["pe
         const positiveCount = await probe.count()
         expect(() => expect(positiveCount, "polling control rejected by the zero-SQL oracle").toBe(0)).toThrow()
       } finally { await fault.close() }
+      // The terminal failure is visible before the door has finished with it:
+      // after that update it still records the failure in the diary, and on a
+      // same-person route writes the notice, wakes both post loops of the
+      // person to read, and posts and marks the notice. On a slow runner the
+      // tail of that landed inside the window (CI, PR 31), so the window opens
+      // only once all of it is observed.
+      await until("the door finished what the terminal failure set off", async () => {
+        const failures = await it.read.sql("select count(*)::int as n from ledger_event where stream = 'operation' and kind = 'failed' and subject = 'door-fake/1000000001'")
+        if (Number(failures[0].n) !== expected) return false
+        if (!samePerson) return true
+        const notice = await it.read.sql("select delivered_at from outbox where kind = 'notice'")
+        return notice.length === 1 && notice[0].delivered_at !== null
+      }, 10_000)
+      // Each post loop's first read after the restart, and, where this door
+      // wrote the notice, each loop's read on the notification it caused.
+      await untilIssued(settle, "both post loops read their pending replies after the restart", /from outbox o\b/, { after: /listen hub_outbox/, times: 2 })
+      if ((await settle.lines()).some(line => line.includes("hub_door_notice"))) {
+        await untilIssued(settle, "both post loops read again on the notice's notification", /from outbox o\b/, { after: /hub_door_notice/, times: 2 })
+      }
       await Bun.sleep(100)
       const quiet = await statementWatch(cluster, [observerPid])
       await Bun.sleep(1200)

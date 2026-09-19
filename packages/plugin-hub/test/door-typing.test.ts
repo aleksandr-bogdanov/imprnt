@@ -27,6 +27,7 @@ import {
   startCluster,
   seam,
   statementWatch,
+  untilIssued,
   until,
   type Cluster,
 } from "./helpers/cluster.ts";
@@ -87,15 +88,34 @@ test(
       //     row nobody has claimed is a turn that has not opened. Typing here
       //     would show a person somebody working on a message the loop has not
       //     accepted.
+      const settle = await statementWatch(cluster, [await it.read.pid()]);
       door = await (runDoor as Function)({
         door: DOOR,
         registryFile: it.registryFile,
         platform: it.fake.platform,
       });
+      // The door is handed back ready once its read, clock and harvest tasks
+      // have landed their connect reads, and its post task's LISTEN and first
+      // read of pending replies can still be on their way. That read is the
+      // last statement of its start, so the window waits to see it.
+      await untilIssued(settle, "the door's post task read its pending replies once", /from outbox o\b/, { after: /listen hub_outbox/ });
       it.fake.deliver({ text: "a message with no runner running at all" });
       await until(
         "the door wrote the row down",
         async () => (await it.read.inbound()).length >= 1,
+        30_000,
+      );
+      // The row is visible before the door has finished accepting it: after
+      // the commit it still marks the chat log line written (`log_ready`) and
+      // then moves its read cursor in the `door_cursor` sheet. Those two writes
+      // are the delivery this setup made, not a timer, and on a slow runner the
+      // cursor write landed inside the window (CI, PR 31). So the window opens
+      // only once both are observed.
+      await until(
+        "the door finished accepting the message: its line is marked written and its cursor has moved",
+        async () =>
+          (await it.read.sql("select count(*)::int as n from inbound where log_ready"))[0].n === 1 &&
+          (await it.read.sheet("door_cursor")).some((row) => row.id === `${DOOR}/${CHAT}`),
         30_000,
       );
       // The statement window belongs HERE, with the door up and no runner:

@@ -2,6 +2,8 @@
 
 Use `imprnt hub check <registry> <machine>` for findings and `imprnt hub status <registry> <machine>` for wanted and observed services. A machine can be omitted only when exactly one is declared. `imprnt hub metrics <registry>` reads the shared store.
 
+Every hub process that opens the store must be started with `BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING=1`, and the store refuses to open in a process that was not. Without it Bun's Postgres client can hand one statement the answer meant for another, and Bun reads the variable only when the process starts. `imprnt hub` and the service units the installer writes set it for you. A script run directly with `bun run`, such as the v2 handoff or the history harvest, needs it on the command line: `BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING=1 bun run scripts/handoff-v2.ts <manifest>`. Units written by an earlier install lack it, so after upgrading run `imprnt hub install <registry> services <hub-entry>` again before starting the hub.
+
 Install the database with `imprnt hub install <registry> database`. The registry must name an explicit `install.admin_argv` for the database administrator. This stage creates the database and runtime roles, applies migrations, and writes `[store]` once. It does not activate services or change database access policy.
 
 Use `imprnt hub install <registry> services <hub-entry>` to install that machine's declared services, including its resident hub. `imprnt hub install <registry> entry <sync-entry>` installs just the selected entry and its schedule for sync rehearsal. On Linux the service account needs lingering enabled by the administrator with `loginctl enable-linger <service-account>`. macOS uses login agents; this does not provide startup before login.
