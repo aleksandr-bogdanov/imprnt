@@ -100,6 +100,7 @@ const registry=loadRegistry(process.argv[1]);
 try { await runSync(listRunEntries(registry).find(e=>e.id===process.argv[2]),registry); process.exit(0); }
 catch(e) { console.error(e.message); process.exit(1); }
 `, f.registryFile, id], { env, stdout: "pipe", stderr: "pipe" })
+  // The rehearsal sync measured max 1329 ms in 12 runs on the Linux box, so 15000 stays. One SD card stall took 10.4 s.
   const timer = setTimeout(() => proc.kill("SIGKILL"), 15000)
   try {
     const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
