@@ -73,8 +73,10 @@ export async function readTail(args: {
   const from = args.now.getTime() - args.hours * 3_600_000;
   const lines: ChatLine[] = [];
   // Only the dated files that can hold a line inside the window, so a year of
-  // log is not read to feed a day of it.
-  for (let at = from - DAY_MS; at <= args.now.getTime(); at += DAY_MS) {
+  // log is not read to feed a day of it. The walk starts at the UTC midnight of
+  // the window's first day, so it steps onto the day the window ends in even
+  // when the window is shorter than a day and crosses midnight.
+  for (let at = Math.floor(from / DAY_MS) * DAY_MS; at <= args.now.getTime(); at += DAY_MS) {
     const file = chatLogPath({ ...args, at: new Date(at) });
     if (!existsSync(file)) continue;
     for (const raw of readFileSync(file, "utf8").split("\n")) {
