@@ -1133,7 +1133,7 @@ export async function runDoor(options: {
 
   const served = new Map<string, Served>();
 
-  const serve = (agent: AgentEntry): void => {
+  const serve = (agent: AgentEntry, activate = false): void => {
     let release: () => void = () => {};
     const left = new Promise<"stopped">((resolve) => {
       release = () => resolve("stopped");
@@ -1164,7 +1164,7 @@ export async function runDoor(options: {
     };
     agent = it.agent;
     served.set(agent.id, it);
-    it.readDone = read(agent, it).finally(() => it.readied());
+    it.readDone = read(agent, it, activate).finally(() => it.readied());
     it.done = Promise.allSettled([
       post(agent, it),
       attend(agent, it),
@@ -1211,7 +1211,19 @@ export async function runDoor(options: {
         for (const agent of wanted) {
           const it = served.get(agent.id);
           if (!it) { await health.initialize(agent); serve(agent); }
-          else if (it.agent.chat !== agent.chat || it.agent.person !== agent.person) {
+          else if (it.agent.person !== agent.person) {
+            // IMP-160. Everything this agent's tasks wait on or read is keyed
+            // on its person: the outbox and turn waiters listen for that
+            // person's notifications, `attend` holds its language and clock
+            // thresholds, and the harvest task reads its chat log. So a new
+            // person is a new set of tasks. The read loop stops at a batch
+            // boundary and the new one activates its route exactly as a chat
+            // edit does below (D-178).
+            await drop(agent.id);
+            await health.initialize(agent);
+            serve(agent, true);
+          }
+          else if (it.agent.chat !== agent.chat) {
             it.rebinding = true;
             await it.readDone;
             Object.assign(it.agent, agent);
