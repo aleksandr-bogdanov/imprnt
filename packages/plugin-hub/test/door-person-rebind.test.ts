@@ -100,3 +100,72 @@ for (const when of ["moved while the turn was open", "moved, then the door resta
     } finally { await door?.stop(); await store.sql.close(); await it.stop() }
   })
 }
+
+// The door shows typing while a turn is open and turns the progress line into
+// totals when it ends, and it hears a turn end on the person of the message
+// the turn belongs to. So a turn that opened before the agent was given to
+// another person is one whose end the new tasks have to hear as well, or the
+// person watches a chat that says somebody is still typing after the answer
+// has already arrived. The thresholds are long here so no clock deadline can
+// send the door back to the table during the quiet window.
+for (const moved of [true, false]) {
+  test(`typing stops when a turn that was open ${moved ? "before the agent moved" : "under the agent's own person"} ends`, async () => {
+    const it = await rolloutStage(cluster, "telegram", {
+      people: [
+        { id: "p1", language: "en", acked_seconds: 600, started_seconds: 600, answered_seconds: 900, delivered_seconds: 600 },
+        { id: "p2", language: "ru", acked_seconds: 600, started_seconds: 600, answered_seconds: 900, delivered_seconds: 600 },
+      ],
+    })
+    const store = await superStore(cluster, it.db)
+    const typed: number[] = []
+    const typing = it.edge.platform.typing
+    it.edge.platform.typing = async where => { if (where.chat === "1000000001") typed.push(Date.now()); return typing(where) }
+    let door: Awaited<ReturnType<typeof runDoor>> | undefined
+    try {
+      door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+      await store.sql`insert into inbound (id, person, agent, body, kind, log_ready, claimed_by)
+        values ('moved-turn', 'p1', 'p1-lair', 'a question being answered when the agent moved', 'human', true, 'runner-pi')`
+      await stamp(store, { messageId: "moved-turn", kind: "acked", actor: "runner" })
+      await stamp(store, { messageId: "moved-turn", kind: "started", actor: "runner" })
+      expect(await observe(() => typed.length > 0, 6000), "the open turn must show typing").toBe(true)
+      if (moved) {
+        const watch = await statementWatch(cluster)
+        editAgent(it.registryFile, "p1-lair", { person: "p2" })
+        await untilIssued(watch, "the new attend task read the open turns once", /received_at, state, claimed_by/,
+          { after: /listen hub_turn/, timeoutMs: 10_000 })
+        const carried = typed.length
+        expect(await observe(() => typed.length > carried, 6000),
+          "the moved agent must still show typing for the turn it carried over").toBe(true)
+      }
+      await store.sql.begin(async tx => {
+        const inside = { ...store, sql: tx as unknown as Store["sql"] }
+        await appendChunks(inside, "moved-turn", ["the answer to the question being answered when the agent moved"])
+        await stamp(inside, { messageId: "moved-turn", kind: "answered", actor: "runner" })
+      })
+      // One refresh period of grace for a call already on its way, then a
+      // window longer than the refresh period, which a door still showing
+      // typing cannot get through in silence.
+      await Bun.sleep(1500)
+      const last = typed.length
+      await Bun.sleep(6000)
+      expect(typed.length - last,
+        "the door must stop showing typing once the turn it was typing for has ended").toBe(0)
+      if (moved) {
+        // With that turn ended the agent holds nothing of p1, so a turn
+        // announced for p1 wakes no read of this door. The control is the same
+        // announcement under p2, which does.
+        const reads = /received_at, state, claimed_by/
+        const quiet = await statementWatch(cluster)
+        await store.sql`insert into state_row (sheet, id, data) values ('turn_progress', 'elsewhere-p1',
+          jsonb_build_object('person', 'p1', 'agent', 'p1-elsewhere', 'actions', 1, 'last_action', 'read', 'started_at', now()))`
+        await Bun.sleep(1500)
+        expect((await quiet.lines()).filter(line => reads.test(line)),
+          "a turn announced for p1 must not wake the moved agent once it holds no turn of p1").toEqual([])
+        const woken = await statementWatch(cluster)
+        await store.sql`insert into state_row (sheet, id, data) values ('turn_progress', 'elsewhere-p2',
+          jsonb_build_object('person', 'p2', 'agent', 'p2-elsewhere', 'actions', 1, 'last_action', 'read', 'started_at', now()))`
+        await untilIssued(woken, "a turn announced for p2 woke a read of this door", reads, { timeoutMs: 4000 })
+      }
+    } finally { await door?.stop(); await store.sql.close(); await it.stop() }
+  })
+}

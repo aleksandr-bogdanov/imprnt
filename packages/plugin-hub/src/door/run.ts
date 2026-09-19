@@ -868,13 +868,29 @@ export async function runDoor(options: {
       }
     };
 
-    const waiter = await openTurnWaiter(store, { person: agent.person });
+    // The people other than this agent's own whose turns it still holds. A turn
+    // is announced under the person of the message it belongs to, and a message
+    // keeps the person it came in under, so an agent given to another person
+    // hears the end of a turn it carried over only by listening for the earlier
+    // person as well. Without it the chat goes on saying somebody is typing
+    // after the answer has landed, and the progress line never becomes totals.
+    //
+    // It costs no statement: every open row this task reads carries its person,
+    // so the set is rebuilt from the read it already does, and a person whose
+    // last turn here has ended drops out with that same read.
+    const owedUnder = new Set<string>();
+    const heard = (rows: OpenTurnRow[]): OpenTurnRow[] => {
+      owedUnder.clear();
+      for (const row of rows) if (row.person !== agent.person) owedUnder.add(row.person);
+      return rows;
+    };
+    const waiter = await openTurnWaiter(store, { person: agent.person, also: owedUnder });
     try {
       // ONE read at connect, which is where a restarted door picks up every
       // turn that opened while it was down and re-arms every clock it owed,
       // and one read of what the door before it had already said.
       try {
-        open = await readOpenTurns(store, { agent: agent.id });
+        open = heard(await readOpenTurns(store, { agent: agent.id }));
         for (const key of await readSpokenClocks(store, { agent: agent.id })) {
           spoken.add(key);
           spokenAt.set(key, Date.now());
@@ -941,7 +957,7 @@ export async function runDoor(options: {
         if (why === "notified") {
           // A turn opened, ended, or its progress moved. One read of this
           // agent's open rows and one of the sheet the runner writes.
-          open = await readOpenTurns(store, { agent: agent.id });
+          open = heard(await readOpenTurns(store, { agent: agent.id }));
           const rows = (await readSheet(store, TURN_PROGRESS_SHEET)) as unknown as {
             id: string;
             data: ProgressRow;
@@ -964,7 +980,7 @@ export async function runDoor(options: {
         // allowed on.
         const ripe = clocksOf(open).filter((clock) => clock.at <= Date.now());
         if (ripe.length === 0) continue;
-        open = await readOpenTurns(store, { agent: agent.id });
+        open = heard(await readOpenTurns(store, { agent: agent.id }));
         for (const clock of clocksOf(open)) {
           if (clock.at > Date.now()) continue;
           await sayExpired(clock.row, clock.stamp);
