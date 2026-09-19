@@ -57,7 +57,7 @@ for (const osName of ["linux", "macos"] as const) {
 
     // First stage crosses the actual Node core -> package shim -> Bun boundary.
     // No plugin replacement, no implementation spy and no native manager call.
-    // The command watchdog is in helpers/rollout-command.ts. With the cluster in memory this install measured 309 to 323 ms in 8 runs on the Linux box.
+    // The command watchdog is in helpers/rollout-command.ts. With the cluster in memory this install measured 309 to 352 ms in 13 runs on the Linux box.
     const installed = await command.run(["install", bootstrap.registryFile, "database"])
     expect(installed.code, `D-170 real core database dispatch must succeed (package hub.mjs ${existsSync(hubPath("hub.mjs")) ? "present" : "missing"})`).toBe(0)
     expect(os.calls).toEqual([])
