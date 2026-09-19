@@ -11,8 +11,9 @@
 // Usage: bun run src/entry/metrics.ts <registryFile>
 
 import { readStampMetrics, renderMetrics } from "../metrics/stamps.ts";
-import { loadRegistry, readSetting } from "../registry/load.ts";
-import { closeStore, openStore, storeUrlAs } from "../store/connect.ts";
+import { loadRegistry } from "../registry/load.ts";
+import { closeStore, openStore } from "../store/connect.ts";
+import { storeUrlFor } from "../store/secrets.ts";
 
 const [registryFile] = process.argv.slice(2);
 if (!registryFile) {
@@ -22,7 +23,7 @@ if (!registryFile) {
 
 const registry = loadRegistry(registryFile);
 const store = await openStore({
-  url: storeUrlAs(String(readSetting(registry, "hub.store_url")), "hub_hub"),
+  url: storeUrlFor(registry, "hub_hub"),
 });
 try {
   process.stdout.write(`${renderMetrics(await readStampMetrics(store))}\n`);

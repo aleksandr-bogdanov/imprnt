@@ -6,7 +6,8 @@ import type { Adapter } from "../adapters/types.ts";
 import { executeHarvest } from "../harvest/execute.ts";
 import { readWatermark, type Watermark } from "../harvest/sheet.ts";
 import { readSetting, type Registry } from "../registry/load.ts";
-import { openStore, storeUrlAs } from "../store/connect.ts";
+import { openStore } from "../store/connect.ts";
+import { storeUrlFor } from "../store/secrets.ts";
 import type { EligibleRow } from "../store/wake.ts";
 import { historyInventoryPath } from "./chatlog.ts";
 
@@ -68,7 +69,7 @@ export async function catchUpHarvest(registry: Registry, person: string, from: s
   const bounds = agents.map(a => inventory.agents[`${person}/${a.id}`]);
   if (!agents.length || Date.parse(from) < Math.min(...bounds.map(b => Date.parse(b.from))) ||
       Date.parse(until) > Math.max(...bounds.map(b => Date.parse(b.until)))) throw new Error("history bounds outside source inventory");
-  const store = await openStore({ url: storeUrlAs(String(readSetting(registry, "hub.store_url")), "hub_runner") });
+  const store = await openStore({ url: storeUrlFor(registry, "hub_runner") });
   const slices: { from: string; until: string; lines: number }[] = [];
   try {
     // Every chat is checked before any is harvested, so a refusal files nothing.

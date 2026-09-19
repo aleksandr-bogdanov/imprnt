@@ -6,7 +6,8 @@ import { thisOs } from "../os/index.ts";
 import type { OsSeam, RenderContext, WantedUnit } from "../os/types.ts";
 import { listMachines, listRunEntries, runEntriesFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
-import { openStore, storeUrlAs, type Store } from "../store/connect.ts";
+import { openStore, type Store } from "../store/connect.ts";
+import { storeUrlFor } from "../store/secrets.ts";
 import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.ts";
 import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
 import { watchControls } from "./control.ts";
@@ -71,7 +72,7 @@ export async function runHub(options: {
   const os = options.os ?? thisOs();
   const application = `hub-${options.machine}`;
   const store: Store = await openStore({
-    url: storeUrlAs(String(readSetting(first, "hub.store_url")), "hub_hub", application),
+    url: storeUrlFor(first, "hub_hub", application),
   });
 
   // SPEC section 6 and D7: ONE hub process per machine. Two of them reconciling

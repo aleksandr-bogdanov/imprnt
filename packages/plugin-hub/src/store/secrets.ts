@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readSetting } from "../registry/load.ts";
+import { storeUrlAs } from "./connect.ts";
 
 /**
  * The hub's own secrets: one password per store role, each in its own file.
@@ -28,4 +30,37 @@ export function secretsDirOf(registry: unknown): string | null {
 
 export function passwordFileOf(dir: string, role: string): string {
   return join(dir, `${role}.password`);
+}
+
+/** A role's password, or null when this machine has no file for it. */
+export function readPassword(registry: unknown, role: string): string | null {
+  const dir = secretsDirOf(registry);
+  if (dir === null) return null;
+  let text: string;
+  try {
+    text = readFileSync(passwordFileOf(dir, role), "utf8");
+  } catch (error) {
+    // No file is a store that trusts this machine's loopback, which the tests'
+    // throwaway clusters do. Any other failure is a file that is there and
+    // cannot be read, and that is said rather than swallowed.
+    if ((error as { code?: string }).code === "ENOENT") return null;
+    throw error;
+  }
+  const password = text.trim();
+  return password === "" ? null : password;
+}
+
+/**
+ * The store a hub process opens, as its own role and with its own password.
+ *
+ * The password goes into the url and nowhere else: not argv, not the
+ * environment, both of which another process of the same account can read.
+ */
+export function storeUrlFor(registry: unknown, role: string, applicationName?: string): string {
+  const url = storeUrlAs(String(readSetting(registry, "hub.store_url")), role, applicationName);
+  const password = readPassword(registry, role);
+  if (password === null) return url;
+  const where = new URL(url);
+  where.password = encodeURIComponent(password);
+  return where.toString();
 }

@@ -7,11 +7,11 @@ import { thisOs } from "../os/index.ts";
 import { wantedState } from "../os/diff.ts";
 import type { OsSeam } from "../os/types.ts";
 import { programForKind } from "../hub/program.ts";
-import { openStore, storeUrlAs } from "../store/connect.ts";
+import { openStore } from "../store/connect.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { standardFor } from "./standard.ts";
 import { installDatabaseReady, installPasswordsSet, installPlan, installServicePlan, installTrustRemains } from "../door/lines.ts";
-import { HUB_ROLES, passwordFileOf, secretsDirOf } from "../store/secrets.ts";
+import { HUB_ROLES, passwordFileOf, secretsDirOf, storeUrlFor } from "../store/secrets.ts";
 import { newPassword, scramMatches, scramVerifier } from "../store/scram.ts";
 
 type Ask = (db: string, args: string[]) => string;
@@ -145,7 +145,7 @@ export async function runInstall(options: { registryFile: string; stage?: string
   for (const agent of listAgents(registry)) {
     if (entries.find(e => e.id === agent.runner)?.machine !== entries.find(e => e.id === agent.door)?.machine) throw new Error("agent-state-unavailable");
   }
-  const store = await openStore({ url: storeUrlAs(url, "hub_hub") });
+  const store = await openStore({ url: storeUrlFor(registry, "hub_hub") });
   try {
     await store.sql`select source, log_ready from inbound limit 0`;
     await store.sql`select route, delivery_state from outbox limit 0`;

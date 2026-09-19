@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { absolute, digest, verifyInventory, version } from "./files.ts";
 import { loadRegistry, readSetting } from "../registry/load.ts";
 import { getPreset, presetId } from "../registry/presets.ts";
-import { openStore, storeUrlAs } from "../store/connect.ts";
+import { openStore } from "../store/connect.ts";
+import { storeUrlFor } from "../store/secrets.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import { settleTurn } from "../runner/settle.ts";
@@ -47,9 +48,8 @@ export async function applyHandoff(input: any, options: { registryFile: string }
   for (const item of manifest.items.filter((i: any) => i.state !== "completed")) {
     if (!registry.agents.some(a => a.id === item.agent && a.person === item.person && a.door === item.door && a.chat === item.chat)) throw new Error("source agent route missing");
   }
-  const url = String(readSetting(registry, "hub.store_url"));
-  const door = await openStore({ url: storeUrlAs(url, "hub_door") });
-  const runner = await openStore({ url: storeUrlAs(url, "hub_runner") });
+  const door = await openStore({ url: storeUrlFor(registry, "hub_door") });
+  const runner = await openStore({ url: storeUrlFor(registry, "hub_runner") });
   const stateDir = String(readSetting(registry, "hub.state_dir"));
   const lock = await door.sql.reserve();
   let locked = false;
