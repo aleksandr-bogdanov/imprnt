@@ -1,7 +1,8 @@
 import { historyHarvestFrom } from "../registry/entries.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
 import { classifyPlatformError } from "./reply.ts";
-import { appendChatLine, appendChatLineOnce } from "../chatlog.ts";
+import { appendChatLine, appendChatLineOnce, type BadRecord } from "../chatlog.ts";
+import { recordOperationFailure as recordDiagnostic } from "../diagnostics.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import {
   dueTrigger,
@@ -53,6 +54,13 @@ interface ProgressLine {
   totals: Promise<void>;
   finished(): void;
 }
+
+/**
+ * IMP-160. The health code of a chat whose fetched batch the door could not
+ * accept twice in a row. A successful read does not clear it, an accepted batch
+ * does.
+ */
+const ACCEPT_FAILED = "accept-failed";
 
 /** How long `post` waits for those totals before it goes ahead anyway. */
 const TOTALS_WAIT_MS = 5000;
@@ -181,10 +189,50 @@ function cannotShowTyping(door: string): string {
   );
 }
 
+/**
+ * D-181. A door with a declared cutover batch serves nothing until that batch
+ * is complete.
+ *
+ * IMP-160. It WAITS rather than refusing to start. A door that threw here was
+ * restarted by its unit until systemd's start limit parked it, and it then
+ * stayed down after the handoff completed until someone reset the unit by hand.
+ * D-186 says the handoff (step 12) comes before the services (step 14), and
+ * nothing enforced it. The reason goes to the diary once, not once a tick, and
+ * the door reads one row a tick while it waits: it has not started serving, so
+ * no idle window is open, and the wait is written down rather than hidden
+ * behind a readiness that never comes (D-185).
+ */
+async function awaitHandoff(store: Store, options: {
+  door: string; batch: string; tickMs: number; signal?: AbortSignal;
+}): Promise<void> {
+  const complete = async (): Promise<boolean> => {
+    const rows = await store.sql`select data from state_row where sheet='cutover' and id=${options.batch}`;
+    return Boolean(rows[0]?.data?.complete);
+  };
+  if (await complete()) return;
+  await recordDiagnostic(store, { operation: "start", target: options.door, actor: "door", error: {
+    code: "cutover-incomplete", message: `waiting for cutover handoff batch ${options.batch} to complete` } });
+  const stopped = new Promise<void>(resolve => {
+    if (options.signal?.aborted) resolve();
+    else options.signal?.addEventListener("abort", () => resolve(), { once: true });
+  });
+  for (;;) {
+    await Promise.race([Bun.sleep(options.tickMs), stopped]);
+    if (options.signal?.aborted) throw new Error(`stopped while waiting for cutover handoff batch ${options.batch}`);
+    // A store that does not answer one tick is asked again the next.
+    if (await complete().catch(() => false)) return;
+  }
+}
+
 export async function runDoor(options: {
   door: string;
   registryFile: string;
   platform: Platform;
+  /**
+   * Stops a door that is still waiting for its cutover batch (IMP-160). Once
+   * the door is ready, `stop()` on the handle is how it is stopped.
+   */
+  signal?: AbortSignal;
 }): Promise<DoorHandle> {
   // SPEC §2's Forbidden line, refused BY NAME and at START. It lives here and
   // not in `src/entry/door.ts` because every check drives `runDoor` directly
@@ -205,15 +253,25 @@ export async function runDoor(options: {
 
   const batch = (registry.data.hub as { cutover_batch?: string }).cutover_batch;
   if (batch) {
-    try {
-      const rows = await store.sql`select data from state_row where sheet='cutover' and id=${batch}`;
-      if (!rows[0]?.data?.complete) throw new Error("cutover handoff batch incomplete");
-    } catch (error) { await store.close(); throw error; }
+    try { await awaitHandoff(store, { door: options.door, batch, tickMs: timeoutMs, signal: options.signal }); }
+    catch (error) { await store.close(); throw error; }
   }
 
   // A successful projection is already fsynced. Keep that knowledge only for
   // pending chunks in this process; a restarted door repairs them all again.
   const projected = new Set<number>();
+  // IMP-160. One complete record in a day file that is not a chat line used to
+  // refuse every append to that file, and at start the whole door. The door
+  // skips it (its bytes stay, D-172 never truncates a complete record) and says
+  // where, once per file and line in this process: the diary and stderr.
+  const reportedBad = new Set<string>();
+  const skipBad = async (bad: BadRecord): Promise<void> => {
+    const where = `${bad.file}:${bad.line}`;
+    if (reportedBad.has(where)) return;
+    reportedBad.add(where);
+    await recordDiagnostic(store, { operation: "chatlog", target: where, actor: "door",
+      error: { code: "chatlog-bad-record", message: "a record that is not a chat line was skipped" } }).catch(() => {});
+  };
   try {
     // Only an explicit operator recovery releases terminal delivery failures.
     // The door keeps its own delivery authority; the hub only restarts it.
@@ -223,14 +281,14 @@ export async function runDoor(options: {
           and data->>'target_kind'='door' and data->>'target_id'=${options.door}
           and data->>'status'='pending')`;
     const pending = await store.sql`select id from inbound where not log_ready and source->>'door' = ${options.door}`;
-    for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id) });
+    for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id), skipBad });
     for (const agent of agentsFor(registry, { door: options.door })) {
       for (const chunk of await readPendingChunks(store, { agent: agent.id })) {
         if (chunk.route && chunk.route.door !== options.door) continue;
         await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
           id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
           from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
-        });
+        }, { skipBad });
         projected.add(chunk.id);
       }
     }
@@ -249,14 +307,15 @@ export async function runDoor(options: {
   for (const agent of agentsFor(registry, { door: options.door })) await health.initialize(agent);
   let releaseHealth!: () => void;
   const healthReady = new Promise<void>(resolve => { releaseHealth = resolve; });
-  const sayReadFailure = async (agent: AgentEntry) => {
+  /** `seconds` is the retry that really follows: the read retry unless said otherwise. */
+  const sayReadFailure = async (agent: AgentEntry, seconds?: number) => {
     const data = health.health.get(agent.chat);
     if (data?.status !== "failed" || data.notice_key) return;
     const key = `chat-read:${options.door}:${agent.chat}:${data.since}`;
     const sent = await routeNotice(store, { registry: registryThisTick(), door: options.door,
       platform: options.platform.name, agent, chat: agent.chat, health: health.health, key,
       failure: { kind: "transient", code: String(data.code), cause: String(data.cause) },
-      operation: "read", seconds: Number(readSetting(registryThisTick(), "door.read_retry_seconds")) });
+      operation: "read", seconds: seconds ?? Number(readSetting(registryThisTick(), "door.read_retry_seconds")) });
     if (sent) {
       data.notice_key = key;
       await putRow(store, "door_health", `${options.door}/${agent.chat}`, data);
@@ -274,6 +333,9 @@ export async function runDoor(options: {
     let cursor = await readCursor(store, options.door, agent.chat);
     let capturing = activate && cursor === null;
     let first = true;
+    /** How many times in a row this chat's fetched batch could not be accepted. */
+    let refused = 0;
+    const acceptFailing = () => health.health.get(agent.chat)?.code === ACCEPT_FAILED;
     while (!stopping && !own.leaving && !own.rebinding) {
       let fresh: Registry;
       try { fresh = registryThisTick(); }
@@ -301,7 +363,10 @@ export async function runDoor(options: {
         first = false;
         continue;
       }
-      await health.succeeded(agent.chat);
+      // A read that worked says nothing about a batch that cannot be accepted.
+      // Clearing that here would open a fresh episode, and a fresh notice, on
+      // every replay, so only an accepted batch clears it (below).
+      if (!acceptFailing()) await health.succeeded(agent.chat);
       if (capturing) {
         const boundary = pulled.batch.cursor;
         if (boundary === null || boundary === cursor) capturing = false;
@@ -324,7 +389,7 @@ export async function runDoor(options: {
               await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
                 id: "harvest-demand:" + inboundId(options.platform.name, message.chat, message.platform_message_id),
                 at: message.at, direction: "in", from: agent.person, text: message.text,
-              });
+              }, { skipBad });
             }
             throw error;
           }
@@ -333,7 +398,7 @@ export async function runDoor(options: {
           const connection = await ingress.sql.reserve();
           try {
             cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: current, stateDir,
-              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor,
+              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor, skipBad,
               received(id) {
                 own.arrivals.push({ id, person: agent.person, agent: agent.id,
                   received_at: new Date(), state: "received", claimed_by: null });
@@ -344,10 +409,27 @@ export async function runDoor(options: {
         });
         accepting = accepted.catch(() => {});
         await accepted;
-      } catch {
+        refused = 0;
+      } catch (error) {
         console.error("ingress: accepted batch remains unacknowledged");
+        // IMP-160. The same batch comes back on every replay, so a second
+        // refusal in a row is a failure that repeats, not a blip. It leaves the
+        // trace a read failure leaves: the chat's health row that `check`
+        // reports, the diary, and one notice per episode to a working chat of
+        // the same person. The retry is the replay one tick from now.
+        refused += 1;
+        if (refused >= 2 && !stopping && !own.leaving) {
+          try {
+            await health.failed(agent.chat, error, timeoutMs / 1000, { code: ACCEPT_FAILED, cause: "operation failed" });
+            await sayReadFailure(agent, timeoutMs / 1000);
+          } catch {
+            // The store that refused the batch may refuse this too. The next
+            // replay tries again.
+          }
+        }
         await Promise.race([Bun.sleep(timeoutMs), stopped, own.left]);
       }
+      if (refused === 0 && acceptFailing()) await health.succeeded(agent.chat).catch(() => {});
       own.readied();
       first = false;
     }
@@ -377,7 +459,7 @@ export async function runDoor(options: {
           await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
             id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
             from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
-          });
+          }, { skipBad });
           projected.add(chunk.id);
         }
         if (chunk.kind === "reply" && chunk.inbound_id !== null) {
@@ -1051,7 +1133,7 @@ export async function runDoor(options: {
 
   const served = new Map<string, Served>();
 
-  const serve = (agent: AgentEntry): void => {
+  const serve = (agent: AgentEntry, activate = false): void => {
     let release: () => void = () => {};
     const left = new Promise<"stopped">((resolve) => {
       release = () => resolve("stopped");
@@ -1082,7 +1164,7 @@ export async function runDoor(options: {
     };
     agent = it.agent;
     served.set(agent.id, it);
-    it.readDone = read(agent, it).finally(() => it.readied());
+    it.readDone = read(agent, it, activate).finally(() => it.readied());
     it.done = Promise.allSettled([
       post(agent, it),
       attend(agent, it),
@@ -1129,7 +1211,19 @@ export async function runDoor(options: {
         for (const agent of wanted) {
           const it = served.get(agent.id);
           if (!it) { await health.initialize(agent); serve(agent); }
-          else if (it.agent.chat !== agent.chat || it.agent.person !== agent.person) {
+          else if (it.agent.person !== agent.person) {
+            // IMP-160. Everything this agent's tasks wait on or read is keyed
+            // on its person: the outbox and turn waiters listen for that
+            // person's notifications, `attend` holds its language and clock
+            // thresholds, and the harvest task reads its chat log. So a new
+            // person is a new set of tasks. The read loop stops at a batch
+            // boundary and the new one activates its route exactly as a chat
+            // edit does below (D-178).
+            await drop(agent.id);
+            await health.initialize(agent);
+            serve(agent, true);
+          }
+          else if (it.agent.chat !== agent.chat) {
             it.rebinding = true;
             await it.readDone;
             Object.assign(it.agent, agent);

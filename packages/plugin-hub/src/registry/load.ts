@@ -1137,6 +1137,27 @@ export function loadRegistry(file: string): Registry {
         );
       }
     }
+    // IMP-160, D-173. Telegram's `getUpdates` offset confirms every update
+    // below it for the whole BOT, not for one chat, and Telegram refuses a
+    // second long poll on a bot while one is open. The door keeps one cursor
+    // per chat and runs one reader per agent, so a second agent on a Telegram
+    // door acknowledges the first one's messages without accepting them.
+    // Serving both would take one reader per bot with one cursor for every
+    // chat, which is not the cursor D-173 fixes, so the file is refused.
+    // Discord's cursor is a per-channel snowflake and stays legal there.
+    if ((parsed.run as Record<string, unknown>[])[nth].platform !== "telegram") return;
+    const readers = ((parsed.agents ?? []) as Record<string, unknown>[])
+      .map((agent, index) => ({ agent, index }))
+      .filter(({ agent }) => agent.door === entry.id);
+    if (readers.length < 2) return;
+    const [kept, extra] = readers;
+    refuse(
+      `agents[${extra.index}].door`,
+      lines.get(`agents[${extra.index}].door`) ?? lines.get(`agents[${extra.index}]`) ?? here,
+      `${entry.id} is a Telegram door and ${kept.agent.id} already reads it (chat ${kept.agent.chat}), ` +
+        `so ${extra.agent.id} (chat ${extra.agent.chat}) cannot: Telegram confirms updates for the whole bot, ` +
+        `so one Telegram door serves one agent in one chat. Give ${extra.agent.id} its own bot and door`,
+    );
   });
 
   const rates: RateEntry[] = [];

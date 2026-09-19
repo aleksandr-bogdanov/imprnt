@@ -263,10 +263,27 @@ async function openWaiter(
         settle = resolve;
       });
       let done = false;
+      // A WAIT SETTLES ONLY ITSELF. A caller may race this wait against
+      // something else and drop it when the other thing wins: the door drops it
+      // for an arrival (`src/door/run.ts:786-791`) and arms the next wait in the
+      // same drain, and the runner drops it for a stop, a leave or a failed
+      // session (`src/runner/run.ts:929-936`). The dropped wait's timer still
+      // fires. Clearing `wake` unconditionally there disarmed the wait that had
+      // replaced it, so a notification landed in `pending` and was answered one
+      // wait late, up to a whole bound. The check is "a wait its caller dropped
+      // settles only itself" in `test/store-wake.test.ts`.
+      //
+      // What keeps a notification from landing ON a dropped wait is the rule
+      // the callers keep: between the race settling and the next `wait()` there
+      // is no await, so nothing can be delivered to the dropped wait's `finish`
+      // in between. The runner keeps it by never waiting again on this waiter
+      // after a drop (every non-wait winner ends its loop and the loop closes
+      // the waiter). A change that needs an await there has to give the waiter a
+      // way to hand an unconsumed wake back first.
       const finish = (reason: WakeReason) => {
         if (done) return;
         done = true;
-        wake = null;
+        if (wake === finish) wake = null;
         settle(reason);
       };
       // Armed before the deadline is read, so a notification that lands during

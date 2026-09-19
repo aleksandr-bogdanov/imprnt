@@ -422,3 +422,106 @@ test(
   },
   SLOW,
 );
+
+test(
+  "STORE-04 a wait its caller dropped settles only itself: with a dropped wait's timer already fired, the live wait still wakes on the notification at once, and a wait with nothing to be told about still answers timeout (D-126, D-70, BUILD-NOTES 168)",
+  async () => {
+    const { openStore, closeStore } = await seam("src/store/connect.ts");
+    const { openTurnWaiter } = await seam("src/store/wake.ts");
+    expect(typeof openTurnWaiter).toBe("function");
+
+    const db = await freshDatabase(cluster);
+    const store = await (openStore as Function)({ url: cluster.url(db) });
+    // The notification is fired BY HAND on a connection of the check's own, so
+    // nothing but the one `pg_notify` below can wake a waiter here: no trigger,
+    // no table, no stamp.
+    const producer = cluster.connect(db) as unknown as {
+      (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown>;
+      close(): Promise<void>;
+    };
+
+    type TurnWaiter = { wait(ms: number): Promise<string>; close(): Promise<void> };
+    const opened: TurnWaiter[] = [];
+    // One waiter per case, because `pending` is the waiter's own memory: a
+    // wake parked by one case would answer the next case's wait and pass it
+    // for the wrong reason.
+    const fresh = async (): Promise<TurnWaiter> => {
+      const waiter = (await (openTurnWaiter as Function)(store, { person: "p1" })) as TurnWaiter;
+      opened.push(waiter);
+      // The LISTEN is settled before anything is asked of it.
+      await Bun.sleep(100);
+      return waiter;
+    };
+
+    try {
+      // THE DEFECT. The door races a wait against an arrival and drops the wait
+      // when the arrival wins (`src/door/run.ts:786-791`), then arms the next
+      // wait in the same drain. Both are armed here with no await between them,
+      // which is that shape exactly. The dropped wait's bound is 400 ms, so its
+      // timer fires at 400 while the live wait is armed until 2000, and the
+      // notification lands at 700, after that timer. A waiter whose dropped
+      // timer disarms the live wait parks the notification instead of waking
+      // anybody, and the live wait sleeps out its whole bound.
+      {
+        const waiter = await fresh();
+        void waiter.wait(400).catch(() => {});
+        const live = waiter.wait(2000);
+        await Bun.sleep(700);
+        const sent = Date.now();
+        await producer`select pg_notify('hub_turn', 'p1')`;
+        const why = await live;
+        const lateBy = Date.now() - sent;
+        expect(why).toBe("notified");
+        expect(lateBy).toBeLessThan(300);
+        // And the live wait consumed the notification, so nothing is parked for
+        // the wait after it. A parked wake here is the notification that the
+        // live wait should have answered, arriving one wait late.
+        expect(await waiter.wait(50)).toBe("timeout");
+      }
+
+      // CONTROL ONE, no dropped wait. The same notification at the same moment
+      // wakes a lone wait at once. This is what stops a build that makes every
+      // wait slower from passing the case above by accident.
+      {
+        const waiter = await fresh();
+        const live = waiter.wait(2000);
+        await Bun.sleep(700);
+        const sent = Date.now();
+        await producer`select pg_notify('hub_turn', 'p1')`;
+        const why = await live;
+        const lateBy = Date.now() - sent;
+        expect(why).toBe("notified");
+        expect(lateBy).toBeLessThan(300);
+      }
+
+      // CONTROL TWO, a dropped wait whose timer has NOT fired yet when the
+      // notification lands. Dropping the wait is harmless on its own: what
+      // deafens the live wait is the dropped wait's timer going off.
+      {
+        const waiter = await fresh();
+        void waiter.wait(400).catch(() => {});
+        const live = waiter.wait(2000);
+        await Bun.sleep(200);
+        const sent = Date.now();
+        await producer`select pg_notify('hub_turn', 'p1')`;
+        const why = await live;
+        const lateBy = Date.now() - sent;
+        expect(why).toBe("notified");
+        expect(lateBy).toBeLessThan(300);
+      }
+
+      // CONTROL THREE, nothing to be told about. A wait with no notification
+      // answers timeout, which stops a build that answers "notified" to
+      // everything.
+      {
+        const waiter = await fresh();
+        expect(await waiter.wait(300)).toBe("timeout");
+      }
+    } finally {
+      for (const waiter of opened) await waiter.close();
+      await producer.close();
+      await (closeStore as Function)(store);
+    }
+  },
+  SLOW,
+);

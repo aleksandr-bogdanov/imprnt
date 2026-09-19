@@ -23,8 +23,10 @@ export async function doorHealth(store: StoreLike, door: string) {
       health.set(agent.chat, data);
       await putRow(store, "door_health", `${door}/${agent.chat}`, data);
     },
-    async failed(chat: string, error: unknown, seconds: number) {
-      const failure = classifyPlatformError(error);
+    async failed(chat: string, error: unknown, seconds: number, as?: Pick<PlatformFailure, "code" | "cause">) {
+      // `as` names a failure the door found itself rather than one the platform
+      // answered with, and keeps what was thrown as the detail.
+      const failure = { ...classifyPlatformError(error), ...as };
       const old = health.get(chat);
       const data = { door, chat, status: "failed", ...failure,
         since: old?.status === "failed" ? old.since : new Date().toISOString(),

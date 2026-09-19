@@ -15,6 +15,7 @@ import { appendEntry, type NewEntry } from "../records/diary.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import { stamp } from "../records/stamps.ts";
 import {
+  agentRetry,
   catchUpNotice,
   outageNotice,
   windowNotice,
@@ -464,7 +465,9 @@ export async function runRunner(options: {
     return false;
   };
   const failedSession = (session: AdapterSession): Promise<never> => session.exited
-    ? session.exited.then(exit => { throw new Error(safeValue((exit as { cause?: string })?.cause ?? "child-exited")); })
+    ? session.exited.then(exit => {
+      throw Object.assign(new Error(safeValue((exit as { cause?: string })?.cause ?? "child-exited")), { childExited: true });
+    })
     : new Promise<never>(() => {});
   const preflight = (registry: Registry, agent: AgentEntry) => {
     const entries = listRunEntries(registry);
@@ -484,6 +487,8 @@ export async function runRunner(options: {
     let startedWith = "";
     let lastWork = Date.now();
     let claimed: string | null = null;
+    /** Whether that claim is a person's message rather than a harvest. */
+    let claimedHuman = false;
     let unhealthy = retries.has(agent.id);
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
@@ -1041,6 +1046,7 @@ export async function runRunner(options: {
         // period. `claimNext`'s `returning` already carries the kind, so the
         // branch costs no read.
         claimed = row.id;
+        claimedHuman = row.kind !== "harvest";
         if (row.kind === "harvest") {
           // REVIEW M1. NOTHING A HARVEST DOES LEAVES THIS LOOP. `Bun.spawn`
           // throws SYNCHRONOUSLY on a command it cannot find (measured, bun
@@ -1090,7 +1096,8 @@ export async function runRunner(options: {
     } catch (error) {
       if (stopping || own.leaving) return;
       const registry = loadRegistry(options.registryFile);
-      const retryAt = new Date(Date.now() + Number(readSetting(registry, "runner.task_retry_seconds") ?? 30) * 1000).toISOString();
+      const taskRetrySeconds = Number(readSetting(registry, "runner.task_retry_seconds") ?? 30);
+      const retryAt = new Date(Date.now() + taskRetrySeconds * 1000).toISOString();
       retries.set(agent.id, Date.parse(retryAt));
       await writes;
       const cause = safeValue(`${(error as Error).name}: ${(error as Error).message}`);
@@ -1101,6 +1108,20 @@ export async function runRunner(options: {
         await tx`update inbound set claimed_by = null, claim_deadline = null, retry_at = ${retryAt}::timestamptz
           where agent = ${agent.id} and claimed_by = ${options.runner} and state not in ('answered', 'delivered')`;
         await putRow(inside, "agent_health", agent.id, { status: "retry", cause, retry_at: retryAt });
+        // IMP-160, D-183. The person whose message this child was working on
+        // hears that it stopped and when it is tried again, once per message,
+        // rather than nothing until the answered clock runs out. A harvest
+        // failure tells nobody (D-155, D-156).
+        if (claimed && claimedHuman && listAgents(registry).some(one => one.id === agent.id)) {
+          const said = noticeRoute(registry, agent.id);
+          // A memory kill reaches here as the child's exit. `own.killed` alone
+          // is also set by a credential refusal, which closes the child itself.
+          const why = !(error as { childExited?: boolean }).childExited ? "task failed"
+            : own.killed ? "memory limit reached" : "child exited";
+          await appendNotice(inside, { person: agent.person, agent: agent.id, ...said,
+            body: agentRetry(said.language as Language, { agent: agent.id, cause: why, seconds: taskRetrySeconds }),
+            noticeKey: `agent-retry:${claimed}` });
+        }
         await appendEntry(inside, { stream: "refusal", subject: agent.id, kind: "refused.turn", actor: "runner",
           detail: { agent: agent.id, error: cause, retry_at: retryAt,
             ...(error instanceof AdapterMissing ? { adapter: safeValue(error.adapter) } : {}) } });
@@ -1282,7 +1303,8 @@ export async function runRunner(options: {
   };
   const controls = await watchControls(store, "runner", data => data.target_kind === "agent" &&
     agentsFor(loadRegistry(options.registryFile), { runner: options.runner }).some(a => a.id === data.target_id),
-    async data => { await recoverAgent({ id: String(data.id), agent: String(data.target_id) }); });
+    async data => { await recoverAgent({ id: String(data.id), agent: String(data.target_id) }); },
+    { registry: () => loadRegistry(options.registryFile) });
   return {
     runner: options.runner,
     recoverAgent,
