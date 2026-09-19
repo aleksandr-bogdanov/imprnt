@@ -1,0 +1,18 @@
+# Checks that cannot pass inside a container, and why.
+#
+# Each line is a substring of a test name that a container makes impossible,
+# then a tab, then the reason. run.sh subtracts these from a failing run so a
+# real regression is not buried under them, and prints every one that fired.
+# A line here is a CLAIM that the container is the wrong box for that check,
+# never that the check is wrong. Verify on the Mac and in CI before adding one.
+#
+# Measured against a CI run of the same tree, these three are not the whole
+# difference and this file does not pretend otherwise: that run also skipped 23
+# checks CI runs, failed two more CI passes (RUN-14, SPEC §1 install script)
+# and produced one failure carrying no name to match on. Those are unexplained,
+# so they stay out of this file and print as REAL. README.md carries the
+# numbers.
+
+ROLL-12 native linux resident service	needs a live systemd user manager, which needs systemd as pid 1, which needs --privileged
+ROLL-29 native linux locates inherited child stderr	same, and its unit fixture cannot clean up without systemctl either
+STORE-07 the tenancy probe	asserts the unboxed process enumeration sees more than fifty processes, and a container's whole process table is single digits

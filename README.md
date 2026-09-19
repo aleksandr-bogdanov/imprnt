@@ -214,6 +214,13 @@ only, never needed by people who use it through their assistant). Clone, `bun in
 `bun run build`, `bun run test`. The reasoning behind the design and the build-and-release model are in the
 [design decisions](https://imprnt.dev/design-decisions/) and [contributing](https://imprnt.dev/contributing/) docs.
 
+CI runs the same checks on a clean Ubuntu runner. To find a macOS-versus-Linux difference before
+pushing, `tools/linux-check/run.sh <test files>` runs just those files on the Linux the runner
+uses, in Docker, against a read-only copy of your tree, in about twelve seconds. With no arguments
+it runs the whole suite. [What it does and does not cover](tools/linux-check/README.md) is worth
+reading first: it has no user service manager, so the checks that need one skip there, and a few
+others are red there and green in CI.
+
 ## License
 
 MIT (c) 2026 Aleksandr Bogdanov
