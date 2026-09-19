@@ -1235,11 +1235,16 @@ export async function runDoor(options: {
             // person's notifications, `attend` holds its language and clock
             // thresholds, and the harvest task reads its chat log. So a new
             // person is a new set of tasks. The read loop stops at a batch
-            // boundary and the new one activates its route exactly as a chat
-            // edit does below (D-178).
+            // boundary, and the new one activates its route exactly as a chat
+            // edit does below (D-178) ONLY when the chat changed too. A person
+            // edit that keeps the chat keeps reading it where the old tasks
+            // left off, saved cursor or none: activating it asked the platform
+            // where the chat stood and skipped a message sent right after the
+            // edit as history (IMP-163).
+            const moved = it.agent.chat !== agent.chat;
             await drop(agent.id);
             await health.initialize(agent);
-            serve(agent, true);
+            serve(agent, moved);
           }
           else if (it.agent.chat !== agent.chat) {
             it.rebinding = true;
