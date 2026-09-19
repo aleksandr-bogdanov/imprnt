@@ -1047,8 +1047,8 @@ export async function runDoor(options: {
         }
 
         const now = new Date();
-        const seen = await readSlice({ ...chat, from: historyHarvestFrom(fresh, agent.person, bound), until: now.toISOString() });
-        const newest = await newestLine({ ...chat, now });
+        const seen = await readSlice({ ...chat, from: historyHarvestFrom(fresh, agent.person, bound), until: now.toISOString(), skipBad });
+        const newest = await newestLine({ ...chat, now, skipBad });
 
         let reason: HarvestBody["reason"] | null = null;
         let until = now.toISOString();
@@ -1067,7 +1067,7 @@ export async function runDoor(options: {
           // this door believes and the sheet is what a runner has settled.
           settled = await readWatermark(store, key);
           const from = historyHarvestFrom(fresh, agent.person, settled?.at ?? null);
-          const slice = await readSlice({ ...chat, from, until });
+          const slice = await readSlice({ ...chat, from, until, skipBad });
           // REVIEW S3, D-145's second gate: "writes the row in one transaction
           // WHEN THE COUNT IS AT LEAST THE APPLICABLE MINIMUM". The count above
           // is the door's own, measured from a bound that is empty every time

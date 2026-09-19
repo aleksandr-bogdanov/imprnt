@@ -83,7 +83,7 @@ export async function acceptBatch(options: {
       const watermark = await readWatermark(store, context);
       const from = watermark?.at ?? null;
       const until = message.at;
-      const slice = await readSlice({ ...context, from, until });
+      const slice = await readSlice({ ...context, from, until, ...skipBad });
       body = encodeHarvestBody({ from, until, reason: "demand", lines: slice.length, said: message.text });
     }
     const source = { log_id: id, at: message.at, door, chat: message.chat, sender_id: sender, from: message.from,
