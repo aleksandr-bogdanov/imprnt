@@ -27,6 +27,7 @@ import {
   startCluster,
   seam,
   statementWatch,
+  untilIssued,
   until,
   type Cluster,
 } from "./helpers/cluster.ts";
@@ -87,11 +88,17 @@ test(
       //     row nobody has claimed is a turn that has not opened. Typing here
       //     would show a person somebody working on a message the loop has not
       //     accepted.
+      const settle = await statementWatch(cluster, [await it.read.pid()]);
       door = await (runDoor as Function)({
         door: DOOR,
         registryFile: it.registryFile,
         platform: it.fake.platform,
       });
+      // The door is handed back ready once its read, clock and harvest tasks
+      // have landed their connect reads, and its post task's LISTEN and first
+      // read of pending replies can still be on their way. That read is the
+      // last statement of its start, so the window waits to see it.
+      await untilIssued(settle, "the door's post task read its pending replies once", /from outbox o\b/, { after: /listen hub_outbox/ });
       it.fake.deliver({ text: "a message with no runner running at all" });
       await until(
         "the door wrote the row down",

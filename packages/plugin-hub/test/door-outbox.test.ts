@@ -34,6 +34,7 @@ import {
   startCluster,
   seam,
   statementWatch,
+  untilIssued,
   backendPid,
   foreignBackends,
   until,
@@ -220,6 +221,7 @@ test(
 
     try {
       await committedInbound(it.db, "m-wake", "a human message");
+      const settle = await statementWatch(cluster, [ownerPid, readerPid, runnerPid]);
       handle = await (runDoor as Function)({
         door: DOOR,
         registryFile: it.registryFile,
@@ -229,6 +231,11 @@ test(
       // The window opens after the door has had time to LISTEN and read its
       // pending chunks once, which is D5's own allowance. Everything counted
       // after this is a timer.
+      // The door is handed back ready once its read, clock and harvest tasks
+      // have landed their connect reads, and its post task's LISTEN and first
+      // read of pending replies can still be on their way. That read is the
+      // last statement of its start, so the window waits to see it.
+      await untilIssued(settle, "the door's post task read its pending replies once", /from outbox o\b/, { after: /listen hub_outbox/ });
       await Bun.sleep(SETTLE_MS);
       const watch = await statementWatch(cluster, [
         ownerPid,

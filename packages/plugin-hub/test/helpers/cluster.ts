@@ -561,6 +561,44 @@ export async function statementWatch(
   };
 }
 
+/**
+ * Wait until the server log shows a statement a setup still owes, so a quiet
+ * window opens after the setup rather than after a guess at how long it takes.
+ *
+ * A window that opens on a fixed sleep counts whatever of its own setup has
+ * not landed yet, and with Bun's pipelining off (src/store/connect.ts) a
+ * process's statements go out one at a time, so on a slow runner that tail is
+ * longer. When the setup's last statement is a row the check can read back,
+ * the check waits for the row. When it is not, a waiter's LISTEN or a loop's
+ * first read, the log is the only place it can be seen, and this is how.
+ *
+ * `watch` is opened BEFORE the setup starts and ignores the check's own
+ * backends. This waits until `pattern` has matched `times` entries after the
+ * FIRST entry matching `after` (or anywhere, with no `after`), and fails by
+ * name at the bound with the entries it did see.
+ */
+export async function untilIssued(
+  watch: { lines(): Promise<string[]> },
+  what: string,
+  pattern: RegExp,
+  options: { times?: number; after?: RegExp; timeoutMs?: number } = {},
+): Promise<void> {
+  const times = options.times ?? 1;
+  const seen = async (): Promise<number> => {
+    const lines = await watch.lines();
+    let from = 0;
+    if (options.after) {
+      from = lines.findIndex((line) => options.after!.test(line)) + 1;
+      if (from === 0) return 0;
+    }
+    return lines.slice(from).filter((line) => pattern.test(line)).length;
+  };
+  await until(what, async () => (await seen()) >= times, options.timeoutMs ?? 15_000, async () =>
+    `The server log showed ${await seen()} of ${times}. The last entries:\n` +
+    (await watch.lines()).slice(-8).map((line) => line.slice(0, 200)).join("\n"),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2. Staging a kill at an exact point, with no switch in production code.
 //
