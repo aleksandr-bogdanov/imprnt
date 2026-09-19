@@ -1,4 +1,5 @@
 import { checkLoopSource } from "../adapters/index.ts";
+import type { LoopProbeOptions, LoopProbeTimeout } from "../adapters/launch.ts";
 import { finding as findingLine, syncRepair } from "../door/lines.ts";
 import { basename, dirname } from "node:path";
 import {
@@ -207,6 +208,12 @@ export async function runCheck(options: {
    * health" is the whole of L10 rule 2.
    */
   credentials?: CredentialProber;
+  /**
+   * Which `claude` the capability probe asks and how long one call may take,
+   * in the same style. The defaults are the installed CLI and the production
+   * wait. A check shortens the wait so a hanging CLI costs seconds, not tens.
+   */
+  loopProbe?: LoopProbeOptions;
   now?: Date;
 }): Promise<Finding[]> {
   const machine = options.machine;
@@ -570,8 +577,20 @@ export async function runCheck(options: {
       if (harvest) presets.add(harvest.harvester);
     }
     for (const preset of presets) {
-      try { await checkLoopSource(registry, preset); }
-      catch {
+      try { await checkLoopSource(registry, preset, options.loopProbe); }
+      catch (error) {
+        // IMP-162. A CLI that did not answer is a timeout, and the operator is
+        // told so. "Unsupported" would send them after a login source that is
+        // sound, when what needs looking at is a CLI that hangs.
+        if ((error as Error)?.name === "LoopProbeTimeout") {
+          const { call, timeoutMs } = error as LoopProbeTimeout;
+          const kind = "loop-probe-timeout";
+          findings.push({ id: findingId(machine, kind, preset), kind, subject: preset, machine,
+            says: findingLine("en", { code: kind, target: preset, cause: `claude ${call} timed out after ${timeoutMs / 1000} s, twice` }),
+            fix: `run claude ${call} by hand to see whether it answers, then imprnt hub check ${options.registryFile}`,
+          });
+          continue;
+        }
         const kind = "credential-source-unsupported";
         findings.push({ id: findingId(machine, kind, preset), kind, subject: preset, machine,
           says: findingLine("en", { code: kind, target: preset, cause: "invalid configuration" }),

@@ -1,5 +1,5 @@
 import { AdapterMissing, type Adapter } from "./types.ts";
-import type { LoopLaunchInput } from "./launch.ts";
+import type { LoopLaunchInput, LoopProbeOptions } from "./launch.ts";
 import { claudeCode } from "./claude-code.ts";
 
 /**
@@ -18,11 +18,12 @@ export function adapterFor(adapters: Record<string, Adapter>, name: string): Ada
 }
 
 /** Synthetic adapters need no real login, but cannot silently inherit explicit sources. */
-export async function loopLaunch(input: LoopLaunchInput) {
+export async function loopLaunch(input: LoopLaunchInput, probe: LoopProbeOptions = {}) {
   const { makeLoopLaunch, sessionBox } = await import("./launch.ts");
   if (input.preset.adapter === claudeCode.name) {
-    const { probeLoopCapabilities } = await import("./launch.ts");
-    await probeLoopCapabilities();
+    // IMP-162. Probed once per binary and login, and the login is checked every time.
+    const { credentialSource, loopCapabilitiesFor } = await import("./launch.ts");
+    await loopCapabilitiesFor(input.credential ?? credentialSource(input.registry, input.agent.preset), probe);
     return makeLoopLaunch(input);
   }
   if ([input.agent.fragment, input.agent.settings, input.agent.mcp, input.agent.tools]
@@ -30,10 +31,10 @@ export async function loopLaunch(input: LoopLaunchInput) {
   return input.box.tree ? sessionBox(input) : {};
 }
 
-export async function checkLoopSource(registry: unknown, presetName: string) {
+export async function checkLoopSource(registry: unknown, presetName: string, probe: LoopProbeOptions = {}) {
   const { getPreset } = await import("../registry/presets.ts");
   if (getPreset(registry, presetName).adapter !== claudeCode.name) return;
   const { credentialSource, validateCredentialSource, probeLoopCapabilities } = await import("./launch.ts");
   validateCredentialSource(credentialSource(registry, presetName));
-  await probeLoopCapabilities();
+  await probeLoopCapabilities(probe.bin, probe.timeoutMs);
 }
