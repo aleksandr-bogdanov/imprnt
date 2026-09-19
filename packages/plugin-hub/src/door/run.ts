@@ -34,7 +34,7 @@ import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
 import { acceptBatch } from "./ingest.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
 import { readCursor, writeCursor } from "./cursor.ts";
-import { clockLine, progressLine, progressTotals, type Language } from "./lines.ts";
+import { clockLine, finding, progressLine, progressTotals, safeValue, type Language } from "./lines.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
 
 /**
@@ -162,6 +162,9 @@ interface Served {
   /** Resolves once the harvest task has done its one read at connect. */
   harvesting: Promise<void>;
   harvested(): void;
+  /** Resolves once `post` has made its first pass over the replies waiting. */
+  posting: Promise<void>;
+  posted(): void;
   /** The progress line of each open turn, by message id. */
   progress: Map<string, ProgressLine>;
   /** Rows this door wrote down itself, handed to `attend` with no read. */
@@ -532,14 +535,54 @@ export async function runDoor(options: {
         if (!row) await stamp(store, { messageId: id, kind: "delivered", actor: "door" });
       }
     };
-    const waiter = await openOutboxWaiter(store, { person: agent.person });
+    // A reply is announced under the person of the message it answers, and a
+    // message keeps the person it came in under. So after this agent is given
+    // to another person, the answers to messages it took in before are
+    // announced under the earlier person, which this task would not hear on its
+    // own. It also hears every other person this agent still has an unanswered
+    // message under. Once a message is answered its reply is in the outbox,
+    // which the pass reads by agent, so that person drops out of the set.
+    //
+    // The set is read at the start of every pass while it may be non-empty, and
+    // on the first pass always, which also covers a door started after the
+    // move. Reading it BEFORE the pending replies is what closes the race with
+    // a settle: a message answered before this read has its reply seen by the
+    // read that follows, and one answered after it is announced to a person
+    // still in the set. An agent with nothing owed under anyone else pays one
+    // read per task start and nothing afterwards.
+    const owedUnder = new Set<string>();
+    let owedKnown = false;
+    const readOwed = async (): Promise<void> => {
+      const rows = await store.sql`select distinct person from inbound
+        where agent = ${agent.id} and person <> ${agent.person} and state in ('received', 'acked', 'started')`;
+      owedUnder.clear();
+      for (const row of rows) owedUnder.add(String(row.person));
+      owedKnown = true;
+    };
+    const waiter = await openOutboxWaiter(store, { person: agent.person, also: owedUnder });
+    // A pass that throws never rejects: the door's readiness waits on the first
+    // one, and a store that refuses it must not keep the door from starting.
+    // What refused is said once per run of failures, on stderr, because the
+    // store that refused the read may refuse a diary row too.
+    let failing = false;
     const attempt = async () => {
-      try { await deliver(); }
-      catch { retryAt = Date.now() + timeoutMs; }
+      try {
+        if (!owedKnown || owedUnder.size > 0) await readOwed();
+        await deliver();
+        failing = false;
+      } catch (error) {
+        retryAt = Date.now() + timeoutMs;
+        if (!failing) {
+          process.stderr.write(finding("en", { code: "post:pass-failed", target: `${options.door}/${agent.id}`,
+            cause: safeValue((error as Error)?.message ?? error) }) + "\n");
+        }
+        failing = true;
+      }
     };
     try {
       await healthReady;
       await attempt();
+      own.posted();
       while (!stopping && !own.leaving) {
         const why = await Promise.race([
           waiter.wait(retryAt === null ? timeoutMs : Math.max(1, retryAt - Date.now())).catch(() => "timeout" as const),
@@ -825,13 +868,29 @@ export async function runDoor(options: {
       }
     };
 
-    const waiter = await openTurnWaiter(store, { person: agent.person });
+    // The people other than this agent's own whose turns it still holds. A turn
+    // is announced under the person of the message it belongs to, and a message
+    // keeps the person it came in under, so an agent given to another person
+    // hears the end of a turn it carried over only by listening for the earlier
+    // person as well. Without it the chat goes on saying somebody is typing
+    // after the answer has landed, and the progress line never becomes totals.
+    //
+    // It costs no statement: every open row this task reads carries its person,
+    // so the set is rebuilt from the read it already does, and a person whose
+    // last turn here has ended drops out with that same read.
+    const owedUnder = new Set<string>();
+    const heard = (rows: OpenTurnRow[]): OpenTurnRow[] => {
+      owedUnder.clear();
+      for (const row of rows) if (row.person !== agent.person) owedUnder.add(row.person);
+      return rows;
+    };
+    const waiter = await openTurnWaiter(store, { person: agent.person, also: owedUnder });
     try {
       // ONE read at connect, which is where a restarted door picks up every
       // turn that opened while it was down and re-arms every clock it owed,
       // and one read of what the door before it had already said.
       try {
-        open = await readOpenTurns(store, { agent: agent.id });
+        open = heard(await readOpenTurns(store, { agent: agent.id }));
         for (const key of await readSpokenClocks(store, { agent: agent.id })) {
           spoken.add(key);
           spokenAt.set(key, Date.now());
@@ -898,7 +957,7 @@ export async function runDoor(options: {
         if (why === "notified") {
           // A turn opened, ended, or its progress moved. One read of this
           // agent's open rows and one of the sheet the runner writes.
-          open = await readOpenTurns(store, { agent: agent.id });
+          open = heard(await readOpenTurns(store, { agent: agent.id }));
           const rows = (await readSheet(store, TURN_PROGRESS_SHEET)) as unknown as {
             id: string;
             data: ProgressRow;
@@ -921,7 +980,7 @@ export async function runDoor(options: {
         // allowed on.
         const ripe = clocksOf(open).filter((clock) => clock.at <= Date.now());
         if (ripe.length === 0) continue;
-        open = await readOpenTurns(store, { agent: agent.id });
+        open = heard(await readOpenTurns(store, { agent: agent.id }));
         for (const clock of clocksOf(open)) {
           if (clock.at > Date.now()) continue;
           await sayExpired(clock.row, clock.stamp);
@@ -1167,6 +1226,8 @@ export async function runDoor(options: {
     });
     let readied!: () => void;
     const reading = new Promise<void>(resolve => { readied = resolve; });
+    let posted!: () => void;
+    const posting = new Promise<void>(resolve => { posted = resolve; });
     const it: Served = {
       agent: { ...agent }, rebinding: false, readDone: Promise.resolve(), reading, readied,
       leaving: false,
@@ -1177,6 +1238,8 @@ export async function runDoor(options: {
       attended,
       harvesting: waitingToHarvest,
       harvested,
+      posting,
+      posted,
       progress: new Map<string, ProgressLine>(),
       arrivals: [],
       arrived: nudge(),
@@ -1185,7 +1248,10 @@ export async function runDoor(options: {
     served.set(agent.id, it);
     it.readDone = read(agent, it, activate).finally(() => it.readied());
     it.done = Promise.allSettled([
-      post(agent, it),
+      // Its waiter is opened outside the pass's own error handling, so a throw
+      // there would leave `posting` pending and the door's caller waiting for
+      // ever. Resolving twice is free.
+      post(agent, it).finally(() => it.posted()),
       attend(agent, it),
       // The same outer `finally` `attend` carries, and for the same reason: a
       // throw before the connect read is swallowed by `allSettled`, so without
@@ -1208,12 +1274,17 @@ export async function runDoor(options: {
   await Promise.all([...served.values()].map(it => it.reading));
   for (const it of served.values()) await sayReadFailure(it.agent);
   releaseHealth();
-  // Ready means ATTENDING AND HARVESTING, so a caller handed this door is
-  // handed one whose clocks are armed and whose two connect reads have landed.
+  // Ready means ATTENDING, HARVESTING AND POSTING, so a caller handed this door
+  // is handed one whose clocks are armed, whose two connect reads have landed
+  // and whose reply sender has made its first pass over the replies waiting.
   // Without it a read rides into whatever window the caller opens next, which
-  // is what test/door-clock.test.ts's restart budget counts (BUILD-NOTES 12).
+  // is what test/door-clock.test.ts's restart budget counts from 2 s after
+  // ready. The post task waits for `healthReady` before that pass, so this wait
+  // comes after `releaseHealth()` and never before it. It ends when the store
+  // refuses the pass too, because the pass catches its own failure.
   await Promise.all([...served.values()].map((it) => it.attending));
   await Promise.all([...served.values()].map((it) => it.harvesting));
+  await Promise.all([...served.values()].map((it) => it.posting));
 
   const supervise = (async () => {
     while (!stopping) {

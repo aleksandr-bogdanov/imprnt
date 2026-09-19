@@ -189,6 +189,8 @@ async function openWaiter(
   options: {
     channel: string;
     wakesOn: string;
+    /** More payloads that wake it, read at each notification, so the caller may change the set. */
+    alsoWakesOn?: ReadonlySet<string>;
     deadline(): Promise<number | null>;
   },
 ): Promise<Waiter> {
@@ -203,7 +205,7 @@ async function openWaiter(
   let wake: ((reason: WakeReason) => void) | null = null;
 
   const arrived = (payload: string) => {
-    if (payload !== options.wakesOn) return;
+    if (payload !== options.wakesOn && !options.alsoWakesOn?.has(payload)) return;
     if (wake) wake("notified");
     else pending = true;
   };
@@ -351,14 +353,22 @@ export async function openWorkWaiter(
   });
 }
 
-/** The door's waiter: one person, and no deadline, the way a chunk has none. */
+/**
+ * The door's waiter: one person, and no deadline, the way a chunk has none.
+ *
+ * `also` holds more people whose announcements wake it. A reply is announced
+ * under the person of the message it answers, so an agent that now belongs to
+ * another person still has its answers to earlier messages announced under
+ * the earlier one. The set is the caller's and is read at each notification.
+ */
 export async function openOutboxWaiter(
   store: StoreLike,
-  options: { person: string },
+  options: { person: string; also?: ReadonlySet<string> },
 ): Promise<Waiter> {
   return await openWaiter(store, {
     channel: OUTBOX_CHANNEL,
     wakesOn: options.person,
+    alsoWakesOn: options.also,
     deadline: async () => null,
   });
 }
@@ -367,6 +377,11 @@ export async function openOutboxWaiter(
  * The door's second waiter: one person, and no deadline, because a turn opening
  * is a commit and not a time.
  *
+ * `also` is the same set of extra people the outbox waiter takes, and for the
+ * same reason: a turn is announced under the person of the message it belongs
+ * to, so an agent given to another person only hears the end of a turn it
+ * carried over if it listens for the earlier person too.
+ *
  * D-126. It is a SECOND connection per agent, said plainly here so the cost is a
  * decision and not a surprise. One waiter listening on two channels was the
  * alternative, and it would change `openWaiter`, which is the one piece three
@@ -374,11 +389,12 @@ export async function openOutboxWaiter(
  */
 export async function openTurnWaiter(
   store: StoreLike,
-  options: { person: string },
+  options: { person: string; also?: ReadonlySet<string> },
 ): Promise<Waiter> {
   return await openWaiter(store, {
     channel: TURN_CHANNEL,
     wakesOn: options.person,
+    alsoWakesOn: options.also,
     deadline: async () => null,
   });
 }
