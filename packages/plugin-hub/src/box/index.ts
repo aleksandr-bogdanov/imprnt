@@ -1,6 +1,6 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { listAgents, listCredentials, listPeople, listRepositories, listRunEntries, personOf } from "../registry/entries.ts";
 import { readSetting } from "../registry/load.ts";
 import { secretsDirOf } from "../store/secrets.ts";
@@ -102,14 +102,21 @@ const MAC_LOGIN = [join(homedir(), "Library", "Keychains")];
 const RUNTIME_MASKS = ["/run/user", "/run/dbus"];
 
 /**
- * One more thing on a Linux host that hands a boxed command the machine, and a
- * single file rather than a directory the loop can spare, so it is masked on its
- * own.
+ * Two more things on a Linux host that hand a boxed command the machine, each a
+ * single file rather than a directory the loop can spare, so each is masked on
+ * its own.
  *
  * The docker socket: a connect to it needs nothing but membership of the group
  * that owns it, and a container started through it can bind the host's root
  * directory and write to it as root, which is a way out of the box and up to
  * root in one step.
+ *
+ * The account's X authority cookie: holding it makes a boxed command an
+ * authorised client of the desktop's X server, which can read the screen and
+ * type into whatever is open there, including a terminal. Masking the cookie is
+ * the half of this that a filesystem can close. The X server's own socket is an
+ * abstract socket, which lives in the network namespace, and the loop shares the
+ * host's network namespace because it needs the model API, so no mount hides it.
  *
  * A file mask is a bind over one directory entry: if whoever owns the file
  * replaces it, the mask is lifted for boxes already running. So this stops an
@@ -117,9 +124,12 @@ const RUNTIME_MASKS = ["/run/user", "/run/dbus"];
  * while a box is running opens it again until the next launch.
  */
 function hostControlMasks(): string[] {
+  const named = process.env.XAUTHORITY;
   return [
     "/run/docker.sock",
     "/var/run/docker.sock",
+    join(homedir(), ".Xauthority"),
+    ...(named && isAbsolute(named) ? [named] : []),
   ];
 }
 

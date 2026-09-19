@@ -14,10 +14,6 @@
 // connect. A property read is the whole probe: nothing is started, and no
 // mutating method is called. The control is a trivial boxed command that runs,
 // so a box that simply broke every command is never mistaken for the fence.
-//
-// The same two halves cover the docker socket, which is the other way out of the
-// box on a host that runs the daemon: a container started through it can bind the
-// host's root directory and write to it as root.
 
 import { test, expect, beforeAll } from "bun:test";
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -64,21 +60,29 @@ test("the rendered Linux box masks the user runtime directory and the system bus
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("the rendered Linux box covers the docker socket with /dev/null, before the command", async () => {
+test("the rendered Linux box covers the docker socket and the X authority cookie the environment names, each with /dev/null", async () => {
   const { boxCommand, boxContextFor } = await seam("src/box/index.ts");
   const dir = mkdtempSync(join(tmpdir(), "hub-box-control-"));
+  const saved = process.env.XAUTHORITY;
   try {
+    // A stand-in cookie, so the assertion needs no real one and reads none.
+    const cookie = join(dir, "Xauthority");
+    writeFileSync(cookie, "synthetic-cookie", { mode: 0o600 });
+    process.env.XAUTHORITY = cookie;
     const ctx = (boxContextFor as Function)(stage(dir).registry, "p1-lair");
     const { argv } = (boxCommand as Function)(["/bin/true"], { ...ctx, platform: "linux" }, "linux") as { argv: string[] };
     const nulled = (path: string) => argv.some((a, i) => a === "--ro-bind" && argv[i + 1] === "/dev/null" && argv[i + 2] === realpathSync(path));
+    expect(nulled(cookie), "the X authority cookie the environment names is masked").toBe(true);
     // The socket is only on a box that runs the daemon, so it is asserted where
     // it exists and the argv simply skips it where it does not.
-    if (existsSync("/run/docker.sock")) {
-      expect(nulled("/run/docker.sock"), "the docker socket is masked").toBe(true);
-      const sep = argv.lastIndexOf("--");
-      expect(argv.findIndex((a, i) => a === "--ro-bind" && argv[i + 1] === "/dev/null")).toBeLessThan(sep);
-    }
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+    if (existsSync("/run/docker.sock")) expect(nulled("/run/docker.sock"), "the docker socket is masked").toBe(true);
+    // Every mask lands before the command.
+    const sep = argv.lastIndexOf("--");
+    expect(argv.findIndex((a, i) => a === "--ro-bind" && argv[i + 1] === "/dev/null")).toBeLessThan(sep);
+  } finally {
+    if (saved === undefined) delete process.env.XAUTHORITY; else process.env.XAUTHORITY = saved;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 beforeAll(() => {
@@ -115,11 +119,16 @@ test.skipIf(!(gate.ok && process.platform === "linux"))(
 );
 
 test.skipIf(!(gate.ok && process.platform === "linux"))(
-  `inside a real Linux box the docker socket refuses a connect, while the same connect succeeds outside it${gate.ok && process.platform === "linux" ? "" : ` [skipped: ${gate.reason || "not linux"}]`}`,
+  `inside a real Linux box the docker socket refuses a connect and the X authority cookie does not read, while the same connect and the same read succeed outside it${gate.ok && process.platform === "linux" ? "" : ` [skipped: ${gate.reason || "not linux"}]`}`,
   async () => {
     const { boxCommand, boxContextFor } = await seam("src/box/index.ts");
     const dir = mkdtempSync(join(tmpdir(), "hub-box-control-exec-"));
+    const saved = process.env.XAUTHORITY;
     try {
+      // A stand-in cookie in the test's own directory, never the real one.
+      const cookie = join(dir, "Xauthority");
+      writeFileSync(cookie, "synthetic-cookie-sentinel", { mode: 0o600 });
+      process.env.XAUTHORITY = cookie;
       // A connect and nothing else: no request is ever sent to the daemon. It
       // goes in a file rather than through -c, because a shell hands a -c
       // program its backslashes and python reads those as line continuations.
@@ -136,6 +145,7 @@ test.skipIf(!(gate.ok && process.platform === "linux"))(
       ].join("\n"));
       const probe = ["/bin/sh", "-c", [
         `echo control-ran`,
+        `printf cookie:; cat ${cookie} 2>/dev/null || echo UNREADABLE`,
         `python3 ${script} 2>&1 | tail -1`,
       ].join("; ")];
       const ctx = (boxContextFor as Function)(stage(dir).registry, "p1-lair");
@@ -147,14 +157,20 @@ test.skipIf(!(gate.ok && process.platform === "linux"))(
       const outside = run(probe);
       const inside = run(argv);
       expect(inside).toContain("control-ran");
+      // The cookie: readable outside, never inside.
+      expect(outside, "the control reads the stand-in cookie outside the box").toContain("synthetic-cookie-sentinel");
+      expect(inside.includes("synthetic-cookie-sentinel"), `the cookie read inside the box:\n${inside}`).toBe(false);
       // The socket: only judged on a box that runs the daemon, and only when the
       // same connect succeeds outside, which is what makes the refusal the fence.
       if (outside.includes("docker:connected")) {
         expect(inside.includes("docker:connected"), `the docker socket connected inside the box:\n${inside}`).toBe(false);
       } else {
-        process.stderr.write(`[box-gate] the docker socket is not connectable on this box, so there is nothing to judge here\n`);
+        process.stderr.write(`[box-gate] the docker socket is not connectable on this box, so only the cookie is judged\n`);
       }
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally {
+      if (saved === undefined) delete process.env.XAUTHORITY; else process.env.XAUTHORITY = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
   },
   120_000,
 );
