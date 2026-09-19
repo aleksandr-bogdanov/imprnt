@@ -24,7 +24,7 @@ export async function commandHarness(root: string) {
     async run(argv: string[], extra: Record<string,string> = {}) {
       writeFileSync(trace, "")
       const child = Bun.spawn([Bun.which("node")!, core, "hub", ...argv], { cwd, env: { ...env, ...extra }, stdout: "pipe", stderr: "pipe" })
-      // Rehearsal commands measured max 544 ms in 12 runs on the Linux box, so 10000 stays. Two SD card stalls took 11 and 34 s.
+      // Rehearsal commands measured max 863 ms in 17 runs on the Linux box, so 10000 stays. Two SD card stalls took 11 and 34 s.
       const timer = setTimeout(() => child.kill(9), 10000)
       try {
         const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])

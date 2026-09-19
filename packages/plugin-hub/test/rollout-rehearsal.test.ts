@@ -55,7 +55,7 @@ for (const osName of ["linux", "macos"] as const) {
 
     // First stage crosses the actual Node core -> package shim -> Bun boundary.
     // No plugin replacement, no implementation spy and no native manager call.
-    // The command watchdog is in helpers/rollout-command.ts. This install measured 495 to 544 ms on the Linux box, twice 11 and 34 s in an SD card stall.
+    // The command watchdog is in helpers/rollout-command.ts. This install measured 495 to 863 ms in 17 runs on the Linux box, twice 11 and 34 s in an SD card stall.
     const installed = await command.run(["install", bootstrap.registryFile, "database"])
     expect(installed.code, `D-170 real core database dispatch must succeed (package hub.mjs ${existsSync(hubPath("hub.mjs")) ? "present" : "missing"})`).toBe(0)
     expect(os.calls).toEqual([])
@@ -135,7 +135,7 @@ for (const osName of ["linux", "macos"] as const) {
         const launch=await make(input)
         const capture=join(sessionDir,"launch.json")
         const session=await claudeCode.start({...launch,preset,sessionId:null,wrap:argv=>launch.wrap(captureCli(capture,f)(argv))})
-        // ending() waits 5000 ms. Measured max 71 ms over 48 turns in 12 runs on the Linux box.
+        // ending() waits 5000 ms. Measured max 71 ms over 68 turns in 17 runs on the Linux box.
         try {await ending(session)} finally {await session.close()}
         const got=JSON.parse(readFileSync(capture,"utf8"))
         const source=f.sources.find(s=>s.person===person.id)!
@@ -163,7 +163,7 @@ for (const osName of ["linux", "macos"] as const) {
     await (runInstall as Function)({registryFile,stage:"entry",target:bootstrap.ids.sync,os:os.os})
     expect(os.calls.every(c=>c.target===bootstrap.ids.sync)).toBe(true)
     const git = observeGit(f.dir)
-    // syncChild kills at 15000 ms. Measured max 1329 ms in 12 runs on the Linux box, once 10.4 s in an SD card stall.
+    // syncChild kills at 15000 ms. Measured max 2308 ms in 17 runs on the Linux box, once 10.4 s in an SD card stall.
     const sync = await syncChild({registryFile,id:bootstrap.ids.sync} as Parameters<typeof syncChild>[0],git.env)
     expect(sync.code,sync.err).toBe(0)
     remoteProof()
@@ -215,7 +215,7 @@ for (const osName of ["linux", "macos"] as const) {
       edges[i].file("synthetic-photo",new Uint8Array([11,22,33,44]))
       edges[i].batch([{platform_message_id:"6",chat:i?"1000000001":"0000000000",sender_id:i?"p2":"p1",from:i?"p2":"p1",text:"media rehearsal",at:new Date().toISOString(),media:[{kind:"photo",remote_id:"synthetic-photo",name:"fixture.png",mime:"image/png",bytes:4,caption:"synthetic caption"}]}],"7")
     }
-    // Measured max 2785 ms in 11 runs on the Linux box. Three times that is 8355, so 10000 stays.
+    // Measured max 2785 ms in 16 runs on the Linux box. Three times that is 8355, so 10000 stays.
     expect(await observe(async()=> (await read.outbox()).filter(r=>r.body.includes("synthetic long answer")).every(r=>r.delivered_at!==null) && edges.every(e=>e.posts().some(p=>p.text.includes("synthetic long answer"))),10000)).toBe(true)
     for(let i=0;i<2;i++) {
       const posts=edges[i].posts().filter(p=>p.text.includes("synthetic long answer"))
@@ -238,7 +238,7 @@ for (const osName of ["linux", "macos"] as const) {
     expect(edges[0].posts().some(p=>p.text==="already delivered")).toBe(false)
     model.hold(m=>m.text === "death during turn")
     edges[0].batch([{platform_message_id:"8",chat:"0000000000",sender_id:"p1",from:"p1",text:"death during turn",at:new Date().toISOString(),media:[]}],"9")
-    // Default 3500 ms window. Measured max 48 ms in 11 runs on the Linux box.
+    // Default 3500 ms window. Measured max 48 ms in 16 runs on the Linux box.
     expect(await observe(()=>model.sessions.some(r=>r.fed.some(m=>m.text==="death during turn")))).toBe(true)
     const target=model.sessions.findLast(r=>r.fed.some(m=>m.text==="death during turn"))!
     expect(target.session.pid).toBeGreaterThan(0)
@@ -247,16 +247,16 @@ for (const osName of ["linux", "macos"] as const) {
     const siblingPid=sibling.session.pid
     model.hold(()=>false)
     target.fail()
-    // Default 3500 ms window. Measured max 31 ms in 11 runs on the Linux box.
+    // Default 3500 ms window. Measured max 31 ms in 16 runs on the Linux box.
     expect(await observe(()=>childGone(target.session.pid!))).toBe(true)
-    // Measured max 3867 ms in 11 runs on the Linux box, a 1 s retry plus runner ticks. Three times that is 11601, rounded up.
+    // Measured max 3867 ms in 16 runs on the Linux box, a 1 s retry plus runner ticks. Three times that is 11601, rounded up.
     expect(await observe(()=>edges[0].posts().some(p=>p.text==="reply to death during turn"),12000)).toBe(true)
     expect((await read.ledger({subject:"p1-lair"})).some(r=>r.kind==="refused.turn" && Number.isFinite(Date.parse(String(r.detail.retry_at))))).toBe(true)
     expect((await read.sheet("agent_health")).some(r=>r.id==="p1-lair")).toBe(false)
-    // The command watchdog is in helpers/rollout-command.ts. This recover measured max 248 ms in 11 runs on the Linux box.
+    // The command watchdog is in helpers/rollout-command.ts. This recover measured max 269 ms in 16 runs on the Linux box.
     const recovery=await command.run(["recover",registryFile,"agent:p1-lair"])
     expect(recovery.code,recovery.err).toBe(0)
-    // Measured max 1188 ms in 11 runs on the Linux box. Three times that is 3564, so 7000 stays.
+    // Measured max 1310 ms in 16 runs on the Linux box. Three times that is 3930, so 7000 stays.
     expect(await observe(async()=>(await read.sheet("control")).some(r=>r.data.status==="applied"),7000)).toBe(true)
     expect(sibling.session.pid).toBe(siblingPid)
     expect(childGone(siblingPid!)).toBe(false)
@@ -266,19 +266,19 @@ for (const osName of ["linux", "macos"] as const) {
     // A chat the door holds no cursor for is read from the newest cursor on, so the door first walks
     // this edge's cursor up without reading (src/door/run.ts:275) and a message sent during that walk
     // is dropped as history. The walk ends at the pull from the newest cursor, "9".
-    // Measured max 1034 ms in 9 runs on the Linux box. Three times that is 3102, so 5000 stays.
+    // Measured max 1034 ms in 14 runs on the Linux box. Three times that is 3102, so 5000 stays.
     expect(await observe(()=>edges[0].pulls().some(p=>p.chat==="1000000001" && p.cursor==="9"),5000)).toBe(true)
     edges[0].batch([{platform_message_id:"10",chat:"1000000001",sender_id:"p1",from:"p1",text:"after recovery and mapping",at:new Date().toISOString(),media:[]}],"11")
-    // Measured max 86 ms in 8 runs on the Linux box once the send waits for the walk. Three times that is 258, so 7000 stays.
+    // Measured max 89 ms in 13 runs on the Linux box once the send waits for the walk. Three times that is 267, so 7000 stays.
     expect(await observe(()=>edges[0].posts().some(p=>p.chat==="1000000001" && p.text.includes("after recovery and mapping")),7000)).toBe(true)
     expect(edges[0].posts().some(p=>p.chat===originalChat && p.text.includes("after recovery and mapping"))).toBe(false)
     expect(os.calls.filter(c=>c.operation==="restart")).toEqual([])
     edges[1].batch([{platform_message_id:"10",chat:"1000000001",sender_id:"p2",from:"p2",text:"harvest this",at:new Date().toISOString(),media:[]}],"11")
-    // Measured max 1234 ms in 8 runs on the Linux box. Three times that is 3702, so 5000 stays.
-    expect(await observe(async()=>(await read.sql("select * from inbound where kind='harvest' and id like 'harvest-demand:%'")).length===1,5000)).toBe(true)
-    // Measured max 1314 ms in 8 runs on the Linux box. Three times that is 3942, so 10000 stays.
+    // Measured max 1807 ms in 13 runs on the Linux box. Three times that is 5421, rounded up.
+    expect(await observe(async()=>(await read.sql("select * from inbound where kind='harvest' and id like 'harvest-demand:%'")).length===1,6000)).toBe(true)
+    // Measured max 1494 ms in 13 runs on the Linux box. Three times that is 4482, so 10000 stays.
     expect(await observe(()=>existsSync(join(vault.vaultDir,"life","demand-note.md")),10000)).toBe(true)
-    // Measured max 24 ms in 8 runs on the Linux box. Three times that is 72, so 5000 stays.
+    // Measured max 24 ms in 13 runs on the Linux box. Three times that is 72, so 5000 stays.
     expect(await observe(async()=>(await read.noticeRows()).some(r=>r.person==="p2" && /harvest|saved|сохран/i.test(r.body)),5000)).toBe(true)
     expect(transcript).not.toContain("harvest this")
     expect(process.pid).toBe(servicePid)
