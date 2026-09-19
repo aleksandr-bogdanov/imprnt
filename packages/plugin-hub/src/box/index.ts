@@ -254,6 +254,13 @@ function profileText(ctx: BoxContext): string {
     "(allow process-exec process-fork)",
     "(allow sysctl-read)",
     "(allow mach-lookup)",
+    // A boxed command may spawn its own children and it may not hand work to
+    // launchd. mach-lookup has to stay open for the loop to start at all, and it
+    // reaches the user launchd, which would run a submitted job OUTSIDE the box
+    // and so outside the fence around this person's tree. Measured: this refuses
+    // a submitted job while leaving reads of launchd's own state and ordinary
+    // spawning alone.
+    "(deny job-creation)",
     // The loop talks to a model over the network and to the tailnet. Measured:
     // without it the loop starts and every turn fails.
     "(allow network*)",
