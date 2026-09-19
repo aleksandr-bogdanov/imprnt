@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, statfsSync } from "node:fs"
 import { join } from "node:path"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
 import { serviceFixture, serviceOs } from "./helpers/rollout-service.ts"
@@ -26,6 +26,9 @@ import { proveRolloutCommand } from "../live/prove-rollout-command.ts"
 import { childGone } from "./helpers/scripted-adapter.ts"
 
 const clock = clockGate(3)
+function memoryRoom() {
+  try { const fs = statfsSync("/dev/shm"); return fs.bavail * fs.bsize >= 512 * 1024 * 1024 } catch { return false }
+}
 announceClock(clock, "06-09 demand after activation")
 // Cleanup is registered before any fixture is allocated, including unit files.
 const cleanups: (() => Promise<unknown> | unknown)[] = []
@@ -42,8 +45,9 @@ for (const osName of ["linux", "macos"] as const) {
   test.skipIf(!native || !clock.ok)(`ROLL-01/02/03/04/05/06/07/08/09/12/18/20/22/23/30/31 ${osName} integrated rehearsal${native ? "" : ` [SKIP: requires ${osName === "macos" ? "macOS" : "Linux"}]`}${clockSuffix(clock)}`, async () => {
     expect(boxGate().ok, "D-184 host kernel box prerequisite").toBe(true)
     // On the Linux box the install below spent 11 to 34 s in four of 25 runs waiting for Postgres to sync the SD
-    // card (IO:WALSync and IO:DataFileImmediateSync), which no window can measure. The cluster lives in memory there.
-    const cluster: Cluster = await startCluster(existsSync("/dev/shm") ? { parent: "/dev/shm" } : {})
+    // card (IO:WALSync and IO:DataFileImmediateSync), which no window can measure. So the cluster lives in memory
+    // where there is room for it: it measured 48.5 MB at the end of the rehearsal, and /dev/shm is used only with 512 MB free.
+    const cluster: Cluster = await startCluster(memoryRoom() ? { parent: "/dev/shm" } : {})
     cleanups.push(() => cluster.stop())
     const bootstrap = await serviceFixture(cluster, true)
     cleanups.push(() => bootstrap.stop())
