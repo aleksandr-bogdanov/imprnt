@@ -238,6 +238,11 @@ export function scriptedClaude(hang: Hang = "never") {
   }
   install(hang)
   const calls = () => readFileSync(log, "utf8").split("\n").filter(Boolean)
+  // The same file overwritten where it stands: same inode, same size, other bytes.
+  const rewrite = () => {
+    const text = readFileSync(bin, "utf8")
+    writeFileSync(bin, text.includes("2.1.0 (") ? text.replace("2.1.0 (", "2.1.1 (") : text.replace("2.1.1 (", "2.1.0 ("))
+  }
   return { dir, bin, calls, auth: () => calls().filter(line => line.startsWith("auth status")).length,
-    replace: install, stop() { rmSync(dir, { recursive: true, force: true }) } }
+    replace: install, rewrite, stop() { rmSync(dir, { recursive: true, force: true }) } }
 }

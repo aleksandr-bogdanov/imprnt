@@ -11,18 +11,23 @@
 //   1. a call that hangs once is asked again, and the launch goes ahead;
 //   2. a call that hangs every time refuses the launch AS A TIMEOUT, and check
 //      reports a timeout rather than an unsupported source;
-//   3. a second launch on the same login and the same binary asks nothing.
-// The controls: a replaced login file and a replaced binary are asked again,
-// and an answer kept from an earlier launch never lets a removed or
-// wrong-shaped login through, because the source itself is checked every time.
+//   3. a second launch on the same login and the same binary asks nothing,
+//      once both files have stood unchanged for a few seconds, and a file
+//      changed more recently than that is probed on every launch.
+// The controls: a login or binary replaced, or rewritten in place at the same
+// inode and size, is asked again, and an answer kept from an earlier launch
+// never lets a removed or wrong-shaped login through, because the source itself
+// is checked every time.
 //
 // Red reasons: behaviour absent. Before the change a hang is never asked again,
-// the refusal says "unsupported", and every launch probes from scratch.
+// the refusal says "unsupported", and every launch probes from scratch. Before
+// the settling rule a file written a moment ago was kept on its first stamp.
 
 import { beforeAll, expect, test } from "bun:test"
-import { lstatSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { lstatSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { loopLaunch } from "../src/adapters/index.ts"
+import { LOOP_PROBE_SETTLED_MS } from "../src/adapters/launch.ts"
 import { loopFixture, launchInput, scriptedClaude, type LoopFixture } from "./helpers/rollout-loop.ts"
 import { startCluster } from "./helpers/cluster.ts"
 import { DOOR, PERSON, stageHub, superStore } from "./helpers/hub-fixture.ts"
@@ -61,31 +66,54 @@ test("IMP-162 a login probe that hangs every time refuses the launch as a timeou
   } finally { cli.stop(); f.stop() }
 }, 60_000)
 
-test("IMP-162 a second launch on the same login and binary probes nothing, a replaced login or binary is probed again", async () => {
+test("IMP-162 a launch probes nothing once the login and binary have settled, and probes again after any change to either", async () => {
   const f = loopFixture(), cli = scriptedClaude()
+  // How many calls one launch made to the binary.
+  const probes = async () => {
+    const before = cli.calls().length
+    await launch(f, cli.bin)
+    return cli.calls().length - before
+  }
+  // A kept answer is trusted only for files that stood unchanged this long.
+  const settle = () => Bun.sleep(LOOP_PROBE_SETTLED_MS + 250)
+  // After a change: probed, probed again until it settles, then kept. The
+  // first launch after it settles is the one that keeps the answer, and it
+  // may already have been the second one on a slow machine, so it is not counted.
+  const changed = async (what: string) => {
+    expect(await probes(), `${what} is probed again`).toBeGreaterThan(0)
+    expect(await probes(), `${what} is probed on every launch until it settles`).toBeGreaterThan(0)
+    await settle()
+    await probes()
+    expect(await probes(), `${what}, once settled, is not probed again`).toBe(0)
+  }
   try {
-    await launch(f, cli.bin)
-    const first = cli.calls().length
-    expect(first).toBeGreaterThan(0)
-    await launch(f, cli.bin)
-    expect(cli.calls().length, "a second launch on the same login and binary asks nothing").toBe(first)
+    // A second write inside one timestamp tick can leave every field a stat
+    // reports as it was, so files written seconds ago are never kept.
+    await changed("a login and binary written seconds ago")
 
-    // Control: the login replaced atomically, as a refresh or a new login does it (ROLL-13).
+    // The login replaced atomically, as a refresh or a new login does it (ROLL-13).
     const inode = lstatSync(f.login).ino
     writeFileSync(f.login + ".next", f.loginBytes("synthetic-replacement-" + crypto.randomUUID()), { mode: 0o600 })
     renameSync(f.login + ".next", f.login)
     expect(lstatSync(f.login).ino).not.toBe(inode)
-    await launch(f, cli.bin)
-    const replaced = cli.calls().length
-    expect(replaced, "a replaced login is probed again").toBeGreaterThan(first)
-    await launch(f, cli.bin)
-    expect(cli.calls().length).toBe(replaced)
+    await changed("a replaced login")
 
-    // Control: the binary replaced, as an update does it.
+    // The login rewritten in place, at the same inode and the same size.
+    const login = statSync(f.login)
+    writeFileSync(f.login, readFileSync(f.login))
+    expect([statSync(f.login).ino, statSync(f.login).size]).toEqual([login.ino, login.size])
+    await changed("a login rewritten in place")
+
+    // The binary replaced, as an update does it.
     cli.replace("never")
-    await launch(f, cli.bin)
-    const updated = cli.calls().length
-    expect(updated, "a replaced binary is probed again").toBeGreaterThan(replaced)
+    await changed("a replaced binary")
+
+    // The binary rewritten in place, at the same inode and the same size, to other bytes.
+    const binary = statSync(cli.bin), bytes = readFileSync(cli.bin, "utf8")
+    cli.rewrite()
+    expect([statSync(cli.bin).ino, statSync(cli.bin).size]).toEqual([binary.ino, binary.size])
+    expect(readFileSync(cli.bin, "utf8")).not.toBe(bytes)
+    await changed("a binary rewritten in place")
 
     // A kept answer never admits a login the loop cannot select.
     const wrong = join(f.dir, "unsupported-login-name.json")
@@ -94,7 +122,7 @@ test("IMP-162 a second launch on the same login and binary probes nothing, a rep
     rmSync(f.login)
     await expect(launch(f, cli.bin)).rejects.toThrow(/credential.*(missing|unreadable)|ENOENT/)
   } finally { cli.stop(); f.stop() }
-}, 60_000)
+}, 90_000)
 
 test("IMP-162 check reports a login probe that keeps hanging as a timeout, not as an unsupported source, and a sound one as nothing", async () => {
   const cluster = await startCluster()

@@ -104,6 +104,11 @@ try {
       const inode = lstatSync(cli.bin).ino
       cli.replace("never")
       assert.notEqual(lstatSync(cli.bin).ino, inode)
+      const before = lstatSync(cli.bin), text = readFileSync(cli.bin, "utf8")
+      cli.rewrite()
+      assert.deepEqual([lstatSync(cli.bin).ino, lstatSync(cli.bin).size], [before.ino, before.size])
+      assert.notEqual(readFileSync(cli.bin, "utf8"), text)
+      assert.match(ask(["--version"]).stdout.toString(), /^2\.1\.1 /)
     } finally { cli.stop() }
     assert.equal(existsSync(cli.dir), false)
   }
