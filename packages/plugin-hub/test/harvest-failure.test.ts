@@ -323,6 +323,15 @@ test.skipIf(!GATE_M2.ok)(
         "select id from inbound where kind = 'harvest' order by received_at, id",
       )) as { id: string }[];
       expect(rows.length).toBe(2);
+      // The empty-slice branch answers the person first and settles the turn
+      // after, in a transaction of its own, so the notice this test waited for
+      // is not evidence that the turn record exists yet.
+      await until(
+        "the second demand's turn record settled",
+        async () => (await it.read.ledger({ stream: "turn", subject: rows[1].id })).length > 0,
+        60_000,
+        async () => JSON.stringify(await it.read.ledger({ stream: "turn" })),
+      );
       const record = (await it.read.ledger({ stream: "turn", subject: rows[1].id }))[0];
       expect((record.detail.harvest as Record<string, unknown>).lines).toBe(0);
       expect(record.detail.input_tokens).toBeNull();

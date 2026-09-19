@@ -106,7 +106,12 @@ const fileLocks = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.d
   flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
 });
 
-function validLine(value: unknown): value is ChatLine {
+/**
+ * A record that is a chat line, which is what every reader of the log checks
+ * before it reads a field. Exported so the harvest's own walk applies the same
+ * rule as the tail and the appender rather than a second copy of it.
+ */
+export function validLine(value: unknown): value is ChatLine {
   if (!value || typeof value !== "object") return false;
   const line = value as ChatLine;
   return typeof line.at === "string" && Number.isFinite(Date.parse(line.at)) &&

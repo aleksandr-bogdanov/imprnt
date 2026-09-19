@@ -34,6 +34,12 @@ test("ROLL-25 cause other remains local with zero notices to the other person", 
     await insertInbound(cluster, it.db, { id: "local-refusal", body: "retry locally" })
     expect(await observe(async () => (await it.read.ledger({ subject: "local-refusal" })).some(r => r.stream === "refusal"))).toBe(true)
     const zeroOther = (notices: { person: string | null }[]) => expect(notices.filter(r => r.person === "p2"), "D-177 local refusal must not notify the other person").toEqual([])
+    // The refusal diary row is committed on its own, and the two outage notices
+    // land in transactions after it, so the row above is not evidence that the
+    // second person's notice exists yet. Only this branch expects that notice,
+    // so only this branch waits for it, and the other must never see one.
+    if (defective) expect(await observe(async () => (await it.read.noticeRows()).some(r => r.person === "p2"), 15_000),
+      "the credential-scoped outage notice for the second person").toBe(true)
     const notices = await it.read.noticeRows()
     // Scoped mutation upgrades only the local refusal to verified shared login.
     // The actual runner writes the notices in both paths.

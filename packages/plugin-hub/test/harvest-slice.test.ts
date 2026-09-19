@@ -106,6 +106,7 @@ test(
       agent: string;
       from: string | null;
       until: string;
+      skipBad?(bad: { file: string; line: number }): void;
     }) => Promise<SliceLine[]>;
     const newest = newestLine as (args: {
       stateDir: string;
@@ -308,10 +309,12 @@ test(
       ).toBe(0);
 
       // ---------------------------------------------------------------
-      // 10. A HALF-WRITTEN LAST LINE is tolerated and nothing else is. The
-      //     line a writer can be in the middle of is the last line of the file
-      //     it is appending to, and a corrupt line anywhere else is a real
-      //     defect. It goes last, because both halves damage the log.
+      // 10. A HALF-WRITTEN LAST LINE is tolerated in silence, and a damaged
+      //     record anywhere else costs only itself: it is stepped over, named
+      //     by its file and line, and the rest of the slice is read. Refusing
+      //     the whole walk jammed the chat, because a demand is read while the
+      //     door accepts the batch that carries it. It goes last, because both
+      //     halves damage the log.
       // ---------------------------------------------------------------
       const newestFile = chatLogFile({
         stateDir,
@@ -330,15 +333,18 @@ test(
         at: new Date(in1.at),
       });
       const older = readFileSync(olderFile, "utf8").split("\n");
+      const kept = await slice({ ...where, from: in1.at, until: "2026-09-16T23:00:00.000Z" });
       older.splice(1, 0, "{this is not JSON at all");
       writeFileSync(olderFile, older.join("\n"), "utf8");
-      let threw = false;
-      try {
-        await slice({ ...where, from: in1.at, until: "2026-09-16T23:00:00.000Z" });
-      } catch {
-        threw = true;
-      }
-      expect(threw).toBe(true);
+      const named: { file: string; line: number }[] = [];
+      const survived = await slice({
+        ...where,
+        from: in1.at,
+        until: "2026-09-16T23:00:00.000Z",
+        skipBad: (bad) => { named.push(bad); },
+      });
+      expect(named).toEqual([{ file: olderFile, line: 2 }]);
+      expect(survived.map((one) => one.text)).toEqual(kept.map((one) => one.text));
     } finally {
       await rm(stateDir, { recursive: true, force: true }).catch(() => {});
     }

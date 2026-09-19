@@ -180,3 +180,53 @@ test("ROLL-05 D-168 an instruction import anywhere in a fragment is refused nami
     } finally { f.stop() }
   }
 })
+
+test("the promoted candidate keeps the [hub] keys the manifest does not set, so every role still finds its password after the cutover", async () => {
+  // The trap this pins: the database is installed BEFORE the conversion, and it
+  // writes each role's password under the active file's `hub.secrets_dir`. A
+  // conversion that took [hub] whole from the manifest dropped that key, so
+  // after promotion every process looked for its password in the default place,
+  // found none, connected without one and was refused.
+  const cluster = await startCluster()
+  const f = migrationFixture()
+  let bootstrap: Awaited<ReturnType<typeof serviceFixture>> | undefined
+  try {
+    bootstrap = await serviceFixture(cluster, true)
+    const { secretsDirOf, readPassword } = await seam("src/store/secrets.ts") as {
+      secretsDirOf: (registry: unknown) => string | null
+      readPassword: (registry: unknown, role: string) => string | null
+    }
+    // A secrets directory of the household's own, not the default one, plus a
+    // second key so the carry is not a single-key special case.
+    const secrets = join(bootstrap.dir, "household-secrets")
+    const text = readFileSync(bootstrap.registryFile, "utf8")
+    expect(text, "the fixture writes a [hub] table to add keys to").toContain("[hub]\n")
+    writeFileSync(bootstrap.registryFile, text.replace("[hub]\n",
+      `[hub]\nsecrets_dir = ${JSON.stringify(secrets)}\nrestart_delay_seconds = 11\n`))
+    const bootstrapped = loadRegistry(bootstrap.registryFile)
+    expect(secretsDirOf(bootstrapped)).toBe(secrets)
+
+    // Step 6: the install writes the passwords where the active file says.
+    const { runInstall } = await seam("src/install/run.ts") as { runInstall: (options: any) => Promise<any> }
+    await runInstall({ registryFile: bootstrap.registryFile, stage: "database" })
+    expect(readPassword(bootstrapped, "hub_door"), "the install wrote a password").toBeTruthy()
+
+    // Step 7: the manifest names neither key, and sets one the active file has.
+    const manifest = structuredClone(f.registryManifest)
+    manifest.active_registry = bootstrap.registryFile
+    manifest.hub = { ...manifest.hub, store_url: (bootstrapped.data.hub as Record<string, unknown>).store_url, tick_seconds: 13 }
+    delete manifest.hub.secrets_dir
+    delete manifest.hub.restart_delay_seconds
+    await (await converter())(manifest, f.lookup)
+    copyFileSync(manifest.candidate, bootstrap.registryFile)
+
+    const promoted = loadRegistry(bootstrap.registryFile)
+    expect(secretsDirOf(promoted), "the household's secrets directory survives promotion").toBe(secrets)
+    expect(readSetting(promoted, "hub.restart_delay_seconds"), "and so does every other [hub] key the manifest is silent about").toBe(11)
+    expect(readPassword(promoted, "hub_door"), "so every role still finds its password").toBe(readPassword(bootstrapped, "hub_door"))
+    // Control: a key the manifest DOES set is the manifest's, because it is the
+    // reviewed intent for the file being published.
+    expect(readSetting(promoted, "hub.tick_seconds")).toBe(13)
+    expect(readSetting(promoted, "hub.cutover_batch")).toBe("synthetic-cutover")
+  } finally { await bootstrap?.stop(); f.stop(); await cluster.stop() }
+})

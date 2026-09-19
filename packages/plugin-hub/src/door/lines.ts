@@ -417,11 +417,33 @@ export function installPasswordsSet(language: Language, values: { roles: string;
       : "install: {roles} did not match the password file in {dir}. Each has a new password and a new file.", values);
 }
 
-/** IMP-158. A pg_hba.conf rule that lets a hub role in with no password at all. */
+/** A pg_hba.conf rule that lets a hub role in with no password at all. */
 export function installTrustRemains(language: Language, values: { lines: string }): string {
   return interpolate(language, language === "ru"
     ? "установка: pg_hba.conf пускает роли хаба без пароля, строки {lines}. Замените trust на scram-sha-256 и перечитайте конфигурацию кластера."
     : "install: pg_hba.conf lets the hub roles in without a password on line {lines}. Change trust to scram-sha-256 there and reload the cluster.", values);
+}
+
+/**
+ * A pg_hba.conf rule that lets a role in over the unix socket on the strength of
+ * the operating system account alone. Its repair is a different one from a trust
+ * line's, so it is a line of its own rather than a wider trust warning.
+ */
+export function installSocketRemains(language: Language, values: { lines: string }): string {
+  return interpolate(language, language === "ru"
+    ? "установка: pg_hba.conf пускает через сокет по учётной записи системы, без пароля, строки {lines}. Замените peer или ident на scram-sha-256 и перечитайте конфигурацию кластера."
+    : "install: pg_hba.conf lets a role in over the socket on the operating system account alone, with no password, on line {lines}. Change peer or ident to scram-sha-256 there and reload the cluster.", values);
+}
+
+/**
+ * A role carrying the name of the account the hub runs as, while a socket rule
+ * above admits it. Any process of that account is then that role with no secret
+ * at all, which is what the passwords exist to stop.
+ */
+export function installAccountRole(language: Language, values: { role: string }): string {
+  return interpolate(language, language === "ru"
+    ? "установка: в кластере есть роль {role} с именем учётной записи, под которой работает хаб, и строка выше пускает её через сокет без пароля. Удалите роль или уберите ту строку."
+    : "install: the cluster has a role named {role}, the account the hub runs as, and a socket rule above lets it in with no password. Drop the role or take that rule out.", values);
 }
 
 export function conversionDone(language: Language, values: LineValues = {}): string {
@@ -481,6 +503,17 @@ export function syncCause(language: Language, code: string): string {
     push: ["push failed", "не удалось отправить изменения"],
   };
   return (causes[code] ?? ["operation failed", "операция не удалась"])[language === "ru" ? 1 : 0];
+}
+
+/**
+ * What to do about a batch the door fetched and could not accept. It is a
+ * refusal on this side, the store or the chat log, and the door replays the
+ * same batch every tick, so restarting it changes nothing.
+ */
+export function acceptRepair(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "устраните указанную причину в {target}: дверь повторяет ту же партию каждый тик, перезапуск не поможет."
+    : "repair the reported cause for {target}: the door replays the same batch every tick, and restarting it changes nothing.", values);
 }
 
 export function syncRepair(language: Language, values: LineValues = {}): string {

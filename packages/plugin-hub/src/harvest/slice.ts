@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { chatLogPath } from "../chatlog.ts";
+import { chatLogPath, validLine, type BadRecord } from "../chatlog.ts";
 
 /**
  * D-145, D-146. The slice: the lines of one chat between two instants that a
@@ -75,16 +75,24 @@ function dayOf(at: number): number {
  * oldest file first, with the walk `readTail` already does and a lower bound
  * instead of a window.
  *
- * A HALF-WRITTEN LAST LINE IS TOLERATED AND NOTHING ELSE IS. The line a writer
- * can be in the middle of is the last line of the file it is appending to, so
- * that one is skipped when it will not parse. A corrupt line anywhere else is a
- * real defect and throwing is what makes it visible, which is the rule the
- * fixture's own reader already applies.
+ * ONE DAMAGED LINE COSTS ONLY ITSELF. A complete record that will not parse, or
+ * that parses into something other than a chat line, is left where it is,
+ * collected into `bad` by its file and its own 1-based line, and the rest of the
+ * slice is read. That is the rule the tail and the appender already apply, and
+ * refusing the whole walk instead jammed the chat that held the line: a person's
+ * harvest demand is read inside acceptance, so the refusal took the batch with
+ * it and every message after it waited for a hand repair.
+ *
+ * A HALF-WRITTEN LAST LINE COSTS NOTHING AND IS NOT NAMED. The line a writer can
+ * be in the middle of is the last one with bytes in the newest file, so that one
+ * alone is skipped in silence when it will not parse: it is not on disk yet as
+ * far as any reader is concerned, and it will be there on the next read.
  */
 function walk(
   where: { stateDir: string; person: string; agent: string },
   fromMs: number,
   untilMs: number,
+  bad?: BadRecord[],
 ): SliceLine[] {
   const files: string[] = [];
   for (let day = dayOf(fromMs) - DAY_MS; day <= dayOf(untilMs); day += DAY_MS) {
@@ -93,15 +101,27 @@ function walk(
   }
   const out: SliceLine[] = [];
   files.forEach((file, nth) => {
-    const lines = readFileSync(file, "utf8").split("\n").filter((raw) => raw.trim() !== "");
-    lines.forEach((raw, at) => {
+    // The raw split, so a line is named by the place it really holds in the
+    // file. A blank line above the damaged one would otherwise shift the number
+    // and send whoever reads the report to the wrong record.
+    const raws = readFileSync(file, "utf8").split("\n");
+    let lastWithBytes = raws.length - 1;
+    while (lastWithBytes >= 0 && raws[lastWithBytes].trim() === "") lastWithBytes -= 1;
+    raws.forEach((raw, index) => {
+      if (raw.trim() === "") return;
+      let record: unknown;
       try {
-        out.push(JSON.parse(raw) as SliceLine);
-      } catch (error) {
-        if (nth !== files.length - 1 || at !== lines.length - 1) throw error;
-        // A line an appender has not finished. It is not on disk yet as far as
-        // any reader is concerned, and it will be on the next read.
+        record = JSON.parse(raw);
+      } catch {
+        if (nth === files.length - 1 && index === lastWithBytes) return;
+        bad?.push({ file, line: index + 1 });
+        return;
       }
+      if (!validLine(record)) {
+        bad?.push({ file, line: index + 1 });
+        return;
+      }
+      out.push(record as SliceLine);
     });
   });
   return out;
@@ -130,12 +150,17 @@ export async function readSlice(args: {
   from: string | null;
   until: string;
   includeFrom?: boolean;
+  /** Told about each damaged record the walk stepped over, by file and line. */
+  skipBad?(bad: BadRecord): void | Promise<void>;
 }): Promise<SliceLine[]> {
   const untilMs = Date.parse(args.until);
   const fromMs =
     args.from === null ? untilMs - SLICE_MAX_DAYS * DAY_MS : Date.parse(args.from);
   const where = { stateDir: args.stateDir, person: args.person, agent: args.agent };
-  return walk(where, fromMs, untilMs)
+  const bad: BadRecord[] = [];
+  const lines = walk(where, fromMs, untilMs, bad);
+  for (const one of bad) await args.skipBad?.(one);
+  return lines
     .filter((line) => {
       const at = Date.parse(line.at);
       return (at > fromMs || (args.includeFrom && at === fromMs)) && at <= untilMs && spoken(line, args.person, args.agent);
@@ -156,10 +181,15 @@ export async function newestLine(args: {
   person: string;
   agent: string;
   now: Date;
+  /** Told about each damaged record the walk stepped over, by file and line. */
+  skipBad?(bad: BadRecord): void | Promise<void>;
 }): Promise<SliceLine | null> {
   const nowMs = args.now.getTime();
   const where = { stateDir: args.stateDir, person: args.person, agent: args.agent };
-  const lines = walk(where, nowMs - NEWEST_MAX_DAYS * DAY_MS, nowMs).filter(
+  const bad: BadRecord[] = [];
+  const walked = walk(where, nowMs - NEWEST_MAX_DAYS * DAY_MS, nowMs, bad);
+  for (const one of bad) await args.skipBad?.(one);
+  const lines = walked.filter(
     (line) =>
       Date.parse(line.at) >= nowMs - NEWEST_MAX_DAYS * DAY_MS &&
       (line.from === args.person || line.from === args.agent),

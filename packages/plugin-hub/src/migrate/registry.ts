@@ -95,13 +95,23 @@ export async function convertV2Registry(manifest: any, platformLookup: (request:
   const selectedCredentials = new Set(Object.values(presets).map((preset: any) => preset.credential));
   const credentials = manifest.credentials.filter((credential: any) => selectedCredentials.has(credential.id) ||
     run.some(entry => entry.kind === "door" && entry.platform === credential.kind && entry.token_file === credential.file));
-  const data: Record<string, unknown> = { hub: { ...manifest.hub, cutover_batch: manifest.batch_id }, machines: manifest.machines, credentials, people, presets, agents, run, repositories: manifest.repositories };
+  // An unreadable active registry refuses here, before anything is written, so a
+  // mistyped path cannot publish a candidate that has lost the file's own tables.
+  const active = loadRegistry(manifest.active_registry).data;
+  // [hub] is carried KEY BY KEY, unlike the whole tables below, because the
+  // manifest writes some of its keys and the rest are the machine's own. The
+  // database is installed before this conversion runs and it writes each role's
+  // password under the active file's `hub.secrets_dir`, so taking the table
+  // whole from the manifest left every process looking for its password in the
+  // default place, finding none, and being refused until the install was rerun.
+  // The manifest's own keys still win: it is the reviewed intent.
+  const activeHub = (active.hub ?? {}) as Record<string, unknown>;
+  const data: Record<string, unknown> = { hub: { ...activeHub, ...manifest.hub, cutover_batch: manifest.batch_id }, machines: manifest.machines, credentials, people, presets, agents, run, repositories: manifest.repositories };
   // The candidate is promoted over the active registry, so every table of that file the
   // conversion does not write ([install], [store], [runner], [door], [[rates]]) is carried
   // unchanged. Dropping [install] would stop the next database install, and [store] is
-  // where the database install recorded the store's pid file. An unreadable active
-  // registry refuses, so a mistyped path cannot publish a candidate without them.
-  for (const [key, value] of Object.entries(loadRegistry(manifest.active_registry).data)) if (!(key in data)) data[key] = value;
+  // where the database install recorded the store's pid file.
+  for (const [key, value] of Object.entries(active)) if (!(key in data)) data[key] = value;
   for (const file of files) {
     if (within(file.path, checkout) || manifest.fragment_roots.some((root: string) => within(file.path, root))) throw new Error("private destination is inside checkout or source");
   }
