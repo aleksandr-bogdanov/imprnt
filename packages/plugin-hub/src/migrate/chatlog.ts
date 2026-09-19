@@ -61,7 +61,10 @@ export async function convertV2Chatlog(manifest: LogManifest) {
           } else {
             const row = lines[n].split("\t");
             if (row.length !== 4 || !row[2] || !/^\d{4}-\d\d-\d\dT.*Z$/.test(row[0])) throw new Error("malformed row");
-            at = new Date(row[0]).toISOString(); sender = row[1]; text = JSON.parse(row[3]); id = `v2:${row[2]}`;
+            at = new Date(row[0]).toISOString(); sender = row[1]; text = JSON.parse(row[3]);
+            // An inbound id is already `<platform>:<chat>:<message>`, the id v3 gives the same
+            // message, so a pending item the handoff carries dedupes against this line.
+            id = /^(telegram|discord):/.test(row[2]) ? row[2] : `v2:${row[2]}`;
           }
           if (!Object.hasOwn(source.senders, sender)) throw new Error("unknown sender");
           if (typeof text !== "string") throw new Error("malformed text");
