@@ -20,9 +20,17 @@ export interface BoxContext {
   otherStateRoots?: string[];
   otherTrees: string[];    // every other declared person's tree
   /**
-   * IMP-158. What no agent may read: the hub's secrets directory, every door's
-   * token file and every declared credential file. A launch takes out the one
-   * model login it runs on and nothing else.
+   * Paths under the read-only host that must be writable: this person's declared
+   * repositories, and the launched login's own directory, because the model CLI
+   * rotates its token in place there. Everything else on the host is read-only,
+   * so a boxed command cannot rewrite the registry, drop a user unit or edit a
+   * shell startup file that would later run outside the box.
+   */
+  writePaths?: string[];
+  /**
+   * What no agent may read: the hub's secrets directory, every door's token file
+   * and every declared credential file. A launch takes out the one model login
+   * it runs on and nothing else.
    */
   secretPaths?: string[];
 }

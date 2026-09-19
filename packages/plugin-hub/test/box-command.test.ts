@@ -205,17 +205,20 @@ test(
       expect(argv).toContain("--unshare-pid");
       expect(argv).toContain("--die-with-parent");
 
-      const devBind = argv.findIndex(
-        (a, i) => a === "--dev-bind" && argv[i + 1] === "/" && argv[i + 2] === "/",
+      // The whole host is bound read-only, with a fresh /dev on top.
+      const hostBind = argv.findIndex(
+        (a, i) => a === "--ro-bind" && argv[i + 1] === "/" && argv[i + 2] === "/",
       );
+      expect(hostBind).toBeGreaterThanOrEqual(0);
+      const dev = argv.findIndex((a, i) => a === "--dev" && argv[i + 1] === "/dev");
+      expect(dev).toBeGreaterThan(hostBind);
       const proc = argv.findIndex((a, i) => a === "--proc" && argv[i + 1] === "/proc");
-      expect(devBind).toBeGreaterThanOrEqual(0);
       expect(proc).toBeGreaterThanOrEqual(0);
       // THE ORDER ASSERTION, by index. Reversed, the host's /proc is bound back
       // over the namespace's and the pid namespace hides nothing, which is a box
       // that passes every outcome check because the outcome is read through the
       // same /proc.
-      expect(proc).toBeGreaterThan(devBind);
+      expect(proc).toBeGreaterThan(hostBind);
 
       const tmpfsAt = argv
         .map((a, i) => (a === "--tmpfs" ? argv[i + 1] : null))

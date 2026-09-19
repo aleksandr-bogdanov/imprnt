@@ -83,11 +83,15 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   const fragment = ordinary ? input.agent.fragment : undefined;
   if (fragment) accessSync(fragment, constants.R_OK);
   const ambient = process.env.HOME;
-  // IMP-158. The box masks every credential file, and this launch keeps the one
-  // login its loop runs on. Every other one, bot tokens and any other model
-  // login alike, stays masked.
+  // The box masks every credential file, and this launch keeps the one login its
+  // loop runs on. Every other one, bot tokens and any other model login alike,
+  // stays masked. The launched login's own directory is bound writable because
+  // the model CLI rotates its token in place there, so it is added to the box's
+  // write paths rather than left to the read-only host.
   const same = (a: string, b: string) => a === b || existsSync(a) && existsSync(b) && realpathSync(a) === realpathSync(b);
-  input = { ...input, box: { ...input.box, secretPaths: input.box.secretPaths?.filter(path => !same(path, credential.file)) } };
+  input = { ...input, box: { ...input.box,
+    writePaths: [...(input.box.writePaths ?? []), dirname(credential.file)],
+    secretPaths: input.box.secretPaths?.filter(path => !same(path, credential.file)) } };
   const boxed = sessionBox(input, [dirname(credential.file), credential.file, ...(fragment ? [fragment] : []), ...(mcpFile ? [mcpFile] : []),
     ...(ambient ? [join(ambient, ".claude", "settings.json"), join(ambient, ".claude", "CLAUDE.md")] : [])]);
   const config = join(boxed.cwd, "config"), home = join(boxed.cwd, "home"), scratch = join(boxed.cwd, "tmp");

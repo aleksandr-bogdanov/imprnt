@@ -19,7 +19,11 @@ for (const os of ["linux", "darwin"]) for (const purpose of ["ordinary", "harves
     const input = launchInput(f, purpose)
     const ctx = { ...boxContextFor(f.registry(), "p1-lair"), stateRoot: join(root, "p1"), otherStateRoots: [join(root, "p2")], sessionDir: input.sessionDir, purpose }
     const box = nativeWrap(ctx)
-    const broken = nativeWrap({ ...ctx, otherStateRoots: [] } as any)
+    // The control box is this box with the fence taken out: no other-state mask,
+    // and the state directory bound writable, because the box binds the host
+    // read-only and a control that could not write would refuse every write
+    // whether the mask was there or not.
+    const broken = nativeWrap({ ...ctx, otherStateRoots: [], writePaths: [...(ctx.writePaths ?? []), root] } as any)
     try {
       // Every refusal has the identical accessible file and operation unboxed.
       for (const file of Object.values(files)) for (const op of ["read", "write"] as const) expect(fileProbe([], file, op).code).toBe(0)

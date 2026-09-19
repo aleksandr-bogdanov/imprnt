@@ -142,7 +142,7 @@ test("IMP-158 (b) the rendered bwrap argv masks the secrets directory, every bot
     const { boxContextFor, boxCommand } = await seam("src/box/index.ts")
     const ctx = (boxContextFor as Function)(loadRegistry(h.registryFile), "p1-lair")
     const { argv } = (boxCommand as Function)(["/bin/true"], ctx, "linux") as { argv: string[] }
-    const hostBind = argv.indexOf("--dev-bind")
+    const hostBind = argv.findIndex((a, i) => a === "--ro-bind" && argv[i + 1] === "/" && argv[i + 2] === "/")
     expect(hostBind).toBeGreaterThan(0)
     expect(masksOf(argv, h.secrets)).toEqual(["tmpfs"])
     for (const token of [h.beside.file, h.apart.file]) expect(masksOf(argv, token), token).toEqual(["null"])

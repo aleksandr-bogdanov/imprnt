@@ -1,7 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { listAgents, listCredentials, listPeople, listRunEntries, personOf } from "../registry/entries.ts";
+import { listAgents, listCredentials, listPeople, listRepositories, listRunEntries, personOf } from "../registry/entries.ts";
 import { readSetting } from "../registry/load.ts";
 import { secretsDirOf } from "../store/secrets.ts";
 import type { BoxContext, BoxedCommand } from "./types.ts";
@@ -144,6 +144,13 @@ export function boxContextFor(registry: unknown, agentId: string): BoxContext {
       .filter((one) => one.id !== agent.person)
       .map((one) => one.tree)
       .filter((tree) => tree !== ""),
+    // This person's declared repositories are working copies the agent edits, so
+    // they stay writable under the read-only host. One under the person's tree is
+    // already covered by the tree's own write bind, so this only adds any that
+    // sit elsewhere.
+    writePaths: listRepositories(registry)
+      .filter((repo) => repo.person === agent.person && repo.path !== "")
+      .map((repo) => repo.path),
     secretPaths: secretPathsOf(registry),
   };
 }
@@ -205,6 +212,11 @@ function profileText(ctx: BoxContext): string {
   for (const path of ctx.readPaths ?? []) lines.push(`(allow file-read* (subpath ${JSON.stringify(path)}))`);
   // The agent WORKS in its own tree, so that one is read AND write.
   if (ctx.tree !== "") lines.push(`(allow file-read* file-write* (subpath ${JSON.stringify(ctx.tree)}))`);
+  // The declared repositories and the launched login's directory are the other
+  // paths a turn writes to. The login directory is writable because the model
+  // CLI rotates its token in place there, and this grant is after the read-only
+  // grant for the same directory so the writable rule is the one that wins.
+  for (const path of ctx.writePaths ?? []) if (path !== "") lines.push(`(allow file-read* file-write* (subpath ${JSON.stringify(path)}))`);
   if (ctx.sharedZone !== "") lines.push(`(allow file-read* (subpath ${JSON.stringify(ctx.sharedZone)}))`);
   lines.push(
     "(allow process-exec process-fork)",
@@ -236,7 +248,7 @@ function profileText(ctx: BoxContext): string {
 
 function profilePath(ctx: BoxContext): string {
   const mark = new Bun.CryptoHasher("sha256")
-    .update([ctx.agent, ctx.tree, ctx.sharedZone, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? [])].join("|"))
+    .update([ctx.agent, ctx.tree, ctx.sharedZone, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])].join("|"))
     .digest("hex")
     .slice(0, 12);
   return join(tmpdir(), `imprnt-hub-box-${ctx.agent}-${mark}.sb`);
@@ -245,10 +257,12 @@ function profilePath(ctx: BoxContext): string {
 /**
  * The argv that runs this command inside the agent's box.
  *
- * Linux: the ORDER is what makes it work. `--proc /proc` comes AFTER
- * `--dev-bind / /`, because the reverse binds the host's `/proc` back over the
- * namespace's and the pid namespace then hides nothing, which looks exactly
- * like a working box from the outside. The network namespace stays shared: the
+ * Linux: the ORDER is what makes it work. The host is bound read-only with a
+ * fresh /dev on top, then `--proc /proc` comes AFTER that bind, because the
+ * reverse binds the host's `/proc` back over the namespace's and the pid
+ * namespace then hides nothing, which looks exactly like a working box from the
+ * outside. Only the tree, the session, the declared repositories and the login
+ * directory are then bound writable. The network namespace stays shared: the
  * loop needs the model API and the tailnet.
  *
  * macOS: a generated `(deny default)` profile. D-106, measured: macOS has no
@@ -260,7 +274,8 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
   ctx = { ...ctx, tree: canonical(ctx.tree), sharedZone: canonical(ctx.sharedZone),
     stateRoot: ctx.stateRoot && canonical(ctx.stateRoot), sessionDir: ctx.sessionDir && canonical(ctx.sessionDir),
     otherTrees: ctx.otherTrees.map(canonical), otherStateRoots: ctx.otherStateRoots?.map(canonical),
-    readPaths: ctx.readPaths?.map(canonical), secretPaths: ctx.secretPaths?.map(canonical) };
+    readPaths: ctx.readPaths?.map(canonical), writePaths: ctx.writePaths?.map(canonical),
+    secretPaths: ctx.secretPaths?.map(canonical) };
   const flavour = flavourOf(ctx, platform);
   if (flavour === "linux") {
     return {
@@ -269,16 +284,44 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         "/usr/bin/bwrap",
         "--unshare-pid",
         "--die-with-parent",
-        "--dev-bind",
+        // The whole host is bound READ-ONLY, with a fresh /dev on top. A writable
+        // host let a boxed command rewrite the registry, drop a unit under the
+        // user systemd directory or edit a shell startup file, each of which then
+        // runs outside the box. Only the paths bound writable below can change.
+        "--ro-bind",
         "/",
         "/",
+        "--dev",
+        "/dev",
+        // /proc AFTER the host bind, or the host's /proc is bound back over the
+        // pid namespace's and the namespace hides nothing.
         "--proc",
         "/proc",
-        ...[ctx.stateRoot, ...(ctx.purpose === "harvest" ? [ctx.tree] : [])]
+        // The agent WORKS in its own tree, so an ordinary turn binds it writable.
+        // A harvest only reads it.
+        ...(ctx.tree && existsSync(ctx.tree)
+          ? [ctx.purpose === "harvest" ? "--ro-bind" : "--bind", ctx.tree, ctx.tree]
+          : []),
+        // State stays readable, never writable. This comes after the tree bind so
+        // that when a person's tree and state root are the same directory the
+        // read-only rule wins, the way it does on the other flavour.
+        ...[ctx.stateRoot]
           .filter((path): path is string => Boolean(path) && existsSync(path!))
           .flatMap(path => ["--ro-bind", path, path]),
+        // The isolated session, under the state root, is the one part of it that
+        // is writable, so it binds after the read-only state root.
         ...(ctx.sessionDir ? ["--bind", ctx.sessionDir, ctx.sessionDir] : []),
+        // The declared repositories and the launched login's directory, the only
+        // other paths a turn writes to (the CLI rotates its token in place).
+        ...[...new Set(ctx.writePaths ?? [])]
+          .filter((path) => path !== "" && existsSync(path))
+          .flatMap(path => ["--bind", path, path]),
+        // A tmpfs empties another person's tree and state root. Under the
+        // read-only host bwrap cannot create a missing mount point, so a path
+        // that is not there is skipped: it holds nothing to hide, and the host
+        // being read-only means a boxed command cannot create it either.
         ...[...new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])]
+          .filter(tree => tree !== "" && existsSync(tree))
           .flatMap(tree => ["--tmpfs", tree]),
         // A fresh empty tmpfs over the user runtime directory and the system
         // bus directory. The user session bus and systemd's own private socket
