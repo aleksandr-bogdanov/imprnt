@@ -100,6 +100,18 @@ export function discord(options: {
         await Bun.sleep(Math.min(READ_AGAIN_MS, deadline - Date.now()));
       }
     },
+    async highWater({ chat }) {
+      // With no `after`, `before` or `around`, a channel read answers the
+      // newest messages first, so one message is where the channel stands. Its
+      // id is a cursor like any other, whoever wrote it, because `after` skips
+      // a bot's message exactly as it skips a person's.
+      const where = new URL(`${API}/channels/${chat}/messages`);
+      where.searchParams.set("limit", "1");
+      const answer = await send(where, { headers, signal: AbortSignal.timeout(ANSWER_WITHIN_MS) });
+      if (!answer.ok) await refuse("a channel read", answer);
+      const newest = (await answer.json()) as Message[];
+      return newest.length > 0 ? newest[0].id : null;
+    },
     async fetchMedia(media) {
       let target = sources.get(media);
       for (let redirects = 0; redirects <= 5; redirects++) {
