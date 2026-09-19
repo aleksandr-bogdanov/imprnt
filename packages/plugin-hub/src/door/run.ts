@@ -189,10 +189,50 @@ function cannotShowTyping(door: string): string {
   );
 }
 
+/**
+ * D-181. A door with a declared cutover batch serves nothing until that batch
+ * is complete.
+ *
+ * IMP-160. It WAITS rather than refusing to start. A door that threw here was
+ * restarted by its unit until systemd's start limit parked it, and it then
+ * stayed down after the handoff completed until someone reset the unit by hand.
+ * D-186 says the handoff (step 12) comes before the services (step 14), and
+ * nothing enforced it. The reason goes to the diary once, not once a tick, and
+ * the door reads one row a tick while it waits: it has not started serving, so
+ * no idle window is open, and the wait is written down rather than hidden
+ * behind a readiness that never comes (D-185).
+ */
+async function awaitHandoff(store: Store, options: {
+  door: string; batch: string; tickMs: number; signal?: AbortSignal;
+}): Promise<void> {
+  const complete = async (): Promise<boolean> => {
+    const rows = await store.sql`select data from state_row where sheet='cutover' and id=${options.batch}`;
+    return Boolean(rows[0]?.data?.complete);
+  };
+  if (await complete()) return;
+  await recordDiagnostic(store, { operation: "start", target: options.door, actor: "door", error: {
+    code: "cutover-incomplete", message: `waiting for cutover handoff batch ${options.batch} to complete` } });
+  const stopped = new Promise<void>(resolve => {
+    if (options.signal?.aborted) resolve();
+    else options.signal?.addEventListener("abort", () => resolve(), { once: true });
+  });
+  for (;;) {
+    await Promise.race([Bun.sleep(options.tickMs), stopped]);
+    if (options.signal?.aborted) throw new Error(`stopped while waiting for cutover handoff batch ${options.batch}`);
+    // A store that does not answer one tick is asked again the next.
+    if (await complete().catch(() => false)) return;
+  }
+}
+
 export async function runDoor(options: {
   door: string;
   registryFile: string;
   platform: Platform;
+  /**
+   * Stops a door that is still waiting for its cutover batch (IMP-160). Once
+   * the door is ready, `stop()` on the handle is how it is stopped.
+   */
+  signal?: AbortSignal;
 }): Promise<DoorHandle> {
   // SPEC §2's Forbidden line, refused BY NAME and at START. It lives here and
   // not in `src/entry/door.ts` because every check drives `runDoor` directly
@@ -213,10 +253,8 @@ export async function runDoor(options: {
 
   const batch = (registry.data.hub as { cutover_batch?: string }).cutover_batch;
   if (batch) {
-    try {
-      const rows = await store.sql`select data from state_row where sheet='cutover' and id=${batch}`;
-      if (!rows[0]?.data?.complete) throw new Error("cutover handoff batch incomplete");
-    } catch (error) { await store.close(); throw error; }
+    try { await awaitHandoff(store, { door: options.door, batch, tickMs: timeoutMs, signal: options.signal }); }
+    catch (error) { await store.close(); throw error; }
   }
 
   // A successful projection is already fsynced. Keep that knowledge only for
