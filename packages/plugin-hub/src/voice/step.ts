@@ -68,7 +68,11 @@ export interface TranscribeOutcome {
   cause: string | null;
   /** When the row is worth another try, and null when nothing will help. */
   retryAt: Date | null;
-  /** The moment the words existed, which is what the shipped clocks measure from. */
+  /**
+   * The moment this row's text existed, which is what the shipped clocks
+   * measure from: the words for a note that came back, the sentence the person
+   * reads for one that never will, and null while the row is still waiting.
+   */
   doneAt: Date | null;
   chunks: number;
   audio_s: number;
@@ -178,13 +182,16 @@ export async function transcribeRow(
     const retryAt = failure === "infra"
       ? new Date(seams.now() + voice.retry_seconds * 1000)
       : null;
+    // The sentence a content failure writes IS this row's text, so the row ends
+    // with the same stamp a success gets and the shipped clocks count from it.
+    const endedAt = failure === "content" ? new Date(seams.now()) : null;
     if (failure === "content") {
       // Over at once, with the sentence in the slot the words would have had,
       // so the caption and anything typed stay where the person put them.
       const source = spliceTranscript(row.source, note.line, voiceUnreadable(options.language));
       await markMediaFailed(store, {
         id: row.id, state: "failed", failure: { class: failure, cause }, retryAt: null,
-        body: String((source as SourceShape).text ?? ""), source,
+        body: String((source as SourceShape).text ?? ""), source, at: endedAt!,
       });
     } else {
       // The row stays PENDING: nothing about the note is wrong, so it waits.
@@ -200,7 +207,7 @@ export async function transcribeRow(
       chunks: partial.chunks, audio_s: partial.audio_s, decode_ms: partial.decode_ms,
       attempts: attempts + 1, class: failure, cause,
     });
-    return { state: "failed", failure, cause, retryAt, doneAt: null, transcript: "", ...partial };
+    return { state: "failed", failure, cause, retryAt, doneAt: endedAt, transcript: "", ...partial };
   };
 
   let samples: Int16Array;

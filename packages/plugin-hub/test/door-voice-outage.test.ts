@@ -27,6 +27,7 @@ import {
 } from "../src/door/lines.ts"
 import { splitPoints } from "../src/voice/pcm.ts"
 import { chunkFilePath, writeChunkFile } from "../src/voice/transcript.ts"
+import { clockDeadlines } from "../src/door/clock.ts"
 import { runDoor } from "../src/door/run.ts"
 import { runRunner } from "../src/runner/run.ts"
 
@@ -439,4 +440,69 @@ test(`RUN-13 a note that gives up after a MIDDLE chunk failed marks every stretc
     expect(await observe(async () =>
       (await it.read.ledger({ subject: row.id })).some(e => e.kind === "delivered"), 30_000)).toBe(true)
   } finally { await runner?.stop(); await door?.stop(); await recognizer.stop(); await it.stop() }
+}, 180_000)
+
+test("RUN-13 a note that gave up counts the shipped clocks from the moment its text existed, not from when it arrived", async () => {
+  // THE WINDOW IS REAL HERE, which is what the case above cannot say: it sets
+  // the give-up window to zero, so its row arrives and gives up in the same
+  // second and every base reads the same. This one plants the arrival a day
+  // back, which is the shape a household really meets, and a base of
+  // `received_at` then tells the person the agent has been silent for a day
+  // directly under the sentence saying their note was only just answered.
+  const port = await deadPort()
+  const it = await rolloutStage(cluster, "telegram", {
+    people: [
+      { id: "p1", language: "en", transcribed_seconds: 600, acked_seconds: 600, started_seconds: 600 },
+      { id: "p2", language: "ru" },
+    ],
+    voice: { port, retry_seconds: 1, give_up_hours: 24 },
+  })
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  try {
+    it.edge.file("voice", AUDIO)
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    it.edge.batch([note("1", P1)], "2")
+    const first = await firstRow(it)
+    expect(await observe(async () => (await it.read.inbound())[0].media_attempts >= 1, 30_000),
+      "RUN-13 the note is waiting on a recognizer that is not there").toBe(true)
+    await door.stop()
+    door = undefined
+
+    // A day and an hour ago, which is past the window this household allows.
+    await it.read.sql("update inbound set received_at = now() - interval '25 hours' where id = $1",
+      [first.id])
+
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    expect(await observe(async () => (await it.read.inbound())[0].media_state === "failed", 40_000),
+      "RUN-13 the window ran out").toBe(true)
+    const row = (await it.read.inbound())[0]
+    expect(row.body, "RUN-13 and the person was told").toContain(voiceGaveUp("en", 24))
+
+    // THE MOMENT THE TEXT EXISTED. A give-up writes the sentence the person
+    // reads, so that is when this row's text came into being, and the three
+    // shipped clocks are measured from it.
+    expect(row.media_done_at, "RUN-13 the give-up stamped when the text existed").not.toBeNull()
+    expect(Math.abs(Date.now() - new Date(row.media_done_at!).getTime()),
+      "RUN-13 and that moment is now, not a day ago").toBeLessThan(60_000)
+    const [due] = clockDeadlines(
+      { state: "received", received_at: row.received_at, media_state: row.media_state,
+        media_done_at: row.media_done_at },
+      { acked_seconds: 600, started_seconds: 600, answered_seconds: 900, delivered_seconds: 60 },
+    )
+    expect(due.stamp).toBe("acked")
+    expect(due.at, "RUN-13 the clock runs from here, rather than having run out yesterday")
+      .toBeGreaterThan(Date.now())
+
+    // And a door coming back to this row reads the same thing, which is where
+    // the person would otherwise be told the loop had ignored them for a day,
+    // directly under the sentence saying the note was only just finished.
+    await door.stop()
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    await Bun.sleep(3000)
+    // The control: this door does write into this person's chat, and did.
+    expect(it.edge.posts().filter(p => p.chat === P1.chat && p.text === transcriberDown("en", 1)),
+      "RUN-13 the person was told the recognizer was not answering").toHaveLength(1)
+    expect(it.edge.posts().filter(p => p.chat === P1.chat && /still waiting/.test(p.text)).map(p => p.text),
+      "RUN-13 no wait line at all, and never one counting from a day ago").toEqual([])
+  } finally { await door?.stop(); await it.stop() }
 }, 180_000)

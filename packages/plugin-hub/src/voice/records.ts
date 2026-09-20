@@ -149,6 +149,14 @@ export async function markMediaDone(
  * classes end differently: an infra failure leaves the row PENDING with a
  * retry, and a content failure is over at once, with the text the person will
  * read written in the same statement.
+ *
+ * A failure that ENDS the row stamps `media_done_at` too, for the same reason a
+ * success does: the sentence the person reads is this row's text, so that is
+ * the moment its text existed and the moment the three shipped clocks count
+ * from. Without it they would count from the note's arrival, and a note that
+ * waited a day would be told the agent had been silent for a day the instant it
+ * was finally answered. A row that stays PENDING has no text yet and keeps the
+ * column empty.
  */
 export async function markMediaFailed(
   store: StoreLike,
@@ -159,15 +167,20 @@ export async function markMediaFailed(
     retryAt?: Date | string | null;
     body?: string;
     source?: Record<string, unknown>;
+    /** When the text existed, for the failures that end the row. */
+    at?: Date | string;
   },
 ): Promise<void> {
   const retry = what.retryAt ?? null;
+  const at = what.at === undefined ? new Date() : new Date(what.at);
+  const done = what.state === "failed" ? at.toISOString() : null;
   await store.sql`
     update inbound
        set media_state = ${what.state},
            media_attempts = media_attempts + 1,
            media_retry_at = ${retry === null ? null : new Date(retry).toISOString()}::timestamptz,
            media_failure = ${what.failure}::jsonb,
+           media_done_at = coalesce(${done}::timestamptz, media_done_at),
            body = coalesce(${what.body ?? null}, body),
            source = coalesce(${what.source ?? null}::jsonb, source)
      where id = ${what.id}`;
