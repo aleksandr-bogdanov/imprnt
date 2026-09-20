@@ -55,6 +55,7 @@ import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
 import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
 import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
+import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
 import { readCursor, writeCursor } from "./cursor.ts";
@@ -114,6 +115,12 @@ const TOTALS_WAIT_MS = 5000;
  * ledger row is what a restarted door reads to know it has already spoken.
  */
 const PROGRESS_SHEET = "door_progress";
+
+/**
+ * Where the store names a door that owes a chat line for a row it did not
+ * write. The payload is the door's id, and each door acts on its own alone.
+ */
+const PROJECT_CHANNEL = "hub_project";
 
 interface ProgressOnDisk {
   post_id: string;
@@ -357,14 +364,14 @@ export async function runDoor(options: {
     await recordDiagnostic(store, { operation: "chatlog", target: where, actor: "door",
       error: { code: "chatlog-bad-record", message: "a record that is not a chat line was skipped" } }).catch(() => {});
   };
-  try {
-    // Only an explicit operator recovery releases terminal delivery failures.
-    // The door keeps its own delivery authority; the hub only restarts it.
-    await store.sql`update outbox set delivery_state='pending', attempts=0, retry_at=null, failure=null
-      where delivery_state='failed' and route->>'door'=${options.door}
-        and exists (select 1 from state_row where sheet='control'
-          and data->>'target_kind'='door' and data->>'target_id'=${options.door}
-          and data->>'status'='pending')`;
+  /**
+   * Every row this door owes a chat line, projected. The ONE implementation of
+   * projection that is not a door's own acceptance: the startup repair runs
+   * it, and so does the door when the store says a row it did not write is
+   * waiting. Two sweeps that overlap still write each line once, because a
+   * line is appended once by its id and a row is marked ready once.
+   */
+  const sweepOwed = async (): Promise<void> => {
     // A ROW WAITING FOR ITS OWN TEXT IS SKIPPED HERE. Projecting it would put a
     // voice note with no words into the chat log and make it claimable on every
     // door start, and the person would be answered about a note nobody has
@@ -374,6 +381,72 @@ export async function runDoor(options: {
       where not log_ready and source->>'door' = ${options.door}
         and media_state is distinct from 'pending'`;
     for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id), skipBad });
+  };
+
+  // THE DOOR IS TOLD ABOUT ROWS IT DID NOT WRITE. A report, and a job for an
+  // agent this door serves, are inserted by a runner or by another door, so no
+  // process of this door is in their loop. The store names the door on a
+  // channel of its own at the commit, and the door runs the sweep above.
+  //
+  // It is a THIRD connection per door process, beside the outbox waiter and the
+  // turn waiter, and one per process rather than one per agent, which is what
+  // keeps it cheaper than either. It rides the plain listener rather than a
+  // second channel on the shared waiter, because three statement-count windows
+  // sit on that waiter. It issues no statement while nothing arrives.
+  //
+  // Opened BEFORE the startup sweep, so a row committed between the sweep's
+  // read and the listen is announced to a listener that already exists.
+  let projecting: Promise<void> = Promise.resolve();
+  let projection: Listener | null = null;
+  let projectionClosed = false;
+  let projectionRetry: ReturnType<typeof setTimeout> | null = null;
+  const sweepSoon = (): void => {
+    projecting = projecting.then(() => projectionClosed ? undefined : sweepOwed()).catch(() => {
+      // A sweep the store refused leaves its rows owed, and the next
+      // notification or the next door start sweeps them again.
+    });
+  };
+  const listenForProjection = async (): Promise<void> => {
+    if (projectionClosed) return;
+    try {
+      projection = await listenForWork({
+        url: store.url,
+        channel: PROJECT_CHANNEL,
+        onNotify: (payload) => { if (payload === options.door) sweepSoon(); },
+        // Every notification after a drop is gone, so the rows they announced
+        // are found by sweeping once something is listening again.
+        onLost: () => { projection = null; void listenForProjection().then(() => { if (projection) sweepSoon(); }); },
+      });
+      if (projectionClosed) { await projection.close(); projection = null; }
+    } catch {
+      // A store that cannot be listened on is not a reason to refuse the door.
+      // Nothing announces the server coming back, so the tick is the bound,
+      // and the sweep after a listen that finally opens finds what was missed.
+      projectionRetry = setTimeout(() => {
+        projectionRetry = null;
+        void listenForProjection().then(() => { if (projection) sweepSoon(); });
+      }, timeoutMs);
+    }
+  };
+  const closeProjection = async (): Promise<void> => {
+    projectionClosed = true;
+    if (projectionRetry !== null) clearTimeout(projectionRetry);
+    const held = projection;
+    projection = null;
+    if (held) await held.close();
+    await projecting;
+  };
+  await listenForProjection();
+
+  try {
+    // Only an explicit operator recovery releases terminal delivery failures.
+    // The door keeps its own delivery authority; the hub only restarts it.
+    await store.sql`update outbox set delivery_state='pending', attempts=0, retry_at=null, failure=null
+      where delivery_state='failed' and route->>'door'=${options.door}
+        and exists (select 1 from state_row where sheet='control'
+          and data->>'target_kind'='door' and data->>'target_id'=${options.door}
+          and data->>'status'='pending')`;
+    await sweepOwed();
     for (const agent of agentsFor(registry, { door: options.door })) {
       for (const chunk of await readPendingChunks(store, { agent: agent.id })) {
         if (chunk.route && chunk.route.door !== options.door) continue;
@@ -385,6 +458,7 @@ export async function runDoor(options: {
       }
     }
   } catch {
+    await closeProjection();
     await store.close();
     throw new Error("chatlog-projection-repair-failed");
   }
@@ -1751,6 +1825,7 @@ export async function runDoor(options: {
       release();
       await supervise;
       await Promise.allSettled([...served.values()].flatMap((it) => [it.done, it.readDone]));
+      await closeProjection();
       await ingress.close();
       await store.close();
     },

@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
-import { rolloutStage, DISPATCH_TARGET, DISPATCH_TARGET_CHAT, DISPATCH_TARGET_RU, DISPATCH_JOB_ONLY } from "./helpers/rollout-stage.ts"
+import { rolloutStage, DISPATCH_TARGET, DISPATCH_TARGET_CHAT, DISPATCH_TARGET_DOOR2, DISPATCH_TARGET_RU, DISPATCH_JOB_ONLY } from "./helpers/rollout-stage.ts"
 import { chatLogLines } from "./helpers/hub-fixture.ts"
 import { observe } from "./helpers/rollout-runner.ts"
 import { message } from "./helpers/rollout-ingress.ts"
@@ -38,7 +38,13 @@ function typed(id: string, text: string, chat = LAIR_CHAT, sender = "p1") {
 }
 
 test("D-211 one typed command lands one job row and the whole envelope", async () => {
-  const it = await rolloutStage(cluster, "telegram", { dispatch: true })
+  // The target sits on a SECOND door that this check never starts. The door
+  // that serves a job's target projects it the moment it is told, so a target
+  // on the running door would be ready before this check could read the row
+  // as the command wrote it. It also makes the target's door a different
+  // string from the dispatcher's, which is what the source assertion below is
+  // about.
+  const it = await rolloutStage(cluster, "telegram", { dispatch: true, secondDoor: true })
   let door: Awaited<ReturnType<typeof runDoor>> | undefined
   try {
     door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
@@ -65,7 +71,8 @@ test("D-211 one typed command lands one job row and the whole envelope", async (
     expect(Number.isNaN(Date.parse(source.dispatch.approved.at))).toBe(false)
     // The TARGET's door and chat, because that is what the projection sweep
     // keys on, and never the dispatcher's, which is the return route below.
-    expect(source.door).toBe("door-fake")
+    expect(source.door).toBe(DISPATCH_TARGET_DOOR2)
+    expect(source.door).not.toBe(source.dispatch.return.door)
     expect(source.chat).toBe(DISPATCH_TARGET_CHAT)
     expect(source.chat).not.toBe(source.dispatch.return.chat)
     expect(job.log_ready).toBe(false)

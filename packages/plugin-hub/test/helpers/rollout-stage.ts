@@ -71,8 +71,13 @@ export const DISPATCH_TARGET_RU_CHAT = "2000000002"
 /** Neither door nor chat, so no chat log, no typing and no clock is its own. */
 export const DISPATCH_JOB_ONLY = "p1-batch"
 export const DISPATCH_RUNNER2 = "runner-mac"
+/**
+ * The door the target moves onto when a check asks for a second door, so a job
+ * for it is projected by a door other than the one that accepted the command.
+ */
+export const DISPATCH_TARGET_DOOR2 = "door-fake-2"
 
-function dispatchSpec(spec: RegistrySpec): RegistrySpec {
+function dispatchSpec(spec: RegistrySpec, secondDoor: boolean): RegistrySpec {
   // Both machines carry the os this suite runs on, so a check may really start
   // either runner here. Two of them is what makes `machine` required on every
   // run entry, which is why the entries are spelled out rather than implied.
@@ -82,12 +87,16 @@ function dispatchSpec(spec: RegistrySpec): RegistrySpec {
     machines: [{ id: "pi", os }, { id: DISPATCH_RUNNER2.replace("runner-", ""), os }],
     agents: [
       ...(spec.agents ?? []),
-      { id: DISPATCH_TARGET, person: "p1", preset: "daily", chat: DISPATCH_TARGET_CHAT, door: "door-fake", runner: "runner-pi" },
+      { id: DISPATCH_TARGET, person: "p1", preset: "daily", chat: DISPATCH_TARGET_CHAT,
+        door: secondDoor ? DISPATCH_TARGET_DOOR2 : "door-fake", runner: "runner-pi" },
       { id: DISPATCH_TARGET_RU, person: "p2", preset: "daily", chat: DISPATCH_TARGET_RU_CHAT, door: "door-fake", runner: "runner-pi" },
       { id: DISPATCH_JOB_ONLY, person: "p1", preset: "daily", runner: DISPATCH_RUNNER2 },
     ],
     run: [
       { id: "door-fake", kind: "door", platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192, machine: "pi" },
+      ...(secondDoor
+        ? [{ id: DISPATCH_TARGET_DOOR2, kind: "door", platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192, machine: "pi" }]
+        : []),
       { id: "runner-pi", kind: "runner", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048, machine: "pi" },
       { id: DISPATCH_RUNNER2, kind: "runner", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048, machine: "mac" },
     ],
@@ -97,7 +106,7 @@ function dispatchSpec(spec: RegistrySpec): RegistrySpec {
 export async function rolloutStage(
   cluster: Cluster,
   name: "telegram" | "discord",
-  options: StageOptions & { voice?: VoiceStage; dispatch?: boolean } = {},
+  options: StageOptions & { voice?: VoiceStage; dispatch?: boolean; secondDoor?: boolean } = {},
 ) {
   const customize = options.registry
   const hub = await stageHub(cluster, {
@@ -110,7 +119,7 @@ export async function rolloutStage(
     }],
     registry: base => {
       const one = { ...base, agents: base.agents!.map(one => ({ ...one, runner: "runner-pi" })) }
-      const spec = options.dispatch ? dispatchSpec(one) : one
+      const spec = options.dispatch ? dispatchSpec(one, options.secondDoor === true) : one
       return customize ? customize(spec) : spec
     },
   })

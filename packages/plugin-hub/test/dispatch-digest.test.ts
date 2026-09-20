@@ -51,7 +51,11 @@ async function dispatched(it: Awaited<ReturnType<typeof rolloutStage>>, id: stri
 }
 
 test("D-212 D-215 a task rewritten before projection is refused by name and never fed", async () => {
-  const it = await rolloutStage(cluster, "telegram", { dispatch: true, adapter: { answer: () => "the codeword weighs four" } })
+  // The target sits on a SECOND door that this check never starts. The door
+  // that serves a job's target projects it the moment it is told, and the
+  // window this check enters is the one before the projection, so it is held
+  // open by arrangement rather than raced.
+  const it = await rolloutStage(cluster, "telegram", { dispatch: true, secondDoor: true, adapter: { answer: () => "the codeword weighs four" } })
   let door: Awaited<ReturnType<typeof runDoor>> | undefined
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   const store = await superStore(cluster, it.db)
