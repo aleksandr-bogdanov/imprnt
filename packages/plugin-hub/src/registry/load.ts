@@ -1,7 +1,7 @@
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { isIP } from "node:net";
 import { isUnspecified } from "../net/address.ts";
-import { isAbsolute, resolve, sep } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { ADAPTERS } from "../adapters/index.ts";
 import {
   artifactsNotBoolean,
@@ -512,6 +512,23 @@ export interface RepositoryEntry {
   remote: string;
   branch: string;
   required?: boolean;
+  /** Set on the one entry per person that is their checkout of the shared zone. */
+  zone?: boolean;
+}
+
+/**
+ * The household's shared zone, declared once.
+ *
+ * `mount` is the folder name every vault carries the zone under, `remote` is the
+ * git remote NAME every checkout wears, which is what `runSync` asks `git
+ * remote` for, and `url` is what a clone reads. The name and the url are two
+ * fields because they are two different strings, which keeps the loader's
+ * comparison against a repository's own `remote` a plain string test.
+ */
+export interface ZoneEntry {
+  mount: string;
+  remote: string;
+  url: string;
 }
 
 export interface AgentEntry {
@@ -562,6 +579,7 @@ export class Registry {
     credentials: CredentialEntry[] = [],
     readonly repositories: RepositoryEntry[] = [],
     readonly recognizers: Record<string, RecognizerEntry> = {},
+    readonly zone: ZoneEntry | null = null,
   ) {
     this.file = file;
     this.data = data;
@@ -1708,8 +1726,70 @@ export function loadRegistry(file: string): Registry {
     if (repositories.some(r => r.id === entry.id)) refuse(`${where}.id`, 0, "repository id is duplicated");
     if (entry.required !== undefined && typeof entry.required !== "boolean")
       refuse(`${where}.required`, 0, "required must be boolean");
+    if (entry.zone !== undefined && typeof entry.zone !== "boolean")
+      refuse(`${where}.zone`, 0, "zone marks a checkout of the shared zone and is a true or a false");
     repositories.push(entry as unknown as RepositoryEntry);
   }
+
+  // THE SHARED ZONE, declared ONCE for the household: one remote, checked out
+  // inside every vault under the same folder name. It is read after the people
+  // and after the repositories because two of its rules need a person's vault
+  // and a repository's own path, and neither is known before here.
+  let zone: ZoneEntry | null = null;
+  const declaredZone = parsed.zone;
+  if (declaredZone !== undefined && declaredZone !== null) {
+    if (typeof declaredZone !== "object" || Array.isArray(declaredZone))
+      refuse("zone", 0, "zone is one table for the household, naming its mount, its remote and its url");
+    const table = declaredZone as Record<string, unknown>;
+    const here = lines.get("zone") ?? 0;
+    const text = (key: string, what: string): string => {
+      const value = table[key];
+      if (typeof value !== "string" || value.trim() === "")
+        refuse(`zone.${key}`, here, `zone.${key} is ${what}, and this is ${describe(value)}`);
+      return value as string;
+    };
+    const mount = text("mount", "the folder name every vault carries the shared zone under");
+    // ONE FOLDER NAME, joined onto a vault path, so anything that could leave
+    // that folder is a path traversal wearing a folder's clothes. Kebab-case in
+    // one predicate refuses a slash, a backslash, a dot, a pair of dots and a
+    // space together, and a separator test for this platform would let the
+    // other platform's through.
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(mount))
+      refuse("zone.mount", here,
+        `the zone mounts at ${describe(mount)}, and a mount is one folder name in lower case letters, ` +
+        `digits and single hyphens: it is joined onto a vault path, so a name that can leave that folder is refused here`);
+    const remote = text("remote", "the git remote name every zone checkout wears");
+    const url = text("url", "the url a clone of the shared zone reads, and a zone nothing can clone is a zone nothing provisions");
+    zone = { mount, remote, url };
+  }
+
+  const zoneOfPerson = new Map<string, number>();
+  for (const one of repositories.filter((one) => one.zone === true)) {
+    const nth = repositories.indexOf(one);
+    const where = `repositories[${nth}]`;
+    const at = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
+    if (!zone)
+      refuse(`${where}.zone`, at, `${one.id} is marked as a checkout of the shared zone and this file declares no [zone] table`);
+    const already = zoneOfPerson.get(one.person);
+    if (already !== undefined)
+      refuse(`${where}.zone`, at,
+        `${one.person} already has a zone checkout, declared on line ${already}, and one shared zone is one checkout per person`);
+    zoneOfPerson.set(one.person, at);
+    const vault = people.find((who) => who.id === one.person)?.vault;
+    if (!vault)
+      refuse(`${where}.person`, at,
+        `${one.person} declares no vault, and a zone checkout is the mount inside a vault, so there is no path for this entry to be at`);
+    // EQUALITY on the resolved paths, never a prefix test: a prefix accepts the
+    // vault itself and every sibling of the mount beside it.
+    const wants = resolve(join(vault as string, "vault", zone!.mount));
+    if (resolve(one.path) !== wants)
+      refuse(`${where}.path`, at,
+        `${one.id} is at ${describe(one.path)}, and the mount ${zone!.mount} puts ${one.person}'s zone checkout at ${wants}`);
+    if (one.remote !== zone!.remote)
+      refuse(`${where}.remote`, at,
+        `${one.id} pulls from the remote ${describe(one.remote)}, and every checkout of the shared zone wears ${describe(zone!.remote)}`);
+  }
+
   entries.forEach((entry, nth) => {
     for (const id of entry.repositories ?? []) {
       if (!repositories.some(r => r.id === id)) refuse(`run[${nth}].repositories`, 0, "repository is undeclared");
@@ -1728,6 +1808,7 @@ export function loadRegistry(file: string): Registry {
     credentials,
     repositories,
     recognizers,
+    zone,
   );
 }
 

@@ -47,6 +47,15 @@ chunk_deadline_seconds = 120
 pid_file = "/var/run/postgresql/15-main.pid"
 unit = "postgresql@15-main.service"
 
+# The household's shared zone, declared once. `mount` is the folder name every
+# vault carries it under, `remote` is the git remote name every checkout wears,
+# and `url` is what a clone of it reads. Sharing a note means moving it into that
+# folder, and it reaches the other person after both syncs run.
+[zone]
+mount = "shared-notes"
+remote = "origin"
+url = "git@example.invalid:household/shared-notes.git"
+
 # The machines this household has. `os` is in the file rather than taken from the
 # process, so a mis-set machine id is refused here instead of writing systemd
 # unit files onto a Mac. Below two machines, no [[run]] entry needs a `machine`.
@@ -199,7 +208,7 @@ child_memory_limit_mb = 2048
 id = "vault-sync"
 machine = "pi"
 kind = "sync"
-repositories = ["p1-vault"]
+repositories = ["p1-vault", "p1-zone", "p2-zone"]
 schedule = "every 15m"
 memory_limit_mb = 128
 
@@ -257,6 +266,27 @@ path = "/var/lib/imprnt-hub/p1/vault-project"
 remote = "origin"
 branch = "main"
 required = true
+
+# One checkout of the shared zone per person, inside that person's own vault at
+# the path the mount implies. `zone = true` is what the loader checks that path
+# and that remote against.
+[[repositories]]
+id = "p1-zone"
+person = "p1"
+path = "/var/lib/imprnt-hub/p1/vault-project/vault/shared-notes"
+remote = "origin"
+branch = "main"
+required = true
+zone = true
+
+[[repositories]]
+id = "p2-zone"
+person = "p2"
+path = "/var/lib/imprnt-hub/p2/vault-project/vault/shared-notes"
+remote = "origin"
+branch = "main"
+required = true
+zone = true
 
 [install]
 admin_argv = ["sudo", "-n", "-u", "postgres", "psql"]

@@ -14,6 +14,7 @@ import {
   type Registry,
   type RepositoryEntry,
   type RunEntry,
+  type ZoneEntry,
 } from "./load.ts";
 import { credentialOfPreset } from "./presets.ts";
 
@@ -387,6 +388,32 @@ export function repositoriesFor(registry: unknown, entryId: string) {
     const repository = it.repositories.find(one => one.id === id)!;
     return { ...repository, required: repository.required ?? true };
   });
+}
+
+/** The household's shared zone: the folder name, the remote name and the url. */
+export type ZoneSettings = ZoneEntry;
+
+/**
+ * The shared zone this household declares, or NULL when it declares none.
+ *
+ * It takes no person on purpose. One zone is mounted into every vault, so a
+ * per-person answer would be a question the file cannot be asked.
+ */
+export function zoneFor(registry: unknown): ZoneSettings | null {
+  const it = loaded(registry, "zoneFor").zone;
+  return it ? { ...it } : null;
+}
+
+/** This person's checkout of the shared zone, or null when they declare none. */
+export function zoneRepositoryFor(registry: unknown, personId: string): RepositoryEntry | null {
+  const found = loaded(registry, "zoneRepositoryFor").repositories
+    .find((one) => one.zone === true && one.person === personId);
+  return found ? { ...found } : null;
+}
+
+/** Where this person's checkout of the shared zone is, or null. */
+export function zonePathFor(registry: unknown, personId: string): string | null {
+  return zoneRepositoryFor(registry, personId)?.path ?? null;
 }
 
 /** Imported history is excluded independently of the durable harvest watermark. */

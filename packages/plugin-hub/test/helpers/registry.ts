@@ -156,6 +156,34 @@ export interface StoreSpec {
   [key: string]: string | number | undefined;
 }
 
+/**
+ * The household's shared zone: the folder name every vault carries it under,
+ * the git remote NAME every checkout wears, and the URL a clone reads. The
+ * index signature is there so a refusal check can render a field deliberately
+ * missing or deliberately of the wrong type.
+ */
+export interface ZoneSpec {
+  mount?: string;
+  remote?: string;
+  url?: string;
+  [key: string]: string | number | boolean | undefined;
+}
+
+/** One declared repository. `zone` marks a person's checkout of the zone. */
+export interface RepositorySpec {
+  id?: string;
+  person?: string;
+  path?: string;
+  remote?: string;
+  branch?: string;
+  required?: boolean;
+  zone?: boolean;
+  [key: string]: string | number | boolean | undefined;
+}
+
+/** The seven a repository entry renders first, in the order the file reads in. */
+const REPOSITORY_KEYS = ["id", "person", "path", "remote", "branch", "required", "zone"] as const;
+
 export interface RegistrySpec {
   hub?: Record<string, string | number>;
   store?: StoreSpec;
@@ -170,6 +198,10 @@ export interface RegistrySpec {
   machines?: MachineSpec[];
   people?: PersonSpec[];
   credentials?: CredentialSpec[];
+  /** The `[zone]` table, absent unless a check asks for one. */
+  zone?: ZoneSpec;
+  /** The `[[repositories]]` entries, absent unless a check asks for them. */
+  repositories?: RepositorySpec[];
 }
 
 const HUB_DEFAULTS: Record<string, string | number> = {
@@ -304,6 +336,12 @@ function renderRegistry(spec: RegistrySpec): string {
     lines.push("");
   }
 
+  if (spec.zone) {
+    lines.push("[zone]");
+    table(lines, spec.zone as Record<string, unknown>);
+    lines.push("");
+  }
+
   // An absent section renders NOTHING, so a spec that names no machines and no
   // people produces the same file it produces today and no earlier check sees a
   // different registry.
@@ -322,6 +360,20 @@ function renderRegistry(spec: RegistrySpec): string {
   for (const credential of spec.credentials ?? []) {
     lines.push("[[credentials]]");
     table(lines, credential as Record<string, unknown>);
+    lines.push("");
+  }
+
+  // After the credentials, which is where the shipped example carries them.
+  // The seven keys are named in order and anything else the spec set follows,
+  // so a check can plant a field the loader has no rule about.
+  for (const repository of spec.repositories ?? []) {
+    lines.push("[[repositories]]");
+    table(lines, {
+      ...Object.fromEntries(REPOSITORY_KEYS.map((key) => [key, repository[key]])),
+      ...Object.fromEntries(
+        Object.entries(repository).filter(([key]) => !(REPOSITORY_KEYS as readonly string[]).includes(key)),
+      ),
+    });
     lines.push("");
   }
 
