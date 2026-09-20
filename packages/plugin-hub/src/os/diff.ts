@@ -41,6 +41,21 @@ export function wantedState(entry: RunEntry | { schedule: string }): WantedState
   return "loaded";
 }
 
+/**
+ * The registry's entries as the set `diffUnits` compares against: each one's
+ * id, the unit name it renders to and the state its schedule asks for. It is
+ * built here so the hub and `check` cannot name or want a unit differently and
+ * then disagree about whether the manager is carrying it.
+ */
+export function wantedUnits(entries: RunEntry[]): WantedUnit[] {
+  return entries.map((entry) => ({
+    id: entry.id,
+    name: unitName(entry.id),
+    state: wantedState(entry),
+    entry,
+  }));
+}
+
 /** Every found unit that belongs to this entry, whatever suffix it wears. */
 function unitsFor(found: UnitState[], entryId: string): UnitState[] {
   return found.filter((unit) => entryIdOf(unit.name) === entryId);
