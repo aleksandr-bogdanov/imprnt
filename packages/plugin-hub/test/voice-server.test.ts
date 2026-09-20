@@ -496,6 +496,23 @@ test(`the model the argv names is the directory the weights are read from${PYTHO
   expect(noName.stderr).toContain("--model");
 });
 
+test("the reference server reads no environment variable at all", () => {
+  // The scan above is the fence over the tree for one prefix. THIS ONE IS
+  // ABSOLUTE and it is about this file: every knob is an argument, so an
+  // environment read of any name is a behaviour an operator reading the unit
+  // cannot see. Socket activation was the last one, and it also asked this
+  // process to be started and stopped by something the hub does not render.
+  const source = readFileSync(SERVER, "utf8");
+  const reads: string[] = [];
+  for (const [index, line] of source.split("\n").entries()) {
+    if (/os\.environ|os\.getenv|\bgetenv\(/.test(line)) reads.push(`${SERVER}:${index + 1}`);
+  }
+  expect(reads, "nothing here reads the environment").toEqual([]);
+  for (const gone of ["LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES", "exit-on-idle", "exit_on_idle"]) {
+    expect(source.includes(gone), `${gone} is not a thing this server knows about`).toBe(false);
+  }
+});
+
 test("what the copy does not carry is not in the package", () => {
   const files = walk(hubPath("."));
   const names = new Set(files.map((path) => path.split("/").pop() as string));

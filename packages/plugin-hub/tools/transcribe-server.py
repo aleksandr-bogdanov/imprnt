@@ -8,8 +8,7 @@
 # step. What is ours is this wrapper and the client that posts to it.
 #
 #   python transcribe-server.py --runtime DIR --model DIR [--port N] [--warm]
-#                               [--idle-s N] [--exit-on-idle] [--fake]
-#                               [--read-timeout-s N]
+#                               [--idle-s N] [--fake] [--read-timeout-s N]
 #
 # EVERY KNOB IS AN ARGUMENT AND NOTHING HERE READS THE ENVIRONMENT. A behaviour
 # switch in an environment variable is forbidden outright, and every knob this
@@ -33,14 +32,13 @@
 #                the counters. It never touches the idle clock, so reading it
 #                cannot pin the model warm.
 #
-# TWO WAYS TO GIVE THE MEMORY BACK, reaching different numbers.
-#   * IN-PLACE UNLOAD (--idle-s N). The recognizer is dropped and the allocator's
-#     arenas are trimmed. This can never reach zero, because the loaded shared
-#     objects and the interpreter heap survive it: measured at 67 MB on the small
-#     box this runs on, and drifting between 300 and 800 MB on a development Mac,
-#     where the trim call does not exist.
-#   * EXIT ON IDLE (--exit-on-idle). The process leaves, which is really zero,
-#     and is only honest when something starts it again on the next request.
+# ONE WAY TO GIVE THE MEMORY BACK: the IN-PLACE UNLOAD (--idle-s N). The
+# recognizer is dropped and the allocator's arenas are trimmed. This can never
+# reach zero, because the loaded shared objects and the interpreter heap survive
+# it: measured at 67 MB on the small box this runs on, and drifting between 300
+# and 800 MB on a development Mac, where the trim call does not exist. Reaching
+# zero would mean the process leaving, which is only honest when something starts
+# it again on the next request, and nothing here does.
 #
 # RESIDENT IS THE DEFAULT AND IT IS A RULING, not an oversight: the memory is not
 # the problem when the box is merely full, it is the problem when the box is
@@ -62,7 +60,10 @@
 # one moment the box has nothing to spare, and an unreachable server is a note
 # that waits instead. A keep-warm ping, because nothing unloads under the default
 # residency and under the other one a ping would defeat the unload the household
-# just asked for. A socket unit, because the hub renders none.
+# just asked for. A socket unit, an adopted listening socket and an exit on idle,
+# because the hub renders one kind of unit for this and it starts the process
+# itself: a process that took a socket from somebody else, or left on its own
+# clock, would need a starter the hub does not have.
 import argparse
 import gc
 import io
@@ -126,10 +127,6 @@ LOOPBACK = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 # below is read once at import and would otherwise keep this default while the
 # per-request deadline honoured the flag.
 READ_TIMEOUT_S = 300.0
-# systemd's SD_LISTEN_FDS_START. Passed sockets begin at fd 3 because 0, 1 and 2
-# are stdio, and that offset is part of the protocol rather than a choice here.
-LISTEN_FDS_START = 3
-
 
 class State:
     # One lock over both the recognizer object and the idle clock. Held across
@@ -143,18 +140,6 @@ class State:
     model = ""
     runtime = ""
     idle_s = 600.0
-    # When true the idle deadline ENDS THE PROCESS instead of unloading in place.
-    # Off by default, because the process leaving is only correct when something
-    # starts it again on the next request.
-    exit_on_idle = False
-    # Set by the reaper under the lock, acted on by the serve loop between
-    # requests. Two steps rather than one because the reaper must not be the
-    # thread that stops the server: see Server.service_actions.
-    exit_requested = False
-    # Requests being handled right now. Only the EXIT consults it, never the
-    # unload: see reaper_tick for why those two differ.
-    in_flight = 0
-    socket_activated = False
     # Monotonic, not wall clock: the idle window must not move when the Pi's
     # clock is stepped by NTP after a boot without an RTC.
     last_request = None
@@ -316,7 +301,8 @@ def unload(why):
     objects stay mapped and the interpreter heap stays allocated after the weights
     go: 67 MB measured on the small box this runs on, and 418 MB right after the
     unload on a development Mac, where the trim call does not exist. The only
-    thing that reaches zero is the process not existing, which is --exit-on-idle.
+    thing that reaches zero is the process not existing, and this process only
+    ends when whatever started it says so.
     """
     if STATE.recognizer is None:
         return False
@@ -349,16 +335,6 @@ def loaded_model_name():
     return FAKE_NAME if STATE.fake else STATE.model
 
 
-def idle_deadline_passed():
-    """True when the window has run out and nothing is being served right now.
-
-    CALL WITH THE LOCK HELD. The in-flight count is what the lock alone does not
-    cover: ffmpeg converts OUTSIDE the lock and the reply is written after the
-    lock is released, so a request can be live at a moment when the lock is free.
-    """
-    return STATE.in_flight == 0 and idle_s_now() >= STATE.idle_s
-
-
 def reaper_tick():
     """One pass of the idle clock. Split out so a test can drive it directly."""
     # The deadline is re-checked HERE, inside the lock, not by the caller: a
@@ -367,19 +343,6 @@ def reaper_tick():
     with STATE.lock:
         if STATE.idle_s <= 0:
             return False
-        if STATE.exit_on_idle:
-            # The exit does NOT wait for a model to be resident. Unloading
-            # nothing is a no-op, but a socket-activated process that sat through
-            # a failed request and then stayed forever is hundreds of megabytes
-            # held for nothing, so the window ends the process either way.
-            #
-            # And the exit is the one that consults in_flight, because it is the
-            # irreversible one. An unload landing between a request's ffmpeg and
-            # its decode costs that request a reload and nothing else, which is
-            # the rule stated above, that only a COMPLETED decode resets the window.
-            # An exit landing there would cost the person their voice note.
-            STATE.exit_requested = idle_deadline_passed()
-            return STATE.exit_requested
         if STATE.recognizer is None:
             return False
         if idle_s_now() < STATE.idle_s:
@@ -395,10 +358,9 @@ def start_reaper():
     process would never wake to notice it has been idle for ten minutes, which is
     the exact case the unload exists for. (Its select does time out on a poll
     interval, but that is an implementation detail of serve_forever, not a
-    contract, and the decision belongs in one place either way.) The thread makes
-    the DECISION in both modes. In exit-on-idle mode it does not carry it out:
-    see Server.service_actions. A daemon thread wakes on its own clock
-    and dies with the process, so nothing has to be joined on shutdown. The
+    contract, and the decision belongs in one place either way.) A daemon thread
+    wakes on its own clock and dies with the process, so nothing has to be joined
+    on shutdown. The
     SERVER stays single-threaded (plain HTTPServer, not the threading one): on a
     4-core Pi one decode already takes all four threads, so two at once would
     make both slower and double the peak memory.
@@ -406,8 +368,7 @@ def start_reaper():
     if STATE.idle_s <= 0:
         # Never-reclaim was asked for, so there is nothing for a thread to do and
         # spinning one at 5 Hz to return immediately is worse than not having it.
-        # --idle-s 0 outranks --exit-on-idle: no window means no deadline to act on.
-        print("transcribe-server: idle reclaim disabled (--idle-s 0), no unload and no exit", file=sys.stderr, flush=True)
+        print("transcribe-server: idle reclaim disabled (--idle-s 0), no unload", file=sys.stderr, flush=True)
         return None
     # Tick derived from the window rather than fixed, so a short window is
     # actually honoured. At the deployed 600 s this wakes every 5 s, which is
@@ -664,11 +625,6 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         body = self.rfile.read(length)
-        # Counted from before the conversion to after the reply, which is wider
-        # than the lock on purpose: ffmpeg runs outside the lock and the reply is
-        # written after it is released. The idle EXIT reads this count.
-        with STATE.lock:
-            STATE.in_flight += 1
         try:
             text, audio_s, decode_ms = transcribe_bytes(body)
             self._reply(200, {"text": text, "audio_s": round(audio_s, 2), "decode_ms": decode_ms})
@@ -680,113 +636,6 @@ class Handler(BaseHTTPRequestHandler):
             msg = str(e).replace("\n", " ")
             self._reply(500, {"error": msg[:300]})
             self._note(500, why="error=" + msg[:120])
-        finally:
-            with STATE.lock:
-                STATE.in_flight -= 1
-
-
-# --- the socket: our own, or the one systemd already bound ---------------------
-
-
-def adopt_listen_fd():
-    """Return systemd's listening socket, or None when nobody passed one.
-
-    systemd hands a socket-activated service its listening sockets as fd 3
-    upwards, with LISTEN_FDS saying how many and LISTEN_PID saying which pid they
-    were meant for. The pid check is the whole safety of the scheme: those two
-    variables are ordinary environment, so a grandchild that re-execs would
-    otherwise adopt whatever it happens to have open on fd 3. Both are removed
-    from the environment either way, which is what sd_listen_fds() does too, so
-    the ffmpeg this process spawns never sees them.
-    """
-    count = os.environ.pop("LISTEN_FDS", "")
-    want_pid = os.environ.pop("LISTEN_PID", "")
-    os.environ.pop("LISTEN_FDNAMES", None)
-    if not count:
-        return None
-    if want_pid.strip() != str(os.getpid()):
-        print(
-            "transcribe-server: LISTEN_FDS set but LISTEN_PID is %r, not this pid %d - binding our own socket"
-            % (want_pid, os.getpid()),
-            file=sys.stderr,
-            flush=True,
-        )
-        return None
-    try:
-        n = int(count)
-    except ValueError:
-        return None
-    if n < 1:
-        return None
-    # Family and type are read off the fd rather than assumed. The unit that
-    # ships here declares one AF_INET stream socket, but reading them means an
-    # IPv6 ListenStream is not silently treated as IPv4 (verified by hand:
-    # socket.socket(fileno=fd) reports AF_INET/SOCK_STREAM for a bound listener).
-    sock = socket.socket(fileno=LISTEN_FDS_START)
-    if n > 1:
-        # Only the first is used. Saying so is better than serving one of several
-        # ports and leaving the rest silently unaccepted.
-        print("transcribe-server: LISTEN_FDS=%d, using only fd %d" % (n, LISTEN_FDS_START), file=sys.stderr, flush=True)
-    return sock
-
-
-class Server(HTTPServer):
-    """HTTPServer that can adopt a pre-bound socket and can stop when idle."""
-
-    def __init__(self, address, handler, sock=None):
-        if sock is None:
-            HTTPServer.__init__(self, address, handler)
-            return
-        # The socket already exists, is already bound and has already had
-        # listen() called on it by systemd before this process started, so
-        # bind_and_activate=False: binding again would fail with EADDRINUSE
-        # against our own service. address_family is set first so the throwaway
-        # socket socketserver makes for us matches the one we are replacing.
-        self.address_family = sock.family
-        HTTPServer.__init__(self, address, handler, bind_and_activate=False)
-        self.socket.close()
-        self.socket = sock
-        self.server_address = sock.getsockname()
-        # server_bind() normally sets these two and we skipped it. A handler that
-        # reads them (they are part of the http.server contract) must not find
-        # them missing just because the bind happened elsewhere.
-        self.server_name = socket.getfqdn(self.server_address[0])
-        self.server_port = self.server_address[1]
-
-    def service_actions(self):
-        """The one place this process may leave. Called by serve_forever's loop.
-
-        Not from the reaper thread, for two reasons. The reaper holds the lock
-        when it decides, and a request that is blocked waiting for that same lock
-        would deadlock anything that tried to join the serve loop from there. And
-        this hook runs BETWEEN requests - serve_forever calls it after
-        _handle_request_noblock() has returned - so on a single-threaded server
-        the exit structurally cannot happen mid-request. That is a stronger
-        guarantee than the lock or the in-flight count, both of which stay as
-        forward defence for the day somebody swaps in ThreadingHTTPServer.
-
-        The deadline is re-checked here under the lock, the same discipline the
-        reaper follows: a voice note may have arrived and completed in the gap
-        between the reaper deciding and this loop coming round.
-        """
-        if not STATE.exit_requested:
-            return
-        with STATE.lock:
-            if not idle_deadline_passed():
-                STATE.exit_requested = False
-                return
-            idle = idle_s_now()
-        # Named on stderr, because a journal reader watching a service stop over
-        # and over deserves to know it is the design and not a crash loop.
-        print(
-            "transcribe-server: exiting on idle after %.1fs with no request (served %d, exit 0)" % (idle, STATE.served),
-            file=sys.stderr,
-            flush=True,
-        )
-        # SystemExit rather than os._exit: it unwinds through main(), whose
-        # finally closes the server, and it is exit code 0 because an idle exit
-        # is a success. os._exit would skip that and buy nothing here.
-        raise SystemExit(0)
 
 
 def warm_up():
@@ -846,12 +695,6 @@ def main():
         action="store_true",
         help="stub backend: no model, no converter, fixed text, same load and unload path",
     )
-    ap.add_argument(
-        "--exit-on-idle",
-        action="store_true",
-        help="end the process at the idle deadline instead of unloading in place; only correct when"
-        " something restarts it on the next request",
-    )
     args = ap.parse_args()
 
     # The runtime directory is where the rented parts live and there is no
@@ -869,7 +712,6 @@ def main():
     STATE.model = args.model or (FAKE_NAME if args.fake else "")
     STATE.runtime = args.runtime or ""
     STATE.idle_s = args.idle_s
-    STATE.exit_on_idle = args.exit_on_idle
     STATE.started_mono = time.monotonic()
 
     # The read budget reaches BOTH places that use it. The class body above is
@@ -906,28 +748,21 @@ def main():
 
     start_reaper()
 
-    passed = adopt_listen_fd()
-    STATE.socket_activated = passed is not None
-    httpd = Server(("127.0.0.1", args.port), Handler, sock=passed)
-    # The BOUND address, not the requested one, for two reasons. --port 0 is
-    # usable, because the caller reads this line to learn where the kernel put it,
-    # which is how two checks can drive their own server at the same time.
-    # And under socket activation this process did not choose the address at all,
-    # so printing a hardcoded 127.0.0.1 would print a lie into the journal the day
-    # somebody hands this process a socket bound to something other than loopback.
+    # A plain server on a socket this process binds itself. Nothing hands one
+    # in, so the address below is always the one asked for here.
+    httpd = HTTPServer(("127.0.0.1", args.port), Handler)
+    # The BOUND address, not the requested one: --port 0 is usable, because the
+    # caller reads this line to learn where the kernel put it, which is how two
+    # checks can drive their own server at the same time.
     host, port = httpd.server_address[0], httpd.server_address[1]
     print(
-        "transcribe-server: listening on %s:%d (model %s, idle %.1fs%s%s%s)"
+        "transcribe-server: listening on %s:%d (model %s, idle %.1fs%s)"
         % (
             host,
             port,
             STATE.model,
             STATE.idle_s,
             ", warm" if args.warm else ", lazy",
-            ", socket-activated on fd %d" % LISTEN_FDS_START if STATE.socket_activated else "",
-            # Only when there is a window to act on, so this line cannot
-            # contradict the "idle reclaim disabled" one above it.
-            ", exits on idle" if STATE.exit_on_idle and STATE.idle_s > 0 else "",
         ),
         file=sys.stderr,
         flush=True,
