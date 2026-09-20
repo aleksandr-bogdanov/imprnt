@@ -14,6 +14,29 @@ export interface LogManifest {
 }
 export const historyInventoryPath = (state: string) => join(state, "migration-history.json");
 
+/**
+ * The old system wrote a voice note as one line, `(voice) <the words>`. This one
+ * writes the kind marker on a line of its own with the words under it, which is
+ * the record every other kind already uses, so the conversion moves the break
+ * and touches nothing else: the words come over byte for byte.
+ *
+ * Two shapes in one log is one agent reading two formats, which is the whole
+ * reason this rule exists. Putting the words ON the marker's line instead would
+ * break that record for every other kind.
+ *
+ * A marker with nothing after it stays one line, because there are no words to
+ * put on a second, and a line that merely mentions the marker further along is
+ * an ordinary sentence.
+ */
+const VOICE_MARKER = "(voice) ";
+
+function voiceOnItsOwnLine(text: string): string {
+  const end = text.indexOf("\n");
+  const first = end === -1 ? text : text.slice(0, end);
+  if (!first.startsWith(VOICE_MARKER) || first.length === VOICE_MARKER.length) return text;
+  return "(voice)\n" + text.slice(VOICE_MARKER.length);
+}
+
 function instant(day: string, clock: string, timezone: string): string {
   const target = `${day}T${clock}`;
   const utc = Date.parse(target + "Z");
@@ -70,7 +93,12 @@ export async function convertV2Chatlog(manifest: LogManifest) {
           if (typeof text !== "string") throw new Error("malformed text");
           const from = source.senders[sender];
           if (from !== source.person && from !== source.agent) throw new Error("unknown sender mapping");
-          records.push({ file, ordinal, person: source.person, agent: source.agent, format, line: { id, at, direction: from === source.person ? "in" : "out", from, text } });
+          // A voice note is something a PERSON sent. An agent that writes the
+          // marker inside its own answer is quoting, so an out line is left as
+          // it was written.
+          const direction = from === source.person ? "in" : "out";
+          records.push({ file, ordinal, person: source.person, agent: source.agent, format,
+            line: { id, at, direction, from, text: direction === "in" ? voiceOnItsOwnLine(text) : text } });
         } catch (error) { throw new Error(`${file}:${n + 1}: ${(error as Error).message}`); }
       }
     }
