@@ -17,9 +17,9 @@ export interface PresetSpec {
   provider?: string;
   effort?: string;
   paid?: string;
-  /** D-111. Which declared credential this preset's loop reads its login from. */
+  /** Which declared credential this preset's loop reads its login from. */
   credential?: string;
-  /** D-110. The three window thresholds, percent, on a `paid = "plan"` preset. */
+  /** The three window thresholds, percent, on a `paid = "plan"` preset. */
   window_pause_at?: number;
   window_notice_at?: number;
   window_hold_at?: number;
@@ -54,33 +54,33 @@ export interface RunSpec {
   platform?: string;
   person?: string;
   token_file?: string;
-  /** D-76. Which machine runs this entry. Absent is legal below two machines. */
+  /** Which machine runs this entry. Absent is legal below two machines. */
   machine?: string;
-  /** D-81. The limit the RUNNER enforces on its model child, not its own. */
+  /** The limit the RUNNER enforces on its model child, not its own. */
   child_memory_limit_mb?: number;
 }
 
-/** D-76. A machine the household has. `os` is in the file, never process.platform. */
+/** A machine the household has. `os` is in the file, never process.platform. */
 export interface MachineSpec {
   id: string;
   os?: string;
   [key: string]: string | number | undefined;
 }
 
-/** D-93. A person and the tree that is their boundary. */
+/** A person and the tree that is their boundary. */
 export interface PersonSpec {
   id: string;
   tree?: string;
-  /** D-108. The language this person reads the door's own lines in. */
+  /** The language this person reads the door's own lines in. */
   language?: string;
-  /** D-108. The four stamp thresholds, seconds, this person's own. */
+  /** The four stamp thresholds, seconds, this person's own. */
   acked_seconds?: number;
   started_seconds?: number;
   answered_seconds?: number;
   delivered_seconds?: number;
   /**
-   * D-137. The five harvest fields, this person's own. Each one is OPTIONAL and
-   * renders nothing when the spec names none, so a spec written before phase 5
+   * The five harvest fields, this person's own. Each one is OPTIONAL and
+   * renders nothing when the spec names none, so a spec written without them
    * produces the file it produces today, byte for byte.
    *
    * `harvest_report` is why the index signature below admits a boolean. It was
@@ -97,7 +97,7 @@ export interface PersonSpec {
 }
 
 /**
- * D-111. A credential this household has: one owner, one place, and every agent
+ * A credential this household has: one owner, one place, and every agent
  * that uses it points at that file.
  */
 export interface CredentialSpec {
@@ -109,7 +109,7 @@ export interface CredentialSpec {
 }
 
 /**
- * 03b item 2. The `[store]` section: where Postgres's own pid file is, and what
+ * The `[store]` section: where Postgres's own pid file is, and what
  * the machine's service manager calls it. Both are written by the install
  * script and read by the hub, so a check that plants one needs the file to
  * carry it.
@@ -145,7 +145,7 @@ const HUB_DEFAULTS: Record<string, string | number> = {
  * A number renders bare, a string renders JSON-quoted, and a BOOLEAN renders as
  * TOML's own bare words `true` and `false`. The boolean branch is written out
  * rather than left to `String` or to `JSON.stringify` landing on the right
- * answer by accident: phase 5's `harvest_report` is the first false a check
+ * answer by accident: the `harvest_report` is the first false a check
  * ever asks this helper to write, and a quoted `"false"` is a string the loader
  * would refuse.
  */
@@ -162,18 +162,18 @@ function table(lines: string[], entries: Record<string, unknown>): void {
 }
 
 /**
- * D-81 makes `child_memory_limit_mb` required on every `kind = "runner"` entry,
- * by name, in the build round. Every implied runner carries one from today, so
- * the 65 shipped checks do not all fail on contact the moment that refusal
- * lands. Today's loader tolerates the key it has no rule about, exactly as it
- * tolerates the fields phase 2 added, so the file still loads unchanged.
+ * `child_memory_limit_mb` is required on every `kind = "runner"` entry, by
+ * name. Every implied runner carries one, so
+ * a shipped check does not fail on contact with that refusal.
+ * The loader tolerates a key it has no rule about, exactly as it
+ * tolerates the newer fields, so the file still loads unchanged.
  */
 const DEFAULT_CHILD_LIMIT_MB = 2048;
 
 /**
- * D-110 makes the three window thresholds required on every `paid = "plan"`
- * preset, by name, in the build round. Every plan preset this helper renders
- * carries them from today, for the reason above: without it every check that
+ * The three window thresholds are required on every `paid = "plan"`
+ * preset, by name. Every plan preset this helper renders
+ * carries them, for the reason above: without it every check that
  * stages a hub turns red the moment the loader requires them, and that is a
  * fixture problem wearing a production failure's clothes. Today's loader
  * tolerates a key it has no rule about, so the file still loads unchanged.
@@ -256,7 +256,7 @@ function renderRegistry(spec: RegistrySpec): string {
   }
 
   // An absent section renders NOTHING, so a spec that names no machines and no
-  // people produces the same file it produces today and no phase 2 check sees a
+  // people produces the same file it produces today and no earlier check sees a
   // different registry.
   for (const machine of spec.machines ?? []) {
     lines.push("[[machines]]");

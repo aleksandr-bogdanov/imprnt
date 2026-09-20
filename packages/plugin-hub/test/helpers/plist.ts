@@ -1,6 +1,7 @@
 // Test infrastructure: a STRICT reader for the property lists launchd is handed.
 //
-// The rendering check used to ask whether the text CONTAINED a number, and a
+// A rendering check that asks whether the text CONTAINED a number is not a
+// check: a
 // renderer that emitted `321garbage`, or a plist that no parser accepts, passed
 // it. launchd does not read a substring: it reads a typed tree, and a job whose
 // plist it cannot parse never runs at all. So the check reads the same tree,

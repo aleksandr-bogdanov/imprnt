@@ -1,6 +1,6 @@
 // Test infrastructure: a loop the test drives, through the five-verb seam.
 //
-// D-34 and D-59. The runner is handed its adapter registry as a parameter, so a
+// The runner is handed its adapter registry as a parameter, so a
 // check can register this under a name generated at run time and drive a turn
 // to any point. It implements the `Adapter` interface pinned in the seam
 // contract and NOTHING else: there is no tool verb of any kind on it, which is
@@ -42,9 +42,9 @@ import type {
 import type { Preset } from "../../src/registry/presets.ts";
 
 /**
- * D-118. What the loop said when it would not answer, and the window it
+ * What the loop said when it would not answer, and the window it
  * reported, written out HERE rather than imported from `src/adapters/types.ts`,
- * because that file carries the phase 3 shape and this round creates nothing
+ * because that file carries the earlier shape and nothing here creates
  * under `src/`. The same reason `test/helpers/units.ts` keeps its own copy of
  * the two unit prefixes.
  */
@@ -60,7 +60,7 @@ export interface WindowReading {
   resets_at: string | null;
 }
 
-/** A turn end carrying phase 4's two fields beside phase 2's three. */
+/** A turn end carrying the two fields beside the three. */
 export interface ScriptedTurnEnd extends TurnEnd {
   refused: TurnRefusal | null;
 }
@@ -87,7 +87,7 @@ export interface FedMessage {
   /**
    * WHICH SESSION this message was fed into, one-based in `starts()` order.
    *
-   * The second seat's finding on check 9: without it every session appends to
+   * THE FINDING: without it every session appends to
    * one log, so a runner that opens an unused fresh harvester session and feeds
    * the slice into the RESIDENT agent session is indistinguishable from one
    * that does it properly. Counting feeds cannot tell them apart, and neither
@@ -104,10 +104,10 @@ export interface StartRecord {
   sessionId: string | null;
   preset: Preset | null;
   at: number;
-  /** 03b item 1. Whether the runner handed this start a boxing hook. */
+  /** Whether the runner handed this start a boxing hook. */
   wrapped?: boolean;
   /**
-   * D-150. The directory this session was started in, or null when the caller
+   * The directory this session was started in, or null when the caller
    * named none.
    *
    * A harvest turn runs in the person's VAULT ROOT rather than in the agent's
@@ -119,7 +119,7 @@ export interface StartRecord {
   cwd: string | null;
 }
 
-/** 03b item 1. One real child spawn, as the adapter really made it. */
+/** One real child spawn, as the adapter really made it. */
 export interface SpawnRecord {
   /** The argv the child was spawned with, after the runner's hook. */
   argv: string[];
@@ -156,15 +156,15 @@ export interface ScriptedOptions {
   usage?: AdapterUsage;
   sessionId?: string;
   /**
-   * D-82. With this, `start` spawns a REAL child that holds memory on command
+   * With this, `start` spawns a REAL child that holds memory on command
    * and the session's `pid` is that process's id. Without it `pid` is null and
-   * every phase 2 check behaves exactly as it does today, which is what keeps
+   * every check behaves exactly as it does today, which is what keeps
    * the 65 green. A scripted adapter with a FAKE pid would make the memory kill
    * check unable to fail, which is why the child is real.
    */
   child?: boolean;
   /**
-   * 03b item 1. A path the real child tries to READ the moment it starts, and
+   * A path the real child tries to READ the moment it starts, and
    * reports on its own stdout.
    *
    * The child is what "wear the box" is about, and a child that is boxed cannot
@@ -176,10 +176,10 @@ export interface ScriptedOptions {
    */
   probePath?: string;
   /**
-   * D-121. Answer REFUSED for the first n turns, then reply normally.
+   * Answer REFUSED for the first n turns, then reply normally.
    *
    * A refused turn replays the user line (so the receipt lands and the row
-   * reaches `acked`, which D-121a says is what the measured no-login wire
+   * reaches `acked`, which is what the measured no-login wire
    * does) and produces NO text at all, so no `started` stamp can land and the
    * runner has nothing to write into the outbox.
    *
@@ -187,14 +187,14 @@ export interface ScriptedOptions {
    * that is a turn the loop really refused too.
    */
   refusals?: number;
-  /** D-119. The window every turn of this loop reports, until it is changed. */
+  /** The window every turn of this loop reports, until it is changed. */
   window?: WindowReading;
   /**
-   * Phase 5. What this loop answers, given the message it was fed.
+   * What this loop answers, given the message it was fed.
    *
    * A harvest turn's reply is an envelope of notes, and `scriptedReply` can
    * only say `reply to <text>`. With this UNSET the turn end is byte for byte
-   * what it is today, which is what keeps every phase 2, 3 and 4 check
+   * what it is today, which is what keeps every check
    * behaving exactly as it does now.
    *
    * It is read at the moment the turn ENDS, so `setAnswer` reaches the next
@@ -231,7 +231,7 @@ const os = require("os");
 const parent = process.ppid;
 if (parent === 1 && process.pid !== 2) process.exit(0);
 const file = os.tmpdir() + "/hub-child-" + process.pid + ".grow";
-// 03b item 1. One line on stdout before anything else: what this child could
+// One line on stdout before anything else: what this child could
 // read of the path it was pointed at. Outside a box it reads it; inside one it
 // does not, and that difference is what "the agent's process wears the box"
 // means from where a check stands.
@@ -273,7 +273,7 @@ export interface BoxProbe {
 export interface HeldChild {
   pid: number;
   exited: Promise<number>;
-  /** The argv this child was really spawned with, boxed or not (03b item 1). */
+  /** The argv this child was really spawned with, boxed or not. */
   argv: string[];
   /** What the child reported about `probePath`, once it has said it. */
   boxProbe(): BoxProbe | null;
@@ -282,7 +282,7 @@ export interface HeldChild {
 
 export interface HolderOptions {
   /**
-   * 03b item 1. The runner's own boxing hook, applied to the argv this holder
+   * The runner's own boxing hook, applied to the argv this holder
    * would otherwise be spawned with. The fixture calls it and spawns whatever
    * comes back, so a wrap that returns a boxed argv puts the child in the box
    * and a missing one leaves it plain.
@@ -391,7 +391,7 @@ export function residentBytes(pid: number): number {
 /**
  * Every holder child still alive anywhere on this box, by pid.
  *
- * The second seat's finding: killing the children a fixture still TRACKS is a
+ * THE FINDING: killing the children a fixture still TRACKS is a
  * cleanup path, not proof that none survived. This asks the platform instead,
  * and it can see a holder whose owner forgot it, including one left by an
  * earlier file. The marker is the grow-file name the holder script carries in
@@ -419,7 +419,7 @@ export function childGone(pid: number): boolean {
   }
 }
 
-/** `AdapterSession` with the handle property D-82 adds to it. */
+/** `AdapterSession` with the child pid the memory watch reads. */
 export interface ChildSession extends AdapterSession {
   readonly pid: number | null;
 }
@@ -428,7 +428,7 @@ export interface ScriptedAdapter {
   adapter: Adapter;
   /** Every real child this adapter still owns, so a test can reap them. */
   children(): HeldChild[];
-  /** 03b item 1. Every real child spawn, with the argv it really used. */
+  /** Every real child spawn, with the argv it really used. */
   spawns(): SpawnRecord[];
   /** Every message handed to the loop, with the moment it happened. */
   fed(): FedMessage[];
@@ -437,10 +437,10 @@ export interface ScriptedAdapter {
   /**
    * Every session that was CLOSED, by its one-based `starts()` index.
    *
-   * The second seat's finding on C, and it is right: counting starts cannot
+   * COUNTING STARTS IS NOT ENOUGH: it cannot
    * tell a runner that closes each harvester session from one that leaks it and
    * opens another, and `close` is a method this fixture implements, so there is
-   * nothing to stop it recording the call. D-150 says the harvester's session
+   * nothing to stop it recording the call. The harvester's session
    * is closed when the turn ends, so nothing of it survives to the next
    * harvest, and this is what makes that assertable.
    */
@@ -499,11 +499,11 @@ export function createScriptedAdapter(
   // The usage a turn end reports is read at the moment it fires, so a test can
   // give each turn of one session its own numbers.
   let usage: AdapterUsage = options.usage ?? { ...DEFAULT_USAGE };
-  // Phase 4. Both are null by default, so a turn end carries exactly what it
-  // carries today plus two nulls, and every phase 2 and phase 3 check behaves
+  // Both are null by default, so a turn end carries exactly what it
+  // carries today plus two nulls, and every check behaves
   // as it does now.
   let window: WindowReading | null = options.window ?? null;
-  // Phase 5. Null means `scriptedReply`, which is what every shipped check gets.
+  // Null means `scriptedReply`, which is what every shipped check gets.
   let answer: ((fed: { id: string; text: string }) => string) | null =
     options.answer ?? null;
   let countdown = options.refusals ?? 0;
@@ -538,7 +538,7 @@ export function createScriptedAdapter(
   let current: Live | null = null;
 
   /**
-   * ONE OPEN TURN PER SESSION, not one per fixture (the second seat's finding
+   * ONE OPEN TURN PER SESSION, not one per fixture (the finding
    * on check 17).
    *
    * A runner serves its agents concurrently (`src/runner/run.ts` runs one
@@ -581,10 +581,10 @@ export function createScriptedAdapter(
       if (countdown === 0) standing = null;
     }
     // Built as a VARIABLE and not as a literal at the call, so the two fields
-    // phase 4 adds travel without an excess property error against the phase 3
+    // the window fields travel without an excess property error against the older
     // `TurnEnd` the handler is typed with.
     const end: ScriptedTurnEnd = {
-      // D-118: the text is empty whenever a refusal is set, so a runner that
+      // The text is empty whenever a refusal is set, so a runner that
       // ignored the field would write an empty chunk rather than an apology.
       // A REFUSAL STILL WINS over `answer`: a loop that would not answer says
       // nothing, whatever a fixture would have had it say.
@@ -606,7 +606,7 @@ export function createScriptedAdapter(
     if (!open) return;
     if (gateProgress) return;
     // A refused turn produces NOTHING, so no `started` stamp can land on a row
-    // the loop never began answering (D-121a).
+    // the loop never began answering.
     if (!standing) fireProgress(live, { kind: "text", text: scriptedReply(open.text) });
     if (gateEnd) return;
     step3(live);
@@ -630,7 +630,7 @@ export function createScriptedAdapter(
   ): ChildSession => {
     const live: Live = { receipt: [], progress: [], end: [], sessionId, nth };
     current = live;
-    // 03b item 1. The adapter is BOX-AGNOSTIC: it imports nothing from
+    // The adapter is BOX-AGNOSTIC: it imports nothing from
     // `src/box/`, knows no tool name, and spawns whatever the hook it was
     // handed returns. What it records is the argv it really used, so a check
     // reads the production code's own output at the seam rather than asking
@@ -655,7 +655,7 @@ export function createScriptedAdapter(
       get sessionId() {
         return live.sessionId;
       },
-      // D-82: a handle property like `close`, never a sixth verb. Null means
+      // A handle property like `close`, never a sixth verb. Null means
       // this loop has no local child for a hub to watch.
       get pid() {
         return held ? held.pid : null;
@@ -703,7 +703,7 @@ export function createScriptedAdapter(
       preset: Preset;
       sessionId: string | null;
       cwd?: string;
-      /** 03b item 1. The runner's boxing hook, applied to this loop's argv. */
+      /** The runner's boxing hook, applied to this loop's argv. */
       wrap?: (argv: string[]) => string[];
     }): Promise<AdapterSession> {
       startLog.push({
@@ -711,7 +711,7 @@ export function createScriptedAdapter(
         preset: where.preset ?? null,
         at: Date.now(),
         wrapped: typeof where.wrap === "function",
-        // D-150. The directory the caller asked for, exactly, and null when it
+        // The directory the caller asked for, exactly, and null when it
         // asked for none. The runner passes `cwd` only when the box has one.
         cwd: where.cwd ?? null,
       });
@@ -833,16 +833,16 @@ export interface AdapterServer {
 interface WireEvent {
   kind: "receipt" | "progress" | "end";
   /**
-   * WHOSE event this is (VERIFY-CODEX, the unresolved adapterClient defect).
-   * The server used to broadcast every event with no session on it, so a client
-   * serving two agents had no way to route one and handed all three kinds to
-   * every handler it held. Moving the handler arrays into the sessions alone
+   * WHOSE event this is. A server that broadcasts every event with no session
+   * on it leaves a client
+   * serving two agents no way to route one, and it hands all three kinds to
+   * every handler it holds. Moving the handler arrays into the sessions alone
    * would not have fixed that: without this field there is nothing to route BY.
    */
   session: string;
   messageId?: string;
   progress?: AdapterProgress;
-  /** Phase 4's two fields ride along, because the whole object is serialised. */
+  /** The two fields ride along, because the whole object is serialised. */
   end?: ScriptedTurnEnd;
 }
 
@@ -895,8 +895,8 @@ export async function serveAdapter(
         seen.set(id, { session: id, pid: null, fed: [] });
         opened.onReceipt((messageId) => push({ kind: "receipt", session: id, messageId }));
         opened.onProgress((progress) => push({ kind: "progress", session: id, progress }));
-        // The handler is typed with the phase 3 `TurnEnd`, and what this
-        // fixture really fires carries phase 4's two fields as well. The whole
+        // The handler is typed with the narrower `TurnEnd`, and what this
+        // fixture really fires carries the two fields as well. The whole
         // object is serialised, so they cross the wire on their own.
         opened.onTurnEnd((end) =>
           push({ kind: "end", session: id, end: end as ScriptedTurnEnd }),
@@ -989,11 +989,10 @@ export function adapterClient(
   options: { child?: boolean } = {},
 ): Adapter {
   /**
-   * HANDLERS BELONG TO A SESSION, not to this client (VERIFY-CODEX, the
-   * unresolved adapterClient defect, confirmed structurally there).
+   * HANDLERS BELONG TO A SESSION, not to this client.
    *
    * One subprocess builds ONE client for all of its agents, and the three
-   * handler arrays used to live here, on the client. Every session registered
+   * HANDLER ARRAYS MUST NOT LIVE HERE, on the client. Every session registered
    * into them and `close()` emptied all three, so a runner respawning agent
    * A's child (a preset change, or a child the memory watch killed) deafened
    * agent B in the middle of B's turn: B's `onTurnEnd` was gone, the turn never

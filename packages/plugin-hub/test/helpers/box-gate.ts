@@ -2,14 +2,14 @@
 // the gate for the unit manager.
 //
 // `bwrap` needs unprivileged user namespaces and a GitHub runner's support for
-// them is not verified (03-CONTEXT), so criterion 9 is gated on the TOOL rather
+// them is not verified, so criterion 9 is gated on the TOOL rather
 // than on a manager, and a closed gate is a named skip and not a failure. The
 // reason goes into the test name through `gateSuffix`, the same way the OS gate
 // does, so nothing here is ever a silent pass.
 //
 // The gate asks only whether the tool exists and runs. It never judges the
 // profile or the argv: those are `src/box/index.ts`'s, and check 15 binds what
-// the probe PRINTED rather than what the profile said (D-92).
+// the probe PRINTED rather than what the profile said.
 
 import { existsSync, readFileSync } from "node:fs";
 

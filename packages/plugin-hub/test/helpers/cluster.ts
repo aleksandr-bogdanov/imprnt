@@ -1,6 +1,6 @@
 // Test infrastructure: a throwaway Postgres cluster.
 //
-// Every check in phase 1 runs against a real Postgres. Nothing here mocks the
+// Every check runs against a real Postgres. Nothing here mocks the
 // database. The helper does initdb into a temporary directory, starts the
 // server on a free loopback port with its own unix socket directory, hands out
 // fresh databases with src/schema.sql applied, then stops the server and
@@ -21,10 +21,10 @@ import { join, dirname } from "node:path";
 const NEEDED = ["initdb", "pg_ctl", "psql", "postgres"] as const;
 
 // ---------------------------------------------------------------------------
-// 03b item 9. The suite does not cost this Mac a shared memory slot every time
+// The suite does not cost this Mac a shared memory slot every time
 // a run is interrupted.
 //
-// BUILD-NOTES B.3: `kern.sysv.shmmni` is 32 on this Mac, each throwaway cluster
+// `kern.sysv.shmmni` is 32 on this Mac, each throwaway cluster
 // holds one System V segment, and a cluster KILLED rather than stopped leaks
 // it. About thirty interrupted runs later every `initdb` fails with "could not
 // create shared memory segment: No space left on device" and the suite reports
@@ -481,7 +481,7 @@ export async function backendPid(conn: {
  * issued by the thing under test.
  *
  * BOTH WIRE PROTOCOLS COUNT, and that is the correction the Codex round made
- * (03b row 6). `log_statement = 'all'` writes `statement: <sql>` for a query
+ * `log_statement = 'all'` writes `statement: <sql>` for a query
  * sent down the SIMPLE protocol and `execute <name>: <sql>` for one sent with
  * bound parameters down the EXTENDED protocol, which is what every tagged
  * template in this package produces. A watch that matched `statement:` alone
@@ -494,7 +494,7 @@ export async function backendPid(conn: {
  * therefore not counted as a second entry.
  *
  * It counts ENTRIES, not lines, and it does not look at the SQL text. The
- * second seat broke the earlier text-matching version three ways: a statement
+ * an earlier text-matching version broke three ways: a statement
  * written across two lines put `SELECT id` and `FROM inbound` on different
  * lines and counted zero, a poll of a different table counted zero, and a poll
  * of a signal table counted zero. None of those escape a count of "any
@@ -600,7 +600,7 @@ export async function untilIssued(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2. Staging a kill at an exact point, with no switch in production code.
+// Staging a kill at an exact point, with no switch in production code.
 //
 // A `kill -9` has to land while the process under test is inside the statement
 // the check is about. A sleep before the kill is a race. Postgres gives a
@@ -620,7 +620,7 @@ export interface HeldLock {
 /**
  * The two lock modes a check may hold, and the difference between them.
  *
- * MEASURED in phase 5's build round, on this Mac, bun 1.3.14: with `access
+ * MEASURED on a Mac, bun 1.3.14: with `access
  * exclusive` held on `state_row`, a plain `select` from a SEPARATE superuser
  * connection blocked for the whole three seconds it was given and returned the
  * moment the lock was released. `access exclusive` conflicts with `access
@@ -816,7 +816,7 @@ export async function foreignBackends(
 // ---------------------------------------------------------------------------
 // A helper process that says when it is up.
 //
-// D-64. Every subprocess entry prints exactly one JSON line when its handle has
+// Every subprocess entry prints exactly one JSON line when its handle has
 // returned. A test that staged a kill without waiting for that line could not
 // tell "not started yet" from "started and waiting", and would be killing some
 // other moment than the one it names.

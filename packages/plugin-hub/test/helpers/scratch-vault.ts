@@ -26,7 +26,7 @@ import { imprntCliPath } from "./imprnt-shim.ts";
 /**
  * The vault contract, as a published `imprnt` carries it.
  *
- * MEASURED in the build round, and it is why this helper does one thing the
+ * MEASURED, and it is why this helper does one thing the
  * plan did not ask for. `imprnt init <root>` copies `<packageRoot>/CLAUDE.md`
  * to `<root>/CLAUDE.md`, and `packages/imprnt/package.json` gets that file from
  * the repository root through its `shipdocs` script at PUBLISH time. So an
@@ -34,7 +34,7 @@ import { imprntCliPath } from "./imprnt-shim.ts";
  * `scripts/cli.ts`, which is what `hub.imprnt` names in every check, copies
  * nothing and says nothing about it.
  *
- * D-150's whole point is that a loop started in the vault root loads the filing
+ * The whole point is that a loop started in the vault root loads the filing
  * rules the way any agent working in a vault does, so a scratch vault without
  * the contract is not the vault this phase is about. The helper puts the same
  * bytes there that a published install would: the repository's OWN `CLAUDE.md`,

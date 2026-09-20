@@ -1,9 +1,9 @@
 // Test infrastructure: two people's trees and the one shared zone.
 //
 // L7: "the boundary is the person", "a person is a registry entry", "one shared
-// zone is mounted into every vault". D-93 makes the zone a household setting so
+// zone is mounted into every vault". The zone is a household setting so
 // "a shared zone for a subset of people" is unwriteable rather than merely
-// discouraged, and D-100 makes the people `p1` and `p2` because the repository
+// discouraged, and the people are `p1` and `p2` because the repository
 // is public.
 //
 // THE ORIGIN IS GENERATED AT RUN TIME. "The other person's origin does not
@@ -14,7 +14,7 @@
 //
 // THE ORIGIN IS READ AS A FILE, never through git. `/usr/bin/git` on macOS is an
 // Xcode shim that dies loading `libxcrun` from a path the box denies, so the
-// probe reads `<tree>/.git/config` directly (03-BRIEF).
+// probe reads `<tree>/.git/config` directly.
 
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

@@ -1,6 +1,6 @@
 // Test infrastructure: a credential prober the test answers for.
 //
-// D-131. `check` opens every credential and asks whether it still works, and
+// `check` opens every credential and asks whether it still works, and
 // the two bot kinds answer that question with a network call to the real
 // platform. No check can reach Telegram or Discord, so the prober is a seam in
 // the style of `os` and `kernel`, and this is the fixture that stands in it.
@@ -11,7 +11,7 @@
 // assertion about the findings and fails `calls()`.
 //
 // The types are written out HERE rather than imported from
-// `src/check/credentials.ts`, because that module does not exist in this round
+// `src/check/credentials.ts`, when that module does not exist
 // and a fixture that imported it would fail to typecheck rather than letting
 // its check go red on the import. The same reason `test/helpers/units.ts` keeps
 // its own copy of the two unit prefixes.
@@ -50,7 +50,7 @@ export interface FakeProber extends CredentialProber {
  * A prober that answers from a map, by credential id OR by file path.
  *
  * The file is the second key on purpose. A door's `token_file` is a credential
- * without being a `[[credentials]]` entry (D-111) and the seam contract pins no
+ * without being a `[[credentials]]` entry and the seam contract pins no
  * id for it, so a check that keyed its answer on a guess at that id would get
  * the fallback below instead and bind nothing. The FILE is the one thing that
  * entry is certain to carry.

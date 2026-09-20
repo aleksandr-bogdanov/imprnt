@@ -2,7 +2,7 @@
 // PATH fronted by shims that record every manager command anything in it tried
 // to run.
 //
-// The second seat's lead: check 22 proved "check never acts on a finding" by
+// check 22 proved "check never acts on a finding" by
 // handing `runCheck` a seam whose mutating verbs throw and record, and that
 // only covers calls made THROUGH the supplied seam. A `check` that spawned
 // `launchctl bootout` itself, or swallowed the seam's exception and then

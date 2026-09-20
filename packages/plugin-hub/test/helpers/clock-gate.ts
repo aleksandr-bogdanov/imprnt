@@ -1,6 +1,6 @@
 // Test infrastructure: the one gate a TRIGGER check asks about the clock.
 //
-// D-145 asks the daily BACKSTOP first and the backstop ignores the minimum, so
+// The daily BACKSTOP is asked first and it ignores the minimum, so
 // one unharvested line older than the last UTC midnight is enough to owe one.
 // A check that plants a line ten minutes back and expects a QUIET row therefore
 // gets a backstop row instead for the first ten minutes of every UTC day, and a
@@ -8,14 +8,14 @@
 // which is exactly when an unattended suite runs.
 //
 // ROUND 2 TRIED TO CLAMP THE PLANTED TIMES AND THAT WAS WORSE, which is the
-// second seat's finding and the harness's ruling. `Math.max(now - back, 00:01)`
+// finding and the harness's ruling. `Math.max(now - back, 00:01)`
 // returns a time in the FUTURE when the run starts before 00:01, and at 00:10 a
 // forty minute, a thirty-nine minute and a twenty minute offset all collapse
 // onto 00:01, so the strict lower bound of a slice silently drops lines the
 // check believes it planted and the order it believes it has does not exist.
 // The clamp is withdrawn. Times are plain offsets again, strictly ordered.
 //
-// What replaces it is 03-CONTEXT's own rule for a gate, the one
+// What replaces it is the standing rule for a gate, the one
 // `test/helpers/os-gate.ts` already follows: evaluated ONCE at module load, the
 // reason carried in the TEST NAME so bun's reporter prints it beside the skip,
 // one line on stderr, and `test.skipIf`. A closed gate is never a silent pass.

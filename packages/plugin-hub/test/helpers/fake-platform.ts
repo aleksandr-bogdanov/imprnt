@@ -1,8 +1,8 @@
 // Test infrastructure: a platform the test owns.
 //
-// D-35. The door is handed its `platform` as a parameter, so a check can stand
+// The door is handed its `platform` as a parameter, so a check can stand
 // a fake in the place Telegram or Discord takes in production. The fake is the
-// only thing in phase 2 allowed to stand in for a real edge: the store, the
+// only thing allowed to stand in for a real edge: the store, the
 // door, the runner, the settle, the claim, the cursor, the chat log and the
 // tail are all the real thing in every check.
 //
@@ -22,12 +22,12 @@ import type {
 } from "../../src/door/platform.ts";
 
 /**
- * D-125. The platform a door needs, as the phase 4 seam contract pins it:
+ * The platform a door needs, as the seam contract pins it:
  * typing with the lifetime its own documentation gives it, an edit, and a post
  * that says which message it made.
  *
  * It is written out HERE rather than imported from `src/door/platform.ts`,
- * because that file carries the phase 2 shape and this round creates nothing
+ * because that file carries the earlier shape and nothing here creates
  * under `src/`. The same reason `test/helpers/units.ts` keeps its own copy of
  * the two unit prefixes: a fixture that borrowed the code under test would
  * agree with every build, including one that never grew the verbs.
@@ -41,7 +41,7 @@ export interface DoorPlatform {
     cursor: string | null;
     timeoutMs: number;
   }): Promise<PlatformPull>;
-  /** D-178, IMP-163. Where a chat stands now, as a cursor, or null for nothing. */
+  /** Where a chat stands now, as a cursor, or null for nothing. */
   highWater(options: { chat: string }): Promise<string | null>;
   post(options: { chat: string; text: string }): Promise<{ id: string | null }>;
   edit(options: { chat: string; id: string; text: string }): Promise<void>;

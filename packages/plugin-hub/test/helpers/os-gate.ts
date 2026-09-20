@@ -1,7 +1,7 @@
 // Test infrastructure: the one gate every OS-bound check asks, and the machine
 // identity every gated fixture declares.
 //
-// 03-CONTEXT "How a check is gated, and how a skip is made visible". An OS-bound
+// How a check is gated, and how a skip is made visible. An OS-bound
 // check calls ONE gate. It answers three questions in order and each failure
 // carries its own reason: is there a manager for this platform at all, does it
 // answer, and on linux is XDG_RUNTIME_DIR set. A closed gate is never a silent
@@ -15,7 +15,7 @@
 //
 // WHAT THE GATE IS NOT. It asks about the MANAGER, never about `src/os/`.
 // `seam` is therefore null until that module exists, and every gated check
-// still imports the module through `seam()` inside its own body (D-25) and goes
+// still imports the module through `seam()` inside its own body and goes
 // red there for "import missing". A gate that closed on a missing module would
 // turn every one of those checks into a skip, which is the opposite of a red
 // round.
@@ -112,10 +112,10 @@ export function announceGate(gate: OsGate = GATE, what = "an OS-bound check"): v
 }
 
 /**
- * D-100's machine ids, picked from the platform this check is running on.
+ * The machine ids, picked from the platform this check is running on.
  *
  * Every gated check declares its `[[machines]]` entry through this, because
- * D-77 has the hub refuse a machine whose declared `os` is not the platform it
+ * the hub refuses a machine whose declared `os` is not the platform it
  * is running on. A fixture that hard-coded `pi`/`linux` would be refused before
  * the check started, on a Mac, and would read exactly like a hub bug.
  */

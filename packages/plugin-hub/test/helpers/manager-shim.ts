@@ -1,10 +1,10 @@
 // Test infrastructure: a service manager that WRITES DOWN every question it is
 // asked, answers the reading ones honestly and refuses the rest.
 //
-// RED-RUN-2's stated residue: "`check` calling a manager by ABSOLUTE path is not
-// caught. Check 22 runs `runCheck` in a subprocess whose PATH is fronted by
-// shims ... A build that spawned `/bin/launchctl` by its full path never meets
-// the shim." 03b item 7 closes it from the other side: the OS seam takes the
+// A PATH shim alone does not catch `check` calling a manager by ABSOLUTE path:
+// running `runCheck` in a subprocess whose PATH is fronted by
+// shims misses a build that spawned `/bin/launchctl` by its full path.
+// It is closed from the other side: the OS seam takes the
 // manager binary as a PARAMETER whose default is the bare name, a check builds
 // the seam with that parameter pointed at this shim BY ABSOLUTE PATH, and then
 // a `check` that reached the real manager by any route at all leaves this log

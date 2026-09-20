@@ -6,7 +6,7 @@
 // the operating system's, which is what SPEC section 6's Forbidden "a
 // supervisor of ours" means as a behaviour rather than as a grep.
 //
-// The second seat found the hole in the first shape of that check: install and
+// A reader found the hole in the first shape of that check: install and
 // start went through `thisOs()` INSIDE the test process, which stayed alive for
 // the whole check, so an OS implementation carrying its own timer could have
 // kickstarted the dead job itself and satisfied every assertion. This entry

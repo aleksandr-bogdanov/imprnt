@@ -1,9 +1,9 @@
 // Test infrastructure: how much processor time a process has actually burned.
 //
-// D-70's residue, carried from phase 1 and phase 2 verbatim: "a waiter that
+// THE RESIDUE a statement count cannot see: a waiter that
 // keeps a flag in memory and re-checks it on a 100 ms timer issues no SQL at
 // all, so it is invisible to a statement count and to any other black-box
-// probe." A statement count is what phase 1 and phase 2 could see. This is the
+// probe. This is the
 // other thing a black box can see: a poll that does any work at all costs
 // processor time, and a process genuinely asleep on a notification costs almost
 // none.
@@ -12,7 +12,7 @@
 // wakes, reads one boolean and goes back to sleep is a few microseconds per
 // wake, so at 100 ms it can still finish a three second window under any bound
 // loose enough not to be flaky. So this is the GUARD and the written review of
-// the waits is the CLOSURE (03b-DEBTS item 6a).
+// the waits is the CLOSURE.
 //
 // Both readers convert at their own edge, the way the memory seam does, and the
 // unit here is SECONDS of processor time (user + system).
