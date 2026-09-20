@@ -47,7 +47,7 @@ import { storeUrlFor } from "../store/secrets.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
-import { clearProgress, writeProgress } from "./progress.ts";
+import { clearProgress, writeProgress, type TurnProgress } from "./progress.ts";
 import {
   clearOutage,
   classifyRefusal,
@@ -145,14 +145,7 @@ function progressOf(open: {
   actions: number;
   lastAction: string;
   startedAt: string;
-}): {
-  messageId: string;
-  person: string;
-  agent: string;
-  actions: number;
-  lastAction: string;
-  startedAt: string;
-} {
+}): TurnProgress {
   return {
     messageId: open.id,
     person: open.person,
