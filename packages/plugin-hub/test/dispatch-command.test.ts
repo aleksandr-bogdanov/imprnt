@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
-import { rolloutStage, DISPATCH_TARGET, DISPATCH_TARGET_CHAT, DISPATCH_TARGET_RU } from "./helpers/rollout-stage.ts"
+import { rolloutStage, DISPATCH_TARGET, DISPATCH_TARGET_CHAT, DISPATCH_TARGET_RU, DISPATCH_JOB_ONLY } from "./helpers/rollout-stage.ts"
 import { chatLogLines } from "./helpers/hub-fixture.ts"
 import { observe } from "./helpers/rollout-runner.ts"
 import { message } from "./helpers/rollout-ingress.ts"
@@ -122,6 +122,29 @@ for (const [shape, task] of [
     } finally { await door?.stop(); await it.stop() }
   }, 60_000)
 }
+
+test("D-211 a target with no chat is queued ready, because it has no log to write a line into", async () => {
+  const it = await rolloutStage(cluster, "telegram", { dispatch: true })
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  try {
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    it.edge.batch([typed("50", `${DISPATCH_PHRASES.en} ${DISPATCH_JOB_ONLY} ${CODEWORD}`)], "51")
+    expect(await observe(async () => (await it.read.inbound()).some(r => r.kind === "job"), 20_000)).toBe(true)
+    const job = (await it.read.inbound()).find(r => r.kind === "job")!
+    expect(job.agent).toBe(DISPATCH_JOB_ONLY)
+    // Ready at the commit: there is no chat log for a line and no door process
+    // to sweep for it, so the shipped work notification is the whole of how its
+    // runner hears about it.
+    expect(job.log_ready).toBe(true)
+    const source = job.source as Record<string, any>
+    expect(source.door).toBeUndefined()
+    expect(source.chat).toBeUndefined()
+    // The return route is still the dispatcher's own, which is the only route
+    // a report from this one could ever take.
+    expect(source.dispatch.return).toEqual({ agent: "p1-lair", door: "door-fake", chat: LAIR_CHAT })
+    expect(it.edge.posts().map(p => p.text)).toContain(dispatchAccepted("en", { agent: DISPATCH_JOB_ONLY }))
+  } finally { await door?.stop(); await it.stop() }
+}, 60_000)
 
 test("D-211 the Russian verb answers in Russian in one run, and the English line is absent", async () => {
   const it = await rolloutStage(cluster, "telegram", { dispatch: true })
