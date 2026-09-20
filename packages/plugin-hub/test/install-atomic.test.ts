@@ -42,6 +42,9 @@ test("SPEC §1 a failed fresh schema leaves no partial installation and can be r
     expect(readFileSync(registryFile, "utf8")).not.toContain("[store]");
     rmSync(fail);
     expect(await runInstall({ registryFile, stage: "database" })).toEqual({ stage: "database", result: "done" });
-    expect((await sql`select max(version) as version from schema_version`)[0].version).toBe(3);
+    // The highest version a FRESH schema lands on, which is the count of
+    // ordered migrations an upgraded box is brought up to. A step that lands in
+    // one and not the other leaves the two boxes on different schemas.
+    expect((await sql`select max(version) as version from schema_version`)[0].version).toBe(4);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

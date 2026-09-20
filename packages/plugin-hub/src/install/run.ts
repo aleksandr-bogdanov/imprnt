@@ -153,7 +153,10 @@ export async function runInstall(options: { registryFile: string; stage?: string
       ask(database, ["--single-transaction", "-f", join(import.meta.dir, "../schema.sql")]);
     } else {
       ask(database, ["-c", "create table if not exists schema_version (version integer primary key)"]);
-      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"]] as const) {
+      // The same ordered list `src/store/migrate.ts` carries. A step that lands
+      // in one of them and not the other leaves an upgraded box a version
+      // behind a fresh one.
+      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"]] as const) {
         if (ask(database, ["-c", `select 1 from schema_version where version = ${version}`])) continue;
         ask(database, ["-c", `begin; ${readFileSync(join(import.meta.dir, "../store/migrations", file), "utf8")} insert into schema_version values (${version}); commit;`]);
       }
@@ -196,7 +199,9 @@ export async function runInstall(options: { registryFile: string; stage?: string
   }
   const store = await openStore({ url: storeUrlFor(registry, "hub_hub") });
   try {
-    await store.sql`select source, log_ready from inbound limit 0`;
+    // A box whose migration did not land says so here rather than on the first
+    // voice note somebody sends.
+    await store.sql`select source, log_ready, media_state from inbound limit 0`;
     await store.sql`select route, delivery_state from outbox limit 0`;
     const os = options.os ?? thisOs();
     const rendered = (stage === "entry" ? [target] : selected).map(entry => ({ entry, files: os.render(entry, {

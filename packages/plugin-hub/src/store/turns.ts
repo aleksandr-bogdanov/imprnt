@@ -19,6 +19,17 @@ export interface OpenTurnRow {
    * the first and must not for the second.
    */
   claimed_by: string | null;
+  /**
+   * The door's transcription step, on the row it belongs to.
+   *
+   * They come back with this read because the door derives a CLOCK from them,
+   * and this read is the one thing all of its rules share: a row still waiting
+   * for its own text is waiting for a different stamp, and one whose text
+   * arrived late is measured from the moment it arrived. Reading them here is
+   * what keeps that clock free of a second statement per tick.
+   */
+  media_state: string | null;
+  media_done_at: Date | null;
 }
 
 /**
@@ -57,7 +68,8 @@ export async function readOpenTurns(
   where: { agent: string },
 ): Promise<OpenTurnRow[]> {
   return (await store.sql`
-    select id, person, agent, received_at, state, claimed_by
+    select id, person, agent, received_at, state, claimed_by,
+           media_state, media_done_at
     from inbound
     where agent = ${where.agent}
       and kind in ('human', 'report')

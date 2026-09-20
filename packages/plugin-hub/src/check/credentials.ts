@@ -186,6 +186,12 @@ export function realProber(options: { fetch?: typeof fetch } = {}): CredentialPr
       if (!("token" in held)) return held;
       if (entry.kind === "telegram") return await askTelegram(held.token);
       if (entry.kind === "discord") return await askDiscord(held.token);
+      // A recognizer's key is opened and never dialled. What a cheap
+      // authenticated probe costs per provider is unmeasured, and the last real
+      // result is on the `voice_health` sheet already, written by real notes.
+      // Opening the file still catches the two states that stop every note:
+      // a key that is not there and a key file that is empty.
+      if (entry.kind === "api-key") return { ok: true };
       return unreadable(`${entry.kind} is not a credential kind this hub knows how to open`);
     },
     async secrets(entry) {

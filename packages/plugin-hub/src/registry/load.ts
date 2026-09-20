@@ -127,6 +127,38 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "the command the runner spawns to file a harvested note",
     required: false,
   },
+  // The household's recognizer and the three knobs the door's transcription
+  // step reads. Every one of them is read ONLY when `voice.recognizer` names a
+  // table this file defines, which is what keeps a setting nothing reads out of
+  // a file whose household never installed the component.
+  //
+  // They sit HERE and not at the head of the list on purpose: a shipped check
+  // deletes the FIRST declared field's line from the example file and requires
+  // the load to be refused, which only a required field can do.
+  {
+    key: "voice.recognizer",
+    type: "string",
+    what: "which of the declared recognizers this household transcribes voice notes with",
+    required: false,
+  },
+  {
+    key: "voice.retry_seconds",
+    type: "integer",
+    what: "how long a voice note waits before the door tries the recognizer again",
+    required: false,
+  },
+  {
+    key: "voice.give_up_hours",
+    type: "integer",
+    what: "how long a voice note waits for its own text before the door says it could not",
+    required: false,
+  },
+  {
+    key: "voice.chunk_deadline_seconds",
+    type: "integer",
+    what: "how long one piece of a voice note may take before the door abandons that request",
+    required: false,
+  },
   // Where the store's own process writes its pid, and what the
   // machine's service manager calls it. Every standard install writes a pid
   // file, so the hub reads that rather than guessing at a process tree, and the
@@ -199,6 +231,31 @@ export interface RunEntry {
   repositories?: string[];
   /** A door's bot token file. Every agent's box masks it. */
   token_file?: string;
+  /**
+   * The three a `kind = "transcriber"` entry carries. The door reaches the
+   * recognizer on loopback at `port`. `residency` says whether the model is
+   * held between notes or dropped after `idle_seconds` of quiet, and only the
+   * one that drops it has an idle window anything reads.
+   */
+  port?: number;
+  residency?: string;
+  idle_seconds?: number;
+}
+
+/**
+ * One recognizer this household declares, with its defaults not yet filled in.
+ *
+ * `runtime` is the local provider's own directory and is null on a cloud one;
+ * `credential` is the cloud provider's key file and is null on a local one.
+ * Each is refused on the other, because a value nothing reads is forbidden.
+ */
+export interface RecognizerEntry {
+  name: string;
+  provider: string;
+  model: string;
+  runtime: string | null;
+  credential: string | null;
+  chunk_seconds: number;
 }
 
 /** A machine the household has. `os` is in the file, never process.platform. */
@@ -225,6 +282,14 @@ export interface PersonEntry {
   started_seconds?: number;
   answered_seconds?: number;
   delivered_seconds?: number;
+  /**
+   * How long this person waits for a voice note's own text, seconds.
+   *
+   * It is deliberately NOT one of the four above: `thresholdsFor` answers
+   * exactly the four clocks L6 names, and two shipped checks compare that
+   * answer whole, so the fifth clock is its own accessor.
+   */
+  transcribed_seconds?: number;
   /** The language this person reads the door's own lines in. */
   language?: string;
   /**
@@ -264,8 +329,50 @@ const MACHINE_OS = ["linux", "macos"];
 /** How a preset is paid for, and there is no third way. */
 export const PAID_KINDS = ["plan", "key"] as const;
 
-/** The three credential kinds this hub knows how to open. */
-export const CREDENTIAL_KINDS = ["claude-login", "telegram", "discord"] as const;
+/** The four credential kinds this hub knows how to open. */
+export const CREDENTIAL_KINDS = ["claude-login", "telegram", "discord", "api-key"] as const;
+
+/** The two recognizer providers this hub speaks: one that runs here, one dialled. */
+export const RECOGNIZER_PROVIDERS = ["sherpa-onnx", "deepgram"] as const;
+
+/**
+ * Whether the recognizer holds its model between notes or drops it.
+ *
+ * `resident` is the default and the ruling behind it is measured: a voice note
+ * arrives exactly when the machine is busiest, so an allocation demanded at a
+ * peak is worse than the same memory held predictably. `idle-unload` exists for
+ * a machine where that memory cannot be assumed affordable, and the household
+ * that sets it accepts the wait on the first note after a quiet spell.
+ */
+export const RESIDENCY_KINDS = ["resident", "idle-unload"] as const;
+
+/**
+ * What a household that names a recognizer and nothing else gets.
+ *
+ * CHOSEN, not measured, every one of them. `chunk_seconds` at 60 is the piece
+ * size the decode was sized against, `chunk_deadline_seconds` at 120 is twice
+ * that and nothing has measured a 60 second piece taking longer, `idle_seconds`
+ * at 600 is the quiet spell the dropping residency waits out, and
+ * `retry_seconds` at 300 is the same cadence a refused credential already
+ * retries on. The first live week measures them.
+ */
+export const VOICE_DEFAULTS = {
+  retry_seconds: 300,
+  give_up_hours: 24,
+  chunk_deadline_seconds: 120,
+  chunk_seconds: 60,
+  idle_seconds: 600,
+  residency: "resident",
+} as const;
+
+/**
+ * How long a person waits for a voice note's own text before the door says it
+ * is still working, seconds.
+ *
+ * CHOSEN: it covers the measured 10.7 second model reload plus a five minute
+ * note at the extrapolated tenth of realtime. The first live week measures it.
+ */
+export const TRANSCRIBED_DEFAULT_SECONDS = 120;
 
 /** The two languages this household speaks. */
 export const LANGUAGES = ["en", "ru"] as const;
@@ -384,6 +491,7 @@ export class Registry {
     people: PersonEntry[] = [],
     credentials: CredentialEntry[] = [],
     readonly repositories: RepositoryEntry[] = [],
+    readonly recognizers: Record<string, RecognizerEntry> = {},
   ) {
     this.file = file;
     this.data = data;
@@ -580,6 +688,125 @@ export function loadRegistry(file: string): Registry {
   // ambiguous about, and every entry belongs to the one machine that asks.
   const namesAMachine = machines.length >= 2;
 
+  // The recognizers come before the entries, because whether `transcriber` is a
+  // kind this file may carry at all turns on which provider the household
+  // names. A recognizer may also name a credential, and that reference is
+  // checked further down beside the presets' own, once the credentials are
+  // parsed.
+  const recognizers: Record<string, RecognizerEntry> = Object.create(null);
+  for (const [name, table] of Object.entries(
+    (parsed.recognizers ?? {}) as Record<string, Record<string, unknown>>,
+  )) {
+    const where = `recognizers.${name}`;
+    const here = lines.get(where) ?? 0;
+    const provider = table.provider;
+    if (
+      typeof provider !== "string" ||
+      !(RECOGNIZER_PROVIDERS as readonly string[]).includes(provider)
+    ) {
+      refuse(
+        `${where}.provider`,
+        here,
+        `${name} is a ${describe(provider)} recognizer, and the two this hub ` +
+          `knows are ${RECOGNIZER_PROVIDERS.join(" and ")}`,
+      );
+    }
+    const model = table.model;
+    if (typeof model !== "string" || model === "") {
+      refuse(
+        `${where}.model`,
+        here,
+        `${name} names no model, and a recognizer is a provider and the model it runs`,
+      );
+    }
+    // The local provider runs a process of ours on this machine, so it names
+    // the directory that process lives in and dials nothing. The cloud one
+    // dials a provider, so it names a key file and has no directory at all.
+    // Each field is refused on the other side, because a value nothing reads is
+    // forbidden.
+    const runs = provider === "sherpa-onnx";
+    const runtime = table.runtime;
+    if (runs) {
+      if (typeof runtime !== "string" || !isAbsolute(runtime)) {
+        refuse(
+          `${where}.runtime`,
+          here,
+          `${name} runs on this machine and has runtime ${describe(runtime)}, and it ` +
+            `must be the absolute directory holding the recognizer's own files`,
+        );
+      }
+    } else if (runtime !== undefined && runtime !== null) {
+      refuse(
+        `${where}.runtime`,
+        here,
+        `${name} is a cloud recognizer and carries a runtime directory, and no ` +
+          `process of ours runs for it, so there is nothing for that path to name`,
+      );
+    }
+    const credential = table.credential;
+    if (runs) {
+      if (credential !== undefined && credential !== null) {
+        refuse(
+          `${where}.credential`,
+          here,
+          `${name} runs on this machine and carries a credential, and a local ` +
+            `recognizer dials nobody, so there is no key for it to read`,
+        );
+      }
+    } else if (typeof credential !== "string" || credential === "") {
+      refuse(
+        `${where}.credential`,
+        here,
+        `${name} is a cloud recognizer and names no credential, and its key is ` +
+          `read from the file a [[credentials]] entry names at the moment of use`,
+      );
+    }
+    // Zero is the big-machine switch and not a bad value: it means the whole
+    // note goes out as one request, uncut.
+    const chunk = table.chunk_seconds;
+    if (
+      chunk !== undefined &&
+      chunk !== null &&
+      (typeof chunk !== "number" || !Number.isInteger(chunk) || chunk < 0)
+    ) {
+      refuse(
+        `${where}.chunk_seconds`,
+        here,
+        `${name} has chunk_seconds ${describe(chunk)}, and it is a whole number of ` +
+          `seconds from zero up, where zero means the note is sent in one piece`,
+      );
+    }
+    recognizers[name] = {
+      name,
+      provider: provider as string,
+      model: model as string,
+      runtime: runs ? (runtime as string) : null,
+      credential: runs ? null : (credential as string),
+      chunk_seconds: typeof chunk === "number" ? chunk : VOICE_DEFAULTS.chunk_seconds,
+    };
+  }
+
+  // Every setting under [voice] is read only when a recognizer is named, so a
+  // table without one holds settings nothing in production would ever reach.
+  const named = valueAt(parsed, "voice.recognizer");
+  if (parsed.voice !== undefined && parsed.voice !== null && (named === undefined || named === null)) {
+    refuse(
+      "voice.recognizer",
+      lines.get("voice") ?? 0,
+      `this file carries a [voice] table and names no recognizer, and every ` +
+        `setting under it is read only when one is named`,
+    );
+  }
+  if (typeof named === "string" && !Object.hasOwn(recognizers, named)) {
+    refuse(
+      "voice.recognizer",
+      lines.get("voice") ?? 0,
+      `this household transcribes with ${describe(named)}, and this file defines ` +
+        `no recognizer by that name`,
+    );
+  }
+  const household = typeof named === "string" ? recognizers[named] : null;
+
   const raw = parsed.run;
   const entries: RunEntry[] = [];
   const claimed = new Map<string, number>();
@@ -638,8 +865,27 @@ export function loadRegistry(file: string): Registry {
       );
     }
 
-    if (!["hub", "door", "runner", "sync"].includes(entry.kind as string))
-      refuse(`${at}.kind`, here, `unsupported-run-kind: ${entry.kind}`);
+    // `transcriber` is a kind a file may carry only while the household names a
+    // recognizer that RUNS here. A cloud recognizer is dialled by the door
+    // itself and an absent one means the component is not installed, so in
+    // either file the process is one nothing in production would ever reach,
+    // and a piece that could never be reached cannot be configured.
+    const kinds = ["hub", "door", "runner", "sync"];
+    if (household?.provider === "sherpa-onnx") kinds.push("transcriber");
+    if (!kinds.includes(entry.kind as string)) {
+      refuse(
+        `${at}.kind`,
+        here,
+        `unsupported-run-kind: ${entry.kind}` +
+          (entry.kind === "transcriber"
+            ? `. This household transcribes ${
+                household === null
+                  ? "with no recognizer at all"
+                  : `with ${household.name}, which is dialled rather than run here`
+              }, so nothing would ever read the process`
+            : ""),
+      );
+    }
 
     const machine = entry.machine;
     if (machine === undefined || machine === null || machine === "") {
@@ -693,17 +939,83 @@ export function loadRegistry(file: string): Registry {
       childLimit = typeof asked === "number" ? asked : undefined;
     }
 
+    // The transcriber's own three. The door posts to 127.0.0.1:<port>, so an
+    // entry without one could never be reached at all.
+    if (entry.kind === "transcriber") {
+      const port = entry.port;
+      if (
+        typeof port !== "number" ||
+        !Number.isInteger(port) ||
+        port < 1 ||
+        port > 65535
+      ) {
+        throw new RegistryRefused(
+          file,
+          lines.get(`${at}.port`) ?? here,
+          `${at}.port`,
+          `${id} has port ${describe(port)}, and the door reaches it on loopback, ` +
+            `so it must be a whole number from 1 to 65535`,
+        );
+      }
+      const residency = entry.residency ?? VOICE_DEFAULTS.residency;
+      if (!(RESIDENCY_KINDS as readonly string[]).includes(residency as string)) {
+        throw new RegistryRefused(
+          file,
+          lines.get(`${at}.residency`) ?? here,
+          `${at}.residency`,
+          `${id} has residency ${describe(residency)}, and the two this hub has ` +
+            `are ${RESIDENCY_KINDS.join(" and ")}`,
+        );
+      }
+      const idle = entry.idle_seconds;
+      const says = idle !== undefined && idle !== null;
+      if (residency === "resident" && says) {
+        throw new RegistryRefused(
+          file,
+          lines.get(`${at}.idle_seconds`) ?? here,
+          `${at}.idle_seconds`,
+          `${id} is resident and carries idle_seconds, and a resident recognizer ` +
+            `never lets its model go, so it has no idle window to read`,
+        );
+      }
+      if (says) positive(idle, `${at}.idle_seconds`);
+    }
+
     entries.push({
       id,
       kind: entry.kind as string,
       schedule: entry.schedule as string,
       memory_limit_mb: limit,
       machine: typeof machine === "string" && machine !== "" ? machine : (machines[0]?.id ?? ""),
-      ...Object.fromEntries(["max_active_children", "child_memory_budget_mb", "repositories", "token_file"]
-        .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
+      ...Object.fromEntries([
+        "max_active_children", "child_memory_budget_mb", "repositories", "token_file",
+        "port", "residency", "idle_seconds",
+      ].filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
   });
+
+  // A door on a machine with no transcriber entry could never transcribe, and
+  // a piece that could never be reached cannot be configured. Asked once, after
+  // every entry is parsed, because it is a question about the whole set.
+  if (household?.provider === "sherpa-onnx") {
+    const transcribes = new Set(
+      entries.filter((entry) => entry.kind === "transcriber").map((entry) => entry.machine),
+    );
+    const orphan = entries.findIndex(
+      (entry) => entry.kind === "door" && !transcribes.has(entry.machine),
+    );
+    if (orphan >= 0) {
+      const door = entries[orphan];
+      refuse(
+        `run[${orphan}].machine`,
+        lines.get(`run[${orphan}].id`) ?? 0,
+        `${door.id} is a door on ${door.machine === "" ? "the one machine this file has" : door.machine}, ` +
+          `and this household transcribes with ${household.name}, which runs beside the door. ` +
+          `That machine carries no [[run]] entry of kind transcriber, so this door could never transcribe`,
+      );
+    }
+  }
 
   const presets: Record<string, PresetEntry> = Object.create(null);
   for (const [name, table] of Object.entries(
@@ -846,6 +1158,20 @@ export function loadRegistry(file: string): Registry {
       }
       clocks[field] = value as number;
     }
+    // The fifth clock, this person's own, kept OUT of the four above on
+    // purpose: `thresholdsFor` answers exactly the four clocks the ruling
+    // names, and two shipped checks compare that answer whole.
+    const spoken = entry.transcribed_seconds;
+    if (spoken !== undefined && spoken !== null) {
+      if (typeof spoken !== "number" || !Number.isInteger(spoken) || spoken <= 0) {
+        refuse(
+          `${where}.transcribed_seconds`,
+          lines.get(`${where}.transcribed_seconds`) ?? here,
+          `${id} has transcribed_seconds ${describe(spoken)}, and a clock is a whole ` +
+            `number of seconds above zero`,
+        );
+      }
+    }
     const speaks = entry.language;
     if (speaks !== undefined && speaks !== null) {
       if (typeof speaks !== "string" || !(LANGUAGES as readonly string[]).includes(speaks)) {
@@ -978,6 +1304,7 @@ export function loadRegistry(file: string): Registry {
       id: id as string,
       tree,
       ...clocks,
+      ...(typeof spoken === "number" ? { transcribed_seconds: spoken } : {}),
       ...(typeof speaks === "string" ? { language: speaks } : {}),
       ...harvest,
     });
@@ -1013,7 +1340,7 @@ export function loadRegistry(file: string): Registry {
       refuse(
         `${where}.kind`,
         here,
-        `${id} is a ${describe(kind)}, and the three kinds this hub opens are ` +
+        `${id} is a ${describe(kind)}, and the four kinds this hub opens are ` +
           `${CREDENTIAL_KINDS.join(", ")}`,
       );
     }
@@ -1056,18 +1383,29 @@ export function loadRegistry(file: string): Registry {
   for (const [name, table] of Object.entries(
     (parsed.presets ?? {}) as Record<string, Record<string, unknown>>,
   )) {
-    const named = table.credential;
-    if (named === undefined || named === null) {
+    const points = table.credential;
+    if (points === undefined || points === null) {
       continue;
     }
-    if (typeof named !== "string" || !declaredCredential.has(named)) {
+    if (typeof points !== "string" || !declaredCredential.has(points)) {
       refuse(
         `presets.${name}.credential`,
         lines.get(`presets.${name}`) ?? 0,
-        `${name} reads its login from ${describe(named)}, which no [[credentials]] ` +
+        `${name} reads its login from ${describe(points)}, which no [[credentials]] ` +
           `entry declares`,
       );
     }
+  }
+  // A cloud recognizer points at its key by id, for the same reason a preset
+  // does: a typo is otherwise a request signed with a key nobody owns.
+  for (const [name, table] of Object.entries(recognizers)) {
+    if (table.credential === null || declaredCredential.has(table.credential)) continue;
+    refuse(
+      `recognizers.${name}.credential`,
+      lines.get(`recognizers.${name}`) ?? 0,
+      `${name} reads its key from ${describe(table.credential)}, which no ` +
+        `[[credentials]] entry declares`,
+    );
   }
 
   const agents: AgentEntry[] = [];
@@ -1221,6 +1559,7 @@ export function loadRegistry(file: string): Registry {
     people,
     credentials,
     repositories,
+    recognizers,
   );
 }
 

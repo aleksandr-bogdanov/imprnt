@@ -63,9 +63,17 @@ metric (id, from_kind, to_kind) as (
          ('time-to-delivered', 'received', 'delivered')
 ),
 gap as (
+  -- Time to ack on a VOICE row excludes the interval its transcript took,
+  -- because a loop cannot accept a message whose text does not exist yet, and
+  -- a household reading this number is asking how fast its agent answers.
+  -- That metric only: the contract names one and names no other, so a reader
+  -- wondering about time to start has the answer without asking.
   select i.person, i.agent, m.id as metric,
          b.at as landed,
-         extract(epoch from (b.at - a.at))::float8 * 1000 as ms
+         extract(epoch from (b.at - a.at))::float8 * 1000
+           - case when m.id = 'time-to-ack' and i.media_done_at is not null
+                  then extract(epoch from (i.media_done_at - i.received_at))::float8 * 1000
+                  else 0 end as ms
     from inbound i
     cross join metric m
     join first_stamp a on a.subject = i.id and a.kind = m.from_kind

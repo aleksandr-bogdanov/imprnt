@@ -5,6 +5,8 @@ import {
   HARVEST_DEFAULTS,
   loaded,
   STAMP_THRESHOLD_DEFAULTS,
+  TRANSCRIBED_DEFAULT_SECONDS,
+  VOICE_DEFAULTS,
   type AgentEntry,
   type CredentialEntry,
   type MachineEntry,
@@ -109,6 +111,92 @@ export function thresholdsFor(registry: unknown, personId: string): StampThresho
     answered_seconds: person?.answered_seconds ?? STAMP_THRESHOLD_DEFAULTS.answered_seconds,
     delivered_seconds: person?.delivered_seconds ?? STAMP_THRESHOLD_DEFAULTS.delivered_seconds,
   };
+}
+
+/** The household's recognizer and the four knobs around it, defaults filled in. */
+export interface VoiceSettings {
+  /** The name of the `[recognizers.<name>]` table the household chose. */
+  recognizer: string;
+  provider: string;
+  model: string;
+  /** The local provider's own directory, and null on a cloud one. */
+  runtime: string | null;
+  /** The cloud provider's key by credential id, and null on a local one. */
+  credential: string | null;
+  chunk_seconds: number;
+  retry_seconds: number;
+  give_up_hours: number;
+  chunk_deadline_seconds: number;
+}
+
+/**
+ * The household's recognizer, or NULL when the file names none.
+ *
+ * IT TAKES NO PERSON. The recognizer is one per household: there is no
+ * per-person field and no consent line, so a `[[people]]` entry that named one
+ * would be a key nothing reads. Null is a real answer and means the component
+ * is not installed, which is the file a household starts with and the one every
+ * shipped check carries.
+ */
+export function voiceFor(registry: unknown): VoiceSettings | null {
+  const it = loaded(registry, "voiceFor");
+  const table = (it.data.voice ?? {}) as Record<string, unknown>;
+  const named = table.recognizer;
+  if (typeof named !== "string") return null;
+  const chosen = it.recognizers[named];
+  if (!chosen) return null;
+  return {
+    recognizer: named,
+    provider: chosen.provider,
+    model: chosen.model,
+    runtime: chosen.runtime,
+    credential: chosen.credential,
+    chunk_seconds: chosen.chunk_seconds,
+    retry_seconds: (table.retry_seconds as number) ?? VOICE_DEFAULTS.retry_seconds,
+    give_up_hours: (table.give_up_hours as number) ?? VOICE_DEFAULTS.give_up_hours,
+    chunk_deadline_seconds:
+      (table.chunk_deadline_seconds as number) ?? VOICE_DEFAULTS.chunk_deadline_seconds,
+  };
+}
+
+/**
+ * This machine's transcriber entry with its residency filled in, or null.
+ *
+ * The same backward compatibility rule `runEntriesFor` has: a file that
+ * declares fewer than two machines has nothing to be ambiguous about, so the
+ * one entry belongs to whichever machine asks.
+ */
+export function transcriberFor(registry: unknown, machine: string): RunEntry | null {
+  const it = loaded(registry, "transcriberFor");
+  const entry = it.run.find(
+    (one) =>
+      one.kind === "transcriber" && (it.machines.length < 2 || one.machine === machine),
+  );
+  if (!entry) return null;
+  const residency = entry.residency ?? VOICE_DEFAULTS.residency;
+  return {
+    ...entry,
+    residency,
+    // Only the residency that lets the model go has an idle window, and the
+    // loader refuses one on the residency that does not.
+    ...(residency === "idle-unload"
+      ? { idle_seconds: entry.idle_seconds ?? VOICE_DEFAULTS.idle_seconds }
+      : {}),
+  };
+}
+
+/**
+ * How long this person waits for a voice note's own text, seconds.
+ *
+ * Its own accessor rather than a fifth key on `thresholdsFor`, because that one
+ * answers exactly the four clocks the ruling names and two shipped checks
+ * compare its answer whole.
+ */
+export function transcribedSecondsFor(registry: unknown, personId: string): number {
+  const person = loaded(registry, "transcribedSecondsFor").people.find(
+    (one) => one.id === personId,
+  );
+  return person?.transcribed_seconds ?? TRANSCRIBED_DEFAULT_SECONDS;
 }
 
 /** What harvests this person's chats, with the defaults filled in. */

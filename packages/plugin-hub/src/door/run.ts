@@ -422,8 +422,13 @@ export async function runDoor(options: {
             cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: current, stateDir,
               door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor, skipBad,
               received(id) {
+                // The media columns are null on a row the batch just wrote,
+                // which is what the store holds for it until a step touches
+                // them, so the clock this row arms is the one it would arm
+                // after a re-read.
                 own.arrivals.push({ id, person: agent.person, agent: agent.id,
-                  received_at: new Date(), state: "received", claimed_by: null });
+                  received_at: new Date(), state: "received", claimed_by: null,
+                  media_state: null, media_done_at: null });
                 own.arrived.wake();
               },
             });
