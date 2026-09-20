@@ -51,7 +51,7 @@ export class PipeliningRefused extends Error {
 /**
  * The refusal, as a function, so it runs before a single connection is opened.
  *
- * It reads the environment, and it is not a behaviour switch (RUN-07): nothing
+ * It reads the environment, and it is not a behaviour switch: nothing
  * about what the hub does depends on it, only whether the runtime underneath
  * can be trusted to hand each statement its own answer.
  */
@@ -90,8 +90,8 @@ const SAYS_OK_EARLY: [string, string[]][] = [
  * new to that connection waits for the connection to go idle, and it hands
  * every answer to the oldest statement queued there. On a busy connection the
  * prepared one overtakes, the new one is handed its answer, and the one that
- * overtook is never answered. That is the outage claim that read its `since` as
- * undefined in phase 4, and the diary append with no `seq` in phase 6. A wider
+ * overtook is never answered. That is how an outage claim reads its `since` as
+ * undefined, and how a diary append lands with no `seq`. A wider
  * pool never prevented it: four and eight connections crossed the same way once
  * every connection was busy, and the width only decided whether the store kept
  * answering afterwards.
@@ -139,7 +139,7 @@ export async function openStore(options: { url: string }): Promise<Store> {
       const value = String(row[setting]);
       if (forbidden.includes(value)) throw new DurabilityRefused(setting, value);
     }
-    // D-85. The name a process answers to in the server's own view of its
+    // The name a process answers to in the server's own view of its
     // clients, which is what lets a silent runner be DERIVED rather than
     // heartbeaten. One statement, at connect, long before any wait window
     // opens, so a runner that is waiting still issues nothing at all.

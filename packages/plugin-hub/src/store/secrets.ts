@@ -6,7 +6,7 @@ import { storeUrlAs } from "./connect.ts";
 /**
  * The hub's own secrets: one password per store role, each in its own file.
  *
- * IMP-158. An agent's box shares the machine's network, so its shell reaches
+ * An agent's box shares the machine's network, so its shell reaches
  * the store on loopback, and a role that logs in without a password is a role
  * any agent can be, including one steered by outside content it read. So
  * every role has a password, the install generates it and writes it to

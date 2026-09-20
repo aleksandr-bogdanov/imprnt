@@ -116,7 +116,7 @@ function place(url: string) {
     hostname: parsed.hostname || "127.0.0.1",
     port: Number(parsed.port || "5432"),
     user: decodeURIComponent(parsed.username),
-    // IMP-158. The role's own password, which a hub process put there from
+    // The role's own password, which a hub process put there from
     // its file in the secrets directory. Empty on a store that trusts loopback.
     password: decodeURIComponent(parsed.password),
     database: decodeURIComponent(parsed.pathname.replace(/^\//, "")),
