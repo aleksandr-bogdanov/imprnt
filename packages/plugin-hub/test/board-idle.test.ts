@@ -30,7 +30,7 @@
 // an assertion.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hubPath, startCluster, statementWatch, until, type Cluster } from "./helpers/cluster.ts";
@@ -39,6 +39,7 @@ import { cpuSeconds } from "./helpers/cpu.ts";
 import { freePort } from "./helpers/board.ts";
 import type { RunSpec } from "./helpers/registry.ts";
 import { boardBindFailed } from "../src/door/lines.ts";
+import { programForKind } from "../src/hub/program.ts";
 
 const SLOW = 120_000;
 const HERE = process.platform === "darwin" ? "mac" : "pi";
@@ -163,6 +164,16 @@ async function startBoard(it: StagedHub, entry: RunSpec): Promise<BoardProcess> 
     },
   };
 }
+
+test("the program the hub renders for a board is the one this file starts", () => {
+  // The hub writes this path into the unit file it installs, so a path with no
+  // file behind it is a unit that fails at its first start and a crash loop
+  // nobody meant. The wave that taught the hub the kind deliberately left this
+  // assertion to the wave that writes the file.
+  const program = programForKind("board");
+  expect(existsSync(program)).toBe(true);
+  expect(program).toBe(hubPath("src/entry/board.ts"));
+});
 
 test(
   "a board up with nobody looking issues no statement at all and burns no processor time, while a process that really polls is over the bound in the same window",

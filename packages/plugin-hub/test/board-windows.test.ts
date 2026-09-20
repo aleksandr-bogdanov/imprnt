@@ -1,5 +1,5 @@
 // The registry shape this phase adds costs the shipped windows nothing.
-// (SPEC §2, D-185)
+// (SPEC §2)
 //
 // WHAT THIS FILE IS. It does not copy the six protected windows and it does not
 // re-derive them: they run as themselves, in the same batch, and they are the

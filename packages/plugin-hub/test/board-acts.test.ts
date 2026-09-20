@@ -1,5 +1,5 @@
 // An act is the one shipped verb or an edit to the file, recorded as asked by
-// the board. (SPEC §6 Forbidden, L13, D-178, RUN-05)
+// the board. (SPEC §6 Forbidden, L13, RUN-05)
 //
 // RESTART IS THE SHIPPED VERB WITH A NEW SOURCE. The board asks
 // `requestRecovery` exactly as the command line does and the hub applies it, so
