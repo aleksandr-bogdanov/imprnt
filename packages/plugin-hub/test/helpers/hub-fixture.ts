@@ -816,7 +816,6 @@ export async function stageTwoMachines(cluster: Cluster): Promise<StagedHub> {
       { id: PERSON, tree: "/var/lib/imprnt-hub/p1" },
       { id: PERSON2, tree: "/var/lib/imprnt-hub/p2" },
     ],
-    hub: { shared_zone: "/var/lib/imprnt-hub/shared" },
     agents: [
       {
         id: AGENT2,

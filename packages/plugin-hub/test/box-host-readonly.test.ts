@@ -37,7 +37,7 @@ function household() {
   const unitDir = join(root, "systemd-user");
   for (const dir of [tree, stateRoot, sessionDir, loginDir, unitDir]) mkdirSync(dir, { recursive: true });
   writeFileSync(registryFixture, "original\n");
-  const ctx = { agent: "p1-lair", person: "p1", tree, sharedZone: "", otherTrees: [] as string[],
+  const ctx = { agent: "p1-lair", person: "p1", tree, otherTrees: [] as string[],
     stateRoot, sessionDir, writePaths: [loginDir], purpose: "ordinary" as const };
   return { root, tree, stateRoot, sessionDir, loginDir, registryFixture, unitDir, ctx };
 }

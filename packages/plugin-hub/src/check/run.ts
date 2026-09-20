@@ -632,9 +632,10 @@ export async function runCheck(options: {
     ...(await copyFindings({
       entries: declared,
       prober,
+      // A zone checkout sits inside a person's vault, and every person's tree
+      // is already on this list, so the sweep reaches it with no root of its own.
       roots: [
         ...listPeople(registry).map((person) => person.tree),
-        String(readSetting(registry, "hub.shared_zone") ?? ""),
         String(readSetting(registry, "hub.state_dir") ?? ""),
         ...opened.map((entry) => dirname(entry.file)),
       ],

@@ -132,7 +132,6 @@ test.skipIf(!gate.ok)(
       hub: {
         store_url: userlessStoreUrl(cluster, db),
         state_dir: dir,
-        shared_zone: trees.sharedZone,
       },
       machines: [{ id: "mac", os: "macos" }],
       people: [

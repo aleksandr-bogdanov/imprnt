@@ -96,7 +96,7 @@ export async function proveRolloutRunner() {
   assert.equal(await observe(() => owned.every(pid => childGone(pid))), true)
   const boxed = rolloutFixture()
   const wrapper = nativeWrap({ agent: "p1-lair", person: "p1", tree: boxed.trees.person("p1").tree,
-    sharedZone: boxed.trees.sharedZone, otherTrees: [boxed.trees.person("p2").tree] })
+    otherTrees: [boxed.trees.person("p2").tree] })
   const edgeBox = controlledAdapter("synthetic-profile-cleanup")
   let profiles: string[] = []
   try {

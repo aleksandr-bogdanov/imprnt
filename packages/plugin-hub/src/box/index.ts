@@ -162,7 +162,6 @@ export function boxContextFor(registry: unknown, agentId: string): BoxContext {
   const agent = listAgents(registry).find((one) => one.id === agentId);
   if (!agent) throw new BoxUnavailable("registry", `${agentId} is not an agent of this registry`);
   const person = personOf(registry, agentId);
-  const zone = readSetting(registry, "hub.shared_zone");
   return {
     stateRoot: join(String(readSetting(registry, "hub.state_dir") ?? ""), agent.person),
     otherStateRoots: listPeople(registry).filter(one => one.id !== agent.person)
@@ -170,7 +169,6 @@ export function boxContextFor(registry: unknown, agentId: string): BoxContext {
     agent: agentId,
     person: agent.person,
     tree: person?.tree ?? "",
-    sharedZone: zone === undefined || zone === null ? "" : String(zone),
     // Every OTHER declared person, and never the agent's own: a box that masked
     // its own tree is a box the agent cannot work in, and one that forgot
     // another person is the leak this exists to close.
@@ -250,7 +248,6 @@ function profileText(ctx: BoxContext): string {
   // CLI rotates its token in place there, and this grant is after the read-only
   // grant for the same directory so the writable rule is the one that wins.
   for (const path of ctx.writePaths ?? []) if (path !== "") lines.push(`(allow file-read* file-write* (subpath ${JSON.stringify(path)}))`);
-  if (ctx.sharedZone !== "") lines.push(`(allow file-read* (subpath ${JSON.stringify(ctx.sharedZone)}))`);
   lines.push(
     "(allow process-exec process-fork)",
     "(allow sysctl-read)",
@@ -287,7 +284,7 @@ function profileText(ctx: BoxContext): string {
 
 function profilePath(ctx: BoxContext): string {
   const mark = new Bun.CryptoHasher("sha256")
-    .update([ctx.agent, ctx.tree, ctx.sharedZone, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])].join("|"))
+    .update([ctx.agent, ctx.tree, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])].join("|"))
     .digest("hex")
     .slice(0, 12);
   return join(tmpdir(), `imprnt-hub-box-${ctx.agent}-${mark}.sb`);
@@ -317,7 +314,7 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
     if (!path || !existsSync(path)) return path;
     try { return realpathSync(path); } catch { return path; }
   };
-  ctx = { ...ctx, tree: canonical(ctx.tree), sharedZone: canonical(ctx.sharedZone),
+  ctx = { ...ctx, tree: canonical(ctx.tree),
     stateRoot: ctx.stateRoot && canonical(ctx.stateRoot), sessionDir: ctx.sessionDir && canonical(ctx.sessionDir),
     otherTrees: ctx.otherTrees.map(canonical), otherStateRoots: ctx.otherStateRoots?.map(canonical),
     readPaths: ctx.readPaths?.map(canonical), writePaths: ctx.writePaths?.map(canonical),

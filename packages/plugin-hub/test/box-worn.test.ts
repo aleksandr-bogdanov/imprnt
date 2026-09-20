@@ -117,7 +117,6 @@ async function stageBoxed(): Promise<StagedHub> {
       child: true,
       probePath: join(p2.tree, p2.marker),
     },
-    hub: { shared_zone: trees.sharedZone },
     machines: [machine],
     // A person is a registry entry and the tree is the boundary. With no
     // tree there is nothing to fence, which is the `agent-unboxed` case.

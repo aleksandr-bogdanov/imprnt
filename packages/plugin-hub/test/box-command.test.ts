@@ -4,8 +4,9 @@
 // L7: "each agent runs in a kernel-enforced box that can reach its own person's
 // tree and nothing else", "the boundary is the person", "one shared zone is
 // mounted into every vault", and Forbidden: "a shared zone for a subset of
-// people". The zone is ONE household setting, so a subset zone is
-// unwriteable rather than merely discouraged.
+// people". The zone is the mount: one checkout inside each person's own vault,
+// so the grant the agent already has on its tree is the grant that reaches it
+// and the box carries no zone of its own.
 //
 // PURE, BOTH PLATFORMS, NOTHING EXECUTED. This is what survives when check 15's
 // gate is closed on a box with no user namespaces, and it is the half that can
@@ -28,7 +29,7 @@
 import { test, expect } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
 import { plantTrees } from "./helpers/trees.ts";
 import { writeRegistry, type RegistrySpec } from "./helpers/registry.ts";
@@ -125,7 +126,6 @@ function stage(people: string[]): {
     hub: {
       store_url: "postgres://127.0.0.1:5432/hub",
       state_dir: dir,
-      shared_zone: trees.sharedZone,
     },
     machines: [
       { id: "pi", os: "linux" },
@@ -166,7 +166,6 @@ test(
       agent: string;
       person: string;
       tree: string;
-      sharedZone: string;
       otherTrees: string[];
     };
     const build = boxCommand as (
@@ -186,7 +185,10 @@ test(
       expect(ctx.agent).toBe("p1-lair");
       expect(ctx.person).toBe("p1");
       expect(ctx.tree).toBe(p1.tree);
-      expect(ctx.sharedZone).toBe(two.trees.sharedZone);
+      // The zone is a checkout inside the tree, so the context carries no field
+      // for it. Asserted against the whole key set, so a context holding an
+      // empty one fails here rather than passing on an empty string.
+      expect(Object.keys(ctx)).not.toContain("sharedZone");
       // Every OTHER declared person, and never the agent's own. A box that
       // masked its own tree would be a box the agent cannot work in, and one
       // that forgot another person is the leak this criterion exists to catch.
@@ -265,11 +267,10 @@ test(
       expect(profile).toContain("sysctl-read");
       expect(profile).toContain("mach-lookup");
 
-      // Its own tree and the ONE shared zone are named in an allow. The zone is
-      // one household setting, so "a shared zone for a subset of people" has
-      // nowhere to be written.
+      // Its own tree is named in an allow, and the zone checkout inside it is
+      // reached by that same grant, which is what "one shared zone is mounted
+      // into every vault" costs the box: nothing.
       expect(profile).toContain(`(subpath "${p1.tree}")`);
-      expect(profile).toContain(`(subpath "${two.trees.sharedZone}")`);
       const allowsOwn = new RegExp(
         `\\(allow file-read\\*[^\\n]*\\(subpath "${p1.tree.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\)`,
       );
@@ -292,11 +293,10 @@ test(
           reaching.map((g) => `${g.kind} ${g.path} in ${g.rule.replace(/\s+/g, " ")}`),
         ).toEqual([]);
       }
-      // The SHARED ZONE'S PARENT is the same question wearing another hat: the
-      // zone is one directory that every person reads, and its parent is the
-      // scratch root both trees live in, so a build that allowed the parent to
-      // save a rule would open every vault on the box.
-      const zoneParent = dirname(two.trees.sharedZone);
+      // THE DIRECTORY BOTH TREES LIVE IN is the same question wearing another
+      // hat: a build that allowed the parent to save a rule would open every
+      // vault on the box.
+      const zoneParent = two.trees.dir;
       for (const grant of grants) {
         if (grant.kind === "subpath" && !deniesOther) {
           expect(grant.path).not.toBe(zoneParent);
@@ -306,7 +306,8 @@ test(
       // is the control that stops the rule above from being satisfied by a
       // profile that grants nothing.
       expect(grants.some((g) => reaches(g, p1.tree))).toBe(true);
-      expect(grants.some((g) => reaches(g, two.trees.sharedZone))).toBe(true);
+      // And so is this person's own zone checkout, through that same grant.
+      expect(grants.some((g) => reaches(g, p1.zonePath))).toBe(true);
 
       // --- a THIRD person, added to the file and to nothing else.
       const three = stage(["p1", "p2", "p3"]);

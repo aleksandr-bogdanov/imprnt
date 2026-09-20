@@ -4,15 +4,14 @@ import type { UnitFile } from "../os/types.ts";
  * The box, as a spawn sees it. Types only.
  *
  * L7: the boundary is the PERSON. Each agent's process reaches its own person's
- * tree and the one shared zone, and nothing else. The zone is one household
- * setting, so "a shared zone for a subset of people" has nowhere to be
- * written rather than merely being discouraged.
+ * tree and nothing else. The household's shared zone is a checkout inside that
+ * tree, so the grant on the tree is the grant that reaches it, the box carries
+ * no path for it, and no agent can reach another person's copy of it.
  */
 export interface BoxContext {
   agent: string;
   person: string;
   tree: string;            // this person's vault tree
-  sharedZone: string;      // one zone, every person, from hub.shared_zone
   sessionDir?: string;
   purpose?: string;
   readPaths?: string[];

@@ -13,7 +13,6 @@ secrets_dir = "/var/lib/imprnt-hub/secrets"
 tail_hours = 24
 tail_tokens = 8000
 claim_lease_seconds = 300
-shared_zone = "/var/lib/imprnt-hub/shared"
 restart_delay_seconds = 1
 give_up_after = 5
 give_up_window_seconds = 300
@@ -60,7 +59,8 @@ id = "mac"
 os = "macos"
 
 # A person, and the tree that is the boundary. Each agent's box reaches its own
-# person's tree and the one shared zone above, and nothing else.
+# person's tree and nothing else. The shared zone is a checkout inside that
+# tree, so it is reached by the same grant.
 # The four clocks are this person's own and the language is the one the door
 # writes its own lines in. All five are optional: a person who sets none is
 # measured against 30, 60, 900 and 60 seconds and reads English.

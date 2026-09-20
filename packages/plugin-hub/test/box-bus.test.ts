@@ -30,7 +30,7 @@ const gate = boxGate();
 function stage(dir: string) {
   const trees = plantTrees(dir, ["p1", "p2"]);
   const spec: RegistrySpec = {
-    hub: { store_url: "postgres://127.0.0.1:5432/hub", state_dir: dir, shared_zone: trees.sharedZone },
+    hub: { store_url: "postgres://127.0.0.1:5432/hub", state_dir: dir },
     machines: [{ id: "pi", os: "linux" }],
     people: trees.people.map((p) => ({ id: p.id, tree: p.tree })),
     presets: { daily: { adapter: "scripted", model: "m", provider: "p", effort: "medium", paid: "plan" } },

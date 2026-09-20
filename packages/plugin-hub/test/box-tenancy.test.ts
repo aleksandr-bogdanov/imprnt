@@ -5,8 +5,25 @@
 // L7: "each agent runs in a kernel-enforced box that can reach its own person's
 // tree and nothing else", with Forbidden carrying "a Unix user per person" and
 // "a shared zone for a subset of people". Both are bound here as behaviours: the
-// uid inside the box is the uid outside, and the one shared zone is readable in
-// BOTH agents' boxes.
+// uid inside the box is the uid outside, and each agent reads its own checkout
+// of the shared zone, which sits inside its own vault, and reads nothing of the
+// other person's.
+//
+// WHICH ASSERTIONS WERE ALREADY TRUE BEFORE THIS FILE ASKED THEM, so a green run
+// is not read as evidence of a change that has not happened. Already true: the
+// other person's tree, marker and origin are unreachable, the enumeration, and
+// the uid. Already true for the same reason and asked here for the first time:
+// each agent reading its OWN zone checkout (it is inside the tree the box
+// already grants) and reading none of the other person's (it is inside the tree
+// the box already denies), and the symlink below.
+//
+// THE SYMLINK. `canonical()` resolves every path in the context with
+// `realpathSync` before rendering, so a symlink and its target are one path in
+// every grant and every deny: the other person's tree is denied by its real
+// path on macOS and covered by a tmpfs on Linux. A link planted inside one
+// vault pointing at a note in the other person's tree is therefore dead inside
+// the box and alive outside it, and the note carries a token generated at run
+// time so the assertion is about that note and nothing else.
 //
 // THE REAL TOOL, on both platforms, gated by `boxGate()` with its reason in the
 // test name. The probe is built only from binaries that run inside the minimal
@@ -47,7 +64,7 @@
 // Red reason: import missing, src/box/index.ts.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
@@ -96,7 +113,12 @@ async function run(argv: string[]): Promise<string> {
  * the profile. Both print their own exit status on a line the check reads, so
  * "the count is small" can never be scored by an enumeration that died.
  */
-function probeFor(otherTree: string, sharedZone: string): string[] {
+function probeFor(
+  otherTree: string,
+  own: { zonePath: string; zoneMarker: string },
+  other: { zonePath: string },
+  link: string,
+): string[] {
   // THE STATUS IS THE ENUMERATION'S OWN, not a pipeline's. `cmd | wc -l` exits
   // with `wc`'s status, which is zero however badly `cmd` failed, so the output
   // is captured first and the status read before anything is counted.
@@ -112,7 +134,9 @@ function probeFor(otherTree: string, sharedZone: string): string[] {
       `cat ${otherTree}/.git/config 2>&1`,
       `${enumerate}; echo "enum-exit=$code"`,
       "id -u",
-      `ls ${sharedZone} 2>&1`,
+      `cat ${join(own.zonePath, own.zoneMarker)} 2>&1`,
+      `ls ${other.zonePath} 2>&1`,
+      `cat ${link} 2>&1`,
     ].join("; "),
   ];
 }
@@ -136,7 +160,7 @@ function enumeration(text: string): { count: number; exit: number | null } {
 }
 
 test.skipIf(!gate.ok)(
-  `STORE-07 the tenancy probe with its control, per agent: inside each agent's box the OTHER person's tree lists nothing, their random origin string does not appear and no entry of that tree is in the output, the enumeration RUNS and on linux sees a handful of processes against hundreds outside, while the same command unboxed reads all of it; and inside the box the uid is the uid outside and the one shared zone is readable for BOTH agents (SPEC §1, L7, D-92, D-93, D-106)${gateSuffix()}`,
+  `STORE-07 the tenancy probe with its control, per agent: inside each agent's box the OTHER person's tree lists nothing, their random origin string does not appear and no entry of that tree is in the output, the enumeration RUNS and on linux sees a handful of processes against hundreds outside, while the same command unboxed reads all of it; and inside the box the uid is the uid outside and each agent reads its own zone checkout and not the other person's, a symlink into the other person's tree included (SPEC §1, L7, D-92, D-93, D-106)${gateSuffix()}`,
   async () => {
     const { boxCommand, boxContextFor } = await seam("src/box/index.ts");
     expect(typeof boxCommand).toBe("function");
@@ -147,7 +171,6 @@ test.skipIf(!gate.ok)(
       hub: {
         store_url: "postgres://127.0.0.1:5432/hub",
         state_dir: dir,
-        shared_zone: trees.sharedZone,
       },
       machines: [{ id: "pi", os: "linux" }],
       people: trees.people.map((p) => ({ id: p.id, tree: p.tree })),
@@ -177,14 +200,24 @@ test.skipIf(!gate.ok)(
       const other = trees.other(person.id);
       const ctx = (boxContextFor as Function)(registry, agent) as Record<string, unknown>;
 
-      const probe = probeFor(other.tree, trees.sharedZone);
+      // A note in the OTHER person's tree, and a symlink to it planted inside
+      // this person's own vault. The token is generated here, so a string that
+      // could only have come from that note is what the assertions read.
+      const seamToken = `seam-${crypto.randomUUID().replace(/-/g, "")}`;
+      const note = join(other.tree, `across-${seamToken}.txt`);
+      writeFileSync(note, `${seamToken}\n`, "utf8");
+      const link = trees.plantZoneSymlink(person.id, note);
+
+      const probe = probeFor(other.tree, person, other, link);
 
       // --- OUTSIDE, first, because without the control this check passes on a
       //     box that cannot run anything at all.
       const outside = await run(probe);
       expect(outside).toContain(other.marker);
       expect(outside).toContain(other.origin);
-      expect(outside).toContain(trees.sharedMarker);
+      expect(outside).toContain(person.zoneMarker);
+      expect(outside).toContain(other.zoneMarker);
+      expect(outside).toContain(seamToken);
       const outsideEnum = enumeration(outside);
       expect(outsideEnum.exit).toBe(0);
       expect(outsideEnum.count).toBeGreaterThan(50);
@@ -233,9 +266,19 @@ test.skipIf(!gate.ok)(
       // --- L7's two Forbidden lines, as behaviours.
       // "a Unix user per person": the uid inside IS the uid outside.
       expect(inside).toContain(String(uid));
-      // "a shared zone for a subset of people": the one zone is readable in
-      // EVERY agent's box, and this loop runs for both.
-      expect(inside).toContain(trees.sharedMarker);
+      // "a shared zone for a subset of people": every agent reads the zone,
+      // through its OWN checkout inside its own vault, and this loop runs for
+      // both. The other person's checkout of the same zone is inside the tree
+      // the box denies, so nothing of it arrives.
+      expect(inside).toContain(person.zoneMarker);
+      expect(inside).not.toContain(other.zoneMarker);
+      // A symlink and its target are one path in every grant and every deny, so
+      // a link out of this vault into the other person's tree carries nothing
+      // back: the note's token does not appear.
+      expect(inside).not.toContain(seamToken);
+
+      rmSync(link, { force: true });
+      rmSync(note, { force: true });
     }
   },
   SLOW,

@@ -661,9 +661,13 @@ test(
     // A household's own shape, under one scratch directory.
     const home = mkdtempSync(join(tmpdir(), "hub-household-"));
     const at = (...parts: string[]) => join(home, ...parts);
-    for (const one of ["p1", "p2", "shared", "state", "credentials", "elsewhere"]) {
+    for (const one of ["p1", "p2", "state", "credentials", "elsewhere"]) {
       mkdirSync(at(one), { recursive: true });
     }
+    // The shared zone is a checkout inside each person's own vault, so it is
+    // swept by that person's tree and is not a root of its own.
+    const zoneOf = (person: string) => at(person, "vault", "shared-notes");
+    for (const person of [PERSON, PERSON2]) mkdirSync(zoneOf(person), { recursive: true });
     // The secret is generated at run time, so "this file holds that secret"
     // can only be true by copying.
     const secret = `token-${crypto.randomUUID()}${crypto.randomUUID()}`;
@@ -684,7 +688,7 @@ test(
 
     const it = await stageHub(cluster, {
       machines: [{ id: "pi", os: "linux" }],
-      hub: { shared_zone: at("shared"), state_dir: at("state") },
+      hub: { state_dir: at("state") },
       people: [
         { id: PERSON, language: "en", tree: at("p1") },
         { id: PERSON2, language: "en", tree: at("p2") },
@@ -748,7 +752,7 @@ test(
       JSON.stringify({ claudeAiOauth: { accessToken: `other-${crypto.randomUUID()}` } }),
       "utf8",
     );
-    const unrelated = at("shared", "shopping.json");
+    const unrelated = join(zoneOf(PERSON), "shopping.json");
     writeFileSync(unrelated, JSON.stringify({ milk: 2, bread: 1 }), "utf8");
 
     try {
@@ -758,12 +762,13 @@ test(
       //     fails this.
       expect(await copies()).toEqual([]);
 
-      // --- 1 and 2. one copy in each of the four roots, four findings, four
-      //     paths. The declared file's own directory is a root too.
+      // --- 1 and 2. one copy in each of the roots, four findings, four paths.
+      //     The declared file's own directory is a root too, and one copy sits
+      //     inside a person's zone checkout, which the tree's own root reaches.
       const planted = [
         at("p1", "notes", "old-login.json"),
         at("p2", "backup", "login.json"),
-        at("shared", "handover.json"),
+        join(zoneOf(PERSON2), "handover.json"),
         at("state", "stray.json"),
       ];
       for (const file of planted) {

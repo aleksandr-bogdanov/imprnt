@@ -83,12 +83,6 @@ export const SETTING_FIELDS: SettingField[] = [
     required: false,
   },
   {
-    key: "hub.shared_zone",
-    type: "string",
-    what: "the one zone every person's box can read, and there is no second one",
-    required: false,
-  },
-  {
     key: "hub.restart_delay_seconds",
     type: "integer",
     what: "how long the operating system waits before starting a dead piece again",

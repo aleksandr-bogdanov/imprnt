@@ -283,8 +283,9 @@ function filesUnder(root: string, out: string[], depth: number): void {
  * diverge".
  *
  * BOUNDED, and derived rather than chosen: every declared person's tree, the
- * shared zone, the state dir, and the directory of each credential file the
- * registry names. Never a walk of the disk, which is what makes this a check a
+ * state dir, and the directory of each credential file the registry names. A
+ * person's checkout of the shared zone is inside their own tree and is swept
+ * with it. Never a walk of the disk, which is what makes this a check a
  * household runs rather than one it dreads.
  *
  * THE SECRET IS HELD IN MEMORY AND REACHES NOTHING. The finding carries the
