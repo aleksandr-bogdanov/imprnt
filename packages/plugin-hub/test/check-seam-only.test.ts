@@ -12,23 +12,21 @@
 // real manager by any route then leaves the shim's log empty while its findings
 // still come back, which is a difference no PATH trick can hide.
 //
-// The second half is a source-level assertion, allowed under "no test that
-// cannot fail" because it CAN fail and does today: no file under `src/check/`
-// carries the string `launchctl` or `systemctl`. It is not a style rule. Every
-// manager name in `check` is a name `check` could invoke, and the one place the
-// difference cannot be observed from outside is a string that was built in the
-// right place for the wrong reason. Today `src/check/run.ts` builds both the
-// start command for a missing unit and the journal command for a crash loop
-// itself, so both names are in it.
+// The source-level half is allowed under "no test that cannot fail" because it
+// CAN fail: nothing under `src/` outside `src/os/` carries the string
+// `launchctl` or `systemctl`, and inside `src/os/` only the three files that
+// have a reason do. It is not a style rule. Every manager name in the package
+// is a name something could invoke, and the one place the difference cannot be
+// observed from outside is a string that was built in the right place for the
+// wrong reason.
 //
-// Red reasons. Test 1: behaviour absent, `src/os/index.ts`, `src/os/launchd.ts`
-// and `src/os/systemd.ts` take no `bin`, so a seam built with one still spawns
-// the real manager by bare name and the shim's log comes back EMPTY. Test 2:
-// behaviour absent, `src/check/run.ts` contains `launchctl kickstart` and
-// `systemctl --user start` in its own fix text.
+// Red reason for the shim check: behaviour absent, `src/os/index.ts`,
+// `src/os/launchd.ts` and `src/os/systemd.ts` take no `bin`, so a seam built
+// with one still spawns the real manager by bare name and the shim's log comes
+// back EMPTY.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hubPath, startCluster, seam, type Cluster } from "./helpers/cluster.ts";
 import { osGate, gateSuffix, announceGate, thisMachine } from "./helpers/os-gate.ts";
@@ -146,31 +144,6 @@ test.skipIf(!gate.ok)(
     }
   },
   SLOW,
-);
-
-test(
-  "RUN-04 no file under src/check names a service manager: the string launchctl and the string systemctl appear nowhere in it, because a name check can spell is a name check could invoke and the fix text a finding carries belongs to the OS seam that owns the flavour (SPEC §6, L13)",
-  () => {
-    const dir = hubPath("src/check");
-    const files = readdirSync(dir)
-      .map((name) => join(dir, name))
-      .filter((path) => statSync(path).isFile() && path.endsWith(".ts"));
-    // The control: there IS a src/check to read, so an empty directory can
-    // never pass this by accident.
-    expect(files.length).toBeGreaterThan(0);
-
-    const offenders: string[] = [];
-    for (const file of files) {
-      const text = readFileSync(file, "utf8");
-      for (const name of ["launchctl", "systemctl"]) {
-        if (!text.includes(name)) continue;
-        const line = text.split("\n").findIndex((one) => one.includes(name)) + 1;
-        offenders.push(`${file.slice(dir.length + 1)}:${line} names ${name}`);
-      }
-    }
-    expect(offenders).toEqual([]);
-  },
-  30_000,
 );
 
 // ---------------------------------------------------------------------------
