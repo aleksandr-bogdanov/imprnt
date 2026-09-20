@@ -299,12 +299,12 @@ test(
     const versions = (await f.sql`select version from schema_version order by version`) as unknown as {
       version: number;
     }[];
-    expect(versions.map((one) => Number(one.version))).toEqual([1, 2, 3, 4]);
+    expect(versions.map((one) => Number(one.version))).toEqual([1, 2, 3, 4, 5]);
     await migrate(f.store());
     const again = (await f.sql`select version from schema_version order by version`) as unknown as {
       version: number;
     }[];
-    expect(again.map((one) => Number(one.version))).toEqual([1, 2, 3, 4]);
+    expect(again.map((one) => Number(one.version))).toEqual([1, 2, 3, 4, 5]);
 
     // A row that predates the columns keeps what it had, so nothing that was
     // already shown to somebody is reopened by the upgrade.
