@@ -67,6 +67,7 @@ import {
   transcriberBack,
   transcriberDown,
   voiceGaveUp,
+  voicePending,
   type Language,
 } from "./lines.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
@@ -1406,13 +1407,33 @@ export async function runDoor(options: {
       await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
     };
 
+    /**
+     * The household took its recognizer out of the file while this note was
+     * waiting for it. Nobody is going to transcribe it now, so it is FINISHED
+     * here rather than let go of: a row left pending is one the startup scan
+     * passes over by design, that `check` says nothing about once the component
+     * is gone, and that nobody is ever answered about. The person reads the
+     * same sentence a household that never had a recognizer reads.
+     */
+    const finishUnnamed = async (row: PendingVoiceRow): Promise<void> => {
+      waiting.delete(row.id);
+      const at = new Date();
+      await markMediaFailed(store, { id: row.id, state: "failed", retryAt: null,
+        failure: { class: "infra", cause: "recognizer-unnamed" }, at });
+      await say(voicePending(language), `voice:unnamed:${row.id}`);
+      await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
+      own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
+        received_at: row.receivedAt, state: "received", claimed_by: null,
+        media_state: "failed", media_done_at: at });
+      own.arrived.wake();
+    };
+
     /** One note, once. */
     const work = async (row: PendingVoiceRow): Promise<void> => {
       const fresh = registryThisTick();
       const voice = voiceFor(fresh);
       if (voice === null) {
-        // The household stopped naming a recognizer while this note waited.
-        waiting.delete(row.id);
+        await finishUnnamed(row);
         return;
       }
       const state = await readMediaState(store, row.id);

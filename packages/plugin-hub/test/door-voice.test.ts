@@ -11,7 +11,8 @@
 // COMMIT (a pending row, an unprojected row, a household with no recognizer)
 // run everywhere, because none of them decodes anything.
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { startCluster, seam, type Cluster } from "./helpers/cluster.ts"
 import { rolloutStage } from "./helpers/rollout-stage.ts"
@@ -329,3 +330,62 @@ test(`RUN-15 a household that transcribes never says voice notes are not transcr
       "RUN-15 a household that transcribes must not be told its notes are not transcribed").toHaveLength(0)
   } finally { await door?.stop(); await recognizer.stop(); await it.stop() }
 }, 60_000)
+
+test("RUN-15 a household that stops naming a recognizer finishes the notes that were already waiting", async () => {
+  // The example registry's own comment tells a household that the recognizer
+  // line can be taken out again, and a note in flight when that happens has
+  // nobody left to transcribe it. Dropping it leaves the row waiting for ever:
+  // the startup sweep passes over a pending row on purpose, `check` says
+  // nothing about voice once the component is gone, and the person is never
+  // answered and never told.
+  const recognizer = await fakeRecognizer()
+  recognizer.setStatus(503)
+  const it = await rolloutStage(cluster, "telegram", {
+    people: [{ id: "p1", language: "en" }, { id: "p2", language: "ru" }],
+    voice: { port: recognizer.port, chunk_seconds: 0, retry_seconds: 1 },
+  })
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  let runner: Awaited<ReturnType<typeof runRunner>> | undefined
+  try {
+    it.edge.file("voice", AUDIO)
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: it.scripted.adapter } })
+    it.edge.batch([voiceMessage("1")], "2")
+    expect(await observe(async () => (await it.read.inbound()).length === 1, 20_000)).toBe(true)
+    const row = (await it.read.inbound())[0]
+    expect(await observe(async () => (await it.read.inbound())[0].media_attempts >= 1, 20_000),
+      "RUN-15 the note is waiting for a recognizer").toBe(true)
+    expect((await it.read.inbound())[0].media_state).toBe("pending")
+
+    // The household takes the recognizer out of the file, which takes its
+    // table and its entry with it. The door re-reads the registry on its tick.
+    const text = readFileSync(it.registryFile, "utf8")
+    const from = text.indexOf("\n[voice]")
+    const to = text.indexOf("\n[door]\n")
+    expect(from, "the staged file names a recognizer").toBeGreaterThan(-1)
+    expect(to, "and the voice tables end where the door's begin").toBeGreaterThan(from)
+    writeFileSync(it.registryFile, text.slice(0, from) + text.slice(to))
+
+    expect(await observe(async () => (await it.read.inbound())[0].media_state === "failed", 30_000),
+      "RUN-15 the note is finished rather than left waiting for nobody").toBe(true)
+    const finished = (await it.read.inbound())[0]
+    expect(finished.media_retry_at, "RUN-15 nothing is armed: no recognizer will come").toBeNull()
+    expect(finished.media_failure).toMatchObject({ cause: "recognizer-unnamed" })
+    expect((await it.read.sql("select log_ready from inbound where id = $1", [row.id]))[0].log_ready,
+      "RUN-15 the row is projected, so the agent can answer it").toBe(true)
+
+    // The same sentence a household that never had a recognizer reads.
+    expect(await observe(async () =>
+      (await it.read.noticeRows()).some(n => n.body === voicePending("en")), 20_000),
+      "RUN-15 the person is told their note will not be transcribed").toBe(true)
+    expect((await it.read.noticeRows()).filter(n => n.body === voicePending("en")),
+      "RUN-15 once").toHaveLength(1)
+    expect(await observe(async () =>
+      (await it.read.ledger({ subject: row.id })).some(e => e.kind === "delivered"), 30_000),
+      "RUN-15 and the agent answers it").toBe(true)
+    expect((await it.read.ledger({ subject: row.id })).filter(e =>
+      ["received", "acked", "started", "answered", "delivered"].includes(e.kind)).map(e => e.kind))
+      .toEqual(["received", "acked", "started", "answered", "delivered"])
+  } finally { await runner?.stop(); await door?.stop(); await recognizer.stop(); await it.stop() }
+}, 90_000)
+
