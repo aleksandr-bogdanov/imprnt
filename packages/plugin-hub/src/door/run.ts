@@ -833,6 +833,11 @@ export async function runDoor(options: {
         Math.round((Date.now() - countFrom(row)) / 1000),
       );
       const text = clockLine(language, stamp, seconds);
+      // One instant for the line and for the row below it, because the two are
+      // records of one sentence and a reader that rebuilds the line from the
+      // row has to land on the moment the file already holds.
+      const id = `clock:${row.id}:${stamp}`;
+      const at = new Date().toISOString();
       spoken.add(key);
       spokenAt.set(key, Date.now());
       // L2's "before sending", the same order a reply chunk is written in, so
@@ -846,8 +851,8 @@ export async function runDoor(options: {
       await appendChatLineOnce(
         { stateDir, person: row.person, agent: row.agent },
         {
-          id: `clock:${row.id}:${stamp}`,
-          at: new Date().toISOString(),
+          id,
+          at,
           direction: "out",
           // A machinery line is the DOOR speaking.
           from: options.door,
@@ -860,6 +865,8 @@ export async function runDoor(options: {
         seconds,
         person: row.person,
         agent: row.agent,
+        id,
+        at,
       });
       try {
         await options.platform.post({ chat: agent.chat, text });

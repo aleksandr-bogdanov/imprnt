@@ -259,8 +259,12 @@ test(
       // A store that predates the columns the derivation reads cannot serve a
       // spoke, and the household is told which columns rather than being told
       // the placement is unsupported.
-      await it.read.sql("alter table inbound drop column source, drop column log_ready");
-      const second = serviceOs(join(it.stateDir, "units-again"), probe.os.flavour, [hub, RUNNER2]);
+      // `log_ready` carries a trigger, so `source` alone is dropped: the probe
+      // selects both and a store missing either cannot serve the derivation.
+      await it.read.sql("alter table inbound drop column source");
+      const againDir = join(it.stateDir, "units-again");
+      mkdirSync(againDir, { recursive: true });
+      const second = serviceOs(againDir, probe.os.flavour, [hub, RUNNER2]);
       let refusal = "";
       try {
         await (runInstall as Function)({
@@ -339,7 +343,11 @@ test(
       const refusal = (await it.read.ledger({ stream: "refusal", subject: rowId }))[0];
       expect(refusal.kind).toBe("refused.harvest");
       expect(String(refusal.detail.said)).toBe(`no vault at ${nowhere} on this machine`);
-      expect(edge.sessions.length).toBe(0);
+      // NO MODEL TURN WAS PAID FOR IT. The agent's own resident session is a
+      // session of its own and says nothing about this row: what would cost a
+      // turn is a harvester session fed the row, and nothing was fed it.
+      expect(edge.sessions.some((one) => one.fed.some((fed) => fed.id === rowId))).toBe(false);
+      expect(edge.sessions.length).toBeLessThanOrEqual(1);
     } finally {
       await runner?.stop();
       await edge.stop();

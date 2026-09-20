@@ -92,10 +92,22 @@ export async function readTail(args: {
   }
 
   lines.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  return renderTailLines(lines, args.tokens);
+}
+
+/**
+ * The tail itself: these lines, oldest first, under the preamble, cut to fit.
+ *
+ * ONE renderer, because a chat has two readers. The lines come off the file
+ * here and out of the store on a machine whose door is elsewhere, and a second
+ * copy of this format and this budget would be two shapes of one chat, found
+ * a year later by whoever read both.
+ */
+export function renderTailLines(lines: ChatLine[], tokens: number): string {
   const rendered = lines.map((line) => `${line.at} ${line.from}: ${line.text}`);
   while (
     rendered.length > 0 &&
-    estimateTokens([TAIL_PREAMBLE, ...rendered].join("\n")) > args.tokens
+    estimateTokens([TAIL_PREAMBLE, ...rendered].join("\n")) > tokens
   ) {
     rendered.shift();
   }

@@ -85,6 +85,14 @@ async function plantSaid(it: StagedHub, id: string, text: string, at: Date): Pro
       text,
     },
   });
+  // The message is over: it was answered and delivered long ago. Without that
+  // the runner would claim it as work and answer it again, which is a
+  // conversation this check is not about.
+  await it.read.sql(
+    `insert into ledger_event (at, stream, subject, kind, actor)
+     values ($2, 'inbound', $1, 'delivered', 'door')`,
+    [id, new Date(at.getTime() + 1000).toISOString()],
+  );
   return { at: at.toISOString(), direction: "in", from: PERSON, text };
 }
 
@@ -139,7 +147,7 @@ test(
       const answer = await plantAnswer(it, "said-one", "from nine to eleven, in October", ago(39));
       const last = await plantSaid(it, "said-two", "and it starts in October", ago(38));
       // A demand is a line in the chat and never a line in a slice.
-      await plantSaid(it, "harvest-demand:said-three", "harvest this", ago(37));
+      const demand = await plantSaid(it, "harvest-demand:said-three", "harvest this", ago(37));
       const slice = [first, answer, last];
 
       it.scripted.setAnswer(() => envelope(NOTE));
@@ -171,7 +179,9 @@ test(
       expect(fed.length).toBe(1);
       expect(fed[0].text.endsWith(renderSlice(slice)), `fed: ${fed[0].text}`).toBe(true);
       expect(fed[0].text).not.toContain("the old news");
-      expect(fed[0].text).not.toContain("harvest this");
+      // The demand's own rendered line, because the harvester's prompt is
+      // allowed to talk about harvesting and the slice is not.
+      expect(fed[0].text).not.toContain(renderSlice([demand]));
 
       // --- the note really landed in the vault, through the real CLI
       expect(existsSync(join(stage.vault.vaultDir, "finances", `${slugOf(TITLE)}.md`))).toBe(true);
