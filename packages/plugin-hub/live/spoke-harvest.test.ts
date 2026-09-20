@@ -46,6 +46,7 @@ import {
   stageHub,
   type StagedHub,
 } from "../test/helpers/hub-fixture.ts";
+import type { PresetSpec } from "../test/helpers/registry.ts";
 import { encodeHarvestBody, harvestRowId } from "../src/harvest/row.ts";
 import type { SliceLine } from "../src/harvest/slice.ts";
 
@@ -113,23 +114,42 @@ test.skipIf(reason !== "")(
     let it: StagedHub | null = null;
     let runner: { stop(): Promise<void> } | null = null;
     try {
-      const preset = {
+      const preset: PresetSpec = {
         adapter: "claude-code",
         model: MODEL,
         provider: "anthropic",
         effort: "medium",
         paid: "plan",
       };
+      // The spoke placement composes rather than being copied: its own registry
+      // step moves the agent onto the machine that has no door, and the
+      // harvester's preset is added on top of whatever it produced. `stageHub`
+      // writes one preset of its own and knows nothing about a harvester's, so
+      // this is where that table gains its second entry.
+      const placement = spokeStage().registry!;
       it = await stageHub(cluster, {
         ...spokeStage(),
         hub: { tick_seconds: 2 },
         imprnt,
         // The person's vault has to lie inside their tree, so the tree is the
         // directory the vault project was cloned into.
-        people: [{ id: PERSON, language: "en", tree: dirname(vaultRoot), vault: vaultRoot, harvester: "harvest" }],
-        harvest: { quiet_minutes: 600, min_messages: 99, report: false },
-        extraPresets: { harvest: preset },
-      } as never);
+        people: [
+          {
+            id: PERSON,
+            language: "en",
+            tree: dirname(vaultRoot),
+            vault: vaultRoot,
+            harvester: "harvest",
+            harvest_quiet_minutes: 600,
+            harvest_min_messages: 99,
+            harvest_report: false,
+          },
+        ],
+        registry: (base) => {
+          const placed = placement(base);
+          return { ...placed, presets: { ...(placed.presets ?? {}), harvest: preset } };
+        },
+      });
 
       // --- 1. THE SLICE CAME FROM THE STORE. Every line below is a row and
       //     nothing on this machine has a file for any of them.
