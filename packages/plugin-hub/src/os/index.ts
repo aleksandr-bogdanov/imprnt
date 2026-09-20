@@ -22,7 +22,7 @@ export class OsUnavailable extends Error {
  * whichever box asks, which is what lets the rendering be checked on one machine
  * for the other.
  *
- * 03b item 7: `bin` is the manager binary, defaulting to the bare name PATH
+ * `bin` is the manager binary, defaulting to the bare name PATH
  * resolves. It is the whole fence around "check reaches no manager but the seam
  * it was handed", because a caller that spawned the real binary by absolute
  * path would never meet a shim fronted on PATH.

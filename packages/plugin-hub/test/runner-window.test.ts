@@ -1,4 +1,4 @@
-// RUN-19. A used-up plan window is the same outage, and every threshold comes
+// A used-up plan window is the same outage, and every threshold comes
 // from the file.
 //
 // SPEC §6 and L10 rule 4: at the pause threshold proactive work pauses, at the
@@ -55,7 +55,7 @@ const PAUSE_AT = 60;
 const NOTICE_AT = 70;
 const HOLD_AT = 80;
 
-/** 04-CONTEXT's pinned strings, written out by the TEST and never imported. */
+/** The pinned strings, written out by the TEST and never imported. */
 function windowNotice(percent: number): string {
   return `[door] the plan window is ${percent}% used. Proactive work is paused and your messages still go first.`;
 }
@@ -83,7 +83,7 @@ interface Staged {
  * a window. `p2-lair` is a SECOND PERSON on the SAME plan preset and the same
  * credential, on the other runner, and its loop reports nothing: the allowance
  * is one account's, so it has to be paused by the FIRST person's reading (the
- * second seat's finding, and v2's own incident, where one person's burn was
+ * finding, and v2's own incident, where one person's burn was
  * invisible to the other's pause). `p1-study` is on a per-token KEY preset
  * beside it, and it is never paused at all.
  *
@@ -143,7 +143,7 @@ async function stageWindow(
       presets: {
         ...base.presets,
         // A per-token key has no window and carries no window field, which the
-        // loader refuses there (04-01 check 2).
+        // loader refuses there.
         metered: {
           adapter: String(base.presets?.daily?.adapter ?? ""),
           model: "a-model-name",
@@ -314,7 +314,7 @@ test(
         async () => JSON.stringify(await it.read.noticeRows()),
       );
       // ONE LINE PER PERSON WITH A PLAN AGENT ON THIS CREDENTIAL, which is
-      // TWO here (the second pass named the old "exactly one" as the fixture
+      // TWO here (a reader named the old "exactly one" as the fixture
       // being out of step with the rule: the allowance is the household's, so
       // everybody whose agent it pauses is told). The keys are the window's
       // own reset and each person's own id.
@@ -400,7 +400,7 @@ test(
       expect(Math.abs(retryAt - new Date(staged.resetsAt).getTime())).toBeLessThan(2000);
       expect(retryAt - Date.now()).toBeGreaterThan(RETRY_SECONDS * 1000 + 30_000);
 
-      // --- THE HOUSEHOLD IS HELD, not the reporting person (the second seat's
+      // --- THE HOUSEHOLD IS HELD, not the reporting person (the
       //     finding, and v2's own incident). The second person's agent is on
       //     the SAME plan preset and the same credential, on the OTHER runner,
       //     and its loop has never reported a window: the only reading in this
@@ -477,7 +477,7 @@ test(
     // --- THE RELEASE THE CONTRACT NAMES: the window's own reset arrives, the
     //     runner claims again, ITS OWN TURN reports a lower reading, and the
     //     hold goes. Nothing is planted into the household's row here (the
-    //     second pass called the planted stage a different path, and it is
+    // a reader called the planted stage a different path, and it is
     //     right: what production does is report through a turn). The stage
     //     above keeps the planted reading as its second case.
     const natural = await stageWindow(

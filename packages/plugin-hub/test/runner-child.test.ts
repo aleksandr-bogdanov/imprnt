@@ -1,5 +1,5 @@
 // Check: a worker spawned from chat is a child of its runner with no service
-// file. (SPEC §6, D7, RUN-03)
+// file. (SPEC §6, D7)
 //
 // D7's second kind of process: "a worker or a model child is a child of its
 // runner, with no unit." A non-model worker does not exist yet, so what binds
@@ -7,20 +7,19 @@
 // ruling. The first phase with a worker proper re-runs these assertions against
 // it and they need no new shape.
 //
-// THE WHOLE CHECK IS GATED, WHICH DEVIATES FROM 03-03 TASK 3 AND IS DELIBERATE.
-// The plan wants the parentage half ungated, so a closed gate narrows the check
-// rather than removing it. In THIS round that would be a test that cannot fail:
+// THE WHOLE CHECK IS GATED, AND THAT IS DELIBERATE.
+// Leaving the parentage half ungated would make it a test that cannot fail:
 // the parentage half passes against shipped code (the child's parent is the
 // runner because the adapter client spawns it there), and only the no-unit half
 // is red. An ungated half would therefore report a PASS on every box whose gate
 // is shut, including CI, which is the silent pass this phase forbids. A visible
 // skip with its reason in the name is the honest answer until `src/os/index.ts`
-// exists, and the build round can split this file in two once it does.
+// exists, and this file can be split in two once it does.
 //
 // Red reason: import missing, `src/os/index.ts`, which is what the no-unit half
 // reads. (The plan tags "export missing, `AdapterSession.pid`"; that is a
 // TypeScript interface and leaves nothing to assert at run time, so the
-// falsifiable half is the unit snapshot. Recorded in RED-RUN-1.md.)
+// falsifiable half is the unit snapshot.)
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { readdirSync } from "node:fs";
@@ -57,7 +56,7 @@ afterAll(async () => {
     // fixture is still asked, so a future edit that plants one cannot leak it.
     await fixture.removeAll();
     // And no holder child outlived the file, asked of the platform rather than
-    // of the fixture's own list (the second seat's finding about cleanup being
+    // of the fixture's own list (the finding about cleanup being
     // a path rather than a proof).
     await until(
       "every model child left the box",
@@ -66,7 +65,7 @@ afterAll(async () => {
       () => `still holding: ${survivingHolders().join(", ")}`,
     );
   } finally {
-    // THE CENSUS, which the second seat found missing from this file. A check
+    // THE CENSUS, which was missing from this file. A check
     // whose whole subject is that NO unit appears is the last one that should
     // be unable to say whether one did.
     if (gate.ok) {

@@ -1,4 +1,4 @@
-// MSG-03, MSG-06 and MSG-01, on the runner's own half of a turn.
+// The runner's own half of a turn.
 //
 // SPEC §2: "Delivery is machinery. An agent produces text. It never calls a
 // send tool, names an address or presses a key, for a human or for another
@@ -92,7 +92,7 @@ test(
 
       // The load: byte equality between the turn's text and the posted text. A
       // build whose reply came from anywhere but the turn's own text fails it,
-      // and that is MSG-03's whole content.
+      // and that is the whole of what this binds.
       const expected = scriptedReply(MESSAGE);
       const chunks = await it.read.outbox();
       expect(chunks.length).toBe(1);

@@ -100,7 +100,7 @@ async function newestWork(store: StoreLike): Promise<Map<string, string>> {
 
 /**
  * Every runner's newest `connected` line, and the identifier of the store this
- * run is reading (03b item 4).
+ * run is reading.
  *
  * The identifier is `initdb`'s own, generated per cluster, so a line carrying
  * one that is not this store's was written against some other cluster and the
@@ -310,11 +310,11 @@ export async function runCheck(options: {
       });
     }
     // The unit rows by name, so a finding can quote the state the manager
-    // reported for the very unit it names (03b row 3).
+    // reported for the very unit it names.
     const byName = new Map(found.map((unit) => [unit.name, unit]));
     for (const [id, seen] of worst) {
       if (seen.restarts < CRASH_LOOP_RESTARTS) continue;
-      // WHAT THE MANAGER SAYS IT IS, beside the count (03b item 3, row 3). A
+      // WHAT THE MANAGER SAYS IT IS, beside the count. A
       // count alone reads the same for a unit the manager is still patiently
       // restarting and for one it has given up on and parked, and those two
       // need different things done to them: the second does not come back from
@@ -344,7 +344,7 @@ export async function runCheck(options: {
         says: `${id} has been started again ${seen.restarts} times, so it is dying in a loop rather than running, ${state}${result}`,
         // The state a parked unit is really in is what has to be cleared, and
         // the command that clears it belongs to the seam that knows the
-        // flavour (03b items 3 and 7).
+        // flavour.
         fix: resetCommand(os.flavour, seen.unit),
       });
     }
@@ -388,11 +388,10 @@ export async function runCheck(options: {
   for (const agent of listAgents(registry)) {
     if (!ownRunners.has(agent.runner)) continue;
     const person = personOf(registry, agent.id);
-    // A DECLARED PERSON WITH NO TREE AND NO PERSON AT ALL ARE THE SAME FINDING
-    // (03b-DEBTS:19). Entry 1 of these build notes shipped
-    // the narrow reading, where a file carrying no `[[people]]` table was
-    // silent, on the argument that half the fixtures would otherwise carry a
-    // row. That is an argument about the fixtures. What `check` is being asked
+    // A DECLARED PERSON WITH NO TREE AND NO PERSON AT ALL ARE THE SAME
+    // FINDING. The narrow reading, where a file carrying no `[[people]]` table
+    // is silent, rests on the argument that half the fixtures would otherwise
+    // carry a row. That is an argument about the fixtures. What `check` is being asked
     // is whether this machine's agents can run inside a box, and the answer for
     // an agent whose person the file never mentions is no, exactly as loudly as
     // for one whose entry omits the field: the box context carries an empty

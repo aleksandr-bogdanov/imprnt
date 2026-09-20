@@ -1,9 +1,9 @@
-// Check: every scheduled job's last success is recent. (SPEC §6, L13, RUN-04)
+// Check: every scheduled job's last success is recent. (SPEC §6, L13)
 //
 // L13: "a scheduled job whose last success is older than its interval plus a
 // grace is reported, read from the job's OWN 'I ran and it landed' stamp,
 // because systemd knows a job ran, not whether it worked", and its Forbidden
-// line: "reading 'timer enabled' as 'job ran'". D-89 makes the stamp a state
+// line: "reading 'timer enabled' as 'job ran'". The stamp is a state
 // sheet `job_success`, one row per entry id, and makes a scheduled entry with NO
 // row its own finding, because a job nobody ever stamped would otherwise look
 // like a job that has not run yet, forever.
@@ -48,7 +48,7 @@ afterAll(async () => {
     // Exactly what this file created, and nothing else, even when a check threw.
     await fixture.removeAll();
   } finally {
-    // THE CENSUS, which the second seat found missing from this file: every
+    // THE CENSUS, which was missing from this file: every
     // other file that can create a unit proves it disturbed nothing, and a
     // file that only removes its own list proves only that it tried.
     if (gate.ok) {
@@ -112,7 +112,7 @@ test(
       const now = new Date();
 
       // The stamps are WRITTEN by the code under test and READ BACK through
-      // phase 1's shipped `readSheet`, so the shape `staleJobs` is handed is the
+      // the shipped `readSheet`, so the shape `staleJobs` is handed is the
       // shape the build itself produced. A test that invented the row shape
       // would be guessing at a type the seam contract names but does not pin.
       const stamps = async () => await readSheet(store, String(JOB_SUCCESS_SHEET));
@@ -153,7 +153,7 @@ test(
 
       // --- 4. THE GRACE SAVES IT: older than the interval alone, younger than
       //     the interval plus the grace. Without this case the grace is a
-      //     setting nothing in production reads, and RUN-07 forbids that.
+      //     setting nothing in production reads, which is forbidden.
       await stamp(store, { entry: "watch-bikes", machine: "pi", at: ago(1800 + Math.floor(GRACE / 2)) });
       expect(stale({ entries, stamps: await stamps(), graceSeconds: GRACE, now })).toEqual([]);
       // And with a grace of zero the very same stamp IS stale, so the number is
@@ -226,7 +226,7 @@ test.skipIf(!gate.ok)(
     const store = await superStore(cluster, it.db);
     try {
       // A job that runs and lands NOTHING. The script is the check's own, in
-      // its own scratch dir: no `src/entry/` file is created this round.
+      // its own scratch dir, so no `src/entry/` file is created for it.
       const jobDir = join(it.stateDir, "jobs");
       mkdirSync(jobDir, { recursive: true });
       const script = join(jobDir, "lands-nothing.ts");
@@ -255,7 +255,7 @@ test.skipIf(!gate.ok)(
       // FIRST, the manager's OWN record says it ran. Without this the rest of
       // the check is about a job that never started and proves nothing.
       //
-      // `ran`, NOT `restarts` (D-101). The second seat read a conflict between
+      // `ran`, NOT `restarts`. A reader could read a conflict between
       // this check and check 23 and it was real: the seam carried one counter
       // mapped to systemd's `NRestarts` and launchd's `runs`, and those count
       // different things. A job that ran once and exited cleanly has `runs = 1`
@@ -263,7 +263,7 @@ test.skipIf(!gate.ok)(
       // asked of that field on both flavours, while check 23's healthy control
       // needs the restart count to be zero for exactly the same job. `ran` is
       // the separate signal, and `start` executes the program now rather than
-      // merely enabling a cadence (D-102), which is what makes this reachable
+      // merely enabling a cadence, which is what makes this reachable
       // for an `every 30m` entry inside a test's lifetime.
       await until(
         "the manager's own record says the job ran and exited cleanly",

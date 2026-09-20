@@ -10,22 +10,20 @@
 // progress line is ever about a row nobody sent. L6, L19.
 //
 // CHECK 4 IS A CONTRACT RULE AND NOT A SPEC LINE, and that is answered here
-// rather than argued later. The second seat is right that neither SPEC section
+// rather than argued later.  neither SPEC section
 // 2's nor section 4's Check and Forbidden lines say "no clock about machinery"
-// in so many words. The rule is D-143, which stands on L6 ("the door speaks
+// in so many words. The rule stands on L6 ("the door speaks
 // about a person's own wait") and on a shipped precedent: `readStampRows` and
 // `readStampMetrics` already select `kind = 'human'` for exactly this reason,
-// and every consumer of `readOpenTurns` is about a person's own wait. D-143
-// also names the defect it closes: with the shipped reader the door would post
+// and every consumer of `readOpenTurns` is about a person's own wait. The
+// defect it closes: with an unfiltered reader the door would post
 // `[door] still waiting: the loop has not accepted this message. 45 s so far.`
-// into a person's chat about a row nobody sent. 05-CONTEXT is a binding
-// document in this project, so a contract entry with a ruling behind it and a
-// precedent beside it is a rule this check may hold to.
+// into a person's chat about a row nobody sent.
 //
 // Both run against the throwaway cluster, and check 3 runs through the real
-// `hub_runner` role because the grant is half of what it binds. D-115 gave the
-// runner `insert, update, delete on state_row` in phase 4, so phase 5 adds no
-// schema object at all and a build that reached for a new table fails.
+// `hub_runner` role because the grant is half of what it binds. The
+// runner already holds `insert, update, delete on state_row`, so the harvest
+// sheet adds no schema object at all and a build that reached for a new table fails.
 //
 // Red reasons: check 3 is import missing, `src/harvest/sheet.ts`. Check 4 is
 // behaviour absent: `src/store/turns.ts`'s one statement is
@@ -104,7 +102,7 @@ test(
       expect(new Set([id(PERSON, AGENT), id(PERSON, AGENT2), id(PERSON2, AGENT)]).size).toBe(3);
 
       // --- 2. the row shape, PURE. `at` is the value handed in and NEVER
-      //     `new Date()`. D-141 is why: `at` is the last harvested LINE's own
+      //     `new Date()`. Here is why: `at` is the last harvested LINE's own
       //     time, and an `in` line's clock is the platform's while an `out`
       //     line's is the door's, so a line whose clock ran a second behind
       //     would otherwise be invisible for ever.
@@ -149,7 +147,7 @@ test(
       expect(((await (readSheet as Function)(runner, "harvest")) as unknown[]).length).toBe(0);
 
       // --- 3. the grant, exercised through the real `hub_runner` role rather
-      //     than through the superuser. D-115 granted it in phase 4, so this is
+      //     than through the superuser. The grant already exists, so this is
       //     the assertion that says the sheet needs no schema change at all.
       await (putRow as Function)(runner, HARVEST_SHEET, made.id, made.data);
       const back = await read(runner, { person: PERSON, agent: AGENT });
@@ -234,8 +232,8 @@ test(
     let store: Awaited<ReturnType<typeof superStore>> | null = null;
     try {
       // Three rows for one agent, all at `received`: a person's own message,
-      // the harvest row the door will write from phase 5 on, and the triage row
-      // phase 6's watcher will write. All three are what the shipped statement
+      // the harvest row the door writes, and the triage row
+      // the watcher will write. All three are what the shipped statement
       // returns today.
       await insertInbound(cluster, it.db, { id: "m-human", body: "a human message" });
       await insertInbound(cluster, it.db, {
@@ -256,7 +254,7 @@ test(
       const open = await readOpenTurns(store, { agent: AGENT });
       expect(open.map((row) => row.id)).toEqual(["m-human"]);
 
-      // --- 4. both other kinds, not only harvest. Phase 6's watcher triage is
+      // --- 4. both other kinds, not only harvest. The watcher triage is
       //     the other rank-1 kind and it arrives on this same table, so a
       //     filter written as `kind <> 'harvest'` passes assertion 1 and fails
       //     here.
@@ -264,7 +262,7 @@ test(
       expect(open.some((row) => row.id.startsWith("harvest:"))).toBe(false);
 
       // --- 2. the control, without which this is a check on a reader that
-      //     returns nothing. D-126's shipped rule, unchanged: a row still opens
+      //     returns nothing. The shipped rule: a row opens
       //     at `acked` and leaves at `answered`.
       await it.read.sql(
         `insert into ledger_event (stream, subject, kind, actor)

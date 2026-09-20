@@ -2,7 +2,7 @@
  * The harvester's reply, read by CODE into exactly three answers.
  *
  * The envelope is what the prompt asks for and what three real runs of the real
- * loop produced byte for byte (05-BRIEF), so it is parsed by two markers and
+ * loop produced byte for byte, so it is parsed by two markers and
  * nothing else. Nothing is salvaged from a half-formed block: that is code
  * guessing at meaning on the write side, which the vault contract itself
  * forbids, and a note the machinery guessed at is a note nobody wrote.

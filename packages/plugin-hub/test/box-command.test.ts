@@ -4,7 +4,7 @@
 // L7: "each agent runs in a kernel-enforced box that can reach its own person's
 // tree and nothing else", "the boundary is the person", "one shared zone is
 // mounted into every vault", and Forbidden: "a shared zone for a subset of
-// people". D-93 makes the zone one household setting, so a subset zone is
+// people". The zone is ONE household setting, so a subset zone is
 // unwriteable rather than merely discouraged.
 //
 // PURE, BOTH PLATFORMS, NOTHING EXECUTED. This is what survives when check 15's
@@ -12,12 +12,12 @@
 // assert the ORDER, which no outcome can: `--proc /proc` before `--dev-bind / /`
 // produces a box that looks exactly like a working one from the outside and
 // hides nothing, because the host's `/proc` is bound back over the namespace's
-// (03-BRIEF, measured, and v2's notes agree).
+// (measured, and v2's notes agree).
 //
-// THE FLAVOUR IS SUPPLIED, and that is a deviation recorded in RED-RUN-1.md:
-// 03-CONTEXT pins `boxCommand(argv, ctx)` with no flavour selector, while
-// 03-03 task 7 requires BOTH flavours to be produced from one registry on
-// whichever box runs the check, with no branch on process.platform in the test.
+// THE FLAVOUR IS SUPPLIED, deliberately. `boxCommand(argv, ctx)` carries no
+// flavour selector of its own, while BOTH flavours have to be produced from
+// one registry on whichever box runs the check, with no branch on
+// process.platform in the test.
 // The two cannot both be true, so the check supplies the platform in both of the
 // places a build could reasonably read it (a third argument, and a field on the
 // context) and asserts `tool`, which is the pinned field that says which flavour
@@ -39,7 +39,7 @@ const PROBE = ["/bin/sh", "-c", "echo the command the loop would have run"];
 // ---------------------------------------------------------------------------
 // Reading a sandbox profile as RULES rather than as text.
 //
-// The second seat's lead: the first shape of this check asserted that no allow
+// the first shape of this check asserted that no allow
 // rule named the other tree by its exact path, and that a profile carrying a
 // BARE `(allow file-read*)` also carried a deny. `(allow file-read* (subpath
 // "/"))` is neither of those and grants the other tree through an ancestor, and
@@ -259,7 +259,7 @@ test(
         .filter((l) => l !== "" && !l.startsWith(";") && !l.startsWith("(version"));
       expect(rules[0]).toBe("(deny default)");
 
-      // The four the probe needs to run at all (03-BRIEF, measured).
+      // The four the probe needs to run at all, measured.
       expect(profile).toContain("process-exec");
       expect(profile).toContain("process-fork");
       expect(profile).toContain("sysctl-read");
@@ -267,7 +267,7 @@ test(
 
       // Its own tree and the ONE shared zone are named in an allow. The zone is
       // one household setting, so "a shared zone for a subset of people" has
-      // nowhere to be written (D-93).
+      // nowhere to be written.
       expect(profile).toContain(`(subpath "${p1.tree}")`);
       expect(profile).toContain(`(subpath "${two.trees.sharedZone}")`);
       const allowsOwn = new RegExp(

@@ -12,19 +12,19 @@
 // test name. The probe is built only from binaries that run inside the minimal
 // profile, and the other vault's origin is read from `<tree>/.git/config` as a
 // FILE rather than through git, because `/usr/bin/git` on macOS is an Xcode shim
-// that dies loading `libxcrun` from a denied path (03-BRIEF).
+// that dies loading `libxcrun` from a denied path.
 //
 // THE CHECK BINDS WHAT THE PROBE PRINTED, never the profile text or the argv
 // string, so a build may change either as long as the outcome holds. Check 16 is
 // where the argv's order and the profile's shape are bound, and it is pure.
 //
-// THE PROCESS HALF IS A LINUX QUESTION, MEASURED (D-106). 03-BRIEF measured
+// THE PROCESS HALF IS A LINUX QUESTION, MEASURED:
 // that `/bin/ps` prints nothing inside the macOS box, and the first shape of
 // this check read that as the fence. It is not: `/bin/ps` is SETUID root
 // (`-rwsr-xr-x root wheel`) and the sandbox refuses to exec a setuid binary
 // under `(deny default)` whatever `process-exec*` says, so what was being
 // measured was the probe failing rather than the box working, which is exactly
-// what the second seat's lead named.
+// what the lead named.
 //
 // `/usr/bin/pgrep` is not setuid, does exec inside the minimal profile, and
 // prints ALL 896 processes there: under the minimal profile, under the same one
@@ -35,13 +35,13 @@
 // `--dev-bind / /` really does produce one, and on darwin it asserts only that
 // the enumeration RAN inside the box, which is what says the tree assertions
 // beside it mean the fence rather than a dead probe. The macOS process list is
-// a stated boundary (D-106), not an assertion that would pass on a refusal.
+// a stated boundary, not an assertion that would pass on a refusal.
 //
-// `[partial]` (D-92): what this proves is that a BOXED COMMAND cannot see the
+// `[partial]`: what this proves is that a BOXED COMMAND cannot see the
 // other person's tree, origin or process list while the same command unboxed
 // reads all three, per agent. What it does not yet prove is that an agent's
 // model process runs inside one, because the profile that lets the real loop
-// start is a build-time lab with the real child, and phase 3 does not wire
+// start is a build-time lab with the real child, and this file does not wire
 // `boxCommand` into `Adapter.start`.
 //
 // Red reason: import missing, src/box/index.ts.
@@ -87,7 +87,7 @@ async function run(argv: string[]): Promise<string> {
 }
 
 /**
- * The probe, per platform (D-106).
+ * The probe, per platform.
  *
  * On linux the enumeration is `/proc` itself rather than a tool, so a box that
  * refused one binary cannot silence it: the directory IS the process list, and
@@ -206,7 +206,7 @@ test.skipIf(!gate.ok)(
       expect(inside).not.toContain(other.origin);
       // NOT A LISTING ENTRY EITHER: no line of the output is a name that tree
       // holds. The PATH is deliberately not asserted against, which is the
-      // false failure the second seat found: "ls: /…/p2: Operation not
+      // false failure found: "ls: /…/p2: Operation not
       // permitted" is the fence working and it carries the path by nature, so a
       // check that forbade the string would fail on the denial it wanted.
       const entries = inside.split("\n").map((line) => line.trim());
@@ -222,7 +222,7 @@ test.skipIf(!gate.ok)(
         expect(insideEnum.count).toBeLessThanOrEqual(10);
         expect(insideEnum.count * 10).toBeLessThan(outsideEnum.count);
       } else {
-        // D-106: macOS has no pid namespace and no sandbox rule hides the
+        // MacOS has no pid namespace and no sandbox rule hides the
         // process list, measured four ways. The count is NOT bound here,
         // because the only thing that could make it small is the enumeration
         // failing, and a check that scored that as the fence would pass on a

@@ -1,4 +1,4 @@
-// RUN-18, MSG-10 and L17, on the three things the store grows in phase 4: the
+// The three things a notice needs from the store: the
 // row a notice is, the channel that says a turn opened, and the primitive two
 // runners race on.
 //
@@ -12,7 +12,7 @@
 // EVERY ONE OF THE THREE ASSERTS THE CATALOG FIRST, by name, before it
 // exercises anything. Against the shipped schema the objects are simply not
 // there, and a check that reached for a reader first would die inside a fixture
-// instead: a red reason that is a helper crash is not the red reason the plan
+// instead: a red reason that is a helper crash is not the red reason this file
 // claims. So each half names the column, the constraint, the trigger or the
 // grant it is about, and only then drives it.
 //
@@ -134,7 +134,7 @@ test(
       expect(outbox.get("inbound_id")?.nullable).toBe(true);
       expect(await constraintsOf(it.read, "outbox")).toContain("outbox_kind_is_whole");
 
-      // THE UNIQUENESS IS THE DATABASE'S (the second pass's finding on row 4).
+      // THE UNIQUENESS IS THE DATABASE'S (the finding).
       // Thirty concurrent pairs raise the odds of an interleaving and cannot
       // force one: a check-then-insert `appendNotice` survives any schedule
       // that happens to serialise each pair, and the race below would then
@@ -222,8 +222,8 @@ test(
       for (const said of refusals) expect(said).toContain("outbox_kind_is_whole");
 
       // --- 3. the arithmetic. The same key never lands twice, however many
-      //     runners write it. This is the whole of D-122: v2's own finding was
-      //     that one notice per outage is a unique key and not a flag.
+      //     runners write it. One notice per outage is a unique key and never
+      //     a flag.
       expect(
         await (appendNotice as Function)(runner, {
           person: PERSON,
@@ -288,7 +288,7 @@ test(
       const heard: string[] = [];
       const listener = await (listenForWork as Function)({
         // The cluster's own superuser url. A LISTEN needs no table privilege,
-        // and the store url the registry carries names NO user by rule (D-36),
+        // and the store url the registry carries names NO user by rule,
         // so a role has to come from somewhere: this is the test's own.
         url: cluster.url(it.db),
         channel: "hub_outbox",
@@ -307,10 +307,10 @@ test(
         await listener.close();
       }
 
-      // AND THE SAME KEY FROM TWO CONNECTIONS AT ONCE (the second seat's
+      // AND THE SAME KEY FROM TWO CONNECTIONS AT ONCE (the
       // finding). A check-then-insert `appendNotice` passes every sequential
       // call above and still writes two rows when two runners reach the outage
-      // in the same instant, which is the case D-122 says the UNIQUE index is
+      // in the same instant, which is the case the UNIQUE index is
       // for. Run thirty times, because one race that happens to serialise
       // proves nothing.
       for (let nth = 0; nth < 30; nth++) {
@@ -420,11 +420,11 @@ test(
       await progress(3);
       expect(await waiter!.wait(10_000)).toBe("notified");
 
-      // AND AGAIN ON THE EDIT (the second seat's finding). The sheet is one row
+      // AND AGAIN ON THE EDIT. The sheet is one row
       // per message, written over and over while the turn is open, so a
       // trigger that fires on INSERT alone wakes the door once and never
       // again: the person would see "3 tool calls" for the rest of the turn.
-      // 04-CONTEXT pins the trigger as after insert OR UPDATE for this reason.
+      // The trigger is after insert OR UPDATE for this reason.
       await progress(4);
       expect(await waiter!.wait(10_000)).toBe("notified");
       await progress(5);
@@ -558,9 +558,9 @@ test(
       };
       expect(won.mine).toBe(true);
       expect(lost.mine).toBe(false);
-      // THE WHOLE OF D-122. The notice key is built from `since`, so a loser
-      // that kept its own would write a second notice per person, which is the
-      // exact rule RUN-18 exists to enforce.
+      // THE WHOLE ARITHMETIC. The notice key is built from `since`, so a loser
+      // that kept its own would write a second notice per person, and one
+      // notice per person is the rule.
       expect(lost.data.since).toBe(mine.since);
       expect(lost.data.reported_by).toBe("runner-pi");
       const rows = (await (readSheet as Function)(first, "outage")) as {

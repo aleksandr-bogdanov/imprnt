@@ -1,11 +1,11 @@
 // The result crossing, its cause turned off, and the store's refusal to run
 // without that.
 //
-// Phase 4 (BUILD-NOTES 7) found an outage claim reading back a row that was not
+// An outage claim was seen reading back a row that was not
 // its own, and the store went from one connection to eight on that finding with
-// no reproducer. Phase 6 (BUILD-NOTES 128 and 130) met it again at four
+// no reproducer. It came back at four
 // connections as a diary append that came back with no `seq`. The investigation
-// that followed reproduced it on demand, and this file now holds the fix.
+// that followed reproduced it on demand, and this file holds the fix.
 //
 // THE MECHANISM, read from Bun 1.3.14's Postgres client and then measured here.
 // The client keeps one queue per connection and hands every answer to the
@@ -278,7 +278,7 @@ test(
         `${told(got)}. If both are right, this Bun no longer crosses without ${SWITCH}=1, and the switch, ` +
         `the refusal in connect.ts and the pool size can all be revisited.`;
       expect(got.claim, described).not.toBe(NO_ANSWER);
-      // BUILD-NOTES 7's symptom: `claimed.data.since` read as undefined. The
+      // The symptom: `claimed.data.since` read as undefined. The
       // claim is told it won, with the append's answer read against its own
       // columns, which it has none of yet.
       expect((got.claim as ClaimAnswer).mine, described).toBe(true);

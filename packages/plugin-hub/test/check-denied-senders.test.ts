@@ -1,12 +1,12 @@
-// D-173, D-183, ROLL-15. A refused sender leaves a trace, and `check` reads it.
+// A refused sender leaves a trace, and `check` reads it.
 //
 // The door refuses a message from a sender the allowlist does not name before
-// anything is saved (D-173), which is right, and until now the refusal left
+// anything is saved, which is right, and until now the refusal left
 // nothing at all: no inbound row, no chat log line, no finding. `check` notices
 // silence only through inbound rows, and the shipped example registry starts
 // with an empty allowlist, so a misconfigured allowlist looked exactly like a
-// quiet chat. D-183: "Unauthorized senders receive no reply. Their rejection can
-// be counted without storing their message content."
+// quiet chat. An unauthorized sender receives no reply, and the rejection is
+// counted without storing the message content.
 //
 // So the DOOR writes one content-free row per refused sender on a door and chat,
 // and `check` reports it while that sender is still off the list, and it reports
@@ -65,7 +65,7 @@ for (const name of ["telegram", "discord"] as const) {
       await door.stop()
       door = undefined
 
-      // Still refused: no work, no reply (ROLL-15 is unchanged by the trace).
+      // Still refused: no work, no reply, and the trace changes neither.
       expect((await it.read.inbound()).filter(row => row.id.endsWith(":2"))).toEqual([])
 
       // ONE row, for the refused sender and nobody else, carrying who and where

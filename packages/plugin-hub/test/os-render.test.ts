@@ -1,8 +1,8 @@
-// RUN-02. The unit naming rule, and both flavours rendered from one registry.
+// The unit naming rule, and both flavours rendered from one registry.
 //
 // SPEC §6: "the installer generates systemd unit files from the list". L13: "one
 // list of what runs, and the service manager runs it". D7: the two kinds of
-// process. D-75: two prefixes, one for what the hub RENDERS (`imprnt-hub-`) and
+// process. Two prefixes, one for what the hub RENDERS (`imprnt-hub-`) and
 // one for what it WATCHES (`imprnt-`), because the hub box's live v2 owns
 // `imprnt-board.service` and the shipped example registry has an entry whose id
 // is `board`.
@@ -30,7 +30,7 @@ import { writeRegistry, type RegistrySpec } from "./helpers/registry.ts";
 import { loadRegistry } from "../src/registry/load.ts";
 import { listRunEntries } from "../src/registry/entries.ts";
 
-/** The four name shapes the live v2 on the hub box owns (03-BRIEF). */
+/** The four name shapes the live v2 on the hub box owns. */
 const LIVE_V2_NAMES = [
   "imprnt-board.service",
   "imprnt-transcribe.service",
@@ -295,7 +295,7 @@ test(
       expect(name("board")).toBe("imprnt-hub-board");
 
       // The other direction: a v2 unit is WATCHED and is never OURS, so it is
-      // reported and never touched (L13, D-78).
+      // reported and never touched (L13).
       for (const v2 of LIVE_V2_NAMES) {
         expect(watched(v2)).toBe(true);
         expect(ours(v2)).toBe(false);
@@ -304,7 +304,7 @@ test(
       expect(watched("postgresql.service")).toBe(false);
       expect(ours("postgresql.service")).toBe(false);
 
-      // --- the three wanted states (D-97) ---------------------------------
+      // --- the three wanted states ---------------------------------
       const state = wantedState as (entry: unknown) => string;
       const entryOf = (id: string) => entries.find((e) => e.id === id)!;
       expect(state(entryOf("runner-pi"))).toBe("running");
@@ -387,7 +387,7 @@ test(
         "runner-pi",
       ]);
       expect(job.KeepAlive).toBe(true);
-      // Measured (03-BRIEF): a KeepAlive job is back 0.33 s after a kill with
+      // Measured: a KeepAlive job is back 0.33 s after a kill with
       // ThrottleInterval 1 and 9.14 s with the key absent, because launchd's
       // own default throttle is 10 s. Check 6 asserts the restart inside the
       // RENDERED value, so a renderer that dropped this key would make that
@@ -396,7 +396,7 @@ test(
       expect(job.ThrottleInterval).toBe(RESTART_DELAY);
       expect(typeof job.ThrottleInterval).toBe("number");
 
-      // --- the give-up asymmetry, asserted in BOTH directions (D-96) ------
+      // --- the give-up asymmetry, asserted in BOTH directions ------
       // launchd never gives up, so it has no equivalent of StartLimit* and the
       // Mac carries `check`'s crash-loop finding instead (D7, check 23).
       for (const key of Object.keys(job)) {

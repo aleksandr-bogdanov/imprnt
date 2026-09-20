@@ -1,17 +1,17 @@
-// LIVE. 03b item 1b. The REAL loop answers from inside the kernel box, and
-// cannot read the other person's tree from in there. (SPEC §5, L7, D-92)
+// LIVE. The REAL loop answers from inside the kernel box, and
+// cannot read the other person's tree from in there. (SPEC §5, L7)
 //
-// The automated half of item 1 (`test/box-worn.test.ts`) proves the runner
+// The automated half (`test/box-worn.test.ts`) proves the runner
 // hands the loop its boxing hook and that the child it spawns is refused the
 // other person's marker. What it cannot prove is that the REAL loop still works
 // in there: a profile tight enough to fence a tree and loose enough for a
 // model-driven agent with a keychain login, a network and a tool set is the
-// thing D-92 said was a build-time lab, and this is that lab as a check.
+// only provable in a build-time lab, and this is that lab as a check.
 //
 // It needs the Claude Code login on this Mac and no platform token, the same as
 // the two live checks beside it, and it runs on the cheap model.
 //
-// WHAT IT BINDS, in the shape D-92 asks for (the outcome, never the profile):
+// WHAT IT BINDS is the outcome and never the profile:
 //   1. a question that needs no tool at all is answered from inside the box, so
 //      the box did not simply break the loop;
 //   2. asked to read a file in ITS OWN person's tree, the loop reads it and the
@@ -25,7 +25,7 @@
 // 2 is what makes 3 mean the fence. Without it a loop whose tools were broken
 // by the profile scores as perfect tenancy.
 //
-// AND 4, ADDED BY THE CODEX CLOSURE ROUND (VERIFY-CODEX row 1): an UNBOXED
+// AND 4, ADDED BY THE CODEX CLOSURE ROUND: an UNBOXED
 // control session, the same real loop on the same cheap model, asked for the
 // same file in the same words, WITH the marker in its answer. Without it the
 // fence assertion above is satisfied by a loop that simply declined to use a
@@ -219,7 +219,7 @@ test.skipIf(!gate.ok)(
 
       // 4. and the origin of the other person's vault, which is the second
       //    thing criterion 9 fences, read as a FILE because git does not run
-      //    inside the box (03-BRIEF).
+      // inside the box.
       const readOrigin = await ask(readThis(join(other.tree, ".git", "config")));
       expect(readOrigin).not.toContain(other.origin);
 

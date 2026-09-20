@@ -3,7 +3,7 @@
 //
 // L17 rules that a state sheet answers "what is true now": one row per id,
 // edited in place, a gone thing's row removed, and no fixed or superseded line
-// and no dated sections. D-90 makes the finding id MACHINE-SCOPED
+// and no dated sections. The finding id is MACHINE-SCOPED
 // (`<machine>/<kind>:<subject>`), because two machines write findings into one
 // store and `kernel-earlyoom` from both would otherwise be one row that each
 // overwrites, and a run on one machine removes only rows under its own prefix.
@@ -44,7 +44,7 @@ const SLOW = 120_000;
  *
  * Fronting PATH with it is the only way a check can see a manager command that
  * a `check` implementation ran ITSELF rather than through the seam it was
- * handed, which is the hole the second seat found in this file.
+ * handed, which is the hole found in this file.
  */
 function shimDir(): { dir: string; log: string; lines(): string[]; remove(): void } {
   const dir = mkdtempSync(join(tmpdir(), "hub-shim-"));
@@ -356,7 +356,7 @@ test(
       expect(headless.map((f) => f.kind)).toContain("kernel-earlyoom");
 
       // --- AND NOTHING WAS RUN, either. Everything above observes calls made
-      //     THROUGH the seam this test supplied, which is the second seat's
+      //     THROUGH the seam this test supplied, which is the
       //     hole: a `check` that spawned `launchctl bootout` itself, or caught
       //     the seam's exception and then shelled out, passes all of it. So the
       //     same `runCheck` runs in a child whose PATH begins with a directory

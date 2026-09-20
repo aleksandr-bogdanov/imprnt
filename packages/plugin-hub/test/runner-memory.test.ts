@@ -1,13 +1,13 @@
-// Check: the memory watch is on for every child. (SPEC §6, L4, RUN-12)
+// Check: the memory watch is on for every child. (SPEC §6, L4)
 //
 // L4: "the runner watches every child it spawns. On each tick it reads the
 // child's memory. Over the limit from the registry, it kills the child and
 // writes one ledger line", worded there as "killed the transcriber at 2.1 GB",
 // so the reading AND the limit are both in the line or a human cannot read it.
-// D-81 puts the limit on the runner's own `[[run]]` entry as
+// The limit lives on the runner's own `[[run]]` entry as
 // `child_memory_limit_mb`, because the two machines are an 8 GB Pi and a 16 GB
 // Mac and one household number is either too small for one or too big for the
-// other. D-83 makes the kill one ledger line on the `memory` stream and leaves
+// other. The kill is one ledger line on the `memory` stream and leaves
 // the session to be started again on the next turn.
 //
 // NO UNIT MANAGER, so this runs on both platforms with no gate: the reading is
@@ -59,7 +59,7 @@ import {
 
 const SLOW = 240_000;
 const TICK = 1;
-// THE NUMBERS ARE CHOSEN SO A FIXED CONSTANT CANNOT PASS (the second seat's
+// THE NUMBERS ARE CHOSEN SO A FIXED CONSTANT CANNOT PASS (the
 // lead). The old pair was a limit of 300 with a child grown by 700, which a
 // build that ignored the registry and killed at a hard-coded 512 MB passed
 // while reporting the configured 300 in its ledger line. So:
@@ -85,7 +85,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   try {
-    // INDEPENDENT PROOF, not a cleanup path (the second seat's finding). The
+    // INDEPENDENT PROOF, not a cleanup path. The
     // fixture kills the children it still tracks; this asks the platform
     // whether any holder is alive anywhere, so one whose owner forgot it is
     // named here rather than living on until the box is rebooted.
@@ -136,7 +136,7 @@ test(
           kind: "runner",
           schedule: "always",
           memory_limit_mb: 512,
-          // The CHILD's limit, which is not the runner's own (D-81).
+          // The CHILD's limit, which is not the runner's own.
           child_memory_limit_mb: CHILD_LIMIT_MB,
         },
       ],
@@ -263,7 +263,7 @@ test(
       expect(runner.proc.exitCode).toBeNull();
       expect(alive(runnerPid)).toBe(true);
 
-      // --- the restart half (D-83). A killed child is a session that has to be
+      // --- the restart half. A killed child is a session that has to be
       //     started again on the next turn, and the runner did not restart to do
       //     it. The child that answers is a DIFFERENT process.
       const startsBefore = it.scripted.starts().length;

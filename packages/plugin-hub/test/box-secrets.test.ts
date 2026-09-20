@@ -1,4 +1,4 @@
-// Checks (a) and (b) of IMP-158: a boxed agent cannot read the hub's secrets
+// Checks (a) and (b): a boxed agent cannot read the hub's secrets
 // or a bot token, and so cannot log in to the store as any hub role. The path
 // this closes is prompt injection: an agent steered by outside content it read,
 // a web page, an email or a listing, running shell commands.

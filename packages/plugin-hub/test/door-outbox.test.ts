@@ -1,16 +1,16 @@
-// MSG-01, MSG-02 and STORE-04, pointed at the door's outbound half.
+// The door's outbound half.
 //
 // SPEC §2: "Only then the door posts, marking each chunk delivered after the
 // platform accepted it." Its Forbidden list carries "a send before the settle
 // commit". SPEC §1 carries "The table holds the work. A notification only wakes
 // a runner... No polling on a timer", and its Forbidden list "polling where a
 // notification exists". The door's wait on the outbox obeys the same rule, and
-// the probe is phase 1's: the cluster runs with log_statement = 'all' and
+// the probe is the: the cluster runs with log_statement = 'all' and
 // log_line_prefix = 'pid=%p ', so a check counts what the server was ACTUALLY
 // asked to do, by which backend, while the door waited.
 //
 // The first check binds L1 step 6's "only then" to the SETTLE rather than to
-// the chunk insert. The second seat's first pass committed a chunk for an
+// the chunk insert. A first attempt at this committed a chunk for an
 // unsettled row and then required the door to post it, which is the opposite of
 // the rule: that chunk is exactly what the door must hold.
 //
@@ -18,7 +18,7 @@
 // needs a separate process, and a subprocess makes every other failure harder
 // to read.
 //
-// THE RESIDUE, carried forward from phase 1's RED-RUN-3 in the same words: a
+// THE RESIDUE, stated so it is not rediscovered: a
 // waiter that keeps a flag in memory and re-checks it on a 100 ms timer issues
 // no SQL at all, so it is invisible to a statement count and to any other
 // black-box probe. Closing it needs to read the implementation, which is the
@@ -95,7 +95,7 @@ test(
   async () => {
     const { runDoor } = await seam("src/door/run.ts");
     expect(typeof runDoor).toBe("function");
-    // Phase 1's shipped stamp writer, so the answered event is written the way
+    // The shipped stamp writer, so the answered event is written the way
     // production writes it rather than by hand.
     const { stamp } = await seam("src/records/stamps.ts");
     expect(typeof stamp).toBe("function");
@@ -381,8 +381,8 @@ test(
     let handle: { stop(): Promise<void> } | null = null;
 
     try {
-      // D-36. The registry carries the location and no user, so a typo cannot
-      // hand the door the runner's role and bypass phase 1's whole fence.
+      // The registry carries the location and no user, so a typo cannot
+      // hand the door the runner's role and bypass the whole fence.
       expect(it.storeUrl).not.toContain("@");
       const registry = await Bun.file(it.registryFile).text();
       expect(registry).toContain(it.storeUrl);
@@ -411,7 +411,7 @@ test(
         expect(backend.usename).toBe("hub_door");
       }
 
-      // The negative half: phase 1's fence, proved against a phase 2 process
+      // The negative half: the fence, proved against a real process
       // rather than a bare connection. The door cannot write a reply even if
       // its own code asked it to.
       await committedInbound(it.db, "m-role", "a human message");

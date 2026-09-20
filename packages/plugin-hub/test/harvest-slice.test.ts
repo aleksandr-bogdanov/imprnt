@@ -6,7 +6,7 @@
 // file per agent, one JSON line per message.
 //
 // Pure over planted chat log files. No Postgres, no door, no runner. The chat
-// log's shape is pinned by phase 2 and this file writes the files itself from
+// log's shape is pinned elsewhere and this file writes the files itself from
 // that shape: <state_dir>/<person>/chatlog/<agent>/<YYYY-MM-DD>.jsonl, one JSON
 // object per line carrying `at`, `direction`, `from` and `text`, dated by the
 // LINE's own `at` in UTC.
@@ -14,21 +14,21 @@
 // Every time below is fixed rather than relative, so the same bytes are planted
 // on every machine and at every hour of the day, and nothing here sleeps.
 //
-// The three machinery lines are written with phase 4's OWN functions, because
-// what D-129 really puts in the log is what the filter has to drop. The probe
-// measured the loop ignoring them once (05-BRIEF, slice C), and a model
+// The three machinery lines are written with the door's OWN functions, because
+// what really lands in the log is what the filter has to drop. The probe
+// measured the loop ignoring them once, and a model
 // ignoring something once is not a rule: the filter is what makes it one.
 //
 // THE THIRTY DAY CAP IS A CONTRACT CHOICE AND NOT A SPEC LINE, and that is
-// answered here rather than argued later. The second seat is right that SPEC
-// section 4 grants no age exemption. The cap is D-145 and `SLICE_MAX_DAYS`,
-// and 05-CONTEXT states plainly what it costs: "the first harvest of a chat
+// answered here rather than argued later.  SPEC
+// section 4 grants no age exemption. The cap is `SLICE_MAX_DAYS`,
+// and what it costs is stated plainly: the first harvest of a chat
 // older than thirty days reaches back thirty days, and the rest of that log is
-// on disk and unharvested". It is a named residue with a named alternative (a
-// years-long log fed to a model in one message, which is worse) and a deferred
-// item of its own (a one-off catch-up run by a human). The assertion below
+// on disk and unharvested. It is a named residue with a named alternative (a
+// years-long log fed to a model in one message, which is worse) and a one-off
+// catch-up a human can run. The assertion below
 // binds the number the contract picked, so a build that picks another one is
-// caught and the decision is re-opened in 05-CONTEXT rather than in a check.
+// caught and the number is re-decided deliberately rather than in a check.
 //
 // Red reason: import missing, `src/harvest/slice.ts`.
 
@@ -151,7 +151,7 @@ test(
       plant(stateDir, IN("2026-09-16T09:04:00.000Z", "сохрани важное"));
       const in3 = plant(stateDir, IN("2026-09-16T09:05:00.000Z", "the wifi password is on the router"));
       // THE NEWEST PERSON-OR-AGENT LINE IS THE AGENT'S, deliberately. The
-      // second seat's finding: with a person line newest, an implementation
+      // THE FINDING: with a person line newest, an implementation
       // that answered "the newest PERSON line" and one that answered "the
       // newest person-or-agent line" give the same answer, so the assertion
       // below would not tell them apart. A quiet clock re-armed only by what a
@@ -259,8 +259,8 @@ test(
 
       // ---------------------------------------------------------------
       // 8. The cap. A chat the hub has never harvested reaches back
-      //    SLICE_MAX_DAYS and no further, which is the residue D-145 states
-      //    rather than hides: the rest of that log is on disk and unharvested.
+      //    SLICE_MAX_DAYS and no further, which is a residue stated
+      //    rather than hidden: the rest of that log is on disk and unharvested.
       // ---------------------------------------------------------------
       expect(SLICE_MAX_DAYS).toBe(30);
       expect(NEWEST_MAX_DAYS).toBe(7);

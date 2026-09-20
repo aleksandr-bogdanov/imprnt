@@ -10,7 +10,7 @@ import { join } from "node:path";
  * PROCESS and which binary it is is a setting (`hub.imprnt`). This is
  * SPEC §2's "an agent produces text, delivery is machinery" applied to filing:
  * the model produced text, the loop cannot write to the vault at all (measured
- * three ways, 05-BRIEF), and code does the filing.
+ * three ways), and code does the filing.
  *
  * THE APPLY IS UNBOXED. The box exists to fence what the MODEL can reach (L7),
  * and this is the hub's own write of the text that model already produced.

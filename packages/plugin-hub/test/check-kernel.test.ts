@@ -1,4 +1,4 @@
-// Check: the two kernel findings fire when they apply. (SPEC §6, L4, RUN-14)
+// Check: the two kernel findings fire when they apply. (SPEC §6, L4)
 //
 // L4: "`hub check` names what the kernel could add, as findings with the fix in
 // them", while "the installer never does it". The fix text is fixed by the
@@ -6,15 +6,15 @@
 // cgroup_memory=1` to `/boot/firmware/cmdline.txt` and reboot, and
 // `sudo apt install earlyoom`.
 //
-// WHY THE VIEW IS SUPPLIED (D-91). On the machine this phase is built on the
+// WHY THE VIEW IS SUPPLIED. On the machine this phase is built on the
 // boot command line ALREADY carries both words, the user slice already delegates
 // `cpu memory pids`, and earlyoom is already installed and active, so NEITHER
 // finding applies there and a check that read the real box could only ever
 // assert an absence. So the views are planted, and the real box is an extra
 // control that must produce neither.
 //
-// PURE, BOTH PLATFORMS, NO GATE, AND IT GREPS NOTHING. RUN-14's other half,
-// "an installer that edits a boot file", is bound behaviourally in check 5 by
+// PURE, BOTH PLATFORMS, NO GATE, AND IT GREPS NOTHING. The other half,
+// "an installer that edits a boot file", is bound behaviourally by
 // the set of paths `install` reported, which is what the rule is actually
 // about: an installer that shells out to something that edits a boot file
 // passes a grep.
@@ -134,7 +134,7 @@ test(
       "kernel-memory-cgroup",
     ]);
     // Machine-scoped ids, so two machines writing into one store cannot each
-    // erase the other's row (D-90).
+    // erase the other's row.
     expect(findings({ cmdline: "rootwait", controllers: [], earlyoom: "absent" }, "mac")[0].id)
       .toContain("mac/");
     expect(both[0].id).not.toBe(

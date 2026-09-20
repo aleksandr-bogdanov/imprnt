@@ -1,4 +1,4 @@
-// ROLL-06 foundation. D-171 and D-182 require own preset references.
+// A preset reference must be the entry's own declared property.
 // Each refusal first loads the same reference as a declared own property.
 import { afterAll, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
@@ -52,7 +52,7 @@ import { expectedPresetId } from "./helpers/preset-oracle.ts"
 import { boxContextFor } from "../src/box/index.ts"
 import { seam } from "./helpers/cluster.ts"
 
-// Accessor call shapes for the new D-171 defaults are deliberately explicit.
+// Accessor call shapes for the defaults are deliberately explicit.
 async function accessor(name: string): Promise<(...args: any[]) => any> {
   const mod = await seam("src/registry/entries.ts")
   expect(typeof mod[name], `D-171 missing accessor ${name}`).toBe("function")

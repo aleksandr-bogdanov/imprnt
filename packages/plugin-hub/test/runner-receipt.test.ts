@@ -1,9 +1,9 @@
-// MSG-02 and MSG-06. The acked stamp is the loop's own acknowledgement, and the
+// The acked stamp is the loop's own acknowledgement, and the
 // started stamp is the loop's first progress.
 //
 // SPEC §2: "The runner feeds the row and marks it sent only when the loop acks
 // that exact message." And the five stamps, "written by machinery, never by the
-// model". D-60: the started stamp is the FIRST progress event of a turn, which
+// model". The started stamp is the FIRST progress event of a turn, which
 // is L6's "the model produced its first token or first action". A session
 // opening event is not progress.
 //

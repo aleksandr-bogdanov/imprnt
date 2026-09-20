@@ -1,4 +1,4 @@
-// ROLL-15, D-173. Each refusal has a listed-sender control on the same door.
+// Each refusal has a listed-sender control on the same door.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readFileSync, writeFileSync } from "node:fs"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"

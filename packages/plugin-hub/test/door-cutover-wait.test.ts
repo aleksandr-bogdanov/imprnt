@@ -1,4 +1,4 @@
-// IMP-160 item 6, D-181, D-186. A door whose declared cutover batch is not yet
+// A door whose declared cutover batch is not yet
 // complete WAITS for it. It pulls nothing and says in its diary why, once, and
 // it becomes ready when the batch completes. It does not exit: a unit that
 // exits on start is restarted by systemd until its start limit, and then it

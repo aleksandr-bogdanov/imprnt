@@ -1,4 +1,4 @@
-// RUN-18. After a refused turn the runner tries again on its own clock, WITH A
+// After a refused turn the runner tries again on its own clock, WITH A
 // LOOP THAT IS STILL THERE.
 //
 // SPEC §6 and L10 rule 3: "Waiting rows stay waiting, nothing is handed to a
@@ -9,7 +9,7 @@
 // WHY NO OTHER CHECK CAN FAIL ON IT. Every outage check drives
 // `createScriptedAdapter`, whose session survives a refusal and answers turn
 // after turn, and the gated real-binary check feeds exactly ONE turn and
-// closes. The adapter ends a refused turn itself and CLOSES THE CHILD (D-118),
+// closes. The adapter ends a refused turn itself and CLOSES THE CHILD,
 // because no retry fixes a dead credential and the runner owns the retry clock,
 // so the handle the next turn would feed is a handle onto a process that is
 // gone. Measured in bun 1.3.14: writing to a killed child's stdin returns
@@ -17,13 +17,13 @@
 // agent's whole serving loop stops on an await with no bound.
 //
 // So this check drives the REAL `claudeCode` adapter, through the production
-// `wrap` hook (03b item 1, D-120), across TWO turns: the first invocation of
+// `wrap` hook, across TWO turns: the first invocation of
 // the scripted CLI emits the measured 401 `api_retry` wire and holds, and the
 // second emits a healthy turn. What is bound is that the runner comes back with
 // a NEW child and answers the message it held.
 //
 // The wire shapes are the ones measured on 2026-09-16 and recorded in
-// 04-BRIEF.md, quoted in test/adapter-refusal.test.ts's own header:
+// quoted in test/adapter-refusal.test.ts's own header:
 //   {"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,
 //    "retry_delay_ms":623,"error_status":401,"error":"authentication_failed"}
 // once per attempt, with rising delays and no `result` written meanwhile.
@@ -83,8 +83,8 @@ afterAll(async () => {
  *
  * It is a shim over `claudeCode.start` and nothing else: what reads the wire is
  * the shipped adapter, and what the runner is handed is the shipped adapter's
- * own session. D-176 supplies a real person box and canonical synthetic login;
- * the scripted wire is composed inside that production wrapper.
+ * own session. A real person box and a canonical synthetic login are supplied,
+ * and the scripted wire is composed inside that production wrapper.
  */
 function realLoopOver(
   scripts: Record<string, unknown>[][],
@@ -170,15 +170,14 @@ test(
       );
       // EACH OF THE THREE IS WAITED FOR ON ITS OWN, because the contract does
       // not put them in one transaction and this check may not assume it does.
-      // D-121 scopes `refuseTurn` to the diary line, the released claim and the
+      // `refuseTurn` covers the diary line, the released claim and the
       // recorded retry. The outage row is `claimRow`'s own statement, because
-      // two runners race for it and the primary key is what settles that
-      // (D-115), and the notice is `appendNotice`'s, because its unique key is
-      // what makes one outage one line per person (D-122). A reader woken by
+      // two runners race for it and the primary key is what settles that,
+      // and the notice is `appendNotice`'s, because its unique key is
+      // what makes one outage one line per person. A reader woken by
       // the diary line therefore lands between them on any box slow enough,
       // and the hub box is: this asserted them straight after the ledger line
-      // and failed there twice, deterministically, about 350 ms in
-      // (BUILD-NOTES 34).
+      // and failed there twice, deterministically, about 350 ms in.
       await until(
         "the household's outage row was opened",
         async () => (await it.read.outageSheet()).length >= 1,
@@ -202,7 +201,7 @@ test(
 
       // --- 2. THE CHILD IS GONE. The adapter ends the turn on the first 401
       //     and closes it, because no retry fixes a dead credential and the
-      //     CLI would go on retrying for minutes (D-118).
+      // CLI would go on retrying for minutes.
       expect(loop.starts()).toBe(1);
       const first = loop.pids()[0];
       expect(first).toBeGreaterThan(0);

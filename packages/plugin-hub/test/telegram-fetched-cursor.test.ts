@@ -1,4 +1,4 @@
-// ROLL-11, ROLL-20. Cursor observations use the real door_cursor sheet.
+// Cursor observations use the real door_cursor sheet.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { constants, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"

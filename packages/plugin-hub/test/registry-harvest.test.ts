@@ -13,7 +13,7 @@
 //
 // "Names the line" is the behaviour, so every refusal here binds the KEY and
 // the LINE and never merely that something threw, exactly as
-// test/registry-thresholds.test.ts binds phase 4's. Every bad file below is
+// test/registry-thresholds.test.ts binds the. Every bad file below is
 // valid in every OTHER respect, for the same reason.
 //
 // THE CONVENTION FOR AN ABSENT KEY, which the shipped loader already uses: a
@@ -21,14 +21,14 @@
 // line of the entry it should have been under, which is that entry's own id
 // line.
 //
-// D-139's whole ruling is that CONTAINMENT IS CHECKED AND EXISTENCE IS NOT.
+// CONTAINMENT IS CHECKED AND EXISTENCE IS NOT.
 // Whether a path exists is a question about a MACHINE and one file loads on
 // three of them. Whether one path lies inside another is string arithmetic
 // decidable from the file alone, and it is what makes the harvester's session
 // able to read the vault at all, because the box fences the person's tree.
 //
 // Red reason: behaviour absent. `loadRegistry` parses `[[people]]` for `id`,
-// `tree` and phase 4's five fields and looks at none of these, so every bad
+// `tree` and the five fields and looks at none of these, so every bad
 // file below loads with no complaint, and `harvestFor` does not exist. The
 // assertion that is red first is refusal 1.
 
@@ -198,7 +198,7 @@ test(
       expect(refusal.line).toBe(lineOf(lines, 'id = "p1"'));
     }
 
-    // --- 3. D-171 lets a vault supply filing rules without enabling harvest.
+    // --- 3. A vault may supply filing rules without enabling harvest.
     {
       const lines = drop(base, 'harvester = "harvest"');
       const registry = loadRegistry(write(lines));
@@ -244,8 +244,8 @@ test(
     // --- 6. the two numbers. Four bad values each, one assertion per value
     //     per key, never as a group: a zero, a negative, a fraction and a word.
     //     A quiet period of zero is a chat that is always quiet and a minimum
-    //     of zero is a slice of nothing, so both are the quiet default RUN-08
-    //     forbids rather than a number a household chose.
+    //     of zero is a slice of nothing, so both are a quiet default
+    //     rather than a number a household chose.
     for (const [key, good] of [
       ["harvest_quiet_minutes", "harvest_quiet_minutes = 31"],
       ["harvest_min_messages", "harvest_min_messages = 3"],
@@ -397,7 +397,7 @@ test(
     }
 
     // --- (e) a person with an EMPTY tree and a vault anywhere loads. Whether
-    //     a person has a tree is a question about a machine (D-93), their
+    // a person has a tree is a question about a machine, their
     //     agents already run unboxed and `check` already says `agent-unboxed`,
     //     and refusing here would take the hub down over a second thing.
     {

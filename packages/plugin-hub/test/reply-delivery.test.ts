@@ -1,4 +1,4 @@
-// ROLL-08. The real runner settles and the real door delivers to a synthetic edge.
+// The real runner settles and the real door delivers to a synthetic edge.
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test"
 import { appendFileSync } from "node:fs"
 import { startCluster, seam, until, statementWatch, untilIssued, type Cluster } from "./helpers/cluster.ts"

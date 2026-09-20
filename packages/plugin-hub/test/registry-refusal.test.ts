@@ -1,4 +1,4 @@
-// RUN-08. A value that does not parse refuses the file and names the line.
+// A value that does not parse refuses the file and names the line.
 //
 // SPEC §6: "a file with a bad value is refused loudly." L14's Forbidden list, as
 // added 2026-09-14: "A value that does not parse being defaulted quietly: the
@@ -53,7 +53,7 @@ function fixture(valueLine: string): string[] {
     'kind = "runner"',
     'schedule = "always"',
     valueLine,
-    // D-81 as phase 3b makes it: a runner entry carries the CHILD's limit in
+    // A runner entry carries the CHILD's limit in
     // every file, whether or not the file declares its machines. Added as a
     // fixture line, not an assertion: the bad value above is still the line
     // this check names, and it is still the last line whose number it asserts.

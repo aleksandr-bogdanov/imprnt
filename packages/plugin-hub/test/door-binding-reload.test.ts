@@ -1,4 +1,4 @@
-// ROLL-23 chat half, D-178. Reader responses straddle the registry edit.
+// The chat half: reader responses straddle the registry edit.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readFileSync, writeFileSync } from "node:fs"
 import { startCluster, startReadySubprocess, type ReadyProcess, type Cluster } from "./helpers/cluster.ts"

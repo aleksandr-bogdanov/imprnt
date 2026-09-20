@@ -1,4 +1,4 @@
-// RUN-18 and RUN-19, on the adapter's half: a loop that will not answer says so
+// The adapter's half: a loop that will not answer says so
 // in a type, and the window it reports is normalised.
 //
 // SPEC §6 and L10 rule 3: "Waiting rows stay waiting, nothing is handed to a
@@ -7,7 +7,7 @@
 // cause". Rule 4: "An agent on a per-token key has no window."
 //
 // EVERY WIRE SHAPE BELOW IS A MEASUREMENT, taken on 2026-09-16 and recorded in
-// 04-BRIEF.md. The CLI was 2.1.273 on this Mac and 2.1.258 on the hub box, and
+// The CLI was 2.1.273 on this Mac and 2.1.258 on the hub box, and
 // the no-login shape is identical on both in every field that matters. Nothing
 // here invents a shape a loop might emit. The one shape that was never observed
 // is a plan window actually used up, and it is not planted: what is planted is
@@ -15,7 +15,7 @@
 // rule ran on.
 //
 // The three ungated checks drive the REAL `claudeCode` adapter through the
-// PRODUCTION `wrap` hook (03b item 1): `Adapter.start` takes it, the adapter
+// PRODUCTION `wrap` hook: `Adapter.start` takes it, the adapter
 // spawns whatever comes back, and the hook returns a small script that emits
 // the measured lines. What is bound is the shipped adapter's own reading of a
 // real shape, not a fake loop standing in for a real edge.
@@ -67,7 +67,7 @@ import type { AdapterSession, TurnEnd } from "../src/adapters/types.ts";
 
 const SLOW = 60_000;
 
-/** What a turn end really carries once phase 4 lands. */
+/** What a turn end really carries, window fields included. */
 type Ended = TurnEnd & {
   refused?: { cause: string; said: string } | null;
   usage: TurnEnd["usage"] & { window?: { utilization: number; resets_at: string | null } | null };
@@ -322,11 +322,9 @@ test(
     expect(transient.end.refused ?? null).toBeNull();
     expect(transient.end.text).toBe("an answer after a wobble");
 
-    // --- control (b): A 429 IS PASSED OVER TOO, exactly as the 503 above is
-    //     (D-118 as amended after the separate review, and BUILD-NOTES 27).
-    //     This control used to assert that a 429 ENDED the turn with cause
-    //     `window`, which was the contract's letter and is the thing the review
-    //     overturned: "no retry fixes it" is an argument about a dead
+    // --- control (b): A 429 IS PASSED OVER TOO, exactly as the 503 above is.
+    //     A 429 must NOT end the turn with cause
+    //     `window`: "no retry fixes it" is an argument about a dead
     //     credential, a 429 is the provider asking the loop to wait, and the
     //     CLI's own backoff is what waits. Ending the turn on the first one
     //     killed the child, opened the household-wide outage and told every
@@ -358,8 +356,7 @@ test(
     // --- control (c): what DOES say the window is gone, on the unmeasured
     //     route. A `result` that ends the turn with `is_error` and names a rate
     //     limit is cause `window`, and it is read off the event's `error` field
-    //     as well as its text (04-BRIEF: "whose text OR `error` names a rate
-    //     limit"), because a result carrying the sentence in `error` beside
+    //     as well as its text, because a result carrying the sentence in `error` beside
     //     `terminal_reason: "api_error"` would otherwise be read as a dead
     //     login and tell a household to go and log in again.
     const usedUp = await driveTurn({
@@ -395,7 +392,7 @@ test(
       lines: [INIT, HEALTHY_RATE_LIMIT, healthyResult("an answer")],
     });
 
-    // The HIGHER of the two, which is D-119: a build that reads `five_hour`
+    // The HIGHER of the two: a build that reads `five_hour`
     // alone reports 0.27 here, and a weekly cap at 100% would never pause
     // anything while the household was held by the provider with nothing said.
     expect(driven.end.usage.window).not.toBeUndefined();
@@ -439,7 +436,7 @@ test(
       new Date(1789523400 * 1000).toISOString(),
     );
 
-    // --- control (c): AND A FALLING READING FALLS (the second seat's
+    // --- control (c): AND A FALLING READING FALLS (the
     //     finding). Keeping the highest utilization ever seen passes control
     //     (b), because the second reading there is the higher one, and then
     //     holds a household on a number that has already reset: the window
@@ -480,7 +477,7 @@ test.skipIf(!gate.ok)(
     const driven = await driveTurn({
       env: { CLAUDE_CONFIG_DIR: empty },
       boundMs: 20_000,
-      // THE MODEL HAS TO BE A REAL ONE, and this is the one 04-BRIEF measured
+      // THE MODEL HAS TO BE A REAL ONE, and this is the one measured
       // with. The fixture preset every other check uses says `a-model-name`,
       // and the real binary refuses an unknown model BEFORE it ever looks at a
       // credential: this check then bound "that model does not exist" while
@@ -492,7 +489,7 @@ test.skipIf(!gate.ok)(
     });
 
     // WHAT THE BINARY ITSELF SAID, from THIS invocation, recorded before
-    // anything is asserted about the typed refusal (the second seat asked for
+    // anything is asserted about the typed refusal (needed
     // it: the record showed an undefined refusal and no proof that the real
     // loop had failed a login). The shipped adapter already copies the
     // `result` event's own text into `usage.raw.result`, so this reads what

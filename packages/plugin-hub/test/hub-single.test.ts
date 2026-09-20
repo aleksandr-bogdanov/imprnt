@@ -1,13 +1,12 @@
-// 03b item 8. ONE hub process per machine, and the second one refuses itself.
+// ONE hub process per machine, and the second one refuses itself.
 // (SPEC §6, D7, L11)
 //
-// 03-CONTEXT's deferred list carried this in its own words: "'One hub process
-// per machine' (SPEC §6, D7) as an enforced invariant. Phase 3 ships one process
-// and never starts two, and nothing yet refuses a second one on the same
-// machine." Two hubs on one machine is not a theoretical shape: it is what a
-// hand-started hub beside a unit-started one is, and BUILD-NOTES B.2 already
-// records what a stray hub does to a box ("a hub process left running by an
-// interrupted check removes every `imprnt-hub-` unit on the box"). Two of them
+// "One hub process per machine" has to be an ENFORCED invariant and not a
+// habit: shipping one process and never starting two leaves nothing refusing a
+// second one on the same
+// machine. Two hubs on one machine is not a theoretical shape: it is what a
+// hand-started hub beside a unit-started one is, and a stray hub left running
+// by an interrupted check removes every `imprnt-hub-` unit on the box. Two of them
 // reconciling the same machine would fight over every unit on it.
 //
 // THE MECHANISM IS THE ONE THE RUNNER ALREADY HAS. The hub names itself
@@ -105,7 +104,7 @@ test.skipIf(!gate.ok)(
       hub: { tick_seconds: TICK, restart_delay_seconds: 1 },
       machines: [machine],
       // ONE REAL ENTRY, because "it installed nothing" has to be a sentence
-      // that could have come out false (VERIFY-CODEX row 8). With no entries at
+      // that could have come out false. With no entries at
       // all the census either side of the second hub is identical whatever that
       // hub did, refusing or reconciling, so the assertion was about a box with
       // nothing on it rather than about a hub that stopped before its tick. The
@@ -214,7 +213,7 @@ test.skipIf(!gate.ok)(
 test.skipIf(!gate.ok)(
   `RUN-09 two hubs for one machine started in the SAME INSTANT settle to one: both are launched with neither having connected yet, exactly one comes up and exactly one leaves with refused.second_hub, one unit is on the box and it is the survivor's, and the survivor is still running afterwards (SPEC §6, D7, L11)${gateSuffix(gate)}`,
   async () => {
-    // WHY SEQUENTIAL WAS NOT ENOUGH (VERIFY-CODEX row 8). The check above waits
+    // WHY SEQUENTIAL WAS NOT ENOUGH. The check above waits
     // for the first hub to be up before starting the second, so the racy
     // implementation this replaced (count the backends with this name, then
     // carry on) passes it: by the time the second counts, the first is there to

@@ -1,4 +1,4 @@
-// ROLL-26. Snowflakes above Number's exact range and more than two wire pages.
+// Snowflakes above Number's exact range and more than two wire pages.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"
 import { rolloutFixture } from "./helpers/rollout-fixtures.ts"

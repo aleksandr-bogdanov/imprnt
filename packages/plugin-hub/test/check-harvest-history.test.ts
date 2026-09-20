@@ -1,4 +1,4 @@
-// D-171, D-181, D-160. Imported history that the registry excludes from harvest
+// Imported history that the registry excludes from harvest
 // is not work a harvest is late on.
 //
 // 6a imports old chat logs for both people and harvests only the second

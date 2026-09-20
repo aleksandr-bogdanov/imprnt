@@ -1,4 +1,4 @@
-// D-152 under a colour setting. The harvest reads what the real `imprnt ingest
+// Classification under a colour setting. The harvest reads what the real `imprnt ingest
 // --apply` said from the marker at the start of each line, and a terminal
 // colour setting in the environment must not change what it reads.
 //
@@ -9,7 +9,7 @@
 //   "\x1b[0m\x1b[31m  ! finances/<slug> exists with DIFFERENT content ...\x1b[0m"
 //
 // and the line no longer STARTS with `!`. No marker is found, the output is
-// unknown, and unknown is refused (D-152), so a conflict the vault recorded is
+// unknown, and unknown is refused, so a conflict the vault recorded is
 // reported as a refusal and the watermark never moves. FORCE_COLOR wins over
 // NO_COLOR in bun (measured the same day: both set still paints), and an
 // EMPTY FORCE_COLOR paints too, so the only environment that cannot colour the

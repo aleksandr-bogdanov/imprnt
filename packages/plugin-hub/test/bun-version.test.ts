@@ -1,4 +1,4 @@
-// 03b item 10. One bun version across the household. (SPEC §8)
+// One bun version across the household. (SPEC §8)
 //
 // Three boxes ran three answers: this Mac and CI on 1.3.10, the hub box on
 // 1.3.14. A suite that passes on one runtime and is never run on the other is a
@@ -23,14 +23,14 @@
 // constant, the root `package.json`, `.bun-version` and the CI pin move in one
 // commit, and this check is what refuses a commit that moves three of the four.
 //
-// WHAT THE FIRST VERSION OF THIS FILE MISSED (VERIFY-CODEX row 10). It read
+// WHAT THE FIRST VERSION OF THIS FILE MISSED. It read
 // `Bun.version`, which is the runtime executing THIS file, and nothing about
 // the runtimes the suite goes on to spawn. Every subprocess in this package was
 // started as the bare word `bun`, resolved by PATH, so a 1.3.14 parent with an
 // older `bun` earlier on PATH passed this check while its door, its runner, its
 // hub, its install script and its holder child all ran on the older one. That
-// is the exact state item 10 exists to end, and BUILD-NOTES B.1 already had to
-// warn the next seat to order PATH by hand because of it.
+// is the exact state this check exists to end, and it is why PATH has to be
+// ordered by hand on a box carrying two of them.
 //
 // So there are two more assertions below: a child really spawned reports the
 // same version, and no spawn under `src/`, `test/` or `live/` names bun by the
@@ -46,7 +46,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { hubPath } from "./helpers/cluster.ts";
 
-/** The hub box's own bun, which is the fixed point (03b item 10). */
+/** The hub box's own bun, which is the fixed point. */
 const PINNED = "1.3.14";
 
 /** The monorepo root: two directories above this package. */

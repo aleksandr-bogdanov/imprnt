@@ -28,7 +28,7 @@ export interface UnitState {
    * `ActiveState` (`active`, `failed`, `activating`) and launchd's `state`
    * (`running`, `not running`). Null when the manager did not say.
    *
-   * 03b row 3. `running` above is a BOOLEAN derived from one substate, and a
+   * `running` above is a BOOLEAN derived from one substate, and a
    * finding that has to tell a household what is wrong cannot say "it is not
    * running" when the manager's answer is "it is failed and I have stopped
    * trying". The two flavours disagree about what the words are, so what is

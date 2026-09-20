@@ -1,4 +1,4 @@
-// MSG-06. The five stamps are machinery's.
+// The five stamps are machinery's.
 //
 // SPEC §2: "Five stamps per human message, written by machinery, never by the
 // model: received, acked, started, answered, delivered." Its Forbidden list
@@ -69,7 +69,7 @@ test("MSG-06 a stamp written by the model is refused: every one of the five stam
      values ('inbound', 'm-stamps', 'acked', 'runner')`,
   );
 
-  // And machinery's own fence, per writer per kind (D-06). Without this a
+  // And machinery's own fence, per writer per kind. Without this a
   // schema that grants both machinery roles all five kinds passes every other
   // assertion in the phase, and L1's order of operations stops being enforced.
   for (const [conn, who, forbidden] of [

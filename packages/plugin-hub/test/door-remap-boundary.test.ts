@@ -1,4 +1,4 @@
-// IMP-163, D-178. An agent remapped to a chat this door has never read starts
+// An agent remapped to a chat this door has never read starts
 // at that chat's high-water mark AS THE PLATFORM REPORTS IT AT ACTIVATION.
 // Everything in the chat before that mark is history and is never answered.
 // A message a person sends once the door has started on the new chat is

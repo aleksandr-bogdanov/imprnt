@@ -19,7 +19,7 @@
 // zero-statement window of its own over an idle door. That window is what
 // test/door-typing.test.ts would otherwise make for the fourth task by
 // accident, and making it here means a build that reads the watermark on every
-// pass fails in the plan that introduced the task.
+// pass fails here rather than somewhere further downstream.
 //
 // Red reasons: check 6 is import missing, `src/harvest/row.ts`, reached through
 // `src/door/run.ts`. Check 7's tag is behaviour absent and what it OBSERVES is
@@ -155,7 +155,7 @@ announceClock(GATE_8, "check 8, the demand phrase");
  * A door that reloaded its configuration by EXITING and being restarted opens
  * new connections, so the set of pids changes. A door that re-read the file on
  * its own tick keeps them. That is a measurement of the process, which is what
- * RUN-09's "a routine operation never restarts a process" is about, and what a
+ * "a routine operation never restarts a process" is about, and what a
  * comparison of a test's own handle variable against its own saved copy is not.
  */
 async function doorBackends(it: StagedHub): Promise<number[]> {
@@ -221,21 +221,19 @@ test.skipIf(!GATE_6.ok)(
       // reading it.
 
       // ---------------------------------------------------------------
-      // THE ORDER OF THESE STAGES IS THE FIXTURE'S WHOLE CORRECTNESS, and the
-      // second seat found the first version had it wrong.
+      // THE ORDER OF THESE STAGES IS THE FIXTURE'S WHOLE CORRECTNESS.
       //
-      // D-145 sets the door's in-memory `bound` to the `until` of whatever it
+      // The door's in-memory `bound` is the `until` of whatever it
       // last fired, and a quiet trigger's `until` is `now`. So the moment a row
       // is written, every line already on disk is BEHIND the bound and counts
       // towards nothing. A stage that fired first and then planted older lines
       // expecting a second row was asking a correct door to break its own rule.
-      // D-145 states that case outright and calls it right: "a bound ahead of a
-      // stuck watermark is correct and is left alone."
+      // A bound ahead of a stuck watermark is correct and is left alone.
       //
       // So the registry edit is exercised BEFORE anything fires, while the
       // bound is still null, and the watermark stage runs against a door that
       // has been RESTARTED, because a door arms its bound from the sheet at
-      // connect (D-144) and that is the honest way to put a bound behind a
+      // connect and that is the honest way to put a bound behind a
       // planted line without waiting out a real quiet period.
       // ---------------------------------------------------------------
 
@@ -249,7 +247,7 @@ test.skipIf(!GATE_6.ok)(
       // A DOOR LINE IS PLANTED BESIDE THEM. Counting it would make three, so a
       // build whose count includes machinery fires here and fails.
       // ---------------------------------------------------------------
-      // THE MINIMUM NEVER CHANGES. The second seat's finding: with the quiet
+      // THE MINIMUM NEVER CHANGES. THE FINDING: with the quiet
       // period and the minimum edited together, a door that reloads the MINIMUM
       // and keeps the timeout it started with produces exactly the sequence the
       // check wanted, and never applies the edited timeout at all. So the
@@ -338,7 +336,7 @@ test.skipIf(!GATE_6.ok)(
 
       // THE DOOR NEVER RESTARTED, measured on the PROCESS and not on a test
       // variable. The old `expect(handle).toBe(started)` compared a local to
-      // its own saved copy and could not have failed, which the second seat
+      // its own saved copy and could not have failed, which a reader
       // called a tautology and it was right. A door that reloaded by exiting
       // and being restarted opens new connections to the store, so the set of
       // backend pids it holds is what says the process is the one that started.
@@ -377,19 +375,19 @@ test.skipIf(!GATE_6.ok)(
       await Bun.sleep(TICK_SECONDS * 2 * 1000 + 500);
       const [unchanged] = await harvestRows(it);
       expect(unchanged.body).toBe(row.body);
-      // And no SECOND row either, which is the mirror case D-145 names and
-      // calls correct: the line is behind the bound the first firing set, so
+      // And no SECOND row either, which is the mirror case and is also
+      // correct: the line is behind the bound the first firing set, so
       // the door leaves it to the harvest that row already covers.
       expect((await harvestRows(it)).length).toBe(1);
 
       // ---------------------------------------------------------------
       // Stage 4: THE WATERMARK IS WHAT `from` COMES FROM, once one exists.
-      // D-145: on firing, take `from` from the sheet and never from the cached
+      // On firing, take `from` from the sheet and never from the cached
       // bound.
       //
       // THE DOOR IS RESTARTED ON PURPOSE HERE, and it is the only restart in
       // this check. A door arms its in-memory bound from the watermark at
-      // connect (D-144), so a restart is what puts the bound behind a line that
+      // connect, so a restart is what puts the bound behind a line that
       // is already on disk without waiting out a real quiet period. Stage 2's
       // no-restart assertion is already made and is not weakened by it.
       // ---------------------------------------------------------------
@@ -439,7 +437,7 @@ test.skipIf(!GATE_6.ok)(
       // ---------------------------------------------------------------
       // Stage 5: WHAT RE-ARMS THE QUIET CLOCK AND WHAT DOES NOT.
       //
-      // The second seat's finding on D, and it is right: every stage above
+      // THE FINDING: every stage above
       // plants person lines, so a door that derived quietness from what the
       // PERSON said and ignored the agent would pass all of them. The helper
       // check binds `newestLine`, and nothing bound the door's own wiring.
@@ -512,8 +510,8 @@ test.skipIf(!GATE_6.ok)(
       // due, and no statement may be issued by any backend that is not this
       // check's own. That is the assertion test/door-typing.test.ts would
       // otherwise make for this task by accident, and making it here means a
-      // build that reads the watermark on every pass fails in the plan that
-      // introduced the task rather than in a phase 4 check whose name says
+      // build that reads the watermark on every pass fails here
+      // rather than in a check whose name says
       // nothing about harvest.
       // ---------------------------------------------------------------
       rewrite(30, 99);  // both, deliberately: this window wants nothing due at all
@@ -536,7 +534,7 @@ test.skipIf(!GATE_6.ok)(
       // Window (ii): NOT A HOT LOOP, over an EXPIRED deadline that fired
       // nothing. THIS IS THE ASSERTION NOTHING ELSE IN THE SUITE CAN MAKE.
       //
-      // D-144 says why. A builder copying `attend`'s bound
+      // Here is why. A builder copying `attend`'s bound
       // (`Math.max(0, due - Date.now())`) gets zero for a deadline that has
       // already passed, so the task re-passes continuously, reading two FILES
       // at a time and issuing NO statement. Window (i) above passes it,
@@ -544,7 +542,7 @@ test.skipIf(!GATE_6.ok)(
       // reaches it because its own stage declares no harvester and the task
       // sleeps a tick there.
       //
-      // The rule that makes this pass is D-144's: a quiet deadline contributes
+      // The rule that makes this pass: a quiet deadline contributes
       // to the bound only while it is in the FUTURE, and once it has passed
       // with nothing fired the next wake is the tick. Nothing is counted
       // inside production code for it. The processor time is the external
@@ -699,7 +697,7 @@ test.skipIf(!GATE_7.ok)(
     ).toBe("backstop");
     // THE BACKSTOP IS ASKED FIRST: a case where both would fire answers
     // backstop, because its slice is the wider one and a quiet row underneath
-    // it would be the empty row D-149 describes.
+    // it would be an empty row.
     expect(
       due({ newest: yesterday, oldest: yesterday, count: 9, quietMinutes: 30, minMessages: 1, now: NOW }),
     ).toBe("backstop");
@@ -786,7 +784,7 @@ test.skipIf(!GATE_7.ok)(
       await Bun.sleep(TICK_SECONDS * 3 * 1000 + 500);
       expect((await harvestRows(it)).length).toBe(1);
 
-      // 6b. AND IT DOES NOT KEEP TRYING. The second seat's finding: a row count
+      // 6b. AND IT DOES NOT KEEP TRYING. THE FINDING: a row count
       //     cannot see an insert that meets `on conflict (id) do nothing`, so a
       //     door that re-attempts the same backstop every tick for ever passes
       //     assertion 6 and quietly costs the store a write per tick per chat.
@@ -798,7 +796,7 @@ test.skipIf(!GATE_7.ok)(
       //     Once the backstop is served the watermark is still absent (no
       //     runner has settled anything), so what stops the door is its own
       //     in-memory bound at the midnight it already fired on, which is
-      //     D-145's arithmetic and not a database refusal.
+      //     the bound's own arithmetic and not a database refusal.
       const mine = [await it.read.pid()];
       const watch = await statementWatch(cluster, mine);
       await Bun.sleep(TICK_SECONDS * 2 * 1000 + 500);
@@ -939,7 +937,7 @@ test.skipIf(!GATE_8.ok)(
       expect(body.lines).toBe(3);
 
       // 2. NO HUMAN ROW WAS WRITTEN FOR IT, asserted positively over the whole
-      //    table rather than by a count. D-146: a message addressed to the
+      //    table rather than by a count. A message addressed to the
       //    machinery and answered by the agent is the confusing half.
       const everything = await it.read.sql(
         "select id, kind, body from inbound order by received_at, id",
@@ -949,7 +947,7 @@ test.skipIf(!GATE_8.ok)(
       ).toBe(false);
 
       // 3. THE CHAT LOG DID GET THE LINE. The diary holds every message in
-      //    both directions (MSG-12), and a demand is a message.
+      // both directions, and a demand is a message.
       await until(
         "the chat log holds the phrase as an in line from the person",
         () =>

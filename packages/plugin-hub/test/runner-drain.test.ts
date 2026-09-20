@@ -6,7 +6,7 @@
 // about waiting rows". Its Check line: "A reconnecting runner drains waiting
 // rows with no new arrival."
 //
-// STORE-04's requirement sits in phase 1 and phase 1 had no runner, so this is
+// The requirement predates the runner, so this is
 // the first check that can put a runner behind it. The rows are enqueued before
 // the runner PROCESS exists, not merely before it connects, so every
 // notification they emitted was gone before anything could hear it.
@@ -14,7 +14,7 @@
 // The second check here is the runner's half of the same rule's other clause:
 // while it waits, it issues nothing. The cluster runs with log_statement = 'all'
 // and log_line_prefix = 'pid=%p ', so the count comes from the server and
-// nothing client-side can fake it, the way phase 1 counts the waiter's own
+// nothing client-side can fake it, the way the store checks count the waiter's own
 // backend and the way test/door-outbox.test.ts counts the door's.
 //
 // Red reason: import missing, src/runner/run.ts.

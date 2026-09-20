@@ -1,4 +1,4 @@
-// RUN-16 and RUN-17. `check` opens every credential and asks whether it still
+// `check` opens every credential and asks whether it still
 // works, a second copy of one is a finding, and a preset that names none is
 // reported rather than refused.
 //
@@ -204,8 +204,8 @@ test(
           kind: "refused",
           says: "the platform answered 401 Unauthorized",
         },
-        // The door's token file is a credential without being an entry
-        // (D-111). It is keyed by its FILE, because no id for it is pinned
+        // The door's token file is a credential without being an entry.
+        // It is keyed by its FILE, because no id for it is pinned
         // anywhere and a guess would silently fall through to the fixture's
         // "nobody told me" answer.
         [files.door]: { ok: true },
@@ -268,19 +268,18 @@ test(
         expect(asked.filter((one) => one.id === id).length).toBe(1);
       }
       // A door's `token_file` is a credential of the door's own platform kind,
-      // so RUN-17's "opens every credential" reaches the two bot tokens with
+      // so "opens every credential" reaches the two bot tokens with
       // no registry edit.
       const doorsAsked = asked.filter((one) => one.file === files.door);
       expect(doorsAsked.length).toBe(1);
       expect(doorsAsked[0].kind).toBe("telegram");
-      // THE PINNED ID (04-CONTEXT's amendment, and the second pass was right
-      // to insist): the contract says a door's token file is probed under
+      // THE PINNED ID: the contract says a door's token file is probed under
       // `door:<door id>`, so the check binds the id and not only the file. A
       // build that invented another id would report a finding whose subject no
       // household could match against its own registry.
       expect(doorsAsked[0].id).toBe(`door:${DOOR_TELEGRAM}`);
       // ITS CONTROL: a door whose platform is neither telegram nor discord is
-      // NOT asked about, which is what keeps every phase 2 and phase 3 fixture
+      // NOT asked about, which is what keeps every fixture
       // (all of them `platform = "fake"`) free of a finding.
       expect(asked.some((one) => one.file === "/dev/null")).toBe(false);
 
@@ -331,14 +330,14 @@ test(
       await it.stop();
     }
 
-    // --- THE DEFAULT PROBER IS WIRED (the second seat's finding). Every
+    // --- THE DEFAULT PROBER IS WIRED. Every
     //     assertion above injects a fake, so a `runCheck` that honoured an
     //     injected prober and otherwise only stat'ed the file would pass all of
     //     them while a household's real `check` stayed green through a dead
     //     login, which is L10's incident exactly. This stage passes NO prober,
     //     and it declares ONLY `claude-login` credentials and a `fake` door, so
     //     the default has nothing it could dial: the one thing it can do is
-    //     open a file, which is what D-131 says it does.
+    //     open a file, which is all it does.
     const blank = plantFile("wired/blank.json", "{}");
     const live = plantFile(
       "wired/live.json",
@@ -510,7 +509,7 @@ test(
     }
 
     // --- the two bot kinds, as far as they go with no network. The identity
-    //     call itself is the cutover's (04-CONTEXT's residues say so).
+    //     call itself belongs to the cutover.
     const missingToken = await prober.open({
       id: "bot",
       kind: "telegram",
@@ -529,15 +528,14 @@ test(
     expect((emptyToken as { kind: string }).kind).toBe("blank");
 
     // --- THE TWO BOT KINDS' IDENTITY CALL, through a transport the check
-    //     supplies (the second seat's finding: the synthetic-message rule
+    //     supplies (the synthetic-message rule
     //     forbids sending a person a message, not standing in for an HTTP
     //     round trip). `realProber` takes an optional `fetch`, and with one
     //     supplied NOTHING reaches a network: the check answers 401 and reads
     //     the finding kind back.
     //
-    //     This argument is not in 04-CONTEXT's seam contract and is pinned
-    //     here, which RED-RUN-2.md records the way the metrics row shape was
-    //     recorded before the contract carried it.
+    //     The seam contract does not carry this argument, so it is pinned
+    //     here instead.
     const asked: { url: string; auth: string }[] = [];
     const refusing = (async (url: unknown, init?: { headers?: Record<string, string> }) => {
       asked.push({
@@ -552,7 +550,7 @@ test(
     const dialled = (realProber as Function)({ fetch: refusing }) as typeof prober;
 
     // THE TOKEN IN THE REQUEST IS THE TOKEN IN THE FILE, and the endpoint is
-    // the identity one (the second pass's finding: a URL that merely contained
+    // the identity one (a URL that merely contained
     // the platform's name and some `Bot ` header passed, so a prober sending a
     // hard-coded token would have too).
     const telegramToken = `token-${crypto.randomUUID()}`;
@@ -736,7 +734,7 @@ test(
         credentials: prober,
       })) as Finding[]).filter((one) => one.kind === "credential-copy");
 
-    // TWO DECOYS, planted before anything else (the second seat's finding).
+    // TWO DECOYS, planted before anything else.
     // Without them a scan that reported every eligible JSON file except the
     // declared one passes every positive below, because every positive file
     // holds the secret AND is eligible. One decoy carries the declared file's
@@ -782,7 +780,7 @@ test(
         expect(one.says).toContain("household-claude");
         expect(one.says).toContain(one.subject);
         expect(one.fix).toContain(declared);
-        // D-132: the secret reaches NOTHING a person or a file can read.
+        // The secret reaches NOTHING a person or a file can read.
         expect(one.says).not.toContain(secret);
         expect(one.fix).not.toContain(secret);
       }

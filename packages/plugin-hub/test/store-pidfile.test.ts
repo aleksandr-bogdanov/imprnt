@@ -1,9 +1,9 @@
-// 03b item 2. Postgres is DECLARED, and the hub reads its pid from the file the
-// standard install writes. (SPEC §1 and §6, L4, D-84)
+// Postgres is DECLARED, and the hub reads its pid from the file the
+// standard install writes. (SPEC §1 and §6, L4)
 //
-// BUILD-NOTES 9 recorded the derivation phase 3 picked and called it a residue:
-// the hub asks the store for `pg_backend_pid()`, reads that process's parent and
-// believes it when the parent's command name contains `postgres`. It works, and
+// THE DERIVED READING IS A RESIDUE, not a fact:
+// asking the store for `pg_backend_pid()`, reading that process's parent and
+// believing it when the parent's command name contains `postgres` works, and
 // it is a guess about process trees rather than a fact the household declared.
 // The standard derivation, measured on both boxes this evening, is that every
 // standard install writes a pid file: `/var/run/postgresql/<n>-main.pid` on
@@ -53,7 +53,7 @@ const TICK = 1;
 /**
  * How far UNDER an earlier `ps` sample the hub's later reading may sit.
  *
- * MEASURED on the hub box (BUILD-NOTES 14): `VmHWM` is not a high-water mark on
+ * MEASURED on the hub box: `VmHWM` is not a high-water mark on
  * that kernel. It equals `VmRSS` at every sample and falls with it as a process
  * settles, two to five pages of 16 kB on a 43 MB holder, and the seam agrees
  * with `ps` to the byte at the same instant. The hub samples seconds after this
@@ -108,7 +108,7 @@ test(
       registry: unknown,
     ) => { pid: number | null; reason: string | null };
 
-    // RUN-06: every setting the code reads has a field in the file, declared
+    // Every setting the code reads has a field in the file, declared
     // here, so `readSetting` answers for it instead of refusing the key.
     const declared = new Map(SETTING_FIELDS.map((field) => [field.key, field]));
     for (const key of ["store.pid_file", "store.unit"]) {
@@ -262,7 +262,7 @@ test.skipIf(!gate.ok)(
       const row = (await sheet.row("postgres"))!;
       expect(Number(row.data.pid)).toBe(holder.pid);
       // A reading, inside a band, so a build that filed a constant fails.
-      // MEASURED on the hub box (BUILD-NOTES 14): `VmHWM` is not a high-water
+      // MEASURED on the hub box: `VmHWM` is not a high-water
       // mark there. It equals `VmRSS` and falls with it, so the hub's later
       // sample can sit a few pages under this one. The band carries that drift.
       expect(Number(row.data.bytes)).toBeGreaterThanOrEqual(mine - PEAK_DRIFT_BYTES);

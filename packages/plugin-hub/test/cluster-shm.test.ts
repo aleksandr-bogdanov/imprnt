@@ -1,16 +1,16 @@
-// 03b item 9. The suite does not cost this Mac a shared memory slot every time
+// The suite does not cost a Mac a shared memory slot every time
 // a run is interrupted. (SPEC §8)
 //
-// BUILD-NOTES B.3 and RED-RUN-2's environment note, in its own words: "The Mac
+// MEASURED: a Mac
 // runs out of System V shared memory before it runs out of anything else, and
-// that is the one item on this list that bites mechanically rather than
+// it bites mechanically rather than
 // conceptually. `kern.sysv.shmmni` is 32, each throwaway cluster holds one
 // segment, and a cluster killed rather than stopped leaks it, so an interrupted
 // run permanently costs the box a slot. After about 30 interrupted runs every
 // `initdb` in the suite fails with `could not create shared memory segment: No
 // space left on device` and the suite reports a setup error that says nothing
 // about the real cause." That is a check round's own tooling eating the machine
-// it runs on, and it is the reason the phase 3 red run had to be started twice.
+// it runs on, and it is why a suite run can have to be started twice.
 //
 // THE FIX HAS TWO HALVES and this file now binds both: `test/helpers/cluster.ts`
 // stops every cluster it started when the process leaves by any route, AND
@@ -19,7 +19,7 @@
 // check here leaks a segment on purpose to see. The first was called
 // uncheckable because a check cannot observe its own death, and the second
 // check below is the answer to that: the process that dies is a CHILD, and this
-// file is the one watching it (VERIFY-CODEX row 9).
+// file is the one watching it.
 //
 // THE ORACLE IS AN ID DIFF AND NOT THE RULE UNDER TEST. The sweep decides what
 // to remove by ownership, attach count and a dead creator. A check that found
@@ -136,7 +136,7 @@ test.skipIf(!darwin)(
     darwin ? "" : " [skipped: System V shared memory is exhausted by Postgres on darwin only]"
   }`,
   async () => {
-    // WHAT THIS IS FOR (VERIFY-CODEX row 9). The check above kills the
+    // WHAT THIS IS FOR. The check above kills the
     // POSTMASTER, which is not the process that owns the cleanup handlers, so
     // reinstating the signal-handler defect REVIEW.md D1 found (re-raise with
     // the listener still attached, which re-enters the handler and burns

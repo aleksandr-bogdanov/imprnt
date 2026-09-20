@@ -1,8 +1,7 @@
-// 03b item 7. `check` cannot reach a service manager by ANY path. (SPEC §6,
-// §7, L13)
+// `check` cannot reach a service manager by ANY path. (SPEC §6, §7, L13)
 //
-// RED-RUN-2's stated residue: "`check` calling a manager by ABSOLUTE path is not
-// caught. Check 22 runs `runCheck` in a subprocess whose PATH is fronted by
+// `check` calling a manager by ABSOLUTE path has to be caught, and a PATH shim
+// alone does not catch it. The subprocess check runs `runCheck` with a PATH fronted by
 // shims that log every `launchctl` and `systemctl` invocation and refuse every
 // mutating verb ... A build that spawned `/bin/launchctl` by its full path never
 // meets the shim." PATH fronting can only ever catch a bare name, so the fence
@@ -175,7 +174,7 @@ test(
 );
 
 // ---------------------------------------------------------------------------
-// The third half, added by the Codex closure round (VERIFY-CODEX row 7).
+// The third half, added by the Codex closure round.
 //
 // The shim check above proves `check` reached the manager through the seam it
 // was HANDED on the run it made. What it cannot see is a helper somewhere under
@@ -185,8 +184,8 @@ test(
 // misses it too, because it reads one directory and no subdirectory.
 //
 // So this scans every `.ts` file under `src/`, recursively, for two things: the
-// manager NAMES, and every process SPAWN. The property it binds is 03b item 7's
-// own: there is exactly one way to invoke a service manager in this package,
+// manager NAMES, and every process SPAWN. The property it binds:
+// there is exactly one way to invoke a service manager in this package,
 // and it is the binary the seam factory was given.
 //
 // WHERE THE BOUNDARY REALLY IS, because the literal wording of row 7 ("the
@@ -194,7 +193,7 @@ test(
 // constants") cannot hold and should not:
 //
 //   - `src/os/diff.ts` returns `launchctl bootout ...` and `systemctl --user
-//     reset-failed ...` as TEXT A HUMAN PASTES. D-105 pins those strings whole,
+//     reset-failed ...` as TEXT A HUMAN PASTES. Those strings are pinned whole,
 //     on the ground that a fix that does not run is worse than no fix, so they
 //     cannot be assembled from parts and cannot move. They are in template
 //     literals, they are returned, and nothing runs them.
@@ -325,7 +324,7 @@ test(
 
     // --- 4. AND INSIDE src/os, only the three files that have a reason:
     //     the two seam factories and the file that returns the commands a
-    //     human pastes (D-105 pins those strings whole).
+    //     human pastes, which are pinned whole.
     const allowed = new Set([
       hubPath("src/os/launchd.ts"),
       hubPath("src/os/systemd.ts"),

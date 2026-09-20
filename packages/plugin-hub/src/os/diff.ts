@@ -106,7 +106,7 @@ export function stopCommand(flavour: string, unit: string): string {
 
 /**
  * The command a human pastes to START a listed piece the manager is not
- * running. Moved here from `check` by 03b item 7: a manager's name that `check`
+ * running. It lives here and not in `check`: a manager's name that `check`
  * can spell is a name `check` could invoke, and the one place the difference
  * cannot be observed from outside is a string built in the right place for the
  * wrong reason. It takes the ENTRY ID, because the two flavours name the same
@@ -121,7 +121,7 @@ export function startCommand(flavour: string, entryId: string): string {
 }
 
 /**
- * The command that clears a unit the manager has GIVEN UP on (03b item 3).
+ * The command that clears a unit the manager has GIVEN UP on.
  *
  * systemd parks a unit that hit its start limit in `ActiveState=failed` with
  * `Result=start-limit-hit`, and such a unit does not come back from `start`

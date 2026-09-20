@@ -6,8 +6,8 @@
 // exactly the log slice and the vault's filing rules". ROADMAP criterion 2:
 // "Every harvest turn carries its preset ID and tokens." L19.
 //
-// This is the ONE place in phase 5 where a real model appears at all. It lives
-// in `live/` for the reason phase 2 gave: it needs the Claude Code login and no
+// This is the ONE place where a real model appears at all. It lives
+// in `live/` for the usual reason: it needs the Claude Code login and no
 // automated run may depend on one. `bunfig.toml` sets the test root to `test`,
 // so `bun test` never reaches it, and `bun run test:live` is what runs it. It
 // needs no platform token: the fake platform is what the door posts into.
@@ -19,7 +19,7 @@
 //   - WHETHER ANY CAME BACK AT ALL.
 //
 // The last one is the harness's ruling after the second Codex pass, and the
-// second seat was right to push on it. L19 rule 3 says `nothing` is a real
+// and it is worth pushing on. L19 rule 3 says `nothing` is a real
 // answer and not a failure, and the phase boundary says the model's taste is
 // unbound. A check that required a positive note would be binding the model's
 // judgment, which is the one thing this phase says no check may do, and it
@@ -34,8 +34,8 @@
 //
 // It PRINTS which answer it got, because a `nothing` on a slice this concrete
 // is worth a human reading even though it is not a failure: it would say the
-// prompt is not carrying its weight, which is D-158's question and not this
-// check's.
+// prompt is not carrying its weight, which is the prompt's question and not
+// this check's.
 //
 // Bounded at 420 s with the answer awaited inside 240 s. The probe measured a
 // real harvest at 31 to 96 s on this Mac with the cheap model at low effort.
@@ -140,7 +140,7 @@ test.skipIf(!GATE_16.ok)(
     const { HARVEST_SHEET } = await seam("src/harvest/sheet.ts");
 
     const db = await freshDatabase(cluster);
-    // THE REAL PATH, and BUILD-NOTES 10 has the measurement. macOS hands out
+    // THE REAL PATH, measured. macOS hands out
     // scratch directories under `/var/folders/...`, which is a symlink to
     // `/private/var/folders/...`, and a sandbox profile's
     // `(subpath "/var/folders/...")` matches nothing because the kernel
@@ -202,8 +202,7 @@ test.skipIf(!GATE_16.ok)(
 
       // THE SLICE, nine lines carrying THREE durable facts with chatter around
       // them, written out here so a reader sees exactly what the model was
-      // shown. The shape is 05-BRIEF's slice A, which the probe measured
-      // producing three notes.
+      // shown. It is the shape the probe measured producing three notes.
       //
       // It is deliberately unmistakable: a moved appointment with a date and a
       // time, a cancelled subscription with an amount and a refund window, and
@@ -273,9 +272,9 @@ test.skipIf(!GATE_16.ok)(
       });
 
       // The harvest row, planted directly as the door role. The door's three
-      // triggers are bound by 05-02 against a fake platform, and making this
+      // triggers are bound elsewhere against a fake platform, and making this
       // check wait out a real quiet period would add a minute to a run that
-      // already costs a model turn and would bind nothing 05-02 does not.
+      // already costs a model turn and would bind nothing those already do.
       const until_ = new Date(now).toISOString();
       const rowId = `harvest:${AGENT}:${until_}`;
       const door_ = cluster.connectAs("hub_door", db) as unknown as {
@@ -418,7 +417,7 @@ test.skipIf(!GATE_16.ok)(
           () => JSON.stringify(fake.posts()),
         );
       } else {
-        // D-159: a QUIET harvest that saved nothing says nothing. The report
+        // A QUIET harvest that saved nothing says nothing. The report
         // line says what was saved, and on this row there is nothing to say.
         expect(mine).toEqual([]);
       }
@@ -431,7 +430,7 @@ test.skipIf(!GATE_16.ok)(
       //     injects the real one when the note carried none, so the only way
       //     this fails is the model having written its own fabricated one and
       //     the prompt not having stopped it, which is the measured defect
-      //     D-158 exists to close.
+      //     the prompt exists to close.
       for (const one of landed) {
         const text = readFileSync(join(vault.vaultDir, one), "utf8");
         const said = /^source:\s*"?\[\[([^\]]+)\]\]"?\s*$/m.exec(text);

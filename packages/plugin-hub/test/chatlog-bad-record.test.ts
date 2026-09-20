@@ -1,8 +1,8 @@
-// IMP-160 item 2, D-172. One complete record in the middle of a chat log that
+// One complete record in the middle of a chat log that
 // is not a chat line is skipped by the door and reported by file and line. It
 // never refuses the door, and every other agent on that door keeps working. A
 // torn LAST record is a different thing: a write that never finished, which
-// D-172 repairs by truncation exactly as before.
+// the repair truncates.
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
@@ -54,7 +54,7 @@ for (const middle of ["malformed", "invalid", "good", "torn-last"] as const) {
       expect(texts.filter(text => text === "accepted after")).toHaveLength(1)
       const failures = (await it.read.ledger({ stream: "operation", kind: "failed" })).filter(row => String(row.subject).startsWith(file))
       if (middle === "malformed" || middle === "invalid") {
-        // D-172: a complete record is never truncated, so its bytes stay.
+        // A complete record is never truncated, so its bytes stay.
         expect(bytes.startsWith(planted), "the skipped record stays on disk").toBe(true)
         expect(failures, "one diary entry names the file and the line").toHaveLength(1)
         expect(failures[0].subject).toBe(`${file}:2`)
@@ -62,7 +62,7 @@ for (const middle of ["malformed", "invalid", "good", "torn-last"] as const) {
       } else {
         expect(failures).toHaveLength(0)
         expect(stderr).not.toContain(file)
-        // D-172's repair of an unfinished last write is unchanged.
+        // The repair of an unfinished last write still applies.
         if (middle === "torn-last") expect(bytes.startsWith(planted + JSON.stringify({ id: owed, at, direction: "in", from: "p1", text: "owed at start" }))).toBe(true)
         else expect(bytes.startsWith(planted)).toBe(true)
       }

@@ -6,17 +6,16 @@
 // operation waiting on a restart" and "a process that reads its configuration
 // only at startup."
 //
-// TWO CHECKS, DELIBERATELY SPLIT (D-88). The first half needs no operating
+// TWO CHECKS, DELIBERATELY SPLIT. The first half needs no operating
 // system at all, so a box with no user manager, including a CI runner, still
 // proves it. A single gated smoke would take the whole criterion down with it.
 //
-// WHAT THIS SMOKE DOES NOT RUN, named here rather than smuggled in. RUN-09 also
-// lists editing an allowlist, adding, editing or pausing a watch, renaming or
-// deleting a channel, and sleeping or waking an agent. Phase 3 has none of them:
-// the ACL is D6 and is deferred past v3.0, watches are phase 6, channels are
-// phase 4 and 6, and no sleep-or-wake concept exists yet.
+// WHAT THIS SMOKE DOES NOT RUN, named here rather than smuggled in. The
+// routine operations also include editing an allowlist, adding, editing or
+// pausing a watch, renaming or deleting a channel, and sleeping or waking an
+// agent. None of them exist yet: the ACL is D6 and is deferred past v3.0.
 //
-// THE MESSAGES GO THROUGH THE PLATFORM (D-104, the second seat's lead). A row
+// THE MESSAGES GO THROUGH THE PLATFORM. A row
 // inserted into the store behind the door's back asks only whether the RUNNER
 // noticed the registry edit, and a door that reads its agent set once at start
 // passes that. A human typing to a newly added agent is typing into a chat
@@ -176,10 +175,10 @@ test(
       //     `src/runner/run.ts` reads `agentsFor(first, { runner })` once at
       //     start and `src/door/run.ts` reads `agentsFor(registry, { door })`
       //     once at start, so a new agent is neither pulled nor served without
-      //     a restart, and RUN-09 forbids that.
+      //     a restart, which is forbidden.
       //
-      //     THE MESSAGE COMES IN THROUGH THE PLATFORM, which is the second
-      //     seat's lead and D-104's reason. Inserting it into the store behind
+      //     THE MESSAGE COMES IN THROUGH THE PLATFORM, and here is why.
+      //     Inserting it into the store behind
       //     the door's back asks only the runner to have noticed; a human
       //     typing to a new agent reaches a chat the door has to be pulling.
       //     So the whole path is exercised: the door notices the new agent,
@@ -265,8 +264,8 @@ test(
       // --- 4. CHANGE A MODEL. The next turn record carries the new preset id,
       //     computed by the TEST from the pinned formula rather than read from
       //     the code under test, and the adapter was asked to start a new
-      //     session (D-73: a preset change restarts the CHILD, never the
-      //     process).
+      //     session, because a preset change restarts the CHILD and never the
+      //     process.
       const startsBefore = it.scripted.starts().length;
       rewrite({ people, model: "a-different-model-name" });
       const after = "a message that lands on the new model";
@@ -408,7 +407,7 @@ test.skipIf(!gate.ok)(
         },
       ]);
       // A LIVE PID, from the manager's own record, not a label in a list. The
-      // second seat's lead: "the label is there and the ledger says started" is
+      // "the label is there and the ledger says started" is
       // satisfied by a hub that loaded the unit and never started it.
       await until(
         "the added entry is a unit with a live pid of its own",
@@ -441,7 +440,7 @@ test.skipIf(!gate.ok)(
       // --- 2. REMOVE IT.
       rewrite(baseRun);
       // THE WAIT IS ON THE HUB'S OWN LINE AND WAS ON THE MANAGER'S LIST
-      // (BUILD-NOTES 18). The hub stops a stale unit and only then removes it
+      // The hub stops a stale unit and only then removes it
       // (`src/hub/run.ts`), so by the time `remove` runs the service is already
       // inactive; `remove` then DISABLES it, which drops the last reference and
       // makes an already-inactive unit collectable, and the delete of the files

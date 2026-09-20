@@ -1,6 +1,5 @@
-// REVIEW M1, M2, S2 and S4. Four things the phase 5 build round left, each one
-// a person or a fact with nothing said about it, which is the class of defect
-// this phase exists to close.
+// Four failures, each one a person or a fact with nothing said about it,
+// which is the class of defect this file exists to close.
 //
 // M1: a `hub.imprnt` naming a command that is not there ends the agent's
 // serving loop for good. `Bun.spawn` throws synchronously on a command it
@@ -16,21 +15,21 @@
 // before the line back, so a person who typed the phrase reads silence. It is
 // reachable in ordinary use, because `readSlice` drops every line that IS the
 // phrase: type it, let it file, type it again with nothing said in between.
-// D-159 pins the answer to exactly this case and calls the silence "the sin
+// The answer is pinned for exactly this case, because the silence is "the sin
 // this project is named after".
 //
 // S2: the door's one read of open turns was narrowed to `kind = 'human'`, and
 // SPEC §2 puts `report` at rank 0 for the same reason it puts `human` there:
 // "rank 0 is anything a human is waiting on (a human's message, a report on a
 // job that answers a human's message)". A report row was getting typing, a
-// progress line and all three clock lines before phase 5 and none after it.
+// progress line and all three clock lines before the narrowing and none after it.
 //
 // S4: `classifyApply` answers `note: ""` when a marker line carries no path at
 // the skip index, and an empty entry joined into the report line renders
 // `[door] saved. Notes: .`, a sentence about nothing. The three forms exist so
 // a person never reads one.
 //
-// THE LOOP IS SCRIPTED AND THE FILING IS REAL, the same split every phase 5
+// THE LOOP IS SCRIPTED AND THE FILING IS REAL, the same split every harvest
 // check is built on.
 
 import { authorizeFixture } from "./helpers/authorized-registry.ts";
@@ -389,7 +388,7 @@ test(
 
     // --- S2, against the cluster. A `report` row is a row a human IS waiting
     //     on: SPEC §2 puts it at rank 0 beside a human's own message, for that
-    //     reason and in those words. Before phase 5 it got typing, a progress
+    //     reason and in those words. Unnarrowed it gets typing, a progress
     //     line and all three clock lines from `attend`; the narrowing to
     //     `kind = 'human'` took all of them away, which is SPEC §2's Forbidden
     //     "an expired clock with no chat line and no finding".

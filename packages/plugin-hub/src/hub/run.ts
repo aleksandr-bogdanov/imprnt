@@ -270,7 +270,7 @@ export async function runHub(options: {
     for (const id of residentIds(registry, options.machine)) {
       let pid: number | null = null;
       if (id === POSTGRES_PEAK_ID) {
-        // 03b item 2. The file the household DECLARED, never a process tree.
+        // The file the household DECLARED, never a process tree.
         // With no `[store]` section nothing is measured for the store and
         // `check` keeps `peak-missing:postgres`, which is the honest state.
         pid = readStorePid(registry).pid;

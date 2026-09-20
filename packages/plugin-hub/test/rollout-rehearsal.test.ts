@@ -190,7 +190,7 @@ for (const osName of ["linux", "macos"] as const) {
     for (let i=0;i<2;i++) {
       let early: Awaited<ReturnType<typeof runDoor>> | undefined
       try {
-        // IMP-160: before the handoff the door waits and says why instead of
+        // Before the handoff the door waits and says why instead of
         // exiting into its unit's start limit, so this control stops it waiting.
         const abort=new AbortController()
         const waiting=runDoor({door:manifest.bindings[i].door,registryFile,platform:edges[i].platform,signal:abort.signal}).then(d=>{early=d;return d})
@@ -276,7 +276,7 @@ for (const osName of ["linux", "macos"] as const) {
     const originalChat=registry.agents.find(a=>a.id==="p1-lair")!.chat
     editAgent(registryFile,"p1-lair",{chat:"1000000001"})
     // A chat the door holds no cursor for starts at the edge's newest cursor, "9", which the door asks
-    // the platform for once when it activates the chat and saves before its first pull (D-178, IMP-163).
+    // the platform for once when it activates the chat and saves before its first pull.
     // Everything sent after that is answered, so this waits for the door to be reading the new chat.
     // Measured max 1286 ms in 27 runs on the Linux box. Three times that is 3858, so 5000 stays.
     expect(await observe(()=>edges[0].pulls().some(p=>p.chat==="1000000001" && p.cursor==="9"),5000)).toBe(true)

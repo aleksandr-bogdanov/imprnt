@@ -84,11 +84,10 @@ function brewPrefix(): string {
 
 /**
  * The loop's own login, which SPEC section 5 names as the one thing inside the
- * box that is not the person's. MEASURED by 03b item 1's bisect: without the
+ * box that is not the person's. MEASURED by bisecting the grants: without the
  * keychain the real loop starts and says "Not logged in", and with it and
  * nothing else of the home directory it answers on the cheap model. The
- * preference and loop-state grants the evening's measurement carried turned out
- * not to be needed and are not here.
+ * preference and loop-state grants are not needed and are not here.
  */
 const MAC_LOGIN = [join(homedir(), "Library", "Keychains")];
 

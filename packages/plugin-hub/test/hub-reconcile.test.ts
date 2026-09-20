@@ -1,10 +1,10 @@
-// RUN-03 and L13. The hub installs, starts, stops and removes from the
+// The hub installs, starts, stops and removes from the
 // registry, and never touches a unit it did not generate. (SPEC §6, D7)
 //
 // D7: "one hub process per machine, ours, unsandboxed, is the only thing that
 // talks to the OS: it watches the registry and installs, starts, stops or
-// restarts service files when the registry changes." D-78 fences what it may
-// touch: a unit under the RENDER prefix with no entry for this machine is one
+// restarts service files when the registry changes." What it may touch is
+// fenced: a unit under the RENDER prefix with no entry for this machine is one
 // the hub itself generated and the registry no longer wants, so the hub removes
 // it. A unit under the SCAN prefix that is NOT under the render prefix was never
 // the hub's to write, so it is reported and nothing executes anything.
@@ -15,7 +15,7 @@
 // prefix only and is therefore a thing the hub must report and must not touch:
 // planting it is the whole point.
 //
-// THE MACHINE IS NEVER HARD-CODED. D-77 has the hub refuse a machine whose
+// THE MACHINE IS NEVER HARD-CODED. The hub refuses a machine whose
 // declared `os` is not the platform it is running on, so a fixture that wrote
 // `pi`/`linux` would be refused before the check started, on a Mac, and would
 // read exactly like a hub bug.
@@ -73,8 +73,8 @@ test.skipIf(!gate.ok)(
     });
 
     // The entry the hub installs is a `kind = "runner"`, so what it renders is
-    // the production entry point D-94 pins. No file under `src/entry/` is
-    // created by this round: the hub derives that path from the entry's kind.
+    // the production entry point. No file under `src/entry/` is
+    // created by the check: the hub derives that path from the entry's kind.
     const base = {
       hub: {
         store_url: it.storeUrl,
@@ -111,7 +111,7 @@ test.skipIf(!gate.ok)(
           child_memory_limit_mb: 64,
         },
       ]);
-      // STARTED means a process, not a label. The second seat's lead: a hub
+      // STARTED means a process, not a label. a hub
       // that LOADED the unit without starting it, and wrote `unit.started`
       // anyway, satisfied a census of names. So the pid comes from the
       // manager's own record, through a helper that imports nothing from src/,
@@ -170,7 +170,7 @@ test.skipIf(!gate.ok)(
         ),
       ).toEqual([]);
 
-      // --- 4. STOP AND REMOVE. The `stale` half of D-78: a render-prefix unit
+      // --- 4. STOP AND REMOVE. The `stale` half: a render-prefix unit
       //     with no entry is the hub's own to remove.
       rewrite([]);
       await until(

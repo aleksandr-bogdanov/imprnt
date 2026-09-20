@@ -1,21 +1,21 @@
-// 03b item 1. The agent's process WEARS the box, and an agent that cannot be
-// boxed is a finding. (SPEC §5, L7, D-92, D-93)
+// The agent's process WEARS the box, and an agent that cannot be
+// boxed is a finding. (SPEC §5, L7)
 //
-// Phase 3 closed the box and left it hanging in the wardrobe: check 15 proves a
+// A closed box left hanging in the wardrobe is the failure: check 15 proves a
 // boxed command cannot read the other person's tree and check 16 proves the
 // command is derived from the registry, and NOTHING wires `boxCommand` into
 // `Adapter.start`, so no agent's model process runs inside one. That residue is
-// D-92's `[partial]` and this file is what closes it.
+// the `[partial]` this file closes.
 //
-// THE SEAM, per 03b: the runner computes the boxing for the agent and hands the
+// THE SEAM: the runner computes the boxing for the agent and hands the
 // adapter a hook, `wrap(argv) => argv`. The adapter stays loop-specific and
 // box-agnostic: it imports nothing from `src/box/`, knows no tool name, and
 // spawns whatever comes back. `test/helpers/scripted-adapter.ts` records the
 // argv it really used, which is the production code's own output read at the
 // seam rather than the boxing code being asked whether it boxed.
 //
-// WHY THE PLANNED macOS PROBE IS NOT THE ONE BELOW. 03b-DEBTS asks for the
-// child's `argv[0]` read from `ps -o command= -p <pid>`. MEASURED on this Mac,
+// WHY THE OBVIOUS macOS PROBE IS NOT THE ONE BELOW. It would read the
+// child's `argv[0]` from `ps -o command= -p <pid>`. MEASURED on a Mac,
 // 2026-09-15: `sandbox-exec` applies the profile and then EXECS the target in
 // the same process, so the pid's own argv is the target's and never names the
 // tool (`/usr/bin/sandbox-exec -f p.sb /bin/sh -c 'sleep 5'` reads back as
@@ -23,13 +23,13 @@
 // including against a perfectly boxed child. `bwrap` is the other way round: it
 // forks, so the spawned pid stays bwrap's and `/proc/<pid>/cmdline` does name
 // it, and that reading is kept as the Linux extra. What replaces it on both
-// platforms is the OUTCOME, which is what D-92 says a box check binds: the
+// platforms is the OUTCOME, which is what a box check binds: the
 // child, from inside itself, cannot read the other person's marker, and the
 // same child unboxed reads it.
 //
-// MEASURED BESIDE IT, and recorded because it narrows D-92's stated reason:
+// MEASURED BESIDE IT, and recorded because it narrows the reason:
 // bun DOES start inside a `(deny default)` profile carrying the allow set
-// 03b-DEBTS measured for the real loop (root literal, the system paths,
+// measured for the real loop (root literal, the system paths,
 // /opt/homebrew, read and write on /private/tmp and /private/var/folders,
 // process-exec, sysctl-read, mach-lookup, network, ipc-posix, system-socket,
 // user-preference-read, iokit-open). "bun itself did not start" was true of the
@@ -119,7 +119,7 @@ async function stageBoxed(): Promise<StagedHub> {
     },
     hub: { shared_zone: trees.sharedZone },
     machines: [machine],
-    // D-93. A person is a registry entry and the tree is the boundary. With no
+    // A person is a registry entry and the tree is the boundary. With no
     // tree there is nothing to fence, which is the `agent-unboxed` case.
     people: [
       { id: PERSON, tree: p1.tree },
@@ -157,7 +157,7 @@ test(
     const machine = thisMachine();
 
     // One person with a tree, one without, an agent each, both on this
-    // machine's runner. The file LOADS: D-93 rules that a person with no tree
+    // machine's runner. The file LOADS, because a person with no tree
     // is a question about a machine and not about the file.
     const half = await stageHub(cluster, {
       machines: [machine],
@@ -225,7 +225,7 @@ test(
       }
 
       // --- AND THE FILE THAT DECLARES NO PEOPLE AT ALL, which is the shape
-      //     03b-DEBTS:19 names first and the one the build round left silent.
+      //     it is easiest to leave silent.
       //     An agent whose person the file never mentions runs exactly as
       //     unboxed as one whose entry omits the field: `boxFor` returns null
       //     for an empty tree either way, and the other trees on that box are
@@ -381,7 +381,7 @@ test.skipIf(!gate.ok)(
     expect(typeof runRunner).toBe("function");
 
     // The trees exist on disk, and the REGISTRY declares none of them. What
-    // decides is the file, which is D-93's rule and is why this is the control
+    // decides is the file, which is why this is the control
     // for the check above rather than a second copy of it.
     const other = trees.other(PERSON);
     const marker = join(other.tree, other.marker);

@@ -103,7 +103,7 @@ export interface Adapter {
     argv?: string[];
     env?: Record<string, string | undefined>;
     /**
-     * 03b item 1. The runner's boxing hook, applied to whatever argv this loop
+     * The runner's boxing hook, applied to whatever argv this loop
      * would otherwise spawn. The adapter spawns `wrap(argv)` when it is given
      * one and `argv` when it is not.
      *

@@ -1,7 +1,7 @@
-// Check: every resident piece has a peak on record. (SPEC §6, L4, RUN-11)
+// Check: every resident piece has a peak on record. (SPEC §6, L4)
 //
 // L4: "every long-running program we ship has a known memory peak, measured
-// once, written down." D-84 makes that a state sheet `memory_peak`, one row per
+// once, written down." That record is a state sheet `memory_peak`, one row per
 // id, with Postgres under the fixed id `postgres` because the household installs
 // it from its own package manager and it is not a registry entry.
 //
@@ -19,7 +19,7 @@
 // THE PEAK THAT NEVER FALLS IS ASSERTED WHERE IT LIVES. `OsSeam.memory` is
 // stateless on both platforms and returns `peak_bytes: null` on darwin, because
 // the macOS kernel keeps no peak for a running process at all. The running
-// maximum is the HUB's, accumulated in the sheet by `recordPeak` (D-84), so
+// maximum is the HUB's, accumulated in the sheet by `recordPeak`, so
 // that is what this asserts. Putting the accumulator inside the reader would
 // hide state in a function every caller reads as a probe, and would make "the
 // peak never falls" unassertable on a Mac.
@@ -27,7 +27,7 @@
 // TWO TESTS SINCE THE CLOSURE ROUND. 13a is everything that can be proved
 // without a service manager: the resident set, the finding, the sheet's one row
 // per id, the peak that never falls and a reading measured against a known
-// change in size. 13b is the half the second seat found missing, at the bottom
+// change in size. 13b is the half was missing, at the bottom
 // of this file: a LIVE HUB writing a resident's peak on its own tick, which no
 // exercise of `recordPeak` from a test can stand in for.
 //
@@ -272,13 +272,13 @@ test(
 );
 
 // ---------------------------------------------------------------------------
-// 13b. The half the second seat found missing.
+// 13b. The half was missing.
 //
 // Everything above exercises `recordPeak` and `readPeaks` with rows the CHECK
 // wrote, so a hub that never measured a resident of its own passes it: the same
 // holder pid supplies every row, including the one filed under `postgres`.
-// D-84's actual rule is "the hub writes the row on its tick and only when the
-// reading exceeds the one on record", so this binds that: a live hub, a real
+// The actual rule is that the hub writes the row on its tick and only when the
+// reading exceeds the one on record, so this binds that: a live hub, a real
 // unit it installed and started itself, and a row nobody in this test wrote,
 // carrying at least the size this test measured independently and the pid the
 // MANAGER reports for that unit.
@@ -287,8 +287,8 @@ test(
 // The half above stays ungated, so a box with no manager still proves the
 // resident set, the sheet and the reading.
 //
-// WHAT IT DELIBERATELY DOES NOT ASSERT: a row for `postgres`. D-84 puts the
-// store in the resident set under a fixed id and says nothing about how a hub
+// WHAT IT DELIBERATELY DOES NOT ASSERT: a row for `postgres`. The store is in
+// the resident set under a fixed id and nothing says how a hub
 // finds that process, so requiring the row here would be this check inventing a
 // derivation the contract does not have. The `peak-missing:postgres` finding
 // above is where that obligation lives.
@@ -312,7 +312,7 @@ test.skipIf(!gate.ok)(
       run: [],
     });
     // The entry is a `kind = "runner"`, so what the hub renders is the entry
-    // point D-94 pins and this round creates no file under `src/entry/`.
+    // point the entry contract pins, and no new file under `src/entry/`.
     writeRegistry(it.stateDir, {
       hub: {
         store_url: it.storeUrl,

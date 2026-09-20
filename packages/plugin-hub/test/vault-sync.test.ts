@@ -1,4 +1,4 @@
-// ROLL-07 and ROLL-31. D-180 requires actual remote commits and one success stamp.
+// Actual remote commits and one success stamp are required.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
@@ -429,7 +429,7 @@ test("L14 killed sync owner releases repository lock for the next process", asyn
 
 import { observe } from "./helpers/rollout-runner.ts"
 
-// IMP-161. A vault holds its mount as a separate checkout, and the parent's
+// A vault holds its mount as a separate checkout, and the parent's
 // status lists it as an untracked directory. The converter gives the mount its
 // own sync entry, so the vault's entry does not name it.
 test("ROLL-31 a declared repository checked out inside a vault is synced on its own branch and is never the vault's uncommitted change", async () => {

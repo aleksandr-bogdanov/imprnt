@@ -95,7 +95,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
   const bin = options.bin ?? "systemctl";
   const unitDir = options.unitDir ?? join(homedir(), ".config", "systemd", "user");
   /**
-   * 03b item 7. The manager binary is a PARAMETER, defaulting to the bare
+   * The manager binary is a PARAMETER, defaulting to the bare
    * name PATH resolves. `check` reaches a manager only through the seam it
    * was handed, and a check that points this at a recording shim BY
    * ABSOLUTE PATH catches the one route PATH fronting never could.

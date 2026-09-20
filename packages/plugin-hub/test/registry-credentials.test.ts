@@ -1,4 +1,4 @@
-// RUN-16. A credential has one owner and one place, and the file says where.
+// A credential has one owner and one place, and the file says where.
 //
 // SPEC §6 and L10 rule 1: "A credential has one owner and one place. The owner
 // is the household or one person. It lives in exactly one file, and every agent
@@ -9,9 +9,9 @@
 //
 // THE UNDECLARED CONTROL IS LOAD-BEARING. A `paid = "plan"` preset that names
 // no credential LOADS, because undeclared is a `check` finding and never a
-// refusal (D-111, bound in test/check-credentials.test.ts). Every shipped
+// refusal, bound in test/check-credentials.test.ts. Every shipped
 // fixture is such a file, so a loader that refused one would take the whole
-// suite down with it. Bound here rather than discovered in the build round.
+// suite down with it.
 //
 // No path below is a real path and no id is a real id: every credential file is
 // a placeholder under a scratch directory, and nothing in this file writes a
@@ -168,8 +168,8 @@ test("RUN-16 a credential has one owner and one place and the file says where: t
   }
 
   // --- 4's own control: the SAME owner in a file that declares NO people at
-  //     all still loads. That is D-93's tolerance applied here for the same
-  //     reason: whether a person is declared is a question this file may not
+  //     all still loads. That is the people-less tolerance applied here for the
+  //     same reason: whether a person is declared is a question this file may not
   //     be answering yet, and a loader that made it unconditional would refuse
   //     files that run today.
   {
@@ -234,7 +234,7 @@ test("RUN-16 a credential has one owner and one place and the file says where: t
   // The agent's own credential is the one its preset names.
   expect((credentialOf as Function)(registry, "p1-lair")).toBe("household-claude");
 
-  // --- control (b): D-111's ruling, and the one every shipped fixture rests
+  // --- control (b): the rule every shipped fixture rests
   //     on. A plan preset naming NO credential loads, and the outage key falls
   //     back to the preset's own name, which is what keeps the one-notice
   //     arithmetic sound for a household that has not written the table yet.

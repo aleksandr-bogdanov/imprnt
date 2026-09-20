@@ -1,8 +1,8 @@
-// RUN-02 and D7. A crash loop is a finding, because launchd never gives up.
+// A crash loop is a finding, because launchd never gives up.
 // (SPEC §6, L13)
 //
 // D7: "launchd never stops restarting a dying process, so on a Mac the crash
-// loop is a `check` finding rather than an OS state." D-96 follows it through:
+// loop is a `check` finding rather than an OS state." Followed through:
 // `hub.give_up_after` and `hub.give_up_window_seconds` render to systemd's
 // `StartLimitBurst` and `StartLimitIntervalSec`, launchd has no equivalent and
 // the launchd renderer emits neither, and `check` carries `crash-loop` instead.
@@ -29,7 +29,7 @@ import { loadRegistry } from "../src/registry/load.ts";
 import { listRunEntries } from "../src/registry/entries.ts";
 
 const SLOW = 180_000;
-// D-103. `give_up_after` is 3 because systemd's own rate limiter allows at most
+// `give_up_after` is 3 because systemd's own rate limiter allows at most
 // `StartLimitBurst - 1` restarts before it refuses to start the unit again, so
 // a finding threshold equal to this setting could never be reached on Linux and
 // the crash loop would be a finding on the Mac and nowhere else. TWO restarts
@@ -134,8 +134,8 @@ test.skipIf(!gate.ok)(
       // FIRST, the manager's OWN counter. Without it this check could report a
       // crash loop for a unit that never started.
       //
-      // `restarts` MEANS RESTARTS on both flavours (D-101), which is the
-      // reconciliation the second seat asked for: the seam used to map launchd
+      // `restarts` MEANS RESTARTS on both flavours, which is the
+      // reconciliation needed here: a seam that maps launchd
       // `runs` straight onto this field, and `runs` counts executions, so a
       // healthy job that has never died read as one restart and the control
       // below was false on a Mac. It is now `max(runs - 1, 0)` there and
@@ -165,7 +165,7 @@ test.skipIf(!gate.ok)(
       const healthy = (await os.show(healthyId))!;
       expect(healthy.running).toBe(true);
       expect(Number(healthy.restarts ?? 0)).toBe(0);
-      // It RAN, and it never restarted: the two facts D-101 keeps apart, in the
+      // It RAN, and it never restarted: two facts that are kept apart, in the
       // one place where reading either for the other gives the wrong answer.
       expect(healthy.ran).toBe(true);
       const healthyByManager = managerState(`imprnt-hub-${healthyId}`)!;
@@ -190,7 +190,7 @@ test.skipIf(!gate.ok)(
       // is dying in a loop from one sitting quietly failed.
       expect(loops[0].says).toContain(dyingId);
       expect(/\d/.test(loops[0].says)).toBe(true);
-      // AND WHAT THE MANAGER SAYS IT IS (03b row 3), on both platforms: a
+      // AND WHAT THE MANAGER SAYS IT IS, on both platforms: a
       // household given only a count cannot tell a unit still being restarted
       // from one the limiter has parked, or know which of `start` and
       // `reset-failed` will do anything.
@@ -198,8 +198,8 @@ test.skipIf(!gate.ok)(
       // THE WORD IS NOT COMPARED TO ONE READING. A unit in a restart loop is
       // MOVING: `check` reads its state a moment after this file does, and on
       // the hub box the two came back `activating` and `active`, which is the
-      // same mistake BUILD-NOTES 18 recorded for the memory drift, made by this
-      // assertion's first draft. So what is bound here is that the sentence
+      // same mistake a fixed memory reading makes. So what is bound here is
+      // that the sentence
       // names the manager and carries a word out of THAT manager's own state
       // vocabulary, widened by whatever this file actually saw. The exact word
       // against a live reading is bound in `test/check-giveup.test.ts`, where
@@ -235,7 +235,7 @@ test.skipIf(!gate.ok)(
         );
       } else {
         // systemd's own give-up state is reached, because the renderer emitted
-        // StartLimitBurst and StartLimitIntervalSec (D-96), and `check` reports
+        // StartLimitBurst and StartLimitIntervalSec, and `check` reports
         // the same finding from the same reading.
         await until(
           "systemd reached its own give-up state",

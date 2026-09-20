@@ -1,4 +1,4 @@
-// MSG-10. A door restarted mid-turn edits the progress line it already posted,
+// A door restarted mid-turn edits the progress line it already posted,
 // and never posts a second one.
 //
 // SPEC §2 and L6: the progress line "is updated as it goes... ending with the
@@ -37,7 +37,7 @@ let cluster: Cluster;
 
 const SLOW = 120_000;
 
-/** 04-CONTEXT's pinned templates, written out by the TEST and never imported. */
+/** The pinned templates, written out by the TEST and never imported. */
 const WORKING = /^\[door\] working: /;
 const TOTALS = /^\[door\] done\./;
 

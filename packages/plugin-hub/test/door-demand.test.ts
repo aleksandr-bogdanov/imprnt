@@ -1,7 +1,7 @@
-// REVIEW M3 and S3. Two things the door's fourth task does with a demand and
+// Two things the door's fourth task does with a demand and
 // with a minimum.
 //
-// M3: the pass opens by SPLICING the demand queue and everything that can throw
+// One: the pass opens by SPLICING the demand queue and everything that can throw
 // comes after it, so a pass that fails loses the demand for good. A
 // half-written registry is an ordinary moment (SPEC §6: "the installer, the web
 // board and an editor edit the same file"), `loadRegistry` on one throws, the
@@ -9,10 +9,10 @@
 // nowhere else. It is worst for the person whose `harvest_report` is off, whose
 // demand line is the only line she would ever read.
 //
-// S3: D-145 pins the firing path as "recomputes the filtered count between
-// `from` and `until`, writes the row in one transaction WHEN THE COUNT IS AT
-// LEAST THE APPLICABLE MINIMUM". The build recomputed the count and never gated
-// on it, so the minimum was only ever measured against the door's own stale
+// Two: the firing path recomputes the filtered count between
+// `from` and `until` and writes the row in one transaction WHEN THE COUNT IS AT
+// LEAST THE APPLICABLE MINIMUM. A build that recomputes the count and never gates
+// on it measures the minimum only against the door's own stale
 // bound. A door that has just come up has no bound at all, so it counts every
 // line in the window, and on a per-token key that buys a paid model turn on a
 // slice the minimum exists to refuse.
@@ -20,9 +20,8 @@
 // THE GATE IS THE KEY PRESET'S OWN, AND THE PLAN CONTROL BESIDE IT SAYS SO.
 // `test/door-harvest.test.ts`'s stage 4 pins the opposite behaviour for a PLAN
 // harvester: a restarted door over one line against a minimum of three writes
-// the row, and BUILD-NOTES 1 argues why. The two are reconcilable and the
-// reason is D-110's: a plan preset carries the three window thresholds and
-// phase 4's pause, notice and hold are what fence its cost, while "an agent on
+// the row. The two are reconcilable: a plan preset carries the three window
+// thresholds and the pause, notice and hold are what fence its cost, while "an agent on
 // a per-token key has no window" at all, so the minimum is the ONLY cost fence
 // a key harvester has. Both halves are asserted here, in one file, so the
 // distinction is deliberate rather than discovered.
@@ -61,7 +60,7 @@ const GATE_S3 = clockGate(12);
 announceClock(GATE_M3, "review M3, a demand that survives a failed pass");
 announceClock(GATE_S3, "review S3, the recomputed minimum on a key harvester");
 
-/** A per-token key harvester. D-110: a key preset carries no window at all. */
+/** A per-token key harvester. A key preset carries no window at all. */
 const KEY_HARVESTER: Record<string, string> = {
   adapter: "a-loop",
   model: "a-cheaper-model-name",
@@ -83,7 +82,7 @@ async function harvestRows(stage: HarvestStage): Promise<Record<string, unknown>
  *
  * Through `$2::jsonb` with a serialised string, which is how every check in
  * this phase plants one and which stores a jsonb SCALAR STRING rather than an
- * object (BUILD-NOTES 2). `readWatermark` unwraps both.
+ * object. `readWatermark` unwraps both.
  */
 async function plantWatermark(stage: HarvestStage, at: string): Promise<void> {
   await stage.hub.read.sql(
@@ -161,7 +160,7 @@ test.skipIf(!GATE_M3.ok)(
       it.fake.deliver({ chat: CHAT, text: "harvest this" });
 
       // --- 1. THE CHAT LOG HAS THE LINE whatever else happens, because the
-      //     door appends it before anything can throw. MSG-12: the diary holds
+      //     door appends it before anything can throw. The diary holds
       //     every message in both directions.
       await until(
         "the chat log holds the phrase the person typed",
@@ -238,7 +237,7 @@ test.skipIf(!GATE_S3.ok)(
     };
 
     // --- THE KEY HARVESTER. No `harvest_min_messages` on the entry, so the
-    //     default is the one D-138 derives from the harvester preset's own
+    //     default is the one derived from the harvester preset's own
     //     `paid`: twenty on a key. Twenty-one lines are on disk and the
     //     watermark says twenty of them are already harvested, so the real
     //     slice is ONE line.
@@ -284,7 +283,7 @@ test.skipIf(!GATE_S3.ok)(
       //     a door that never writes: the SAME shape under a PLAN harvester
       //     with a minimum of three writes the row, with `lines: 1`, which is
       //     what `test/door-harvest.test.ts`'s stage 4 already pins. A plan
-      //     preset carries the three window thresholds and phase 4's pause,
+      // preset carries the three window thresholds and the pause,
       //     notice and hold fence its cost; a key preset has no window at all,
       //     so the minimum is the only fence it has.
       plan = await stageHarvest(cluster, {

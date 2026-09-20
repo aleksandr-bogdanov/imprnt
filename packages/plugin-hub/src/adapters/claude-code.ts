@@ -90,8 +90,8 @@ function namesARateLimit(said: string): boolean {
 
 /**
  * What the loop said about the end of a turn: its own text AND its `error`
- * field, because 04-BRIEF's words are "any `result` with `is_error: true` whose
- * text OR `error` names a rate limit". A `result` carrying the sentence in
+ * field, because the rule is any `result` with `is_error: true` whose
+ * text OR `error` names a rate limit. A `result` carrying the sentence in
  * `error` while `terminal_reason` is `api_error` would otherwise be read as a
  * dead login, and the login notice is the one that tells a human to go and log
  * in again.
@@ -107,7 +107,7 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
   }
   if (options.sessionId) args.push("--resume", options.sessionId);
 
-  // 03b item 1. Whatever the runner handed over, applied to this loop's own
+  // Whatever the runner handed over, applied to this loop's own
   // argv. This file names no tool and imports nothing from `src/box/`: what
   // comes back is simply what gets spawned.
   const argv = typeof options.wrap === "function" ? options.wrap(args) : args;

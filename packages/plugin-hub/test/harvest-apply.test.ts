@@ -35,7 +35,7 @@
 // The em dash and the backticks above are the CLI's OWN bytes, quoted. They are
 // not this file's prose.
 //
-// D-152's rule is the one a permissive build fails: UNKNOWN IS REFUSED,
+// The rule a permissive build fails: UNKNOWN IS REFUSED,
 // whatever the exit code. An output no marker classified is an outcome nobody
 // read, and a watermark must never move on one.
 //
@@ -243,13 +243,13 @@ test(
       // ---------------------------------------------------------------
       // 4c. AN APPLY THAT NEVER FINISHES IS REFUSED ON ITS OWN BOUND.
       //
-      //     This is the harness's answer to the second seat's every-child
+      //     This is the harness's answer to the every-child
       //     reading of the memory watch. The apply is not a loop and its risk
       //     is not memory: it is the hub's own delivery machinery running the
       //     household's `imprnt` for a second or two, and what goes wrong is a
       //     HANG. So the bound is a wall clock, it lives on `applyNote`, and a
       //     child past it is killed and reported `refused` with `said` naming
-      //     the bound. A refused apply never moves a watermark (D-153), so a
+      // the bound. A refused apply never moves a watermark, so a
       //     hung CLI costs a retry and never a lost slice.
       //
       //     The shim here traps TERM, INT and HUP and loops for ever, so a
@@ -284,7 +284,7 @@ test(
       // 5. `classifyApply` is PURE, and UNKNOWN IS REFUSED.
       //
       //    THE TRANSCRIPTS GO IN FROM THE CHILD, NOT FROM `applyNote`. The
-      //    second seat's finding: feeding `applyNote`'s own `said` back into
+      //    THE FINDING: feeding `applyNote`'s own `said` back into
       //    the classifier lets a build launder its output, because the same
       //    code produced both sides of the comparison. So this drives the shim
       //    directly, captures stdout and stderr itself, and hands THAT to
@@ -361,14 +361,14 @@ test(
       expect(classify("something the CLI never says", 1).outcome).toBe("refused");
 
       // --- AND A MARKER THE EXIT CODE CONTRADICTS IS REFUSED, both ways
-      //     round. This is the assertion the second seat found missing, and it
+      //     round. This is the assertion that was missing, and it
       //     is the one that stops a watermark moving on an apply that did not
       //     land: a classifier reading the marker alone and ignoring its `exit`
       //     argument passes every case above and fails here.
       //
       //     `conflict` and `refused` BOTH exit 1 in the real CLI, so the exit
       //     code alone cannot tell them apart either. Both signals are needed
-      //     and neither is sufficient, which is what D-152 pins.
+      //     and neither is sufficient.
       expect(classify(filed.said, 1).outcome).toBe("refused");
       expect(classify(noop.said, 1).outcome).toBe("refused");
       expect(classify(conflict.said, 0).outcome).toBe("refused");

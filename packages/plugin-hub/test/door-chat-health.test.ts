@@ -1,4 +1,4 @@
-// ROLL-21 and the platform-read half of ROLL-29, D-174.
+// The platform-read half of a chat's health.
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"
 import { rolloutStage } from "./helpers/rollout-stage.ts"

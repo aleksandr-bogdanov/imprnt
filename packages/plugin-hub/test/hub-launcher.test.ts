@@ -1,4 +1,4 @@
-// IMP-161. D-186 step 4 dispatches the Node shim to prove the core can start
+// The install dispatches the Node shim to prove the core can start
 // the hub, so the one failure it exists to catch has to say what it is.
 import { expect, test } from "bun:test"
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"

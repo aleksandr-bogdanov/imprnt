@@ -1,8 +1,8 @@
 // HARV-04. One line back into the chat, per person, in that person's own
 // language, and always when a person asked.
 //
-// L19 rule 4: "One line back into the chat, optional per person." HARV-04's
-// ruling: on by default for the owner, off for the second person. D-159: one
+// L19 rule 4: "One line back into the chat, optional per person." It is
+// on by default for the owner and off for the second person, and it is one
 // `notice` outbox row per harvest, key `harvest:<row id>`, written before the
 // settle, suppressed when `harvest_report` is false EXCEPT on a demand harvest,
 // which always answers, because a person who typed a phrase at the machinery
@@ -12,7 +12,7 @@
 // reads it: on the platform. Both are stopped in `finally`.
 //
 // Every string is written out HERE and never imported, the way
-// test/runner-window.test.ts writes out phase 4's own lines. D-105's rule: a
+// test/runner-window.test.ts writes out the window lines. A
 // human reads it, so it is pinned whole.
 //
 // THE COUNT IS NEVER GLUED TO A NOUN in either language. The LIST carries it,
@@ -438,7 +438,7 @@ test.skipIf(!GATE_13.ok)(
       //     (b) AND THE KEY IS WHAT MAKES A SECOND ONE IMPOSSIBLE. `appendNotice`
       //     is driven twice with one harvest key through the real `hub_runner`
       //     role: the first lands, the second answers false, and the table holds
-      //     one row. That is D-122's arithmetic, reused rather than rebuilt, and
+      //     one row. That is the one-notice arithmetic, reused rather than rebuilt, and
       //     it is what a crash between the notice and the settle would meet.
       const { openStore, storeUrlAs } = await seam("src/store/connect.ts");
       const { appendNotice } = await seam("src/store/outbox.ts");
@@ -552,7 +552,7 @@ test.skipIf(!GATE_13.ok)(
       ).toBe(false);
 
       // --- 11. THE CONFLICT FORM REACHES A PERSON, which is the second of the
-      //     three places D-153 requires a conflict to be visible.
+      //     three places a conflict has to be visible.
       plant(it.stateDir, PERSON, AGENT, {
         at: at(3),
         direction: "in",
@@ -600,21 +600,21 @@ test.skipIf(!GATE_13.ok)(
 
       // --- 12c. THE REAL REPLAY, through a runner that is killed mid-settle.
       //
-      //     The second seat is right that the previous two bindings do not
+      //     The previous two bindings do not
       //     exercise RUNNER replay: they drive `appendNotice` with a key the
       //     TEST chose, so a runner that picks the right key on its first
-      //     attempt and a different one on its retry is not caught. And it is
-      //     right that the schema forbidding a stamp DELETE does not forbid
+      //     attempt and a different one on its retry is not caught. And the
+      //     schema forbidding a stamp DELETE does not forbid
       //     observing and killing a runner before it settles. The suite already
       //     has that staging and no production switch is needed for it.
       //
       //     The order the runner works in is what makes this reachable: stage,
-      //     apply, appendNotice, settle (D-159's "written before the settle").
+      //     apply, appendNotice, settle, so the notice is written before the settle.
       //     So the gate holds the apply, a lock goes on `state_row` while it is
       //     held, the apply is released, the NOTICE lands in its own
       //     transaction, and the settle is what blocks. The runner is killed
       //     there. Nothing of the settle committed and the notice survived.
-      //     A runner started again under the same id redoes the row (D-43), and
+      // A runner started again under the same id redoes the row, and
       //     the key it chooses the second time is its own.
       // ---------------------------------------------------------------
       const replayGateDir = await mkdtemp(join(tmpdir(), "hub-harvest-replay-"));
@@ -702,7 +702,7 @@ test.skipIf(!GATE_13.ok)(
           ).length,
         ).toBe(1);
 
-        // THE RESTART, under the SAME runner id, which D-43 makes a redo.
+        // THE RESTART, under the SAME runner id, which makes it a redo.
         replayRunner = await startReadySubprocess("test/helpers/runner-subprocess.ts", [
           them.registryFile,
           RUNNER,

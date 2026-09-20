@@ -1,4 +1,4 @@
-// MSG-05. Feed order, and the fence that keeps rank from drifting from kind.
+// Feed order, and the fence that keeps rank from drifting from kind.
 //
 // SPEC §2: "Feed order: rank 0 is anything a human is waiting on (a human's
 // message, a report on a job that answers a human's message), rank 1 is
@@ -9,11 +9,11 @@
 //
 // TWO DIFFERENT KINDS OF RULE, and the second check's name says which is which.
 // The ORDERING is SPEC §2's own feed order line. The column being unwritable is
-// NOT in the spec: D-41 infers a GENERATED ALWAYS column so the rank and the
-// kind cannot drift apart, and 02-CONTEXT names a plain column with a trigger
-// as the allowed fallback. So the check cites the entry it rests on rather than
+// NOT in the spec: a GENERATED ALWAYS column is inferred so the rank and the
+// kind cannot drift apart, with a plain column plus a trigger as the allowed
+// fallback. So the check states the rule it rests on rather than
 // claiming a spec line for it, and its refusal matcher accepts either shape.
-// Who writes a report row is phase 3, so the check inserts one as the
+// Nothing else writes a report row yet, so the check inserts one as the
 // superuser.
 //
 // Red reasons: schema missing, inbound.kind and inbound.rank. Import missing,
@@ -145,7 +145,7 @@ test(
     const it = await stageHub(cluster);
 
     try {
-      // A row with no kind named, which is every phase 1 insert. The default
+      // A row with no kind named, which is every early insert. The default
       // keeps it valid and the generated rank follows from it, so the first
       // read below is the one that names the absent column.
       await insertInbound(cluster, it.db, {
@@ -211,16 +211,15 @@ test(
           stateDir: second.stateDir,
           text: "what was said yesterday",
         });
-        // THE RANK 1 KIND HERE IS `room` AND WAS `harvest` (BUILD-NOTES 7).
+        // THE RANK 1 KIND HERE IS `room` AND WAS `harvest`.
         // SPEC §2's rank 1 is "watcher triage, rooms, harvest", so any of the
         // three is the proactive row this half needs, and what it needs of it
         // is that the runner feeds it to the agent's own session AFTER the
-        // human row. Phase 5 gives `harvest` a meaning of its own: a row of
+        // human row. `harvest` has a meaning of its own: a row of
         // that kind is served by a session of the harvester's, is fed a slice
-        // rather than its own body, and reaches no chat at all, which is
-        // exactly the behaviour D-162 names as the one phase 5 removes. Nothing
-        // about the ORDER this half asserts changed, and `room` is the rank 1
-        // kind no phase has claimed.
+        // rather than its own body, and reaches no chat at all. Nothing
+        // about the ORDER this half asserts turns on that, and `room` is the
+        // rank 1 kind nothing has claimed.
         await insertInbound(cluster, second.db, {
           id: "m-room",
           body: "yesterday is worth filing",

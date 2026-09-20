@@ -14,8 +14,8 @@
 // test/check-stamps.test.ts and test/check-silence.test.ts do it. The prober is
 // `fakeProber` so no credential finding is reached.
 //
-// THE OLDEST UNHARVESTED LINE IS THE AGE, and that overrules 05-BRIEF's
-// leaning. Under a newest-line rule a BUSY chat never fires at all, however
+// THE OLDEST UNHARVESTED LINE IS THE AGE, and never the newest.
+// Under a newest-line rule a BUSY chat never fires at all, however
 // long its watermark has been stuck, because its newest line is minutes old
 // every day for ever. A busy chat whose backstop is broken is exactly the
 // failure criterion 1 names, because the backstop is the thing that exists for
@@ -23,8 +23,7 @@
 //
 // Every assertion here filters to `harvest-stale` and `harvest-undeclared`, so
 // the credential and stamp findings the stage also produces break nothing. That
-// is the discipline 04-CONTEXT recorded and test/check-stamps.test.ts already
-// follows.
+// is the discipline test/check-stamps.test.ts already follows.
 //
 // Red reason: import missing, `src/check/harvest.ts`. `runCheck` reports
 // nothing about harvest at all.
@@ -70,7 +69,7 @@ const AGENT_MACHINERY = "p1-machinery";
 /**
  * THE HARVESTER'S OWN PRESET, which every registry below must define.
  *
- * The second seat's finding on check 15: the people declare
+ * THE FINDING: the people declare
  * `harvester = "harvest"` and the stage's default registry defines only
  * `daily`, so once the loader carries check 1's refusal 1 the whole file is
  * refused before `runCheck` can produce a single finding, and this check would
