@@ -148,7 +148,7 @@ export interface LoopProbeOptions { bin?: string; timeoutMs?: number; writePaths
 export const LOOP_PROBE_TIMEOUT_MS = 10_000;
 
 /**
- * IMP-162. A probe call that did not answer within its wait, asked twice.
+ * A probe call that did not answer within its wait, asked twice.
  *
  * A killed call leaves an empty answer, and an empty answer says nothing about
  * what the CLI supports. So this is reported as the timeout it is, never as
@@ -163,15 +163,15 @@ export class LoopProbeTimeout extends Error {
 }
 
 /**
- * IMP-162. The probe's answer, kept per binary and per login, in this process only.
+ * The probe's answer, kept per binary and per login, in this process only.
  *
- * The probe proves a property of the installed CLI (D-176): that it selects the
+ * The probe proves a property of the installed CLI: that it selects the
  * named login file, follows its atomic replacement and falls back to nothing.
  * That answer cannot change while neither the binary nor the login does, so a
  * launch probes again only when one of them is not the file probed last. The
  * stamp is each file's own identity at nanosecond resolution: its real path,
  * device, inode, size, mtime and ctime. An atomic replacement is a new inode
- * (the signal ROLL-13 pins), an update that repoints a symlink moves the real
+ * an update that repoints a symlink moves the real
  * path, and every write, rename or chmod moves ctime, which no program can set
  * back.
  *
@@ -244,7 +244,7 @@ export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PRO
       sessionDir: join(root, "session"), purpose: "ordinary",
       box: { agent: "probe", person: "probe", tree: root, sharedZone: "", otherTrees: [], writePaths },
     });
-    // IMP-162. A call that hangs is asked once more before the probe gives up:
+    // A call that hangs is asked once more before the probe gives up:
     // measured on the Linux box, `auth status` hung in 4 of 36 runs and answered
     // in under half a second otherwise.
     const ask = (args: string[]) => {

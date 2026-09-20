@@ -46,7 +46,7 @@ function numberOrNull(value: unknown): number | null {
 }
 
 /**
- * D-119. The highest utilization this loop reported, with THAT window's own
+ * The highest utilization this loop reported, with THAT window's own
  * reset, out of the `unifiedWindows` object measured on 2026-09-16:
  * `{"five_hour":{"utilization":0.27,"resetsAt":1789523400},
  *   "seven_day":{"utilization":0.55,"resetsAt":1789808400}}`.
@@ -79,9 +79,9 @@ function readWindow(info: Record<string, unknown> | undefined): WindowReading | 
  * credential. Nothing parses a NUMBER out of it: the sentence is copied whole
  * into `said` and this only chooses which cause it is.
  *
- * A used-up plan window's exact wire shape was never observed (04-BRIEF: the
- * owner's window cannot be exhausted for a probe), so this is the honest half
- * of D-118: the measured path is `utilization`, and this is what a loop that
+ * A used-up plan window's exact wire shape was never observed, because a live
+ * window cannot be exhausted for a probe, so this is the honest half of it:
+ * the measured path is `utilization`, and this is what a loop that
  * says it in prose gets.
  */
 function namesARateLimit(said: string): boolean {
@@ -129,11 +129,11 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
   // The plan windows arrive once per process rather than once per turn, so the
   // newest the loop has reported is what every turn of this session records.
   let planUsage: Record<string, unknown> | null = null;
-  // D-119. The NEWEST reading, up or down. Keeping the highest one ever seen
+  // The NEWEST reading, up or down. Keeping the highest one ever seen
   // would hold a household on a number that has already reset: the window came
   // back and every runner still reads the old percent.
   let window: WindowReading | null = null;
-  // D-118. A refusal the stream has already named, waiting for the event that
+  // A refusal the stream has already named, waiting for the event that
   // ends the turn. The measured no-login stream says it on the `assistant` line
   // and then again on the `result`, and a stream with only the second is the
   // other route to the same cause.
@@ -176,7 +176,7 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
   /**
    * The end of a turn the loop refused, with no `result` behind it.
    *
-   * D-118. `text` is empty, so a runner that ignored `refused` altogether would
+   * `text` is empty, so a runner that ignored `refused` altogether would
    * write an empty chunk rather than the loop's own apology into a person's
    * chat. The usage is the shape every other turn end carries, with nothing in
    * it, because zero tokens is what a refused turn really used.
@@ -213,7 +213,7 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
       window = readWindow(info);
       return;
     }
-    // D-118. A synthetic assistant line carrying the refusal as text, with a
+    // A synthetic assistant line carrying the refusal as text, with a
     // top-level `error` field naming the cause. Measured with an empty
     // CLAUDE_CONFIG_DIR: `error: "authentication_failed"`,
     // `is_api_error_message: true`, and the text "Not logged in · Please run
@@ -232,7 +232,7 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
       seen = { cause: "login", said: said || String(event.error) };
       return;
     }
-    // D-118. The CLI does not give up on a refused credential: measured with an
+    // The CLI does not give up on a refused credential: measured with an
     // invalid key it emits one of these per attempt with delays 623, 1153,
     // 2188, 4969, 8302, 18484 and 35294 ms and rising, ten attempts, and writes
     // no `result` meanwhile. No retry fixes a dead credential and the RUNNER
@@ -240,14 +240,14 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
     // FIRST 401 and closes the child rather than holding a person's message
     // open for minutes.
     //
-    // EVERY OTHER STATUS IS PASSED OVER, 429 as much as 503 (D-118 as amended
-    // after the review). "No retry fixes it" is an argument about a dead
+    // EVERY OTHER STATUS IS PASSED OVER, 429 as much as 503. "No retry fixes
+    // it" is an argument about a dead
     // credential. A 429 is the provider asking the loop to wait and the CLI's
-    // own backoff is what waits, so ending the turn on the first one shipped a
-    // household-wide hold on one transient throttle: the child killed, the
+    // own backoff is what waits, so ending the turn on the first one would put
+    // a household-wide hold on one transient throttle: the child killed, the
     // outage opened with cause `window`, and every person on that credential
     // told the plan's allowance was gone. What says a window is really used up
-    // is the `utilization` the loop reports (D-119) and a `result` that ends
+    // is the `utilization` the loop reports and a `result` that ends
     // the turn naming a rate limit. A retry line is neither.
     if (event.type === "system" && event.subtype === "api_retry") {
       if (event.error_status !== 401) return;
@@ -309,7 +309,7 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
         },
       };
       const said = String(event.result ?? "");
-      // MEASURED, and it is the trap the whole of D-118 is about: the no-login
+      // MEASURED, and it is the trap this branch exists for: the no-login
       // `result` carries `subtype: "success"` AND `is_error: true`. An adapter
       // reading `subtype` alone settles it as a reply, the runner writes "Not
       // logged in" into the outbox and the door posts it to the person, which
@@ -358,7 +358,7 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
     get sessionId() {
       return sessionId;
     },
-    // D-82. The child the runner's memory watch reads and, over its limit,
+    // The child the runner's memory watch reads and, over its limit,
     // kills. It is this process's own child, with no unit of its own (D7).
     get pid() {
       return child.pid ?? null;

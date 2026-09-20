@@ -5,7 +5,7 @@ import type { UnitFile } from "../os/types.ts";
  *
  * L7: the boundary is the PERSON. Each agent's process reaches its own person's
  * tree and the one shared zone, and nothing else. The zone is one household
- * setting (D-93), so "a shared zone for a subset of people" has nowhere to be
+ * setting, so "a shared zone for a subset of people" has nowhere to be
  * written rather than merely being discouraged.
  */
 export interface BoxContext {

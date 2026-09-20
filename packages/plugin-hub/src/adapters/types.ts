@@ -13,7 +13,7 @@ export interface AdapterProgress {
 }
 
 /**
- * D-118. Why a loop would not answer, typed, so the runner branches on no
+ * Why a loop would not answer, typed, so the runner branches on no
  * loop's name and no loop's prose.
  *
  * A `login` is a credential no retry fixes. A `window` is the plan's own
@@ -26,7 +26,7 @@ export interface TurnRefusal {
 }
 
 /**
- * D-119. The plan window a loop reported, normalised: the HIGHEST utilization
+ * The plan window a loop reported, normalised: the HIGHEST utilization
  * across every window it named, with that window's own reset.
  */
 export interface WindowReading {
@@ -43,14 +43,14 @@ export interface AdapterUsage {
   output_tokens: number | null;
   plan_usage: Record<string, unknown> | null;
   /**
-   * D-118. The normalised reading beside the raw `plan_usage`, never instead of it.
+   * The normalised reading beside the raw `plan_usage`, never instead of it.
    *
-   * OPTIONAL rather than required, and the reason is a shipped assertion
-   * (BUILD-NOTES 6): `test/turn-record.test.ts`, `test/chatlog.test.ts` and
-   * `test/helpers/scripted-adapter.ts` build `AdapterUsage` literals, and since
-   * 3b `tsc --noEmit` is part of what green means, so a required field would
-   * make four shipped files red for a fixture edit this round may not make. The
-   * Claude Code adapter always sets it, null included, and check 9 binds that.
+   * OPTIONAL rather than required, because a shipped assertion depends on it:
+   * `test/turn-record.test.ts`, `test/chatlog.test.ts` and
+   * `test/helpers/scripted-adapter.ts` build `AdapterUsage` literals, and
+   * `tsc --noEmit` is part of what green means, so a required field would
+   * turn four shipped files red. The
+   * Claude Code adapter always sets it, null included, and a check binds that.
    */
   window?: WindowReading | null;
   resolved_model_ids?: string[];
@@ -73,8 +73,8 @@ export interface AdapterSession {
   /**
    * The process id of the child this loop is, when the hub has one to watch.
    *
-   * D-82. A handle property like `close`, never a sixth verb: RUN-12 needs the
-   * pid of every child the runner spawned, and D11's five verbs are what the
+   * A handle property like `close`, never a sixth verb: the memory watch needs
+   * the pid of every child the runner spawned, and D11's five verbs are what the
    * loop DOES, not what the handle IS. Null means this loop has no local child
    * for this hub to watch (a hosted loop), and the memory watch skips it.
    */

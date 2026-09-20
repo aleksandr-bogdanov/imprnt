@@ -28,9 +28,9 @@ export class BoxUnavailable extends Error {
  * those on one platform or the other, and a grant on an ancestor hands over
  * every vault on the box as surely as naming one does.
  *
- * `/private/var/db` rather than the two directories under it phase 3 named:
- * MEASURED, 03b item 1's bisect, the loop does not start without the whole of
- * it. Nothing a person owns lives there.
+ * `/private/var/db` whole, rather than the two directories under it:
+ * MEASURED by bisecting the grants against the real loop, which does not start
+ * without all of it. Nothing a person owns lives there.
  */
 const MAC_SYSTEM = [
   "/usr",
@@ -145,7 +145,7 @@ function flavourOf(ctx: BoxContext, platform?: string): string {
 }
 
 /**
- * IMP-158. Every path in this household that holds a secret an agent must not
+ * Every path in this household that holds a secret an agent must not
  * read: the directory the store roles' passwords are in, every door's token
  * file, and every declared credential file. The box shares the machine's
  * network and, on Linux, the machine's whole filesystem, so a password or a
@@ -222,12 +222,11 @@ function secretMasks(ctx: BoxContext): { path: string; directory: boolean }[] {
 /**
  * The profile, per agent.
  *
- * 03b item 1 widened it from phase 3's read-only skeleton, which nothing
- * loop-shaped could start under, to the set the REAL loop needs, and then
- * bisected that set against the real loop one cheap call at a time. What the
- * bisect removed is recorded in BUILD-NOTES: every rule below either failed the
+ * THE SET IS BISECTED, not guessed: it was cut back against the real loop one
+ * cheap call at a time, so every rule below either failed the
  * loop when it was taken out, or is a tool path a boxed command needs to exist
- * at all, or is one of the three the tenancy check pins by name.
+ * at all, or is one of the three the tenancy check pins by name. A rule added
+ * here without that test is a grant nobody has shown the loop needs.
  */
 function profileText(ctx: BoxContext): string {
   const lines = [
@@ -310,7 +309,7 @@ function profilePath(ctx: BoxContext): string {
  * directory are then bound writable. The network namespace stays shared: the
  * loop needs the model API and the tailnet.
  *
- * macOS: a generated `(deny default)` profile. D-106, measured: macOS has no
+ * macOS: a generated `(deny default)` profile. MEASURED: macOS has no
  * pid namespace and no sandbox rule produces one, so the process list is NOT
  * fenced there. The tree, its files and its origin are fenced on both.
  */
