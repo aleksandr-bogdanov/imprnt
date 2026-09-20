@@ -1,8 +1,20 @@
+// An agent whose door is on another machine is served its chat from the store,
+// and an agent whose own state root on THIS machine cannot be read is refused
+// before any model starts.
+//
+// The two cases used to be one refusal. The cross-machine one existed because
+// the tail was read from a local path, so an agent whose door was elsewhere
+// would have been served an empty chat in silence. There is no local path in
+// that case any more: the lines come out of the store, and refusing the
+// placement would be refusing the transport. The other case is about this
+// machine's own directory and is unchanged, which is what says the refusal
+// still has teeth.
+
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"
-import { stageHub, insertInbound } from "./helpers/hub-fixture.ts"
+import { CHAT, stageHub, insertInbound } from "./helpers/hub-fixture.ts"
 import { controlledAdapter, observe } from "./helpers/rollout-runner.ts"
 import { proveRolloutRunner } from "../live/prove-rollout-runner.ts"
 import { runRunner } from "../src/runner/run.ts"
@@ -11,7 +23,7 @@ let cluster: Cluster
 beforeAll(async () => { await proveRolloutRunner(); cluster = await startCluster() })
 afterAll(async () => { await cluster?.stop() })
 
-for (const problem of ["cross-machine", "inaccessible-root"] as const) test(`ROLL-09 ROLL-14 D-182 ${problem} refuses before model start while local absent log works`, async () => {
+for (const problem of ["cross-machine", "inaccessible-root"] as const) test(`ROLL-09 ROLL-14 D-182 ${problem} ${problem === "cross-machine" ? "is served from the store" : "refuses before model start"} while local absent log works`, async () => {
   for (const refused of [false, true]) {
     const it = await stageHub(cluster, {
       machines: [{ id: "pi", os: "linux" }, { id: "mac", os: "macos" }],
@@ -25,6 +37,13 @@ for (const problem of ["cross-machine", "inaccessible-root"] as const) test(`ROL
     // the test account can bypass chmod. It is owned scratch data, not a mock.
     if (refused && problem === "inaccessible-root") writeFileSync(join(it.stateDir, "p1"), "not a state directory")
     else mkdirSync(join(it.stateDir, "p1"), { recursive: true })
+    // The message the cross-machine agent is served: a store row with the
+    // platform's own record on it, and no file anywhere near this runner.
+    if (refused && problem === "cross-machine") {
+      const at = new Date().toISOString()
+      await insertInbound(cluster, it.db, { id: "from-the-store", body: "linden-honey", receivedAt: at,
+        source: { log_id: "from-the-store", at, door: "door-fake", chat: CHAT, sender_id: "fixture-sender", text: "linden-honey" } })
+    }
     const edge = controlledAdapter(it.adapterName)
     let runner: Awaited<ReturnType<typeof runRunner>> | undefined
     try {
@@ -35,6 +54,15 @@ for (const problem of ["cross-machine", "inaccessible-root"] as const) test(`ROL
         expect(error).toBe("")
         await insertInbound(cluster, it.db, { id: "local", body: "absent log is valid" })
         expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "local"))).toBe(true)
+        expect(edge.sessions.length).toBe(1)
+      } else if (problem === "cross-machine") {
+        // Served, not refused: the door is on the other machine and the lines
+        // it wrote are in the store, so the tail is fed from there.
+        expect(error).toBe("")
+        expect(await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length > 0)).toBe(true)
+        expect(edge.sessions[0].fed[0].text).toContain("linden-honey")
+        const detail = JSON.stringify(await it.read.sheet("agent_health")) + JSON.stringify(await it.read.ledger()) + error
+        expect(detail).not.toContain("agent-state-unavailable")
         expect(edge.sessions.length).toBe(1)
       } else {
         const detail = JSON.stringify(await it.read.sheet("agent_health")) + JSON.stringify(await it.read.ledger()) + error
