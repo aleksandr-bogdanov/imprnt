@@ -7,7 +7,7 @@
 # directory named on the command line holds them, built by an optional install
 # step. What is ours is this wrapper and the client that posts to it.
 #
-#   python transcribe-server.py --runtime DIR --model NAME [--port N] [--warm]
+#   python transcribe-server.py --runtime DIR --model DIR [--port N] [--warm]
 #                               [--idle-s N] [--exit-on-idle] [--fake]
 #                               [--read-timeout-s N]
 #
@@ -84,8 +84,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # nothing the load did not already cost.
 #
 # The model NAME is not here. It is what the registry says and what the command
-# line passes, because a household on a smaller box names a smaller model and a
-# name compiled into this file would not be a setting.
+# line passes: the directory under the runtime that the weights are read from,
+# because a household on a smaller box names a smaller model and a name compiled
+# into this file would not be a setting.
 FAKE_NAME = "fake-stub"
 # What the fake backend returns for any body. Fixed, so a test can assert on it.
 FAKE_TEXT = "the quick brown fox jumps over the lazy dog"
@@ -257,7 +258,13 @@ def load_backend():
     # The weights are looked for BEFORE the library is imported. A household that
     # has not built the runtime directory is missing both, and the directory is
     # the thing an operator can fix, so it is the thing the refusal names.
-    model_dir = os.path.join(STATE.runtime, "model")
+    #
+    # THE MODEL IS THAT DIRECTORY. Swapping it is what a household on a smaller
+    # box does, so the name the registry passes has to be the name this reads
+    # from, or the setting would be one nothing acts on.
+    model_dir = os.path.join(STATE.runtime, STATE.model)
+    if not os.path.isdir(model_dir):
+        raise RuntimeError("model directory missing: " + model_dir)
     needed = ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"]
     for name in needed:
         path = os.path.join(model_dir, name)
@@ -824,8 +831,9 @@ def main():
     ap.add_argument(
         "--model",
         default="",
-        help="the model this server loads, reported by /health. A household on a"
-        " smaller box names a smaller one",
+        help="the model's own directory under --runtime, which is what this server"
+        " loads and what /health reports. A household on a smaller box names a"
+        " smaller one. Required unless --fake",
     )
     ap.add_argument(
         "--read-timeout-s",
@@ -850,7 +858,12 @@ def main():
     # sensible default for it: a guessed path would make a misconfigured unit
     # look like a working one until the first voice note.
     if not args.fake and not args.runtime:
-        sys.exit("transcribe-server: --runtime is required (the directory holding venv/ and model/)")
+        sys.exit("transcribe-server: --runtime is required (the directory holding venv/ and the model)")
+    # Same reason as the runtime: a default here would be a directory nobody
+    # named, and the first voice note of the day would be where a household
+    # found out which weights it is really running.
+    if not args.fake and not args.model:
+        sys.exit("transcribe-server: --model is required (the model's own directory under --runtime)")
 
     STATE.fake = args.fake
     STATE.model = args.model or (FAKE_NAME if args.fake else "")

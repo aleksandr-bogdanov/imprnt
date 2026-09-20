@@ -14,7 +14,7 @@
 
 import { afterEach, expect, test } from "bun:test";
 import net from "node:net";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hubPath } from "./helpers/cluster.ts";
@@ -445,9 +445,10 @@ test(`the server refuses to start when the converter is missing${PYTHON_SUFFIX}`
   const dir = scratchDir();
   // Checked at startup rather than met per request: without the converter the
   // health endpoint would answer while every decode failed.
-  const noFfmpeg = await refuses(["--port", "0", "--runtime", dir, "--idle-s", "0"], {
-    PATH: join(dir, "nothing-here"),
-  });
+  const noFfmpeg = await refuses(
+    ["--port", "0", "--runtime", dir, "--model", "a-model-name", "--idle-s", "0"],
+    { PATH: join(dir, "nothing-here") },
+  );
   expect(noFfmpeg.code).not.toBe(0);
   expect(noFfmpeg.stderr, "the converter is named").toMatch(/ffmpeg/);
 });
@@ -461,9 +462,38 @@ test(`the server refuses to start when the weights are missing${PYTHON_SUFFIX}${
   // unit renders, so this is the deployed shape refusing rather than the first
   // voice note of the day failing. It is reachable only where the converter is
   // present, because that guard is checked first and would answer instead.
-  const noModel = await refuses(["--port", "0", "--runtime", dir, "--warm", "--idle-s", "0"]);
+  const noModel = await refuses([
+    "--port", "0", "--runtime", dir, "--model", "a-model-name", "--warm", "--idle-s", "0",
+  ]);
   expect(noModel.code).not.toBe(0);
   expect(noModel.stderr, "the missing file is named").toMatch(/model/);
+});
+
+test(`the model the argv names is the directory the weights are read from${PYTHON_SUFFIX}${
+  FFMPEG ? "" : " [skipped: ffmpeg is not on PATH, so the converter guard answers first]"
+}`, async () => {
+  if (!PYTHON || !FFMPEG) return;
+  const dir = scratchDir();
+  // A runtime holding a COMPLETE set of weights under a fixed name, and nothing
+  // under the name the registry chose. A server that reads a fixed directory
+  // walks past this and dies later on the library instead, which makes --model
+  // a setting nothing reads and a smaller model on a smaller box unreachable.
+  mkdirSync(join(dir, "model"), { recursive: true });
+  for (const name of ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"]) {
+    writeFileSync(join(dir, "model", name), "");
+  }
+  const wrongModel = await refuses([
+    "--port", "0", "--runtime", dir, "--model", "a-model-name", "--warm", "--idle-s", "0",
+  ]);
+  expect(wrongModel.code).not.toBe(0);
+  expect(wrongModel.stderr, "the directory an operator can fix is the one the argv named")
+    .toContain(join(dir, "a-model-name"));
+
+  // And a household that names none is told which flag to pass, rather than
+  // being served out of whatever directory happened to be there.
+  const noName = await refuses(["--port", "0", "--runtime", dir, "--warm", "--idle-s", "0"]);
+  expect(noName.code).not.toBe(0);
+  expect(noName.stderr).toContain("--model");
 });
 
 test("what the copy does not carry is not in the package", () => {
