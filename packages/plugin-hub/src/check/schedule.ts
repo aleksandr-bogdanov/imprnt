@@ -46,13 +46,13 @@ export function staleJobs(args: {
   now: Date;
 }): Finding[] {
   const out: Finding[] = [];
-  for (const entry of args.entries ?? []) {
+  for (const entry of args.entries) {
     const interval = intervalOf(entry.schedule);
     // `always` and `on demand` are not scheduled jobs, so they are never asked
     // for a stamp. Without that the transcriber is reported forever, and a
     // permanent finding is worse than no check at all.
     if (interval === null) continue;
-    const stamp = (args.stamps ?? []).find((row) => row.id === entry.id);
+    const stamp = args.stamps.find((row) => row.id === entry.id);
     const machine = String(stamp?.data?.machine ?? entry.machine ?? "");
     if (!stamp) {
       out.push({

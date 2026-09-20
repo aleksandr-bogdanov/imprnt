@@ -73,8 +73,7 @@ export function diffUnits(args: { wanted: WantedUnit[]; found: UnitState[] }): {
   stale: UnitState[];
   extra: UnitState[];
 } {
-  const wanted = args.wanted ?? [];
-  const found = args.found ?? [];
+  const { wanted, found } = args;
   const wantedIds = new Set(wanted.map((one) => one.id));
 
   const missing = wanted.filter((one) => !satisfied(one.state, unitsFor(found, one.id)));

@@ -24,9 +24,9 @@ export function silentRunners(args: {
   now: Date;
   machine: string;
 }): Finding[] {
-  const live = new Set(args.liveApplications ?? []);
+  const live = new Set(args.liveApplications);
   const out: Finding[] = [];
-  for (const runner of args.runners ?? []) {
+  for (const runner of args.runners) {
     if (live.has(runner)) continue;
     const last = args.lastEventAt?.[runner] ?? null;
     if (last === null) continue;
