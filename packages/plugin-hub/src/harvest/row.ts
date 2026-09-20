@@ -1,5 +1,5 @@
 /**
- * D-142, D-145. The harvest row the DOOR writes, and the arithmetic that says
+ * The harvest row the DOOR writes, and the arithmetic that says
  * when one is owed.
  *
  * The row is an `inbound` row like every other, because SPEC §2 gives that
@@ -49,14 +49,14 @@ export function nextMidnight(now: Date): number {
 }
 
 /**
- * D-145. Which trigger is owed right now, or none. PURE: it takes its clock
+ * Which trigger is owed right now, or none. PURE: it takes its clock
  * rather than reading one, so the rule is readable and bindable without a store
  * and without waiting for a midnight.
  *
  * THE BACKSTOP IS ASKED FIRST, and it ignores the minimum. L19: "the daily
  * backstop over yesterday for chats that never went quiet, where small slices
  * merge into one turn." Its slice is the wider one, and a quiet row underneath
- * it would be the empty row D-149 describes. It needs no state of its own:
+ * it would be an empty row. It needs no state of its own:
  * once that row is harvested the watermark passes the midnight and the
  * condition is false, and a door that was DOWN over a midnight serves it the
  * moment it comes up, which is what a backstop is for.

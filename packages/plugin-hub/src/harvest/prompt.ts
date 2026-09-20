@@ -1,14 +1,14 @@
 import { renderSlice, type SliceLine } from "./slice.ts";
 
 /**
- * D-158. The one message a harvester is ever fed, pinned WHOLE.
+ * The one message a harvester is ever fed, pinned WHOLE.
  *
- * D-105's rule is that a string a reader depends on is pinned rather than
+ * A string a reader depends on is pinned rather than
  * assembled, and here the reader is a MODEL: a prompt built from fragments is a
  * prompt nobody can review, and what this one says is the difference between a
  * note that files and a note that poisons a vault.
  *
- * EVERY LINE OF IT CLOSES A DEFECT THE PROBE MEASURED (05-BRIEF, four real runs
+ * EVERY LINE OF IT CLOSES A DEFECT THE PROBE MEASURED (four real runs
  * of the real loop on 2026-09-16), and the rules are in that order:
  *
  * - `nothing` as a single word, because that is exactly what the loop answered
@@ -16,7 +16,7 @@ import { renderSlice, type SliceLine } from "./slice.ts";
  *   guessing at meaning.
  * - the LANGUAGE, because a Russian slice came back as two English notes with
  *   an invented `time:` field. It is the PERSON's language and not "the
- *   language of the slice" (D-158): the second is unfalsifiable by any check,
+ * language of the slice": the second is unfalsifiable by any check,
  *   because no assertion distinguishes a build that put that sentence in the
  *   message from one that did not, while the first is a registry edit and a
  *   pinned word inside the fed bytes.

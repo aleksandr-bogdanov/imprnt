@@ -2,12 +2,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * D-152. A harvested note is staged to a file and filed by the household's own
+ * A harvested note is staged to a file and filed by the household's own
  * `imprnt ingest --apply`, and the outcome is read from that command's own
  * bytes.
  *
  * The hub cannot import core (the plugin contract), so the apply is a CHILD
- * PROCESS and which binary it is is a setting (`hub.imprnt`, D-140). This is
+ * PROCESS and which binary it is is a setting (`hub.imprnt`). This is
  * SPEC §2's "an agent produces text, delivery is machinery" applied to filing:
  * the model produced text, the loop cannot write to the vault at all (measured
  * three ways, 05-BRIEF), and code does the filing.
@@ -30,14 +30,14 @@ export interface ApplyResult {
 /**
  * How long an apply may take before it is killed and reported refused.
  *
- * The harness's ruling after the second Codex pass. SPEC §6's watched children
+ * SPEC §6's watched children
  * are the model processes and workers the runner spawns as LOOPS, and
  * `watchChildren` reads a loop's resident size on the tick. The apply is the
  * hub's own delivery machinery running the household's `imprnt` for a second or
  * two, and what goes wrong with it is not memory but a HANG: a CLI waiting on a
  * lock, on a prompt, on a vault directory that turns out to be a network mount.
- * So the bound is a wall clock. A refused apply never moves a watermark
- * (D-153), so a hung CLI costs a retry and never a lost slice.
+ * So the bound is a wall clock. A refused apply never moves a watermark,
+ * so a hung CLI costs a retry and never a lost slice.
  */
 export const APPLY_TIMEOUT_MS = 120_000;
 
@@ -117,7 +117,7 @@ export function classifyApply(
 }
 
 /**
- * D-152. The staging directory's name, with every character a filesystem or a
+ * The staging directory's name, with every character a filesystem or a
  * file browser could misread taken out.
  *
  * A harvest row id is `harvest:<agent>:<until iso>`. Colons are legal at the
