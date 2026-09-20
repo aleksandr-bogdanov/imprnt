@@ -63,7 +63,9 @@ for (const invalid of ["database-not-ready", "missing-hub", "multiple-hubs", "un
     const { runInstall } = await seam("src/install/run.ts")
     if (invalid === "missing-hub") writeFileSync(f.registryFile, good.replace(/\[\[run\]\]\nid = "hub-[\s\S]*?(?=\n\[|$)/, ""))
     if (invalid === "multiple-hubs") writeFileSync(f.registryFile, good + `\n[[run]]\nid = "hub-extra-${crypto.randomUUID().slice(0,8)}"\nkind = "hub"\nmachine = "${f.machine}"\nschedule = "always"\nmemory_limit_mb = 256\n`)
-    if (invalid === "unsupported-run-kind") writeFileSync(f.registryFile, good.replace('kind = "sync"', 'kind = "board"'))
+    // The stand-in unsupported kind. It has to be one the loader still refuses
+    // by that name, and the board is supported now.
+    if (invalid === "unsupported-run-kind") writeFileSync(f.registryFile, good.replace('kind = "sync"', 'kind = "watcher"'))
     await expect((runInstall as Function)({ registryFile: f.registryFile, stage: "services", target: f.ids.hub, os: probe.os })).rejects.toThrow()
     expect(probe.files).toEqual([])
     expect(probe.calls).toEqual([])
@@ -86,7 +88,7 @@ for (const flavour of ["systemd", "launchd"] as const) test(`ROLL-05 ${flavour} 
     expect(probe.calls.some(call => call.operation === "install")).toBe(true)
     // Full registry validation also applies to the restricted entry stage.
     const text = readFileSync(f.registryFile, "utf8")
-    writeFileSync(f.registryFile, text.replace('kind = "runner"', 'kind = "board"'))
+    writeFileSync(f.registryFile, text.replace('kind = "runner"', 'kind = "watcher"'))
     const clean = serviceOs(f.dir, flavour, Object.values(f.ids))
     await expect((runInstall as Function)({ registryFile: f.registryFile, stage: "entry", target: f.ids.sync, os: clean.os })).rejects.toThrow(/unsupported-run-kind/)
     expect(clean.files).toHaveLength(0)

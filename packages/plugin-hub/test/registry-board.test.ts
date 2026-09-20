@@ -242,6 +242,36 @@ test("D-241 a board with no port, or a port that is not a whole number in range,
   }
 });
 
+test("D-244 whether the hub keeps an entry running is asked of every kind, by key and by line", () => {
+  // The field is not a board's. It is the one place a household says it does
+  // not want a piece up, and the hub re-reads the file on every tick, so it is
+  // asked of every entry and refused by name where it is there and wrong.
+  for (const entry of [DOOR, RUNNER, HUB, EXAMPLE_BOARD]) {
+    const nth = [DOOR, RUNNER, HUB, EXAMPLE_BOARD].indexOf(entry);
+    const { error, text } = refusalOf(
+      [DOOR, RUNNER, HUB, EXAMPLE_BOARD].map((one, i) =>
+        i === nth ? { ...one, enabled: "no" as unknown as boolean } : one,
+      ),
+    );
+    expect(error.key).toBe(`run[${nth}].enabled`);
+    expect(error.line).toBe(lineOf(text, entry.id, "enabled"));
+    expect(error.reason).toBe(
+      `${entry.id} has enabled no, and whether the hub keeps it running is a true or a false.`,
+    );
+  }
+  // The control: both booleans load, and the field reaches the entry only when
+  // the file carries it.
+  for (const enabled of [true, false]) {
+    const { file } = write([{ ...RUNNER, enabled }, DOOR, HUB]);
+    const row = listRunEntries(loadRegistry(file)).find((one) => one.id === RUNNER.id)!;
+    expect(row.enabled).toBe(enabled);
+  }
+  const { file } = write([RUNNER, DOOR, HUB]);
+  expect(Object.hasOwn(listRunEntries(loadRegistry(file)).find((one) => one.id === RUNNER.id)!, "enabled")).toBe(
+    false,
+  );
+});
+
 test("D-241 the example block loads whole and boardFor answers the machine that has one", async () => {
   // The control on the ten refusals. A build that refused every board-shaped
   // file passes all of them and fails here.
