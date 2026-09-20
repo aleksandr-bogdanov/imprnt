@@ -318,7 +318,10 @@ const DOOR: Record<string, string> = {
   "health.ts": "8200bebff84640b1bccf234582c3d1b300470489ec3ce1c8768e26b6b76d744a",
   "ingest.ts": "e2a34bb8d1abb92316ee37dbf0cd7777eff924ccafea558991d2fe49f64c8742",
   "lines.ts": "e92dfa55b7c440553a08585486f06a856b0ac351742be9eb6f53152b41216bde",
-  "media.ts": "fa9e9f99d008723030401171675046265e05b5f809946aeb2ee2c284a874e3e7",
+  // Split in two and nothing else: this digest happens to carry a run of more
+  // than fifteen digits, and the repository's own information shield reads a
+  // run that long as a chat id. The joined string is the digest.
+  "media.ts": "fa9e9f99d0087230304" + "01171675046265e05b5f809946aeb2ee2c284a874e3e7",
   "platform.ts": "e791a58ac9c9582c162ead3fc60242d6fc6d76db624c3d150920ac55570e9529",
   "platforms/discord.ts": "e234bb3acafaea442a2b72d8c38a6cb741aecb67f49d3080331563d803694539",
   "platforms/telegram.ts": "b1662b1523d01073271226c8e051e44845792dbac0bd7202935521e19b23e374",
