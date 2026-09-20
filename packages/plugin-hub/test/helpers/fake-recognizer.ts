@@ -58,6 +58,14 @@ export interface FakeRecognizer {
   setStatus(status: number): void;
   /** The next request fails once, and everything after it answers normally. */
   setRefuseOnce(): void;
+  /**
+   * Every request from the nth on fails, counting from one.
+   *
+   * A note cut into pieces is asked for in one pass with nothing between the
+   * requests, so a check that wants the FIRST piece to land and the rest to
+   * stop has no moment to flip a status in. This is that, decided in advance.
+   */
+  setRefuseFrom(nth: number): void;
   stop(): Promise<void>;
 }
 
@@ -78,6 +86,7 @@ export async function fakeRecognizer(
   let delayMs = 0;
   let status = 200;
   let refuseOnce = false;
+  let refuseFrom: number | null = null;
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -112,6 +121,11 @@ export async function fakeRecognizer(
         refuseOnce = false;
         return new Response("synthetic one-off failure", { status: 503 });
       }
+      // Counted over the chunk requests this fake has taken, the one already
+      // recorded above included, so the nth request is the nth refusal.
+      if (refuseFrom !== null && requests.filter((one) => one.path === chunkPath).length >= refuseFrom) {
+        return new Response("synthetic failure", { status: 503 });
+      }
       if (delayMs > 0) await Bun.sleep(delayMs);
       if (status !== 200) return new Response("synthetic failure", { status });
       return Response.json(raw === undefined ? answer : raw);
@@ -138,6 +152,9 @@ export async function fakeRecognizer(
     },
     setRefuseOnce() {
       refuseOnce = true;
+    },
+    setRefuseFrom(nth) {
+      refuseFrom = nth;
     },
     async stop() {
       await server.stop(true);

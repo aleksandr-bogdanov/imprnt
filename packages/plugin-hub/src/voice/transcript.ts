@@ -29,7 +29,10 @@ export interface ChunkResult {
   to_s: number;
   text: string;
   decode_ms: number;
-  /** `done`, `empty` when it held no words, or `failed`. */
+  /**
+   * `done`, `empty` when it held no words, `failed`, or `waiting` when the
+   * step has filed the stretch and has not asked for it yet.
+   */
   state: string;
 }
 
@@ -134,10 +137,10 @@ export function joinTranscript(file: ChunkFile): string {
  * The marker's POSITION is the point: a gap belongs where the silence was, not
  * appended at the end where it says nothing about which part was lost.
  *
- * A stretch after the LAST chunk on file cannot be marked, because the file
- * carries no entry for it and its three keys say nothing about how long the note
- * was. What can be seen is a hole between two chunks, a hole before the first,
- * and a chunk that is there and failed.
+ * The step files an entry for every chunk of a note before it asks for any of
+ * them, so a stretch that never came back is marked wherever it sits. A hole
+ * between two entries, or before the first, is marked too: a file written
+ * before that was true still renders what it can rather than dropping it.
  */
 export function renderPartial(file: ChunkFile, language: Language): string {
   const parts: string[] = [];

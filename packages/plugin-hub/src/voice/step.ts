@@ -226,6 +226,22 @@ export async function transcribeRow(
     file = { recognizer, chunk_seconds: voice.chunk_seconds, chunks: [] };
   }
 
+  // EVERY CHUNK GETS ITS ENTRY, including the ones nobody has asked for yet.
+  // The boundaries are known here and nowhere later, and a stretch with no
+  // entry at all is one nothing on file can measure: if this note runs out its
+  // window, the give-up render can only mark what the file describes, so a
+  // chunk that was never reached would be lost without a word. They are carried
+  // by the writes below rather than written on their own, so the file still
+  // appears at the moment the first chunk is answered.
+  const known = new Set(file.chunks.map((one) => one.n));
+  for (let n = 1; n <= points.length; n += 1) {
+    if (known.has(n)) continue;
+    file.chunks.push({
+      n, from_s: (n === 1 ? 0 : points[n - 2]) / rate, to_s: points[n - 1] / rate,
+      text: "", decode_ms: 0, state: "waiting",
+    });
+  }
+
   const audioSeconds = samples.length / rate;
   let spent = 0;
   for (let n = nextChunk(file); n <= points.length; n = nextChunk(file)) {
@@ -242,10 +258,9 @@ export async function transcribeRow(
     } catch (error) {
       // Every piece that finished stays on disk, so the next try starts where
       // this one stopped rather than paying for all of them again. The piece
-      // that did not is written down as failed, which is what puts the gap
-      // marker in the RIGHT PLACE if the note eventually gives up: a stretch
-      // with no entry at all cannot be marked, because nothing on file says how
-      // long it was.
+      // that did not is written down as failed, and the pieces after it keep
+      // the entries made above, which is what puts a gap marker in the RIGHT
+      // PLACE for each of them if the note eventually gives up.
       file.chunks = [...file.chunks.filter((one) => one.n !== n), {
         n, from_s: from / rate, to_s: to / rate, text: "", decode_ms: 0, state: "failed",
       }];

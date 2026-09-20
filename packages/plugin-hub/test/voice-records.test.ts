@@ -26,10 +26,15 @@
 // do not exist and the clock knows nothing about media.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { seam, startCluster, type Cluster } from "./helpers/cluster.ts";
 import { rolloutDatabase } from "./helpers/rollout-fixtures.ts";
 import { storeReader } from "./helpers/hub-fixture.ts";
 import { readOpenTurns } from "../src/store/turns.ts";
+import { gapMarker } from "../src/door/lines.ts";
+import { plantSamples, WAV_RATE } from "./helpers/wav.ts";
 
 let cluster: Cluster;
 
@@ -640,5 +645,95 @@ test(
       "answered-to-delivered",
       "time-to-delivered",
     ]);
+  },
+);
+
+test(
+  "RUN-15 a chunk that fails in the middle of a note leaves every later stretch on file, so the give-up render can say how much was lost (SPEC §2)",
+  async () => {
+    const { transcribeRow } = await seam("src/voice/step.ts");
+    expect(typeof transcribeRow).toBe("function");
+    const { chunkFilePath, readChunkFile, renderPartial } = await seam(
+      "src/voice/transcript.ts",
+    );
+    const { DecodeRefused } = await seam("src/voice/recognize.ts");
+
+    const f = await rolloutDatabase(cluster);
+    const door = f.store("hub_door");
+    const dir = mkdtempSync(join(tmpdir(), "voice-middle-"));
+    try {
+      const audio = join(dir, "0.ogg");
+      // The saved bytes are never read here: the converter is a seam, so what
+      // this drives is the ARITHMETIC and what it leaves beside the audio.
+      const source = {
+        door: "door-fake",
+        lines: ["(voice " + audio + ")"],
+        media: [{ kind: "voice", path: audio, sha256: "a".repeat(64), line: 0 }],
+      };
+      await door.sql`insert into inbound (id, person, agent, body, source, log_ready)
+                     values ('m-middle', 'p1', 'p1-lair', ${"(voice " + audio + ")"},
+                             ${source}::jsonb, false)`;
+      await door.sql`update inbound set media_state = 'pending' where id = 'm-middle'`;
+
+      const rate = WAV_RATE;
+      const samples = plantSamples({ seconds: 150, rate, quietAt: [59.0, 118.0] });
+      // The SECOND of three, which is the shape the shipped give-up check
+      // cannot see: it plants the last one, and a note that stops at the last
+      // chunk is the only note whose missing stretch is already on file.
+      let asked = 0;
+      const outcome = (await (transcribeRow as Function)(door, {
+        row: { id: "m-middle", source },
+        voice: {
+          recognizer: "local", provider: "sherpa-onnx", model: "a-recognizer-model",
+          runtime: dir, credential: null, chunk_seconds: 60,
+          retry_seconds: 300, give_up_hours: 24, chunk_deadline_seconds: 120,
+        },
+        endpoint: "http://127.0.0.1:1/transcribe",
+        credentialFile: null,
+        language: "en",
+        seams: {
+          toPcm: async () => ({ samples, rate }),
+          recognize: async () => {
+            asked += 1;
+            if (asked === 1) return { text: "synthetic piece one", audio_s: 59, decode_ms: 1 };
+            throw new (DecodeRefused as new (named: string, says: string) => Error)(
+              "recognizer-status", "the recognizer answered 503",
+            );
+          },
+          now: () => Date.now(),
+        },
+      })) as { state: string; failure: string | null };
+      expect(outcome.state).toBe("failed");
+      expect(outcome.failure, "the recognizer having a bad day is never the note's fault")
+        .toBe("infra");
+      expect(asked, "it stopped at the chunk that failed").toBe(2);
+
+      const held = (readChunkFile as Function)((chunkFilePath as Function)(audio, 0)) as {
+        chunks: { n: number; from_s: number; to_s: number; state: string }[];
+      };
+      // EVERY CHUNK, not only the ones that were asked for. A stretch with no
+      // entry at all is a stretch nothing on file can measure, and the person
+      // would never be told it was lost.
+      expect([...held.chunks].map((one) => one.n).sort(), "all three stretches are on file")
+        .toEqual([1, 2, 3]);
+      const third = held.chunks.find((one) => one.n === 3)!;
+      expect(third.from_s).toBe(118);
+      expect(third.to_s).toBe(150);
+      expect(["done", "empty"], "and the one nobody asked for is not finished")
+        .not.toContain(third.state);
+
+      // What the person would read if this note ran out its window now: the
+      // piece that came back, then a marker for each stretch that did not, in
+      // the place it was.
+      expect((renderPartial as Function)(held, "en")).toBe(
+        [
+          "synthetic piece one",
+          gapMarker("en", 59),
+          gapMarker("en", 32),
+        ].join(" "),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   },
 );

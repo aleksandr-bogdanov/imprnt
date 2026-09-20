@@ -388,3 +388,55 @@ test(`RUN-13 a recognizer that works says none of the five things${NEEDS_FFMPEG}
     expect(health[0]?.data.last_ok_at, "RUN-13 success is known from a real note").toBeTruthy()
   } finally { await runner?.stop(); await door?.stop(); await recognizer.stop(); await it.stop() }
 }, 90_000)
+
+test(`RUN-13 a note that gives up after a MIDDLE chunk failed marks every stretch it never heard${NEEDS_FFMPEG}`, async () => {
+  // The case above plants the LAST chunk as the one that failed, which is the
+  // one shape where the stretch that is missing is already described on file.
+  // This one stops the note in the middle, end to end through the door, so the
+  // piece after the failure is a stretch the person would otherwise never be
+  // told about.
+  if (!FFMPEG) return
+  const long = clip(150)
+  const recognizer = await fakeRecognizer()
+  recognizer.setAnswer({ text: "synthetic piece one", audio_s: 59, decode_ms: 1 })
+  // The first chunk lands, the second and everything after it does not.
+  recognizer.setRefuseFrom(2)
+  const it = await rolloutStage(cluster, "telegram", {
+    people: [{ id: "p1", language: "en", transcribed_seconds: 600 }, { id: "p2", language: "ru" }],
+    voice: { port: recognizer.port, chunk_seconds: 60, retry_seconds: 2, give_up_hours: 24 },
+  })
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  let runner: Awaited<ReturnType<typeof runRunner>> | undefined
+  try {
+    it.edge.file("voice", long)
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: it.scripted.adapter } })
+    it.edge.batch([note("1", P1, long)], "2")
+    const first = await firstRow(it)
+    expect(await observe(() =>
+      recognizer.requests.filter(r => r.method === "POST").length >= 2, 60_000),
+      "RUN-13 the first chunk was answered and the second was asked for").toBe(true)
+    expect(await observe(async () => (await it.read.inbound())[0].media_attempts >= 1, 30_000),
+      "RUN-13 and the note is waiting on the chunk that failed").toBe(true)
+    expect((await it.read.inbound())[0].media_state).toBe("pending")
+
+    writeFileSync(it.registryFile,
+      readFileSync(it.registryFile, "utf8").replace("give_up_hours = 24", "give_up_hours = 0"))
+    expect(await observe(async () => (await it.read.inbound())[0].media_state === "failed", 40_000),
+      "RUN-13 the window ran out").toBe(true)
+    const row = (await it.read.inbound())[0]
+    expect(row.id).toBe(first.id)
+    const path = savedPath(row.body)
+    // The boundaries the production cut puts them at, derived here from the
+    // same planted samples the door saved.
+    const points = splitPoints(plantSamples({ seconds: 150, rate: WAV_RATE, quietAt: [] }), WAV_RATE, 60)
+    expect(points, "RUN-13 a 150 s note at a 60 s chunk is three pieces").toHaveLength(3)
+    const span = (n: number) => Math.round((points[n - 1] - (n === 1 ? 0 : points[n - 2])) / WAV_RATE)
+    expect(row.body, "RUN-13 the piece that came back, then a marker for each stretch that did not")
+      .toBe([`(voice ${path})`,
+        `synthetic piece one ${gapMarker("en", span(2))} ${gapMarker("en", span(3))}`,
+        voiceGaveUp("en", 0)].join("\n"))
+    expect(await observe(async () =>
+      (await it.read.ledger({ subject: row.id })).some(e => e.kind === "delivered"), 30_000)).toBe(true)
+  } finally { await runner?.stop(); await door?.stop(); await recognizer.stop(); await it.stop() }
+}, 180_000)
