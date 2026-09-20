@@ -36,5 +36,5 @@ export async function checkLoopSource(registry: unknown, presetName: string, pro
   if (getPreset(registry, presetName).adapter !== claudeCode.name) return;
   const { credentialSource, validateCredentialSource, probeLoopCapabilities } = await import("./launch.ts");
   validateCredentialSource(credentialSource(registry, presetName));
-  await probeLoopCapabilities(probe.bin, probe.timeoutMs);
+  await probeLoopCapabilities(probe.bin, probe.timeoutMs, probe.writePaths);
 }

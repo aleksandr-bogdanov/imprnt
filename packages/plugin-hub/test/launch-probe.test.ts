@@ -25,7 +25,7 @@
 
 import { beforeAll, expect, test } from "bun:test"
 import { lstatSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { loopLaunch } from "../src/adapters/index.ts"
 import { LOOP_PROBE_SETTLED_MS } from "../src/adapters/launch.ts"
 import { loopFixture, launchInput, scriptedClaude, type LoopFixture } from "./helpers/rollout-loop.ts"
@@ -39,8 +39,12 @@ beforeAll(async () => { await import("../live/prove-rollout-loop.ts") })
 // full suite loading the machine.
 const WAIT = 5000
 
-function launch(f: LoopFixture, bin: string, input: Record<string, unknown> = {}) {
-  return loopLaunch({ ...launchInput(f), ...input } as never, { bin, timeoutMs: WAIT })
+// The scripted CLI records every call it was asked in its own directory, and it
+// runs INSIDE the probe's box, where the host is read-only. So that directory is
+// handed to the probe as a write path, the way a declared repository is handed
+// to an agent's box.
+function launch(f: LoopFixture, bin: string, input: Record<string, unknown> = {}, writePaths: string[] = [dirname(bin)]) {
+  return loopLaunch({ ...launchInput(f), ...input } as never, { bin, timeoutMs: WAIT, writePaths })
 }
 
 test("IMP-162 a login probe that hangs once is asked again and the launch goes ahead", async () => {
@@ -144,7 +148,7 @@ test("IMP-162 check reports a login probe that keeps hanging as a timeout, not a
     const probeFindings = async (bin: string) => {
       const store = await superStore(cluster, it.db)
       try {
-        const found = await runCheck({ machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null, loopProbe: { bin, timeoutMs: WAIT } })
+        const found = await runCheck({ machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null, loopProbe: { bin, timeoutMs: WAIT, writePaths: [dirname(bin)] } })
         return found.filter(one => one.subject === "loop" && one.kind !== "credential-undeclared")
       } finally { await store.close().catch(() => {}) }
     }

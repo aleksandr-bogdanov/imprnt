@@ -26,7 +26,7 @@
 // Red reason: import missing, src/box/index.ts.
 
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
@@ -205,23 +205,34 @@ test(
       expect(argv).toContain("--unshare-pid");
       expect(argv).toContain("--die-with-parent");
 
-      const devBind = argv.findIndex(
-        (a, i) => a === "--dev-bind" && argv[i + 1] === "/" && argv[i + 2] === "/",
+      // The whole host is bound read-only, with a fresh /dev on top.
+      const hostBind = argv.findIndex(
+        (a, i) => a === "--ro-bind" && argv[i + 1] === "/" && argv[i + 2] === "/",
       );
+      expect(hostBind).toBeGreaterThanOrEqual(0);
+      const dev = argv.findIndex((a, i) => a === "--dev" && argv[i + 1] === "/dev");
+      expect(dev).toBeGreaterThan(hostBind);
       const proc = argv.findIndex((a, i) => a === "--proc" && argv[i + 1] === "/proc");
-      expect(devBind).toBeGreaterThanOrEqual(0);
       expect(proc).toBeGreaterThanOrEqual(0);
       // THE ORDER ASSERTION, by index. Reversed, the host's /proc is bound back
       // over the namespace's and the pid namespace hides nothing, which is a box
       // that passes every outcome check because the outcome is read through the
       // same /proc.
-      expect(proc).toBeGreaterThan(devBind);
+      expect(proc).toBeGreaterThan(hostBind);
 
-      // One --tmpfs per other tree, over that tree.
       const tmpfsAt = argv
         .map((a, i) => (a === "--tmpfs" ? argv[i + 1] : null))
         .filter((a): a is string => a !== null);
-      expect(tmpfsAt).toEqual([p2.tree]);
+      // One --tmpfs per other tree, over that tree.
+      expect(tmpfsAt.filter((path) => !path.startsWith("/run/"))).toEqual([p2.tree]);
+      // The user runtime directory and the system bus directory are masked too,
+      // on a machine that has them. Naming one that is not there would fail
+      // every boxed launch, because bwrap cannot make a mount point under the
+      // read-only host.
+      for (const path of ["/run/user", "/run/dbus"]) {
+        if (existsSync(path)) expect(tmpfsAt).toContain(path);
+        else expect(tmpfsAt).not.toContain(path);
+      }
 
       // No --unshare-net: the loop needs the model API and the tailnet, so a
       // network namespace here breaks the hub rather than fencing it.
@@ -308,7 +319,7 @@ test(
         const masked = build(PROBE, { ...withThree, platform: "linux" }, "linux");
         const masks = masked.argv
           .map((a, i) => (a === "--tmpfs" ? masked.argv[i + 1] : null))
-          .filter((a): a is string => a !== null)
+          .filter((a): a is string => a !== null && !a.startsWith("/run/"))
           .sort();
         expect(masks).toEqual(
           [three.trees.person("p2").tree, three.trees.person("p3").tree].sort(),

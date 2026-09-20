@@ -83,13 +83,36 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   const fragment = ordinary ? input.agent.fragment : undefined;
   if (fragment) accessSync(fragment, constants.R_OK);
   const ambient = process.env.HOME;
-  // IMP-158. The box masks every credential file, and this launch keeps the one
-  // login its loop runs on. Every other one, bot tokens and any other model
-  // login alike, stays masked.
+  // The box masks every credential file, and this launch keeps the one login its
+  // loop runs on. Every other one, bot tokens and any other model login alike,
+  // stays masked. The launched login's own directory is bound writable because
+  // the model CLI rotates its token in place there, so it is added to the box's
+  // write paths rather than left to the read-only host.
   const same = (a: string, b: string) => a === b || existsSync(a) && existsSync(b) && realpathSync(a) === realpathSync(b);
-  input = { ...input, box: { ...input.box, secretPaths: input.box.secretPaths?.filter(path => !same(path, credential.file)) } };
-  const boxed = sessionBox(input, [dirname(credential.file), credential.file, ...(fragment ? [fragment] : []), ...(mcpFile ? [mcpFile] : []),
-    ...(ambient ? [join(ambient, ".claude", "settings.json"), join(ambient, ".claude", "CLAUDE.md")] : [])]);
+  const writePaths = [...(input.box.writePaths ?? []), dirname(credential.file)];
+  const reads = [dirname(credential.file), credential.file, ...(fragment ? [fragment] : []), ...(mcpFile ? [mcpFile] : []),
+    ...(ambient ? [join(ambient, ".claude", "settings.json"), join(ambient, ".claude", "CLAUDE.md")] : [])];
+  // Every other credential file is masked. On Linux a single-file mask is a bind
+  // over one directory entry, and the kernel lifts it if the host later replaces
+  // the file by renaming a new one over it. So where a masked credential sits in
+  // a directory that holds nothing the loop reads or writes, the whole directory
+  // is masked instead, which a rename cannot lift. A credential sharing a
+  // directory with something the loop needs, the launched login above all, stays
+  // a single-file mask, and `check` reports that on Linux. The macOS box denies
+  // by path at every access, so a rename lifts nothing there and the file masks
+  // stand unchanged.
+  const kept = (input.box.secretPaths ?? []).filter(path => !same(path, credential.file));
+  const needs = [input.box.tree, input.box.sharedZone, input.box.stateRoot ?? "", input.sessionDir, ...reads, ...writePaths]
+    .filter(path => path !== "");
+  const holdsNeeded = (directory: string) =>
+    needs.some(path => same(path, directory) || path.startsWith(`${directory}/`));
+  const maskPaths = process.platform !== "linux" ? kept : [...new Set(kept.map(path => {
+    if (!existsSync(path) || !statSync(path).isFile()) return path;
+    const parent = dirname(path);
+    return holdsNeeded(parent) ? path : parent;
+  }))];
+  input = { ...input, box: { ...input.box, writePaths, secretPaths: maskPaths } };
+  const boxed = sessionBox(input, reads);
   const config = join(boxed.cwd, "config"), home = join(boxed.cwd, "home"), scratch = join(boxed.cwd, "tmp");
   for (const dir of [config, home, scratch]) mkdirSync(dir, { recursive: true, mode: 0o700 });
   // Only runtime plumbing is inherited; no ambient login, loader, or plugin variables.
@@ -114,8 +137,14 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   return { ...boxed, argv, env, credentialId: credential.id };
 }
 
-/** How the capability probe finds the CLI and how long one call to it may take. */
-export interface LoopProbeOptions { bin?: string; timeoutMs?: number }
+/**
+ * How the capability probe finds the CLI, how long one call to it may take, and
+ * any extra path its box may write to. The probe's box is built here, not by a
+ * caller, so a CLI that records what it was asked has nowhere to write under the
+ * read-only host unless it is named: the checks use this to hand their scripted
+ * CLI its own directory.
+ */
+export interface LoopProbeOptions { bin?: string; timeoutMs?: number; writePaths?: string[] }
 export const LOOP_PROBE_TIMEOUT_MS = 10_000;
 
 /**
@@ -188,7 +217,7 @@ export function loopCapabilitiesFor(credential: CredentialEntry, probe: LoopProb
   const kept = probed.get(key), clock = clockLead();
   // A second of slack keeps an ordinary clock slew from dropping a good answer.
   if (stamp !== null && kept?.stamp === stamp && clock > kept.clock - 1_000) return kept.answer;
-  const answer = probeLoopCapabilities(bin, probe.timeoutMs);
+  const answer = probeLoopCapabilities(bin, probe.timeoutMs, probe.writePaths);
   if (stamp !== null) probed.set(key, { stamp, clock, answer });
   else probed.delete(key);
   answer.catch(() => { if (probed.get(key)?.answer === answer) probed.delete(key); });
@@ -196,7 +225,7 @@ export function loopCapabilitiesFor(credential: CredentialEntry, probe: LoopProb
 }
 
 /** Offline capability evidence; no real login or model request enters this probe. */
-export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PROBE_TIMEOUT_MS) {
+export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PROBE_TIMEOUT_MS, writePaths: string[] = []) {
   const executable = Bun.which(bin);
   if (!executable) throw new Error("credential-source-unsupported");
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hub-loop-capability-")));
@@ -213,7 +242,7 @@ export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PRO
       credential: { id: "probe", owner: "probe", kind: "claude-login", file: source },
       agent: { id: "probe", person: "probe", preset: "probe", runner: "probe", door: "probe", chat: "probe" },
       sessionDir: join(root, "session"), purpose: "ordinary",
-      box: { agent: "probe", person: "probe", tree: root, sharedZone: "", otherTrees: [] },
+      box: { agent: "probe", person: "probe", tree: root, sharedZone: "", otherTrees: [], writePaths },
     });
     // IMP-162. A call that hangs is asked once more before the probe gives up:
     // measured on the Linux box, `auth status` hung in 4 of 36 runs and answered
