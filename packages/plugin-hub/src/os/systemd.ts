@@ -91,6 +91,27 @@ function stateOf(name: string, fields: Map<string, string>): UnitState {
   };
 }
 
+/**
+ * A unit the manager named but would not describe: the name and nothing else.
+ * Every reading is null rather than a zero, because a unit nobody could read
+ * has not restarted zero times.
+ */
+function unreadUnit(name: string): UnitState {
+  return {
+    name,
+    loaded: false,
+    running: false,
+    pid: null,
+    runs: null,
+    ran: false,
+    restarts: null,
+    lastExit: null,
+    since: null,
+    state: null,
+    result: null,
+  };
+}
+
 export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSeam {
   const bin = options.bin ?? "systemctl";
   const unitDir = options.unitDir ?? join(homedir(), ".config", "systemd", "user");
@@ -298,22 +319,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
         .map((line) => line.trim().replace(/^●\s*/, "").split(/\s+/)[0] ?? "")
         .filter((name) => name.startsWith(SCAN_PREFIX));
       const found = await show(names);
-      return names.map(
-        (name) =>
-          found.get(name) ?? {
-            name,
-            loaded: false,
-            running: false,
-            pid: null,
-            runs: null,
-            ran: false,
-            restarts: null,
-            lastExit: null,
-            since: null,
-            state: null,
-            result: null,
-          },
-      );
+      return names.map((name) => found.get(name) ?? unreadUnit(name));
     },
 
     async unitFiles(): Promise<string[]> {
@@ -345,23 +351,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
       // A file this hub wrote that the manager has not loaded is still a unit
       // that exists, and saying so is what tells a stopped one from a removed
       // one. A file that is gone as well is nothing at all.
-      if (existsSync(join(unitDir, name))) {
-        return (
-          found ?? {
-            name,
-            loaded: false,
-            running: false,
-            pid: null,
-            runs: null,
-            ran: false,
-            restarts: null,
-            lastExit: null,
-            since: null,
-            state: null,
-            result: null,
-          }
-        );
-      }
+      if (existsSync(join(unitDir, name))) return found ?? unreadUnit(name);
       return null;
     },
 

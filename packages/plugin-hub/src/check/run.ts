@@ -9,10 +9,10 @@ import {
   seenUnits,
   startCommand,
   stopCommand,
-  wantedState,
+  wantedUnits,
 } from "../os/diff.ts";
-import { entryIdOf, isOurs, unitName } from "../os/names.ts";
-import type { OsSeam, WantedUnit } from "../os/types.ts";
+import { entryIdOf, isOurs } from "../os/names.ts";
+import type { OsSeam } from "../os/types.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import {
   harvestFor,
@@ -226,12 +226,7 @@ export async function runCheck(options: {
   // --- what runs against what is listed, both directions (criterion 1) -----
   const os = options.os ?? null;
   if (os) {
-    const wanted: WantedUnit[] = entries.map((entry) => ({
-      id: entry.id,
-      name: unitName(entry.id),
-      state: wantedState(entry),
-      entry,
-    }));
+    const wanted = wantedUnits(entries);
     const found = await seenUnits(os, entries);
     const difference = diffUnits({ wanted, found });
 

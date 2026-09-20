@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync, lstatSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { CredentialEntry } from "../registry/load.ts";
 import { findingId, type Finding } from "./finding.ts";
 

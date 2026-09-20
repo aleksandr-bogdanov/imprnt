@@ -73,6 +73,27 @@ function readPrint(label: string, text: string): UnitState {
   };
 }
 
+/**
+ * A unit that exists and about which `print` said nothing: the name, whether
+ * the manager is carrying it, and no reading at all. Every other field is null
+ * rather than a zero, because a job nobody could read has not run zero times.
+ */
+function unreadUnit(name: string, loaded: boolean): UnitState {
+  return {
+    name,
+    loaded,
+    running: false,
+    pid: null,
+    runs: null,
+    ran: false,
+    restarts: null,
+    lastExit: null,
+    since: null,
+    state: null,
+    result: null,
+  };
+}
+
 export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSeam {
   const bin = options.bin ?? "launchctl";
   const unitDir = options.unitDir ?? join(homedir(), "Library", "LaunchAgents");
@@ -206,21 +227,7 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
         .filter((label) => label.startsWith(SCAN_PREFIX));
       const out: UnitState[] = [];
       for (const label of labels) {
-        out.push(
-          (await print(label)) ?? {
-            name: label,
-            loaded: true,
-            running: false,
-            pid: null,
-            runs: null,
-            ran: false,
-            restarts: null,
-            lastExit: null,
-            since: null,
-            state: null,
-            result: null,
-          },
-        );
+        out.push((await print(label)) ?? unreadUnit(label, true));
       }
       return out;
     },
@@ -249,21 +256,7 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
       const label = unitName(entryId);
       const found = await print(label);
       if (found) return found;
-      if (existsSync(fileOf(label))) {
-        return {
-          name: label,
-          loaded: false,
-          running: false,
-          pid: null,
-          runs: null,
-          ran: false,
-          restarts: null,
-          lastExit: null,
-          since: null,
-          state: null,
-          result: null,
-        };
-      }
+      if (existsSync(fileOf(label))) return unreadUnit(label, false);
       return null;
     },
 

@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { appendEntry } from "../records/diary.ts";
-import { diffUnits, seenUnits, wantedState } from "../os/diff.ts";
-import { entryIdOf, unitName } from "../os/names.ts";
+import { diffUnits, seenUnits, wantedState, wantedUnits } from "../os/diff.ts";
+import { entryIdOf } from "../os/names.ts";
 import { thisOs } from "../os/index.ts";
-import type { OsSeam, RenderContext, WantedUnit } from "../os/types.ts";
+import type { OsSeam, RenderContext } from "../os/types.ts";
 import { listMachines, listRunEntries, runEntriesFor } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
 import { openStore, type Store } from "../store/connect.ts";
@@ -169,7 +169,7 @@ export async function runHub(options: {
     // The explicit asks come first, before the reconcile's own work, so a
     // request lands within one tick of being written rather than behind
     // whatever the registry happened to change in the same pass.
-    await acknowledge(registry, entries);
+    await acknowledge(entries);
     const started = new Set<string>();
 
     for (const entry of entries) {
@@ -190,12 +190,7 @@ export async function runHub(options: {
       }
     }
 
-    const wanted: WantedUnit[] = entries.map((entry) => ({
-      id: entry.id,
-      name: unitName(entry.id),
-      state: wantedState(entry),
-      entry,
-    }));
+    const wanted = wantedUnits(entries);
     const elsewhere = new Set(listRunEntries(registry).filter(e => listMachines(registry).length > 1 && e.machine !== options.machine).map(e => e.id));
     const found = (await seenUnits(os, entries)).filter(unit => !elsewhere.has(entryIdOf(unit.name) ?? ""));
     const difference = diffUnits({ wanted, found });
@@ -219,7 +214,7 @@ export async function runHub(options: {
   };
 
   /** The restart requests, each acted on or refused exactly once. */
-  const acknowledge = async (registry: unknown, entries: RunEntry[]): Promise<void> => {
+  const acknowledge = async (entries: RunEntry[]): Promise<void> => {
     let requests: RestartRequest[];
     try {
       requests = await readRequests(store, { after: watermark });

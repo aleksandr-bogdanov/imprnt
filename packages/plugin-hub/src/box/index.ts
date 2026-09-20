@@ -139,10 +139,6 @@ function hostControlMasks(): string[] {
   ];
 }
 
-function flavourOf(ctx: BoxContext, platform?: string): string {
-  return String(platform ?? process.platform);
-}
-
 /**
  * Every path in this household that holds a secret an agent must not
  * read: the directory the store roles' passwords are in, every door's token
@@ -326,7 +322,9 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
     otherTrees: ctx.otherTrees.map(canonical), otherStateRoots: ctx.otherStateRoots?.map(canonical),
     readPaths: ctx.readPaths?.map(canonical), writePaths: ctx.writePaths?.map(canonical),
     secretPaths: ctx.secretPaths?.map(canonical) };
-  const flavour = flavourOf(ctx, platform);
+  // The caller may name the box flavour, for a check that renders the other
+  // machine's command. Unnamed, it is the one this process is running on.
+  const flavour = String(platform ?? process.platform);
   if (flavour === "linux") {
     return {
       tool: "bwrap",

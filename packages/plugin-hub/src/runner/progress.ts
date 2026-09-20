@@ -18,16 +18,19 @@ export interface ProgressRow {
   started_at: string;
 }
 
+/** The same progress in the runner's own spelling, before it becomes a row. */
+export interface TurnProgress {
+  messageId: string;
+  person: string;
+  agent: string;
+  actions: number;
+  lastAction: string;
+  startedAt: string;
+}
+
 export async function writeProgress(
   store: StoreLike,
-  progress: {
-    messageId: string;
-    person: string;
-    agent: string;
-    actions: number;
-    lastAction: string;
-    startedAt: string;
-  },
+  progress: TurnProgress,
 ): Promise<void> {
   await putRow(store, TURN_PROGRESS_SHEET, progress.messageId, {
     person: progress.person,

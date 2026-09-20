@@ -2,7 +2,7 @@ import { executeHarvest } from "../harvest/execute.ts";
 import { watchControls } from "../hub/control.ts";
 import { prepareReply } from "../door/reply.ts";
 import type { InboundSource } from "../store/inbound.ts";
-import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { adapterFor, loopLaunch } from "../adapters/index.ts";
 import { AdapterMissing, type Adapter, type AdapterSession, type TurnEnd } from "../adapters/types.ts";
@@ -30,6 +30,7 @@ import {
   languageOf,
   listAgents,
   listRunEntries,
+  noticeRoute,
 } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
 import {
@@ -46,7 +47,7 @@ import { storeUrlFor } from "../store/secrets.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
-import { clearProgress, writeProgress } from "./progress.ts";
+import { clearProgress, writeProgress, type TurnProgress } from "./progress.ts";
 import {
   clearOutage,
   classifyRefusal,
@@ -127,12 +128,6 @@ function setting(registry: Registry, key: string): number {
   return Number(readSetting(registry, key));
 }
 
-function noticeRoute(registry: Registry, id: string) {
-  const agent = listAgents(registry).find(one => one.id === id)!;
-  const door = (registry.data.run as { id: string; platform?: string }[]).find(one => one.id === agent.door);
-  return { route: { door: agent.door, chat: agent.chat }, platform: door?.platform ?? "discord", language: languageOf(registry, agent.person) };
-}
-
 /**
  * How long a runner waits before it tries a refused credential again.
  * L10 rule 3's fixed interval, and v2's own was five minutes.
@@ -150,14 +145,7 @@ function progressOf(open: {
   actions: number;
   lastAction: string;
   startedAt: string;
-}): {
-  messageId: string;
-  person: string;
-  agent: string;
-  actions: number;
-  lastAction: string;
-  startedAt: string;
-} {
+}): TurnProgress {
   return {
     messageId: open.id,
     person: open.person,
