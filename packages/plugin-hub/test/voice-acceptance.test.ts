@@ -194,10 +194,11 @@ const WINDOWS: Record<string, string> = {
  */
 const RUNNER: Record<string, string> = {
   "claim.ts": "3facf4135c6b27933d4e2193aec87c2aee03fb7209fa18cb794c07c70cfb76fa",
+  "job.ts": "e6d0dcef52be22b10ec5edcaa789166295c3c0f9316169394ce77abdde986545",
   "outage.ts": "3e363ae419beb0a974dae8587e550bf1ba051d76271e33a20c6aea85c678e7d8",
   "progress.ts": "5f52d49c969890f7979ff5dfeb5ed405869f75ac1a9d6a7c35f7fbf6c8546c8e",
-  "run.ts": "1970787e250394fc391accf7fa67f3a64193bc6276671911fa6f2c20776b19b8",
-  "settle.ts": "5c671242861f975cb091c88b213b416feeebbf76f6b15619445d73c9f5fd37ee",
+  "run.ts": "373b6a88d2620189ba2ce57f6efa10e10d4cc7acb2a79d26e1bcc8759ee2808a",
+  "settle.ts": "c45b3f3753ada2388777ec7b6abfa8769a8eb7730e2d3c9e6150dde5c0e63e43",
 };
 
 /** The shipped check that says a household with no recognizer kept today's path. */
