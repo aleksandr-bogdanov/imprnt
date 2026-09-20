@@ -2,7 +2,7 @@ import { putRow, removeRow } from "../records/statesheet.ts";
 import type { StoreLike } from "../store/connect.ts";
 
 /**
- * D-117 and D-124. What the open turn has done so far, one row per message.
+ * What the open turn has done so far, one row per message.
  *
  * The runner writes it while the turn runs and the settle removes it, and the
  * trigger on that write is what wakes the door to edit the one platform message
