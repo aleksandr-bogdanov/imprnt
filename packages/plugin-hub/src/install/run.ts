@@ -7,7 +7,7 @@ import { listAgents, listMachines, listRunEntries } from "../registry/entries.ts
 import { thisOs } from "../os/index.ts";
 import { wantedState } from "../os/diff.ts";
 import type { OsSeam } from "../os/types.ts";
-import { programForKind } from "../hub/program.ts";
+import { programForKind, transcriberArgv } from "../hub/program.ts";
 import { openStore } from "../store/connect.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { standardFor } from "./standard.ts";
@@ -206,6 +206,9 @@ export async function runInstall(options: { registryFile: string; stage?: string
     const os = options.os ?? thisOs();
     const rendered = (stage === "entry" ? [target] : selected).map(entry => ({ entry, files: os.render(entry, {
       machine: target.machine, execPath: process.execPath, entryScript: programForKind(entry.kind),
+      // The same function the hub's own tick calls, so a unit installed by hand
+      // and a unit the hub writes cannot differ.
+      argv: entry.kind === "transcriber" ? transcriberArgv(registry, entry) : undefined,
       registryFile: options.registryFile, stateDir: String(readSetting(registry, "hub.state_dir")),
       restartDelaySeconds: Number(readSetting(registry, "hub.restart_delay_seconds") ?? 1),
       giveUpAfter: Number(readSetting(registry, "hub.give_up_after") ?? 5),

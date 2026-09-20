@@ -27,7 +27,11 @@ for (const kind of ["hub", "door", "runner", "sync"] as const) for (const flavou
     } finally { await f.stop() }
   })
 }
-for (const kind of ["watcher", "transcriber", "backup", "board", "arbitrary-kind"]) {
+// `transcriber` is not in this list because the hub renders that kind now: its
+// program is the recognizer's Python server and its argv is bound in
+// test/voice-units.test.ts. The four that remain are still deferred, and each
+// one still refuses before the first file write or child start.
+for (const kind of ["watcher", "backup", "board", "arbitrary-kind"]) {
   test(`ROLL-17 ${kind} refuses before the first file or child start and defeats hub fallback`, async () => {
     const f = await serviceFixture(cluster)
     try {

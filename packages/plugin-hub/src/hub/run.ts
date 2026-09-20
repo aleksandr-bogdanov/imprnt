@@ -12,7 +12,7 @@ import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.
 import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
 import { watchControls } from "./control.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
-import { programForKind } from "./program.ts";
+import { programForKind, transcriberArgv } from "./program.ts";
 
 /**
  * The hub: one process per machine, ours, unsandboxed, and the only thing that
@@ -148,6 +148,9 @@ export async function runHub(options: {
     machine: options.machine,
     execPath: process.execPath,
     entryScript: programForKind(entry.kind),
+    // One function answers this for both callers that render a unit, so a unit
+    // installed by hand and a unit written on a tick cannot differ.
+    argv: entry.kind === "transcriber" ? transcriberArgv(registry, entry) : undefined,
     registryFile: options.registryFile,
     stateDir: String(readSetting(registry, "hub.state_dir")),
     restartDelaySeconds: setting(registry, "hub.restart_delay_seconds", 1),
@@ -260,7 +263,7 @@ export async function runHub(options: {
     }
   };
 
-  /** A measured peak for every resident piece, and only when it grew. */
+  /** A measured peak for every resident piece, and the current reading beside it. */
   const measure = async (registry: unknown, entries: RunEntry[]): Promise<void> => {
     for (const id of residentIds(registry, options.machine)) {
       let pid: number | null = null;
@@ -284,6 +287,9 @@ export async function runHub(options: {
           how: reading.peak_bytes === null ? "sampled" : "vmhwm",
           machine: options.machine,
           pid,
+          // What it is holding right now, beside the high-water mark. Nothing
+          // new is sampled for it: this is the reading already taken.
+          reading_bytes: reading.current_bytes,
         });
       } catch {
         // A process that went away between the listing and the reading is not a
