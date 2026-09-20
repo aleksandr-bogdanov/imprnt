@@ -3,15 +3,45 @@
   "ui": "stream",
   "tasks": {
     "build": {
-      "inputs": ["src/**", "scripts/**", "templates/**", "package.json", "tsconfig.json"],
-      "outputs": ["dist/**", "check.js", "timemachine.js", "statusline.js", "kopeika.js", "client.js"]
+      "inputs": [
+        "src/**",
+        "scripts/**",
+        "templates/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "outputs": [
+        "dist/**",
+        "check.js",
+        "timemachine.js",
+        "statusline.js",
+        "kopeika.js",
+        "client.js"
+      ]
     },
     "typecheck": {
-      "inputs": ["src/**", "scripts/**", "package.json", "tsconfig.json"],
+      "inputs": [
+        "src/**",
+        "test/**",
+        "live/**",
+        "scripts/**",
+        "package.json",
+        "tsconfig.json"
+      ],
       "outputs": []
     },
     "test": {
-      "inputs": ["src/**", "scripts/**", "templates/**", "package.json", "tsconfig.json"],
+      "inputs": [
+        "src/**",
+        "test/**",
+        "live/**",
+        "scripts/**",
+        "templates/**",
+        "package.json",
+        "tsconfig.json",
+        "bunfig.toml",
+        "hub.mjs"
+      ],
       "outputs": []
     }
   }
