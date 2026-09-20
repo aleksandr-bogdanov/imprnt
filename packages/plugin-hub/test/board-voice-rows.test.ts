@@ -308,7 +308,14 @@ const entryRow = (text: string, id: string) => cellsFor(text, "peak bytes", id);
 /** One recognizer's row on the metrics page. */
 const healthRow = (text: string, id: string) => cellsFor(text, "recognizer", id);
 
-/** Every `<p>` and every `<th>` the page carries, as text. */
+/**
+ * Every `<p>` and every `<th>` the page carries, as text.
+ *
+ * Those two and not the headings, because a heading on these pages carries a
+ * page name, a machine id or a scope name, which is a value. What this reads is
+ * the prose and the column labels, which are the two places a sentence nobody
+ * pinned could be assembled.
+ */
 function prose(text: string): string[] {
   return [
     ...[...text.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)].map((one) => one[1]),
