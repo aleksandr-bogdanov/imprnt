@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs"
 import type { Cluster } from "./cluster.ts"
 import { stageHub, type StageOptions } from "./hub-fixture.ts"
+import type { RegistrySpec } from "./registry.ts"
 import { rolloutPlatform } from "./rollout-platform.ts"
 
 /**
@@ -53,10 +54,50 @@ function voiceTables(voice: VoiceStage, runtime: string): string {
   return lines.join("\n") + "\n"
 }
 
+/**
+ * The household a dispatch check needs: a second agent per person on the same
+ * door with a chat of its own, a second machine with a runner of its own, and a
+ * job-only agent that names neither door nor chat.
+ *
+ * UNSET MEANS THE FILE IS THE ONE EVERY SHIPPED CHECK ALREADY LOADS. Nothing
+ * below runs without the option, so a stage written without it renders the same
+ * registry byte for byte and no shipped check sees a second machine.
+ */
+export const DISPATCHER = "p1-lair"
+export const DISPATCH_TARGET = "p1-research"
+export const DISPATCH_TARGET_CHAT = "1000000002"
+export const DISPATCH_TARGET_RU = "p2-research"
+export const DISPATCH_TARGET_RU_CHAT = "2000000002"
+/** Neither door nor chat, so no chat log, no typing and no clock is its own. */
+export const DISPATCH_JOB_ONLY = "p1-batch"
+export const DISPATCH_RUNNER2 = "runner-mac"
+
+function dispatchSpec(spec: RegistrySpec): RegistrySpec {
+  // Both machines carry the os this suite runs on, so a check may really start
+  // either runner here. Two of them is what makes `machine` required on every
+  // run entry, which is why the entries are spelled out rather than implied.
+  const os = process.platform === "darwin" ? "macos" : "linux"
+  return {
+    ...spec,
+    machines: [{ id: "pi", os }, { id: DISPATCH_RUNNER2.replace("runner-", ""), os }],
+    agents: [
+      ...(spec.agents ?? []),
+      { id: DISPATCH_TARGET, person: "p1", preset: "daily", chat: DISPATCH_TARGET_CHAT, door: "door-fake", runner: "runner-pi" },
+      { id: DISPATCH_TARGET_RU, person: "p2", preset: "daily", chat: DISPATCH_TARGET_RU_CHAT, door: "door-fake", runner: "runner-pi" },
+      { id: DISPATCH_JOB_ONLY, person: "p1", preset: "daily", runner: DISPATCH_RUNNER2 },
+    ],
+    run: [
+      { id: "door-fake", kind: "door", platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192, machine: "pi" },
+      { id: "runner-pi", kind: "runner", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048, machine: "pi" },
+      { id: DISPATCH_RUNNER2, kind: "runner", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048, machine: "mac" },
+    ],
+  }
+}
+
 export async function rolloutStage(
   cluster: Cluster,
   name: "telegram" | "discord",
-  options: StageOptions & { voice?: VoiceStage } = {},
+  options: StageOptions & { voice?: VoiceStage; dispatch?: boolean } = {},
 ) {
   const customize = options.registry
   const hub = await stageHub(cluster, {
@@ -68,7 +109,8 @@ export async function rolloutStage(
       door: "door-fake", runner: "runner-pi",
     }],
     registry: base => {
-      const spec = { ...base, agents: base.agents!.map(one => ({ ...one, runner: "runner-pi" })) }
+      const one = { ...base, agents: base.agents!.map(one => ({ ...one, runner: "runner-pi" })) }
+      const spec = options.dispatch ? dispatchSpec(one) : one
       return customize ? customize(spec) : spec
     },
   })
