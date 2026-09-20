@@ -130,7 +130,10 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
     render(entry: RunEntry, ctx: RenderContext): UnitFile[] {
       const wanted = wantedState(entry);
       const label = unitName(entry.id);
-      const argv = [ctx.execPath, "run", ctx.entryScript, ctx.registryFile, entry.id];
+      // The entry's own command line when it has one, and the bun default
+      // otherwise. The fallback is what every other kind renders, so a render
+      // with no argv supplied is byte for byte what it always was.
+      const argv = ctx.argv ?? [ctx.execPath, "run", ctx.entryScript, ctx.registryFile, entry.id];
       const every = wanted === "scheduled" ? scheduleSeconds(entry.schedule) : null;
       const body = [
         ...(ctx.stateDir ? [

@@ -106,6 +106,16 @@ export interface InboundRow {
   state: string;
   claimed_by: string | null;
   claim_deadline: Date | null;
+  /**
+   * The door's own transcription step, on the row it belongs to. A row nothing
+   * has touched reads five nulls and a zero, which is what makes every insert
+   * that says nothing about them legal unchanged.
+   */
+  media_state: string | null;
+  media_attempts: number;
+  media_retry_at: Date | null;
+  media_failure: Record<string, unknown> | null;
+  media_done_at: Date | null;
 }
 
 /**
@@ -177,7 +187,8 @@ export function storeReader(cluster: Cluster, database: string): StoreReader {
     },
     async inbound() {
       return (await rows(
-        `select id, person, agent, body, received_at, state, claimed_by, claim_deadline
+        `select id, person, agent, body, received_at, state, claimed_by, claim_deadline,
+                media_state, media_attempts, media_retry_at, media_failure, media_done_at
          from inbound order by received_at, id`,
       )) as unknown as InboundRow[];
     },

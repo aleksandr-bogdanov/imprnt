@@ -12,7 +12,7 @@ import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.
 import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
 import { watchControls } from "./control.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
-import { programForKind } from "./program.ts";
+import { programForKind, transcriberArgv } from "./program.ts";
 
 /**
  * The hub: one process per machine, ours, unsandboxed, and the only thing that
@@ -148,6 +148,9 @@ export async function runHub(options: {
     machine: options.machine,
     execPath: process.execPath,
     entryScript: programForKind(entry.kind),
+    // One function answers this for both callers that render a unit, so a unit
+    // installed by hand and a unit written on a tick cannot differ.
+    argv: entry.kind === "transcriber" ? transcriberArgv(registry, entry) : undefined,
     registryFile: options.registryFile,
     stateDir: String(readSetting(registry, "hub.state_dir")),
     restartDelaySeconds: setting(registry, "hub.restart_delay_seconds", 1),
@@ -260,7 +263,7 @@ export async function runHub(options: {
     }
   };
 
-  /** A measured peak for every resident piece, and only when it grew. */
+  /** A measured peak for every resident piece, and the current reading beside it. */
   const measure = async (registry: unknown, entries: RunEntry[]): Promise<void> => {
     for (const id of residentIds(registry, options.machine)) {
       let pid: number | null = null;
@@ -284,6 +287,9 @@ export async function runHub(options: {
           how: reading.peak_bytes === null ? "sampled" : "vmhwm",
           machine: options.machine,
           pid,
+          // What it is holding right now, beside the high-water mark. Nothing
+          // new is sampled for it: this is the reading already taken.
+          reading_bytes: reading.current_bytes,
         });
       } catch {
         // A process that went away between the listing and the reading is not a
@@ -292,10 +298,36 @@ export async function runHub(options: {
     }
   };
 
-  const controls = await watchControls(store, "hub", data => data.target_kind === "door" &&
-    runEntriesFor(loadRegistry(options.registryFile), options.machine).some(e => e.id === data.target_id && e.kind === "door"), async data => {
-      try { await os.restart(String(data.target_id)); }
-      catch (error) { await recordOperationFailure(store, { operation: "restart", target: String(data.target_id), error }); throw error; }
+  /**
+   * When each entry was last restarted from a control row, so the one a wedged
+   * recognizer earns cannot become a restart loop.
+   *
+   * THE LIMIT LIVES HERE AND NOT IN THE ASKER. A refusal is a `refusal` line and
+   * the door holds no insert policy for that stream, so a door-side limit would
+   * be a fence widened for a diagnostic this side can already write.
+   */
+  const restartedAt = new Map<string, number>();
+  const targets = (data: Record<string, unknown>, kind: string): boolean =>
+    runEntriesFor(loadRegistry(options.registryFile), options.machine)
+      .some(e => e.id === data.target_id && e.kind === kind);
+  const controls = await watchControls(store, "hub",
+    // A recognizer entry of THIS machine joins the door as a target. Anything
+    // else, and anything on another machine, is not this hub's to act on.
+    data => (data.target_kind === "door" && targets(data, "door")) ||
+      (data.target_kind === "run" && targets(data, "transcriber")), async data => {
+      const id = String(data.target_id);
+      // The limit is the RECOGNIZER's alone. An operator asking for a door back
+      // is a person who meant it, and nothing about a door's failures makes a
+      // second ask a loop.
+      const bounded = data.target_kind === "run";
+      const seconds = setting(loadRegistry(options.registryFile), "hub.outage_retry_seconds", 300);
+      const last = restartedAt.get(id);
+      if (bounded && last !== undefined && Date.now() - last < seconds * 1000) {
+        throw new Error(`${id} was restarted less than ${seconds} s ago, which is this household's retry interval`);
+      }
+      try { await os.restart(id); }
+      catch (error) { await recordOperationFailure(store, { operation: "restart", target: id, error }); throw error; }
+      if (bounded) restartedAt.set(id, Date.now());
     });
 
   const tick = setting(first, "hub.tick_seconds", 5) * 1000;

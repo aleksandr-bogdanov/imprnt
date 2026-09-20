@@ -58,6 +58,30 @@ export interface RunSpec {
   machine?: string;
   /** The limit the RUNNER enforces on its model child, not its own. */
   child_memory_limit_mb?: number;
+  /**
+   * The three a `kind = "transcriber"` entry carries. The door reaches the
+   * recognizer on loopback at `port`; `residency` says whether the model is
+   * held or dropped between notes, and `idle_seconds` is the window the
+   * dropping one waits. Each renders nothing when the spec names none.
+   */
+  port?: number;
+  residency?: string;
+  idle_seconds?: number;
+}
+
+/**
+ * One recognizer the household may name. Every field is optional so a check can
+ * render a table with one deliberately missing, and the index signature admits
+ * a key the loader has no rule about so a check can prove that novelty alone is
+ * not what gets refused.
+ */
+export interface RecognizerSpec {
+  provider?: string;
+  model?: string;
+  runtime?: string;
+  credential?: string;
+  chunk_seconds?: number;
+  [key: string]: string | number | undefined;
 }
 
 /** A machine the household has. `os` is in the file, never process.platform. */
@@ -78,6 +102,8 @@ export interface PersonSpec {
   started_seconds?: number;
   answered_seconds?: number;
   delivered_seconds?: number;
+  /** How long this person waits for a voice note's own text, seconds. */
+  transcribed_seconds?: number;
   /**
    * The five harvest fields, this person's own. Each one is OPTIONAL and
    * renders nothing when the spec names none, so a spec written without them
@@ -123,6 +149,10 @@ export interface StoreSpec {
 export interface RegistrySpec {
   hub?: Record<string, string | number>;
   store?: StoreSpec;
+  /** The `[voice]` table: which recognizer the household names, and its knobs. */
+  voice?: Record<string, string | number>;
+  /** One `[recognizers.<name>]` table each. */
+  recognizers?: Record<string, RecognizerSpec>;
   presets?: Record<string, PresetSpec>;
   agents?: AgentSpec[];
   rates?: RateSpec[];
@@ -255,6 +285,15 @@ function renderRegistry(spec: RegistrySpec): string {
     lines.push("");
   }
 
+  // The household's recognizer, where the shipped example carries it. An
+  // absent section renders NOTHING, so a spec that names no voice field
+  // produces the same file it produces today, byte for byte.
+  if (spec.voice) {
+    lines.push("[voice]");
+    table(lines, spec.voice as Record<string, unknown>);
+    lines.push("");
+  }
+
   // An absent section renders NOTHING, so a spec that names no machines and no
   // people produces the same file it produces today and no earlier check sees a
   // different registry.
@@ -288,6 +327,14 @@ function renderRegistry(spec: RegistrySpec): string {
     lines.push("");
   }
 
+  // After the presets, which is where the shipped example carries them: a
+  // recognizer may name a credential, and the credential tables are above.
+  for (const [name, recognizer] of Object.entries(spec.recognizers ?? {})) {
+    lines.push(`[recognizers.${name}]`);
+    table(lines, recognizer as Record<string, unknown>);
+    lines.push("");
+  }
+
   for (const agent of spec.agents ?? []) {
     lines.push("[[agents]]");
     table(lines, agent as Record<string, unknown>);
@@ -300,6 +347,8 @@ function renderRegistry(spec: RegistrySpec): string {
     lines.push("");
   }
 
+  // This call renders the keys it is GIVEN and nothing else, so every field a
+  // spec may carry has to be named here or the file says nothing about it.
   for (const entry of spec.run ?? impliedRun(spec.agents ?? [])) {
     lines.push("[[run]]");
     table(lines, {
@@ -312,6 +361,9 @@ function renderRegistry(spec: RegistrySpec): string {
       schedule: entry.schedule ?? "always",
       memory_limit_mb: entry.memory_limit_mb ?? 256,
       child_memory_limit_mb: entry.child_memory_limit_mb,
+      port: entry.port,
+      residency: entry.residency,
+      idle_seconds: entry.idle_seconds,
     });
     lines.push("");
   }

@@ -1,5 +1,6 @@
 import { appendEntry } from "../records/diary.ts";
 import type { StampThresholds } from "../registry/entries.ts";
+import { TRANSCRIBED_DEFAULT_SECONDS } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import type { OpenTurnRow } from "../store/turns.ts";
 
@@ -14,26 +15,44 @@ export interface ClockDeadline {
 }
 
 /**
- * The clocks a row is waiting on right now, derived from `received_at` and that
- * person's own thresholds.
+ * The clocks a row is waiting on right now, derived from that person's own
+ * thresholds and the moment their message became a message with text in it.
  *
- * All three are measured from `received_at` and not from the stamp
- * before them, because `received_at` is the moment the person sent it and that
- * is what they are counting from. The row's STATE says which one is armed
- * a `received` row is waiting for `acked` and for nothing
- * else, an `acked` row for `started`, a `started` row for `answered`.
+ * All three are measured from ONE base and not from the stamp before them,
+ * because that base is the moment the person sent it and that is what they are
+ * counting from. The row's STATE says which one is armed: a `received` row is
+ * waiting for `acked` and for nothing else, an `acked` row for `started`, a
+ * `started` row for `answered`.
+ *
+ * A ROW WAITING FOR ITS OWN TEXT ARMS ONE CLOCK AND IT IS NOT `acked`. While
+ * the door is still transcribing a voice note, "the loop has not accepted this
+ * message" is a false sentence: there is nothing yet to accept. So a pending
+ * row arms `transcribed` alone, and once the text exists the base moves to the
+ * moment it existed. A row with no media is unchanged in every case.
  *
  * `delivered` is NOT here and never will be. The thing it measures is the
  * door's own post, and a door that cannot post cannot post a line about not
  * being able to post. It is a `check` finding and nothing else.
  *
- * Pure, so the arithmetic is readable without a store or a clock.
+ * Pure, so the arithmetic is readable without a store or a clock. The third
+ * argument carries its own default, so every two-argument call is unchanged.
  */
 export function clockDeadlines(
-  row: Pick<OpenTurnRow, "state" | "received_at">,
+  row: Pick<OpenTurnRow, "state" | "received_at"> & {
+    media_state?: string | null;
+    media_done_at?: Date | string | null;
+  },
   thresholds: StampThresholds,
+  transcribedSeconds: number = TRANSCRIBED_DEFAULT_SECONDS,
 ): ClockDeadline[] {
-  const from = new Date(row.received_at).getTime();
+  const received = new Date(row.received_at).getTime();
+  if (row.media_state === "pending") {
+    return [{ stamp: "transcribed", at: received + transcribedSeconds * 1000 }];
+  }
+  const from =
+    row.media_done_at === undefined || row.media_done_at === null
+      ? received
+      : new Date(row.media_done_at).getTime();
   const waits: Record<string, { stamp: string; seconds: number }> = {
     received: { stamp: "acked", seconds: thresholds.acked_seconds },
     acked: { stamp: "started", seconds: thresholds.started_seconds },

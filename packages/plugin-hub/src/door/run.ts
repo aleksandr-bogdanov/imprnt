@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { historyHarvestFrom } from "../registry/entries.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
-import { classifyPlatformError } from "./reply.ts";
+import { classifyPlatformError, prepareReply } from "./reply.ts";
+import { requestRecovery } from "../hub/control.ts";
 import { appendChatLine, appendChatLineOnce, type BadRecord } from "../chatlog.ts";
 import { recordOperationFailure as recordDiagnostic } from "../diagnostics.ts";
 import { projectInbound } from "../chatlog/project.ts";
@@ -16,13 +18,35 @@ import { readWatermark, type Watermark } from "../harvest/sheet.ts";
 import { isDemand, newestLine, readSlice } from "../harvest/slice.ts";
 import { stamp } from "../records/stamps.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
-import { agentsFor, harvestFor, languageOf, senderAllowed, thresholdsFor } from "../registry/entries.ts";
+import {
+  agentsFor,
+  credentialFor,
+  harvestFor,
+  languageOf,
+  listRunEntries,
+  senderAllowed,
+  thresholdsFor,
+  transcribedSecondsFor,
+  transcriberFor,
+  voiceFor,
+  type VoiceSettings,
+} from "../registry/entries.ts";
 import {
   loadRegistry,
   readSetting,
   type AgentEntry,
   type Registry,
+  type RunEntry,
 } from "../registry/load.ts";
+import { readVoiceHealth } from "../voice/health.ts";
+import { markMediaFailed, readMediaState, recordTranscribe } from "../voice/records.ts";
+import { spliceTranscript, transcribeRow, voiceMediaOf } from "../voice/step.ts";
+import {
+  chunkFilePath,
+  readChunkFile,
+  renderPartial,
+  type ChunkFile,
+} from "../voice/transcript.ts";
 import { getPreset } from "../registry/presets.ts";
 import { TURN_PROGRESS_SHEET, type ProgressRow } from "../runner/progress.ts";
 import { openStore, type Store } from "../store/connect.ts";
@@ -31,10 +55,21 @@ import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
 import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
 import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
-import { acceptBatch } from "./ingest.ts";
+import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
 import { readCursor, writeCursor } from "./cursor.ts";
-import { clockLine, finding, progressLine, progressTotals, safeValue, type Language } from "./lines.ts";
+import {
+  clockLine,
+  finding,
+  progressLine,
+  progressTotals,
+  safeValue,
+  transcriberBack,
+  transcriberDown,
+  voiceGaveUp,
+  voicePending,
+  type Language,
+} from "./lines.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
 
 /**
@@ -162,6 +197,17 @@ interface Served {
   /** Resolves once the harvest task has done its one read at connect. */
   harvesting: Promise<void>;
   harvested(): void;
+  /**
+   * Resolves once the transcription task has read this agent's waiting notes
+   * and checked each one's saved bytes against its receipt.
+   *
+   * It is a member of readiness because a restarted door must have decided
+   * about every waiting note before anything else looks at the table: a note
+   * whose bytes no longer match is finished on the spot, and one that is sound
+   * is re-armed from its own retry.
+   */
+  transcribing: Promise<void>;
+  transcribed(): void;
   /** Resolves once `post` has made its first pass over the replies waiting. */
   posting: Promise<void>;
   posted(): void;
@@ -170,6 +216,9 @@ interface Served {
   /** Rows this door wrote down itself, handed to `attend` with no read. */
   arrivals: OpenTurnRow[];
   arrived: Nudge;
+  /** Notes this door wrote down that are waiting for their words. */
+  voice: PendingVoiceRow[];
+  voiced: Nudge;
 }
 
 /**
@@ -185,6 +234,38 @@ interface Served {
  * Outbound waits on the notification the settling transaction emits. Between
  * one wake and the next it issues no statement at all.
  */
+/**
+ * Where a dialled recognizer is reached. One entry per provider, because a
+ * household names the provider and never a URL: a setting that could point a
+ * chunk's audio at any host is not a setting this file wants to own.
+ */
+const CLOUD_ENDPOINTS: Record<string, string> = {
+  deepgram: "https://api.deepgram.com/v1/listen",
+};
+
+/** The recognizer entry on this door's own machine, or null. */
+function transcriberEntry(registry: Registry, door: string): RunEntry | null {
+  const machine = listRunEntries(registry).find((one) => one.id === door)?.machine ?? "";
+  return transcriberFor(registry, machine);
+}
+
+/**
+ * The whole URL a chunk is posted to.
+ *
+ * A recognizer beside the door is reached on LOOPBACK and nowhere else, at the
+ * port its own entry carries, which is why an entry with no port is refused
+ * when the file is read.
+ */
+function recognizerEndpoint(
+  registry: Registry,
+  voice: VoiceSettings,
+  door: string,
+): string | null {
+  if (voice.provider !== "sherpa-onnx") return CLOUD_ENDPOINTS[voice.provider] ?? null;
+  const entry = transcriberEntry(registry, door);
+  return entry === null ? null : `http://127.0.0.1:${entry.port}/transcribe`;
+}
+
 /** The pinned refusal, thrown by `runDoor` at start. */
 function cannotShowTyping(door: string): string {
   return (
@@ -284,7 +365,14 @@ export async function runDoor(options: {
         and exists (select 1 from state_row where sheet='control'
           and data->>'target_kind'='door' and data->>'target_id'=${options.door}
           and data->>'status'='pending')`;
-    const pending = await store.sql`select id from inbound where not log_ready and source->>'door' = ${options.door}`;
+    // A ROW WAITING FOR ITS OWN TEXT IS SKIPPED HERE. Projecting it would put a
+    // voice note with no words into the chat log and make it claimable on every
+    // door start, and the person would be answered about a note nobody has
+    // heard. The transcription task's own connect scan takes those rows,
+    // checks their saved bytes and finishes them.
+    const pending = await store.sql`select id from inbound
+      where not log_ready and source->>'door' = ${options.door}
+        and media_state is distinct from 'pending'`;
     for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id), skipBad });
     for (const agent of agentsFor(registry, { door: options.door })) {
       for (const chunk of await readPendingChunks(store, { agent: agent.id })) {
@@ -421,10 +509,19 @@ export async function runDoor(options: {
           try {
             cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: current, stateDir,
               door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor, skipBad,
-              received(id) {
+              received(id, mediaState) {
+                // The media state travels with the row, because the clock it
+                // arms depends on it: a note still waiting for its words is
+                // waiting for a different stamp, and a row with no media is
+                // null here exactly as the store holds it.
                 own.arrivals.push({ id, person: agent.person, agent: agent.id,
-                  received_at: new Date(), state: "received", claimed_by: null });
+                  received_at: new Date(), state: "received", claimed_by: null,
+                  media_state: mediaState, media_done_at: null });
                 own.arrived.wake();
+              },
+              pending(row) {
+                own.voice.push(row);
+                own.voiced.wake();
               },
             });
           } finally { connection.release(); }
@@ -606,6 +703,9 @@ export async function runDoor(options: {
    */
   const attending = async (agent: AgentEntry, own: Served): Promise<void> => {
     const thresholds = thresholdsFor(registry, agent.person);
+    // The fourth clock's own threshold, this person's. A note waiting for its
+    // words is waiting for a stamp none of the three above measures.
+    const transcribedSeconds = transcribedSecondsFor(registry, agent.person);
     const language = languageOf(registry, agent.person) as Language;
     // One second inside the platform's own lifetime, so the status never
     // lapses: Telegram's is 5 seconds and Discord's is 10, and the number is
@@ -667,7 +767,7 @@ export async function runDoor(options: {
     const clocksOf = (rows: OpenTurnRow[]): { row: OpenTurnRow; stamp: string; at: number }[] => {
       const out: { row: OpenTurnRow; stamp: string; at: number }[] = [];
       for (const row of rows) {
-        for (const clock of clockDeadlines(row, thresholds)) {
+        for (const clock of clockDeadlines(row, thresholds, transcribedSeconds)) {
           const key = `${row.id}/${clock.stamp}`;
           if (!spoken.has(key)) {
             out.push({ row, stamp: clock.stamp, at: clock.at });
@@ -704,6 +804,22 @@ export async function runDoor(options: {
       return soonest;
     };
 
+    /**
+     * What a wait on this row is counted from.
+     *
+     * The same base the deadline itself is derived from, so the seconds a person
+     * reads and the moment the line goes out agree. A note still waiting for its
+     * words counts from when the person sent it, which is what they are counting
+     * from. Once the words exist the three shipped clocks count from the moment
+     * they landed, because the loop could not have accepted a message whose text
+     * did not exist yet. A row with no media is unchanged either way.
+     */
+    const countFrom = (row: OpenTurnRow): number => {
+      const received = new Date(row.received_at).getTime();
+      if (row.media_state === "pending" || !row.media_done_at) return received;
+      return new Date(row.media_done_at).getTime();
+    };
+
     /** The clock line: the chat log first, then the diary, then the chat. */
     const sayExpired = async (row: OpenTurnRow, stamp: string): Promise<void> => {
       const key = `${row.id}/${stamp}`;
@@ -714,7 +830,7 @@ export async function runDoor(options: {
       }
       const seconds = Math.max(
         1,
-        Math.round((Date.now() - new Date(row.received_at).getTime()) / 1000),
+        Math.round((Date.now() - countFrom(row)) / 1000),
       );
       const text = clockLine(language, stamp, seconds);
       spoken.add(key);
@@ -931,9 +1047,16 @@ export async function runDoor(options: {
         // Rows this door wrote down since the last pass. In memory, so a
         // message that nobody has claimed still has its acked clock armed.
         if (own.arrivals.length > 0) {
-          const here = new Set(open.map((row) => row.id));
           for (const row of own.arrivals.splice(0)) {
-            if (!here.has(row.id)) open.push(row);
+            const at = open.findIndex((one) => one.id === row.id);
+            // A row already here has come back because its MEDIA state moved:
+            // the words exist now, so the clock this row arms is a different
+            // one and its base is the moment they landed. Only those two fields
+            // are taken, because the row's own state and claim are what the
+            // last read of the table said and this poke knows nothing about
+            // them.
+            if (at === -1) open.push(row);
+            else open[at] = { ...open[at], media_state: row.media_state, media_done_at: row.media_done_at };
           }
           retune();
         }
@@ -1207,6 +1330,264 @@ export async function runDoor(options: {
     }
   };
 
+  /**
+   * The FIFTH task per agent, and the only thing in the door that turns a saved
+   * voice note into words.
+   *
+   * IT POLLS NOTHING. It learns a note from the commit that wrote it, over the
+   * same in-memory poke `attend` already uses, and it waits on that note's own
+   * retry on a timer the stop cancels. It issues a statement when a note is
+   * actually worked on and at no other time, which is what keeps an idle door
+   * at zero statements with a note waiting.
+   *
+   * The whole of its connect work happens before readiness: every note this
+   * agent is still owed is read once, its saved bytes are checked against the
+   * receipt the download wrote, and a note whose bytes no longer match is
+   * finished on the spot rather than waited on for ever.
+   */
+  const transcribing = async (agent: AgentEntry, own: Served): Promise<void> => {
+    const language = languageOf(registry, agent.person) as Language;
+    /** Each note still owed, and when it is worth another try. */
+    const waiting = new Map<string, { row: PendingVoiceRow; dueAt: number }>();
+    /**
+     * The episode of failure this door believes it is in, read from the
+     * recognizer's own health sheet so a restart never opens a second one and
+     * never says the same line twice.
+     */
+    let episode: string | null = null;
+
+    const arm = (row: PendingVoiceRow, dueAt: number): void => {
+      waiting.set(row.id, { row, dueAt });
+    };
+
+    /** One machinery line into this person's own chat, once per key. */
+    const say = async (body: string, key: string): Promise<void> => {
+      const parts = prepareReply(body, options.platform.name, language);
+      await store.sql.begin(async tx => {
+        for (const [index, part] of parts.entries()) {
+          await tx`select hub_door_notice(${agent.person}, ${agent.id}, ${part},
+            ${index === 0 ? key : `${key}:part:${index + 1}`},
+            ${{ door: options.door, chat: agent.chat }}::jsonb, ${index + 1})`;
+        }
+      });
+    };
+
+    /** The saved note's bytes, still the ones the download wrote. */
+    const sound = (row: PendingVoiceRow): boolean => {
+      const note = voiceMediaOf(row.source);
+      if (note === null) return true;
+      try {
+        const bytes = new Uint8Array(readFileSync(note.path));
+        return new Bun.CryptoHasher("sha256").update(bytes).digest("hex") === note.sha256;
+      } catch {
+        return false;
+      }
+    };
+
+    /**
+     * The note waited out its whole window. What exists is rendered in order
+     * with a marker where each missing stretch was, the person is told, and the
+     * row is finished so the agent answers it.
+     */
+    const abandon = async (row: PendingVoiceRow, voice: VoiceSettings): Promise<void> => {
+      const note = voiceMediaOf(row.source);
+      let held: ChunkFile | null = null;
+      try { held = note === null ? null : readChunkFile(chunkFilePath(note.path, note.index)); }
+      catch { held = null; }
+      const partial = held === null ? "" : renderPartial(held, language);
+      const text = [partial, voiceGaveUp(language, voice.give_up_hours)].filter(Boolean).join("\n");
+      const source = note === null ? row.source : spliceTranscript(row.source, note.line, text);
+      await markMediaFailed(store, { id: row.id, state: "failed", retryAt: null,
+        failure: { class: "infra", cause: "gave-up" },
+        body: String((source as { text?: string }).text ?? ""), source });
+      await recordTranscribe(store, { id: row.id, kind: "transcribe.failed",
+        recognizer: voice.recognizer, chunks: held?.chunks.length ?? null, audio_s: null,
+        decode_ms: null, attempts: null, class: "infra", cause: "gave-up" });
+      waiting.delete(row.id);
+      await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
+    };
+
+    /**
+     * The household took its recognizer out of the file while this note was
+     * waiting for it. Nobody is going to transcribe it now, so it is FINISHED
+     * here rather than let go of: a row left pending is one the startup scan
+     * passes over by design, that `check` says nothing about once the component
+     * is gone, and that nobody is ever answered about. The person reads the
+     * same sentence a household that never had a recognizer reads.
+     */
+    const finishUnnamed = async (row: PendingVoiceRow): Promise<void> => {
+      waiting.delete(row.id);
+      const at = new Date();
+      await markMediaFailed(store, { id: row.id, state: "failed", retryAt: null,
+        failure: { class: "infra", cause: "recognizer-unnamed" }, at });
+      await say(voicePending(language), `voice:unnamed:${row.id}`);
+      await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
+      own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
+        received_at: row.receivedAt, state: "received", claimed_by: null,
+        media_state: "failed", media_done_at: at });
+      own.arrived.wake();
+    };
+
+    /** One note, once. */
+    const work = async (row: PendingVoiceRow): Promise<void> => {
+      const fresh = registryThisTick();
+      const voice = voiceFor(fresh);
+      if (voice === null) {
+        await finishUnnamed(row);
+        return;
+      }
+      const state = await readMediaState(store, row.id);
+      if (state === null) {
+        waiting.delete(row.id);
+        return;
+      }
+      if (state.state !== "pending") {
+        // THE TEXT LANDED AND SOMETHING AFTER IT DID NOT. Writing the words and
+        // appending the log line are two writes, and a row between them has its
+        // text, no log line and no claim: the runner cannot see it, and the turn
+        // stays open with its clocks running. Finishing it here is what saves it
+        // from waiting for the next door start, which is the only other thing
+        // that looks at a row in that state.
+        waiting.delete(row.id);
+        const [seen] = (await store.sql`
+          select log_ready from inbound where id = ${row.id}`) as unknown as
+          { log_ready: boolean }[];
+        if (seen === undefined || seen.log_ready) return;
+        await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
+        own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
+          received_at: row.receivedAt, state: "received", claimed_by: null,
+          media_state: state.state, media_done_at: state.done_at });
+        own.arrived.wake();
+        return;
+      }
+      if (Date.now() >= row.receivedAt.getTime() + voice.give_up_hours * 3_600_000) {
+        await abandon(row, voice);
+        return;
+      }
+      const endpoint = recognizerEndpoint(fresh, voice, options.door);
+      const outcome = await transcribeRow(store, {
+        row: { id: row.id, source: row.source }, voice, language,
+        endpoint: endpoint ?? "", attempts: state.attempts,
+        credentialFile: voice.credential === null ? null
+          : credentialFor(fresh, voice.credential)?.file ?? null,
+      });
+      if (outcome.state === "done" || outcome.failure === "content") {
+        waiting.delete(row.id);
+        // The words exist, so the row becomes an ordinary human message: one
+        // log line, `log_ready`, and the claim gate opens.
+        await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
+        // And the clock task is told, over the same poke the commit uses. Without
+        // it a door with nothing claiming its rows would hold the clock this row
+        // armed while it had no words, because nothing else wakes that task
+        // until a turn opens.
+        own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
+          received_at: row.receivedAt, state: "received", claimed_by: null,
+          media_state: outcome.state === "done" ? "done" : "failed",
+          media_done_at: outcome.doneAt });
+        own.arrived.wake();
+        if (outcome.state === "done" && episode !== null) {
+          const [count] = await store.sql`select count(*)::int as waiting from inbound
+            where agent = ${agent.id} and media_state = 'pending'`;
+          await say(transcriberBack(language, Number(count?.waiting ?? 0)),
+            `voice:back:${voice.recognizer}:${episode}:${agent.person}`);
+          episode = null;
+        }
+        return;
+      }
+      arm(row, outcome.retryAt?.getTime() ?? Date.now() + voice.retry_seconds * 1000);
+      // ONE LINE PER EPISODE PER PERSON. The episode's own id is the moment the
+      // recognizer's health sheet says it began, so a door started again in the
+      // middle of one says nothing a second time. The person is the last part
+      // of the key because the sentence is theirs, and a household with two
+      // people owes each of them one.
+      const since = (await readVoiceHealth(store)).get(voice.recognizer)?.since ?? null;
+      if (since !== null) {
+        episode = since;
+        await say(transcriberDown(language, voice.retry_seconds),
+          `voice:down:${voice.recognizer}:${since}:${agent.person}`);
+      }
+      // A converter or a recognizer that wedged is the one failure a restart
+      // can fix, so the door ASKS and the hub decides. Keyed on the attempt, so
+      // a replay of the same attempt asks once.
+      if (outcome.cause === "chunk-deadline") {
+        const entry = transcriberEntry(fresh, options.door);
+        if (entry !== null) {
+          await requestRecovery(store, {
+            id: `voice-recovery:${entry.id}:${row.id}:${state.attempts}`,
+            registry: fresh, source: "door", actor: "door",
+            target_kind: "run", target_id: entry.id,
+          }).catch(async error => {
+            await recordDiagnostic(store, { operation: "recovery", target: entry.id, actor: "door",
+              error: { code: "recovery-refused", message: (error as Error).message } }).catch(() => {});
+          });
+        }
+      }
+    };
+
+    try {
+      try {
+        const rows = (await store.sql`select id, person, agent, source, received_at, media_retry_at
+          from inbound where agent = ${agent.id} and media_state = 'pending'`) as unknown as {
+            id: string; person: string; agent: string; source: Record<string, unknown>;
+            received_at: string | Date; media_retry_at: string | Date | null;
+          }[];
+        episode = (await readVoiceHealth(store)).get(voiceFor(registry)?.recognizer ?? "")?.since ?? null;
+        for (const row of rows) {
+          const it: PendingVoiceRow = { id: String(row.id), person: String(row.person),
+            agent: String(row.agent), source: row.source, receivedAt: new Date(row.received_at) };
+          // A note whose audio no longer matches its receipt will never be the
+          // right words, so it is finished here rather than retried for hours.
+          if (!sound(it)) { await work(it); continue; }
+          arm(it, row.media_retry_at === null ? 0 : new Date(row.media_retry_at).getTime());
+        }
+      } catch {
+        // A store that would not answer at connect is one the other four tasks
+        // are already failing on, and the next pass asks again.
+      } finally {
+        own.transcribed();
+      }
+
+      while (!stopping && !own.leaving) {
+        for (const row of own.voice.splice(0)) if (!waiting.has(row.id)) arm(row, 0);
+        let soonest: { id: string; dueAt: number } | null = null;
+        for (const [id, one] of waiting) {
+          if (soonest === null || one.dueAt < soonest.dueAt) soonest = { id, dueAt: one.dueAt };
+        }
+        if (soonest !== null && soonest.dueAt <= Date.now()) {
+          const one = waiting.get(soonest.id)!;
+          // THE STOP DOES NOT WAIT FOR A RECOGNIZER. A chunk may sit in a
+          // request for as long as its own deadline allows, and a door whose
+          // stop waited that out would hold a restart for minutes. The row is
+          // still `pending` on disk, so whatever this pass does not finish the
+          // next door's connect scan picks up: nothing is lost by walking away
+          // from it, and the work that is still in flight writes into a store
+          // that is closing, which is why its failure is swallowed.
+          const finished = work(one.row).then(() => "worked" as const, () => {
+            // A pass that could not finish is a pass. The note keeps its place
+            // and is tried again on the tick.
+            arm(one.row, Date.now() + timeoutMs);
+            return "worked" as const;
+          });
+          const why = await Promise.race([finished, stopped, own.left]);
+          if (why !== "worked") return;
+          continue;
+        }
+        const bound = soonest === null
+          ? timeoutMs
+          : Math.max(1, Math.min(timeoutMs, soonest.dueAt - Date.now()));
+        const why = await Promise.race([
+          Bun.sleep(bound).then(() => "timeout" as const),
+          own.voiced.wait().then(() => "arrived" as const),
+          stopped,
+          own.left,
+        ]);
+        if (why === "stopped" || stopping || own.leaving) return;
+      }
+    } finally {
+      waiting.clear();
+    }
+  };
+
   const served = new Map<string, Served>();
 
   const serve = (agent: AgentEntry, activate = false): void => {
@@ -1222,6 +1603,10 @@ export async function runDoor(options: {
     const waitingToHarvest = new Promise<void>((resolve) => {
       harvested = () => resolve();
     });
+    let transcribed: () => void = () => {};
+    const waitingToTranscribe = new Promise<void>((resolve) => {
+      transcribed = () => resolve();
+    });
     let readied!: () => void;
     const reading = new Promise<void>(resolve => { readied = resolve; });
     let posted!: () => void;
@@ -1236,11 +1621,15 @@ export async function runDoor(options: {
       attended,
       harvesting: waitingToHarvest,
       harvested,
+      transcribing: waitingToTranscribe,
+      transcribed,
       posting,
       posted,
       progress: new Map<string, ProgressLine>(),
       arrivals: [],
       arrived: nudge(),
+      voice: [],
+      voiced: nudge(),
     };
     agent = it.agent;
     served.set(agent.id, it);
@@ -1256,6 +1645,10 @@ export async function runDoor(options: {
       // it a door that could not start would HANG its caller instead of saying
       // so. Resolving twice is free.
       harvesting(agent, it).finally(() => it.harvested()),
+      // The same outer `finally` again, and for the same reason: a throw before
+      // the connect read is swallowed by `allSettled`, so without it a door
+      // that could not start would hang its caller instead of saying so.
+      transcribing(agent, it).finally(() => it.transcribed()),
     ]).then(() => {});
   };
 
@@ -1282,6 +1675,7 @@ export async function runDoor(options: {
   // refuses the pass too, because the pass catches its own failure.
   await Promise.all([...served.values()].map((it) => it.attending));
   await Promise.all([...served.values()].map((it) => it.harvesting));
+  await Promise.all([...served.values()].map((it) => it.transcribing));
   await Promise.all([...served.values()].map((it) => it.posting));
 
   const supervise = (async () => {

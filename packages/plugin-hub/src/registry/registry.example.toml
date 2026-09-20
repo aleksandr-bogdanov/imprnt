@@ -28,6 +28,19 @@ outage_retry_seconds = 300
 # PATH by default; a household whose vault CLI is somewhere else names it here.
 imprnt = "imprnt"
 
+# Which recognizer this household transcribes voice notes with, by the name of
+# one of the [recognizers.*] tables below. Delete this line and the component is
+# not installed: a voice note is saved and logged as it always was, the agent is
+# told it is not transcribed, and nothing under here is read at all.
+# The three knobs are the door's own step: how long a note waits before the
+# recognizer is tried again, how long it waits for its text in total before the
+# door says it could not, and how long one piece of it may take.
+[voice]
+recognizer = "local"
+retry_seconds = 300
+give_up_hours = 24
+chunk_deadline_seconds = 120
+
 # Where the store's own process is, so the hub can measure it without guessing
 # at a process tree. Every standard install writes a pid file: this is Debian's,
 # and `imprnt install` writes the right one for the box it is run on, once.
@@ -132,6 +145,18 @@ window_pause_at = 85
 window_notice_at = 95
 window_hold_at = 100
 
+# The recognizers this household declares, one table each, and `voice.recognizer`
+# above names the one it uses. A `sherpa-onnx` one runs beside the door on
+# loopback, so it names the directory holding its own files and dials nobody. A
+# `deepgram` one is dialled, so it names a [[credentials]] entry of kind
+# `api-key` instead and has no directory. `chunk_seconds` is how much audio goes
+# in one request, and 0 means the whole note goes in one.
+[recognizers.local]
+provider = "sherpa-onnx"
+model = "a-speech-model-directory"
+runtime = "/var/lib/imprnt-hub/voice"
+chunk_seconds = 60
+
 # An agent is a person, a preset, a chat, and the pieces that serve it.
 [[agents]]
 id = "p1-lair"
@@ -179,6 +204,22 @@ schedule = "every 15m"
 memory_limit_mb = 128
 
 
+
+# The recognizer's own process, one per machine that runs a door while the
+# household's recognizer is one that runs here. The door posts to
+# 127.0.0.1:<port>. `residency = "resident"` holds the model between notes,
+# which is the default when the line is absent: a voice note arrives exactly
+# when the machine is busiest, so memory held predictably beats memory demanded
+# at a peak. A machine that cannot afford it says `residency = "idle-unload"`
+# and takes the wait on the first note after a quiet spell.
+[[run]]
+id = "transcriber"
+kind = "transcriber"
+machine = "pi"
+schedule = "always"
+memory_limit_mb = 2048
+port = 8798
+residency = "resident"
 
 [[run]]
 id = "hub-pi"

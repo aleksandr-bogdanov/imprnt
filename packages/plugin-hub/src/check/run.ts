@@ -15,6 +15,7 @@ import { entryIdOf, isOurs } from "../os/names.ts";
 import type { OsSeam } from "../os/types.ts";
 import { putRow, readSheet, removeRow } from "../records/statesheet.ts";
 import {
+  credentialFor,
   harvestFor,
   listAgents,
   listCredentials,
@@ -24,11 +25,14 @@ import {
   personOf,
   runEntriesFor,
   thresholdsFor,
+  transcribedSecondsFor,
+  transcriberFor,
+  voiceFor,
 } from "../registry/entries.ts";
 import { credentialOfPreset } from "../registry/presets.ts";
 import { loadRegistry, readSetting, type CredentialEntry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
-import { readPeaks, residentIds } from "../hub/peak.ts";
+import { overLimit, readPeaks, residentIds } from "../hub/peak.ts";
 import {
   copyFindings,
   credentialFindings,
@@ -40,6 +44,7 @@ import { findingId, type Finding } from "./finding.ts";
 import { harvestFindings, readHarvestState } from "./harvest.ts";
 import { allowlistFindings, deniedSenderFindings, readDeniedSenders } from "./senders.ts";
 import { readStampRows, stampFindings } from "./stamps.ts";
+import { readVoiceState, transcribingFindings, voiceFindings } from "./voice.ts";
 import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
 import { silentRunners } from "./silence.ts";
@@ -356,8 +361,10 @@ export async function runCheck(options: {
   );
 
   // --- every resident piece has a measured peak (criterion 6) --------------
-  const peaks = new Set((await readPeaks(options.store)).map((row) => row.id));
-  for (const id of residentIds(registry, machine)) {
+  const peakRows = await readPeaks(options.store);
+  const resident = residentIds(registry, machine);
+  const peaks = new Set(peakRows.map((row) => row.id));
+  for (const id of resident) {
     if (peaks.has(id)) continue;
     findings.push({
       id: findingId(machine, "peak-missing", id),
@@ -366,6 +373,32 @@ export async function runCheck(options: {
       machine,
       says: `${id} runs all day and nothing has ever measured what it holds`,
       fix: `let the hub run a tick with ${id} up, or measure it once with /usr/bin/time -l`,
+    });
+  }
+
+  // --- a resident holding more than the registry asked for -----------------
+  //
+  //     For every resident on this machine, the doors and the hub included and
+  //     not the transcriber alone: the hub already samples each resident pid on
+  //     its tick and writes the reading down, so the comparison costs nothing
+  //     and the answer is the same question for all of them.
+  //
+  //     THE FIX NAMES THE TWO KERNEL FINDINGS beside the entry. A unit's own
+  //     `MemoryMax` is inert on a box whose firmware leaves the memory cgroup
+  //     off, and launchd has no equivalent at all, so pointing a household at
+  //     the unit alone would point it at a lever that does not move.
+  for (const one of overLimit({ rows: peakRows, entries, resident })) {
+    findings.push({
+      id: findingId(machine, "memory-over-limit", one.id),
+      kind: "memory-over-limit",
+      subject: one.id,
+      machine,
+      says:
+        `${one.id} was last measured holding ${Math.round(one.reading_bytes / (1024 * 1024))} MB ` +
+        `and the registry asks for ${one.limit_mb} MB`,
+      fix:
+        `raise memory_limit_mb for ${one.id} in ${options.registryFile} or make it hold less, and ` +
+        `note that the limit only binds where kernel-memory-cgroup and kernel-earlyoom are clear`,
     });
   }
 
@@ -474,6 +507,41 @@ export async function runCheck(options: {
         rows: await readStampRows(options.store, { agents: mine.map((agent) => agent.id) }),
         thresholds: (person) => thresholdsFor(registry, person),
         runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        machine,
+        now,
+      }),
+    );
+  }
+
+  // --- the recognizer, and the rows waiting on it (criterion 1) ------------
+  //
+  //     A HOUSEHOLD THAT NAMES NO RECOGNIZER HEARS NOTHING HERE. Every setting
+  //     under the voice table is read only when one is named, and so is this:
+  //     `voiceFor` answers null and both functions return nothing, so a
+  //     household that did not install the component has no voice finding to
+  //     read and no voice sentence to wonder about.
+  //
+  //     The rows go with the `mine` set like the stamps above, so two machines
+  //     running `check` never both report one row.
+  const voice = voiceFor(registry);
+  if (voice !== null) {
+    const state = await readVoiceState(options.store, { agents: mine.map((agent) => agent.id) });
+    const dialled = voice.credential === null ? null : credentialFor(registry, voice.credential);
+    findings.push(
+      ...voiceFindings({
+        state,
+        recognizer: { name: voice.recognizer, provider: voice.provider },
+        transcriberEntry: transcriberFor(registry, machine)?.id ?? null,
+        credentialFile: dialled?.file ?? null,
+        machine,
+        now,
+      }),
+      ...transcribingFindings({
+        state,
+        patience: (person) => transcribedSecondsFor(registry, person),
+        graceSeconds: setting(registry, "hub.job_grace_seconds", 300),
+        doorOf: (agent) => mine.find((one) => one.id === agent)?.door ?? "",
+        recognizer: voice.recognizer,
         machine,
         now,
       }),

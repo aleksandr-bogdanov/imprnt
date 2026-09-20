@@ -29,21 +29,62 @@ export interface PeakRow {
   how: PeakMethod;
   machine: string;
   pid: number | null;
+  /**
+   * What the process was holding at the LAST sample, and when.
+   *
+   * The peak answers "how large can this get" and the reading answers "how
+   * large is it now", and a household comparing what it asked for against what
+   * it got needs the second. Null on a row written before anything measured a
+   * current size.
+   */
+  reading_bytes: number | null;
+  reading_at: string | null;
 }
 
-/** The larger of the reading and the row already there. Never the smaller. */
+/**
+ * The row after this sample: the reading always, the peak only when it grew.
+ *
+ * A LOW READING STILL WRITES A ROW, and that is the non-obvious half: a sample
+ * below the peak is exactly the case where a household needs to know what the
+ * process is holding right now, so what is skipped on such a sample is RAISING
+ * the peak and never the write itself. `bytes` is monotonic, which is what the
+ * peak means, and `reading_bytes` moves in both directions.
+ */
 export async function recordPeak(
   store: StoreLike,
-  row: { id: string; bytes: number; at?: string; how: PeakMethod; machine: string; pid?: number | null },
+  row: {
+    id: string;
+    bytes: number;
+    at?: string;
+    how: PeakMethod;
+    machine: string;
+    pid?: number | null;
+    /** What it is holding now. Absent leaves whatever the row already says. */
+    reading_bytes?: number | null;
+    reading_at?: string | null;
+  },
 ): Promise<void> {
   const already = (await readPeaks(store)).find((one) => one.id === row.id);
-  if (already && Number(already.bytes) >= Number(row.bytes)) return;
+  const now = row.at ?? new Date().toISOString();
+  const grew = !already || Number(already.bytes) < Number(row.bytes);
+  const reading =
+    row.reading_bytes === undefined || row.reading_bytes === null
+      ? (already?.reading_bytes ?? null)
+      : Number(row.reading_bytes);
+  const readingAt =
+    row.reading_bytes === undefined || row.reading_bytes === null
+      ? (already?.reading_at ?? null)
+      : (row.reading_at ?? now);
+  // The whole blob is replaced on every write, so the held peak is carried
+  // forward by name rather than left to survive a partial update.
   await putRow(store, MEMORY_PEAK_SHEET, row.id, {
-    bytes: Number(row.bytes),
-    at: row.at ?? new Date().toISOString(),
-    how: row.how,
-    machine: row.machine,
-    pid: row.pid ?? null,
+    bytes: grew ? Number(row.bytes) : Number(already!.bytes),
+    at: grew ? now : already!.at,
+    how: grew ? row.how : already!.how,
+    machine: grew ? row.machine : already!.machine,
+    pid: grew ? (row.pid ?? null) : already!.pid,
+    reading_bytes: reading,
+    reading_at: readingAt,
   });
 }
 
@@ -55,7 +96,57 @@ export async function readPeaks(store: StoreLike): Promise<PeakRow[]> {
     how: String((row.data as Record<string, unknown>).how ?? "sampled") as PeakMethod,
     machine: String((row.data as Record<string, unknown>).machine ?? ""),
     pid: ((row.data as Record<string, unknown>).pid ?? null) as number | null,
+    reading_bytes:
+      (row.data as Record<string, unknown>).reading_bytes === undefined ||
+      (row.data as Record<string, unknown>).reading_bytes === null
+        ? null
+        : Number((row.data as Record<string, unknown>).reading_bytes),
+    reading_at:
+      (row.data as Record<string, unknown>).reading_at === undefined ||
+      (row.data as Record<string, unknown>).reading_at === null
+        ? null
+        : String((row.data as Record<string, unknown>).reading_at),
   }));
+}
+
+/** One resident holding more than its entry asked for. */
+export interface OverLimit {
+  id: string;
+  /** What the last sample read, bytes. */
+  reading_bytes: number;
+  /** What the registry asked for, megabytes. */
+  limit_mb: number;
+}
+
+/**
+ * Which resident's latest reading is past its own `memory_limit_mb`.
+ *
+ * Pure, so the arithmetic is readable without a store. Three things keep it
+ * quiet where it should be quiet. A piece that is not resident is skipped
+ * whatever it holds, because a scheduled or on-demand piece has no reading to
+ * keep and a permanent finding is noise. A resident nothing has measured is
+ * skipped, because "nothing has measured it" is the missing-peak finding and
+ * two findings saying one thing is noise. And the store is skipped for the same
+ * reason it is in the resident set under a fixed id: it is not a registry entry
+ * and declares no limit for anything to compare against.
+ */
+export function overLimit(args: {
+  rows: PeakRow[];
+  entries: { id: string; memory_limit_mb: number }[];
+  resident: string[];
+}): OverLimit[] {
+  const out: OverLimit[] = [];
+  const resident = new Set(args.resident);
+  for (const entry of args.entries) {
+    if (!resident.has(entry.id)) continue;
+    const row = args.rows.find((one) => one.id === entry.id);
+    if (!row || row.reading_bytes === null) continue;
+    const limit = Number(entry.memory_limit_mb);
+    if (!(limit > 0)) continue;
+    if (row.reading_bytes <= limit * 1024 * 1024) continue;
+    out.push({ id: entry.id, reading_bytes: row.reading_bytes, limit_mb: limit });
+  }
+  return out;
 }
 
 /**

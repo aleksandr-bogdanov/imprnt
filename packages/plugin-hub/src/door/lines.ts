@@ -30,10 +30,15 @@ function says(language: Language, sentence: string): string {
   return `${MACHINERY_LINES[language]} ${sentence}`;
 }
 
-type Stamp = "acked" | "started" | "answered";
+type Stamp = "transcribed" | "acked" | "started" | "answered";
 
 const CLOCK: Record<Language, Record<Stamp, (seconds: number) => string>> = {
   en: {
+    // A voice note waiting for its own text. It belongs to this family rather
+    // than to a function of its own, which is what lets `sayExpired`, the
+    // expiry record and the ledger's ASCII stamp key serve a fourth clock with
+    // no change at all.
+    transcribed: (n) => `still transcribing your voice note. ${n} s so far.`,
     acked: (n) =>
       `still waiting: the loop has not accepted this message. ${n} s so far.`,
     started: (n) =>
@@ -41,6 +46,8 @@ const CLOCK: Record<Language, Record<Stamp, (seconds: number) => string>> = {
     answered: (n) => `still waiting: the turn has not ended. ${n} s so far.`,
   },
   ru: {
+    transcribed: (n) =>
+      `всё ещё расшифровываю голосовое сообщение. Прошло ${n} с.`,
     acked: (n) =>
       `всё ещё жду: агент не принял это сообщение. Прошло ${n} с.`,
     started: (n) => `всё ещё жду: агент не начал отвечать. Прошло ${n} с.`,
@@ -107,6 +114,73 @@ export function catchUpNotice(language: Language, count: number): string {
       ? `снова работает. Сообщений в очереди: ${count}.`
       : `it works again. Messages waiting: ${count}.`,
   );
+}
+
+/**
+ * The recognizer is not answering, once per episode per person.
+ *
+ * It is the shipped outage shape: the cause named outright, then the tail that
+ * says nothing is lost and names the interval, so a person who reads it knows
+ * their note is still there and roughly when to expect it.
+ */
+export function transcriberDown(language: Language, retrySeconds: number): string {
+  return says(
+    language,
+    language === "ru"
+      ? `расшифровка не отвечает. Голосовое сообщение ждёт, ничего не потеряно. ` +
+          `Повторяю попытку каждые ${retrySeconds} с и сообщу, когда заработает.`
+      : `the transcriber is not answering. Your voice note is waiting and nothing is lost. ` +
+          `I try again every ${retrySeconds} s and will say when it works.`,
+  );
+}
+
+/**
+ * The one line when it works again.
+ *
+ * The Russian is written so the count is never glued to a noun: number
+ * agreement then never arises, which is the lesson the catch-up line taught.
+ */
+export function transcriberBack(language: Language, count: number): string {
+  return says(
+    language,
+    language === "ru"
+      ? `расшифровка снова работает. Голосовых в очереди: ${count}.`
+      : `transcription works again. Voice notes waiting: ${count}.`,
+  );
+}
+
+/** The audio decoded to nothing. The person is told, and the agent answers. */
+export function voiceUnreadable(language: Language): string {
+  return says(
+    language,
+    language === "ru"
+      ? `голосовое сообщение не разобрать: похоже, там тишина. Напишите текстом.`
+      : `I could not make out the voice note: it sounds like silence or no words. Please type it.`,
+  );
+}
+
+/** The note waited out its whole window. It is kept, and the person is told. */
+export function voiceGaveUp(language: Language, hours: number): string {
+  return says(
+    language,
+    language === "ru"
+      ? `не удалось расшифровать голосовое сообщение за ${hours} ч. Оно сохранено. Напишите текстом.`
+      : `I could not transcribe your voice note after ${hours} h. It is saved. Please type it.`,
+  );
+}
+
+/**
+ * A stretch of a voice note that never got its text, in the place it belongs.
+ *
+ * THE ONE LINE HERE WITH NO MACHINERY MARKER, and the reason is where it sits:
+ * inside the text slot of the message, which is the person's own words. A
+ * marker in the middle of a sentence somebody dictated would read as the door
+ * having said it.
+ */
+export function gapMarker(language: Language, seconds: number): string {
+  return language === "ru"
+    ? `[... ${seconds} с не расшифровано]`
+    : `[... ${seconds} s not transcribed]`;
 }
 
 /** The one line at the notice threshold, before anything is held. */

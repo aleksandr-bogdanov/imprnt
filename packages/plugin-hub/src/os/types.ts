@@ -53,6 +53,20 @@ export interface RenderContext {
   restartDelaySeconds: number;
   giveUpAfter: number;
   giveUpWindowSeconds: number;
+  /**
+   * The whole command line this entry is started with, when it is not the bun
+   * default.
+   *
+   * It exists for the ONE kind whose program is not a bun entry point: the
+   * local recognizer's Python server, whose interpreter lives in the
+   * household's runtime and whose knobs are all arguments. Absent means the
+   * default, which is what keeps every other render what it is.
+   *
+   * It is NOT a way for a household to pass arguments to a door or a runner.
+   * Nothing reads it from the registry: the only caller that sets it is the
+   * function that derives the recognizer's argv from the file.
+   */
+  argv?: string[];
 }
 
 export interface UnitFile {

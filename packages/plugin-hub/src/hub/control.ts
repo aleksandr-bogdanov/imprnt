@@ -7,7 +7,7 @@ import { listenForWork, type Listener } from "../store/listen.ts";
 import { appendNotice, type ReplyRoute } from "../store/outbox.ts";
 
 interface RecoveryRequest {
-  id: string; source: "cli" | "chat"; actor: string; person?: string;
+  id: string; source: "cli" | "chat" | "door"; actor: string; person?: string;
   sender_id?: string; door?: string; chat?: string; target_kind: string; target_id: string;
   /** The agent whose chat a chat request came in on. */
   agent?: string;
@@ -39,8 +39,17 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
   const registry = request.registry ?? loadRegistry(request.registryFile!);
   const agent = listAgents(registry).find(a => a.id === request.target_id);
   const door = listRunEntries(registry).find(e => e.id === request.target_id && e.kind === "door");
-  if (request.target_kind === "agent" ? !agent : request.target_kind === "door" ? !door : true) throw new Error("invalid-recovery-target");
-  if (request.source !== "cli" && request.source !== "chat") throw new Error("invalid-recovery-source");
+  // The third target. It is ONLY a recognizer entry: the hub restarts a process
+  // whose failures it can classify, and a runner or a hub restarted from here
+  // would be a door reaching past what it is allowed to know about.
+  const run = listRunEntries(registry).find(e => e.id === request.target_id && e.kind === "transcriber");
+  if (request.target_kind === "agent" ? !agent : request.target_kind === "door" ? !door
+    : request.target_kind === "run" ? !run : true) throw new Error("invalid-recovery-target");
+  if (!["cli", "chat", "door"].includes(request.source)) throw new Error("invalid-recovery-source");
+  // A door may ask for the recognizer beside it back and for nothing else. It
+  // cannot ask for a door, its own included, because a piece that can restart
+  // its own supervisor is the failure L11 exists about.
+  if (request.source === "door" && request.target_kind !== "run") throw new Error("recovery-not-authorized");
   const declaredDoor = (registry.data.run as { id: string; person?: string }[]).find(e => e.id === door?.id);
   const person = agent?.person ?? declaredDoor?.person ?? request.person ?? null;
   if (request.source === "chat" && (request.target_kind !== "agent" || person !== request.person ||
@@ -51,8 +60,9 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
     route: { door: request.door!, chat: request.chat! },
     agent: request.agent ?? listAgents(registry).find(a => a.person === person && a.door === request.door && a.chat === request.chat)!.id,
   } : {};
-  const data = { id: request.id, actor: request.actor, person, target_kind: request.target_kind,
-    target_id: request.target_id, requested_at: new Date().toISOString(), status: "pending", cause: null, ...asked };
+  const data = { id: request.id, actor: request.actor, source: request.source, person,
+    target_kind: request.target_kind, target_id: request.target_id,
+    requested_at: new Date().toISOString(), status: "pending", cause: null, ...asked };
   // An active coordinator can confirm completion without polling. Otherwise
   // the durable request remains pending for its next startup.
   let completion: Listener | undefined;
@@ -70,7 +80,7 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
         on conflict (sheet,id) do nothing returning data`;
       if (!rows.length) return (await sql`select data from state_row where sheet='control' and id=${request.id}`)[0].data;
       await appendEntry({ ...store, sql: sql as unknown as StoreLike["sql"] }, { stream: "control", subject: request.id,
-        kind: "recovery.requested", actor: request.source === "chat" ? "door" : "hub", detail: data });
+        kind: "recovery.requested", actor: request.source === "cli" ? "hub" : "door", detail: data });
       await sql`select pg_notify('hub_control',${request.id})`;
       return data;
     });
