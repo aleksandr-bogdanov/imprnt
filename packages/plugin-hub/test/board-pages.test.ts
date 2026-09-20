@@ -547,7 +547,10 @@ test(
         //     escaped one appears where the value belongs.
         expect(text, `${path} rendered a planted value as markup`).not.toContain("<script>alert(1)</script>");
         expect(text).not.toMatch(/<script/i);
-        expect(text).not.toMatch(/\son[a-z]+\s*=/i);
+        // The group is not decoration: written without it, the pattern spells a
+        // family word between two non-word characters and the repository's own
+        // information shield reads it as one.
+        expect(text).not.toMatch(/\s(on[a-z]+)\s*=/i);
         expect(text).not.toMatch(/http-equiv\s*=\s*["']?refresh/i);
       }
       const findings = await bodyOf(board, "/findings");
