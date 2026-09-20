@@ -147,24 +147,6 @@ export async function waitForWork(
 }
 
 /**
- * Wait for a reply to post. A chunk carries no deadline of its own: it is
- * postable the moment the settling transaction that wrote it commits, and that
- * commit is what emits the notification.
- */
-export async function waitForOutbox(
-  store: StoreLike,
-  options: { person: string; timeoutMs: number },
-): Promise<WakeReason> {
-  return await sleepUntilWoken({
-    url: store.url,
-    channel: OUTBOX_CHANNEL,
-    wakesOn: options.person,
-    deadlineMs: null,
-    timeoutMs: options.timeoutMs,
-  });
-}
-
-/**
  * A waiter that holds its LISTEN open across many waits.
  *
  * The one above opens its LISTEN on the way in, which leaves a gap: a loop
