@@ -34,7 +34,7 @@ import {
 import {
   loadRegistry,
   readSetting,
-  type AgentEntry,
+  type ChatAgent,
   type Registry,
   type RunEntry,
 } from "../registry/load.ts";
@@ -181,7 +181,7 @@ export interface DoorHandle {
  * the door's outbox wait still issues nothing at all.
  */
 interface Served {
-  agent: AgentEntry;
+  agent: ChatAgent;
   rebinding: boolean;
   readDone: Promise<void>;
   reading: Promise<void>;
@@ -400,7 +400,7 @@ export async function runDoor(options: {
   let releaseHealth!: () => void;
   const healthReady = new Promise<void>(resolve => { releaseHealth = resolve; });
   /** `seconds` is the retry that really follows: the read retry unless said otherwise. */
-  const sayReadFailure = async (agent: AgentEntry, seconds?: number) => {
+  const sayReadFailure = async (agent: ChatAgent, seconds?: number) => {
     const data = health.health.get(agent.chat);
     if (data?.status !== "failed" || data.notice_key) return;
     const key = `chat-read:${options.door}:${agent.chat}:${data.since}`;
@@ -421,7 +421,7 @@ export async function runDoor(options: {
   try { ingress = await openStore({ url: store.url }); }
   catch (error) { await store.close(); throw error; }
   let accepting: Promise<void> = Promise.resolve();
-  const read = async (agent: AgentEntry, own: Served, activate = false): Promise<void> => {
+  const read = async (agent: ChatAgent, own: Served, activate = false): Promise<void> => {
     let cursor = await readCursor(store, options.door, agent.chat);
     // A route this door has never read starts at the
     // platform's high-water mark, asked for ONCE at activation and saved before
@@ -556,7 +556,7 @@ export async function runDoor(options: {
     }
   };
 
-  const post = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const post = async (agent: ChatAgent, own: Served): Promise<void> => {
     let retryAt: number | null = null;
     const deliver = async (): Promise<void> => {
       retryAt = null;
@@ -703,7 +703,7 @@ export async function runDoor(options: {
    * notification, and once per clock that has run out. The typing refresh is a
    * timer over memory and issues no statement at all.
    */
-  const attending = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const attending = async (agent: ChatAgent, own: Served): Promise<void> => {
     const thresholds = thresholdsFor(registry, agent.person);
     // The fourth clock's own threshold, this person's. A note waiting for its
     // words is waiting for a stamp none of the three above measures.
@@ -1133,7 +1133,7 @@ export async function runDoor(options: {
     }
   };
 
-  const attend = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const attend = async (agent: ChatAgent, own: Served): Promise<void> => {
     // `runDoor` waits on `attending` before it hands its caller a
     // handle, and everything from here to the connect read can throw: the two
     // registry reads, and `openTurnWaiter`. A throw is swallowed by the
@@ -1191,7 +1191,7 @@ export async function runDoor(options: {
     return parsedRegistry;
   };
 
-  const harvesting = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const harvesting = async (agent: ChatAgent, own: Served): Promise<void> => {
     const chat = { stateDir, person: agent.person, agent: agent.id };
     const key = { person: agent.person, agent: agent.id };
     /** What a runner has SETTLED for this chat, or null when nothing has. */
@@ -1361,7 +1361,7 @@ export async function runDoor(options: {
    * receipt the download wrote, and a note whose bytes no longer match is
    * finished on the spot rather than waited on for ever.
    */
-  const transcribing = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const transcribing = async (agent: ChatAgent, own: Served): Promise<void> => {
     const language = languageOf(registry, agent.person) as Language;
     /** Each note still owed, and when it is worth another try. */
     const waiting = new Map<string, { row: PendingVoiceRow; dueAt: number }>();
@@ -1606,7 +1606,7 @@ export async function runDoor(options: {
 
   const served = new Map<string, Served>();
 
-  const serve = (agent: AgentEntry, activate = false): void => {
+  const serve = (agent: ChatAgent, activate = false): void => {
     let release: () => void = () => {};
     const left = new Promise<"stopped">((resolve) => {
       release = () => resolve("stopped");

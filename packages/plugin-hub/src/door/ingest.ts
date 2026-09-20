@@ -6,7 +6,7 @@ import { encodeHarvestBody } from "../harvest/row.ts";
 import { readWatermark } from "../harvest/sheet.ts";
 import { isDemand, isRecoveryCommand, readSlice } from "../harvest/slice.ts";
 import { languageOf, senderAllowed, voiceFor } from "../registry/entries.ts";
-import { readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
+import { readSetting, type ChatAgent, type Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markMediaPending } from "../voice/records.ts";
@@ -29,7 +29,7 @@ export interface PendingVoiceRow {
 /** Accepted work, its files and its projection precede the fetched boundary. */
 export async function acceptBatch(options: {
   store: StoreLike; registry: Registry; stateDir: string; door: string;
-  agent: AgentEntry; platform: Platform; batch: PlatformPull; cursor: string | null;
+  agent: ChatAgent; platform: Platform; batch: PlatformPull; cursor: string | null;
   received?(id: string, mediaState: string | null): void;
   /** A row the transcription step now owes its words, handed over with no query. */
   pending?(row: PendingVoiceRow): void;

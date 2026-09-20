@@ -2,7 +2,7 @@ import { recordOperationFailure as recordFailure } from "../diagnostics.ts";
 import { appendEntry } from "../records/diary.ts";
 import { putRow, readSheet } from "../records/statesheet.ts";
 import { agentsFor, languageOf } from "../registry/entries.ts";
-import type { AgentEntry, Registry } from "../registry/load.ts";
+import type { ChatAgent, Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { chatUnreadable, deliveryFailed, deliveryUncertain, type Language } from "./lines.ts";
 import { classifyPlatformError, prepareReply, type PlatformFailure } from "./reply.ts";
@@ -17,7 +17,7 @@ export async function doorHealth(store: StoreLike, door: string) {
   for (const row of await readSheet(store, "door_health")) if (row.data.door === door) health.set(String(row.data.chat), row.data);
   return {
     health,
-    async initialize(agent: AgentEntry) {
+    async initialize(agent: ChatAgent) {
       if (health.has(agent.chat)) return;
       const data = { door, chat: agent.chat, status: "unknown", since: new Date().toISOString() };
       health.set(agent.chat, data);
@@ -49,7 +49,7 @@ export async function doorHealth(store: StoreLike, door: string) {
 }
 
 export async function routeNotice(store: StoreLike, options: {
-  registry: Registry; door: string; platform: string; agent: AgentEntry; chat: string;
+  registry: Registry; door: string; platform: string; agent: ChatAgent; chat: string;
   health: Map<string, Record<string, unknown>>; key: string; failure: PlatformFailure;
   operation: "read" | "post"; seconds: number;
 }): Promise<boolean> {

@@ -8,6 +8,7 @@ import {
   TRANSCRIBED_DEFAULT_SECONDS,
   VOICE_DEFAULTS,
   type AgentEntry,
+  type ChatAgent,
   type CredentialEntry,
   type MachineEntry,
   type PersonEntry,
@@ -34,10 +35,14 @@ export function listAgents(registry: unknown): AgentEntry[] {
  * The agents a piece serves. It is how a door and a runner learn what they are
  * for, from the file rather than from an argument.
  */
+export function agentsFor(registry: unknown, who: { door: string; runner?: string }): ChatAgent[];
+export function agentsFor(registry: unknown, who: { door?: string; runner?: string }): AgentEntry[];
 export function agentsFor(
   registry: unknown,
   who: { door?: string; runner?: string },
 ): AgentEntry[] {
+  // Asked by door, every answer has a door, and the loader refuses a door
+  // without a chat, so each one is an agent that answers in a chat.
   return listAgents(registry).filter(
     (agent) =>
       (who.door === undefined || agent.door === who.door) &&
@@ -314,9 +319,14 @@ export function languageOf(registry: unknown, personId: string): "en" | "ru" {
  * chat, the platform that door speaks, and its person's language. Everything a
  * notice needs beyond its own words, read from the file in one place, so the
  * runner and the harvest cannot disagree about where a line lands.
+ *
+ * Null for an agent that takes jobs alone, which has no chat for a notice to
+ * land in, and for an id this file no longer names. The caller is the one that
+ * knows where the notice goes instead.
  */
 export function noticeRoute(registry: Registry, id: string) {
-  const agent = listAgents(registry).find(one => one.id === id)!;
+  const agent = listAgents(registry).find(one => one.id === id);
+  if (agent?.door === undefined || agent.chat === undefined) return null;
   const door = (registry.data.run as { id: string; platform?: string }[]).find(one => one.id === agent.door);
   return { route: { door: agent.door, chat: agent.chat }, platform: door?.platform ?? "discord", language: languageOf(registry, agent.person) };
 }

@@ -542,10 +542,18 @@ export interface AgentEntry {
   id: string;
   person: string;
   preset: string;
-  chat: string;
-  door: string;
+  /**
+   * The chat this agent answers in, and the door that carries it. BOTH OR
+   * NEITHER: an agent with neither exists only to take jobs, and its entry
+   * declaring no chat is what makes its empty tail a fact rather than a gap.
+   */
+  chat?: string;
+  door?: string;
   runner: string;
 }
+
+/** An agent that answers in a chat, which is every agent a door serves. */
+export type ChatAgent = AgentEntry & { chat: string; door: string };
 
 export interface RateEntry {
   model: string;
@@ -1638,22 +1646,35 @@ export function loadRegistry(file: string): Registry {
     if (entry.sleeping !== undefined && typeof entry.sleeping !== "boolean")
       refuse(`${where}.sleeping`, here, "sleeping must be boolean");
     if (entry.idle_seconds !== undefined) positive(entry.idle_seconds, `${where}.idle_seconds`);
+    // A chat and the door that carries it come as a pair. With neither, the
+    // agent exists only to take jobs and its empty tail is what the file says.
+    // With one of them, the file has half an agent: a chat no door reads, or a
+    // door with nowhere to post, and either would be served silently wrong.
+    for (const [said, missing] of [["chat", "door"], ["door", "chat"]] as const) {
+      if (entry[said] !== undefined && entry[missing] === undefined) {
+        refuse(
+          `${where}.${missing}`,
+          here,
+          `${entry.id} names a ${said} and no ${missing}, and an agent carries both or neither: ` +
+            `both to answer in a chat, neither to take jobs alone`,
+        );
+      }
+    }
     agents.push({
-      ...Object.fromEntries(["fragment", "settings", "mcp", "tools", "mode", "sleeping", "idle_seconds"]
+      ...Object.fromEntries(["fragment", "settings", "mcp", "tools", "mode", "sleeping", "idle_seconds", "chat", "door"]
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       id: entry.id as string,
       person: entry.person as string,
       preset: entry.preset as string,
-      chat: entry.chat as string,
-      door: entry.door as string,
       runner: entry.runner as string,
     });
   });
 
   // A door that serves an agent has to say which platform it speaks, whose it is
   // and where its credential lives, because that is all the hub is ever told
-  // about it. A door nobody points at is on the list and serves nobody yet.
-  const served = new Set(agents.map((agent) => agent.door));
+  // about it. A door nobody points at is on the list and serves nobody yet. An
+  // agent that takes jobs alone points at no door, so it adds none to the set.
+  const served = new Set(agents.flatMap((agent) => agent.door === undefined ? [] : [agent.door]));
   entries.forEach((entry, nth) => {
     if (entry.kind !== "door" || !served.has(entry.id)) return;
     const where = `run[${nth}]`;

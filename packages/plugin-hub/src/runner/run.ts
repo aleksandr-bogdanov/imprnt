@@ -483,7 +483,7 @@ export async function runRunner(options: {
     /** Whether that claim is a person's message rather than a harvest. */
     let claimedHuman = false;
     /** Where a claimed JOB's notice goes, which is never this agent's own chat. */
-    let claimedReturn: { door: string; chat: string } | null = null;
+    let claimedReturn: { agent: string; door: string; chat: string } | null = null;
     let unhealthy = retries.has(agent.id);
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
@@ -764,7 +764,7 @@ export async function runRunner(options: {
         // A job's answer is the whole report and reaches no chat, so it is
         // never cut to a platform's size.
         chunks: about.kind === "job" ? [end.text]
-          : prepareReply(end.text, about.source?.log_id.split(":")[0] ?? noticeRoute(about.registry, agent.id).platform, languageOf(about.registry, agent.person)),
+          : prepareReply(end.text, about.source?.log_id.split(":")[0] ?? noticeRoute(about.registry, agent.id)?.platform ?? "discord", languageOf(about.registry, agent.person)),
         turn: record,
       });
     };
@@ -842,6 +842,14 @@ export async function runRunner(options: {
 
       // A spawned session has no memory of what was said, so the tail of the
       // log is the first thing it is fed and a human message is never the first.
+      //
+      // AN AGENT WITH NO CHAT HAS NO TAIL, and its entry is what says so: it
+      // takes jobs alone, and a job's body is its whole input. That is a
+      // declared empty tail, and a different thing from an agent whose chat log
+      // lives on another machine, which is read from the store below. Whatever
+      // sits where a chat log would be is not this agent's conversation,
+      // because no door writes one for an agent with no door.
+      if (agent.chat === undefined) return;
       // Where those lines are read from is the registry's answer: the file this
       // machine's door wrote, or the store when that door is somewhere else.
       const where = {
@@ -1124,16 +1132,23 @@ export async function runRunner(options: {
         if (claimed && claimedHuman && listAgents(registry).some(one => one.id === agent.id)) {
           // A job is read back to the agent that dispatched it, which is the
           // only route it has: an agent that works jobs alone has no chat of
-          // its own for a notice to land in.
-          const ordinary = noticeRoute(registry, agent.id);
-          const said = claimedReturn ? { ...ordinary, route: claimedReturn } : ordinary;
+          // its own for a notice to land in. The words are cut for the
+          // platform the return door speaks, which the dispatcher's own route
+          // names, and the chat is the one the job pinned when it was asked.
+          const said = claimedReturn
+            ? { ...(noticeRoute(registry, claimedReturn.agent)
+                ?? { platform: "discord", language: languageOf(registry, agent.person) }),
+                route: { door: claimedReturn.door, chat: claimedReturn.chat } }
+            : noticeRoute(registry, agent.id);
           // A memory kill reaches here as the child's exit. `own.killed` alone
           // is also set by a credential refusal, which closes the child itself.
           const why = !(error as { childExited?: boolean }).childExited ? "task failed"
             : own.killed ? "memory limit reached" : "child exited";
-          await appendNotice(inside, { person: agent.person, agent: agent.id, ...said,
-            body: agentRetry(said.language as Language, { agent: agent.id, cause: why, seconds: taskRetrySeconds }),
-            noticeKey: `agent-retry:${claimed}` });
+          if (said) {
+            await appendNotice(inside, { person: agent.person, agent: agent.id, ...said,
+              body: agentRetry(said.language as Language, { agent: agent.id, cause: why, seconds: taskRetrySeconds }),
+              noticeKey: `agent-retry:${claimed}` });
+          }
         }
         await appendEntry(inside, { stream: "refusal", subject: agent.id, kind: "refused.turn", actor: "runner",
           detail: { agent: agent.id, error: cause, retry_at: retryAt,
