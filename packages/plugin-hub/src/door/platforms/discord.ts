@@ -22,7 +22,7 @@ const API = "https://discord.com/api/v10";
 const READ_AGAIN_MS = 2000;
 
 /**
- * How long one call may take before the door stops waiting on it (REVIEW S3).
+ * How long one call may take before the door stops waiting on it.
  *
  * This runtime's `fetch` has no deadline of its own, and a door that hung on a
  * black-holed packet would stop serving its person with nothing said. The read

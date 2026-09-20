@@ -1,13 +1,13 @@
 /**
  * Every string a person reads, in both languages, in one place.
  *
- * D-128. One machinery marker for every line the hub writes into a chat, and it
+ * One machinery marker for every line the hub writes into a chat, and it
  * names the door: L6 asks the line to say it is the door speaking, and the door
  * is the only piece of the hub a person ever meets. The marker is translated
  * with the sentence, because an English label inside Russian prose is a defect
  * under the copy rules this household already applies to its own products.
  *
- * D-105's rule: a human reads or pastes it, so it is pinned WHOLE rather than
+ * A human reads or pastes it, so it is pinned WHOLE rather than
  * assembled from fragments, and the notices the RUNNER writes come from here
  * too, so one table is the whole vocabulary.
  */
@@ -16,7 +16,7 @@ export type Language = "en" | "ru";
 /**
  * The marker, per language. It names the door, in the person's own words.
  *
- * EVERY TEMPLATE BELOW IS BUILT FROM IT (REVIEW's note on this file). Spelling
+ * EVERY TEMPLATE BELOW IS BUILT FROM IT. Spelling
  * the marker out again in each of the fourteen would make this constant a
  * second source of truth that could not drift into the strings it claims to
  * define, which is worse than having no constant at all.
@@ -48,7 +48,7 @@ const CLOCK: Record<Language, Record<Stamp, (seconds: number) => string>> = {
   },
 };
 
-/** MSG-10. A clock ran out, and the line says which one and how long it has been. */
+/** A clock ran out, and the line says which one and how long it has been. */
 export function clockLine(language: Language, stamp: string, seconds: number): string {
   return says(language, CLOCK[language][stamp as Stamp](seconds));
 }
@@ -85,7 +85,7 @@ const OUTAGE: Record<Language, Record<string, (n: number) => string>> = {
   },
 };
 
-/** RUN-18. One line per person when a household-wide cause stops every turn. */
+/** One line per person when a household-wide cause stops every turn. */
 export function outageNotice(
   language: Language,
   cause: string,
@@ -95,7 +95,7 @@ export function outageNotice(
 }
 
 /**
- * RUN-18. The one line when it works again.
+ * The one line when it works again.
  *
  * The Russian is written this way on purpose: a `{count}` glued to a noun needs
  * number agreement, and `Сообщений в очереди: 5` is correct for every count.
@@ -109,7 +109,7 @@ export function catchUpNotice(language: Language, count: number): string {
   );
 }
 
-/** RUN-19. The one line at the notice threshold, before anything is held. */
+/** The one line at the notice threshold, before anything is held. */
 export function windowNotice(language: Language, percent: number): string {
   return says(
     language,
@@ -122,7 +122,7 @@ export function windowNotice(language: Language, percent: number): string {
 }
 
 /**
- * HARV-04, D-159. The one line back into a chat after a harvest, naming what
+ * The one line back into a chat after a harvest, naming what
  * was saved.
  *
  * THREE FORMS AND NOT ONE TEMPLATE WITH TWO SLOTS, for the same reason the
@@ -131,14 +131,14 @@ export function windowNotice(language: Language, percent: number): string {
  *
  * THE COUNT IS NEVER GLUED TO A NOUN in either language. The LIST carries it,
  * so `Заметки: finances/a, people/b` is correct for one note and for five and
- * Russian number agreement never arises, which is D-105's own lesson from the
- * catch-up line.
+ * Russian number agreement never arises, the same lesson the catch-up line
+ * taught.
  */
 export function harvestReport(
   language: Language,
   what: { notes: string[]; conflicts: string[] },
 ): string {
-  // REVIEW S4. AN ENTRY THAT NAMES NOTHING IS NOT IN THE SENTENCE. The apply's
+  // AN ENTRY THAT NAMES NOTHING IS NOT IN THE SENTENCE. The apply's
   // classifier answers `note: ""` whenever a marker line carries no path at its
   // own skip index, and one of those joined into the list renders
   // `[door] saved. Notes: .`, which is the sentence about nothing these three
@@ -174,7 +174,7 @@ export function harvestReport(
 }
 
 /**
- * D-159. The answer to a harvest a person ASKED for that saved nothing.
+ * The answer to a harvest a person ASKED for that saved nothing.
  *
  * It is sent on a demand and never on a quiet harvest: the report says what was
  * saved, and a person who typed a phrase at the machinery and got silence has
@@ -190,11 +190,11 @@ export function harvestNothing(language: Language): string {
 }
 
 /**
- * MSG-10. What the agent is doing, edited as it goes.
+ * What the agent is doing, edited as it goes.
  *
  * A loop that reported no action at all gets the form that says only the
  * elapsed time, which is honest rather than silent: "a turn with no tool call
- * still lands" is the case MSG-10 names.
+ * still lands" is the case this covers.
  */
 export function progressLine(
   language: Language,
@@ -215,7 +215,7 @@ export function progressLine(
   );
 }
 
-/** MSG-10. The last edit before the reply is posted: "ending with the totals". */
+/** The last edit before the reply is posted: "ending with the totals". */
 export function progressTotals(
   language: Language,
   what: { actions?: number; seconds: number },
@@ -235,7 +235,7 @@ export function progressTotals(
   );
 }
 
-/** D-183. Interpolated data cannot introduce another line or expose a credential. */
+/** Interpolated data cannot introduce another line or expose a credential. */
 export function safeValue(value: unknown): string {
   return String(value ?? "").split(/[\r\n]/, 1)[0]
     .replace(/(?:authorization\s*:|bearer\s|(?:token|password|signature|secret)\s*[=:]).*/i, "")
@@ -406,7 +406,7 @@ export function installDatabaseReady(language: Language): string {
     : "install: postgres schema ready; existing store settings unchanged.";
 }
 
-/** IMP-158. Roles that had no password, or one their file no longer matched, now have one. */
+/** Roles that had no password, or one their file no longer matched, now have one. */
 export function installPasswordsSet(language: Language, values: { roles: string; dir: string; had: "none" | "other" }): string {
   return interpolate(language, values.had === "none"
     ? language === "ru"
@@ -453,7 +453,7 @@ export function conversionDone(language: Language, values: LineValues = {}): str
   return sentence;
 }
 
-/** D-181b. What each one-off migration command takes, whole per command and language. */
+/** What each one-off migration command takes, whole per command and language. */
 export type MigrationScript = "convert-v2-chatlog" | "convert-v2-registry" | "handoff-v2" | "harvest-v2";
 
 const MIGRATION_USAGE: Record<Language, Record<MigrationScript, string>> = {

@@ -3,7 +3,7 @@ import type { StampThresholds } from "../registry/entries.ts";
 import type { StoreLike } from "../store/connect.ts";
 import type { OpenTurnRow } from "../store/turns.ts";
 
-/** D-116. The door's own stream, and the one kind it holds. */
+/** The door's own stream, and the one kind it holds. */
 export const CLOCK_STREAM = "clock";
 
 /** One clock: the stamp it is waiting for, and the moment it runs out. */
@@ -17,10 +17,10 @@ export interface ClockDeadline {
  * The clocks a row is waiting on right now, derived from `received_at` and that
  * person's own thresholds.
  *
- * D-127. All three are measured from `received_at` and not from the stamp
+ * All three are measured from `received_at` and not from the stamp
  * before them, because `received_at` is the moment the person sent it and that
  * is what they are counting from. The row's STATE says which one is armed
- * (D-126's table): a `received` row is waiting for `acked` and for nothing
+ * a `received` row is waiting for `acked` and for nothing
  * else, an `acked` row for `started`, a `started` row for `answered`.
  *
  * `delivered` is NOT here and never will be. The thing it measures is the
@@ -79,8 +79,8 @@ export async function recordExpiry(
 /**
  * Which (message, stamp) pairs this door has ALREADY spoken about.
  *
- * One statement at connect. A restarted door re-arms every clock it owed
- * (D-126), and without this it would also re-post every line the door before it
+ * One statement at connect. A restarted door re-arms every clock it owed,
+ * and without this it would also re-post every line the door before it
  * had already posted, because the deadline it reads is the message's own and
  * that deadline is long past.
  */

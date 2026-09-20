@@ -1,13 +1,13 @@
 import type { StoreLike } from "../store/connect.ts";
 
 /**
- * D-173, D-183. A refused sender leaves one content-free row.
+ * A refused sender leaves one content-free row.
  *
  * The door refuses a message from a sender the allowlist does not name before
  * anything is saved, and sends no reply. Until this row existed that refusal
  * left nothing anywhere, so an allowlist that named the wrong id, or none, made
- * a person's chat look exactly like a quiet one. D-183 allows the rejection to
- * be counted without storing the message, and this is the smallest form of it:
+ * a person's chat look exactly like a quiet one. The rejection is counted
+ * without storing the message, and this is the smallest form of it:
  * which door and chat, which stable sender id, whose agent, and when the first
  * and the latest refusal happened. Never the text, the media or the display
  * name.

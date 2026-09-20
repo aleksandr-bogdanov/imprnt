@@ -7,7 +7,7 @@ export async function projectInbound(
   store: StoreLike,
   options: { stateDir: string; inboundId: string;
     accepted?: { person: string; agent: string; source: InboundSource };
-    /** IMP-160. Skip a complete record that is not a chat line, and say where. */
+    /** Skip a complete record that is not a chat line, and say where. */
     skipBad?(bad: BadRecord): void | Promise<void> },
 ): Promise<void> {
   // Fresh acceptance already knows the committed row. Replays read its original source.
