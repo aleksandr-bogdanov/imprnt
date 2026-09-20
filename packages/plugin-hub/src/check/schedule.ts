@@ -10,9 +10,9 @@ import { findingId, type Finding } from "./finding.ts";
  * L13: "a scheduled job whose last success is older than its interval plus a
  * grace is reported, read from the job's own 'I ran and it landed' stamp,
  * because systemd knows a job ran, not whether it worked", and its Forbidden
- * line: "reading 'timer enabled' as 'job ran'". D-89 makes the stamp a state
+ * line: "reading 'timer enabled' as 'job ran'". The stamp is a state
  * sheet, one row per entry id, written by the job when it ran AND landed, and
- * makes a scheduled entry with NO row its own finding: a job nobody ever
+ * a scheduled entry with NO row is its own finding: a job nobody ever
  * stamped would otherwise look like a job that has not run yet, forever.
  */
 export const JOB_SUCCESS_SHEET = "job_success";

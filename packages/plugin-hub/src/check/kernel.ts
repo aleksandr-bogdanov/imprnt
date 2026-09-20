@@ -4,9 +4,9 @@ import { findingId, type Finding } from "./finding.ts";
 
 /**
  * What the kernel could add, named as findings with the fix in them, while the
- * installer never does it (L4, RUN-14).
+ * installer never does it (L4).
  *
- * D-91. The view is SUPPLIED rather than read, because on the machine this was
+ * The view is SUPPLIED rather than read, because on the machine this was
  * built for the boot line already carries both words, the user slice already
  * delegates the memory controller and earlyoom is already active, so a check
  * that read the real box could only ever assert an absence. `readKernelView`

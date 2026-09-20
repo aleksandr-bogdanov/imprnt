@@ -3,7 +3,7 @@ import { findingId, type Finding } from "./finding.ts";
 /**
  * A runner silent for N hours is a finding (STORE-01, D5).
  *
- * D-85 derives it with NO heartbeat write, because the runner's wait issues no
+ * It is DERIVED with no heartbeat write, because the runner's wait issues no
  * statement at all and a per-tick heartbeat would turn that wait into a timer.
  * So silence is BOTH halves at once: no live backend for that runner in the
  * server's own view of its clients, AND the newest work event for any of its
