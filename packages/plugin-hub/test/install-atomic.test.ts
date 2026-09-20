@@ -45,6 +45,6 @@ test("SPEC §1 a failed fresh schema leaves no partial installation and can be r
     // The highest version a FRESH schema lands on, which is the count of
     // ordered migrations an upgraded box is brought up to. A step that lands in
     // one and not the other leaves the two boxes on different schemas.
-    expect((await sql`select max(version) as version from schema_version`)[0].version).toBe(4);
+    expect((await sql`select max(version) as version from schema_version`)[0].version).toBe(5);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

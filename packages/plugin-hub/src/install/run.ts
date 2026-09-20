@@ -156,7 +156,7 @@ export async function runInstall(options: { registryFile: string; stage?: string
       // The same ordered list `src/store/migrate.ts` carries. A step that lands
       // in one of them and not the other leaves an upgraded box a version
       // behind a fresh one.
-      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"]] as const) {
+      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"], [5, "005-dispatch.sql"]] as const) {
         if (ask(database, ["-c", `select 1 from schema_version where version = ${version}`])) continue;
         ask(database, ["-c", `begin; ${readFileSync(join(import.meta.dir, "../store/migrations", file), "utf8")} insert into schema_version values (${version}); commit;`]);
       }
@@ -199,9 +199,12 @@ export async function runInstall(options: { registryFile: string; stage?: string
     // The columns a voice note and a chat read from the store both need, asked
     // for in one probe so a box whose migration did not land says so here,
     // naming the column, rather than on the first voice note somebody sends or
-    // the first turn a runner has to serve for a door on another machine.
+    // the first turn a runner has to serve for a door on another machine. The
+    // dispatch step adds no column, so it is probed by the FUNCTION it creates:
+    // a column probe would pass on a store the step never reached.
     await store.sql`select source, log_ready, media_state from inbound limit 0`;
     await store.sql`select route, delivery_state from outbox limit 0`;
+    await store.sql`select 'hub_report(text, text)'::regprocedure`;
     const os = options.os ?? thisOs();
     const rendered = (stage === "entry" ? [target] : selected).map(entry => ({ entry, files: os.render(entry, {
       machine: target.machine, execPath: process.execPath, entryScript: programForKind(entry.kind),
