@@ -20,14 +20,9 @@
 // With a gate off, that step runs on its own and the turn continues to the next
 // gate, so the default is a whole turn and a check only names what it holds.
 //
-// `openSession()` is the session opening, and it deliberately reaches NONE of
-// the three handlers. A loop's own session opening (the verified Claude Code
-// toolchain emits a `system` event of subtype `init` at the start of every
-// turn) is not progress, so an adapter that reported it as progress would be
-// the adapter's own bug, and that is the Claude Code adapter's acceptance
-// criterion rather than this one's. What this fixture probes is the RUNNER: with
-// progress held, a session is open, a message is fed and acknowledged, and no
-// `started` stamp may exist.
+// What this fixture probes with progress held is the RUNNER: a message is
+// fed and acknowledged and no `started` stamp may exist until the loop has
+// actually produced something.
 
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -445,10 +440,6 @@ export interface ScriptedAdapter {
    * harvest, and this is what makes that assertable.
    */
   closes(): number[];
-  /** The session opening. Not progress, and it reaches no handler. */
-  openSession(): void;
-  /** When the session opening happened, for an ordering assertion. */
-  openedAt(): number | null;
   holdReceipt(on: boolean): void;
   sendReceipt(messageId: string): void;
   holdProgress(on: boolean): void;
@@ -515,7 +506,6 @@ export function createScriptedAdapter(
   const closeLog: number[] = [];
   const children: HeldChild[] = [];
   const spawnLog: SpawnRecord[] = [];
-  let openedAt: number | null = null;
   let opened = 0;
 
   let gateReceipt = false;
@@ -731,10 +721,6 @@ export function createScriptedAdapter(
     fed: () => fedLog.map((f) => ({ ...f })),
     starts: () => startLog.map((s) => ({ ...s })),
     closes: () => [...closeLog],
-    openSession() {
-      openedAt = Date.now();
-    },
-    openedAt: () => openedAt,
     // A GATE IS THE FIXTURE'S, so releasing one releases every turn this
     // fixture is holding. With one session open that is what it always did.
     // With two, which is a runner serving two agents, it is what lets a check

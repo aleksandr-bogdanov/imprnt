@@ -151,8 +151,6 @@ for (const refusal of ["dirty", "wrong branch", "absent remote", "conflict", "fe
       const git = observeGit(f.root)
       const r = f.repos[0]
       commitChange(r.path)
-      const localHead = fixtureGit(r.path, "rev-parse", "HEAD")
-      const baseHead = fixtureGit(r.path, "rev-parse", "HEAD~1")
       const remoteHead = fixtureGit(f.root, "--git-dir", r.remote, "rev-parse", "main")
       const oldPath = r.path
       if (refusal === "dirty") writeFileSync(join(r.path, "base.txt"), "uncommitted owner change\n")
@@ -210,7 +208,6 @@ for (const refusal of ["dirty", "wrong branch", "absent remote", "conflict", "fe
       expect((await syncChild(f, git.env)).code).toBe(0)
       expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:local.txt")).toBe("synthetic local change")
       expect((await f.read.sheet("job_success")).find(row => row.id === f.id)).toBeDefined()
-      expect(localHead).not.toBe(baseHead)
     } finally { await f.stop() }
   })
 }

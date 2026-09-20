@@ -34,6 +34,7 @@ test("REC-02 every state sheet has exactly one row per id: an append on an exist
   const { openStore, closeStore } = await seam("src/store/connect.ts");
   const { appendRow, putRow, removeRow, readSheet, StateSheetDuplicate } =
     await seam("src/records/statesheet.ts");
+  const { readDiary } = await seam("src/records/diary.ts");
   expect(typeof appendRow).toBe("function");
   expect(typeof putRow).toBe("function");
   expect(typeof removeRow).toBe("function");
@@ -57,6 +58,19 @@ test("REC-02 every state sheet has exactly one row per id: an append on an exist
   }
   expect(refusal).toBeInstanceOf(StateSheetDuplicate as Function);
   expect(((await (readSheet as Function)(store, SHEET)) as unknown[]).length).toBe(1);
+
+  // The refused attempt is a ledger event that names the sheet and the id.
+  // Found by kind and subject, never by counting rows.
+  const refusals = (await (readDiary as Function)(store, {
+    stream: "refusal",
+  })) as { kind: string; subject: string }[];
+  expect(
+    refusals.filter(
+      (e) =>
+        e.kind === "refused.state_sheet_duplicate" &&
+        e.subject === `${SHEET}/vault-sync-stale`,
+    ).length,
+  ).toBe(1);
 
   // A change is an edit to that row.
   await (putRow as Function)(store, SHEET, "vault-sync-stale", {
@@ -103,36 +117,4 @@ test("REC-02 a second row for the same id is refused by the database, not only b
   expect(rows.length).toBe(1);
 
   await owner.close();
-});
-
-test("REC-04 appending an existing id to a state sheet is refused and the attempt is a ledger event (SPEC §7, L17)", async () => {
-  const { openStore, closeStore } = await seam("src/store/connect.ts");
-  const { appendRow, StateSheetDuplicate } = await seam("src/records/statesheet.ts");
-  const { readDiary } = await seam("src/records/diary.ts");
-  expect(typeof appendRow).toBe("function");
-
-  const db = await freshDatabase(cluster);
-  const store = await (openStore as Function)({ url: cluster.url(db) });
-
-  await (appendRow as Function)(store, SHEET, "runner-silent", { text: "quiet" });
-
-  let refusal: unknown;
-  try {
-    await (appendRow as Function)(store, SHEET, "runner-silent", { text: "again" });
-  } catch (err) {
-    refusal = err;
-  }
-  expect(refusal).toBeInstanceOf(StateSheetDuplicate as Function);
-
-  const refusals = (await (readDiary as Function)(store, {
-    stream: "refusal",
-  })) as { kind: string; subject: string }[];
-  const match = refusals.filter(
-    (e) =>
-      e.kind === "refused.state_sheet_duplicate" &&
-      e.subject === `${SHEET}/runner-silent`,
-  );
-  expect(match.length).toBe(1);
-
-  await (closeStore as Function)(store);
 });

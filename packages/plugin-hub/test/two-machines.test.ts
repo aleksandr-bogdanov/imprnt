@@ -39,19 +39,17 @@ import { scriptedReply } from "./helpers/scripted-adapter.ts";
 import {
   AGENT,
   AGENT2,
-  CHAT,
   DOOR,
-  PERSON,
   PERSON2,
   RUNNER2,
+  RUNNER_PI,
   insertInbound,
   plantChatLine,
-  stageHub,
+  stageTwoMachines,
   type StagedHub,
 } from "./helpers/hub-fixture.ts";
 import { loadRegistry, readSetting } from "../src/registry/load.ts";
 
-const RUNNER_PI = "runner-pi";
 const SLOW = 120_000;
 
 let cluster: Cluster;
@@ -63,65 +61,6 @@ beforeAll(async () => {
 afterAll(async () => {
   if (cluster) await cluster.stop();
 });
-
-/** One registry, two machines, two people, two runners, two agents. */
-async function stageTwoMachines(): Promise<StagedHub> {
-  const it = await stageHub(cluster, {
-    servers: true,
-    machines: [
-      { id: "pi", os: "linux" },
-      { id: "mac", os: "macos" },
-    ],
-    people: [
-      { id: PERSON, tree: "/var/lib/imprnt-hub/p1" },
-      { id: PERSON2, tree: "/var/lib/imprnt-hub/p2" },
-    ],
-    hub: { shared_zone: "/var/lib/imprnt-hub/shared" },
-    agents: [
-      {
-        id: AGENT2,
-        person: PERSON2,
-        preset: "daily",
-        chat: `${CHAT}1`,
-        door: "door-mac",
-        runner: RUNNER2,
-      },
-    ],
-    run: [
-      {
-        id: DOOR,
-        kind: "door",
-        machine: "pi",
-        platform: "fake",
-        person: PERSON,
-        token_file: "/dev/null",
-        schedule: "always",
-        memory_limit_mb: 192,
-      },
-      {
-        id: RUNNER_PI,
-        kind: "runner",
-        machine: "pi",
-        schedule: "always",
-        memory_limit_mb: 512,
-        child_memory_limit_mb: 512,
-      },
-      {
-        id: RUNNER2,
-        kind: "runner",
-        machine: "mac",
-        schedule: "always",
-        memory_limit_mb: 512,
-        child_memory_limit_mb: 2048,
-      },
-    ],
-  });
-  // The default agent is on `runner-test`, and this registry has no such entry.
-  // Rewriting it onto `runner-pi` keeps one agent per runner, one per machine.
-  const text = await Bun.file(it.registryFile).text();
-  await Bun.write(it.registryFile, text.replace(/runner = "runner-test"/, `runner = "${RUNNER_PI}"`));
-  return it;
-}
 
 function startRunner(it: StagedHub, id: string): Promise<ReadyProcess> {
   return startReadySubprocess("test/helpers/runner-subprocess.ts", [
@@ -138,7 +77,7 @@ test(
     const { runRunner } = await seam("src/runner/run.ts");
     expect(typeof runRunner).toBe("function");
 
-    const it = await stageTwoMachines();
+    const it = await stageTwoMachines(cluster);
     let pi: ReadyProcess | null = null;
     let mac: ReadyProcess | null = null;
     try {
@@ -205,19 +144,14 @@ test(
         expect(backend.client_addr).not.toBeNull();
       }
 
-      // The ONE host half. The store url is a single value in a single file,
-      // both runners were handed that same file, and both of their backends are
-      // registered in THIS server's own view: a runner that had connected to a
-      // different cluster would simply not be in it. The server's own
-      // identifier is read as well, because it cannot be forged by a test that
-      // opened two connections to two different clusters.
+      // The ONE host half. The store url is a single value in a single file and
+      // both runners were handed that same file, so the backends counted above
+      // are two processes reading one setting. Which SERVER each of them
+      // believes it reached is a stronger claim than a shared file can make and
+      // it is bound in test/store-split.test.ts, where each runner writes the
+      // cluster's own system_identifier and the two are compared.
       const registry = loadRegistry(it.registryFile);
       expect(String(readSetting(registry, "hub.store_url"))).toBe(it.storeUrl);
-      expect(it.storeUrl.startsWith("postgres://127.0.0.1:")).toBe(true);
-      const [control] = (await it.read.sql(
-        "select system_identifier::text as id from pg_control_system()",
-      )) as { id: string }[];
-      expect(control.id.length).toBeGreaterThan(0);
     } finally {
       if (pi) await pi.stop();
       if (mac) await mac.stop();
@@ -233,7 +167,7 @@ test(
     const { runRunner } = await seam("src/runner/run.ts");
     expect(typeof runRunner).toBe("function");
 
-    const it = await stageTwoMachines();
+    const it = await stageTwoMachines(cluster);
     let pi: ReadyProcess | null = null;
     let mac: ReadyProcess | null = null;
     let watching = true;

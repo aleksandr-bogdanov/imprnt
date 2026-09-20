@@ -83,6 +83,17 @@ test("REC-01 every diary is in time order and no entry was modified after the on
   }
   expect(refusal).toBeInstanceOf(DiaryImmutable as Function);
 
+  // The refusal survived the transaction it refused, and it names what was
+  // attacked. Found by kind and subject, never by counting rows.
+  const refusals = (await (readDiary as Function)(store, {
+    stream: "refusal",
+  })) as { kind: string; subject: string }[];
+  expect(
+    refusals.filter(
+      (e) => e.kind === "refused.diary_edit" && e.subject === String(target),
+    ).length,
+  ).toBe(1);
+
   const owner = cluster.connect(db) as unknown as Conn;
   await refused(() =>
     owner.unsafe(`update ledger_event set kind = 'answered' where seq = ${target}`),
@@ -97,46 +108,6 @@ test("REC-01 every diary is in time order and no entry was modified after the on
   expect(after.map((e) => [e.seq, e.kind, e.at])).toEqual(
     before.map((e) => [e.seq, e.kind, e.at]),
   );
-
-  await (closeStore as Function)(store);
-});
-
-test("REC-04 editing a diary entry is refused and the attempt is a ledger event (SPEC §7, L17)", async () => {
-  const { openStore, closeStore } = await seam("src/store/connect.ts");
-  const { appendEntry, editEntry, readDiary, DiaryImmutable } = await seam(
-    "src/records/diary.ts",
-  );
-  expect(typeof editEntry).toBe("function");
-
-  const db = await freshDatabase(cluster);
-  const store = await (openStore as Function)({ url: cluster.url(db) });
-
-  const seq = (await (appendEntry as Function)(store, {
-    stream: "inbound",
-    subject: "m-refusal",
-    kind: "received",
-    actor: "door",
-    detail: {},
-  })) as number;
-
-  let refusal: unknown;
-  try {
-    await (editEntry as Function)(store, seq, { kind: "delivered" });
-  } catch (err) {
-    refusal = err;
-  }
-  expect(refusal).toBeInstanceOf(DiaryImmutable as Function);
-
-  // The refusal survived the transaction it refused, and it names what was
-  // attacked. Found by kind and subject, never by counting rows.
-  const refusals = (await (readDiary as Function)(store, {
-    stream: "refusal",
-  })) as { kind: string; subject: string }[];
-
-  const match = refusals.filter(
-    (e) => e.kind === "refused.diary_edit" && e.subject === String(seq),
-  );
-  expect(match.length).toBe(1);
 
   await (closeStore as Function)(store);
 });

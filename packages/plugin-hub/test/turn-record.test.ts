@@ -419,88 +419,6 @@ test(
 );
 
 test(
-  "LOOP-02 a guessed price is forbidden: with every rate row dated after the turn nothing covers it, so the price is null rather than the nearest row, zero, or the loop's own estimate (SPEC §3 Forbidden, L18)",
-  async () => {
-    const { priceFor } = await seam("src/registry/presets.ts");
-    expect(typeof priceFor).toBe("function");
-    const { runRunner } = await seam("src/runner/run.ts");
-    expect(typeof runRunner).toBe("function");
-
-    const usage: AdapterUsage = {
-      input_tokens: 5000,
-      cached_input_tokens: 100,
-      output_tokens: 900,
-      plan_usage: null,
-      raw: { input_tokens: 5000, output_tokens: 900, total_cost_usd: 0.0212 },
-    };
-
-    const it = await stageHub(cluster, {
-      adapter: { usage },
-      preset: { paid: "key" },
-      registry: (base) => ({
-        ...base,
-        rates: [
-          {
-            model: "a-model-name",
-            from: "2099-01-01",
-            input_per_m: 3,
-            cached_per_m: 0.3,
-            output_per_m: 15,
-            currency: "USD",
-          },
-          {
-            model: "another-model-name",
-            from: "2020-01-01",
-            input_per_m: 1,
-            cached_per_m: 0.1,
-            output_per_m: 5,
-            currency: "USD",
-          },
-        ],
-      }),
-    });
-    let runner: { stop(): Promise<void> } | null = null;
-
-    try {
-      await insertInbound(cluster, it.db, {
-        id: "m-no-rate",
-        body: "nothing covers this",
-      });
-      runner = await (runRunner as Function)({
-        runner: RUNNER,
-        registryFile: it.registryFile,
-        adapters: { [it.adapterName]: it.scripted.adapter },
-      });
-      await until(
-        "the turn was settled",
-        async () =>
-          (await it.read.ledger({ stream: "turn" })).some(
-            (t) => t.subject === "m-no-rate",
-          ),
-        60_000,
-      );
-
-      const turn = turnFor(
-        await it.read.ledger({ stream: "turn" }),
-        "m-no-rate",
-      );
-      // Null rather than a fallback. That is what "never guess a number" means
-      // in a check.
-      expect(turn.detail.price).toBeNull();
-      expect(turn.detail.plan_usage).toBeNull();
-      expect(JSON.stringify(turn.detail.price)).not.toContain("0.0212");
-      // And the counts were still recorded, so nothing was dropped with it.
-      expect(turn.detail.input_tokens).toBe(5000);
-      expect(turn.detail.output_tokens).toBe(900);
-    } finally {
-      if (runner) await runner.stop();
-      await it.stop();
-    }
-  },
-  SLOW,
-);
-
-test(
   "LOOP-02 a guessed price is forbidden: with one of the three token counts missing the price is null, because a price from two of three counts is a guess wearing a number's clothes (SPEC §3 Forbidden, L18)",
   async () => {
     const { priceFor } = await seam("src/registry/presets.ts");
@@ -568,7 +486,8 @@ test(
       // The control, so the null above is the missing count's doing and not a
       // rate table that never works: the same rate row prices a whole count.
       const registry = (await seam("src/registry/load.ts")).loadRegistry as Function;
-      const priced = (priceFor as Function)(registry(it.registryFile), {
+      const loaded = registry(it.registryFile);
+      const priced = (priceFor as Function)(loaded, {
         model: "a-model-name",
         at: new Date(),
         paid: "key",
@@ -576,6 +495,28 @@ test(
       }) as { amount: number } | null;
       expect(priced).not.toBeNull();
       expect(priced!.amount).toBeGreaterThan(0);
+
+      // The other half of "never guess a number", on the same loaded registry
+      // and the same whole usage: a turn dated BEFORE every rate row is covered
+      // by none of them, so the price is null rather than the nearest row, zero,
+      // or the loop's own estimate. The turn above proves a null price reaches
+      // the record as exactly null.
+      const uncovered = (priceFor as Function)(loaded, {
+        model: "a-model-name",
+        at: new Date("2019-01-01T00:00:00Z"),
+        paid: "key",
+        usage: { ...usage, cached_input_tokens: 0 },
+      }) as { amount: number } | null;
+      expect(uncovered).toBeNull();
+      // And a model no row names at all is uncovered at any date.
+      expect(
+        (priceFor as Function)(loaded, {
+          model: "another-model-name",
+          at: new Date(),
+          paid: "key",
+          usage: { ...usage, cached_input_tokens: 0 },
+        }),
+      ).toBeNull();
     } finally {
       if (runner) await runner.stop();
       await it.stop();

@@ -756,3 +756,70 @@ export function outLineOnDisk(args: {
       args.agent ?? AGENT,
     ).some((line) => line.direction === "out" && line.text === post.text);
 }
+
+/** The runner the two-machine registry puts on the pi. */
+export const RUNNER_PI = "runner-pi";
+
+/**
+ * One registry, two machines, two people, two runners, two agents, one agent
+ * per runner. The default agent ships on `runner-test`, which this registry has
+ * no entry for, so it is rewritten onto the pi's runner before the file is used.
+ */
+export async function stageTwoMachines(cluster: Cluster): Promise<StagedHub> {
+  const it = await stageHub(cluster, {
+    servers: true,
+    machines: [
+      { id: "pi", os: "linux" },
+      { id: "mac", os: "macos" },
+    ],
+    people: [
+      { id: PERSON, tree: "/var/lib/imprnt-hub/p1" },
+      { id: PERSON2, tree: "/var/lib/imprnt-hub/p2" },
+    ],
+    hub: { shared_zone: "/var/lib/imprnt-hub/shared" },
+    agents: [
+      {
+        id: AGENT2,
+        person: PERSON2,
+        preset: "daily",
+        chat: `${CHAT}1`,
+        door: "door-mac",
+        runner: RUNNER2,
+      },
+    ],
+    run: [
+      {
+        id: DOOR,
+        kind: "door",
+        machine: "pi",
+        platform: "fake",
+        person: PERSON,
+        token_file: "/dev/null",
+        schedule: "always",
+        memory_limit_mb: 192,
+      },
+      {
+        id: RUNNER_PI,
+        kind: "runner",
+        machine: "pi",
+        schedule: "always",
+        memory_limit_mb: 512,
+        child_memory_limit_mb: 512,
+      },
+      {
+        id: RUNNER2,
+        kind: "runner",
+        machine: "mac",
+        schedule: "always",
+        memory_limit_mb: 512,
+        child_memory_limit_mb: 2048,
+      },
+    ],
+  });
+  const text = await Bun.file(it.registryFile).text();
+  await Bun.write(
+    it.registryFile,
+    text.replace(/runner = "runner-test"/, `runner = "${RUNNER_PI}"`),
+  );
+  return it;
+}

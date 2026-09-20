@@ -208,7 +208,6 @@ test(
         45_000,
         async () => JSON.stringify(await it.read.ledger({ stream: "inbound" })),
       );
-      it.scripted.openSession();
       await Bun.sleep(3000);
 
       // THE LOAD. Nothing has been produced, so nothing may say it started.
@@ -232,12 +231,6 @@ test(
       });
       expect(started.length).toBe(1);
       expect(started[0].actor).toBe("runner");
-      // Decoration rather than load, and named as such: the test called
-      // openSession before sending progress, so this ordering is nearly given.
-      // The absence above is what an implementation can fail.
-      expect(new Date(started[0].at).getTime()).toBeGreaterThanOrEqual(
-        it.scripted.openedAt()!,
-      );
     } finally {
       if (runner) await runner.stop();
       await it.stop();

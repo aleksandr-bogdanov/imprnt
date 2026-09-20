@@ -358,7 +358,6 @@ test(
     expect(readFileSync(kept, "utf8")).toContain(mine);
     expect(readFileSync(kept, "utf8")).toContain("a-unit-the-household-named");
 
-    await until("the installer's own processes are done", () => true, 1000);
   },
   SLOW,
 );
