@@ -42,8 +42,18 @@ export interface FakeRecognizer {
   port: number;
   /** `http://127.0.0.1:<port>`, with no trailing slash. */
   url: string;
+  /** The full URL a client posts a chunk to, path included. */
+  endpoint: string;
   requests: RecordedRequest[];
   setAnswer(answer: Partial<RecognizerAnswer>): void;
+  /**
+   * Answer this JSON body instead of the three keys.
+   *
+   * A cloud recognizer answers in its own shape, and the seam is what maps that
+   * shape onto the three keys. A fake that could only answer the three would
+   * leave the mapping unasserted.
+   */
+  setRawAnswer(body: unknown): void;
   setDelayMs(ms: number): void;
   setStatus(status: number): void;
   /** The next request fails once, and everything after it answers normally. */
@@ -51,11 +61,20 @@ export interface FakeRecognizer {
   stop(): Promise<void>;
 }
 
+export interface FakeRecognizerOptions {
+  /** The path a chunk is posted to. A cloud provider has its own. */
+  path?: string;
+}
+
 const NO_CONTENT_LENGTH = 411;
 
-export async function fakeRecognizer(): Promise<FakeRecognizer> {
+export async function fakeRecognizer(
+  options: FakeRecognizerOptions = {},
+): Promise<FakeRecognizer> {
+  const chunkPath = options.path ?? "/transcribe";
   const requests: RecordedRequest[] = [];
   let answer: RecognizerAnswer = { text: "synthetic transcript", audio_s: 1, decode_ms: 1 };
+  let raw: unknown = undefined;
   let delayMs = 0;
   let status = 200;
   let refuseOnce = false;
@@ -81,7 +100,7 @@ export async function fakeRecognizer(): Promise<FakeRecognizer> {
       if (url.pathname === "/health" && request.method === "GET") {
         return Response.json({ ok: true });
       }
-      if (url.pathname !== "/transcribe" || request.method !== "POST") {
+      if (url.pathname !== chunkPath || request.method !== "POST") {
         return new Response("not found", { status: 404 });
       }
       // The reference server reads the body by its declared length, so a
@@ -95,7 +114,7 @@ export async function fakeRecognizer(): Promise<FakeRecognizer> {
       }
       if (delayMs > 0) await Bun.sleep(delayMs);
       if (status !== 200) return new Response("synthetic failure", { status });
-      return Response.json(answer);
+      return Response.json(raw === undefined ? answer : raw);
     },
   });
 
@@ -103,9 +122,13 @@ export async function fakeRecognizer(): Promise<FakeRecognizer> {
   return {
     port,
     url: `http://127.0.0.1:${port}`,
+    endpoint: `http://127.0.0.1:${port}${chunkPath}`,
     requests,
     setAnswer(next) {
       answer = { ...answer, ...next };
+    },
+    setRawAnswer(body) {
+      raw = body;
     },
     setDelayMs(ms) {
       delayMs = ms;
