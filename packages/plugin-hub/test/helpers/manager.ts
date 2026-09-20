@@ -7,8 +7,8 @@
 // nothing from `src/`, deliberately, the same reason `test/helpers/units.ts`
 // keeps its own copy of the two prefixes.
 //
-// The four counters follow D-101, which exists because launchd's single counter
-// counts EXECUTIONS and systemd's counts RESTARTS. Measured on this Mac with
+// The four counters are kept apart because launchd's single counter
+// counts EXECUTIONS and systemd's counts RESTARTS. Measured on a Mac with
 // `launchctl print gui/<uid>/<label>`, 2026-09-15:
 //
 //   a healthy KeepAlive job     state = running       runs = 1  last exit code = (never exited)
@@ -26,7 +26,7 @@ export interface ManagerView {
   loaded: boolean;
   running: boolean;
   pid: number | null;
-  /** Executions, where the manager counts them. Null on systemd (D-101). */
+  /** Executions, where the manager counts them. Null on systemd. */
   runs: number | null;
   /** The manager's own record says the program has executed at least once. */
   ran: boolean;
@@ -125,7 +125,7 @@ function linux(base: string): ManagerView | null {
     loaded: fields.get("LoadState") === "loaded",
     running: fields.get("SubState") === "running",
     pid,
-    // systemd counts no executions at all (D-101).
+    // systemd counts no executions at all.
     runs: null,
     ran: (fields.get("ExecMainStartTimestamp") ?? "") !== "",
     restarts: /^\d+$/.test(restartsText) ? Number(restartsText) : null,

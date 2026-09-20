@@ -1,4 +1,4 @@
-// MSG-02. The order of operations, probed by killing the door inside it.
+// The order of operations, probed by killing the door inside it.
 //
 // SPEC §2: "the door reads from the platform, writes the inbound row, commits,
 // only then acks the platform." Its Forbidden list carries "a cursor that moves
@@ -17,7 +17,7 @@
 // and only when it sees that backend does it send the signal. Nothing in
 // production code is switched by any of this.
 //
-// THE ORDER OF THE STAGING matters as much as the lock. The second seat's first
+// THE ORDER OF THE STAGING matters as much as the lock. The first
 // pass took both locks before the door started, and an ACCESS EXCLUSIVE lock on
 // state_row blocks a READ of that table as well as a write, so the door's own
 // startup cursor read could have been the backend the waiter saw and the kill

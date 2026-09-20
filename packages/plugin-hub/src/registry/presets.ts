@@ -87,7 +87,7 @@ export function priceFor(
   };
 }
 
-/** D-110. The three window thresholds a plan preset carries, as percent. */
+/** The three window thresholds a plan preset carries, as percent. */
 export interface WindowThresholds {
   pause_at: number;
   notice_at: number;
@@ -98,7 +98,7 @@ export interface WindowThresholds {
  * The window thresholds of a preset, or null when it is paid for by a per-token
  * key and has no window at all (L10 rule 4).
  *
- * D-109. They are read off the RAW table rather than off `PresetEntry`, and
+ * They are read off the RAW table rather than off `PresetEntry`, and
  * that is deliberate rather than shy. `test/preset-id.test.ts` pins
  * `PRESET_FIELDS` against an oracle that recomputes the hash outside this code,
  * and one level below it `src/runner/run.ts` writes `preset_settings: {
@@ -122,7 +122,7 @@ export function windowThresholds(
   };
 }
 
-/** D-111. The credential id this preset's loop reads its login from, or null. */
+/** The credential id this preset's loop reads its login from, or null. */
 export function credentialOfPreset(registry: unknown, presetName: string): string | null {
   const it = loaded(registry, "credentialOfPreset");
   const table = (it.data.presets as Record<string, Record<string, unknown>> | undefined)?.[

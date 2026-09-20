@@ -41,12 +41,12 @@ export function agentsFor(
   );
 }
 
-/** D-76. The machines this household declares, in the order the file lists them. */
+/** The machines this household declares, in the order the file lists them. */
 export function listMachines(registry: unknown): MachineEntry[] {
   return loaded(registry, "listMachines").machines.map((entry) => ({ ...entry }));
 }
 
-/** D-93. The people this household declares, each with its tree. */
+/** The people this household declares, each with its tree. */
 export function listPeople(registry: unknown): PersonEntry[] {
   return loaded(registry, "listPeople").people.map((entry) => ({ ...entry }));
 }
@@ -54,7 +54,7 @@ export function listPeople(registry: unknown): PersonEntry[] {
 /**
  * What this machine runs.
  *
- * D-76's backward compatibility rule made concrete: a file that declares fewer
+ * The backward compatibility rule made concrete: a file that declares fewer
  * than two machines has nothing to be ambiguous about, so every entry belongs
  * to the one machine the asking process names, whatever it calls itself. Once
  * the file declares two or more, `machine` is required on every entry (the
@@ -75,7 +75,7 @@ export function personOf(registry: unknown, agentId: string): PersonEntry | null
   return person ? { ...person } : null;
 }
 
-/** D-111. The credentials this household declares, in the order the file lists them. */
+/** The credentials this household declares, in the order the file lists them. */
 export function listCredentials(registry: unknown): CredentialEntry[] {
   return loaded(registry, "listCredentials").credentials.map((entry) => ({ ...entry }));
 }
@@ -86,7 +86,7 @@ export function credentialFor(registry: unknown, id: string): CredentialEntry | 
   return found ? { ...found } : null;
 }
 
-/** D-108. The four clocks this person is measured against, defaults filled in. */
+/** The four clocks this person is measured against, defaults filled in. */
 export interface StampThresholds {
   acked_seconds: number;
   started_seconds: number;
@@ -110,7 +110,7 @@ export function thresholdsFor(registry: unknown, personId: string): StampThresho
   };
 }
 
-/** D-137. What harvests this person's chats, with the defaults filled in. */
+/** What harvests this person's chats, with the defaults filled in. */
 export interface HarvestSettings {
   /** The preset name a slice of their chats is read under. */
   harvester: string;
@@ -122,11 +122,11 @@ export interface HarvestSettings {
 }
 
 /**
- * D-137, D-138. This person's harvest, or NULL when they name no harvester.
+ * This person's harvest, or NULL when they name no harvester.
  *
  * Null is a real answer and not a missing one: a household that has not chosen
  * a harvester still runs, nothing harvests that person's chats, and `check`
- * says so (D-156). That is D-111's own shape for `credential-undeclared`.
+ * says so, the same shape `credential-undeclared` has.
  *
  * The minimum slice's default comes off the HARVESTER preset's `paid` rather
  * than the agent's, because the cost L19 is talking about is the harvest's own:
@@ -148,14 +148,14 @@ export function harvestFor(registry: unknown, personId: string): HarvestSettings
   };
 }
 
-/** D-108. The language this person reads the door's own lines in. */
+/** The language this person reads the door's own lines in. */
 export function languageOf(registry: unknown, personId: string): "en" | "ru" {
   const person = loaded(registry, "languageOf").people.find((one) => one.id === personId);
   return (person?.language ?? DEFAULT_LANGUAGE) as "en" | "ru";
 }
 
 /**
- * D-121. The id this agent's outage is keyed by.
+ * The id this agent's outage is keyed by.
  *
  * The credential its preset names, or `preset:<preset name>` when it names
  * none. The fallback is what keeps the one-notice arithmetic sound for a
@@ -173,7 +173,7 @@ export function credentialOf(registry: unknown, agentId: string): string {
   return credentialOfPreset(it, agent.preset) ?? `preset:${agent.preset}`;
 }
 
-/** D-171. Launch sources are explicit even when the registry omits them. */
+/** Launch sources are explicit even when the registry omits them. */
 export function launchFor(registry: unknown, agentId: string) {
   const agent = loaded(registry, "launchFor").agents.find(one => one.id === agentId);
   if (!agent) throw new TypeError(`unknown agent: ${agentId}`);

@@ -1,4 +1,4 @@
-// MSG-10, and SPEC §2's Forbidden line phrased as a check: "a turn open with no
+// SPEC §2's Forbidden line phrased as a check: "a turn open with no
 // typing shown" is refused.
 //
 // SPEC §2 and L6: "While a turn is open the door shows typing on Telegram and
@@ -13,7 +13,7 @@
 // platform and not the refresh.
 //
 // A TURN OPENS AT `acked` AND ENDS AT `answered`, and those are two different
-// state sets from the set a clock is armed for (D-126's table). A build that
+// state sets from the set a clock is armed for. A build that
 // read "open" as one set gets one of them wrong, so this check watches a row
 // that nobody has claimed and a row that has been answered as well as one in
 // the middle.
@@ -38,7 +38,7 @@ let cluster: Cluster;
 
 const SLOW = 120_000;
 
-/** 04-CONTEXT's pinned refusal, written out by the TEST and never imported. */
+/** The pinned refusal, written out by the TEST and never imported. */
 function cannotType(door: string): string {
   return (
     `${door} serves a platform that cannot show typing, and a turn open with no typing ` +
@@ -119,7 +119,7 @@ test(
         30_000,
       );
       // The statement window belongs HERE, with the door up and no runner:
-      // the runner's own tick re-read (03b row 6, deliberately kept) would
+      // the runner's own tick re-read, deliberately kept, would
       // otherwise be counted against the door. What is bound is that the door
       // issues nothing while no turn is open and that its typing timer, when
       // it has one, is memory and not a query.
@@ -144,7 +144,7 @@ test(
         registryFile: it.registryFile,
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
-      // THE REPLY, not "a post" (the second pass's finding). A compliant door
+      // THE REPLY, not "a post". A compliant door
       // posts a progress line while the turn is open, so a post count reaches
       // one before the answer exists and this wait would end in the middle of
       // the turn it is supposed to be past. The `delivered` stamp is the door
@@ -164,7 +164,7 @@ test(
 
       // --- half two, the idle control, which is what makes half one mean
       //     anything: with nothing in flight the door types NOTHING. It also
-      //     covers the other side of D-126's table: a row that has been
+      //     covers the other side of that table: a row that has been
       //     ANSWERED is out of the open set and the typing stops with it.
       const idleFrom = Date.now();
       await Bun.sleep(seconds * 2 * 1000);
@@ -204,7 +204,7 @@ test(
         () => `typings=${JSON.stringify(it.fake.typings())}`,
       );
 
-      // AND IT KEEPS GOING (the second seat's finding). Three calls in a burst
+      // AND IT KEEPS GOING. Three calls in a burst
       // at the start of a turn satisfy a count and a pairwise bound and then
       // leave the person watching a dead chat for the rest of a long turn, so
       // the turn is held open for twice the platform's lifetime after the
@@ -264,9 +264,8 @@ test(
       expect(after.filter((one) => one.at > postedAt + seconds * 2 * 1000)).toEqual([]);
       expect(after.filter((one) => one.at > answeredAt + seconds * 2 * 1000)).toEqual([]);
 
-      // --- half two's LAST side, added under the separate review (S4, and
-      //     BUILD-NOTES 29): a row at `acked` that NOBODY HOLDS draws no
-      //     typing. D-121a leaves a refused row at `acked` and releases it onto
+      // --- half two's LAST side: a row at `acked` that NOBODY HOLDS draws no
+      //     typing. A refused row is left at `acked` and released onto
       //     its `retry_at`, so the state alone cannot tell a turn that is
       //     running from one that is waiting out an outage, and a door that
       //     typed for the second shows a person somebody working on a message

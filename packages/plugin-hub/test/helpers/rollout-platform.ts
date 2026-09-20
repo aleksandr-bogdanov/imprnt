@@ -1,4 +1,4 @@
-// A fetched-batch edge for D-166 and D-173. Store and cursor work stays in src/.
+// A fetched-batch edge. Store and cursor work stays in src/.
 import { createFakePlatform } from "./fake-platform.ts"
 
 export interface RolloutMedia {

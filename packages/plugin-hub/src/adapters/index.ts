@@ -21,7 +21,7 @@ export function adapterFor(adapters: Record<string, Adapter>, name: string): Ada
 export async function loopLaunch(input: LoopLaunchInput, probe: LoopProbeOptions = {}) {
   const { makeLoopLaunch, sessionBox } = await import("./launch.ts");
   if (input.preset.adapter === claudeCode.name) {
-    // IMP-162. Probed once per binary and login, and the login is checked every time.
+    // Probed once per binary and login, and the login is checked every time.
     const { credentialSource, loopCapabilitiesFor } = await import("./launch.ts");
     await loopCapabilitiesFor(input.credential ?? credentialSource(input.registry, input.agent.preset), probe);
     return makeLoopLaunch(input);

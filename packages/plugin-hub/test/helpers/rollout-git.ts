@@ -1,4 +1,4 @@
-// Local Git graphs for D-180. No command contacts a network remote.
+// Local Git graphs. No command contacts a network remote.
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 

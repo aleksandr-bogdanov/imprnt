@@ -1,19 +1,19 @@
-// RUN-10. A restart request is acted on by the hub, and one aimed at the
+// A restart request is acted on by the hub, and one aimed at the
 // asker's own unit is refused. (SPEC §6, L11, D7)
 //
 // L11: a restart request is "acted on by the hub process. The agent being
 // restarted never reads the request, and the agent carrying the request can
-// never restart itself." RUN-10: "never the agent being restarted, never the
-// asker's own unit." D-80 makes the request a ledger row on the `restart`
+// never restart itself." Never the agent being restarted, never the
+// asker's own unit. The request is a ledger row on the `restart`
 // stream, the hub's refusal a `refusal` row with kind `refused.restart` naming
-// both ids, and the hub's watermark what makes a request act exactly once.
+// both ids, and the hub's watermark is what makes a request act exactly once.
 //
-// `[partial]`, in D-80's own words: in this phase the only writer of a request
+// `[partial]`, and why: the only writer of a request
 // is the command line, where the asker has no unit, so `asked_by === target` is
 // SUPPLIED by this check rather than produced by a caller. The path that makes
 // the shape reachable in production is "typed in any chat" (L11), which needs
 // the door or the runner to recognise a request in a human's message, and that
-// is phase 4's work. What this check binds is real code either way: the hub's
+// is the work. What this check binds is real code either way: the hub's
 // own refusal, its ledger line, and the pid that did not change.
 //
 // Red reason: import missing, src/hub/restart.ts.
@@ -106,7 +106,7 @@ test.skipIf(!gate.ok)(
     const pidOf = async (id: string): Promise<number> => managerPid(`imprnt-hub-${id}`) ?? 0;
 
     // EVERY pid either unit ever had, sampled through the whole check.
-    // The second seat's lead: "exactly once" was asserted only through a count
+    // "exactly once" was asserted only through a count
     // of ledger lines, so a hub that restarted A over and over while writing
     // one deduplicated event passed. A restart IS a new pid, so the set of pids
     // each unit wore is the independent count, and it is compared against the

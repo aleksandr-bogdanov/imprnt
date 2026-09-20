@@ -4,7 +4,7 @@
 // L13: "`check` compares systemd's truth with the list: a running `imprnt-*`
 // unit the registry does not imply is reported in red with the command to stop
 // it, never stopped by a robot. A registry entry with no unit is reported."
-// D-78 splits that in two: a unit under the RENDER prefix with no entry is one
+// That splits in two: a unit under the RENDER prefix with no entry is one
 // the hub itself generated and the registry no longer wants, so the hub removes
 // it (`stale`), while a unit under the SCAN prefix only was never the hub's to
 // write, so it is `check`'s to report and nobody's to touch (`extra`).
@@ -48,7 +48,7 @@ function unitState(over: Record<string, unknown>): Record<string, unknown> {
  * The entry id of a wanted unit as the diff handed it back.
  *
  * `diffUnits` returns elements of the `wanted` array it was given, and
- * 03-CONTEXT pins that array's element type by NAME (`WantedUnit`) without
+ * that array's element type is pinned by NAME (`WantedUnit`) without
  * pinning its fields. So the check builds each element as the run entry spread
  * together with its unit name and its wanted state, and reads a result back
  * through whichever of those a build kept.
@@ -168,7 +168,7 @@ test(
       expect(withStale.missing).toEqual([]);
 
       // --- extra: under the WATCH prefix ONLY. check's to report, nobody's to
-      //     touch. The separation is the whole of D-78: a stray is never
+      //     touch. The separation is the whole point: a stray is never
       //     `stale`, so the hub never removes it, and that is L13's "never
       //     stopped by a robot" made structural rather than promised.
       const withStray = diff({
@@ -181,7 +181,7 @@ test(
       expect(withStray.missing).toEqual([]);
 
       // The command travels with it as TEXT, for both flavours, and nothing
-      // runs it. THE WHOLE STRING IS BOUND, per D-105, because this is a `fix`
+      // runs it. THE WHOLE STRING IS BOUND, because this is a `fix`
       // a human PASTES: a fragments match ("contains systemctl --user stop",
       // "contains the name") passes a command carrying an invalid option
       // between the two, and a fix that does not run is worse than no fix,

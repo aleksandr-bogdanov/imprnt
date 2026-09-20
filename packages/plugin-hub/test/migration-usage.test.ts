@@ -1,4 +1,4 @@
-// D-181b. A one-off migration command called with the wrong arguments says what it takes.
+// A one-off migration command called with the wrong arguments says what it takes.
 import { expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"

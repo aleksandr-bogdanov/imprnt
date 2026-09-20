@@ -14,7 +14,7 @@ export interface StampRow {
 }
 
 /**
- * D-130's table: what each state is waiting for, and what the wait is measured
+ * What each state is waiting for, and what the wait is measured
  * from.
  *
  * Three of the four are measured from `received_at`, because that is the moment
@@ -74,7 +74,7 @@ export async function readStampRows(
 }
 
 /**
- * MSG-08's finding: a human row past its person's OWN threshold with the next
+ * The finding: a human row past its person's OWN threshold with the next
  * stamp missing.
  *
  * Pure, so the arithmetic is readable without a store, the way `staleJobs` and

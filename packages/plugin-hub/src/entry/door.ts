@@ -1,6 +1,6 @@
 // The door, as a program the operating system starts.
 //
-// D-94. Argv is `<registryFile> <entry id>` and nothing else. Which platform
+// Argv is `<registryFile> <entry id>` and nothing else. Which platform
 // this door speaks, whose it is and where its credential lives are all in the
 // registry entry the id names, which is what the loader already refuses a door
 // for having no `platform`, `person` or `token_file`.

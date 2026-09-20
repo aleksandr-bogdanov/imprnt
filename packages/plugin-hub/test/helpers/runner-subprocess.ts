@@ -1,9 +1,9 @@
 // Test infrastructure. Runs the REAL runner in a process of its own.
 //
-// D-33, D-34 and D-63. The runner kill test needs a process the test can kill
-// with the settle transaction blocked, and D-34's adapter registry is a
+// The runner kill test needs a process the test can kill
+// with the settle transaction blocked, and the adapter registry is a
 // parameter, so the adapter name comes from argv rather than being fixed here.
-// Plan 02-04 hands it a name generated at run time, which is what makes "no
+// A caller hands it a name generated at run time, which is what makes "no
 // branch on the adapter name anywhere but the adapter registry" probeable: a
 // build cannot have enumerated a name it could not know.
 //
@@ -12,9 +12,9 @@
 // Usage: bun run test/helpers/runner-subprocess.ts <registryFile> <runnerId> <adapterServerUrl> <adapterName> [child]
 //
 // With the fifth argument `child`, the adapter client spawns a REAL child here,
-// inside THIS process, so the child's parent pid is the runner's (D-82, checks
-// 11 and 12). Without it nothing changes and every phase 2 check that uses this
-// entry behaves exactly as it does today.
+// inside THIS process, so the child's parent pid is the runner's.
+// Without it nothing changes and every check that uses this
+// entry behaves exactly as it does without the argument.
 
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";

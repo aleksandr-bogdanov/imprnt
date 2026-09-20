@@ -1,11 +1,11 @@
 import type { StoreLike } from "../store/connect.ts";
 
 /**
- * D-141. The watermark: how far each chat has been harvested.
+ * The watermark: how far each chat has been harvested.
  *
  * One row per chat, edited in place, which L17 rules is a state sheet rather
- * than a diary. D-115 already granted the runner `insert, update, delete on
- * state_row` in phase 4, so this whole file adds no schema object at all.
+ * than a diary. The runner already holds `insert, update, delete on
+ * state_row`, so this whole file adds no schema object at all.
  */
 export const HARVEST_SHEET = "harvest";
 
@@ -85,7 +85,7 @@ function sheetData<T>(raw: unknown): T | null {
  * How far this chat has been harvested, or null when nothing has been.
  *
  * NO ROW MEANS NOTHING HARVESTED, which is a different fact from a harvest that
- * found nothing worth keeping: the second moves the watermark (D-153) and the
+ * found nothing worth keeping: the second moves the watermark and the
  * first has none to move. One row by its key rather than the whole sheet,
  * because the runner asks this once per harvest turn and the door asks it only
  * when it is about to write a row.

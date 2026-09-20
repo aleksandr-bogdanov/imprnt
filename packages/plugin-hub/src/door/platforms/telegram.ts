@@ -60,7 +60,7 @@ export function telegram(options: {
       // client's. A call with no poll of its own (a post, an edit, a typing
       // indicator) carries the same ten seconds, because this runtime's `fetch`
       // has no deadline and a door that hung on one would stop serving its
-      // person (REVIEW S3).
+      // person.
       signal: AbortSignal.timeout(timeoutMs + 10_000),
     });
     const said = (await answer.json()) as Record<string, unknown>;

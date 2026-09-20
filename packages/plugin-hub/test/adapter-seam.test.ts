@@ -7,14 +7,14 @@
 //
 // THE PARTIAL, and its reason. That Forbidden line quantifies over code that
 // does not exist yet, so no probe run today can enumerate every call site, and
-// the first test's name carries [partial] the way phase 1's RUN-06 checks do.
+// the first test's name carries [partial] the way a partly bound check does.
 // What CAN be probed is the mechanism, and it is probed hard: the runner drives
 // an adapter registered under a name generated at run time, which no build can
 // have in a list and no build can have branched on, and then the same adapter
 // object under a second such name, and the two runs must be identical. The
 // census over real call sites belongs to a later `check` verb.
 //
-// No source file is grepped. Phase 1 established that a grep is not a behaviour
+// No source file is grepped, because a grep is not a behaviour
 // and cannot fail for the right reason.
 //
 // THE SECOND CHECK'S CITATIONS. The decision record does not say what a missing
@@ -23,8 +23,8 @@
 // editing a diary entry is refused, both attempts are ledger events", which is
 // where a refused attempt belongs, and SPEC §6, L14, "a file with a bad value
 // is refused loudly", which is what a preset naming a loop nobody registered
-// is. The exact shape of the record is an inferred seam rule, pinned in
-// 02-CONTEXT and named in the test rather than claimed as a spec line.
+// is. The exact shape of the record is an inferred seam rule, named in the
+// test rather than claimed as a spec line.
 //
 // Red reasons: import missing, src/adapters/types.ts and src/runner/run.ts.
 

@@ -1,8 +1,8 @@
 // Test infrastructure. Reads one setting through the real loader, in a process
 // of its own, and prints the answer as JSON on stdout.
 //
-// RUN-07 forbids "a behaviour switch on the command line or in an environment
-// variable". An in-process check cannot prove that honestly: the loader, or any
+// "A behaviour switch on the command line or in an environment
+// variable" is forbidden. An in-process check cannot prove that honestly: the loader, or any
 // helper it imports, can read `process.env` once at import time, and by the
 // time a test has planted its override the module graph may already be built.
 // Busting the cache of the root module does not help, because a helper module

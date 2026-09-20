@@ -1,7 +1,7 @@
 // Check: a runner silent for N hours is a finding. (SPEC §1, D5, STORE-01)
 //
 // D5's check line: "`check` reports a runner that has not connected for N
-// hours." D-85 derives it with NO HEARTBEAT WRITE, because
+// hours." It is DERIVED with NO HEARTBEAT WRITE, because
 // `test/runner-drain.test.ts` counts ZERO statements from the runner's backends
 // in a window while it waits, and a per-tick heartbeat would break that check or
 // race it. So silence is: no live backend for that runner in `pg_stat_activity`
@@ -175,7 +175,7 @@ test(
       //     view of its clients.
       //
       // THE PAIR THAT FORCES `runCheck` TO CONSULT THE LIVE BACKENDS, which is
-      // the second seat's lead: an implementation that ignored them and read
+      // an implementation that ignored them and read
       // only recent ledger events passed the old shape of this check, because
       // the runner that was up was also the runner with recent work. So BOTH
       // runners' agents get an event planted at the same age, older than the

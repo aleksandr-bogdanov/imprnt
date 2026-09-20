@@ -1,9 +1,9 @@
 // Test infrastructure: the one gate the real-binary check asks, and how its
 // skip stays visible.
 //
-// 04-CONTEXT "How a gated check is skipped, and how the skip stays visible",
-// which is the rule 03-CONTEXT set for the OS gate, applied to the one gated
-// check phase 4 has. The gate is evaluated ONCE, at module load, with
+// How a gated check is skipped, and how the skip stays visible: the same rule
+// the OS gate follows, applied to the one gated
+// check that needs a real login. The gate is evaluated ONCE, at module load, with
 // synchronous spawns, so a test NAME can carry its reason (a name is built
 // before any test body runs). The reason goes into the name through
 // `gateSuffix`, so bun's reporter prints it beside the skip, and into one

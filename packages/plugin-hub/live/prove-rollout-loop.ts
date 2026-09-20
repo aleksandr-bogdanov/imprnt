@@ -70,7 +70,7 @@ try {
   assert.equal(probe.version, "synthetic-version")
   assert.equal(probe.flags.length, 5)
   assert.equal(capabilityProbe("/nonexistent/synthetic-cli", {}).ok, false)
-  // The scripted `claude` the IMP-162 checks put in front of the probe: it
+  // The scripted `claude` put in front of the probe: it
   // answers what the probe asks, reads the canonical login only, hangs as told,
   // and writes down every call, the killed ones included.
   const canonical = join(f.dir, "scripted-login"), session = join(f.dir, "scripted-session")

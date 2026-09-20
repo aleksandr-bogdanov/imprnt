@@ -35,7 +35,7 @@ function readSecret(file: string): string | null {
 }
 
 /**
- * IMP-158. Every hub role gets a password that only the account running the
+ * Every hub role gets a password that only the account running the
  * hub can read, so an agent's shell on the same loopback cannot be one.
  *
  * A role whose stored verifier was made from its file's password is left

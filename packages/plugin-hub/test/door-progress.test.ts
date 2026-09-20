@@ -1,4 +1,4 @@
-// MSG-10. A progress line is posted once when the agent starts, edited as the
+// A progress line is posted once when the agent starts, edited as the
 // work goes, and edited once more to the totals before the reply is posted.
 //
 // SPEC §2 and L6: "While the agent works, a progress line in the chat says what
@@ -11,7 +11,7 @@
 // else in the sentence is bound, which is what stops a build passing a line
 // with anything between the fragments.
 //
-// THE THROTTLE IS TIME AND NOT ACTION (D-124). A per-action rule makes the
+// THE THROTTLE IS TIME AND NOT ACTION. A per-action rule makes the
 // store's write rate, the notification rate and the platform's edit rate a
 // function of how many tools a turn calls, and a turn can call two hundred.
 // Both platforms rate-limit edits. So the observable is that the door made
@@ -38,7 +38,7 @@ let cluster: Cluster;
 
 const SLOW = 120_000;
 
-/** 04-CONTEXT's pinned templates, written out by the TEST and never imported. */
+/** The pinned templates, written out by the TEST and never imported. */
 const WORKING_WITH_ACTIONS = /^\[door\] working: (.+), (\d+) tool calls, (\d+) s$/;
 const WORKING_NO_ACTIONS = /^\[door\] working: (\d+) s$/;
 const TOTALS_WITH_ACTIONS = /^\[door\] done\. Tool calls: (\d+), time: (\d+) s\.$/;
@@ -116,7 +116,7 @@ test(
       // next two. A per-action build writes one line per action and fails the
       // count below.
       // TWENTY ACTIONS IN TWO SECONDS, and every write to the sheet COUNTED by
-      // the database itself (the second pass's finding: a sampler misses
+      // the database itself (a sampler misses
       // writes between samples and a date string merges two inside one
       // second, so a write per action fitted the allowance). A check owns the
       // throwaway cluster it built, so it installs a counting trigger of its
@@ -130,7 +130,7 @@ test(
          )`,
       );
       // SECURITY DEFINER, and the reason is a platform fact rather than a
-      // preference (BUILD-NOTES 13). A PL/pgSQL trigger function runs as the
+      // preference. A PL/pgSQL trigger function runs as the
       // INVOKING role, and the role that writes this sheet is `hub_runner`,
       // which holds no grant on a table this check created as the superuser.
       // Without it every `putRow` on `turn_progress` is refused with
@@ -182,7 +182,7 @@ test(
 
       // --- 1. ONE post, and every later update is an edit of it. A door that
       //     posts a new line per update floods the chat, which is the failure
-      //     MSG-10's "updated as it goes" is written against.
+      //     "updated as it goes" is written against.
       const postsBefore = it.fake.posts().filter((one) => one.chat === CHAT);
       expect(postsBefore.length).toBe(1);
       const edits = it.fake.edits().filter((one) => one.chat === CHAT);
@@ -247,7 +247,7 @@ test(
       expect(totals).not.toBeNull();
       expect(Number(totals![1])).toBe(actions.length);
       expect(last.at).toBeLessThanOrEqual(reply.at);
-      // THE TOTALS EDIT IS AN EDIT OF THE SAME MESSAGE (the second seat's
+      // THE TOTALS EDIT IS AN EDIT OF THE SAME MESSAGE (the
       // finding). A door that edited the line as it went and then sent the
       // totals to some other message id would leave the progress line frozen
       // mid-work and put the totals somewhere the person is not looking, and
@@ -259,7 +259,7 @@ test(
       expect(await it.read.sheet("turn_progress")).toEqual([]);
 
       // --- 5. a loop that reported NO action still gets a line, which is
-      //     MSG-10's "a turn with no tool call still lands" as a sentence a
+      //     "a turn with no tool call still lands" as a sentence a
       //     person reads. Both forms are asserted whole.
       const before = it.fake.posts().filter((one) => one.chat === CHAT).length;
       it.scripted.holdTurnEnd(true);
@@ -290,7 +290,7 @@ test(
       //     overwrites as it goes, so a line per edit would flood the tail with
       //     the same sentence at six different second counts, and one line at
       //     the totals would put "3 tool calls, 40 s" in front of the next
-      //     session about its own previous turn (D-129).
+      // session about its own previous turn.
       const log = chatLogLines(it.stateDir, PERSON, AGENT);
       expect(log.length).toBe(4);
       expect(log.map((line) => line.direction)).toEqual(["in", "out", "in", "out"]);

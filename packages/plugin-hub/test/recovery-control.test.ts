@@ -52,7 +52,7 @@ for (const source of ["chat", "cli", "pending-before-start", "replay-after-resta
     expect(await observe(async () => (await it.read.sheet("control")).some(r => r.data.status === "applied")), "D-178 recovery must apply").toBe(true)
     await insertInbound(cluster,it.db,{id:"after-target",person:"p1",agent:"p2-lair",body:"after recovery"})
     await insertInbound(cluster,it.db,{id:"after-asker",person:"p1",agent:"p1-lair",body:"still serving"})
-    // IMP-160: a chat request's outcome is said in that chat, one notice row beside the four replies.
+    // A chat request's outcome is said in that chat, one notice row beside the four replies.
     expect(await observe(async () => (await it.read.outbox()).length === 4 + (source === "chat" ? 1 : 0))).toBe(true)
     expect((await it.read.noticeRows()).filter(r => String(r.notice_key).startsWith("recovery-outcome:"))).toHaveLength(source === "chat" ? 1 : 0)
     const after = { asker:pidFor("after-asker"),target:pidFor("after-target"),runner:runner.pid }

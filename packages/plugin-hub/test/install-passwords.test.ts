@@ -1,8 +1,8 @@
-// Check (c) of IMP-158: the install gives every hub role a password, and only
+// Check (c): the install gives every hub role a password, and only
 // the owner of the hub processes can read it.
 //
 // The box an agent runs in shares the machine's network, so an agent's shell
-// reaches the store on loopback. The cutover procedure used to let the four hub
+// reaches the store on loopback. A cutover that leaves the four hub
 // roles in with `trust`, so an agent steered by outside content it read, a web
 // page or an email, could log in to the store with no password. The fix takes
 // the roles off trust: the install creates each role

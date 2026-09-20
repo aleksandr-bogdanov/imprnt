@@ -3,7 +3,7 @@ import { findingId, type Finding } from "./finding.ts";
 /**
  * A runner silent for N hours is a finding (STORE-01, D5).
  *
- * D-85 derives it with NO heartbeat write, because the runner's wait issues no
+ * It is DERIVED with no heartbeat write, because the runner's wait issues no
  * statement at all and a per-tick heartbeat would turn that wait into a timer.
  * So silence is BOTH halves at once: no live backend for that runner in the
  * server's own view of its clients, AND the newest work event for any of its
@@ -40,8 +40,8 @@ export function silentRunners(args: {
       subject: runner,
       machine: args.machine,
       says: `${runner} has no connection to the store and its newest work is ${Math.floor(silentFor / 3600)} hours old, past the ${args.hours} hour threshold`,
-      // No manager's name here: this module is under `src/check/` and 03b item
-      // 7 rules that a name `check` can spell is a name `check` could invoke.
+      // No manager's name here: this module is under `src/check/`, and a name
+      // `check` can spell is a name `check` could invoke.
       // The unit is named, because that is what a person looks up, and the
       // looking up is theirs.
       fix: `check whether ${runner}'s machine is on, then ask its service manager about the unit imprnt-hub-${runner}`,

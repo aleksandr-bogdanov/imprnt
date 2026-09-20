@@ -10,7 +10,7 @@ import type { StoreLike } from "../store/connect.ts";
 import { findingId, type Finding } from "./finding.ts";
 
 /**
- * D-160. Criterion 1: "every watermark is younger than its last quiet period
+ * Criterion 1: "every watermark is younger than its last quiet period
  * plus the daily backstop, or a finding."
  *
  * One impure reader and one pure function, the shape `readStampRows` plus
@@ -42,7 +42,7 @@ export interface ChatHarvestState {
  * line would report a chat as unharvested for ever, because a harvest would
  * never take that line and the watermark would never pass it.
  *
- * THE SLICE STARTS WHERE EVERY HARVEST STARTS (D-171, D-181): the later of the
+ * THE SLICE STARTS WHERE EVERY HARVEST STARTS: the later of the
  * watermark and the person's `history_harvest_after`. Imported history before
  * that bound is excluded from every harvest on purpose, so counting it would
  * keep this finding red for as long as a first slice reaches back, about a
@@ -95,7 +95,7 @@ function allowanceSeconds(settings: HarvestSettings): number {
 }
 
 /**
- * D-160. The two findings, PURE.
+ * The two findings, PURE.
  *
  * `harvest-stale` measures the OLDEST unharvested line and not the newest, and
  * that is the whole of why the finding is worth having. Under a newest-line

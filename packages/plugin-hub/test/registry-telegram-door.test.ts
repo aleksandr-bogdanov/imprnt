@@ -1,4 +1,4 @@
-// IMP-160 item 4, D-173. A Telegram door reads its bot's ONE update queue:
+// A Telegram door reads its bot's ONE update queue:
 // `getUpdates` confirms every update below the offset it is sent, for the whole
 // bot and not per chat, and Telegram refuses a second long poll on the same bot
 // while one is open. The door keeps one cursor per chat and runs one reader per

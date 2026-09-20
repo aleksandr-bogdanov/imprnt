@@ -81,7 +81,7 @@ export async function readTail(args: {
     if (!existsSync(file)) continue;
     for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (raw.trim() === "") continue;
-      // IMP-160. A record that is not a chat line is left out of the tail, the
+      // A record that is not a chat line is left out of the tail, the
       // way the door leaves it out of the log it appends to and names it by
       // file and line. Throwing here failed every spawn of this agent for good.
       let line: unknown;
@@ -126,10 +126,10 @@ export interface BadRecord { file: string; line: number }
 /**
  * A kernel lock dies with its owner, including a writer killed before fsync.
  *
- * D-172 repairs only an incomplete LAST record, a write that never finished,
+ * The repair touches only an incomplete LAST record, a write that never finished,
  * by truncating it. A complete record that is not a chat line is history and
  * is never truncated. By default it refuses the append, naming the file and the
- * line. A caller that passes `skipBad` (the door, IMP-160) instead leaves those
+ * line. A caller that passes `skipBad` (the door) instead leaves those
  * bytes where they are, does not count them as the record being appended, and
  * is told the file and line once the lock is released, so one bad line cannot
  * stop every message after it.

@@ -1,11 +1,10 @@
-// RUN-08 and RUN-04. The phase 3 registry fields are refused BY NAME, and a
+// The machine and people registry fields are refused BY NAME, and a
 // file carrying all of them loads.
 //
 // SPEC §6: "a file with a bad value is refused loudly." L14's Forbidden: "A
 // value that does not parse being defaulted quietly: the file is refused and the
-// line named." L13: "the registry is the list." D-76 adds `[[machines]]` and
-// `[[run]].machine`, D-81 adds `child_memory_limit_mb` on a runner entry, D-93
-// adds `[[people]]`.
+// line named." L13: "the registry is the list." The file carries `[[machines]]`,
+// `[[run]].machine`, `child_memory_limit_mb` on a runner entry and `[[people]]`.
 //
 // "Names the line" is the behaviour, so every refusal here binds the KEY and the
 // LINE, never merely that something threw: the shipped loader already throws for
@@ -15,10 +14,10 @@
 //
 // THE TWO TOLERANCES ARE THE LOAD-BEARING CONTROLS. A file that declares fewer
 // than two machines needs no `machine` anywhere, and a file that declares no
-// people is not asked about them. That is the same move phase 2 made with
+// people is not asked about them. That is the same move made with
 // `inbound.kind`'s default, and it is what keeps the 65 shipped checks green: a
 // loader that made either fact unconditional would fail every one of them on
-// contact. Bound here rather than discovered in the build round.
+// contact.
 //
 // Red reason: behaviour absent. `loadRegistry` today parses `[[run]]` and never
 // looks at `machine`, `child_memory_limit_mb` or `[[people]]`, so every one of
@@ -74,8 +73,8 @@ function goodLines(): string[] {
     'provider = "a-provider"',
     'effort = "medium"',
     'paid = "plan"',
-    // D-110 as phase 4 makes it: the three window thresholds are required
-    // on every plan preset, by name. Today's loader tolerates them.
+    // The three window thresholds are required
+    // on every plan preset, by name.
     "window_pause_at = 85",
     "window_notice_at = 95",
     "window_hold_at = 100",
@@ -175,7 +174,7 @@ test(
     }
 
     // --- 2. a machine that no [[machines]] declares. A typo would otherwise
-    //     mean "runs nowhere", quietly, which is the default RUN-08 forbids.
+    //     mean "runs nowhere", quietly, which is a forbidden quiet default.
     {
       const lines = replace(base, 'machine = "mac"', 'machine = "macc"');
       const refusal = refusalOf(write(lines));
@@ -185,7 +184,7 @@ test(
       expect(refusal.reason).toContain("macc");
     }
 
-    // --- 3. a runner with no child memory limit (D-81). A child that could
+    // --- 3. a runner with no child memory limit. A child that could
     //     never be watched cannot be configured.
     {
       const lines = drop(base, "child_memory_limit_mb = 2048");
@@ -218,7 +217,7 @@ test(
     }
 
     // --- 6. an os outside the two. The os is in the FILE rather than taken from
-    //     process.platform (D-76), so a mis-set one is caught here rather than
+    // process.platform, so a mis-set one is caught here rather than
     //     by writing systemd units onto a Mac.
     {
       const lines = replace(base, 'os = "macos"', 'os = "plan9"');
@@ -240,7 +239,7 @@ test(
     expect(typeof runEntriesFor).toBe("function");
     expect(typeof personOf).toBe("function");
 
-    // D-171 requires the production preset's explicit credential.
+    // The production preset's credential is explicit and required.
     const absentLogin = refusalOf(write(base.filter(line => line !== 'credential = "test-login"')));
     expect(absentLogin.key).toBe("presets.daily.credential");
 
@@ -298,7 +297,7 @@ test(
         .sort(),
     ).toEqual(["door-fake", "runner-pi"]);
 
-    // And a file with no [[machines]] table at all is the shape every phase 2
+    // And a file with no [[machines]] table at all is the shape every early
     // check writes today.
     const machineless = loadRegistry(write(lean.filter((l, i) => i < 2 || i > 5)));
     expect(
@@ -309,7 +308,7 @@ test(
 
     // --- control (c): an unrelated extra key in each table still loads, so a
     //     loader that refuses every key it has no rule about is caught. That is
-    //     the narrowing control phase 2 added to its own refusal checks.
+    //     the narrowing control every refusal check here carries.
     const tolerated: [string, string][] = [
       ['os = "linux"', 'note = "the one in the hall"'],
       ['tree = "/var/lib/imprnt-hub/p1"', 'nickname = "the first"'],
@@ -348,23 +347,20 @@ test(
 );
 
 // ---------------------------------------------------------------------------
-// 03b item 5. `child_memory_limit_mb` is required on a runner entry whether or
+// `child_memory_limit_mb` is required on a runner entry whether or
 // not the file declares its machines.
 //
-// BUILD-NOTES 1 made the refusal conditional on `[[machines]]`, because phase 1
-// fixtures carried runner entries without the field and an unconditional rule
-// turned two green checks red on contact. That was a compromise with the test
-// suite and not a rule anybody wanted: D-81's words are "required on a runner
-// entry, refused by name when missing, so a child that could never be watched
-// cannot be configured", and a file with no `[[machines]]` table is exactly the
+// Making the refusal conditional on `[[machines]]` would be a compromise with
+// the test suite and not a rule anybody wants: the field is required on a runner
+// entry and refused by name when missing, so a child that could never be watched
+// cannot be configured, and a file with no `[[machines]]` table is exactly the
 // file a household starts with. Every fixture in the repository now carries the
 // field, so the tolerance has nothing left to protect.
 //
-// DEVIATION from 03b-DEBTS, recorded: the plan asks for "the refusal with a
-// one-machine file", and a one-machine file is ALREADY refused today, because
+// A ONE-MACHINE FILE IS ALREADY REFUSED, because
 // the shipped rule fires whenever `machines.length > 0`. So the one-machine
-// file is kept as the CONTROL that says the existing half did not move, and the
-// case that is red today is the file with no `[[machines]]` table at all.
+// file is kept as the CONTROL that says the existing half still holds, and the
+// case this file is really about is the file with no `[[machines]]` table at all.
 //
 // Red reason: behaviour absent. `src/registry/load.ts` refuses a runner with no
 // `child_memory_limit_mb` only when the file declares at least one machine, so

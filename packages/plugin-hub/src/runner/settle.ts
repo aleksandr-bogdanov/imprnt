@@ -9,7 +9,7 @@ import { clearProgress } from "./progress.ts";
 import type { Price } from "../registry/presets.ts";
 
 /**
- * D-157. What a HARVEST turn did, beside what it cost.
+ * What a HARVEST turn did, beside what it cost.
  *
  * Criterion 2 is one query over this object and `preset_id`, so every field it
  * asks for is here: the bounds the door fixed, why it fired, how many lines the
@@ -48,8 +48,8 @@ export interface TurnRecord {
   lacks: string[];
   tail: boolean;
   /**
-   * D-157. Spread onto the record ONLY on a harvest turn, exactly the way
-   * phase 4's optional fields are and for the same shipped reason:
+   * Spread onto the record ONLY on a harvest turn, the way every optional
+   * field on it is spread, and for the same reason:
    * `test/turn-record.test.ts` and `test/chatlog.test.ts` read this object, and
    * a record that always carried an eighth key would turn them red for a
    * feature their agent never uses.
@@ -102,7 +102,7 @@ export async function settleTurn(
       actor: "runner",
       detail: turn.turn as unknown as Record<string, unknown>,
     });
-    // D-124. The open turn's progress row goes with the settle, inside the one
+    // The open turn's progress row goes with the settle, inside the one
     // transaction, so the door never edits a line about a turn that has ended.
     await clearProgress(inside, turn.inboundId);
     await tx`update inbound set claimed_by = null, claim_deadline = null
@@ -111,14 +111,14 @@ export async function settleTurn(
 }
 
 /**
- * D-154. The end of a HARVEST turn, in ONE transaction: the `answered` stamp,
+ * The end of a HARVEST turn, in ONE transaction: the `answered` stamp,
  * the turn record, the watermark when one is owed, and the claim released.
  *
  * A sibling of `refuseTurn` rather than an option on `settleTurn`, because
  * `settleTurn`'s signature is what nine shipped checks sit on and because what
  * a harvest settles is genuinely different: **no chunk**, since a harvest reply
  * is not a reply to anybody and its text never reaches a chat, and **no
- * progress row**, since none was ever written (D-155).
+ * progress row**, since none was ever written.
  *
  * THE WATERMARK LANDS WITH THE SETTLE OR NOT AT ALL, which is the whole of
  * HARV-02 read from this end. The order the caller works in is the other half:
@@ -167,7 +167,7 @@ export async function settleHarvest(
  * `answered` stamp, one diary line saying why, and the row released onto a
  * recorded retry.
  *
- * D-121. Nothing new is needed and saying so is what stops this looking like
+ * Nothing new is needed and saying so is what stops this looking like
  * machinery: `retry_at` is already a column, `hub_runner` already holds the
  * grant on it, `claimNext` and `readEligible` already honour it, and
  * `untilNextDeadline` already wakes a waiting runner on it. A window hold is
@@ -186,12 +186,12 @@ export async function refuseTurn(
     said: string;
     retryAt: string;
     /**
-     * D-156. Which refusal this is. `refused.harvest` is the one a household
+     * Which refusal this is. `refused.harvest` is the one a household
      * reading its own diary needs to tell a dead login from a note the vault
      * would not take, and `ledger_event_runner_turn` already permits it: that
      * policy constrains the STREAM and not the kind, so no schema object
      * changes. Absent means the outage this function was written for.
-     * D-177 adds `refused.local`, a refusal with no verified evidence against
+     * `refused.local` is a refusal with no verified evidence against
      * the shared credential, which opens no outage and holds one agent only.
      */
     kind?: string;

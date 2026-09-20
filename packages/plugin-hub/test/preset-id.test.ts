@@ -98,8 +98,8 @@ test("LOOP-01 a typed preset ID is refused: a presets table carrying an id key r
       'provider = "a-provider"',
       'effort = "medium"',
       'paid = "plan"',
-      // D-110 as phase 4 makes it: the three window thresholds are required
-      // on every plan preset, by name. Today's loader tolerates them.
+      // The three window thresholds are required
+      // on every plan preset, by name.
       "window_pause_at = 85",
       "window_notice_at = 95",
       "window_hold_at = 100",
@@ -109,7 +109,7 @@ test("LOOP-01 a typed preset ID is refused: a presets table carrying an id key r
       'kind = "runner"',
       'schedule = "always"',
       "memory_limit_mb = 512",
-      // D-81 as phase 3b makes it: required on every runner entry, machines
+      // Required on every runner entry, machines
       // declared or not. Below every line this check numbers.
       "child_memory_limit_mb = 512",
       "",
@@ -208,8 +208,8 @@ test("LOOP-01 an agent points at one preset and the file says which pieces serve
       'provider = "a-provider"',
       'effort = "medium"',
       'paid = "plan"',
-      // D-110 as phase 4 makes it: the three window thresholds are required
-      // on every plan preset, by name. Today's loader tolerates them.
+      // The three window thresholds are required
+      // on every plan preset, by name.
       "window_pause_at = 85",
       "window_notice_at = 95",
       "window_hold_at = 100",

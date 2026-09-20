@@ -3,11 +3,11 @@ import { claimRow, putRow } from "../records/statesheet.ts";
 import type { WindowThresholds } from "../registry/presets.ts";
 import type { StoreLike } from "../store/connect.ts";
 
-/** D-117. The household's standing outage, one row per credential id. */
+/** The household's standing outage, one row per credential id. */
 export const OUTAGE_SHEET = "outage";
 
 /**
- * D-117. The household's newest window reading, one row per credential id.
+ * The household's newest window reading, one row per credential id.
  *
  * Household-wide because the allowance is one account's, which is v2's own
  * finding: it first kept the window per person and one person's burn was
@@ -34,10 +34,10 @@ export interface WindowRow {
 /**
  * Open the household's outage, or join the one that is already open.
  *
- * D-122. `claimRow` and never `putRow`, and the whole one-notice arithmetic
+ * `claimRow` and never `putRow`, and the whole one-notice arithmetic
  * rests on it: the notice key is built from `since`, so a second runner that
  * overwrote the row with its own clock would produce a second key and a second
- * notice per person, which is the exact rule RUN-18 exists to enforce. The
+ * notice per person, and one notice per person is the rule. The
  * loser is handed the winner's row and uses the winner's `since`.
  */
 export async function openOutage(
@@ -127,7 +127,7 @@ export async function readWindow(
 }
 
 /**
- * D-122. The key that makes one notice one notice.
+ * The key that makes one notice one notice.
  *
  * `outage:<credential>:<since>:<person>` and
  * `outage-over:<credential>:<since>:<person>`, and `since` comes off the sheet
@@ -147,7 +147,7 @@ export function percentOf(window: { utilization: number }): number {
 }
 
 /**
- * D-123. The highest rank this household may claim right now, or null for
+ * The highest rank this household may claim right now, or null for
  * nothing at all.
  *
  * Pure, so the three-threshold rule is readable without a store: 1 is
@@ -157,7 +157,7 @@ export function percentOf(window: { utilization: number }): number {
  * A reading whose own reset has PASSED is stale and claims nothing back: the
  * only way the household can learn the window came back is a turn that reports
  * it, and the only way a turn can happen is the hold letting one through. That
- * is D-123's natural release, and without it a held household would sit on a
+ * is the natural release, and without it a held household would sit on a
  * number from an hour ago forever.
  *
  * No reading at all, and no thresholds at all, are both "claim anything": a

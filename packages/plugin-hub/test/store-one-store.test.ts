@@ -11,7 +11,7 @@
 // That is the probe. If the ledger and the queue were two systems, the message
 // and its event could not be written and undone as one atomic act.
 //
-// The production write path does it, not the test. The second seat named the
+// The production write path does it, not the test. A reader named the
 // hole that closes: "a store exposing a plain SQL client and two ordinary
 // Postgres tables passes while the production enqueue path writes its ledger
 // elsewhere. The test itself issues both INSERTs." So `enqueueInbound` is what

@@ -2,8 +2,7 @@
 //
 // The hub box runs a LIVE v2 out of the same `~/.config/systemd/user/` the
 // Linux checks write into, and this Mac carries the owner's own launchd jobs.
-// Three rules follow and this module is where they live (03-CONTEXT "The hub box
-// runs a live v2 under the same user manager"):
+// Three rules follow and this module is where they live:
 //
 //   1. every name this fixture hands out carries a run-time random suffix under
 //      the hub's own render prefix, and a planted stray takes the SCAN prefix
@@ -23,11 +22,11 @@
 // build, including one that renamed the fence away.
 //
 // WHERE THE FILES GO. On linux a user unit is loadable from the manager's search
-// path and from nowhere else (D-95), so this writes into the real
+// path and from nowhere else, so this writes into the real
 // `~/.config/systemd/user/` and calls `daemon-reload` after writing and after
 // removing (permitted: a reload re-reads every user unit including v2's and
 // starts, stops and restarts nothing). On macOS `launchctl bootstrap gui/<uid>
-// <plist>` loads a job from ANY path (03-BRIEF, measured), so the plists go into
+// <plist>` loads a job from ANY path, measured, so the plists go into
 // a scratch directory this fixture owns and the owner's own
 // `~/Library/LaunchAgents` is never written to by a check.
 import { livePid } from "./manager.ts";
@@ -209,7 +208,7 @@ export function unitFixture(): UnitFixture {
   /**
    * Remove one, VERIFY it is gone, and throw naming it when it is not.
    *
-   * The second seat's finding: the first shape of this swallowed a failed
+   * THE FINDING: the first shape of this swallowed a failed
    * `bootout`, swallowed the timeout waiting for the job to disappear, deleted
    * the plist anyway and then forgot the name. A job that refused to leave was
    * therefore left LOADED WITH NO FILE, invisible to the next run's cleanup and

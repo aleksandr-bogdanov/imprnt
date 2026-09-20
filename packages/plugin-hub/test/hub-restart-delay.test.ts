@@ -6,7 +6,7 @@
 // the operating system's, which is what "a supervisor of ours is forbidden"
 // means as a behaviour rather than as a grep.
 //
-// HOW THAT IS MADE LITERAL (the second seat's lead). The first shape of this
+// HOW THAT IS MADE LITERAL. The first shape of this
 // check installed and started through `thisOs()` inside the test process, which
 // then stayed alive for the whole check: an OS implementation carrying its own
 // timer could have kickstarted the dead job and passed every assertion. So the
@@ -17,7 +17,7 @@
 // built one.
 //
 // THE BOUND COMES FROM THE RENDERED UNIT, not from a number the test wrote
-// twice. Measured on this Mac (03-BRIEF): a `KeepAlive` job is back 0.33 s after
+// twice. Measured on this Mac: a `KeepAlive` job is back 0.33 s after
 // a `kill -9` with `ThrottleInterval` 1, and 9.14 s with the key absent, because
 // launchd's own default throttle is 10 s. So the delay is read back out of the
 // text the renderer produced, and a renderer that dropped the key fails on the
@@ -86,7 +86,7 @@ function renderedDelaySeconds(text: string): number {
 /**
  * Render, install and start, in a process that EXITS before the kill.
  *
- * The second seat's lead: doing it through `thisOs()` inside the test process
+ * doing it through `thisOs()` inside the test process
  * left that process alive for the whole check, so an OS implementation carrying
  * its own timer could have kickstarted the dead job itself and satisfied every
  * assertion. The only process that ever built a seam object is gone before the
@@ -195,7 +195,7 @@ test.skipIf(!gate.ok)(
     const firstPid = Number(first.pid);
     const firstRestarts = Number(first.restarts ?? 0);
     expect(pidAlive(firstPid)).toBe(true);
-    // A resident that has been started once and never died: D-101's counters
+    // A resident that has been started once and never died: the counters
     // say exactly that, and they say it the same way on both managers.
     expect(first.ran).toBe(true);
     expect(firstRestarts).toBe(0);
@@ -226,7 +226,7 @@ test.skipIf(!gate.ok)(
     expect(Number(back.restarts ?? 0)).toBeGreaterThan(firstRestarts);
 
     // --- THE CONTROL. Same registry, same manager, same kill. An on-demand
-    //     entry wants to be LOADED and not running (D-97), so it stays dead.
+    // entry wants to be LOADED and not running, so it stays dead.
     //     Read through the same independent helper, or the claim that nothing
     //     of ours is running leaks back in through this half.
     await until(

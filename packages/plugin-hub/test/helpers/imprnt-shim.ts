@@ -1,13 +1,13 @@
 // Test infrastructure: the real `imprnt` CLI, reachable as one command.
 //
-// D-140. `hub.imprnt` names the command the runner spawns to file a harvested
+// `hub.imprnt` names the command the runner spawns to file a harvested
 // note, because which binary files a note is a household fact and not a thing
 // for code to guess. This Mac's is one build, the hub box's is another, and the
 // monorepo's own is `packages/imprnt/scripts/cli.ts`, which runs under `bun`
 // with no build step at all.
 //
 // So a check writes a one-line shell script that runs THAT file and puts its
-// path in `hub.imprnt`. Every check in phase 5 then drives the REAL apply path,
+// path in `hub.imprnt`. Every harvest check then drives the REAL apply path,
 // on this Mac, on the hub box and in CI, against a scratch vault, with nothing
 // built and no developer's own vault registry touched.
 //
@@ -47,7 +47,7 @@ export function writeImprntShim(dir: string): string {
 /**
  * The same shim, with a GATE in front of the real CLI.
  *
- * The second seat's finding on check 10: every assertion about the watermark
+ * THE FINDING: every assertion about the watermark
  * reads the sheet AFTER the apply has finished, so a runner that writes the
  * watermark early, spawns the apply and restores the row on a refusal shows the
  * same final state as a correct one. The only way to tell them apart from

@@ -1,4 +1,4 @@
-// Test infrastructure: the scaffolding every phase 2 check shares.
+// Test infrastructure: the scaffolding every check shares.
 //
 // Everything here READS. It makes a scratch state dir, it builds the userless
 // store url the registry carries, and it reads the store and the chat log back
@@ -7,7 +7,7 @@
 // log and the tail are the real thing in every check, and only the platform and
 // the loop are fixtures.
 //
-// D-68. The fixtures are p1 and p1-lair, and the chat id is a digit string,
+// The fixtures are p1 and p1-lair, and the chat id is a digit string,
 // because the repository is public.
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -58,7 +58,7 @@ export const DOOR = "door-fake";
 export const RUNNER = "runner-test";
 export const CHAT = FAKE_CHAT;
 
-// D-100. The second person, the second agent and the second runner, for the
+// The second person, the second agent and the second runner, for the
 // two-machine checks. The repository is public, so these are fixtures and not
 // anybody's name.
 export const PERSON2 = "p2";
@@ -70,7 +70,7 @@ export async function scratchDir(what = "hub-phase2-"): Promise<string> {
 }
 
 /**
- * The store url a registry carries: D-36 says it names the database and no
+ * The store url a registry carries names the database and no
  * user, and the process supplies its own role. A check asserts that, so the
  * helper that builds it must not sneak one in.
  */
@@ -109,7 +109,7 @@ export interface InboundRow {
 }
 
 /**
- * D-113. A notice is an outbox row with no message on it, so it carries its own
+ * A notice is an outbox row with no message on it, so it carries its own
  * person and agent and the key that makes it the only one of its kind.
  */
 export interface NoticeRow {
@@ -128,12 +128,12 @@ export interface StoreReader {
   ledger(filter?: { stream?: string; subject?: string; kind?: string }): Promise<LedgerRow[]>;
   inbound(): Promise<InboundRow[]>;
   outbox(): Promise<OutboxRow[]>;
-  /** Phase 4. The notice rows alone, in outbox order. */
+  /** The notice rows alone, in outbox order. */
   noticeRows(): Promise<NoticeRow[]>;
-  /** Phase 4. The `outage` sheet, which is one row per credential id. */
+  /** The `outage` sheet, which is one row per credential id. */
   outageSheet(): Promise<{ sheet: string; id: string; data: Record<string, unknown> }[]>;
   /**
-   * D-141. The `harvest` sheet, which is one row per chat, id `<person>/<agent>`.
+   * The `harvest` sheet, which is one row per chat, id `<person>/<agent>`.
    *
    * `updated_at` comes back with it, because check 11 asserts the watermark
    * landed inside the settling transaction rather than in one of its own.
@@ -186,7 +186,7 @@ export function storeReader(cluster: Cluster, database: string): StoreReader {
       // as a STRING, because the type's range is past what a double holds.
       // `OutboxRow.id` says `number` and a check that compares two of them
       // reads it as one, so the conversion happens here rather than at every
-      // reader (BUILD-NOTES 9). A household's outbox id is nowhere near
+      // reader. A household's outbox id is nowhere near
       // 2^53, so nothing is lost by it.
       const found = await rows(
         `select id, inbound_id, seq_in_reply, body, written_at, delivered_at
@@ -195,7 +195,7 @@ export function storeReader(cluster: Cluster, database: string): StoreReader {
       return found.map((row) => ({ ...row, id: Number(row.id) })) as unknown as OutboxRow[];
     },
     async noticeRows() {
-      // The columns are phase 4's own, so this reader throws a readable
+      // The columns are the, so this reader throws a readable
       // "column does not exist" against the shipped schema. Every check that
       // calls it asserts the catalog first, so the red reason is the missing
       // object and never this helper.
@@ -272,7 +272,7 @@ export function chatLogFile(args: {
 /**
  * Every line of every dated file for this agent, oldest file first.
  *
- * 03b item 11. THE LAST LINE OF THE LAST FILE MAY BE HALF WRITTEN, and only
+ * THE LAST LINE OF THE LAST FILE MAY BE HALF WRITTEN, and only
  * that one. This reader is handed to the fake platform as `outLineOnDisk`'s
  * probe, so it runs INSIDE the door's post attempt: a `JSON.parse` that throws
  * there throws out of `platform.post`, the door catches it as a refused post,
@@ -283,7 +283,7 @@ export function chatLogFile(args: {
  *
  * Every other unparseable line still throws. A corrupt line in the middle of a
  * log is a real defect and a reader that swallowed it could not fail for the
- * right reason, which is the rule this round is written under.
+ * right reason.
  */
 export function chatLogLines(
   stateDir: string,
@@ -360,12 +360,12 @@ export interface StageOptions {
   preset?: PresetSpec;
   /** Replace the whole registry spec, given the pieces this stage built. */
   registry?: (base: RegistrySpec) => RegistrySpec;
-  // Phase 3. Each of these is ABSENT from the default spec, so every phase 2
-  // check keeps loading the registry it loads today (D-76 and D-93's tolerance
-  // is what makes that legal once the loader carries the new fields).
-  /** D-76. The machines this file declares. */
+  // Each of these is ABSENT from the default spec, so a check that declares
+  // none of them keeps loading the registry it loads today: the loader tolerates
+  // a file that carries fewer of the newer fields.
+  /** The machines this file declares. */
   machines?: MachineSpec[];
-  /** D-93. The people this file declares, each with its tree. */
+  /** The people this file declares, each with its tree. */
   people?: PersonSpec[];
   /** The `[[run]]` entries, when the agents' implied set is not what is wanted. */
   run?: RunSpec[];
@@ -373,12 +373,12 @@ export interface StageOptions {
   agents?: AgentSpec[];
   /** Extra or replacement `[hub]` settings. */
   hub?: Record<string, string | number>;
-  // Phase 4. Both ABSENT from the default spec, so every shipped check keeps
+  // Both ABSENT from the default spec, so every shipped check keeps
   // loading the registry it loads today.
-  /** D-111. The credentials this file declares. */
+  /** The credentials this file declares. */
   credentials?: CredentialSpec[];
   /**
-   * D-108. The language the DEFAULT person reads the door's lines in.
+   * The language the DEFAULT person reads the door's lines in.
    *
    * A stage that names no people declares one for `p1` carrying this and no
    * tree, because a tree is what the box is drawn around and a stage that
@@ -387,7 +387,7 @@ export interface StageOptions {
    */
   language?: "en" | "ru";
   /**
-   * D-125. What the staged platform is, beyond its name and its probe.
+   * What the staged platform is, beyond its name and its probe.
    *
    * `typingSeconds` is a platform's own documented lifetime (Telegram's 5,
    * Discord's 10), and a check that watches the cadence reads its bound off
@@ -396,12 +396,12 @@ export interface StageOptions {
    * cadence check seconds long instead of a minute.
    */
   platform?: { typingSeconds?: number; noTyping?: boolean };
-  /** 03b item 2. The `[store]` section, absent unless a check asks for one. */
+  /** The `[store]` section, absent unless a check asks for one. */
   store?: StoreSpec;
-  // Phase 5. Both ABSENT from the default spec, so no person carries a
+  // Both ABSENT from the default spec, so no person carries a
   // harvester and no `[hub] imprnt` line appears unless a check asks.
   /**
-   * D-137. The five harvest fields on the DEFAULT person's entry.
+   * The five harvest fields on the DEFAULT person's entry.
    *
    * A stage that names no people declares one for `p1` carrying these and no
    * tree, exactly as `language` already does, and a stage that names its own
@@ -415,9 +415,9 @@ export interface StageOptions {
     report?: boolean;
   };
   /**
-   * D-140. `hub.imprnt`, the command the runner spawns to file a harvested
+   * `hub.imprnt`, the command the runner spawns to file a harvested
    * note. A check points it at the shim of `test/helpers/imprnt-shim.ts`, which
-   * is what makes every check in phase 5 drive the REAL apply.
+   * is what makes every harvest check drive the REAL apply.
    */
   imprnt?: string;
 }
@@ -449,9 +449,9 @@ export async function stageHub(
 
   // The default person, declared only when a stage asked for a language or for
   // a harvest. An absent option renders no `[[people]]` table at all, which is
-  // the file every phase 2 check loads today.
+  // the file every check loads today.
   //
-  // D-137. The harvest fields travel the same road `language` already travels,
+  // The harvest fields travel the same road `language` already travels,
   // and each one is filled in ONLY where the entry says nothing, so a check
   // that writes its own people keeps every value it wrote.
   const onDefault: PersonSpec = {
@@ -489,7 +489,7 @@ export async function stageHub(
     hub: {
       store_url: storeUrl,
       state_dir: dir,
-      // D-140. Absent unless a check asks, so the default stage's `[hub]` is
+      // Absent unless a check asks, so the default stage's `[hub]` is
       // the one every shipped check already loads.
       ...(options.imprnt === undefined ? {} : { imprnt: options.imprnt }),
       ...(options.hub ?? {}),
@@ -553,7 +553,7 @@ export async function stageHub(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 additions.
+// The machine, people and box fields.
 // ---------------------------------------------------------------------------
 
 /**
@@ -561,10 +561,10 @@ export async function stageHub(
  *
  * `runCheck`, `recordPeak` and `recordJobSuccess` take a store. In production
  * the hub opens it as `hub_hub`, which is a role the schema does not carry yet.
- * Opening as that role here would make every check in 03-03 and 03-04 red for
- * "role does not exist" rather than for the module the plan names, so the
- * fixture opens as the superuser and the ROLE fence stays bound where phase 1
- * and phase 2 bind it.
+ * Opening as that role here would turn every check that uses this fixture red
+ * for "role does not exist" rather than for the module under test, so the
+ * fixture opens as the superuser and the ROLE fence stays bound where the
+ * store checks bind it.
  */
 export async function superStore(
   cluster: Cluster,
@@ -610,7 +610,7 @@ export function hubReader(
 /**
  * The hub as a PROCESS, so a check that asserts "this pid did not change" is
  * asserting about a process and not about a handle in its own runtime. The same
- * reason phase 2 gave for the door and the runner.
+ * reason the door and the runner have one.
  */
 export async function startHub(
   registryFile: string,
@@ -673,10 +673,10 @@ export async function insertInbound(
        values (${columns.map((_, i) => `$${i + 1}`).join(", ")})`,
       values,
     );
-    // THE STAMP CARRIES THE SAME TIME THE COLUMN DOES (the second seat's
+    // THE STAMP CARRIES THE SAME TIME THE COLUMN DOES (the
     // finding on check 24). A backdated `received_at` with a `received` stamp
     // at `now()` is a row whose own two records of when it arrived disagree,
-    // and every phase 4 reader derives from the LEDGER: the metrics measure
+    // and every reader derives from the LEDGER: the metrics measure
     // from the stamps, `check`'s stamp finding measures from them, and a
     // fixture that planted two different times would make a correct build fail
     // an oracle computed from the other one.

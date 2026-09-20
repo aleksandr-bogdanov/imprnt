@@ -1,6 +1,6 @@
 // Test infrastructure. Runs the REAL door in a process of its own.
 //
-// D-33 and D-63. A `kill -9` at an exact point cannot be staged in process, and
+// A `kill -9` at an exact point cannot be staged in process, and
 // the two door kill tests are the phase's first criterion. So the door runs
 // here, as a `bun` child, wired to the fake platform over HTTP. It calls the
 // production `runDoor` and defines no door of its own: a copy would be a
@@ -60,7 +60,7 @@ try {
     registryFile,
     // The client asks the server what it is before it is handed over, so a
     // door in this process holds the same typing lifetime the in-process one
-    // does (D-125).
+    // does.
     platform: await platformClient(platformUrl),
   });
 } catch (err) {

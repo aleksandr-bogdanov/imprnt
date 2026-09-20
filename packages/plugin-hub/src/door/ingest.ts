@@ -20,7 +20,7 @@ export async function acceptBatch(options: {
   store: StoreLike; registry: Registry; stateDir: string; door: string;
   agent: AgentEntry; platform: Platform; batch: PlatformPull; cursor: string | null;
   received?(id: string): void;
-  /** IMP-160. The door skips a bad complete chat log record and reports it. */
+  /** The door skips a bad complete chat log record and reports it. */
   skipBad?(bad: BadRecord): void | Promise<void>;
 }): Promise<string | null> {
   const { store, registry, stateDir, door, agent, platform, batch } = options;
@@ -29,7 +29,7 @@ export async function acceptBatch(options: {
   for (const message of batch.messages) {
     if (message.chat !== agent.chat || !message.sender_id) continue;
     if (!senderAllowed(registry, agent.person, door, message.sender_id)) {
-      // D-183. Refused with no reply and nothing saved, and counted without
+      // Refused with no reply and nothing saved, and counted without
       // its content, so an allowlist that names the wrong id is visible.
       await recordDeniedSender(store, { door, chat: message.chat, sender_id: message.sender_id,
         person: agent.person, agent: agent.id, at: message.at });

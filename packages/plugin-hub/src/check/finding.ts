@@ -13,7 +13,7 @@ export interface Finding {
 }
 
 /**
- * D-90. The id is MACHINE-SCOPED, because two machines write their findings
+ * The id is MACHINE-SCOPED, because two machines write their findings
  * into one store: `kernel-earlyoom` from both would otherwise be one row that
  * each run overwrites, and a run on one machine removes only the rows under its
  * own prefix.

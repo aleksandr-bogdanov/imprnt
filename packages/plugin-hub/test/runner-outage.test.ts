@@ -1,4 +1,4 @@
-// RUN-18. During an outage exactly one notice per person exists and zero
+// During an outage exactly one notice per person exists and zero
 // per-row apologies, and when it clears one catch-up line says how much was
 // waiting.
 //
@@ -20,7 +20,7 @@
 // its own, both refuse, and the check drives them together.
 //
 // Every string a person reads is asserted IN FULL, in that person's own
-// language, against 04-CONTEXT's pinned table. A check that asserted three
+// language, against the pinned table. A check that asserted three
 // fragments would pass a sentence with anything between them, and these are
 // sentences a household reads on a phone.
 //
@@ -55,7 +55,7 @@ const CREDENTIAL = "household-claude";
 /** Short on purpose, so the retry is seconds and the check is not a minute. */
 const RETRY_SECONDS = 2;
 
-/** 04-CONTEXT's pinned strings, written out by the TEST and never imported. */
+/** The pinned strings, written out by the TEST and never imported. */
 const OUTAGE_LOGIN = {
   en: `[door] the model login was refused. Messages are waiting and nothing is lost. I try again every ${RETRY_SECONDS} s and will say when it works.`,
   ru: `[дверь] вход в модель отклонён. Сообщения ждут, ничего не потеряно. Повторяю попытку каждые ${RETRY_SECONDS} с и сообщу, когда заработает.`,
@@ -117,7 +117,7 @@ async function stageOutage(options: { refusals: number; declare?: boolean }): Pr
         door: DOOR,
         runner: RUNNER_MAC,
       },
-      // A SECOND AGENT FOR THE FIRST PERSON (the second seat's lead A). One
+      // A SECOND AGENT FOR THE FIRST PERSON (the lead A). One
       // agent per person cannot tell a notice keyed on the person from one
       // keyed on the agent, because the two sets are the same size. With two
       // agents here, an agent-keyed build writes three notices and fails the
@@ -190,7 +190,7 @@ async function plantMessages(it: StagedHub): Promise<void> {
  * Every message has been through a turn once, whichever way this build ends
  * one: a settled turn writes a `turn` line and a refused one writes a
  * `refusal` line, both keyed on the message. The condition therefore reaches
- * its bound in the world this round is in AND in the world the build round
+ * its bound in the world this check is in AND in the world a later build
  * makes, so the red below is an assertion and never a timeout.
  */
 async function everyMessageSeen(it: StagedHub): Promise<boolean> {
@@ -222,8 +222,8 @@ test(
         async () => JSON.stringify(await it.read.inbound()),
       );
 
-      // --- 1. ZERO APOLOGIES, phrased as the property RUN-18's Forbidden line
-      //     names: no outbox row references an inbound row that was refused. A
+      // --- 1. ZERO APOLOGIES, phrased as a property:
+      //     no outbox row references an inbound row that was refused. A
       //     build that wrote an EMPTY chunk fails this too, which is the point
       //     of counting rows rather than reading their text.
       const chunks = await it.read.outbox();
@@ -239,7 +239,7 @@ test(
       const keys = notices.map((row) => String(row.notice_key));
       for (const key of keys) expect(key.startsWith(`outage:${CREDENTIAL}:`)).toBe(true);
       const sinces = keys.map((key) => key.split(":").slice(2, -1).join(":"));
-      // THE WHOLE OF D-122: the `since` is the outage sheet's own, so both
+      // THE WHOLE ARITHMETIC: the `since` is the outage sheet's own, so both
       // runners compute the same key. A build that took its own clock writes
       // two keys and, after a restart, two more.
       expect(new Set(sinces).size).toBe(1);
@@ -261,7 +261,7 @@ test(
       const waiting = await it.read.inbound();
       expect(waiting.length).toBe(MESSAGES.length);
       for (const row of waiting) {
-        // D-121a: the measured wire replays the user line, so a refused row is
+        // The measured wire replays the user line, so a refused row is
         // `acked` when it is released and every retry re-stamps it. Never
         // `started` and never `answered`, which is the whole of "the rows
         // wait": nothing was handed to a human as could not answer.
@@ -303,7 +303,7 @@ test(
       expect([RUNNER_PI, RUNNER_MAC]).toContain(String(sheet[0].data.reported_by));
 
       // --- 6. THE RETRY, and it is asserted BEFORE anything is restarted (the
-      //     second seat's finding: with the restart first, a runner that only
+      //     THE FINDING: with the restart first, a runner that only
       //     revisits refused rows when it starts up passes this).
       //
       //     EVERY row is retried, not one. A runner that kept one row on its
@@ -342,7 +342,7 @@ test(
         return { id, gap: ordered[1] - ordered[0] };
       });
       expect(gaps.length).toBe(MESSAGES.length);
-      // THE INTERVAL IS THE INTERVAL, both ends (the second pass's finding: a
+      // THE INTERVAL IS THE INTERVAL, both ends (a
       // ceiling of "under the tick" accepted a twenty second retry for a two
       // second setting, which is a household waiting ten times as long as its
       // own file says). The band is the setting less a second, because a
@@ -374,7 +374,7 @@ test(
       await it.stop();
     }
 
-    // --- 8. the undeclared fallback. The file loads (04-01 check 3), the
+    // --- 8. the undeclared fallback. The file loads, the
     //     outage keys off `credentialOf`'s fallback, and the rule holds. A
     //     household that has not written the table yet gets it anyway, and
     //     `check` is meanwhile telling it to write one.

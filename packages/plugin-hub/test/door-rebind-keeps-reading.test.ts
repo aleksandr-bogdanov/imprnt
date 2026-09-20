@@ -1,4 +1,4 @@
-// IMP-163, D-178. A registry edit that does not move an agent to another chat
+// A registry edit that does not move an agent to another chat
 // never re-baselines where the door reads that chat. The door asks the platform
 // where a chat stands only when an agent's CHAT changes to one the door has
 // never read. An allowlist edit or a person rebind keeps the chat, so a message

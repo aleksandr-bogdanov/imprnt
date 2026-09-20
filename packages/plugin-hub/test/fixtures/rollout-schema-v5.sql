@@ -21,7 +21,7 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
--- D-79. The hub process writes to the ledger as actor `hub`, and the invariant
+-- The hub process writes to the ledger as actor `hub`, and the invariant
 -- `current_user = 'hub_' || actor` is what makes the name this one. It is ugly
 -- and it is kept, because a prettier one would cost that one-line check.
 do $$ begin
@@ -71,7 +71,7 @@ create table inbound (
   retry_at       timestamptz,
   constraint inbound_state_is_a_stamp
     check (state in ('received', 'acked', 'started', 'answered', 'delivered')),
-  -- REVIEW S6. `measure` is the sixth and it is not work: it is what the
+  -- `measure` is the sixth and it is not work: it is what the
   -- store's own measuring tool writes to weigh a message, and it is rank 1 like
   -- every other kind nobody is waiting on. It exists so those rows are
   -- invisible to every reader that asks about a person's messages, all of which
@@ -86,13 +86,13 @@ create index inbound_by_agent on inbound (agent, state);
 -- One row per reply chunk. The runner writes them, the door marks them
 -- delivered once the platform accepted them.
 --
--- D-113. A NOTICE is a row here too, and it is the one thing on this table with
+-- A NOTICE is a row here too, and it is the one thing on this table with
 -- no message on it: a household-wide cause (a dead login, a used-up plan
 -- window) is one line per person and not an apology per row, so it hangs on
 -- nothing. `kind` defaults to `reply`, which is what keeps every shipped insert
 -- (`insert into outbox (inbound_id, seq_in_reply, body)`) legal unchanged.
 --
--- `notice_key unique` is the WHOLE of the one-notice arithmetic (D-122). The
+-- `notice_key unique` is the WHOLE of the one-notice arithmetic. The
 -- pair above stops constraining a notice at all, because NULLs are distinct in
 -- a unique index, so this is what makes a second runner's write, a restart's
 -- write and a same-tick sibling's write all land nothing.
@@ -151,7 +151,7 @@ create trigger ledger_event_append_only
 -- below tell this write apart from a hand-written one, and it is local to the
 -- statement.
 --
--- D-114. It is also source one of `hub_turn`: a turn OPENS at `acked` and ENDS
+-- It is also source one of `hub_turn`: a turn OPENS at `acked` and ENDS
 -- at `answered`, and nothing else in the store fires at the start of one. The
 -- person comes back from the update this function already runs, so the channel
 -- costs one notify and no second read.
@@ -215,7 +215,7 @@ create trigger inbound_notify_work
 -- postable and never before. The payload is the person, because the door filters
 -- to the agents it serves and the outbox row does not carry a door.
 --
--- D-113. A notice carries its own person, because there is no message to read
+-- A notice carries its own person, because there is no message to read
 -- one off. The coalesce is what lets one trigger serve both rows.
 create function hub_notify_out() returns trigger
 language plpgsql as $$
@@ -230,7 +230,7 @@ create trigger outbox_notify_out
   after insert on outbox
   for each row execute function hub_notify_out();
 
--- D-114, source two. The runner writes the open turn's progress onto a sheet
+-- Source two of `hub_turn`. The runner writes the open turn's progress onto a sheet
 -- while the turn runs, and the door edits one platform message as the count
 -- grows. The write is an upsert, so this fires on INSERT OR UPDATE: a trigger
 -- that fired on the insert alone would wake the door once and leave the person
@@ -265,7 +265,7 @@ create policy ledger_event_door_stamps on ledger_event
   with check (actor = 'door' and stream = 'inbound'
               and kind in ('received', 'delivered'));
 
--- D-116. A clock running out is a line the door writes, and it is not a stamp.
+-- A clock running out is a line the door writes, and it is not a stamp.
 -- A SECOND policy rather than a widening of the one above: PostgreSQL ORs
 -- permissive policies, so this is purely additive, and the fence
 -- test/msg-stamps.test.ts binds in both directions stays readable as the one
@@ -282,7 +282,7 @@ create policy ledger_event_runner_stamps on ledger_event
 -- What a turn cost and what the runner refused are the runner's own to write.
 -- Neither is a stamp, so neither widens the fence above.
 --
--- 03b item 4 adds the `runner` stream: one line at connect naming the server
+-- The `runner` stream: one line at connect naming the server
 -- this runner really reached. It cannot be stream `machine`, which is the hub's
 -- and is fenced below, so the runner says it in a stream of its own.
 create policy ledger_event_runner_turn on ledger_event
@@ -321,12 +321,12 @@ grant update (delivered_at) on outbox to hub_door;
 
 -- The door keeps its platform cursor on a state sheet, so it writes here.
 --
--- D-115. The runner writes three of its own now: the household's outage, the
+-- The runner writes three of its own now: the household's outage, the
 -- household's window reading, and the open turn's progress. Two runners racing
 -- for one outage row is an expected race and the primary key is what settles
 -- it, so the runner claims with `claimRow` and never with `appendRow`, whose
 -- refusal path writes as actor `hub` on the caller's own connection.
--- REVIEW S5. The door keeps the platform message id of the progress line it
+-- The door keeps the platform message id of the progress line it
 -- posted on a sheet of its own (`door_progress`), so a door started again
 -- mid-turn EDITS the line it inherits rather than posting a second one beside
 -- it. It carries `delete` for that sheet alone: a thing that is gone leaves no

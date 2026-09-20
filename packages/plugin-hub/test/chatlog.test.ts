@@ -1,4 +1,4 @@
-// MSG-12. The chat log is the record, and a spawned session is fed its tail.
+// The chat log is the record, and a spawned session is fed its tail.
 //
 // SPEC §2: "Chat log: the door appends every message in both directions to one
 // dated file per agent, before sending. The loop's session is a cache. On every

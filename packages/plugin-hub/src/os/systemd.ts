@@ -10,7 +10,7 @@ import { STARTED_WITH } from "../store/connect.ts";
 /**
  * systemd, as the hub talks to it: `systemctl --user` and nothing else.
  *
- * D-95. A user unit is loadable from the manager's search path and from nowhere
+ * A user unit is loadable from the manager's search path and from nowhere
  * else, so `unitDir` defaults to it and a check points the seam at the same
  * directory rather than at a scratch one. `daemon-reload` is permitted and is
  * not a violation of "never edit a unit you did not create": it re-reads every
@@ -80,7 +80,7 @@ function stateOf(name: string, fields: Map<string, string>): UnitState {
     loaded: fields.get("LoadState") === "loaded",
     running: fields.get("SubState") === "running",
     pid,
-    // systemd counts no executions at all (D-101).
+    // systemd counts no executions at all.
     runs: null,
     ran: (fields.get("ExecMainStartTimestamp") ?? "") !== "",
     restarts: /^\d+$/.test(restarts) ? Number(restarts) : null,
@@ -95,7 +95,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
   const bin = options.bin ?? "systemctl";
   const unitDir = options.unitDir ?? join(homedir(), ".config", "systemd", "user");
   /**
-   * 03b item 7. The manager binary is a PARAMETER, defaulting to the bare
+   * The manager binary is a PARAMETER, defaulting to the bare
    * name PATH resolves. `check` reaches a manager only through the seam it
    * was handed, and a check that points this at a recording shim BY
    * ABSOLUTE PATH catches the one route PATH fronting never could.
@@ -153,7 +153,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
         "After=network-online.target",
         "Wants=network-online.target",
         `Description=imprnt hub ${entry.kind} ${entry.id} on ${ctx.machine}`,
-        // D-96. The give-up pair, which launchd has no equivalent of at all.
+        // The give-up pair, which launchd has no equivalent of at all.
         `StartLimitIntervalSec=${ctx.giveUpWindowSeconds}`,
         `StartLimitBurst=${ctx.giveUpAfter}`,
         // The default collect mode keeps a FAILED unit loaded forever, and the
@@ -270,7 +270,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
     },
 
     async start(entryId: string): Promise<void> {
-      // D-102. The program runs NOW. Enabling a cadence is install's job.
+      // The program runs NOW. Enabling a cadence is install's job.
       await perform(["--user", "start", service(entryId)]);
     },
 
@@ -317,7 +317,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
     },
 
     async unitFiles(): Promise<string[]> {
-      // REVIEW S6. The directory and nothing else. A hub that died between
+      // The directory and nothing else. A hub that died between
       // `remove`'s disable and its delete leaves a file enabled nowhere, and a
       // unit nothing references can leave `list-units` altogether, so the
       // manager is the one party that cannot be asked about it. Only the

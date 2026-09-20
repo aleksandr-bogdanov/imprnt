@@ -90,7 +90,7 @@ select s.scope, s.id, w.name as win, s.metric,
  * `percentile_cont`'s own definition: linear interpolation over the ordered set.
  *
  * MEASURED 2026-09-16, and this is why the arithmetic is here rather than in
- * the aggregate (BUILD-NOTES 21). The server computes `percentile_cont`'s
+ * the aggregate. The server computes `percentile_cont`'s
  * interpolation with a FUSED multiply-add: asked for the 99th percentile of
  * eighteen values it answers 431999.99999999994, while the same formula
  * evaluated step by step answers 431999.9999999993, in SQL on that same server
@@ -108,10 +108,10 @@ export function percentileOf(sorted: number[], p: number): number | null {
 }
 
 /**
- * MSG-07 and MSG-09's data: the five metrics, p50, p99 and a count, per person
+ * The five metrics, p50, p99 and a count, per person
  * and per agent, over today and over this week.
  *
- * D-133. A MEASUREMENT BELONGS TO THE WINDOW HOLDING ITS LATER STAMP, because
+ * A MEASUREMENT BELONGS TO THE WINDOW HOLDING ITS LATER STAMP, because
  * that is the moment the number became knowable. Anchoring on `received_at`
  * instead would put a message received at 23:50 and delivered at 00:10 in
  * yesterday's p99, and yesterday's numbers would keep changing after the day
@@ -203,11 +203,10 @@ const NOTHING_MEASURED = "-";
 const HEADINGS = ["scope", "who", "window", "metric", "p50 ms", "p99 ms", "count"];
 
 /**
- * MSG-09's smallest honest display: the table as text.
+ * The smallest honest display: the table as text.
  *
- * Pure, so a check binds it without a process and phase 7's board binds it
- * without a browser. One implementation, two front ends, which is the whole of
- * D-134.
+ * Pure, so a check binds it without a process and a richer front end binds it
+ * without a browser. One implementation, two front ends.
  */
 export function renderMetrics(rows: MetricsRow[]): string {
   const cells: string[][] = [HEADINGS];

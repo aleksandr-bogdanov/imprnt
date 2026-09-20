@@ -33,7 +33,7 @@ export interface Platform {
   readonly name: string;
   fetchMedia?(media: MediaRef): Promise<Response>;
   /**
-   * D-125. How long ONE typing call shows for, from the platform's own
+   * How long ONE typing call shows for, from the platform's own
    * documentation: Telegram's `sendChatAction` sets the status "for 5 seconds
    * or less" and Discord's typing indicator "expires after 10 seconds". The
    * door refreshes inside whichever it is, so the status never lapses, and a
@@ -52,7 +52,7 @@ export interface Platform {
     timeoutMs: number;
   }): Promise<PlatformPull>;
   /**
-   * D-178, IMP-163. Where `chat` stands NOW, as a cursor: a pull from it
+   * Where `chat` stands NOW, as a cursor: a pull from it
    * returns only what arrives after this call. Null means nothing is there to
    * skip, so a pull from no cursor already reads only new messages.
    *

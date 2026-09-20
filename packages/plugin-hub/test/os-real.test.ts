@@ -1,7 +1,7 @@
 // Check: running units minus the registry's set is empty and the reverse is
 // empty (SPEC §6, L13), against the REAL launchd or the REAL systemd. And:
 // Forbidden, phrased as a check: "an installer that edits a boot file" is absent
-// (SPEC §6 Forbidden, RUN-14, L4).
+// (SPEC §6 Forbidden, L4).
 //
 // One shared assertion body, `thisOs()` on whichever platform runs it, gated by
 // `osGate()` with the reason in the test name and one line on stderr.
@@ -72,7 +72,7 @@ afterAll(async () => {
   }
 });
 
-/** A script the CHECK owns, so no file under src/entry/ is created this round. */
+/** A script the CHECK owns, so no file under src/entry/ is created for it. */
 function scratchScript(name: string, body: string): string {
   const jobs = join(dir, "jobs");
   mkdirSync(jobs, { recursive: true });
@@ -112,7 +112,7 @@ function context(script: string, registryFile: string): Record<string, unknown> 
 /**
  * A file by its CONTENTS, not by its size and its timestamp.
  *
- * The second seat's lead: an installer that edited a boot file with content of
+ * an installer that edited a boot file with content of
  * the same length and then restored the mtime passed a size-and-mtime snapshot.
  * Both are one `utimes` call away from being forged and a sha256 is not, so the
  * fingerprint is the hash, with the size beside it for a readable failure.
@@ -248,7 +248,7 @@ test.skipIf(!gate.ok)(
     expect(reported.extra.map((e) => String(e.name))).toContain(
       String(withStray.find((u) => String(u.name).startsWith(stray.base))!.name),
     );
-    // It is NOT the hub's to remove (D-78), which is the separation that keeps a
+    // It is NOT the hub's to remove, which is the separation that keeps a
     // live v2 unit safe from a hub that treated every imprnt-* as its own.
     expect(reported.stale.map((e) => String(e.name)).join(" ")).not.toContain(stray.base);
 

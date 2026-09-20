@@ -1,4 +1,4 @@
-// IMP-160 item 1, D-174. A fetched batch the door cannot accept, again and
+// A fetched batch the door cannot accept, again and
 // again, leaves the same durable trace a read failure does: a door_health row
 // `check` reports, one notice to a working chat of the same person, and a clear
 // only once the batch really is accepted.

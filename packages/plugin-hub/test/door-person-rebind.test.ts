@@ -1,4 +1,4 @@
-// IMP-160 item 5, D-178. An agent moved to another person on a live door is
+// An agent moved to another person on a live door is
 // served for the NEW person: its outbox and turn waiters wake on that person's
 // notifications, so its replies go out and its turns show typing. The door
 // process is not restarted for the edit.

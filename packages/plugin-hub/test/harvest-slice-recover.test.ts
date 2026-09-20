@@ -1,4 +1,4 @@
-// D-146 and D-178. A recovery command is addressed to the machinery, so it is
+// A recovery command is addressed to the machinery, so it is
 // never in a harvest slice.
 //
 // The door logs `/recover <agent>` and `/восстановить <agent>` under the

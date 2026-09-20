@@ -15,7 +15,7 @@ interface RecoveryRequest {
 }
 
 /**
- * IMP-160. The outcome of a recovery somebody asked for in a chat, said back
+ * The outcome of a recovery somebody asked for in a chat, said back
  * in that chat. It is an ordinary machinery notice on the route the request
  * was pinned to, keyed on the request, so a replayed control says it once.
  */

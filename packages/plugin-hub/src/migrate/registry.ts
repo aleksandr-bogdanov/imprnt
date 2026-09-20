@@ -4,7 +4,7 @@ import { loadRegistry } from "../registry/load.ts";
 import { absolute, canonical, digest, toml, version, within, writePrivate } from "./files.ts";
 
 /**
- * D-168. The first instruction import a fragment still holds, or null. v2 expanded an
+ * The first instruction import a fragment still holds, or null. v2 expanded an
  * import only when it stood alone on its line, so a rendered fragment carries none, and
  * a line that starts with `@` is refused as before. An `@` path inside running text was
  * never expanded by v2 or by the loop, so an agent given it silently runs without what

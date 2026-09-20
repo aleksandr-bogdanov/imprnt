@@ -1,10 +1,10 @@
-// 03b item 6b. A door and a runner with nothing to do burn no processor time.
-// (SPEC §2, D-70)
+// A door and a runner with nothing to do burn no processor time.
+// (SPEC §2)
 //
-// D-70 is the residue phase 1, phase 2 and phase 3 all carried forward
-// verbatim: "a waiter that keeps a flag in memory and re-checks it on a 100 ms
+// THE RESIDUE a statement count cannot see:
+// a waiter that keeps a flag in memory and re-checks it on a 100 ms
 // timer issues no SQL at all, so it is invisible to a statement count and to
-// any other black-box probe." The statement count is what
+// any other black-box probe. The statement count is what
 // `test/runner-drain.test.ts` binds. This is the second thing a black box can
 // see: a poll that does any work at all costs processor time, and a process
 // genuinely asleep on a notification costs almost none.
@@ -15,7 +15,7 @@
 // window well under any bound loose enough not to be flaky. MEASURED on this
 // Mac: a 100 ms timer doing three million additions each time burns 0.03 s over
 // three seconds, which is a tenth of the bound below. So this is the GUARD, and
-// the CLOSURE is 03b item 6a, the reviewer's written pass over every wait in
+// the CLOSURE is a written pass over every wait in
 // `src/store/wake.ts`, `src/door/run.ts`, `src/runner/run.ts` and
 // `src/hub/run.ts` naming what wakes each one, with file and line.
 //
@@ -31,9 +31,8 @@
 // holds the event loop open, which for the door and the runner is their own
 // tick timer. `src/entry/hold.ts` and both subprocess helpers hold that way.
 //
-// Red reason: NONE. This check PASSES against 0cefd6c and is a regression
-// guard, which is what 03b-DEBTS asks item 6b to be. Recorded as a deviation
-// from "every 3b check is red" in RED-RUN-1.md rather than forced into a red.
+// This check is a regression guard rather than a red-first check: it passes
+// against the build it was written for and exists to keep passing.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
@@ -66,7 +65,7 @@ let cluster: Cluster;
 beforeAll(async () => {
   // `log_statement = 'all'` with `log_line_prefix = 'pid=%p '` is what makes
   // the statement count below come from the SERVER rather than from anything
-  // the processes under test could fake. It is phase 1's probe, and the check
+  // the processes under test could fake. It is the probe, and the check
   // that uses it carries its own control, because a cluster started without
   // these two settings scores a poll as perfect silence.
   cluster = await startCluster({
@@ -189,7 +188,7 @@ test(
 );
 
 // THE ZERO STATEMENT CASE THAT USED TO SIT HERE IS GONE WITH THE BEHAVIOUR IT
-// BOUND (03b row 6). It staged this pair on a one second tick and asserted that
+// BOUND. It staged this pair on a one second tick and asserted that
 // four seconds of idleness cost the store nothing, which is exactly what
 // `docs/SPEC.md:17` asks for and what the runner did for the length of this
 // round. The hub box then failed `test/runner-drain.test.ts` in three of four

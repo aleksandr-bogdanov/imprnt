@@ -1,4 +1,4 @@
-// MSG-12. The tail is the last hours, capped at the configured tokens, newest
+// The tail is the last hours, capped at the configured tokens, newest
 // kept, and the size is a household setting rather than a per-agent one.
 //
 // SPEC §2, the chat log line: "On every spawn the runner feeds the tail (24
@@ -7,7 +7,7 @@
 // sentence is in the chat log line itself rather than in section 2's Forbidden
 // list, and the refusal being loud and naming its line is SPEC §6, L14.
 //
-// These three touch no Postgres, on purpose, the same way phase 1's registry
+// These three touch no Postgres, on purpose, the same way the registry
 // checks do: the tail is a function of a folder of lines and a clock, and the
 // per-agent refusal is a file loader's refusal, so a database would add a
 // dependency without adding a probe.
@@ -119,7 +119,7 @@ test(
 
     // The oracle is independent of the code under test in both directions: the
     // preamble is the pinned text and the estimate is the pinned formula. The
-    // first pass used the seam's own estimator as its oracle, so a build whose
+    // An earlier version used the seam's own estimator as its oracle, so a build whose
     // estimateTokens always returned 1 satisfied any budget.
     expect(TAIL_PREAMBLE).toBe(PINNED_PREAMBLE);
     expect((estimateTokens as Function)("abcdefgh")).toBe(2);
@@ -220,8 +220,8 @@ test(
         'provider = "a-provider"',
         'effort = "medium"',
         'paid = "plan"',
-        // D-110 as phase 4 makes it: the three window thresholds are required
-        // on every plan preset, by name. Today's loader tolerates them.
+        // The three window thresholds are required
+        // on every plan preset, by name.
         "window_pause_at = 85",
         "window_notice_at = 95",
         "window_hold_at = 100",
@@ -248,7 +248,7 @@ test(
         'kind = "runner"',
         'schedule = "always"',
         "memory_limit_mb = 512",
-        // D-81 as phase 3b makes it: required on every runner entry, machines
+        // Required on every runner entry, machines
         // declared or not. A fixture line below every line this check numbers.
         "child_memory_limit_mb = 512",
         "",

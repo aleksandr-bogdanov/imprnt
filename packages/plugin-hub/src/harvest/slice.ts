@@ -2,11 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { chatLogPath, validLine, type BadRecord } from "../chatlog.ts";
 
 /**
- * D-145, D-146. The slice: the lines of one chat between two instants that a
+ * The slice: the lines of one chat between two instants that a
  * PERSON or an AGENT said, and nothing else.
  *
  * Two filters, and each is a rule rather than a hope. A machinery line is the
- * door speaking (D-129), and the probe measured the loop ignoring one once,
+ * door speaking, and the probe measured the loop ignoring one once,
  * which is not the same as it never reading one. The demand phrase and the
  * recovery command are messages addressed to the machinery, and feeding them
  * back to the harvester as conversation would teach it that the household
@@ -20,14 +20,14 @@ export interface SliceLine {
   text: string;
 }
 
-/** D-146. Matched trimmed and lowercased, EXACTLY, in either language. */
+/** Matched trimmed and lowercased, EXACTLY, in either language. */
 export const DEMAND_PHRASES: Record<"en" | "ru", string> = {
   en: "harvest this",
   ru: "сохрани важное",
 };
 
 /**
- * D-145. A chat the hub has never harvested reaches back this far and no
+ * A chat the hub has never harvested reaches back this far and no
  * further.
  *
  * The residue is stated rather than hidden: the rest of a longer log is on disk
@@ -53,7 +53,7 @@ export function isDemand(text: string): boolean {
 }
 
 /**
- * D-178. A recovery command, `/recover <agent>` or `/восстановить <agent>`, the
+ * A recovery command, `/recover <agent>` or `/восстановить <agent>`, the
  * way the door recognises one: the verb at the very start of the message, in
  * any case, followed by whitespace or by nothing. The door routes a message
  * that matches to the recovery control and never to the agent, and the slice

@@ -1,13 +1,13 @@
-// STORE-02 and MSG-04. Two machines, one store.
+// Two machines, one store.
 //
 // D5: "one Postgres server on the Pi holds every message, reply, job and turn
 // for every person and every machine. Every runner, on the Pi or on a spoke,
 // connects to it over the tailnet. A job for a machine that is off waits in its
-// table." MSG-04: a job for a spoke is a row in the same database, the spoke's
+// table." A job for a spoke is a row in the same database, the spoke's
 // runner claims and settles it, and a machine that is off finds its rows
 // waiting.
 //
-// PROVED ON ONE BOX WITH TWO RUNNER PROCESSES (D-98). There is no Postgres on
+// PROVED ON ONE BOX WITH TWO RUNNER PROCESSES. There is no Postgres on
 // the hub box today, so until it is installed no check can run there, and these
 // two criteria are proved on the Mac with two runner PROCESSES against one
 // throwaway cluster on its loopback TCP port, never its unix socket. WHAT THIS
@@ -15,8 +15,8 @@
 // than a check: SPEC §2 rules that a human sends one real message per person and
 // gets a real answer, never a script.
 //
-// D-86: `report` rows stay deferred to phase 4, so the waiting row goes in the
-// way phase 2's feed-order check put its report row in. MSG-04's own content is
+// Nothing writes a `report` row yet, so the waiting row goes in the
+// same way the feed-order check puts its report row in. What is bound here is
 // the routing, the waiting and the draining, and all three are true of an
 // inbound row of any kind whose agent names the spoke's runner.
 //
@@ -186,7 +186,7 @@ test(
       const theirs = backends.filter((b) => !mine.has(Number(b.pid)));
       expect(theirs.length).toBeGreaterThanOrEqual(2);
 
-      // BOTH runners, each by its OWN id. D-85's mechanism is the seam's
+      // BOTH runners, each by its OWN id. The mechanism is the seam's
       // business and this binds the OUTCOME, so a url parameter and a
       // `set application_name` at connect are both allowed. Neither is in a
       // wait window, so `test/runner-drain.test.ts` stays green.
@@ -195,7 +195,7 @@ test(
       expect(named).toContain(RUNNER2);
 
       // EVERY one of them, not one. A runner that opened a second connection as
-      // somebody else fails here, which is phase 1's fence binding to two
+      // somebody else fails here, which is the fence binding to two
       // processes rather than one.
       for (const backend of theirs) {
         expect(backend.usename).toBe("hub_runner");
@@ -240,7 +240,7 @@ test(
     try {
       // --- the routing, DERIVED. An agent names its runner and the runner is a
       //     `[[run]]` entry, so "which machine runs this agent" is read off the
-      //     file and can never be a second fact that disagrees with it (D-76).
+      // file and can never be a second fact that disagrees with it.
       //     This is the half that is red today: the loader carries no machine.
       const { listMachines, runEntriesFor } = await seam("src/registry/entries.ts");
       expect(typeof listMachines).toBe("function");
@@ -284,7 +284,7 @@ test(
       // look identical to a correct run if only the final state were read, and
       // that is the exact failure this criterion exists to catch.
       const claimsSeen = new Set<string>();
-      // AND EVERY FEED THE LOOP EVER SAW, which is the second seat's lead: a
+      // AND EVERY FEED THE LOOP EVER SAW, which is a
       // claim writes no ledger event (`src/runner/claim.ts`), so a wrong runner
       // that claimed the row, fed it to a loop and released it between two
       // samples would leave the row looking untouched. The adapter server

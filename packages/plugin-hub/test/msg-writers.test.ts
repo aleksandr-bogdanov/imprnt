@@ -1,4 +1,4 @@
-// MSG-01. Two tables, one owner each.
+// Two tables, one owner each.
 //
 // SPEC §2: "Two tables, one owner each: `inbound`, written by the door, and
 // `outbox`, written by the runner in chunks. Nobody else writes either." L1's

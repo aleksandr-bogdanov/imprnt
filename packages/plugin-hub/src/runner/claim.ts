@@ -17,7 +17,7 @@ export async function claimNext(
   store: StoreLike,
   who: { runner: string; agent: string; leaseMs: number; maxRank?: number; rowId?: string },
 ): Promise<EligibleRow | null> {
-  // D-123. The pause is a WHERE clause on the statement the runner already
+  // The pause is a WHERE clause on the statement the runner already
   // runs, not a second query: at the household's own pause threshold proactive
   // work stops and a row a human is waiting on still goes first. 1 is
   // everything, 0 is rank-0 only. Claiming nothing at all is the caller's

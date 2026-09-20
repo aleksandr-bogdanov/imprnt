@@ -20,17 +20,17 @@
 // into was scaffolded by the real `imprnt init`. Nothing here asserts anything
 // about the model's judgment: which facts it kept, which slug it chose and
 // whether `nothing` was the right answer vary between two runs of one slice
-// (05-BRIEF) and the only place a real model appears at all is
+//  and the only place a real model appears at all is
 // `live/harvest-turn.test.ts`.
 //
 // Red reasons. Check 9's tag is import missing `src/harvest/prompt.ts` plus
 // behaviour absent, and what it OBSERVES is the behaviour, deliberately: the
-// stage runs first so the fixture five checks lean on is exercised this round,
+// stage runs first so the fixture five checks lean on is exercised,
 // and the shipped runner feeds the harvest row's JSON body to the chat agent's
 // own session, so `starts()` holds one record instead of two. Check 12 is
 // import missing, `src/harvest/parse.ts`. Check 14's tag is export missing
 // `TurnRecord.harvest`, which is a TypeScript type and vanishes at run time
-// (the same class as phase 4's checks 7, 9 and 14), so what it OBSERVES is
+// (the same class as the checks 7, 9 and 14), so what it OBSERVES is
 // behaviour absent: the criterion's own query comes back carrying the AGENT's
 // preset id.
 
@@ -60,11 +60,11 @@ let cluster: Cluster;
 const SLOW = 120_000;
 
 /**
- * THE PROMPT, PINNED WHOLE, copied out of 05-CONTEXT.md by machine rather than
- * retyped. D-105's rule is that a string a reader depends on is pinned whole,
+ * THE PROMPT, PINNED WHOLE, copied by machine rather than
+ * retyped. A string a reader depends on is pinned whole,
  * and here the reader is a model. `{LANGUAGE}` is its one slot.
  *
- * Every line of it closes a defect the probe measured (05-BRIEF): invented
+ * Every line of it closes a defect the probe measured: invented
  * entity slugs, invented frontmatter fields, a fabricated `source:` that
  * `--apply` keeps verbatim and records as the manifest's raw entry, and a
  * Russian slice filed as English notes.
@@ -223,7 +223,7 @@ test(
       // capture `fedBefore` at zero with the tail feed still in flight. The
       // harvest assertions below would then see two entries and fail for a
       // fixture's reason rather than the runner's, which is the exact shape
-      // this round's rules forbid. The tail is non-empty here, because five
+      // the filing rules forbid. The tail is non-empty here, because five
       // lines are planted above and `hub.tail_hours` is a day.
       await until(
         "the agent's own session was fed the tail of its chat log",
@@ -286,7 +286,7 @@ test(
         expectedPresetId(stage.agentPreset),
       );
 
-      // --- 4. D-176 isolates automatic discovery in a fresh session cwd.
+      // --- 4. Automatic discovery is isolated in a fresh session cwd.
       expect(harvester.cwd!.startsWith(realpathSync(join(it.stateDir, PERSON, "sessions", AGENT)) + "/")).toBe(true);
       expect(harvester.cwd).not.toBe(stage.vault.root);
       expect(existsSync(join(stage.vault.root, "CLAUDE.md"))).toBe(true);
@@ -309,7 +309,7 @@ test(
       );
 
       // --- 6b. AND IT WENT INTO THE SECOND SESSION, not into the resident
-      //     one. The second seat's finding: a count of feeds and a count of
+      //     one. THE FINDING: a count of feeds and a count of
       //     starts cannot tell a runner that opens an unused fresh harvester
       //     and feeds the slice into the AGENT's session from one that does it
       //     properly, because both produce two starts and one feed. The
@@ -334,7 +334,7 @@ test(
       expect(fedAfter.some((one) => one.id === AGENT)).toBe(false);
       expect(fedAfter[0].id).toBe(rowId);
 
-      // --- 9. THE AGENT'S OWN SESSION IS UNTOUCHED, which is what D-148's
+      // --- 9. THE AGENT'S OWN SESSION IS UNTOUCHED, which is what the branch's
       //     placement is about: the harvest branch goes ABOVE the
       //     `presetId(preset) !== startedWith || own.killed` line, and a build
       //     that put it below respawns the resident session on every harvest
@@ -343,7 +343,7 @@ test(
       expect(starts.length).toBe(2);
 
       // --- 11. NO `acked` AND NO `started` STAMP were written for the harvest
-      //     row (D-155). Its ledger holds a `received` line from the door and
+      // row. Its ledger holds a `received` line from the door and
       //     an `answered` line from the runner and nothing between them.
       const stamps = await it.read.ledger({ stream: "inbound", subject: rowId });
       expect(stamps.map((one) => one.kind)).toEqual(["received", "answered"]);
@@ -357,8 +357,8 @@ test(
       //
       //     A NEW LINE IS PLANTED FIRST, and that is not decoration. The first
       //     harvest moved the watermark to the last line of its own slice, so a
-      //     second row over the same lines would find an EMPTY slice, and D-149
-      //     rules that an empty slice opens NO session at all. Demanding a
+      //     second row over the same lines would find an EMPTY slice, and an
+      //     empty slice opens NO session at all. Demanding a
       //     third start over a slice with nothing in it would be demanding that
       //     a correct build break the contract. So there is something new to
       //     harvest, and only then is a third session owed.
@@ -390,7 +390,7 @@ test(
       // produces exactly this count. `close` is a verb the fixture implements,
       // so the call itself is recorded. Session 2 is closed and the resident
       // session 1 is NOT, because the agent's own session stays up between
-      // turns and that is the whole of D-148's placement.
+      // turns and that is the whole of the branch's placement.
       expect(it.scripted.closes()).toContain(2);
       expect(it.scripted.closes()).not.toContain(1);
       // The second harvest was fed into the THIRD session, over the one line
@@ -641,8 +641,8 @@ test(
       const startsBefore = it.scripted.starts().length;
       const fedBefore = it.scripted.fed().length;
       //     THE WINDOW ITSELF IS EMPTY, and that is the fixture correction the
-      //     second seat found. The runner recomputes the slice from the SHEET's
-      //     watermark and never from the row's own `from` (D-149), so a row
+      // found. The runner recomputes the slice from the SHEET's
+      // watermark and never from the row's own `from`, so a row
       //     whose `from` sits in the future changes nothing: the slice is still
       //     everything after the stored watermark, and there IS an unharvested
       //     line, so a correct build would open a session and this assertion
@@ -651,7 +651,7 @@ test(
       //     What is really empty is a row whose `until` is at or before the
       //     watermark, because the slice is `(watermark, until]` and that
       //     interval is empty however many lines are on disk. It is also the
-      //     real case D-149 names: a quiet row overtaken by a row that already
+      //     real case: a quiet row overtaken by a row that already
       //     harvested past it.
       const storedAt = String(((await watermark())!.data as Record<string, unknown>).at);
       const emptyRow = await plantHarvestRow(stage, {
@@ -682,7 +682,7 @@ test(
       //     one open turn, so two rows run one after the other.
       //
       //     THE PAIR IS QUIET THEN BACKSTOP, not two quiet rows, and that is
-      //     the second seat's real point about this stage. A runner that
+      //     the real point about this stage. A runner that
       //     recomputes a QUIET row's slice from the sheet but trusts a BACKSTOP
       //     row's own declared bounds passes a two-quiet-row arrangement and
       //     still harvests one span twice the moment a real backstop carries
@@ -768,8 +768,8 @@ test(
         plantLine(stage, { at: at(29), direction: "in", from: PERSON, text: "and the lease notice is two months" }),
       ];
 
-      // The criterion's own query, written out here exactly as 05-CONTEXT pins
-      // it, so a later board asks it the same way.
+      // The criterion's own query, written out here exactly as it is pinned,
+      // so a later board asks it the same way.
       const CRITERION_QUERY = `select e.detail from ledger_event e
     join inbound i on i.id = e.subject
    where e.stream = 'turn' and i.kind = 'harvest'`;
@@ -795,7 +795,7 @@ test(
       });
 
       // One row over a slice WITH lines, and one over an EMPTY slice, which is
-      // D-149's overtaken row.
+      // the overtaken row.
       const withLines = await plantHarvestRow(stage, {
         from: null,
         until: new Date(now).toISOString(),

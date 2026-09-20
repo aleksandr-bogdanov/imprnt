@@ -57,7 +57,7 @@ interface ProgressLine {
 }
 
 /**
- * IMP-160. The health code of a chat whose fetched batch the door could not
+ * The health code of a chat whose fetched batch the door could not
  * accept twice in a row. A successful read does not clear it, an accepted batch
  * does.
  */
@@ -67,7 +67,7 @@ const ACCEPT_FAILED = "accept-failed";
 const TOTALS_WAIT_MS = 5000;
 
 /**
- * REVIEW S5. Which platform message the progress line of an open turn IS.
+ * Which platform message the progress line of an open turn IS.
  *
  * The door's own sheet, one row per message id, written when the line is posted
  * and removed when the totals land on it. Without it the id lived only in the
@@ -91,8 +91,8 @@ interface ProgressOnDisk {
  * An in-process poke, so one task of a door can tell another that something
  * happened without either of them asking the store.
  *
- * D-127 arms a clock "per message it knows about", and a message the door has
- * just written down is one it knows about WITHOUT a read: nothing on
+ * A clock is armed per message the door knows about, and a message the door
+ * has just written down is one it knows about WITHOUT a read: nothing on
  * `hub_turn` fires for a `received` row, because no turn has opened, so the
  * acked clock would otherwise be armed by nobody until some later wake
  * happened to read the table.
@@ -107,7 +107,7 @@ function nudge(): Nudge {
   // resolves it again and sets no flag, so THAT poke is dropped. It costs
   // nothing and the reason is worth writing down rather than rediscovering: the
   // payload rides in `own.arrivals`, which is drained at the top of the very
-  // next iteration whatever woke it (REVIEW's note on this function).
+  // next iteration whatever woke it.
   let pending = false;
   let fire: (() => void) | null = null;
   return {
@@ -137,9 +137,9 @@ export interface DoorHandle {
 /**
  * One agent this door is serving right now.
  *
- * D-104. The door reconciles its agent set on the tick exactly as the runner
- * does, because RUN-09's Forbidden line is "a process that reads its
- * configuration only at startup" and it does not say "the runner": an agent
+ * The door reconciles its agent set on the tick exactly as the runner
+ * does, because a process that reads its configuration only at startup is
+ * forbidden here and that rule is not the runner's alone: an agent
  * added to the file whose door never pulls its chat is an agent nobody can
  * reach, so the routine operation "add an agent" is not done until the door has
  * noticed too. The reconcile is one file parse per tick and issues no SQL, so
@@ -185,7 +185,7 @@ interface Served {
  * Outbound waits on the notification the settling transaction emits. Between
  * one wake and the next it issues no statement at all.
  */
-/** D-125's pinned refusal, thrown by `runDoor` at start. */
+/** The pinned refusal, thrown by `runDoor` at start. */
 function cannotShowTyping(door: string): string {
   return (
     `${door} serves a platform that cannot show typing, and a turn open with no typing ` +
@@ -194,17 +194,17 @@ function cannotShowTyping(door: string): string {
 }
 
 /**
- * D-181. A door with a declared cutover batch serves nothing until that batch
+ * A door with a declared cutover batch serves nothing until that batch
  * is complete.
  *
- * IMP-160. It WAITS rather than refusing to start. A door that threw here was
+ * It WAITS rather than refusing to start. A door that threw here was
  * restarted by its unit until systemd's start limit parked it, and it then
  * stayed down after the handoff completed until someone reset the unit by hand.
- * D-186 says the handoff (step 12) comes before the services (step 14), and
- * nothing enforced it. The reason goes to the diary once, not once a tick, and
+ * The install order puts the handoff before the services, and this wait is
+ * what holds a door to it. The reason goes to the diary once, not once a tick, and
  * the door reads one row a tick while it waits: it has not started serving, so
  * no idle window is open, and the wait is written down rather than hidden
- * behind a readiness that never comes (D-185).
+ * behind a readiness that never comes.
  */
 async function awaitHandoff(store: Store, options: {
   door: string; batch: string; tickMs: number; signal?: AbortSignal;
@@ -233,14 +233,14 @@ export async function runDoor(options: {
   registryFile: string;
   platform: Platform;
   /**
-   * Stops a door that is still waiting for its cutover batch (IMP-160). Once
+   * Stops a door that is still waiting for its cutover batch. Once
    * the door is ready, `stop()` on the handle is how it is stopped.
    */
   signal?: AbortSignal;
 }): Promise<DoorHandle> {
   // SPEC §2's Forbidden line, refused BY NAME and at START. It lives here and
-  // not in `src/entry/door.ts` because every check drives `runDoor` directly
-  // (D-33, D-94), so a refusal in the entry point would be a promise rather
+  // not in `src/entry/door.ts` because every check drives `runDoor` directly,
+  // so a refusal in the entry point would be a promise rather
   // than a behaviour. Nothing has been read and no chat has been pulled yet.
   if (
     typeof (options.platform as { typing?: unknown }).typing !== "function" ||
@@ -264,9 +264,9 @@ export async function runDoor(options: {
   // A successful projection is already fsynced. Keep that knowledge only for
   // pending chunks in this process; a restarted door repairs them all again.
   const projected = new Set<number>();
-  // IMP-160. One complete record in a day file that is not a chat line used to
-  // refuse every append to that file, and at start the whole door. The door
-  // skips it (its bytes stay, D-172 never truncates a complete record) and says
+  // A complete record in a day file that is not a chat line must not stop
+  // every append to that file, nor the whole door at start. The door
+  // skips it (its bytes stay, a complete record is never truncated) and says
   // where, once per file and line in this process: the diary and stderr.
   const reportedBad = new Set<string>();
   const skipBad = async (bad: BadRecord): Promise<void> => {
@@ -335,13 +335,13 @@ export async function runDoor(options: {
   let accepting: Promise<void> = Promise.resolve();
   const read = async (agent: AgentEntry, own: Served, activate = false): Promise<void> => {
     let cursor = await readCursor(store, options.door, agent.chat);
-    // D-178, IMP-163. A route this door has never read starts at the
+    // A route this door has never read starts at the
     // platform's high-water mark, asked for ONCE at activation and saved before
     // the first pull. What the chat held before it is history, and everything
-    // after it is served. The door used to find the mark by paging through the
-    // chat and skipping every page until one came back empty, so the boundary
-    // was wherever that walk ended, and a message a person sent during the walk
-    // was skipped as history with nothing said.
+    // after it is served. THE MARK IS NEVER FOUND BY WALKING THE CHAT: paging
+    // through it and skipping every page until one comes back empty puts the
+    // boundary wherever that walk ended, and a message a person sends during
+    // the walk is skipped as history with nothing said.
     //
     // One gap stays named rather than closed: a message sent between the edit
     // and this call (the tick that notices the edit, then the old reader's last
@@ -434,7 +434,7 @@ export async function runDoor(options: {
         refused = 0;
       } catch (error) {
         console.error("ingress: accepted batch remains unacknowledged");
-        // IMP-160. The same batch comes back on every replay, so a second
+        // The same batch comes back on every replay, so a second
         // refusal in a row is a failure that repeats, not a blip. It leaves the
         // trace a read failure leaves: the chat's health row that `check`
         // reports, the diary, and one notice per episode to a working chat of
@@ -596,7 +596,7 @@ export async function runDoor(options: {
 
   /**
    * The third task per agent, and the only thing in the door that knows a turn
-   * is open (D-126).
+   * is open.
    *
    * It owns its own waiter on `hub_turn`, so `post`'s loop is untouched and the
    * window `test/door-outbox.test.ts` counts statements inside is exactly what
@@ -625,13 +625,12 @@ export async function runDoor(options: {
     let sheet = new Map<string, ProgressRow>();
 
     const typable = (): OpenTurnRow[] =>
-      // D-126's table: a turn OPENS at `acked` and ENDS at `answered`. A
+      // A turn OPENS at `acked` and ENDS at `answered`. A
       // `received` row would show a person somebody working on a message the
       // loop has not accepted, and an `answered` one would show it after the
       // answer was written.
       //
-      // AND IT HAS TO BE CLAIMED (D-126 as amended after the review, REVIEW
-      // S4). A turn the loop REFUSED leaves its row at `acked` (D-121a) and
+      // AND IT HAS TO BE CLAIMED. A turn the loop REFUSED leaves its row at `acked` and
       // releases it onto `retry_at`, so the state alone cannot tell a turn that
       // is running from one that is waiting out an outage. Without the claim
       // the door typed for the whole of an outage: a person watched a chat
@@ -674,7 +673,7 @@ export async function runDoor(options: {
             out.push({ row, stamp: clock.stamp, at: clock.at });
             continue;
           }
-          // D-126. Only the answered clock comes back, and it comes back
+          // Only the answered clock comes back, and it comes back
           // SILENT: a turn that is stuck gets one read every
           // `answered_seconds` and no second chat line, because nothing else
           // announces a stuck loop coming back.
@@ -705,7 +704,7 @@ export async function runDoor(options: {
       return soonest;
     };
 
-    /** MSG-10's clock line: the chat log first, then the diary, then the chat. */
+    /** The clock line: the chat log first, then the diary, then the chat. */
     const sayExpired = async (row: OpenTurnRow, stamp: string): Promise<void> => {
       const key = `${row.id}/${stamp}`;
       if (spoken.has(key)) {
@@ -727,7 +726,7 @@ export async function runDoor(options: {
         {
           at: new Date().toISOString(),
           direction: "out",
-          // D-129. A machinery line is the DOOR speaking.
+          // A machinery line is the DOOR speaking.
           from: options.door,
           text,
         },
@@ -752,11 +751,11 @@ export async function runDoor(options: {
      * nothing to post one about.
      *
      * A LINE IS OWED ONLY ONCE THE TURN HAS OUTLIVED ONE TICK, and that is the
-     * rule rather than a delay for comfort: MSG-10's line says what the agent
+     * rule rather than a delay for comfort: the line says what the agent
      * is doing WHILE IT WORKS, and a turn that answers in five milliseconds
      * gives a person "working: 0 s" above the answer itself. The threshold is
      * `hub.tick_seconds`, which is already the cadence the runner writes the
-     * sheet at (D-124), so no second number exists to be the same one.
+     * sheet at, so no second number exists to be the same one.
      */
     const lineDueAt = (row: OpenTurnRow): number | null => {
       if (row.state !== "started") return null;
@@ -767,7 +766,7 @@ export async function runDoor(options: {
       return (Number.isNaN(startedAt) ? Date.now() : startedAt) + timeoutMs;
     };
 
-    /** MSG-10's progress line: one message, posted once and edited as it goes. */
+    /** The progress line: one message, posted once and edited as it goes. */
     const carryProgress = async (byId: Map<string, ProgressRow>): Promise<void> => {
       for (const row of open) {
         if (row.state !== "started") continue;
@@ -996,7 +995,7 @@ export async function runDoor(options: {
   };
 
   const attend = async (agent: AgentEntry, own: Served): Promise<void> => {
-    // REVIEW S7. `runDoor` waits on `attending` before it hands its caller a
+    // `runDoor` waits on `attending` before it hands its caller a
     // handle, and everything from here to the connect read can throw: the two
     // registry reads, and `openTurnWaiter`. A throw is swallowed by the
     // `Promise.allSettled` this task sits in, so without this outer finally a
@@ -1011,28 +1010,27 @@ export async function runDoor(options: {
   };
 
   /**
-   * D-144. The FOURTH task per agent, and the only thing in the door that knows
+   * The FOURTH task per agent, and the only thing in the door that knows
    * what a quiet period is.
    *
-   * A task of its own rather than work folded into `post` or `attend`, for
-   * D-126's reason with two more windows behind it: five shipped checks count
+   * A task of its own rather than work folded into `post` or `attend`, because
+   * five shipped checks count
    * every statement a door issues inside a window, and two of them require
    * ZERO. So what this costs is said out loud.
    *
    * ONE statement at connect, ZERO per pass, and one read plus one insert when
    * a row is actually owed. Each pass reads two FILES: the registry, which is
-   * how a changed knob lands with nothing restarted (D-161), and the chat log.
+   * how a changed knob lands with nothing restarted, and the chat log.
    * The door already parses the registry once a tick in `supervise`, so this is
    * a second parse of a file the process is already reading.
    */
   /**
-   * REVIEW S5. ONE registry parse per tick for the WHOLE door, not one per
+   * ONE registry parse per tick for the WHOLE door, not one per
    * agent per pass.
    *
-   * The task's own reason for re-reading stands (D-161: a changed knob lands
-   * with nothing restarted), and its doc comment's claim that this is "a second
-   * parse of a file the process is already reading" was true for one agent and
-   * not for four. A door serving four agents was reading and parsing the file
+   * The task's own reason for re-reading stands: a changed knob lands with
+   * nothing restarted. The parse is shared because it is one per agent per
+   * pass otherwise, so a door serving four agents reads and parses the file
    * four times a tick on top of `supervise`'s own one, and
    * `test/wait-idle.test.ts` is the processor-time window that sees exactly
    * that cost.
@@ -1060,8 +1058,8 @@ export async function runDoor(options: {
     /** What a runner has SETTLED for this chat, or null when nothing has. */
     let settled: Watermark | null = null;
     try {
-      // The one read at connect, which D-85 permits and which `attend` and
-      // `readSpokenClocks` already do. `runDoor` waits on it before it hands
+      // The one read at connect, the same one `attend` and
+      // `readSpokenClocks` already make. `runDoor` waits on it before it hands
       // back a handle, so "ready" means this task has spoken to the store and a
       // check that plants lines and then starts a door is deterministic rather
       // than raced. It lands before readiness and therefore outside every
@@ -1077,7 +1075,7 @@ export async function runDoor(options: {
      * The `until` of the last row THIS TASK wrote, and nothing else.
      *
      * It starts empty because a door that has just come up has asked for
-     * nothing yet (BUILD-NOTES 1). D-149 names what that costs and calls it
+     * nothing yet. What that costs is
      * ordinary: a bound behind the real watermark overcounts, so a restarted
      * door can write one row whose slice the runner then recomputes from the
      * sheet and finds smaller, or empty, and settles with no model turn. The
@@ -1090,12 +1088,12 @@ export async function runDoor(options: {
     while (!stopping && !own.leaving) {
       let sleepMs = timeoutMs;
       try {
-        // D-161. Re-read per tick, so the harvester, the quiet timeout, the
+        // Re-read per tick, so the harvester, the quiet timeout, the
         // minimum slice and the report switch all land with nothing restarted.
         const fresh = registryThisTick();
         const settings = harvestFor(fresh, agent.person);
         if (settings === null) {
-          // D-137. This person's chats are not harvested at all, and `check`
+          // This person's chats are not harvested at all, and `check`
           // says so rather than this task complaining once a tick.
           await Promise.race([
             Bun.sleep(timeoutMs),
@@ -1121,14 +1119,14 @@ export async function runDoor(options: {
         } else if (trigger === "quiet") reason = "quiet";
 
         if (reason !== null) {
-          // D-145. On firing, and only then, the watermark is read, and `from`
+          // On firing, and only then, the watermark is read, and `from`
           // comes from IT rather than from the cached bound: the bound is what
           // this door believes and the sheet is what a runner has settled.
           settled = await readWatermark(store, key);
           const from = historyHarvestFrom(fresh, agent.person, settled?.at ?? null);
           const slice = await readSlice({ ...chat, from, until, skipBad });
-          // REVIEW S3, D-145's second gate: "writes the row in one transaction
-          // WHEN THE COUNT IS AT LEAST THE APPLICABLE MINIMUM". The count above
+          // The second gate: the row is written in one transaction
+          // WHEN THE COUNT IS AT LEAST THE APPLICABLE MINIMUM. The count above
           // is the door's own, measured from a bound that is empty every time
           // this task starts, so a door that has just come up counts lines a
           // runner has long since harvested. This is the count the RUNNER will
@@ -1136,14 +1134,14 @@ export async function runDoor(options: {
           //
           // IT GATES A KEY HARVESTER AND NOT A PLAN ONE, and the two are
           // different questions rather than one rule half applied. A plan
-          // preset carries the three window thresholds and phase 4's pause,
-          // notice and hold are what fence what it spends; D-110's own sentence
-          // is that "an agent on a per-token key has no window", so for a key
+          // preset carries the three window thresholds, and the pause,
+          // notice and hold are what fence what it spends. An agent on a
+          // per-token key has no window at all, so for a key
           // harvester the minimum is the ONLY cost fence there is, and a turn
           // bought under it is money the household did not agree to spend. On a
           // plan the row still lands and the runner settles it for what it
           // really holds, which is what `test/door-harvest.test.ts`'s own stage
-          // 4 pins and what BUILD-NOTES 1 argues.
+          // 4 pins.
           const paid = getPreset(fresh, settings.harvester).paid;
           const tooFew =
             reason === "quiet" && paid === "key" && slice.length < settings.min_messages;
@@ -1174,7 +1172,7 @@ export async function runDoor(options: {
           bound = until;
         }
 
-        // D-144. The bound this task sleeps on, and the rule inside it is what
+        // The bound this task sleeps on, and the rule inside it is what
         // stops a hot loop nothing else in the suite could see. A QUIET
         // DEADLINE CONTRIBUTES ONLY WHILE IT IS IN THE FUTURE: a chat sitting
         // permanently under its minimum is the ordinary case, its deadline
@@ -1302,17 +1300,17 @@ export async function runDoor(options: {
           const it = served.get(agent.id);
           if (!it) { await health.initialize(agent); serve(agent); }
           else if (it.agent.person !== agent.person) {
-            // IMP-160. Everything this agent's tasks wait on or read is keyed
+            // Everything this agent's tasks wait on or read is keyed
             // on its person: the outbox and turn waiters listen for that
             // person's notifications, `attend` holds its language and clock
             // thresholds, and the harvest task reads its chat log. So a new
             // person is a new set of tasks. The read loop stops at a batch
             // boundary, and the new one activates its route exactly as a chat
-            // edit does below (D-178) ONLY when the chat changed too. A person
+            // edit does below ONLY when the chat changed too. A person
             // edit that keeps the chat keeps reading it where the old tasks
             // left off, saved cursor or none: activating it asked the platform
             // where the chat stood and skipped a message sent right after the
-            // edit as history (IMP-163).
+            // edit as history.
             const moved = it.agent.chat !== agent.chat;
             await drop(agent.id);
             await health.initialize(agent);

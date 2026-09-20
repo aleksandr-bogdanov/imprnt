@@ -63,7 +63,7 @@ test("REC-03 the current state of a diary is derived by code: the message state 
       actor: ACTOR[kind],
     });
 
-    // Read the events themselves, not only the derived answer. The second seat
+    // Read the events themselves, not only the derived answer. A reader
     // named the hole this closes: "a stamp function that directly sets a
     // protected inbound.state column and never appends an event passes. The
     // test calls stamp and reads state through inboundState. It never reads

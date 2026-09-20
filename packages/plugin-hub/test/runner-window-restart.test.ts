@@ -1,10 +1,9 @@
-// RUN-19, after a restart. A runner that went down while the window held its
+// After a restart. A runner that went down while the window held its
 // rows reads the hold back on startup and treats the window it finds the way a
 // running runner treats the window on its next wake.
 //
-// Phase 4 carried this as a residue (BUILD-NOTES, "a runner restarted DURING a
-// window hold"): the hold was a flag in the agent loop's memory, so a runner
-// that came back up with the window already fine never released anything, and
+// THE HOLD CANNOT BE A FLAG IN THE AGENT LOOP'S MEMORY: a runner
+// that comes back up with the window already fine then releases nothing, and
 // its rows sat on a `retry_at` an hour out because nothing but the transition
 // out of the hold clears it.
 //

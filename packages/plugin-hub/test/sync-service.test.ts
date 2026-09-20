@@ -1,4 +1,4 @@
-// D-180. Cross-platform rendering and fake schedule activation, no native units.
+// Cross-platform rendering and fake schedule activation, no native units.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
@@ -36,7 +36,7 @@ for (const flavour of ["systemd", "launchd"] as const) {
       const expected = [process.execPath, "run", ctx.entryScript, f.registryFile, f.id]
       const exact = (files: ReturnType<typeof probe.os.render>) => expect(scheduledArgv(files, flavour)).toEqual(expected)
       exact(probe.os.render(f.entry(), ctx))
-      // ROLL-17 Forbidden: same renderer and registry, only program is defective.
+      // Forbidden: same renderer and registry, only the program is defective.
       expect(() => exact(probe.os.render(f.entry(), { ...ctx, entryScript: hubPath("src/entry/hub.ts") }))).toThrow()
       const { programForKind } = await seam("src/hub/program.ts")
       const files = probe.os.render(f.entry(), { ...ctx, entryScript: (programForKind as Function)("sync") })

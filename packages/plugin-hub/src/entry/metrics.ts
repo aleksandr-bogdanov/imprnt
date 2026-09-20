@@ -1,12 +1,12 @@
 // The metrics table, as a command a household runs.
 //
-// D-134. Argv is the registry file and nothing else, which is "what to do and
-// to whom" and is what RUN-07 permits. Nothing is read from the environment and
-// no argv value switches behaviour.
+// Argv is the registry file and nothing else, which is "what to do and
+// to whom" and is all an entry point may take. Nothing is read from the
+// environment and no argv value switches behaviour.
 //
-// MSG-09's board proper is phase 7. What this phase ships is the DATA and the
-// smallest honest display, and phase 7's board is this same implementation's
-// second front end rather than a second copy of it.
+// What ships here is the DATA and the smallest honest display of it. A richer
+// front end belongs on top of this same reader rather than beside it as a
+// second copy.
 //
 // Usage: bun run src/entry/metrics.ts <registryFile>
 

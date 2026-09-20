@@ -53,7 +53,7 @@ test("ROLL-25 cause other remains local with zero notices to the other person", 
   }
 })
 
-// D-177 names classifyRefusal, but leaves its argument spelling to the build.
+// `classifyRefusal` is named, but its argument spelling is the build's own.
 // These checks propose one evidence object and assert the resulting scope.
 for (const scenario of [
   { name: "other", refusal: { cause: "other", said: "local policy" }, evidence: null, scope: "local" },

@@ -7,7 +7,7 @@ import type { StoreLike } from "../store/connect.ts";
 import { findingId, type Finding } from "./finding.ts";
 
 /**
- * D-173, D-183. The two ways an agent goes silent at the door, which no inbound
+ * The two ways an agent goes silent at the door, which no inbound
  * row can show because a refused message never becomes one.
  *
  * One impure reader and pure functions, the shape `readHarvestState` and
@@ -74,7 +74,7 @@ export function deniedSenderFindings(args: {
 
 /**
  * An agent whose person lists no sender for its door answers nobody, because
- * a missing or empty allowlist refuses everyone (D-171). Pure.
+ * a missing or empty allowlist refuses everyone. Pure.
  */
 export function allowlistFindings(args: {
   agents: AgentEntry[];

@@ -1,7 +1,7 @@
-// 03b item 2. The install script: Postgres the standard way, the schema, and
-// the `[store]` section written ONCE. (SPEC §1 and §6, RUN-07, RUN-14, L4)
+// The install script: Postgres the standard way, the schema, and
+// the `[store]` section written ONCE. (SPEC §1 and §6, L4)
 //
-// BUILD-NOTES 9's other half. A household installs Postgres from its own
+// A household installs Postgres from its own
 // package manager, so the hub cannot install it as a side effect of running,
 // and nothing in v3 has ever written down how a box gets one. `src/entry/install.ts`
 // is that step, run by hand once per machine: it detects the OS, installs
@@ -12,7 +12,7 @@
 // WHAT THIS CHECK WILL NOT DO IS INSTALL POSTGRES. A check that ran
 // `brew install` or `apt-get install` would change the box it is run on, which
 // is the one thing every rule in this phase is about. So the two halves are:
-// WHAT THIS FILE CANNOT EXERCISE, stated once (VERIFY-CODEX row 2). Both real
+// WHAT THIS FILE CANNOT EXERCISE, stated once. Both real
 // runs below start from a scratch cluster that ANSWERS, so the absent-server
 // branch of `src/entry/install.ts` (the one that runs the package manager and,
 // on macOS, the service command) is never entered here and cannot be. Entering
@@ -20,16 +20,15 @@
 // have one: that is the whole reason the hub can be checked against a real
 // store at all. The dry run is what binds that branch's WORDS on this
 // platform, `pg_lsclusters` and the manager census either side bind that it
-// changed nothing, and BUILD-NOTES 27 records the same limit for the Linux
-// half. A check that claimed otherwise would be claiming a measurement nobody
-// made.
+// changed nothing, and the Linux half carries the same limit. A check that
+// claimed otherwise would be claiming a measurement nobody made.
 //
 // `--dry`, which prints this platform's commands and touches nothing, and a
 // real run against the THROWAWAY cluster, where Postgres already answers and
 // the install step is the one thing the script must decide not to do. The apt
-// half proper is Linux plus `sudo -n` and is the build round's, on the box.
+// half proper is Linux plus `sudo -n`, on a Linux box.
 //
-// RUN-07: `--dry` is an action modifier and not a behaviour switch. It says
+// `--dry` is an action modifier and not a behaviour switch. It says
 // "tell me what you would do" about the same work, which is the same shape as
 // the verb itself, and nothing in the script reads the environment.
 //
@@ -171,7 +170,7 @@ test(
       expect(said).toContain(".pid");
     }
     // --- IT NAMES THE SERVICE COMMAND, whether or not this run would reach
-    //     for it (03b-DEBTS item 2's dated note, VERIFY-CODEX row 2). Starting
+    // for it. Starting
     //     Postgres's OWN service through the package manager is part of the
     //     standard install and is allowed; what is not allowed is doing it
     //     without saying so. This box already has a server, so the real run
@@ -206,7 +205,7 @@ test(
     //     real run is for.
     expect(readFileSync(registryFile, "utf8")).not.toContain("[store]");
 
-    // --- RUN-07's own shape: no registry, no run.
+    // --- The entry point's own shape: no registry, no run.
     const bare = await runInstall([]);
     expect(bare.code).not.toBe(0);
     expect(`${bare.out}${bare.err}`).toContain("usage");
@@ -222,7 +221,7 @@ test(
     const machine = thisMachine();
     const dir = await scratchDir("hub-install-real-");
     const database = `hub_installed_${crypto.randomUUID().slice(0, 8).replace(/-/g, "")}`;
-    // D-36's userless url, which is what the file carries. The script supplies
+    // The userless url, which is what the file carries. The script supplies
     // its own identity, which on a real box is the local administrator; here
     // the throwaway cluster is given a superuser of this account's own name so
     // a userless connection lands the same way it does on a real box.
@@ -258,7 +257,7 @@ test(
     const unitsBefore = gate.ok ? (await fixture.listWatched()).sort() : [];
 
     // THE APT HALF, Linux and `sudo -n` only, and a visible line when it has
-    // neither. The whole point of this round is that no check installs a
+    // neither. The whole point is that no check installs a
     // package, so what is asserted here is that the script DID NOT need to:
     // Postgres already answers on the url the registry names.
     if (process.platform !== "linux") {

@@ -1,4 +1,4 @@
-// Test infrastructure: the stage plan 05-03's six checks share.
+// Test infrastructure: the stage the harvest checks share.
 //
 // Three lines of staging with one non-obvious rule in each, written once here
 // rather than repeated in three files.
@@ -13,8 +13,8 @@
 //      test's own oracle over the five fields computes two different sixteen
 //      character ids and check 14's assertion is not satisfiable by accident.
 //
-// THE PERSON'S VAULT LIES INSIDE THEIR TREE (D-139), or the loader refuses the
-// file once the build round lands and every check in the plan would be red on a
+// THE PERSON'S VAULT LIES INSIDE THEIR TREE, or the loader refuses the
+// file, and every check that uses it would be red on a
 // fixture rather than on the behaviour it names. So the tree is a scratch
 // directory of this stage's own and the vault is the project `imprnt init`
 // scaffolded under it.
@@ -166,7 +166,7 @@ export interface ChatLine {
  * Plant one line into this stage's chat log, exactly as the door appends one.
  *
  * Four checks wrote this out and the four copies were byte-identical, which is
- * four places for the log's own shape to drift. The shape is phase 2's and is
+ * four places for the log's own shape to drift. The shape is the and is
  * pinned by `chatLogFile`: one dated file per agent, one JSON object per line,
  * dated by the LINE's own time in UTC.
  */

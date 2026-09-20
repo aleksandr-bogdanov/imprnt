@@ -1,4 +1,4 @@
-// D-173 protects HARV-03's acceptance path used by ROLL-03. No new clock gate.
+// The acceptance path is protected, and no new clock gate is added.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"

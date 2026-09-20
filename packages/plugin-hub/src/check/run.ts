@@ -51,7 +51,7 @@ export { findingId } from "./finding.ts";
  * `check` compares what runs with what the registry lists, and REPORTS the
  * difference rather than acting on it.
  *
- * D-90 makes it a state sheet: one row per finding id, edited in place, and a
+ * The findings are a state sheet: one row per finding id, edited in place, and a
  * finding that no longer applies leaves no line behind. The ids are
  * machine-scoped, because two machines write into one store and a run on one of
  * them removes only the rows under its own prefix.
@@ -64,7 +64,7 @@ export { findingId } from "./finding.ts";
  */
 export const CHECK_SHEET = "check";
 
-/** D-103. Two restarts, read from the counter and never from the running flag. */
+/** Two restarts, read from the counter and never from the running flag. */
 const CRASH_LOOP_RESTARTS = 2;
 
 function setting(registry: unknown, key: string, fallback: number): number {
@@ -100,7 +100,7 @@ async function newestWork(store: StoreLike): Promise<Map<string, string>> {
 
 /**
  * Every runner's newest `connected` line, and the identifier of the store this
- * run is reading (03b item 4).
+ * run is reading.
  *
  * The identifier is `initdb`'s own, generated per cluster, so a line carrying
  * one that is not this store's was written against some other cluster and the
@@ -181,7 +181,7 @@ function fieldOf(detail: string | null, field: string): string {
  * ones: read as `hub_hub`, every runner's row comes back with a null
  * backend_type, so a filter on it would hide exactly the rows this is looking
  * for and report a whole household of runners silent. `application_name`
- * survives the masking, which is why D-85 can derive silence from it at all.
+ * survives the masking, which is what makes silence derivable at all.
  * A database-scoped row with a name of its own is a client by construction:
  * the server's own background processes carry no database and no name.
  */
@@ -203,7 +203,7 @@ export async function runCheck(options: {
   os?: OsSeam | null;
   kernel?: KernelView | null;
   /**
-   * D-131. How a credential is opened, in the style of `os` and `kernel`. The
+   * How a credential is opened, in the style of `os` and `kernel`. The
    * default is the real reader, so a household that hands nothing still has
    * every credential OPENED rather than merely listed: "presence is not
    * health" is the whole of L10 rule 2.
@@ -257,7 +257,7 @@ export async function runCheck(options: {
       });
     }
 
-    // REVIEW S6. A unit FILE under the hub's own prefix that no registry entry
+    // A unit FILE under the hub's own prefix that no registry entry
     // declares. `remove` disables, then deletes the files, then stops, so a hub
     // that dies between the disable and the delete leaves a file that is
     // enabled nowhere and that the manager may no longer list, and `seenUnits`
@@ -282,7 +282,7 @@ export async function runCheck(options: {
       });
     }
 
-    // D-103. The counter is the one reading that means the same thing on both
+    // The counter is the one reading that means the same thing on both
     // flavours: at the moment the finding fires launchd is still bouncing the
     // job while systemd has parked it in `failed`, so a rule that read the
     // running flag would answer opposite on the two for the same illness.
@@ -310,11 +310,11 @@ export async function runCheck(options: {
       });
     }
     // The unit rows by name, so a finding can quote the state the manager
-    // reported for the very unit it names (03b row 3).
+    // reported for the very unit it names.
     const byName = new Map(found.map((unit) => [unit.name, unit]));
     for (const [id, seen] of worst) {
       if (seen.restarts < CRASH_LOOP_RESTARTS) continue;
-      // WHAT THE MANAGER SAYS IT IS, beside the count (03b item 3, row 3). A
+      // WHAT THE MANAGER SAYS IT IS, beside the count. A
       // count alone reads the same for a unit the manager is still patiently
       // restarting and for one it has given up on and parked, and those two
       // need different things done to them: the second does not come back from
@@ -326,7 +326,7 @@ export async function runCheck(options: {
       // which is where the limiter's own evidence lands when it lands
       // (`start-limit-hit`); on this systemd it usually does not, because the
       // manager keeps a unit's FIRST failure result and the limiter's later
-      // refusal does not overwrite it (BUILD-NOTES A.6).
+      // refusal does not overwrite it.
       const said = byName.get(seen.unit) ?? null;
       const state =
         said?.state == null
@@ -344,7 +344,7 @@ export async function runCheck(options: {
         says: `${id} has been started again ${seen.restarts} times, so it is dying in a loop rather than running, ${state}${result}`,
         // The state a parked unit is really in is what has to be cleared, and
         // the command that clears it belongs to the seam that knows the
-        // flavour (03b items 3 and 7).
+        // flavour.
         fix: resetCommand(os.flavour, seen.unit),
       });
     }
@@ -375,24 +375,23 @@ export async function runCheck(options: {
   }
 
   // --- an agent that cannot be boxed, because the tree is the boundary -----
-  //     (03b item 1, D-92, D-93). A finding and never a refusal: whether a
+  //     A finding and never a refusal: whether a
   //     person has a tree is a question about a machine and not about the file,
-  //     so the registry loads. Since D-176 the launch takes the box as an input
+  //     so the registry loads. The launch takes the box as an input
   //     and refuses one with no tree before any child exists, for a turn and
   //     for a harvest alike, and the runner retries that refusal for ever. So
   //     the agent never starts and never answers, and the sentence says that
-  //     rather than naming a fence that no longer has anything inside it.
+  //     rather than naming a fence with nothing inside it.
   const ownRunners = new Set(
     entries.filter((entry) => entry.kind === "runner").map((entry) => entry.id),
   );
   for (const agent of listAgents(registry)) {
     if (!ownRunners.has(agent.runner)) continue;
     const person = personOf(registry, agent.id);
-    // A DECLARED PERSON WITH NO TREE AND NO PERSON AT ALL ARE THE SAME FINDING
-    // (03b-DEBTS:19, VERIFY-CODEX row 1). Entry 1 of these build notes shipped
-    // the narrow reading, where a file carrying no `[[people]]` table was
-    // silent, on the argument that half the fixtures would otherwise carry a
-    // row. That is an argument about the fixtures. What `check` is being asked
+    // A DECLARED PERSON WITH NO TREE AND NO PERSON AT ALL ARE THE SAME
+    // FINDING. The narrow reading, where a file carrying no `[[people]]` table
+    // is silent, rests on the argument that half the fixtures would otherwise
+    // carry a row. That is an argument about the fixtures. What `check` is being asked
     // is whether this machine's agents can run inside a box, and the answer for
     // an agent whose person the file never mentions is no, exactly as loudly as
     // for one whose entry omits the field: the box context carries an empty
@@ -414,12 +413,12 @@ export async function runCheck(options: {
     });
   }
 
-  // --- every runner reached the ONE store (03b item 4, D5) ----------------
+  // --- every runner reached the ONE store (D5) ----------------------------
   //
   // A RUNNER THAT NAMED NO SERVER IS A FINDING TOO, and it is the same one. An
-  // empty identifier used to be skipped without a word, which made a runner
+  // empty identifier is never skipped in silence: that would make a runner
   // that could not read the server's identity indistinguishable from one that
-  // read it and found it right, so `store-split` could never fire for that
+  // read it and found it right, and `store-split` could never fire for that
   // runner however wrong its store was. The finding kind is not split in two,
   // because the question a household is asking is the same in both cases and
   // the answer to it is the same line in the file. What changes is the reason
@@ -487,7 +486,7 @@ export async function runCheck(options: {
   }
 
   // --- every chat whose slice has outlived a quiet period plus a day, and ---
-  //     every person who has chosen no harvester at all (criterion 1, D-160).
+  // every person who has chosen no harvester at all (criterion 1).
   //
   //     THE MACHINE IS THE AGENT'S RUNNER'S, which is the `mine` set above, so
   //     two machines running `check` do not both report one chat or one person.
@@ -513,7 +512,7 @@ export async function runCheck(options: {
   }
 
   // --- check OPENS every credential and asks whether it still works --------
-  //     (criterion 8, RUN-17, L10 rule 2). The incident behind it: a login
+  //     (L10 rule 2). The incident behind it: a login
   //     died, thirteen turns failed over 31 hours, and `check` was green
   //     throughout because it never opened the file.
   const prober = options.credentials ?? realProber();
@@ -554,7 +553,7 @@ export async function runCheck(options: {
   );
 
   // --- a plan preset that names no credential is REPORTED, never refused ---
-  //     (D-111). A household that has not written the table yet still runs and
+  //     A household that has not written the table yet still runs and
   //     is told, loudly, because nothing can open what the file does not name.
   const usedHere = new Set(mine.map((agent) => agent.preset));
   for (const [name, preset] of Object.entries(registry.presets)) {
@@ -614,7 +613,7 @@ export async function runCheck(options: {
     for (const preset of presets) {
       try { await checkLoopSource(registry, preset, options.loopProbe); }
       catch (error) {
-        // IMP-162. A CLI that did not answer is a timeout, and the operator is
+        // A CLI that did not answer is a timeout, and the operator is
         // told so. "Unsupported" would send them after a login source that is
         // sound, when what needs looking at is a CLI that hangs.
         if ((error as Error)?.name === "LoopProbeTimeout") {
@@ -670,7 +669,7 @@ export async function runCheck(options: {
       says: findingLine("en", { code: row.data.code, target, cause: accepting ? (row.data.detail ?? row.data.cause) : row.data.cause }),
       fix: accepting ? acceptRepair("en", { target }) : `imprnt hub recover <registry> door:${row.data.door}` });
   }
-  // --- a refused sender, and an agent that refuses everyone (D-173, D-183) --
+  // --- a refused sender, and an agent that refuses everyone --
   //     A refused message never becomes an inbound row, so no stamp finding
   //     can see it. The door records each refused sender on the sheet this
   //     reads, and the allowlist itself is read off the file. The refusal is

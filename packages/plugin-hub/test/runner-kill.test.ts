@@ -1,4 +1,4 @@
-// MSG-02. The settle is one transaction, probed by killing the runner inside it.
+// The settle is one transaction, probed by killing the runner inside it.
 //
 // SPEC §2: "The turn ends, the runner writes every outbox chunk and settles the
 // inbound row in one transaction." Its Check line: "Kill the runner between
@@ -15,14 +15,14 @@
 //                 written. A settle that is one transaction still leaves zero
 //                 chunks, because the transaction dies with the process.
 //
-// The second is the one the second seat's two-transaction escape needs: a
+// The second is the one the two-transaction escape needs: a
 // runner that commits its chunks in transaction A and settles in transaction B
 // passes the outbox staging (blocked A rolls back) and fails this one, because
 // A's chunk survives the kill. Its redo then either duplicates the chunk or
 // hits the outbox uniqueness constraint. Either way the assertions below say
 // so, and a one-transaction settle passes both.
 //
-// WHAT MUST BE EXACTLY ONCE, and what may honestly repeat. D-46. A redo after
+// WHAT MUST BE EXACTLY ONCE, and what may honestly repeat. A redo after
 // the kill re-feeds the message, so a second `acked` and a second `started`
 // event are appended, and that is honest: the loop genuinely accepted the
 // message twice and a diary records what happened. What the settle transaction
@@ -156,7 +156,7 @@ test(
       expect(afterKill.length).toBe(1);
       expect(afterKill[0].claimed_by).toBe(RUNNER);
 
-      // The restart, under the SAME runner id. D-43: a runner treats rows
+      // The restart, under the SAME runner id: a runner treats rows
       // claimed by its own id as its own to redo, because it was not running
       // them, so no lease has to expire and no test-only switch is needed.
       it.scripted.holdTurnEnd(false);

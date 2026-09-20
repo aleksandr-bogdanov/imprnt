@@ -5,7 +5,7 @@ import type { StoreLike } from "./connect.ts";
 /**
  * A chunk the runner settled and the door has not delivered yet.
  *
- * D-113. Two things come through here now. A `reply` is half of an answer and
+ * Two things come through here now. A `reply` is half of an answer and
  * hangs on the message it answers. A `notice` is one line about a
  * household-wide cause and hangs on nothing, so it carries its own person and
  * agent and its `inbound_id` is null.
@@ -48,13 +48,13 @@ export async function appendChunks(
  * One line about a household-wide cause, written once however many runners
  * write it. False when the key was already there.
  *
- * D-122. The arithmetic is the database's: `outbox.notice_key` is unique, so a
+ * The arithmetic is the database's: `outbox.notice_key` is unique, so a
  * sibling runner on its own connection, a restart and a second turn on the same
  * tick all meet the same index. Nothing here reads before it writes, because a
  * read-then-insert is exactly the check-then-act that two runners defeat.
  *
- * `seq_in_reply` is 1 on every notice. THE CONTRACT IS SILENT ON IT (BUILD-NOTES
- * 2): the column is `not null` and `unique (inbound_id, seq_in_reply)` is inert
+ * `seq_in_reply` is 1 on every notice. THE CONTRACT IS SILENT ON IT: the column
+ * is `not null` and `unique (inbound_id, seq_in_reply)` is inert
  * for a notice, because NULLs are distinct in a unique index, so a constant is
  * both legal and carries no meaning a reader could be misled by.
  */
@@ -84,7 +84,7 @@ export async function appendNotice(
  * so a chunk sitting there is half of a reply and posting it is the send before
  * the settle that L1 step 6 forbids.
  *
- * D-113. THAT SUPPRESSION IS A REPLY'S, and it is gated on the kind for that
+ * THAT SUPPRESSION IS A REPLY'S, and it is gated on the kind for that
  * reason: it is L1 step 6 about half of a reply, and a notice is not half of
  * anything. The join is a LEFT one so a notice reaches the door at all, and the
  * person and the agent come off the outbox row when there is no message to read

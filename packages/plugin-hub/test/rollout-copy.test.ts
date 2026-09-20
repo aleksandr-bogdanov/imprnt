@@ -1,4 +1,4 @@
-// D-183 pins whole templates here. Later plans extend this same file.
+// Whole templates are pinned here, because a human reads them.
 import { expect, test } from "bun:test"
 import { seam } from "./helpers/cluster.ts"
 
@@ -142,7 +142,7 @@ for (const [key, en, ru] of templates) {
   }
 }
 
-// D-181b. One pinned whole sentence per migration command, since each reads a different manifest.
+// One pinned whole sentence per migration command, since each reads a different manifest.
 for (const [requirement, script, en, ru] of [
   ["ROLL-02", "convert-v2-chatlog",
     "usage: bun run scripts/convert-v2-chatlog.ts <manifest>, one absolute path to the private version 1 chat log manifest.",

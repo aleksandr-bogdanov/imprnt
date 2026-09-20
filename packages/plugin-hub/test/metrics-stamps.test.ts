@@ -1,10 +1,10 @@
-// MSG-07 and MSG-09. The five metrics of L6's own table, derived from the five
+// The five metrics of L6's own table, derived from the five
 // stamps, with p50, p99 and a count, per person and per agent, over today and
 // over this week, and one command that prints the table.
 //
 // SPEC §2 and L6: "The board shows per person p50 and p99 of every metric over
-// today, this week, and per agent." MSG-09's board proper is phase 7, so this
-// phase ships the DATA plus the smallest honest display: a command that prints
+// today, this week, and per agent." What ships here is the DATA plus the
+// smallest honest display: a command that prints
 // the table as text, and no web page, no HTTP server and no chart.
 //
 // EVERY PERCENTILE IS ASSERTED EXACTLY, against a value the test computes
@@ -16,8 +16,8 @@
 // THE ROW SHAPE IS PINNED HERE, because the seam contract names `MetricsRow`
 // and `Measure` without their fields: a scope, an id, a window and one
 // `Measure` per metric id, each carrying `count`, `p50_ms` and `p99_ms`. A
-// build that names them differently fails on the shape, which is stated in
-// RED-RUN-1.md as this check's own pinning rather than a contract's.
+// build that names them differently fails on the shape, which is this check's
+// own pinning rather than a contract's.
 //
 // Red reason for both: import missing, `src/metrics/stamps.ts` for the first
 // and `src/entry/metrics.ts` for the second.
@@ -405,7 +405,7 @@ test(
       const rows = (await (readStampMetrics as Function)(store, { now })) as MetricsRow[];
       const text = String((renderMetrics as Function)(rows));
 
-      // --- THE TABLE IS READ AS A TABLE (the second pass's finding: a
+      // --- THE TABLE IS READ AS A TABLE (a
       //     substring search let a count hide inside a percentile's digits,
       //     and a row was selected without its window). Each line is split
       //     into CELLS on two or more spaces, a tab or a pipe, so a renderer
@@ -418,7 +418,7 @@ test(
           .split(/\s{2,}|\t|\|/)
           .map((cell) => cell.trim())
           .filter((cell) => cell !== "");
-      // THE ID IS MATCHED AS A CELL, not as a substring (BUILD-NOTES 22). A
+      // THE ID IS MATCHED AS A CELL, not as a substring. A
       // person's id is a PREFIX of their agents' (`p1` and `p1-lair`), so a
       // line naming the agent also contains the person's id and a substring
       // filter finds three lines for `p1` where the check needs one. No
@@ -450,8 +450,8 @@ test(
           const cells = lineFor(row, metric);
           if (one.count === 0) {
             // NOTHING MEASURED PRINTS THE MARKER, never a zero, because a zero
-            // in a table a human reads is a claim. 04-CONTEXT pins the marker
-            // as the literal `-`.
+            // in a table a human reads is a claim. The marker is
+            // the literal `-`.
             expect(cells).toContain("-");
             expect(cells.includes("0")).toBe(false);
             continue;
@@ -477,7 +477,7 @@ test(
         expect(lineFor(silent, Object.keys(silent.measures)[0])).toContain("-");
       }
 
-      // --- the entry point, as a PROCESS, with the three RUN-07 assertions
+      // --- the entry point, as a PROCESS, with the three assertions
       //     every entry carries.
       const run = async (argv: string[], env: Record<string, string> = {}) => {
         const proc = Bun.spawn([process.execPath, "run", entry, ...argv], {
@@ -498,8 +498,8 @@ test(
       expect(plain.stdout.length).toBeGreaterThan(0);
       // WHAT THE COMMAND PRINTS IS WHAT THE RENDERER RENDERS (the second
       // seat's finding: a separate command printing a constant passed every
-      // assertion here). One implementation, and phase 7's board is its second
-      // front end rather than a second copy, which is the whole of D-134.
+      // assertion here). One implementation, and a richer board would be its
+      // second front end rather than a second copy.
       expect(plain.stdout.trim()).toBe(text.trim());
 
       // No argument: a usage line naming the entry, and a non-zero exit.

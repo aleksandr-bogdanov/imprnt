@@ -2,12 +2,12 @@
 //
 // The routine-operations smoke asserts that a process id did not change, and a
 // process id is a fact about a PROCESS, not about a handle in the test's own
-// runtime. That is the reason phase 2 gave for the door and the runner, and it
+// runtime. That is the reason the door and the runner have one, and it
 // is why this file exists rather than a `runHub` call inside a check.
 //
 // It calls the production `runHub` and defines no hub of its own.
 //
-// D-77: the machine is "to whom", taken from argv, never a setting and never
+// The machine is "to whom", taken from argv, never a setting and never
 // read from the environment. `runHub` refuses a machine whose declared `os` is
 // not the platform it is running on, so a check declares its `[[machines]]`
 // entry through `thisMachine()`.
@@ -17,7 +17,7 @@
 // seam pointed at the directory `test/helpers/units.ts` will clean up. Without
 // it a check on a Mac would write plists into the owner's own
 // `~/Library/LaunchAgents` and leave them there. On linux the fixture's
-// directory IS the manager's search path, so nothing changes (D-95).
+// directory IS the manager's search path, so nothing changes.
 //
 // Usage: bun run test/helpers/hub-subprocess.ts <registryFile> <machine> [unitDir]
 

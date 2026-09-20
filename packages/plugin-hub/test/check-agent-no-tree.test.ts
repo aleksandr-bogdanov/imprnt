@@ -1,8 +1,8 @@
-// D-176, D-92, D-93. An agent whose person has no tree cannot start, and
+// An agent whose person has no tree cannot start, and
 // `check` says so.
 //
-// Before 6a an agent with no tree ran without a box, and `agent-unboxed` said
-// "runs unboxed". D-176 made the production launch take the box as an input:
+// An agent with no tree must NOT run without a box, and `agent-unboxed` must
+// not say "runs unboxed". The production launch takes the box as an input:
 // `makeLoopLaunch` refuses a launch with no tree before any child exists, the
 // runner records the refusal as a retry and tries again for ever, and the
 // harvest goes through the same launch. So the agent never answers anyone, and

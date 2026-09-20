@@ -1,4 +1,4 @@
-// IMP-158, the other half of check (c): with the hub roles off trust, every
+// The other half of check (c): with the hub roles off trust, every
 // hub process logs in with its own role's password file, and nothing else can.
 //
 // The install writes `<role>.password` into the secrets directory

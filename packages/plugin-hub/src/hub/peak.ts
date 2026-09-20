@@ -6,8 +6,8 @@ import type { StoreLike } from "../store/connect.ts";
 
 /**
  * Every long-running program the household ships has a known memory peak,
- * measured once and written down (L4). D-84 makes that a state sheet: one row
- * per id, edited in place, with Postgres under a fixed id because the household
+ * measured once and written down (L4), and that record is a state sheet: one
+ * row per id, edited in place, with Postgres under a fixed id because the household
  * installs it from its own package manager and it is not a registry entry.
  *
  * THE PEAK NEVER FALLS, and it is accumulated HERE rather than inside the
@@ -74,10 +74,10 @@ export function residentIds(registry: unknown, machine: string): string[] {
 /**
  * The store's own pid, read from the file the standard install writes.
  *
- * BUILD-NOTES 9's residue. Phase 3 asked the store for `pg_backend_pid()`, read
- * that backend's parent and believed it when the parent's command name held
- * `postgres`. It works, and it is a guess about process trees that is only true
- * when the store happens to sit on this machine. MEASURED on both boxes: every
+ * NEVER DERIVED FROM A BACKEND. Asking the store for `pg_backend_pid()`,
+ * reading that backend's parent and believing it when the parent's command name
+ * holds `postgres` works, and it is a guess about process trees that is only
+ * true when the store happens to sit on this machine. MEASURED on both boxes: every
  * standard install writes a pid file whose FIRST LINE is the postmaster's pid
  * (`/var/run/postgresql/<n>-main.pid` on Debian, `postmaster.pid` inside the
  * data directory under Homebrew), so the household declares that file in

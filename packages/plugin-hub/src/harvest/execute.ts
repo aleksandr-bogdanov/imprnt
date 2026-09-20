@@ -53,7 +53,7 @@ export async function executeHarvest(args: {
   const settings = harvestFor(registry, agent.person);
   const every = Number(readSetting(registry, "runner.task_retry_seconds"));
   /**
-   * D-156. Every way a harvest ends badly, in one place.
+   * Every way a harvest ends badly, in one place.
    *
    * The row goes back on its own recorded retry with a diary line that says
    * `refused.harvest` and not `refused.outage`, so a household reading its
@@ -124,7 +124,7 @@ export async function executeHarvest(args: {
     harvest: what.harvest,
   });
 
-  // D-137. This person's chats are not harvested any more, and a row
+  // This person's chats are not harvested any more, and a row
   // written before the setting was taken out would otherwise sit there for
   // ever. It is settled with nothing harvested rather than refused: there
   // is nothing to retry.
@@ -147,7 +147,7 @@ export async function executeHarvest(args: {
     return;
   }
 
-  // D-150. A VAULT ROOT THAT IS NOT ON THIS MACHINE REFUSES BEFORE ANY
+  // A VAULT ROOT THAT IS NOT ON THIS MACHINE REFUSES BEFORE ANY
   // SESSION STARTS. `boxFor`'s own shape for a tree that is not here is
   // `cwd: undefined`, and copying it would start a loop with no cwd, have
   // it read nothing, and then die on the CLI's `no vault at <dir>` after
@@ -161,7 +161,7 @@ export async function executeHarvest(args: {
   const harvester = getPreset(registry, settings.harvester);
   const language = languageOf(registry, agent.person) as Language;
   /**
-   * D-159. Whether a line is owed for this harvest at all.
+   * Whether a line is owed for this harvest at all.
    *
    * A demand ALWAYS answers, whatever the setting says, and that is the
    * ruling's own sentence: a person who typed a phrase at the machinery and
@@ -179,7 +179,7 @@ export async function executeHarvest(args: {
     });
   };
 
-  // D-149. THE SLICE IS COMPUTED FROM THE SHEET AND NEVER FROM THE ROW'S
+  // THE SLICE IS COMPUTED FROM THE SHEET AND NEVER FROM THE ROW'S
   // OWN `from`: the row records what the door believed when it wrote it and
   // the sheet is what a runner has really settled. That is what makes "a
   // slice harvested twice" impossible by arithmetic rather than by a lock:
@@ -209,13 +209,13 @@ export async function executeHarvest(args: {
     staged,
   };
 
-  // D-149. An empty slice costs NO MODEL TURN: no session, no message, and
+  // An empty slice costs NO MODEL TURN: no session, no message, and
   // no watermark, because nothing was harvested. It still writes its `turn`
   // line, or criterion 2's query is vacuously true for the case it exists
   // to cover.
   if (lines.length === 0) {
-    // REVIEW M2. A DEMAND STILL ANSWERS HERE, and this is the branch that
-    // used to return in silence. It is reachable in ordinary use rather
+    // A DEMAND STILL ANSWERS HERE, and this branch must never return in
+    // silence. It is reachable in ordinary use rather
     // than in an edge case: `readSlice` drops every line that IS the
     // phrase, so typing it, letting it file and typing it again with
     // nothing said in between leaves a slice that is empty by
@@ -248,7 +248,7 @@ export async function executeHarvest(args: {
     });
     // The ONLY handler. A harvest writes no stamp between `received` and
     // `answered`, so there is nothing for a receipt or a progress event to
-    // do (D-155).
+    // do.
     session.onTurnEnd((ending) => finish(ending));
     await Promise.race([session.feed({
       id: row.id,
@@ -261,7 +261,7 @@ export async function executeHarvest(args: {
   }
   if (end === "stopped") return;
 
-  // D-156. A harvest turn DOES record the window it reported, under the
+  // A harvest turn DOES record the window it reported, under the
   // HARVESTER's own credential, because on the common household the
   // harvester and the agents share one plan login and that is how the
   // household learns its allowance moved. It writes no window NOTICE, for
@@ -280,7 +280,7 @@ export async function executeHarvest(args: {
     });
   }
 
-  // D-156. A refused harvest turn opens NO outage and writes NO notice.
+  // A refused harvest turn opens NO outage and writes NO notice.
   if (end.refused) {
     await refuse(end.refused.said);
     return;
@@ -315,19 +315,19 @@ export async function executeHarvest(args: {
         await refuse(result.said);
         return;
       }
-      // D-153. A conflict COUNTS AS LANDED: the vault's own contradiction
+      // A conflict COUNTS AS LANDED: the vault's own contradiction
       // workflow recorded it in `_needs-review.md`, nothing about the slice
       // is lost, and re-running the model on the same slice produces the
       // same conflict for ever, so a watermark that stood still would
       // harvest that chat every quiet period until a human intervened.
-      // REVIEW S4. ONLY A PATH THE CLI REALLY NAMED. `classifyApply`
+      // ONLY A PATH THE CLI REALLY NAMED. `classifyApply`
       // answers `note: ""` whenever a marker line carries no token at its
       // own skip index, and an empty entry joined into the report line
       // renders `[door] saved. Notes: .`, a sentence about nothing. It
       // would go into the turn record as an empty string too, which is a
       // note nobody can look up.
       if (result.note === "") continue;
-      // D-153. A conflict COUNTS AS LANDED: the vault's own contradiction
+      // A conflict COUNTS AS LANDED: the vault's own contradiction
       // workflow recorded it in `_needs-review.md`, nothing about the slice
       // is lost, and re-running the model on the same slice produces the
       // same conflict for ever, so a watermark that stood still would
@@ -337,7 +337,7 @@ export async function executeHarvest(args: {
     }
   }
 
-  // D-159. The line back, written BEFORE the settle, so a person reads it
+  // The line back, written BEFORE the settle, so a person reads it
   // and then the next answers. It is keyed on the harvest ROW, so a second
   // attempt at one harvest meets its own key and a second harvest of the
   // same chat gets its own line.
@@ -351,7 +351,7 @@ export async function executeHarvest(args: {
     if (said !== null) await say(said);
   }
 
-  // D-141, D-154. The watermark is the LAST HARVESTED LINE's own time and
+  // The watermark is the LAST HARVESTED LINE's own time and
   // never the row's `until`, and it lands with the settle or not at all.
   await settleHarvest(store, {
     inboundId: row.id,

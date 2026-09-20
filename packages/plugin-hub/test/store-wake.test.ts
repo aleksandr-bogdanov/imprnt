@@ -13,7 +13,7 @@
 // a timer issues something every tick. The count comes from the database and
 // nothing client-side can fake it.
 //
-// The count is of STATEMENTS, not of text. The second seat broke an earlier
+// The count is of STATEMENTS, not of text. A reader broke an earlier
 // text-matching version three ways: a statement split across two lines put
 // `SELECT id` and `FROM inbound` on different lines and counted zero, a poll of
 // a different table counted zero, and a poll of a separate signal table counted
@@ -380,10 +380,10 @@ test(
       sql: unknown;
     };
 
-    // WHY THIS EXISTS. 03b row 6 stopped the runner claiming on a bare timeout,
-    // which is what SPEC §1 asks for, and that turned a waiter with no listener
-    // from "slow" into "deaf forever": the bound was the only thing that could
-    // ever end its wait, and the caller was being told the bound meant nothing
+    // WHY THIS EXISTS. The runner must not claim on a bare timeout,
+    // which is what SPEC §1 asks for, and that turns a waiter with no listener
+    // from "slow" into "deaf forever": the bound is then the only thing that can
+    // ever end its wait, and the caller is told the bound meant nothing
     // happened. MEASURED on this Mac with `listenForWork` made to throw:
     // `test/runner-drain.test.ts` waited out its full minute for a message the
     // door had committed in the first second. On the hub box it showed up as

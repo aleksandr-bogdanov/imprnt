@@ -1,8 +1,8 @@
 /**
- * D-151. The harvester's reply, read by CODE into exactly three answers.
+ * The harvester's reply, read by CODE into exactly three answers.
  *
  * The envelope is what the prompt asks for and what three real runs of the real
- * loop produced byte for byte (05-BRIEF), so it is parsed by two markers and
+ * loop produced byte for byte, so it is parsed by two markers and
  * nothing else. Nothing is salvaged from a half-formed block: that is code
  * guessing at meaning on the write side, which the vault contract itself
  * forbids, and a note the machinery guessed at is a note nobody wrote.
@@ -29,7 +29,7 @@ export type HarvestReply =
  * `nothing` is honoured as a SINGLE WORD, trimmed and case-insensitive, because
  * that is what the probe measured the loop producing and what the prompt asks
  * for. "Nothing is a valid answer" is L19 rule 3's own words: it moves the
- * watermark (D-153), because the slice was read and judged and the filing that
+ * watermark, because the slice was read and judged and the filing that
  * was owed was none.
  *
  * Anything that is neither the word nor one or more well-formed blocks is

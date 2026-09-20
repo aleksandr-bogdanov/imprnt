@@ -5,13 +5,13 @@ import type { StoreLike } from "../store/connect.ts";
  * A restart is the bug (L11), so a restart request is a row somebody can read
  * afterwards rather than a signal nobody can.
  *
- * D-80. The row is `stream = 'restart'`, `kind = 'requested'`, actor `hub`, and
+ * The row is `stream = 'restart'`, `kind = 'requested'`, actor `hub`, and
  * the subject is the entry it is aimed at. The hub reads the ones newer than its
  * own watermark and acts on each exactly once. Two shapes are refused, and a
  * refusal is a row of its own naming both ids: a request whose asker IS its
  * target (L11: the agent carrying the request can never restart itself) and one
- * aimed at the hub's own entry (RUN-10, plus D7's one hub per machine, which
- * cannot restart the thing doing the restarting).
+ * aimed at the hub's own entry (D7's one hub per machine cannot restart the
+ * thing doing the restarting).
  */
 export const RESTART_STREAM = "restart";
 export const REFUSED_RESTART = "refused.restart";

@@ -1,5 +1,5 @@
-// REVIEW S6. A unit file the hub's own removal left behind is a finding.
-// (SPEC §7, L13, D-90)
+// A unit file the hub's own removal left behind is a finding.
+// (SPEC §7, L13)
 //
 // `remove` disables a unit, then deletes its files, then stops it. A hub that
 // dies between the disable and the delete leaves a file under the hub's own
@@ -231,7 +231,7 @@ test(
         expect(acting).toEqual([]);
 
         // --- AND THE ROW IS THE SHEET'S. Standing now, gone once the operator
-        //     has removed the file: a fixed finding leaves no line (D-90).
+        // has removed the file: a fixed finding leaves no line.
         const standing = (await sheet.rows()).map((row) => row.id);
         for (const name of orphanNames) expect(standing).toContain(`${one.machine}/${KIND}:${name}`);
 

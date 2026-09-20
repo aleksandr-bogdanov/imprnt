@@ -1,8 +1,8 @@
 // Test infrastructure: a scripted command-line loop, put in front of the REAL
 // adapter through the production `wrap` hook.
 //
-// D-120. `Adapter.start` already takes `wrap?: (argv: string[]) => string[]`
-// (03b item 1) and `src/adapters/claude-code.ts` spawns whatever comes back, so
+// `Adapter.start` already takes `wrap?: (argv: string[]) => string[]`
+//  and `src/adapters/claude-code.ts` spawns whatever comes back, so
 // a check hands the real adapter a hook that returns a small script emitting
 // the JSON lines MEASURED against the real CLI on 2026-09-16. What is bound is
 // the shipped adapter's own reading of a real wire shape, not a fake loop
@@ -14,7 +14,7 @@
 // would be re-implementing the CLI.
 //
 // The script is run with `process.execPath` and never with the bare word `bun`
-// (03b item 10): a check that spawned whatever the PATH happened to carry would
+// a check that spawned whatever the PATH happened to carry would
 // be measuring the box rather than the loop.
 
 /**

@@ -4,7 +4,7 @@
 // SPEC §1: "Measured on this Pi: 26 MB idle, about 1.3 ms per durable commit,
 // 0.6 KB of write-ahead log per message. Measure again under real traffic: WAL
 // per day, commit latency across checkpoints, the full peak beside the memory
-// workload of section 6." Those numbers were taken once, by hand, in phase 1's
+// workload of section 6." Those numbers were taken once, by hand, in the
 // exploration, and nothing in the package could take them again.
 //
 // IT IS LIVE BECAUSE IT NEEDS REAL TIME AND A REAL CHECKPOINT, not because it
@@ -14,7 +14,7 @@
 // daily.
 //
 // ITS INSERTS ARE NOT A SYNTHETIC TEST MESSAGE. They reach no door, no
-// platform and no person, and MSG-11's forbidden thing is a synthetic message
+// platform and no person. What is forbidden is a synthetic message
 // sent to test the pipe. Said here because a reader will ask.
 //
 // Run it with `bun test --timeout 600000 ./live/store-numbers.test.ts`.
@@ -78,7 +78,7 @@ test(
 
       // A CHECKPOINT REALLY HAPPENED, read from the server's own counter either
       // side of the measurement, and a server that publishes NEITHER counter
-      // FAILS rather than skipping (the second pass's finding: a skip let the
+      // FAILS rather than skipping (a skip let the
       // exact no-measurement implementation through). PostgreSQL 17 moved the
       // counter from pg_stat_bgwriter (checkpoints_req, checkpoints_timed) to
       // pg_stat_checkpointer (num_requested, num_timed), view AND columns, so
@@ -140,7 +140,7 @@ test(
       expect(await checkpoints()).toBeGreaterThan(checkpointsBefore);
 
       // Every reading is a finite number above zero. The VALUES are for the
-      // record beside phase 1's and are not asserted against them: a Mac's
+      // record beside the and are not asserted against them: a Mac's
       // disk is not the hub box's, and pinning one box's number would make
       // this check a thing the other box fails.
       expect(Number.isFinite(numbers.wal_bytes_per_message)).toBe(true);
@@ -150,7 +150,7 @@ test(
       expect(Number.isFinite(numbers.commit_ms_p99)).toBe(true);
       expect(numbers.commit_ms_p99).toBeGreaterThan(0);
       expect(numbers.commit_ms_p99).toBeGreaterThanOrEqual(numbers.commit_ms_p50);
-      // AND BOTH ARE A REAL COMMIT'S TIME. Phase 1 measured about 1.3 ms per
+      // AND BOTH ARE A REAL COMMIT'S TIME. The recorded number is about 1.3 ms per
       // durable commit on the hub box, and a durable commit on any box the hub
       // runs on is milliseconds: a number above a second is not a commit
       // latency, and a constant of 1 that every reading shares is caught by the
@@ -165,7 +165,7 @@ test(
       expect(numbers.peak_bytes === null || numbers.peak_bytes > 0).toBe(true);
       expect(String(numbers.how).length).toBeGreaterThan(0);
 
-      // --- THE WRITE-AHEAD LOG GROWS WITH THE MESSAGES (the second seat's
+      // --- THE WRITE-AHEAD LOG GROWS WITH THE MESSAGES (the
       //     finding: a tool returning zero for none and one for any number
       //     passed every assertion above). Ten times the messages writes about
       //     ten times the log, so the TOTAL has to grow while the PER MESSAGE

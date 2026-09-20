@@ -1,4 +1,4 @@
-// D-177 and D-156. The diary names a refusal for what it is.
+// The diary names a refusal for what it is.
 //
 // `classifyRefusal` splits a refused turn in two. A refusal with verified
 // evidence against the shared credential opens an outage, and one without it is

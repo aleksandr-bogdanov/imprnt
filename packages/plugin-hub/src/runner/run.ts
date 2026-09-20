@@ -75,7 +75,7 @@ export interface RunnerHandle {
 /**
  * One agent this runner is serving right now.
  *
- * The set is reconciled on the tick (D-87), so adding an agent to the registry
+ * The set is reconciled on the tick, so adding an agent to the registry
  * starts its loop and removing one stops it, with no restart and without
  * touching the others. The reconcile is its own loop rather than something
  * inside an agent's, because one that lived inside `runAgent` would never run
@@ -93,7 +93,7 @@ interface Live {
   /**
    * The loop was spawned INSIDE a box, so `session.pid` is the box tool's and
    * the loop is somewhere below it. What the memory watch must read is not the
-   * pid it holds (03b item 1's own regression, REVIEW.md D3).
+   * pid it holds.
    */
   boxed: boolean;
   leaving: boolean;
@@ -114,7 +114,7 @@ interface OpenTurn {
   tail: boolean;
   acked: boolean;
   started: boolean;
-  /** D-124. What the loop has done so far, and when it started doing it. */
+  /** What the loop has done so far, and when it started doing it. */
   actions: number;
   lastAction: string;
   startedAt: string;
@@ -134,7 +134,7 @@ function noticeRoute(registry: Registry, id: string) {
 }
 
 /**
- * D-112. How long a runner waits before it tries a refused credential again.
+ * How long a runner waits before it tries a refused credential again.
  * L10 rule 3's fixed interval, and v2's own was five minutes.
  */
 function retrySeconds(registry: Registry): number {
@@ -142,7 +142,7 @@ function retrySeconds(registry: Registry): number {
   return typeof said === "number" && said > 0 ? said : 300;
 }
 
-/** D-124. The open turn, as the sheet the door reads it off. */
+/** The open turn, as the sheet the door reads it off. */
 function progressOf(open: {
   id: string;
   person: string;
@@ -168,13 +168,13 @@ function progressOf(open: {
   };
 }
 
-/** D-121. The credential this agent's outage is keyed by, from the agent in hand. */
+/** The credential this agent's outage is keyed by, from the agent in hand. */
 function credentialFor(registry: Registry, agent: AgentEntry): string {
   return credentialOfPreset(registry, agent.preset) ?? `preset:${agent.preset}`;
 }
 
 /**
- * D-122. One line per PERSON, and the agent on the row is the FIRST agent of
+ * One line per PERSON, and the agent on the row is the FIRST agent of
  * that person, in registry order, whose preset resolves to this credential.
  *
  * Computed the same way by every runner, so two of them write one row between
@@ -228,8 +228,8 @@ async function waitingPerPerson(
 /**
  * ONE line, at connect, naming the server this runner really reached.
  *
- * D-98's residue: the household's own check that two runners share one store
- * could observe one server and could not rule out a second hidden one, because
+ * The household's own check that two runners share one store
+ * can observe one server and cannot rule out a second hidden one, because
  * `application_name` says who connected and nothing says WHERE. `initdb`
  * generates a `system_identifier` per cluster, so a runner that writes the one
  * it sees has said which cluster it is talking to in a way nothing on the
@@ -238,12 +238,12 @@ async function waitingPerPerson(
  *
  * It is stream `runner` and not `machine`, because `machine` is the hub's and
  * `ledger_event_hub_writes` fences it. It is ONE statement pair at connect,
- * which D-85 already allows and which lands long before any wait window opens,
+ * which lands long before any wait window opens,
  * so a waiting runner still issues nothing at all.
  *
- * A RUNNER THAT COULD NOT READ THE IDENTIFIER SAYS WHY. It used to write an
- * empty one, and an empty identifier is the one value `check` cannot tell from
- * a healthy runner, so a runner pointing at the wrong cluster could go on
+ * A RUNNER THAT COULD NOT READ THE IDENTIFIER SAYS WHY, and never writes an
+ * empty one: an empty identifier is the one value `check` cannot tell from
+ * a healthy runner, so a runner pointing at the wrong cluster would go on
  * saying nothing forever. The reason is written into the line instead, and
  * `check` reports the silence as a finding rather than skipping it. The read is
  * wrapped and the append is not: a runner that cannot write its connect line at
@@ -301,8 +301,8 @@ async function launchFor(registry: Registry, agent: AgentEntry, presetName: stri
 /**
  * Every process under this one, on linux, host pids.
  *
- * THE BOX TOOL IS NOT THE LOOP (REVIEW.md D3, the regression 03b item 1
- * introduced). `bwrap` spawns the command inside a new pid namespace and stays
+ * THE BOX TOOL IS NOT THE LOOP. `bwrap` spawns the command inside a new pid
+ * namespace and stays
  * outside it, so the pid the adapter hands up is the wrapper's, its resident
  * size is a megabyte or two, and a `child_memory_limit_mb` read off it can
  * never trip. The tree is not one level deep either: without `--as-pid-1` the
@@ -394,7 +394,7 @@ export async function runRunner(options: {
   // Connecting is the read that surfaces the rows that waited while this runner
   // was down. The notifications they emitted are long gone, so nothing asks.
   const store: Store = await openStore({
-    // D-85. The runner names itself to the server once, at connect, so a silent
+    // The runner names itself to the server once, at connect, so a silent
     // runner is DERIVED from the server's own view of its clients and no
     // heartbeat is written on any tick.
     url: storeUrlFor(first, "hub_runner", options.runner),
@@ -495,7 +495,7 @@ export async function runRunner(options: {
     let waiter: Waiter | null = null;
     /** This agent stopped claiming because the household's window is used up. */
     let heldByWindow = false;
-    /** RUN-18. One notice per person, and never a second one for the same outage. */
+    /** One notice per person, and never a second one for the same outage. */
     const sayOutage = async (
       registry: Registry,
       credential: string,
@@ -518,7 +518,7 @@ export async function runRunner(options: {
     };
 
     /**
-     * RUN-18. It works again, once per person, carrying that person's own count.
+     * It works again, once per person, carrying that person's own count.
      *
      * THE COUNT IS TAKEN BEFORE THE CLEAR, and the order is what makes N right
      * across two runners. Count, then clear: the runner that wins the clear
@@ -544,7 +544,7 @@ export async function runRunner(options: {
       });
     };
 
-    /** RUN-19. One line per person at the notice threshold, keyed on the reset. */
+    /** One line per person at the notice threshold, keyed on the reset. */
     const sayWindow = async (
       registry: Registry,
       credential: string,
@@ -568,7 +568,7 @@ export async function runRunner(options: {
     };
 
     /**
-     * RUN-19. This agent's unfinished rows wait for the window's own reset.
+     * This agent's unfinished rows wait for the window's own reset.
      *
      * The guard is what keeps it a write that happens once rather than one per
      * wake: a row already waiting for that reset is left alone, and a row that
@@ -585,7 +585,7 @@ export async function runRunner(options: {
     /**
      * The hold is off, so the rows are eligible NOW and not at the old reset.
      * Without this a released household would wait out a reset that has already
-     * stopped meaning anything (04-CONTEXT's harness amendment to D-123).
+     * stopped meaning anything.
      */
     const releaseRows = async (): Promise<void> => {
       await store.sql`update inbound set retry_at = null
@@ -668,7 +668,7 @@ export async function runRunner(options: {
       const thresholds = windowThresholds(about.registry, agent.preset);
       const reading = end.usage.window ?? null;
 
-      // RUN-19. The household's one row, written by whichever turn reported a
+      // The household's one row, written by whichever turn reported a
       // reading, and read by every runner before it claims. A turn that
       // reported nothing leaves it alone: a loop on a per-token key has no
       // window, and a missing report is not a reading of zero.
@@ -701,7 +701,7 @@ export async function runRunner(options: {
         return;
       }
 
-      // RUN-18. A turn the loop refused writes NO chunk and NO stamp. The row
+      // A turn the loop refused writes NO chunk and NO stamp. The row
       // goes back on a recorded retry, the diary says why, and the person is
       // told once about the CAUSE rather than once about every message of
       // theirs that is waiting on it.
@@ -722,7 +722,7 @@ export async function runRunner(options: {
           cause: end.refused.cause,
           said: end.refused.said,
           retryAt,
-          // D-156, D-177. The diary names the refusal for what it is: only a
+          // The diary names the refusal for what it is: only a
           // credential-scoped one opens an outage below, so only that one is
           // written as `refused.outage`. A local one keeps one agent on a
           // retry and nothing else, and a household counting its outages by
@@ -745,7 +745,7 @@ export async function runRunner(options: {
         return;
       }
 
-      // D-124's last write: the totals, before the settle that takes the row
+      // The last write of the open turn: the totals, before the settle that takes the row
       // away, so the door's own line ends with them (L6). It goes in HERE and
       // not beside the settle on purpose: the write commits and announces
       // itself, and everything below it is what gives the door the room to read
@@ -772,7 +772,7 @@ export async function runRunner(options: {
     };
 
     /**
-     * D-148 to D-159. A harvest turn, which touches the agent's own session not
+     * A harvest turn, which touches the agent's own session not
      * at all.
      *
      * It opens a session of its OWN under the harvester's preset, in the
@@ -782,7 +782,7 @@ export async function runRunner(options: {
      * read or written here, so nothing of the agent's turn machinery can see a
      * harvest: no receipt, no progress, no `acked` and no `started` stamp, and
      * therefore no typing, no progress line and no clock line about a row
-     * nobody sent (D-155, and D-143 is its belt and braces).
+     * nobody sent.
      */
     const harvestTurn = (row: EligibleRow, registry: Registry) => executeHarvest({
       store, registry, agent, row, runner: options.runner, stateDir, adapters: options.adapters,
@@ -822,14 +822,14 @@ export async function runRunner(options: {
           open.startedAt = new Date().toISOString();
           write(() => stamp(store, { messageId: open.id, kind: "started", actor: "runner" }));
           // One write at `started`, which is what gives the door a line to post
-          // for a turn that never calls a tool at all (MSG-10's own case).
+          // for a turn that never calls a tool at all.
           open.wroteAt = Date.now();
           write(() => writeProgress(store, progressOf(open)));
         }
         if (event.kind !== "action") return;
         open.actions += 1;
         open.lastAction = event.text;
-        // D-124. THROTTLED BY TIME AND NEVER PER ACTION. A per-action rule
+        // THROTTLED BY TIME AND NEVER PER ACTION. A per-action rule
         // makes the store's write rate, the notification rate and the
         // platform's edit rate a function of how many tools a turn calls, and a
         // turn can call two hundred. Both platforms rate-limit edits. The
@@ -864,12 +864,12 @@ export async function runRunner(options: {
       waiter = await openWorkWaiter(store, { agent: agent.id });
       const initial = loadRegistry(options.registryFile);
       preflight(initial, agent);
-      // RUN-19 AFTER A RESTART. The hold outlives the process that opened it:
+      // THE HOLD AFTER A RESTART. The hold outlives the process that opened it:
       // the rows keep the window's reset as their `retry_at`, and only the way
       // out of the hold clears it. A loop that started with the flag false
       // would find the window already fine, never take that way out, and leave
-      // the rows waiting out a reset that no longer means anything (phase 4's
-      // own residue). The household's open window outage is the hold as the
+      // the rows waiting out a reset that no longer means anything.
+      // The household's open window outage is the hold as the
       // store keeps it, so it is read back ONCE, here, and the first wake below
       // then releases or keeps holding exactly as it would for a loop that had
       // never stopped. An agent on a per-token key has no window and pays no
@@ -893,27 +893,19 @@ export async function runRunner(options: {
       // is up, and this is where that one settles.
       own.settle();
       /**
-       * WHY THIS LOOP STILL ASKS ON ITS BOUND (03b row 6, D-70, and the reason
-       * it is NOT closed).
+       * WHY THIS LOOP STILL ASKS ON ITS BOUND.
        *
        * `docs/SPEC.md:17` says the runner reads its eligible rows on connect
        * and after every turn, wakes itself on a recorded deadline, and never
-       * polls on a timer, and a bare timeout is none of those. This round
-       * gated the claim on the wake reason exactly as that reads, and the hub
-       * box then failed `test/runner-drain.test.ts` in THREE of four full suite
-       * runs while passing it alone every time: a notification the runner has
-       * to hear does not reach it under load there, and with no read on the
-       * bound the row it announced is never claimed at all. The tick was
-       * covering that, which nobody had written down, and taking the cover away
-       * without knowing what is dropping the notification trades a statement a
-       * second for a message a household never gets an answer to.
-       *
-       * So the gate is reverted and the debt is recorded rather than closed.
-       * What ships from that work is the half that stands on its own: the
-       * statement probe that could not see a bound query at all, and a waiter
-       * with no listener answering its caller `notified` instead of `timeout`
-       * (`src/store/wake.ts`), which the door needed too and had no tick
-       * behind it.
+       * polls on a timer, and a bare timeout is none of those. Gating the
+       * claim on the wake reason exactly as that reads makes the hub box fail
+       * `test/runner-drain.test.ts` in THREE of four full suite runs while it
+       * passes alone every time: a notification the runner has to hear does
+       * not reach it under load there, and with no read on the bound the row
+       * it announced is never claimed at all. The tick is the cover for that,
+       * and taking the cover away without knowing what drops the notification
+       * trades a statement a second for a message a household never gets an
+       * answer to.
        */
       while (!stopping && !own.leaving) {
         // Before each turn, because a preset or a rate is a registry edit and
@@ -942,9 +934,9 @@ export async function runRunner(options: {
           ]);
         };
 
-        // RUN-19. THE WINDOW IS READ HERE AND NOWHERE ELSE: beside the claim,
+        // THE WINDOW IS READ HERE AND NOWHERE ELSE: beside the claim,
         // on a wake the runner was already having, and never on a timer of its
-        // own (D-123). An agent on a per-token key has no window and this costs
+        // own. An agent on a per-token key has no window and this costs
         // it no statement at all.
         const credential = credentialFor(registry, agent);
         const thresholds: WindowThresholds | null = windowThresholds(registry, agent.preset);
@@ -1039,7 +1031,7 @@ export async function runRunner(options: {
           await sleep();
           continue;
         }
-        // D-148. THE BRANCH GOES ABOVE THE RESPAWN LINE, and the placement is
+        // THE BRANCH GOES ABOVE THE RESPAWN LINE, and the placement is
         // the contract. A harvest is served by a session of its own, so a build
         // that branched BELOW would kill and respawn the agent's resident
         // session on every harvest, throw away the session L2's whole tail
@@ -1049,7 +1041,7 @@ export async function runRunner(options: {
         claimed = row.id;
         claimedHuman = row.kind !== "harvest";
         if (row.kind === "harvest") {
-          // REVIEW M1. NOTHING A HARVEST DOES LEAVES THIS LOOP. `Bun.spawn`
+          // NOTHING A HARVEST DOES LEAVES THIS LOOP. `Bun.spawn`
           // throws SYNCHRONOUSLY on a command it cannot find (measured, bun
           // 1.3.14: `ENOENT: no such file or directory, posix_spawn '<path>'`),
           // and `hub.imprnt` is optional and falls back to the bare word
@@ -1109,10 +1101,10 @@ export async function runRunner(options: {
         await tx`update inbound set claimed_by = null, claim_deadline = null, retry_at = ${retryAt}::timestamptz
           where agent = ${agent.id} and claimed_by = ${options.runner} and state not in ('answered', 'delivered')`;
         await putRow(inside, "agent_health", agent.id, { status: "retry", cause, retry_at: retryAt });
-        // IMP-160, D-183. The person whose message this child was working on
+        // The person whose message this child was working on
         // hears that it stopped and when it is tried again, once per message,
         // rather than nothing until the answered clock runs out. A harvest
-        // failure tells nobody (D-155, D-156).
+        // failure tells nobody.
         if (claimed && claimedHuman && listAgents(registry).some(one => one.id === agent.id)) {
           const said = noticeRoute(registry, agent.id);
           // A memory kill reaches here as the child's exit. `own.killed` alone
@@ -1178,8 +1170,8 @@ export async function runRunner(options: {
   };
 
   /**
-   * RUN-12. On the tick the runner reads each child's memory and kills the one
-   * over the limit its OWN `[[run]]` entry carries (D-81), with ONE ledger line
+   * On the tick the runner reads each child's memory and kills the one
+   * over the limit its OWN `[[run]]` entry carries, with ONE ledger line
    * naming the child, the reading and the limit, because L4 words that line as
    * "killed the transcriber at 2.1 GB" and a line with only one of the two
    * cannot be read.

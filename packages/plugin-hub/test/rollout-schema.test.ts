@@ -1,4 +1,4 @@
-// D-172. Library migrations, not installer or native service operations.
+// Library migrations, not installer or native service operations.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { startCluster, seam, type Cluster } from "./helpers/cluster.ts"
 import { rolloutDatabase } from "./helpers/rollout-fixtures.ts"

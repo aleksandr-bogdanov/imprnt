@@ -13,7 +13,7 @@ export interface OpenTurnRow {
   /**
    * The runner that holds this row right now, or null.
    *
-   * REVIEW S4. A row a turn was REFUSED on is left at `acked` (D-121a) and is
+   * A row a turn was REFUSED on is left at `acked` and is
    * released onto its `retry_at`, so its state alone cannot tell a turn that is
    * running from one that is waiting out an outage. The door shows typing for
    * the first and must not for the second.
@@ -24,7 +24,7 @@ export interface OpenTurnRow {
 /**
  * The one read that tells a door which of its agent's messages are still open.
  *
- * D-126. `answered` is NOT here, and the branch table is why: a turn opens at
+ * `answered` is NOT here, and the branch table is why: a turn opens at
  * `acked` and ends at `answered`, and from `answered` on the reply is in the
  * outbox and the door's `post` owns it. A row still at `received` is here
  * because a CLOCK is armed on it (nobody has accepted it yet) even though no
@@ -32,7 +32,7 @@ export interface OpenTurnRow {
  * it. One read serves two rules with two different state sets, and a build that
  * treated "open" as one set would get one of them wrong.
  *
- * D-143, as amended in the review round. A ROW A HUMAN IS WAITING ON, AND NEVER
+ * A ROW A HUMAN IS WAITING ON, AND NEVER
  * MACHINERY. Every consumer of this read is about a person's wait: the typing,
  * the progress line and all three clock lines. Without the filter a `harvest`
  * row sits at `received` from the moment the door writes it until the runner
@@ -40,7 +40,7 @@ export interface OpenTurnRow {
  * waiting: the loop has not accepted this message. 45 s so far.` into a
  * person's chat about a row nobody sent.
  *
- * THE SET IS RANK 0 AND NOT `human` ALONE, which is what the review corrected.
+ * THE SET IS RANK 0 AND NOT `human` ALONE.
  * SPEC §2 defines rank 0 in these words: "anything a human is waiting on (a
  * human's message, a report on a job that answers a human's message)". A
  * `report` is a person waiting for an answer as surely as their own message is,

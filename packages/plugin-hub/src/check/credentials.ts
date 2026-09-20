@@ -12,7 +12,7 @@ export type CredentialHealth =
   | { ok: false; kind: "blank" | "expired" | "unreadable" | "refused"; says: string };
 
 /**
- * D-131. The seam `check` opens a credential through, in the style of `os` and
+ * The seam `check` opens a credential through, in the style of `os` and
  * `kernel`: the two bot kinds answer with the platform's own identity call, and
  * no automated check can reach Telegram or Discord.
  */
@@ -22,7 +22,7 @@ export interface CredentialProber {
   secrets(entry: CredentialEntry): Promise<string[]>;
 }
 
-/** D-132. How far into a root the copy scan looks, and how big a file it reads. */
+/** How far into a root the copy scan looks, and how big a file it reads. */
 export const SCAN_MAX_DEPTH = 4;
 export const SCAN_MAX_BYTES = 1_048_576;
 
@@ -36,7 +36,7 @@ type Send = (input: string | URL | Request, init?: RequestInit) => Promise<Respo
 
 /**
  * How long an identity call may take before it is one this household is not
- * getting an answer to (REVIEW S3).
+ * getting an answer to.
  *
  * This runtime's `fetch` has no deadline of its own, and `check` is the one
  * command a household runs to find out what is wrong: a black-holed packet
@@ -127,7 +127,7 @@ function tokenOf(file: string): { token: string } | CredentialHealth {
 }
 
 /**
- * D-131. The real prober: one reader per kind, and the FILE is read before
+ * The real prober: one reader per kind, and the FILE is read before
  * anything is dialled, so a credential that is not there is `unreadable` with
  * no network call at all.
  *
@@ -254,7 +254,7 @@ function filesUnder(root: string, out: string[], depth: number): void {
     let about;
     try {
       // lstat, never stat: a symlink is not followed, so a link out of a root
-      // is not a way around the roots (D-132).
+      // is not a way around the roots.
       about = lstatSync(here);
     } catch {
       continue;
@@ -272,7 +272,7 @@ function filesUnder(root: string, out: string[], depth: number): void {
 }
 
 /**
- * RUN-16. A copy anywhere inside the roots the registry already names is a
+ * A copy anywhere inside the roots the registry already names is a
  * finding, "because the thing that owns the file rewrites it and copies
  * diverge".
  *
@@ -338,7 +338,7 @@ export async function copyFindings(args: {
   return out;
 }
 
-/** D-111. A door's `token_file` is a credential without being an entry. */
+/** A door's `token_file` is a credential without being an entry. */
 export function doorCredential(door: {
   id: string;
   platform: string;

@@ -63,7 +63,7 @@ export async function launchSeam() {
   return (options: Record<string, unknown>) => withAmbient((options.ambientEnv ?? {}) as Record<string, string>, () => make(options))
 }
 
-// D-176 pins the inputs and outputs, not the spelling of the options object.
+// What is pinned is the inputs and outputs, not the spelling of the options object.
 export function launchInput(f: LoopFixture, purpose = "ordinary", generation: string = crypto.randomUUID()) {
   const registry = f.registry()
   const sessionDir = f.session(generation)
@@ -192,7 +192,7 @@ export function capabilityProbe(bin: string, env: Record<string, string | undefi
 }
 
 /**
- * An installed `claude` as the capability probe meets it (D-176, IMP-162).
+ * An installed `claude` as the capability probe meets it.
  *
  * It answers the five calls `probeLoopCapabilities` makes the way the real CLI
  * does: a version, a help text naming the isolation flags, and `auth status

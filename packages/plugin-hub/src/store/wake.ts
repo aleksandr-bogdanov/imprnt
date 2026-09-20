@@ -7,7 +7,7 @@ export type WakeReason = "notified" | "deadline" | "timeout";
 
 export const WORK_CHANNEL = "hub_work";
 export const OUTBOX_CHANNEL = "hub_outbox";
-/** D-114. A turn opened, or the progress of one moved. The payload is the person. */
+/** A turn opened, or the progress of one moved. The payload is the person. */
 export const TURN_CHANNEL = "hub_turn";
 
 export interface EligibleRow {
@@ -382,7 +382,7 @@ export async function openOutboxWaiter(
  * to, so an agent given to another person only hears the end of a turn it
  * carried over if it listens for the earlier person too.
  *
- * D-126. It is a SECOND connection per agent, said plainly here so the cost is a
+ * It is a SECOND connection per agent, said plainly here so the cost is a
  * decision and not a surprise. One waiter listening on two channels was the
  * alternative, and it would change `openWaiter`, which is the one piece three
  * shipped statement-count windows sit on.

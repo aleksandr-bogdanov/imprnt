@@ -1,7 +1,7 @@
-// IMP-162. An agent launch survives a slow login probe.
+// An agent launch survives a slow login probe.
 //
 // Before every child, the launch asked the installed `claude` five questions
-// (`probeLoopCapabilities`, D-176). Measured on the Linux box, `auth status
+// (`probeLoopCapabilities`). Measured on the Linux box, `auth status
 // --json` hung until the 10 s timeout in 4 of 36 traced runs. The probe read the
 // empty answer as a CLI that cannot select a login and refused the launch as
 // `credential-source-unsupported`, so an agent went quiet now and then and the
@@ -95,7 +95,7 @@ test("IMP-162 a launch probes nothing once the login and binary have settled, an
     // reports as it was, so files written seconds ago are never kept.
     await changed("a login and binary written seconds ago")
 
-    // The login replaced atomically, as a refresh or a new login does it (ROLL-13).
+    // The login replaced atomically, as a refresh or a new login does it.
     const inode = lstatSync(f.login).ino
     writeFileSync(f.login + ".next", f.loginBytes("synthetic-replacement-" + crypto.randomUUID()), { mode: 0o600 })
     renameSync(f.login + ".next", f.login)

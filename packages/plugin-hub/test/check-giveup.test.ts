@@ -1,10 +1,9 @@
-// 03b item 3. systemd's OWN give-up state, reached and reported. (SPEC §6, L13,
-// D7, D-96, D-103)
+// systemd's OWN give-up state, reached and reported. (SPEC §6, L13, D7)
 //
-// RED-RUN-2's last open residue, in Codex's words: "`check` is never run against
-// the real systemd's give-up state. Check 23's Linux branch is written and
-// unexecuted." It is written and unexecuted because on the box the whole check
-// failed at the missing OS import before it reached that branch, and because
+// `check` has to be run against the real systemd's give-up state, and a Linux
+// branch that is written and never executed does not do that. It stays
+// unexecuted when the whole check fails at a missing OS import before it
+// reaches the branch, and because
 // check 23's Linux arm waits only for `running === false`, which a unit reaches
 // the moment it is between restarts.
 //
@@ -14,15 +13,14 @@
 // `check` reports about it, carrying the command a human pastes to clear it.
 //
 // `give_up_after` IS THREE, and the choice is recorded because the two readings
-// of it disagree. BUILD-NOTES A.1, measured on the hub box with
+// of it disagree. MEASURED on a Linux box with
 // `StartLimitBurst=3`: `NRestarts` reads 1, 2, then 3, and at 3 the unit is
 // `failed`, which reads as "the limiter allows `StartLimitBurst` restarts".
-// D-103's reasoning says the ceiling is `StartLimitBurst - 1`. Under the first
+// The other reading makes the ceiling `StartLimitBurst - 1`. Under the first
 // reading a burst of 2 reaches 2 restarts and under the second it reaches 1, so
-// a burst of 2 would make D-103's own threshold of two restarts unreachable on
+// a burst of 2 would make a threshold of two restarts unreachable on
 // half the readings. Three is reachable under both, so that is what this sets,
-// and the assertion below is `restarts >= 2` rather than an exact count. The
-// build round measures the ceiling on the box and says which reading is true.
+// and the assertion below is `restarts >= 2` rather than an exact count.
 //
 // Red reasons, one per platform, and the Linux one comes FIRST in the body so
 // that is what a Linux run reports:
@@ -95,7 +93,7 @@ function systemdShow(unit: string, properties: string[]): Map<string, string> {
  * The LIMITER'S OWN EVIDENCE that it parked this unit, which is what item 3 is
  * really after.
  *
- * MEASURED on the hub box (BUILD-NOTES 10): systemd 252 records a unit's
+ * MEASURED on the hub box: systemd 252 records a unit's
  * failure result ONCE, so a unit whose own program exited non-zero keeps
  * `Result=exit-code` forever and `start-limit-hit` is only ever seen on a unit
  * that was still at `success` when the limiter refused it. What IS there on
@@ -136,7 +134,7 @@ test.skipIf(!gate.ok)(
       expect(typeof resetCommand).toBe("function");
       const reset = resetCommand as (flavour: string, unit: string) => string;
       const uid = process.getuid?.() ?? -1;
-      // D-105's rule: the WHOLE string, twice, with two different unit names, so
+      // The WHOLE string, twice, with two different unit names, so
       // a hard-coded answer fails. It is a command a human pastes.
       expect(reset("systemd", "imprnt-hub-one.service")).toBe(
         "systemctl --user reset-failed imprnt-hub-one.service",
@@ -217,7 +215,7 @@ test.skipIf(!gate.ok)(
       await os.start(dyingId);
 
       // --- THE GIVE-UP STATE ITSELF, read from the manager directly. This is
-      //     the branch phase 3 wrote and never executed.
+      //     the branch that was written and never executed.
       await until(
         "systemd parked the unit at its own start limit",
         () =>
@@ -235,7 +233,7 @@ test.skipIf(!gate.ok)(
       // The manager really stopped restarting it, by its own evidence.
       expect(limiterParked(unit)).toBe(true);
       const restarts = Number(parked.get("NRestarts") ?? 0);
-      // D-103's threshold, reachable under either reading of the ceiling.
+      // The threshold, reachable under either reading of the ceiling.
       expect(restarts).toBeGreaterThanOrEqual(2);
       expect(Number(parked.get("ExecMainStatus") ?? -1)).toBe(1);
 
@@ -253,7 +251,7 @@ test.skipIf(!gate.ok)(
       expect(loops[0].subject).toContain(dyingId);
       expect(loops[0].says).toContain(dyingId);
       expect(loops[0].says).toContain(String(restarts));
-      // THE STATE IT IS REALLY IN, beside the count (03b item 3, row 3). A
+      // THE STATE IT IS REALLY IN, beside the count. A
       // count alone reads the same for a unit systemd is still restarting and
       // for one it has parked, and only the second needs the reset the fix
       // below carries: a household reading "started again five times" and
@@ -265,7 +263,7 @@ test.skipIf(!gate.ok)(
       expect(loops[0].says).toContain("failed");
       expect(loops[0].says).toContain("systemd");
       // AND THE LIMITER'S EVIDENCE WHEN THERE IS ANY. `Result` keeps a unit's
-      // FIRST failure result on this systemd (BUILD-NOTES A.6), so what it
+      // FIRST failure result on this systemd, so what it
       // holds here is `exit-code` rather than `start-limit-hit`, and either way
       // the finding quotes whatever the manager reported rather than inventing
       // a verdict of its own.
@@ -275,13 +273,13 @@ test.skipIf(!gate.ok)(
       }
       // THE FIX A PARKED UNIT NEEDS. A unit systemd has given up on does not
       // come back from `start` alone: the failure has to be reset first, and a
-      // fix that does not run is worse than no fix (D-105).
+      // fix that does not run is worse than no fix.
       expect(loops[0].fix).toContain("reset-failed");
       expect(loops[0].fix).toContain(unit);
       expect(loops[0].fix).toBe(`systemctl --user reset-failed ${unit}`);
 
       // The same text, from the seam that owns it, so `check` carries no
-      // manager's name of its own (03b item 7).
+      // manager's name of its own.
       const { resetCommand } = await seam("src/os/diff.ts");
       expect(typeof resetCommand).toBe("function");
       expect((resetCommand as Function)("systemd", unit)).toBe(loops[0].fix);

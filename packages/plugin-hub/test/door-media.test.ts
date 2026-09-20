@@ -1,4 +1,4 @@
-// ROLL-01, D-166. Wire normalization, saved files and full door/runner effects.
+// Wire normalization, saved files and full door/runner effects.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync } from "node:fs"
 import { join } from "node:path"

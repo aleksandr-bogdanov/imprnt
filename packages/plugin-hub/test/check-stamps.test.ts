@@ -1,10 +1,10 @@
-// MSG-08. Every human row older than a threshold with the next stamp missing is
+// Every human row older than a threshold with the next stamp missing is
 // a finding, and it clears when the stamp lands.
 //
 // SPEC §2 and L6's check line: "every human row older than a threshold with the
 // next stamp missing is a finding, and it clears when the stamp lands", with
 // "a silent day is never a finding" beside it. The thresholds are the PERSON's
-// own (MSG-08), so one age gives two answers for two people.
+// own, so one age gives two answers for two people.
 //
 // Everything here is planted: rows with chosen `received_at` values and stamps
 // with chosen `at` values, no door and no runner, the way
@@ -13,13 +13,13 @@
 //
 // THE FOUR GAPS ARE NOT MEASURED FROM ONE PLACE. Three are measured from
 // `received_at` and the fourth, `answered` to `delivered`, is measured from the
-// answered event's own time (D-130's table), so the fourth row below carries a
+// answered event's own time, so the fourth row below carries a
 // `received_at` a long way back: a build measuring it from `received_at`
 // reports the wrong number and fails on the seconds in `says`.
 //
 // The registry declares no credentials, so `credential-undeclared` stands
-// against its plan preset once the build round lands (04-CONTEXT's residues say
-// so). Every assertion here filters to `stamp-missing`, which is also how the
+// against its plan preset. Every assertion here filters to `stamp-missing`,
+// which is also how the
 // shipped `test/check-sheet.test.ts` stays self-consistent.
 //
 // Red reason: import missing, `src/check/stamps.ts`.

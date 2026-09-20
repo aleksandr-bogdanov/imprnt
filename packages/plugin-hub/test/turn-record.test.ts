@@ -212,7 +212,7 @@ test(
         (after.detail.preset_settings as Record<string, string>).effort,
       ).toBe("high");
 
-      // THE LOAD, and the hole the first pass left: a runner that re-read the
+      // THE LOAD, and the hole an obvious version leaves: a runner that re-read the
       // registry only to label the ledger, while the session kept running on
       // the old effort, passed every assertion above. A session is bound to the
       // preset it was started with, so a changed preset means a new start with

@@ -54,7 +54,7 @@ export async function appendRow(
  * Claim the one row an id may have: one winner, and the loser is handed what
  * the winner wrote.
  *
- * D-115. `appendRow` is the wrong primitive here for a concrete reason. On a
+ * `appendRow` is the wrong primitive here for a concrete reason. On a
  * duplicate it calls `recordRefusal`, which opens a SECOND connection on the
  * caller's own url and inserts a `refusal` row as actor `hub`, and only
  * `hub_hub` may write that actor. From a `hub_runner` connection that insert is
@@ -63,7 +63,7 @@ export async function appendRow(
  * racing for one outage row is an EXPECTED race, and a refusal per race is
  * noise in the one diary a household reads.
  *
- * D-122. The loser's answer is the WINNER'S DATA, and that is what the whole
+ * The loser's answer is the WINNER'S DATA, and that is what the whole
  * one-notice arithmetic stands on: the notice key is built from the outage's
  * `since`, so a loser that kept its own would write a second notice per person.
  * The primary key does the arithmetic, which is why this holds across two
@@ -87,8 +87,8 @@ export async function claimRow(
                                     where sheet = ${sheet} and id = ${id}`) as unknown as {
     data: Record<string, unknown>;
   }[];
-  // THE ONE HOLE IN D-122'S ARITHMETIC, named rather than left to be found
-  // (REVIEW's note on this function). A loser whose re-read finds no row at all
+  // THE ONE HOLE IN THE ONE-NOTICE ARITHMETIC, named rather than left to be
+  // found. A loser whose re-read finds no row at all
   // answers with its OWN data, which carries its own `since` and therefore a
   // second notice key. It needs a row opened and cleared between one statement
   // and the next, so it is remote, and the alternative is answering with

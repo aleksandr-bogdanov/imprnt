@@ -29,7 +29,7 @@ export function scheduleSeconds(schedule: string): number | null {
 }
 
 /**
- * D-97. Three states, derived from the schedule and from nothing else.
+ * Three states, derived from the schedule and from nothing else.
  *
  * Without the third one the transcriber is reported missing forever, and a
  * permanent finding is worse than no check at all.
@@ -93,7 +93,7 @@ export async function seenUnits(os: OsSeam, entries: RunEntry[]): Promise<UnitSt
 /**
  * The command a human PASTES, per flavour, and nothing here or anywhere else
  * runs it (L13). The whole string is the contract, because a fix that does not
- * run is worse than no fix at all (D-105). launchd's takes the uid from the
+ * run is worse than no fix at all. launchd's takes the uid from the
  * running process, because there is nowhere else in the signature for it.
  */
 export function stopCommand(flavour: string, unit: string): string {
@@ -106,7 +106,7 @@ export function stopCommand(flavour: string, unit: string): string {
 
 /**
  * The command a human pastes to START a listed piece the manager is not
- * running. Moved here from `check` by 03b item 7: a manager's name that `check`
+ * running. It lives here and not in `check`: a manager's name that `check`
  * can spell is a name `check` could invoke, and the one place the difference
  * cannot be observed from outside is a string built in the right place for the
  * wrong reason. It takes the ENTRY ID, because the two flavours name the same
@@ -121,12 +121,12 @@ export function startCommand(flavour: string, entryId: string): string {
 }
 
 /**
- * The command that clears a unit the manager has GIVEN UP on (03b item 3).
+ * The command that clears a unit the manager has GIVEN UP on.
  *
  * systemd parks a unit that hit its start limit in `ActiveState=failed` with
  * `Result=start-limit-hit`, and such a unit does not come back from `start`
  * alone: the failure has to be reset first, so a crash-loop fix that only said
- * "start it" would not run (D-105). launchd never gives up, so there is no
+ * "start it" would not run. launchd never gives up, so there is no
  * state to reset there and the honest command for a job that is bouncing is the
  * one that takes it out of the domain. The whole string is the contract on both.
  */
@@ -144,14 +144,14 @@ function shellWord(text: string): string {
 }
 
 /**
- * The command that takes away a hub unit FILE no registry entry declares
- * (REVIEW S6), per flavour. It finishes the removal a dead hub started, in the
+ * The command that takes away a hub unit FILE no registry entry declares,
+ * per flavour. It finishes the removal a dead hub started, in the
  * hub's own order with the stop brought forward: the manager lets go of the
  * unit, the file goes, and on systemd the manager re-reads its directory. The
  * steps are joined so each runs whatever the one before it said, because the
  * usual reason this file exists is that the manager has already forgotten the
  * unit and would refuse the first step. The whole string is the contract
- * (D-105), and nothing here or anywhere else runs it (L13).
+ * a person pastes, and nothing here or anywhere else runs it (L13).
  */
 export function removeFileCommand(flavour: string, path: string): string {
   const name = path.slice(path.lastIndexOf("/") + 1);

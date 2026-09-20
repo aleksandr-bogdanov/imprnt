@@ -6,7 +6,7 @@
 // for it: a scripted loop is told what to say, so only a real loop can
 // demonstrate that the tail actually arrived and was understood.
 //
-// A REAL RESPAWN, not a fresh start. The first pass started one runner and
+// A REAL RESPAWN, not a fresh start. Starting one runner and
 // called that a respawn, and a runner that fed the human message first and the
 // tail second could still have answered with the word. So this one runs a whole
 // ordinary exchange, STOPS the runner, plants the word into the log the door

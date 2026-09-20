@@ -186,7 +186,7 @@ test(
       // ---------------------------------------------------------------
       // 0. THE WATERMARK IS NOT THERE WHILE THE APPLY IS RUNNING.
       //
-      //    The second seat's finding on this check: every other assertion here
+      //    THE FINDING: every other assertion here
       //    reads the sheet AFTER the apply has finished, so a runner that
       //    writes the watermark early, spawns the apply, and restores the row
       //    when a note is refused shows exactly the final state a correct one
@@ -200,8 +200,8 @@ test(
       //    WHAT THIS CATCHES AND WHAT IT DOES NOT, said plainly: it catches a
       //    watermark written before or during an apply. It does not catch one
       //    written after every apply and before the settle, because the gate is
-      //    already open by then. That shape is D-154's own violation and it is
-      //    check 11's lock probe that sees it. The two probes together cover
+      //    already open by then. That shape is a violation of its own and it
+      //    is the lock probe that sees it. The two probes together cover
       //    the window and neither covers it alone.
       // ---------------------------------------------------------------
       const staged = stagedAt(it.stateDir, PERSON, rowId);
@@ -219,14 +219,14 @@ test(
 
       await reachedGate(1);
       // Both notes were staged before any of them was applied, which is
-      // D-152's order: stage every note, then apply them in order.
+      // the required order: stage every note, then apply them in order.
       expect(existsSync(join(staged, "1.md"))).toBe(true);
       expect(existsSync(join(staged, "2.md"))).toBe(true);
       // AND THE SHEET IS EMPTY, with a real apply running.
       expect(await it.read.harvestSheet()).toEqual([]);
 
       // EVERY APPLY IS GATED, not only the first, and the sheet is read while
-      // each one is held. The second seat's finding: with the gate opened after
+      // each one is held. THE FINDING: with the gate opened after
       // the first note, a runner is free to advance the watermark BETWEEN the
       // two applies and restore it when the second is refused, and every later
       // assertion still passes. Releasing one ticket at a time closes that.
@@ -238,7 +238,7 @@ test(
       expect(existsSync(join(staged, "1.md"))).toBe(false);
       expect(await it.read.harvestSheet()).toEqual([]);
       gate.release(2);
-      // BUILD-NOTES 6. AND THE GATE'S WORK IS DONE HERE. Every assertion that
+      // AND THE GATE'S WORK IS DONE HERE. Every assertion that
       // needs an apply held is above, and the shim takes the NEXT ticket for
       // every apply after these two, so the retry stage below would spend its
       // whole bound waiting out the shim's own sixty second give-up twice over.
@@ -292,13 +292,13 @@ test(
       expect(heldRow.claimed_by).toBeNull();
       expect(heldRow.state).toBe("received");
       expect(heldRow.retry_at).not.toBeNull();
-      // BOUND FROM BOTH SIDES, which the second seat is right that an upper
-      // bound alone is not. D-112's rule is `now + hub.outage_retry_seconds` at
+      // BOUND FROM BOTH SIDES, because an upper bound alone is not one.
+      // The rule is `now + hub.outage_retry_seconds` at
       // the moment of refusal, so a retry in the PAST is a row that comes back
       // instantly and spins, and naming that gap does not discharge it. The
       // lower bound is the moment the check started waiting for the refusal,
       // which is before the refusal was written.
-      // BUILD-NOTES 4. `new Date(String(<a Date>))` truncates to the SECOND,
+      // `new Date(String(<a Date>))` truncates to the SECOND,
       // because `Date.prototype.toString` has no milliseconds, while the column
       // and the diary both carry them. Reading the value rather than its human
       // spelling is what makes the equality below an equality.
@@ -331,7 +331,7 @@ test(
       expect(existsSync(join(staged, "2.md"))).toBe(true);
       expect(readFileSync(join(staged, "2.md"), "utf8")).toBe(NOTE_NO_TYPE);
 
-      // --- 6. NO OUTAGE WAS OPENED AND NO NOTICE WAS WRITTEN (D-156). The
+      // --- 6. NO OUTAGE WAS OPENED AND NO NOTICE WAS WRITTEN. The
       //     outage notice says "Messages are waiting and nothing is lost", and
       //     that sentence is false when what is waiting is proactive work
       //     nobody asked for.
@@ -481,9 +481,9 @@ test(
       // 0. THE SETTLE IS ONE TRANSACTION, observed as one, and the lock is
       //    taken AFTER the runner has read the watermark.
       //
-      //    The second seat found the first version of this backwards, and it
-      //    was right. An ACCESS EXCLUSIVE lock blocks READS as well as writes,
-      //    and D-149 makes the runner read the stored watermark BEFORE it
+      //    THE ORDER HERE IS EASY TO GET BACKWARDS. An ACCESS EXCLUSIVE lock
+      //    blocks READS as well as writes,
+      //    and the runner reads the stored watermark BEFORE it
       //    builds the slice. A lock taken before the row existed therefore
       //    caught that read, `waitForLockWaiter` was satisfied by it (it
       //    filters on role and relation and not on what the statement is), and
@@ -528,7 +528,7 @@ test(
       // below land in front of the settle and not in front of the read.
       expect(await it.read.harvestSheet()).toEqual([]);
 
-      // BUILD-NOTES 5. `exclusive` AND NOT `access exclusive`, measured: the
+      // `exclusive` AND NOT `access exclusive`, measured: the
       // stronger mode conflicts with `access share`, which is the lock every
       // `SELECT` takes, so the read of the sheet below would have waited on
       // this check's own lock until the test timed out. `exclusive` still
@@ -595,7 +595,7 @@ test(
       ).toBe(true);
 
       // --- 2. THE WATERMARK IS ONE ROW, carrying the LAST SLICE LINE's own
-      //     `at` and never the row's `until` (D-141): an `in` line's clock is
+      // `at` and never the row's `until`: an `in` line's clock is
       //     the platform's and an `out` line's is the door's, so a line that
       //     lands a second late must fall into the NEXT slice rather than
       //     vanish.
@@ -633,7 +633,7 @@ test(
       );
 
       // -------------------------------------------------------------
-      // THE CONFLICT STAGE, which is D-153's ruling made a behaviour.
+      // THE CONFLICT STAGE: a conflict counts as landed.
       // -------------------------------------------------------------
       const bytesBefore = readFileSync(
         join(stage.vault.vaultDir, "finances", `${feeSlug}.md`),
@@ -695,8 +695,8 @@ test(
       expect(await it.read.ledger({ stream: "refusal", subject: conflictRow })).toEqual([]);
 
       // --- 9. the conflict is visible in the TURN RECORD, which is the first
-      //     of the three places D-153 requires. Check 13 binds the second and
-      //     the vault's own `_needs-review.md` is the third.
+      //     of the three places a conflict has to appear. Another check binds
+      //     the second and the vault's own `_needs-review.md` is the third.
       const conflictTurn = (await it.read.ledger({ stream: "turn", subject: conflictRow }))[0];
       const harvest = conflictTurn.detail.harvest as Record<string, unknown>;
       expect(harvest.conflicts).toEqual([`finances/${feeSlug}`]);

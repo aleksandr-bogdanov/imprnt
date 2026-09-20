@@ -1,4 +1,4 @@
-// RUN-06 and RUN-07. Every setting lives in the registry file, and nowhere else.
+// Every setting lives in the registry file, and nowhere else.
 //
 // SPEC §6: "every setting the code reads has a field in the file." L14: "All
 // settings live in one file, the registry, plus one folder of watch files...
@@ -17,7 +17,7 @@
 //
 // The forbidden-override check runs the loader in a `bun` process of its own,
 // with the environment and the argument list poisoned before that process
-// starts. An in-process check cannot prove it: the second seat showed that a
+// starts. An in-process check cannot prove it: it has been shown that a
 // helper module imported before the overrides are planted can snapshot the
 // environment, and busting the cache of the root module would not catch it.
 
@@ -127,7 +127,7 @@ test("[partial] RUN-06 every setting the code reads has a field in the file: the
   // Direction two, the negative. Take the shipped file, delete the line
   // carrying one declared field, and the load must be refused. Without this a
   // one-field catalogue satisfies the check while the file drifts away from it,
-  // which is the hole the second seat named.
+  // which is the hole a reader named.
   const shipped = await supportedExample();
   const leaf = fields[0].key.split(".").pop()!;
   const lines = shipped.split("\n");

@@ -1,4 +1,4 @@
-// MSG-08 and RUN-19. The thresholds are one table in the registry, per person,
+// The thresholds are one table in the registry, per person,
 // and the window thresholds are settings on the preset rather than numbers in
 // code.
 //
@@ -116,7 +116,7 @@ test("MSG-08 the thresholds are one table per person and a bad one refuses the f
   const base = peopleLines();
 
   // --- 1. a threshold of zero. A clock that runs out at once is a clock
-  //     nobody set, and the quiet default is what RUN-08 forbids.
+  //     nobody set, and a quiet default is forbidden.
   {
     const lines = replace(base, "acked_seconds = 31", "acked_seconds = 0");
     const refusal = refusalOf(write(lines));
@@ -299,7 +299,7 @@ test("RUN-19 a window threshold in code is absent: a plan preset carries all thr
   // setting nothing in production reads" is forbidden, and an agent on a
   // per-token key has no window at all.
   //
-  // THE VALUE IS NOT THE PLAN PRESET'S (the second seat's finding). With `85`
+  // THE VALUE IS NOT THE PLAN PRESET'S. With `85`
   // on both, `lineOf` found the plan preset's line first and a refusal that
   // correctly named the key preset's own line would have failed. The numbers
   // here are in range and in order, so the only rule that can refuse them is
@@ -345,8 +345,8 @@ test("RUN-19 a window threshold in code is absent: a plan preset carries all thr
   }
 
   // The ORDER. A file that says hold at 50 and pause at 90 would pause nothing
-  // and hold everything with no complaint, which is the quiet default RUN-08
-  // forbids.
+  // and hold everything with no complaint, which is a forbidden quiet
+  // default.
   {
     const lines = replace(
       replace(base, "window_pause_at = 85", "window_pause_at = 90"),

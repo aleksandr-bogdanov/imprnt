@@ -1,4 +1,4 @@
-// IMP-160 item 3, D-178, D-175, D-183. What a person asked for in a chat, and
+// What a person asked for in a chat, and
 // a child that died under a person's message, both come back to that person's
 // chat through the door's ordinary notice path: `recoveryDone` or
 // `recoveryRefused` for a chat `/recover`, and `agentRetry` once per message a

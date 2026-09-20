@@ -1,4 +1,4 @@
-// ROLL-20, D-172. These are library crash boundaries. Plan 05 extends them
+// These are library crash boundaries. Plan 05 extends them
 // through runDoor and covers external delivery receipt ambiguity.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"

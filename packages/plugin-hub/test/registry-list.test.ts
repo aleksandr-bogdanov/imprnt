@@ -1,4 +1,4 @@
-// RUN-01. The registry is the list of what runs.
+// The registry is the list of what runs.
 //
 // SPEC §6: "The registry is the list: one file names everything the hub runs for
 // a household (doors, runners, watcher timers, the vault sync, the backup, the
@@ -29,11 +29,11 @@ function lineOf(lines: string[], needle: string, from = 0): number {
   return index + 1;
 }
 
-// D-81 as phase 3b makes it: `child_memory_limit_mb` is required on every
+// `child_memory_limit_mb` is required on every
 // `kind = "runner"` entry, whether or not the file declares its machines, so the
 // runner carries one. A fixture field: every line number this file
 // asserts is computed from the array it just built, so nothing below it moves.
-/** D-171 supports four run kinds in 6a, each with a schedule and memory limit. */
+/** Four run kinds, each with a schedule and a memory limit. */
 const SUPPORTED: {
   id: string;
   kind: string;

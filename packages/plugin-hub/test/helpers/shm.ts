@@ -1,8 +1,8 @@
 // Test infrastructure: the box's System V shared memory segments, read from
 // `ipcs` and never from the code under test.
 //
-// BUILD-NOTES B.3 and RED-RUN-2's environment note: `kern.sysv.shmmni` is 32 on
-// this Mac, each throwaway Postgres cluster holds one segment, and a cluster
+// MEASURED: `kern.sysv.shmmni` is 32 on
+// a Mac, each throwaway Postgres cluster holds one segment, and a cluster
 // that is KILLED rather than stopped leaks it. About thirty interrupted runs
 // later every `initdb` in the suite fails with "could not create shared memory
 // segment: No space left on device", and the suite reports a setup error that

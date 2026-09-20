@@ -1,4 +1,4 @@
-// MSG-10. A clock running out is a line in the chat, in the person's language,
+// A clock running out is a line in the chat, in the person's language,
 // saying it is the door speaking.
 //
 // SPEC §2 and L6: "When a clock runs out, the door says so in the chat, in the
@@ -19,7 +19,7 @@
 // asserted three fragments would pass a sentence with anything between them,
 // and these are sentences a household reads on a phone.
 //
-// WHICH CLOCK IS ARMED IS A FUNCTION OF THE ROW'S STATE (D-126's table): a row
+// WHICH CLOCK IS ARMED IS A FUNCTION OF THE ROW'S STATE: a row
 // that is `received` is waiting for `acked` and nothing else, one that is
 // `acked` is waiting for `started`, one that is `started` is waiting for
 // `answered`, and `delivered` has no door clock at all because the door cannot
@@ -57,7 +57,7 @@ let cluster: Cluster;
 
 const SLOW = 120_000;
 
-/** 04-CONTEXT's pinned lines, written out by the TEST and never imported. */
+/** The pinned lines, written out by the TEST and never imported. */
 const CLOCK = {
   en: {
     acked: /^\[door\] still waiting: the loop has not accepted this message\. (\d+) s so far\.$/,
@@ -184,7 +184,7 @@ test(
 
       // --- 3. THE CHAT LOG, written BEFORE the post, with the DOOR as the
       //     line's author, so a session reads exactly what the chat holds and
-      //     sees it marked as machinery twice over (D-129).
+      // sees it marked as machinery twice over.
       expect(said.probe).toBe(true);
       const logged = chatLogLines(it.stateDir, PERSON, AGENT).filter((line) =>
         isClockLine(line.text),
@@ -226,7 +226,7 @@ test(
 
       // --- 6. `delivered` gets NO line, ever. The door cannot post a line
       //     about not being able to post, so that one is a `check` finding
-      //     alone (D-127).
+      // alone.
       it.fake.holdPosts(true);
       it.scripted.holdTurnEnd(false);
       await until(
@@ -387,7 +387,7 @@ test(
       const russian = it.fake.posts().find((one) => one.chat === CHAT2)!;
 
       // --- 2. THE MARKER IS TRANSLATED. An English label inside Russian prose
-      //     is the defect D-128 exists to prevent.
+      //     is the defect the translated marker exists to prevent.
       expect(russian.text.includes("[door]")).toBe(false);
       expect(english.text.includes("[дверь]")).toBe(false);
 
@@ -531,8 +531,8 @@ test(
       // --- 2. the restart re-arms. The deadline is the message's OWN
       //     received_at and never the new door's start, which is the only way
       //     a door that was down through a deadline can still say anything.
-      // WHEN THE PROCESS WAS ASKED TO START, not when it said it was ready
-      // (the second pass's finding). A fresh timer can be armed inside
+      // WHEN THE PROCESS WAS ASKED TO START, not when it said it was ready.
+      // A fresh timer can be armed inside
       // `runDoor` BEFORE the ready line is printed, and a bound measured from
       // readiness leaves that timer room. This is measured from the spawn.
       const startedAt = Date.now();
@@ -550,7 +550,7 @@ test(
       );
       const late = it.fake.posts().find((one) => CLOCK.en.answered.test(one.text))!;
       expect(late.at - receivedAt).toBeGreaterThanOrEqual(ANSWERED_SECONDS * 1000);
-      // AND NOT A FRESH FULL TIMEOUT (the second seat's finding). A door that
+      // AND NOT A FRESH FULL TIMEOUT. A door that
       // armed `answered_seconds` from its own startup rather than from the
       // message's `received_at` also lands after the original deadline, just
       // late: the person waits the clock out twice. The slack is the restart
@@ -563,7 +563,7 @@ test(
       // the door was started well into the message's clock. The slack is the
       // restart's own settle.
       // THE SLACK IS 600 ms AND NOT 1500, and it is a measurement rather than
-      // a preference (BUILD-NOTES 14). This bound and the staging guard under
+      // a preference. This bound and the staging guard under
       // it pull in opposite directions: the guard needs the restart to be at
       // least `slack` into the message's own clock, or a fresh full timeout
       // from startup would land INSIDE the bound and the check would stop

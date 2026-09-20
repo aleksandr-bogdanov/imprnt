@@ -1,7 +1,7 @@
 /**
  * What the hub's units are called, and what it is allowed to touch.
  *
- * D-75. TWO PREFIXES, and the difference between them is the whole fence. The
+ * TWO PREFIXES, and the difference between them is the whole fence. The
  * RENDER prefix is what the hub writes: a unit under it with no registry entry
  * is one the hub itself generated and the registry no longer wants, so the hub
  * removes it. The SCAN prefix is SPEC's own `imprnt-*`, which is what `check`

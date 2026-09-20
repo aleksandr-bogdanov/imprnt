@@ -52,7 +52,7 @@ for (const name of ["telegram", "discord"] as const) test(`ROLL-18 ${name} froze
       expect(prepared.source_inventory).toEqual(manifest.source_inventory)
       expect(prepared.sources).toEqual(manifest.sources)
       // Refusal control: same door must start after the batch is complete.
-      // IMP-160: until then it waits and says why instead of exiting into the
+      // Until then it waits and says why instead of exiting into the
       // unit's start limit, so this control stops it while it waits.
       let refusal: unknown
       const abort = new AbortController()

@@ -1,15 +1,15 @@
-// MSG-10. The requests the two real platforms build: typing, the post that
+// The requests the two real platforms build: typing, the post that
 // says which message it made, and the edit of that message.
 //
 // SPEC §2 and L6: "While a turn is open the door shows typing on Telegram and
 // Discord, refreshed every few seconds", and the progress line "is updated as
-// it goes". D-125 pins the seam and the two documented lifetimes.
+// it goes". The seam and the two documented lifetimes are pinned.
 //
 // WHY THIS IS CHECKABLE AT ALL, and why it was not before. SPEC §2's Forbidden
 // line is "a synthetic test message", which is a message sent to a real person
 // through a real platform. A transport the check supplies reaches no platform
-// and no person, so it is outside that line. 04-CONTEXT's harness ruling after
-// the second Codex pass says so and pins this check: `telegram({ tokenFile,
+// and no person, so it is outside that line. What this check pins:
+// `telegram({ tokenFile,
 // fetch? })` and `discord({ tokenFile, fetch? })` take an optional transport
 // with the global's signature, the way `realProber({ fetch })` already does.
 // What stays the cutover's is whether the real platforms ACCEPT these
@@ -21,7 +21,7 @@
 // that throw, loudly, and the check says which platform did it.
 //
 // Every fact below is from the platforms' own documentation, read 2026-09-16
-// and recorded in 04-BRIEF.md: Telegram's `sendChatAction` sets the status
+// and recorded here: Telegram's `sendChatAction` sets the status
 // "for 5 seconds or less" and returns True, `sendMessage` returns the `Message`
 // whose `message_id` an edit needs, and `editMessageText` takes that id.
 // Discord's `POST /channels/{id}/typing` "expires after 10 seconds" and
