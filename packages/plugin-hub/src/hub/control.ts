@@ -15,6 +15,11 @@ import { appendNotice, type ReplyRoute } from "../store/outbox.ts";
  * the board is the asker and its own unit is what would go away, and a door
  * because a door has a target kind of its own and two ways to name one thing is
  * a difference somebody has to explain later.
+ *
+ * `transcriber` is on the list because a household that transcribes on its own
+ * machines declares one and a wedged recognizer is the thing its door asks to
+ * have back. A household that names no such recognizer carries no entry of that
+ * kind at all, so for it the name matches nothing.
  */
 export const RUN_RECOVERY_KINDS = ["runner", "sync", "transcriber"] as const;
 

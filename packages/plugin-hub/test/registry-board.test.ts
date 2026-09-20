@@ -272,6 +272,18 @@ test("D-244 whether the hub keeps an entry running is asked of every kind, by ke
   );
 });
 
+test("D-244 an entry that says nothing about enabled is enabled", async () => {
+  const { enabledOf } = await seam("src/registry/entries.ts");
+  expect(typeof enabledOf, "enabledOf must be a function").toBe("function");
+  const asked = enabledOf as (entry: { enabled?: boolean }) => boolean;
+  const { file } = write([{ ...RUNNER, enabled: false }, { ...DOOR, enabled: true }, HUB]);
+  const rows = listRunEntries(loadRegistry(file));
+  // A file written before the field existed says what it always said.
+  expect(asked(rows.find((one) => one.id === HUB.id)!)).toBe(true);
+  expect(asked(rows.find((one) => one.id === DOOR.id)!)).toBe(true);
+  expect(asked(rows.find((one) => one.id === RUNNER.id)!)).toBe(false);
+});
+
 test("D-241 the example block loads whole and boardFor answers the machine that has one", async () => {
   // The control on the ten refusals. A build that refused every board-shaped
   // file passes all of them and fails here.
@@ -295,7 +307,9 @@ test("D-241 the example block loads whole and boardFor answers the machine that 
 });
 
 test("D-241 every other specific address is accepted, because the range is not the loader's to know", async () => {
-  for (const bind of ["127.0.0.1", "10.0.0.5", "fd7a:115c:a1e0::1", "::1"]) {
+  // Documentation addresses, on purpose: what the loader accepts is any
+  // specific address, and naming a real range here would read as a rule.
+  for (const bind of ["127.0.0.1", "10.0.0.5", "2001:db8::1", "::1"]) {
     const { file } = write([DOOR, RUNNER, { ...EXAMPLE_BOARD, bind }]);
     const board = await boardOf(loadRegistry(file), "pi");
     expect(board?.bind, `${bind} must load`).toBe(bind);
