@@ -389,3 +389,58 @@ test("RUN-15 a household that stops naming a recognizer finishes the notes that 
   } finally { await runner?.stop(); await door?.stop(); await recognizer.stop(); await it.stop() }
 }, 90_000)
 
+test(`RUN-15 a note whose words landed and whose log line did not is finished on the next pass, with no restart${NEEDS_FFMPEG}`, async () => {
+  if (!FFMPEG) return
+  // The step writes the words and the projection appends the log line, and they
+  // are two writes. A door that gets the first and loses the second leaves a row
+  // with its text, no log line and no claim: the runner cannot see it, the turn
+  // stays open with its clocks running, and nothing looks at it again until the
+  // next door start. The chat log directory is made unwritable here, which is a
+  // real thing a disk does, so the projection really fails.
+  const recognizer = await fakeRecognizer()
+  recognizer.setAnswer({ text: "synthetic spoken codeword", audio_s: 1, decode_ms: 1 })
+  const it = await rolloutStage(cluster, "telegram", {
+    people: [{ id: "p1", language: "en" }, { id: "p2", language: "ru" }],
+    voice: { port: recognizer.port, chunk_seconds: 0, retry_seconds: 1 },
+  })
+  const logDir = join(it.stateDir, "p1", "chatlog", "p1-lair")
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  let runner: Awaited<ReturnType<typeof runRunner>> | undefined
+  try {
+    mkdirSync(logDir, { recursive: true })
+    // Readable and listable, so every read this door and runner make still
+    // works and the only thing that fails is appending the line.
+    chmodSync(logDir, 0o500)
+    it.edge.file("voice", AUDIO)
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: it.scripted.adapter } })
+    it.edge.batch([voiceMessage("1")], "2")
+    expect(await observe(async () => (await it.read.inbound()).length === 1, 20_000)).toBe(true)
+    const row = (await it.read.inbound())[0]
+
+    const readiness = async () => (await it.read.sql(
+      "select media_state, log_ready from inbound where id = $1", [row.id]))[0] as
+      { media_state: string | null; log_ready: boolean }
+    expect(await observe(async () => (await readiness()).media_state === "done", 30_000),
+      "RUN-15 the words landed").toBe(true)
+    expect((await readiness()).log_ready,
+      "RUN-15 and the log line did not, which is the state this is about").toBe(false)
+
+    // The disk is well again, and NOTHING IS RESTARTED: the same door that
+    // lost the line is the one that has to finish the row.
+    chmodSync(logDir, 0o700)
+    expect(await observe(async () => (await readiness()).log_ready, 30_000),
+      "RUN-15 the row is projected without waiting for the next door start").toBe(true)
+    expect(chatLogLines(it.stateDir, "p1", "p1-lair").filter(l => l.direction === "in"),
+      "RUN-15 one line, not two").toHaveLength(1)
+    expect(await observe(async () =>
+      (await it.read.ledger({ subject: row.id })).some(e => e.kind === "delivered"), 30_000),
+      "RUN-15 and the agent answers it").toBe(true)
+    expect((await it.read.ledger({ subject: row.id })).filter(e =>
+      ["received", "acked", "started", "answered", "delivered"].includes(e.kind)).map(e => e.kind))
+      .toEqual(["received", "acked", "started", "answered", "delivered"])
+  } finally {
+    chmodSync(logDir, 0o700)
+    await runner?.stop(); await door?.stop(); await recognizer.stop(); await it.stop()
+  }
+}, 120_000)

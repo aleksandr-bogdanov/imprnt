@@ -1437,8 +1437,27 @@ export async function runDoor(options: {
         return;
       }
       const state = await readMediaState(store, row.id);
-      if (state === null || state.state !== "pending") {
+      if (state === null) {
         waiting.delete(row.id);
+        return;
+      }
+      if (state.state !== "pending") {
+        // THE TEXT LANDED AND SOMETHING AFTER IT DID NOT. Writing the words and
+        // appending the log line are two writes, and a row between them has its
+        // text, no log line and no claim: the runner cannot see it, and the turn
+        // stays open with its clocks running. Finishing it here is what saves it
+        // from waiting for the next door start, which is the only other thing
+        // that looks at a row in that state.
+        waiting.delete(row.id);
+        const [seen] = (await store.sql`
+          select log_ready from inbound where id = ${row.id}`) as unknown as
+          { log_ready: boolean }[];
+        if (seen === undefined || seen.log_ready) return;
+        await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
+        own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
+          received_at: row.receivedAt, state: "received", claimed_by: null,
+          media_state: state.state, media_done_at: state.done_at });
+        own.arrived.wake();
         return;
       }
       if (Date.now() >= row.receivedAt.getTime() + voice.give_up_hours * 3_600_000) {
