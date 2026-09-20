@@ -29,12 +29,20 @@ export function scheduleSeconds(schedule: string): number | null {
 }
 
 /**
- * Three states, derived from the schedule and from nothing else.
+ * Four states. Three come from the schedule, and the fourth from the file.
  *
- * Without the third one the transcriber is reported missing forever, and a
+ * Without the third the transcriber is reported missing forever, and a
  * permanent finding is worse than no check at all.
+ *
+ * `stopped` is answered FIRST, before the schedule is read, because it is a
+ * household saying it does not want this piece up at all and the schedule has
+ * nothing to add to that. It lives in the registry because the hub re-reads the
+ * registry on every tick and starts whatever it says should be running, so a
+ * hold kept anywhere else would be undone within a tick, and because the file
+ * is the one place the installer, a page and an editor all write.
  */
-export function wantedState(entry: RunEntry | { schedule: string }): WantedState {
+export function wantedState(entry: RunEntry | { schedule: string; enabled?: boolean }): WantedState {
+  if ((entry as { enabled?: boolean }).enabled === false) return "stopped";
   const schedule = String((entry as { schedule: string }).schedule ?? "").trim().toLowerCase();
   if (schedule === "always") return "running";
   if (scheduleSeconds(schedule) !== null) return "scheduled";
@@ -62,6 +70,14 @@ function unitsFor(found: UnitState[], entryId: string): UnitState[] {
 }
 
 function satisfied(state: WantedState, units: UnitState[]): boolean {
+  // A piece the household asked to be down is never MISSING, whether the
+  // manager carries a unit for it or carries none: missing means the registry
+  // wants it and the manager has not got it, which cannot be true of something
+  // the registry wants down. The opposite fault, a stopped entry the manager is
+  // still running, is its own finding and is read off the manager's own list,
+  // so nothing is lost by answering yes here. This arm comes before the empty
+  // test for that reason.
+  if (state === "stopped") return true;
   if (units.length === 0) return false;
   if (state === "running") return units.some((unit) => unit.running === true);
   if (state === "scheduled") return units.some((unit) => unit.loaded === true);

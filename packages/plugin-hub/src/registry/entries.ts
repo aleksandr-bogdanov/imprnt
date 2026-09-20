@@ -69,6 +69,27 @@ export function runEntriesFor(registry: unknown, machine: string): RunEntry[] {
   return listRunEntries(it).filter((entry) => entry.machine === machine);
 }
 
+/**
+ * This machine's board entry, or null when it serves none.
+ *
+ * Null is a real answer: a household runs one board, on one machine, and every
+ * other machine has none.
+ */
+export function boardFor(registry: unknown, machine: string): RunEntry | null {
+  const found = runEntriesFor(loaded(registry, "boardFor"), machine).find(
+    (entry) => entry.kind === "board",
+  );
+  return found ? { ...found } : null;
+}
+
+/**
+ * Whether the hub keeps this entry running. Absent means it does, so a file
+ * written before the field existed says the same thing it always said.
+ */
+export function enabledOf(entry: { enabled?: boolean }): boolean {
+  return entry.enabled !== false;
+}
+
 /** Where an agent's chat is read from: the file its door wrote, or the store. */
 export type ChatStatePlacement = "file" | "store";
 

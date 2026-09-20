@@ -275,11 +275,26 @@ test("D-241 every other specific address is accepted, because the range is not t
 test("D-241 a board is an ordinary entry, so the shipped memory refusal reaches it and a stray bind elsewhere is ignored", async () => {
   // (c) L4's "a long-running piece with no measured peak is forbidden" reaches
   //     the board for free, through the refusal every entry already meets.
-  const board = { ...EXAMPLE_BOARD };
-  delete (board as Record<string, unknown>).memory_limit_mb;
-  const { error } = refusalOf([DOOR, RUNNER, board]);
-  expect(error.key).toBe("run[2].memory_limit_mb");
-  expect(error.reason).toContain("memory_limit_mb");
+  // The fixture fills a memory limit in for every entry it renders, so the line
+  // is taken back out of the file by hand rather than left out of the spec.
+  const staged = write([DOOR, RUNNER, EXAMPLE_BOARD]);
+  writeFileSync(
+    staged.file,
+    staged.text
+      .split("\n")
+      .filter((line, i) => i + 1 !== lineOf(staged.text, "board", "memory_limit_mb"))
+      .join("\n"),
+    "utf8",
+  );
+  let caught: unknown;
+  try {
+    loadRegistry(staged.file);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught, "a board with no memory limit must be refused").toBeInstanceOf(RegistryRefused);
+  expect((caught as RegistryRefused).key).toBe("run[2].memory_limit_mb");
+  expect((caught as RegistryRefused).reason).toContain("memory_limit_mb");
 
   // (d) The loader has always tolerated a key it has no rule about, and `bind`
   //     and `port` on a non-board entry are two more of those. The rows for the

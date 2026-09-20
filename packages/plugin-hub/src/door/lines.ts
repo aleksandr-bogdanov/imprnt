@@ -595,3 +595,118 @@ export function syncRepair(language: Language, values: LineValues = {}): string 
     ? "устраните указанную причину в {target} и повторите синхронизацию."
     : "repair the reported cause in {target} and run sync again.", values);
 }
+
+/**
+ * The board's own sentences, and the loader refusals that go with its entry.
+ *
+ * THEY CARRY NO MACHINERY MARKER, which is the opposite of every family above.
+ * The marker names the door, and it belongs on a line the hub writes INTO A
+ * CHAT. These go to an operator's stderr and into the board's HTML, where an
+ * English `[door]` is a label nobody asked for. So they are written beside the
+ * marked families rather than through `says`.
+ *
+ * A page renders in English, because no person's language applies to a reader
+ * the hub has not identified. The Russian column is here anyway, so a language
+ * toggle later costs no new sentence and no second place for one to drift.
+ */
+export function boardBindMissing(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} не указывает bind, а доска слушает один конкретный адрес."
+    : "{id} has no bind, and a board listens on one specific address.", values);
+}
+
+export function boardBindWide(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} слушает {bind}, а доска слушает один конкретный адрес, а не все сразу."
+    : "{id} binds to {bind}, and a board listens on one specific address, never a wildcard.", values);
+}
+
+export function boardBindNotAddress(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} слушает {bind}, а bind - это IP-адрес, а не имя."
+    : "{id} binds to {bind}, and bind is an IP address, not a name.", values);
+}
+
+export function boardPort(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} указывает порт {value}, а порт доски - целое число от 1 до 65535."
+    : "{id} has port {value}, and a board's port is a whole number from 1 to 65535.", values);
+}
+
+export function enabledNotBoolean(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} указывает enabled {value}, а держать ли его запущенным - это true или false."
+    : "{id} has enabled {value}, and whether the hub keeps it running is a true or a false.", values);
+}
+
+export function artifactsNotBoolean(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} указывает artifacts {value}, а показывать ли артефакты этого человека - это true или false."
+    : "{id} has artifacts {value}, and whether the board serves this person's artifacts is a true or a false.", values);
+}
+
+/** The address this machine does not hold, said on stderr as the process exits. */
+export function boardBindFailed(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "доска: не удаётся слушать {bind}:{port}: {cause}."
+    : "board: cannot listen on {bind}:{port}: {cause}.", values);
+}
+
+/**
+ * The one word on a card. It is `check`'s answer and never the page's opinion:
+ * the question a card asks is whether the `check` sheet holds a finding whose
+ * subject is this thing.
+ */
+export function cardOk(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru" ? "в порядке" : "ok", values);
+}
+
+export function cardWaiting(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru" ? "ожидание" : "waiting", values);
+}
+
+export function cardBroken(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru" ? "сломано" : "broken", values);
+}
+
+export function actRequested(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "запрошен перезапуск {target}."
+    : "restart requested for {target}.", values);
+}
+
+export function actRefused(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "перезапуск {target} отклонён: {cause}."
+    : "restart refused for {target}: {cause}.", values);
+}
+
+export function editApplied(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{field} для {target} установлено в {value}."
+    : "{field} set to {value} for {target}.", values);
+}
+
+/** A machine with no registry writer says so and names the file to edit. */
+export function editUnavailable(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{target} нельзя изменить отсюда: на этой машине нет записи в реестр. Отредактируйте файл."
+    : "{target} cannot be changed from here: this machine has no registry writer. Edit the file.", values);
+}
+
+export function checkRan(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "проверка: замечаний: {count}, на {at}."
+    : "check: findings: {count}, as of {at}.", values);
+}
+
+export function pageMissing(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru" ? "такой страницы нет." : "no such page.", values);
+}
+
+/** The one finding this phase adds: stopped on the list, running in the manager. */
+export function unitNotStopped(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} в реестре остановлен, а менеджер служб всё ещё держит его запущенным."
+    : "{id} is on the registry's list as stopped and the service manager is still running it.", values);
+}

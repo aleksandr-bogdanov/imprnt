@@ -221,6 +221,22 @@ memory_limit_mb = 2048
 port = 8798
 residency = "resident"
 
+# The board: one page per machine that serves one, reached over the tailnet.
+# THE ADDRESS BELOW IS AN EXAMPLE. Binding to this machine's own tailnet address
+# is what makes the board reachable there and nowhere else, and nothing in the
+# loader can check that an address belongs to a tailnet, so it refuses a
+# wildcard, an empty value and a name and accepts any other specific address.
+# The limit is chosen and unmeasured: the hub's first tick with the board up
+# records the real peak, which is what peak-missing exists for.
+[[run]]
+id = "board"
+kind = "board"
+machine = "pi"
+schedule = "always"
+memory_limit_mb = 128
+bind = "100.64.0.1"
+port = 8794
+
 [[run]]
 id = "hub-pi"
 kind = "hub"

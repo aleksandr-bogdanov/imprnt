@@ -78,9 +78,12 @@ type Line = (language: Language, values?: Record<string, unknown>) => string;
 function twins(text: string, values: string[]): string[] {
   const out = [
     // An em dash where the contract has none.
-    text.includes("-") ? text.replace("-", "—") : text.replace(" ", " — "),
+    text.includes("-") ? text.replace("-", "—") : text.includes(" ") ? text.replace(" ", " — ") : `${text}—`,
     // A semicolon where the contract has none.
     text.includes(".") ? text.replace(".", ";") : `${text};`,
+    // Shouted, which is what a build that decided a label needed emphasis does
+    // to a one-word card.
+    text.toUpperCase(),
   ];
   // The slot never filled at all, which is what a broken interpolation looks
   // like on a page.
@@ -340,8 +343,10 @@ test("D-253 the shipped vocabulary, the zero case and the shipped unavailable li
     );
   }
   // The status value D-253 names needs no new entry, said by name.
-  expect(status("ru", { id: "board", wanted: "stopped", seen: "stopped", pid: "unknown" })).toBe(
-    "board: ожидается остановлен, наблюдается остановлен, pid неизвестно.",
+  // `pid` is not one of the translated keys, and it is not meant to be: it
+  // carries a number or the word this line was handed.
+  expect(status("ru", { id: "board", wanted: "stopped", seen: "stopped", pid: 4242 })).toBe(
+    "board: ожидается остановлен, наблюдается остановлен, pid 4242.",
   );
 
   const operations: [string, string][] = [

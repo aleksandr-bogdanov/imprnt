@@ -9,7 +9,11 @@ export async function readStatus(options: { registryFile: string; machine: strin
   return await Promise.all(runEntriesFor(loadRegistry(options.registryFile), options.machine).map(async entry => {
     const state = await os.show(entry.id);
     const wanted = wantedState(entry);
-    const seen = !state ? "missing" : state.running ? "running" : state.loaded && wanted === "scheduled" ? "scheduled" : "stopped";
+    // WITH NO RECORD AT ALL, a stopped entry reads stopped and not missing.
+    // `missing` is the word a finding uses, and a piece the household asked to
+    // be down is not missing.
+    const seen = !state ? (wanted === "stopped" ? "stopped" : "missing")
+      : state.running ? "running" : state.loaded && wanted === "scheduled" ? "scheduled" : "stopped";
     return { id: entry.id, wanted, seen, pid: state?.pid ?? null };
   }));
 }

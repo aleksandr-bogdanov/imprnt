@@ -404,8 +404,10 @@ test(
       //    thing that called an acting verb on the manager is the hub. No board
       //    code and no agent has a seam at all.
       expect([...new Set(os.acting().map((call) => call.by))]).toEqual(["hub"]);
-      // A refused ask moves nothing.
-      expect(os.acting().filter((call) => call.target === BOARD.id)).toEqual([]);
+      // A refused ask restarts nothing. The board is a resident entry, so the
+      // hub's own reconcile starts it like any other, which is not an act
+      // anybody asked for.
+      expect(os.acting().filter((call) => call.operation === "restart" && call.target === BOARD.id)).toEqual([]);
       expect(os.acting().filter((call) => call.operation === "restart").map((call) => call.target).sort()).toEqual(
         [DOOR.id, RUNNER.id, SYNC.id].sort(),
       );

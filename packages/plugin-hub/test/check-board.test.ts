@@ -27,7 +27,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { seam, startCluster, statementWatch, type Cluster } from "./helpers/cluster.ts";
-import { hubReader, stageHub, superStore } from "./helpers/hub-fixture.ts";
+import { stageHub, superStore } from "./helpers/hub-fixture.ts";
 import type { RunSpec } from "./helpers/registry.ts";
 import type { Finding } from "./helpers/finding.ts";
 import { loadRegistry, RegistryRefused } from "../src/registry/load.ts";
@@ -296,7 +296,8 @@ test(
         return new Response("a page check must never ask for");
       },
     });
-    const it = await stage([DOOR, RUNNER, HUB, BOARD(listener.port)]);
+    const port = Number(listener.port);
+    const it = await stage([DOOR, RUNNER, HUB, BOARD(port)]);
     const store = await superStore(cluster, it.db);
     const os = plantedOs(ownDir("hub-check-board-port-"));
     try {
@@ -319,7 +320,7 @@ test(
       expect(accepts).toBe(0);
       // The control on that zero: the listener counts, proved by connecting to
       // it once from here.
-      await fetch(`http://127.0.0.1:${listener.port}/`);
+      await fetch(`http://127.0.0.1:${port}/`);
       expect(accepts).toBe(1);
       // And the manager was never acted on either.
       expect(os.calls.filter((call) => call.operation !== "install")).toEqual([]);
@@ -337,7 +338,6 @@ test(
   async () => {
     const it = await stage([DOOR, RUNNER, HUB, BOARD(1)]);
     const store = await superStore(cluster, it.db);
-    const sheet = hubReader(cluster, it.db, "check");
     const os = plantedOs(ownDir("hub-check-board-quiet-"));
     try {
       const { runCheck } = await seam("src/check/run.ts");
@@ -345,7 +345,7 @@ test(
       for (const id of [DOOR.id, RUNNER.id, HUB.id]) os.plant(id);
       // Everything the setup owes is already in the log before the window
       // opens: the reader below is this test's own backend and is excluded.
-      const mine = [await it.read.pid(), await sheet.pid()];
+      const mine = [await it.read.pid()];
       const watch = await statementWatch(cluster, mine);
       await check({
         machine: MACHINE,
@@ -369,7 +369,6 @@ test(
         "the run must have written a row about the board, or the window above proves nothing",
       ).toBe(true);
     } finally {
-      await sheet.close();
       await store.close();
       await it.stop();
     }
@@ -449,10 +448,12 @@ test(
           now,
         });
       };
-      const shape = (found: Finding[]) =>
+      // Each stage writes its own registry, and a fix that names the file would
+      // differ for that reason alone, so the path is taken out of both.
+      const shape = (found: Finding[], registryFile: string) =>
         found
           .filter((one) => one.subject !== "board")
-          .map((one) => `${one.kind}:${one.subject}:${one.fix}`)
+          .map((one) => `${one.kind}:${one.subject}:${one.fix}`.replaceAll(registryFile, "<the registry>"))
           .sort();
 
       const one = await run(withOne.registryFile, a, plantedOs(ownDir("hub-check-board-with-")));
@@ -461,7 +462,7 @@ test(
       expect(none.filter((finding) => finding.subject === "board")).toEqual([]);
       expect(none.some((finding) => /board/.test(finding.says))).toBe(false);
       expect(one.some((finding) => finding.subject === "board")).toBe(true);
-      expect(shape(one)).toEqual(shape(none));
+      expect(shape(one, withOne.registryFile)).toEqual(shape(none, without.registryFile));
     } finally {
       await a.close();
       await b.close();

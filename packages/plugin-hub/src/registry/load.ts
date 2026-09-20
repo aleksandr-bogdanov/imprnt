@@ -1,6 +1,14 @@
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
+import { isIP } from "node:net";
 import { isAbsolute, resolve, sep } from "node:path";
 import { ADAPTERS } from "../adapters/index.ts";
+import {
+  boardBindMissing,
+  boardBindNotAddress,
+  boardBindWide,
+  boardPort,
+  enabledNotBoolean,
+} from "../door/lines.ts";
 
 /**
  * The registry is the only place a setting lives. Every setting the code reads
@@ -212,6 +220,23 @@ export class UnknownSetting extends Error {
   }
 }
 
+/**
+ * The kinds every file may carry, as an ARRAY rather than a literal inside the
+ * condition that reads it, so adding one is a line here and nothing else.
+ *
+ * `transcriber` is deliberately not among them: it is the one kind a file may
+ * carry only while the household names a recognizer that runs here, so the
+ * condition below adds it for such a file and for no other.
+ */
+export const RUN_KINDS = ["hub", "door", "runner", "sync", "board"] as const;
+
+/**
+ * The two addresses that mean every interface. A board that bound to one would
+ * be reachable from anything that can route to this machine, which is the
+ * opposite of what binding to one tailnet address buys.
+ */
+export const WILDCARD_BINDS = ["0.0.0.0", "::"] as const;
+
 export interface RunEntry {
   id: string;
   kind: string;
@@ -232,14 +257,35 @@ export interface RunEntry {
   /** A door's bot token file. Every agent's box masks it. */
   token_file?: string;
   /**
-   * The three a `kind = "transcriber"` entry carries. The door reaches the
-   * recognizer on loopback at `port`. `residency` says whether the model is
-   * held between notes or dropped after `idle_seconds` of quiet, and only the
-   * one that drops it has an idle window anything reads.
+   * A board's one specific listening address.
+   *
+   * Binding to this machine's own tailnet address is what makes a board
+   * reachable on the tailnet and nowhere else. Nothing here can check that the
+   * address belongs to one, so what the loader refuses is the shape: a
+   * wildcard, an empty string, and a name.
+   */
+  bind?: string;
+  /**
+   * The port, carried by the two kinds that are reached at one: a board on the
+   * address above, and a `kind = "transcriber"` entry on loopback, which is
+   * where the door beside it posts.
    */
   port?: number;
+  /**
+   * The recognizer's other two. `residency` says whether the model is held
+   * between notes or dropped after `idle_seconds` of quiet, and only the one
+   * that drops it has an idle window anything reads.
+   */
   residency?: string;
   idle_seconds?: number;
+  /**
+   * Whether the hub keeps this entry running. Absent means it does.
+   *
+   * It lives in the FILE because a hold kept anywhere else would be undone by
+   * the hub's own next tick, which starts whatever the file says should be
+   * running.
+   */
+  enabled?: boolean;
 }
 
 /**
@@ -573,6 +619,14 @@ function describe(value: unknown): string {
 }
 
 /**
+ * The same value with no quotes around a string, for the sentences that already
+ * name the key they are about, where `"0.0.0.0"` reads as part of the address.
+ */
+function describeBare(value: unknown): string {
+  return typeof value === "string" ? value : String(value);
+}
+
+/**
  * The key a reader asks for, with any command-line decoration taken off: a
  * leading dash run and anything glued on after an `=`. The spelling is all that
  * is stripped. The value that came with it is dropped on the floor and the
@@ -870,7 +924,7 @@ export function loadRegistry(file: string): Registry {
     // itself and an absent one means the component is not installed, so in
     // either file the process is one nothing in production would ever reach,
     // and a piece that could never be reached cannot be configured.
-    const kinds = ["hub", "door", "runner", "sync"];
+    const kinds: string[] = [...RUN_KINDS];
     if (household?.provider === "sherpa-onnx") kinds.push("transcriber");
     if (!kinds.includes(entry.kind as string)) {
       refuse(
@@ -885,6 +939,51 @@ export function loadRegistry(file: string): Registry {
               }, so nothing would ever read the process`
             : ""),
       );
+    }
+
+    // Whether the hub keeps a piece running is asked of EVERY entry, and it is
+    // spread onto the entry only when the file carries it, so a file that says
+    // nothing produces the entry it produces today.
+    if (entry.enabled !== undefined && entry.enabled !== null && typeof entry.enabled !== "boolean") {
+      refuse(
+        `${at}.enabled`,
+        here,
+        enabledNotBoolean("en", { id, value: describeBare(entry.enabled) }),
+      );
+    }
+
+    // The address and the port, asked of a BOARD entry and of nothing else.
+    // The loader tolerates either key on another kind the way it tolerates any
+    // key it has no rule about.
+    if (entry.kind === "board") {
+      const bind = entry.bind;
+      if (bind === undefined || bind === null || bind === "") {
+        refuse(`${at}.bind`, here, boardBindMissing("en", { id }));
+      } else if (typeof bind !== "string") {
+        refuse(`${at}.bind`, here, boardBindNotAddress("en", { id, bind: describeBare(bind) }));
+      } else if ((WILDCARD_BINDS as readonly string[]).includes(bind)) {
+        refuse(`${at}.bind`, here, boardBindWide("en", { id, bind }));
+      } else if (isIP(bind) === 0) {
+        // A NAME IS REFUSED WHERE AN ADDRESS IS NOT. A name resolves at bind
+        // time to whatever the resolver answers, which can be a wildcard by
+        // another route, so a file that read as one specific address would end
+        // up serving every interface the box has. Nothing here validates a
+        // RANGE: a loader that did would carry a behaviour constant it cannot
+        // verify and would refuse a household that reaches its board another
+        // way.
+        refuse(`${at}.bind`, here, boardBindNotAddress("en", { id, bind }));
+      }
+      const port = entry.port;
+      if (
+        port === undefined ||
+        port === null ||
+        typeof port !== "number" ||
+        !Number.isInteger(port) ||
+        port < 1 ||
+        port > 65535
+      ) {
+        refuse(`${at}.port`, here, boardPort("en", { id, value: describeBare(port) }));
+      }
     }
 
     const machine = entry.machine;
@@ -987,10 +1086,17 @@ export function loadRegistry(file: string): Registry {
       schedule: entry.schedule as string,
       memory_limit_mb: limit,
       machine: typeof machine === "string" && machine !== "" ? machine : (machines[0]?.id ?? ""),
-      ...Object.fromEntries([
-        "max_active_children", "child_memory_budget_mb", "repositories", "token_file",
-        "port", "residency", "idle_seconds",
-      ].filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
+      ...Object.fromEntries(["max_active_children", "child_memory_budget_mb", "repositories", "token_file", "enabled"]
+        .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
+      // The fields that belong to ONE kind, carried onto that kind's row and
+      // IGNORED on every other, the way the loader has always tolerated a key
+      // it has no rule about. A board is reached at an address and a port, the
+      // recognizer at a port on loopback plus the two knobs that say how long
+      // it holds its model. Carrying any of them onto a door's row would put a
+      // field on it that nothing reads and that a reader would have to explain.
+      ...Object.fromEntries((entry.kind === "board" ? ["bind", "port"]
+        : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"] : [])
+        .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
   });
