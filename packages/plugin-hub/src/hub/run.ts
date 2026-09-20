@@ -21,9 +21,9 @@ import { programForKind } from "./program.ts";
  * On its tick it reads the registry file, renders the entries for ITS machine,
  * compares them with what the manager has, and installs, starts, stops or
  * removes. It acts on the restart requests in the ledger and refuses the two
- * shapes RUN-10 forbids. It records a measured peak for every resident piece.
+ * forbidden shapes. It records a measured peak for every resident piece.
  *
- * WHAT IT MAY TOUCH IS THE FENCE (D-78). A unit under the RENDER prefix with no
+ * WHAT IT MAY TOUCH IS THE FENCE. A unit under the RENDER prefix with no
  * entry for this machine is one the hub itself generated and the registry no
  * longer wants, so the hub stops and removes it. A unit under the SCAN prefix
  * that is not under the render prefix was never the hub's to write: it is
@@ -57,7 +57,7 @@ export async function runHub(options: {
   os?: OsSeam;
 }): Promise<HubHandle> {
   const first = loadRegistry(options.registryFile);
-  // D-77. A hub that acted for a machine whose declared os is not the one it is
+  // A hub that acted for a machine whose declared os is not the one it is
   // running on would write systemd unit files onto a Mac, so it refuses loudly
   // instead, which catches a mis-set machine id at the first tick rather than
   // in the unit directory.
@@ -76,14 +76,14 @@ export async function runHub(options: {
   });
 
   // SPEC section 6 and D7: ONE hub process per machine. Two of them reconciling
-  // the same machine fight over every unit on it, and BUILD-NOTES B.2 already
-  // records what one stray hub does to a box. The register of who is running is
+  // the same machine fight over every unit on it, which has taken a box down
+  // before now. The register of who is running is
   // the store itself, because the hub is already connected to it, so there is
   // no lock file and nothing to clean up after a crash: a dead hub's backend is
   // gone by the time anybody asks. This happens BEFORE the first tick, so a hub
   // that refuses has touched no unit on its way out.
   //
-  // IT IS A LOCK AND NOT A COUNT (REVIEW.md D5). Counting the other backends
+  // IT IS A LOCK AND NOT A COUNT. Counting the other backends
   // with this name and then carrying on is a check-then-act: two hubs starting
   // in the same instant both count zero and both proceed, which enforces "one
   // hub per machine unless two start together". `pg_try_advisory_lock` is the
@@ -93,10 +93,9 @@ export async function runHub(options: {
   // name hashed to the bigint the function takes, so two machines against one
   // store never collide.
   //
-  // WHAT THE LOCK'S DURABILITY RESTS ON (REVIEW S8). It used to rest on the
-  // store being opened with one connection, and it does not any more: a store
-  // holds several. It rests on what it always really rested on, which is that
-  // `pg_try_advisory_lock` is held by the SESSION that took it and that this
+  // WHAT THE LOCK'S DURABILITY RESTS ON, and it is NOT the store being opened
+  // with one connection, because a store holds several. It rests on
+  // `pg_try_advisory_lock` being held by the SESSION that took it and on this
   // client keeps its connections for the life of the store rather than opening
   // and closing one per statement. Measured on a throwaway cluster: the lock
   // taken through the pool stays held across churn and a second store on the
@@ -266,7 +265,7 @@ export async function runHub(options: {
     }
   };
 
-  /** A measured peak for every resident piece, and only when it grew (D-84). */
+  /** A measured peak for every resident piece, and only when it grew. */
   const measure = async (registry: unknown, entries: RunEntry[]): Promise<void> => {
     for (const id of residentIds(registry, options.machine)) {
       let pid: number | null = null;

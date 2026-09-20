@@ -8,7 +8,7 @@ import type { RunEntry } from "../registry/load.ts";
  * Types only. No runtime code lives here.
  */
 
-/** What a `[[run]]` entry's schedule asks the manager for (D-97). */
+/** What a `[[run]]` entry's schedule asks the manager for. */
 export type WantedState = "running" | "scheduled" | "loaded";
 
 export interface UnitState {
@@ -16,7 +16,7 @@ export interface UnitState {
   loaded: boolean;
   running: boolean;
   pid: number | null;
-  // D-101. Four fields, one meaning each, because launchd's single counter
+  // Four fields, one meaning each, because launchd's single counter
   // counts executions and systemd's counts restarts.
   runs: number | null;     // executions, where the manager counts: launchd runs, null on systemd
   ran: boolean;            // the manager's own record says the program executed at least once
@@ -39,7 +39,7 @@ export interface UnitState {
   /**
    * The manager's own word for why it last stopped, verbatim: systemd's
    * `Result` (`success`, `exit-code`, `start-limit-hit`). Null on launchd,
-   * which keeps no such field and never gives up (D-96).
+   * which keeps no such field and never gives up.
    */
   result: string | null;
 }
@@ -69,7 +69,7 @@ export interface MemoryReading {
 /**
  * A wanted unit: the entry, the name it renders to and the state it asks for.
  *
- * D-107. Four fields, pinned, and `diffUnits` accepts exactly this. The earlier
+ * Four fields, pinned, and `diffUnits` accepts exactly this. The earlier
  * shape spread the whole `RunEntry` in beside `entry` and carried `name` twice
  * (once as `unit`), so the same fact had three spellings and nothing said which
  * one a reader was meant to use. `id` is the entry's, because that is what the
@@ -92,7 +92,7 @@ export interface OsSeam {
   restart(entryId: string): Promise<void>;
   list(): Promise<UnitState[]>;                              // everything under SCAN_PREFIX
   /**
-   * REVIEW S6. Every unit FILE in this seam's unit directory under the RENDER
+   * Every unit FILE in this seam's unit directory under the RENDER
    * prefix, as absolute paths. Read from the directory and never from the
    * manager, because the file it exists to find is one the manager has no
    * record of. Optional, so a seam a check assembles by hand may leave it out,

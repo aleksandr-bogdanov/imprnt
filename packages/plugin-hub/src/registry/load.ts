@@ -43,7 +43,7 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "the directory the chat logs are written under",
     required: false,
   },
-  // IMP-158. Where each store role's password file is, which every box masks.
+  // Where each store role's password file is, which every box masks.
   // Absent, it is `secrets` under hub.state_dir.
   {
     key: "hub.secrets_dir",
@@ -105,7 +105,7 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "how long a runner may be off the store with no work before it is reported",
     required: false,
   },
-  // D-112. How long a runner waits before it tries a refused credential again.
+  // How long a runner waits before it tries a refused credential again.
   // L10 rule 3: "the runners retry on their own on a fixed interval", and v2's
   // was a fixed five minutes. It is a retry cadence and not a window threshold,
   // so SPEC section 6's "a window threshold in code" does not reach it.
@@ -115,7 +115,7 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "how long a runner waits before it tries a credential that refused a turn again",
     required: false,
   },
-  // D-140. Which binary files a harvested note is a HOUSEHOLD FACT and not a
+  // Which binary files a harvested note is a HOUSEHOLD FACT and not a
   // thing for code to guess: one box's is a package build, another's predates
   // the `vault` verb, and the monorepo's own runs under bun with no build step.
   // The hub cannot import core (the plugin contract), so the apply is a child
@@ -127,12 +127,12 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "the command the runner spawns to file a harvested note",
     required: false,
   },
-  // 03b item 2. Where the store's own process writes its pid, and what the
+  // Where the store's own process writes its pid, and what the
   // machine's service manager calls it. Every standard install writes a pid
   // file, so the hub reads that rather than guessing at a process tree, and the
   // install script writes these two once per box. They go at the END of the
-  // list on purpose: RUN-06's negative direction deletes the FIRST declared
-  // field's line from the shipped example and requires the load to be refused,
+  // list on purpose: a shipped check deletes the FIRST declared
+  // field's line from the example file and requires the load to be refused,
   // which only a required field can do.
   {
     key: "store.pid_file",
@@ -186,49 +186,49 @@ export interface RunEntry {
   schedule: string;
   memory_limit_mb: number;
   /**
-   * D-76. Which machine runs this entry. A file that declares fewer than two
+   * Which machine runs this entry. A file that declares fewer than two
    * machines needs no `machine` anywhere and every entry belongs to the one the
    * asking process names, so this carries the single machine's id there and the
    * empty string when the file declares none at all.
    */
   machine: string;
-  /** D-81. The limit the RUNNER enforces on its model child, not its own. */
+  /** The limit the RUNNER enforces on its model child, not its own. */
   child_memory_limit_mb?: number;
   max_active_children?: number;
   child_memory_budget_mb?: number;
   repositories?: string[];
-  /** A door's bot token file. IMP-158: every agent's box masks it. */
+  /** A door's bot token file. Every agent's box masks it. */
   token_file?: string;
 }
 
-/** D-76. A machine the household has. `os` is in the file, never process.platform. */
+/** A machine the household has. `os` is in the file, never process.platform. */
 export interface MachineEntry {
   id: string;
   os: string;
 }
 
 /**
- * D-93. A person and the tree that is the tenancy boundary.
+ * A person and the tree that is the tenancy boundary.
  *
- * D-108. The five phase 4 fields are OPTIONAL and are spread onto the entry only
- * when the file carries them, exactly the way `child_memory_limit_mb` is spread
- * onto a `RunEntry`. `test/registry-machines.test.ts` asserts that
+ * The five clock and harvest fields are OPTIONAL and are spread onto the entry
+ * only when the file carries them, exactly the way `child_memory_limit_mb` is
+ * spread onto a `RunEntry`. `test/registry-machines.test.ts` asserts that
  * `listPeople` on a file that sets none returns rows carrying `id` and `tree`
- * and nothing else, so an entry that always carried five more keys would turn a
- * green check red for a fixture edit nobody asked for.
+ * and nothing else, so an entry that always carried five more keys would turn
+ * that check red.
  */
 export interface PersonEntry {
   id: string;
   tree: string;
-  /** D-108. The four stamp clocks, this person's own, in seconds. */
+  /** The four stamp clocks, this person's own, in seconds. */
   acked_seconds?: number;
   started_seconds?: number;
   answered_seconds?: number;
   delivered_seconds?: number;
-  /** D-108. The language this person reads the door's own lines in. */
+  /** The language this person reads the door's own lines in. */
   language?: string;
   /**
-   * D-137. The harvest, this person's own, and the same spread-never-set rule.
+   * The harvest, this person's own, and the same spread-never-set rule.
    *
    * `harvester` names the preset a slice of their chats is read under, and its
    * ABSENCE means this person's chats are not harvested at all: `check` says
@@ -249,7 +249,7 @@ export interface PersonEntry {
 }
 
 /**
- * D-111. A credential this household runs on: one owner, one place, and every
+ * A credential this household runs on: one owner, one place, and every
  * agent that uses it points at that file (L10 rule 1).
  */
 export interface CredentialEntry {
@@ -261,16 +261,16 @@ export interface CredentialEntry {
 
 const MACHINE_OS = ["linux", "macos"];
 
-/** D-110. How a preset is paid for, and there is no third way. */
+/** How a preset is paid for, and there is no third way. */
 export const PAID_KINDS = ["plan", "key"] as const;
 
-/** D-111. The three credential kinds this hub knows how to open. */
+/** The three credential kinds this hub knows how to open. */
 export const CREDENTIAL_KINDS = ["claude-login", "telegram", "discord"] as const;
 
-/** D-108. The two languages this household speaks. */
+/** The two languages this household speaks. */
 export const LANGUAGES = ["en", "ru"] as const;
 
-/** D-108. The four clocks a person's own file may override, one at a time. */
+/** The four clocks a person's own file may override, one at a time. */
 const STAMP_THRESHOLD_KEYS = [
   "acked_seconds",
   "started_seconds",
@@ -279,8 +279,8 @@ const STAMP_THRESHOLD_KEYS = [
 ] as const;
 
 /**
- * D-108. L6's own four numbers, called defaults by the ruling itself, so a
- * default in code is allowed HERE and forbidden for the window (D-110).
+ * L6's own four numbers, called defaults by the ruling itself, so a
+ * default in code is allowed HERE and forbidden for the window.
  */
 export const STAMP_THRESHOLD_DEFAULTS = {
   acked_seconds: 30,
@@ -292,7 +292,7 @@ export const STAMP_THRESHOLD_DEFAULTS = {
 export const DEFAULT_LANGUAGE = "en";
 
 /**
- * D-138. What a person who names only a harvester is harvested on.
+ * What a person who names only a harvester is harvested on.
  *
  * L19's own words: "Defaults ship per model so a plan login can run a strong
  * model on every slice and a per-token key runs a cheaper preset with a larger
@@ -301,11 +301,11 @@ export const DEFAULT_LANGUAGE = "en";
  * about is the harvest's own. 20 is L19's second cost figure, the size at which
  * a per-token harvest is worth paying for.
  *
- * A default in code is allowed here and forbidden for the window (D-110), and
+ * A default in code is allowed here and forbidden for the window, and
  * the two are different questions: L10's Forbidden names a window threshold and
  * names no harvest knob, while L19's Forbidden is a harvest cost that cannot be
- * changed in the registry, which a default the file overrides is not. This is
- * D-108's argument for the four stamp thresholds, cited rather than re-made.
+ * changed in the registry, which a default the file overrides is not. The four
+ * stamp thresholds rest on the same argument.
  */
 export const HARVEST_DEFAULTS = {
   quiet_minutes: 30,
@@ -313,7 +313,7 @@ export const HARVEST_DEFAULTS = {
   min_messages: { plan: 1, key: 20 },
 } as const;
 
-/** D-110. The three window thresholds, percent, on a `paid = "plan"` preset. */
+/** The three window thresholds, percent, on a `paid = "plan"` preset. */
 const WINDOW_KEYS = ["window_pause_at", "window_notice_at", "window_hold_at"] as const;
 
 /** The five, alphabetical, which is the order the derived id hashes them in. */
@@ -548,7 +548,7 @@ export function loadRegistry(file: string): Registry {
     }
   }
 
-  // D-76. The machines come first, so an entry naming a machine whose `os` is
+  // The machines come first, so an entry naming a machine whose `os` is
   // outside the two is refused at the declaration rather than at the entry.
   const machines: MachineEntry[] = [];
   ((parsed.machines ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
@@ -660,16 +660,13 @@ export function loadRegistry(file: string): Registry {
       );
     }
 
-    // D-81. The CHILD's limit, which is not the entry's own `memory_limit_mb`.
+    // The CHILD's limit, which is not the entry's own `memory_limit_mb`.
     // A child that could never be watched cannot be configured.
     //
-    // 03b item 5. Asked of EVERY runner entry, whether or not the file declares
-    // its machines. BUILD-NOTES 1 made the rule conditional because phase 1
-    // fixtures carried runner entries without the field and an unconditional
-    // one turned two green checks red on contact. Every fixture in the
-    // repository carries it now, so the tolerance has nothing left to protect,
-    // and a file with no `[[machines]]` table is exactly the file a household
-    // starts with.
+    // Asked of EVERY runner entry, whether or not the file declares
+    // its machines. Making it conditional on the machines table would let a
+    // runner entry without the field through, and a file with no
+    // `[[machines]]` table is exactly the file a household starts with.
     let childLimit: number | undefined;
     if (entry.kind === "runner") {
       const asked = entry.child_memory_limit_mb;
@@ -730,7 +727,7 @@ export function loadRegistry(file: string): Registry {
         );
       }
     }
-    // D-110. `paid` is a closed set of two, because everything below turns on
+    // `paid` is a closed set of two, because everything below turns on
     // which of them it is and a third value would read as a quiet default.
     const paid = table.paid as string;
     if (!(PAID_KINDS as readonly string[]).includes(paid)) {
@@ -742,7 +739,7 @@ export function loadRegistry(file: string): Registry {
       );
     }
 
-    // D-110. The window thresholds are settings on the preset, never code
+    // The window thresholds are settings on the preset, never code
     // (L10 rule 4), so a plan preset carries all three or the file is refused,
     // and a key preset carrying one is refused by name: "an agent on a
     // per-token key has no window", and a setting nothing reads is forbidden.
@@ -785,7 +782,7 @@ export function loadRegistry(file: string): Registry {
       window[field] = value as number;
     }
     // A file that said hold at 50 and pause at 90 would pause nothing and hold
-    // everything with no complaint, which is the quiet default RUN-08 forbids.
+    // everything with no complaint, and a quiet default is forbidden.
     if (
       paid === "plan" &&
       !(
@@ -811,7 +808,7 @@ export function loadRegistry(file: string): Registry {
     };
   }
 
-  // D-93. A person is a registry entry and its tree is the boundary. Two with
+  // A person is a registry entry and its tree is the boundary. Two with
   // one id is the same refusal a duplicate [[run]] id already carries.
   const people: PersonEntry[] = [];
   const peopleAt = new Map<string, number>();
@@ -832,7 +829,7 @@ export function loadRegistry(file: string): Registry {
     }
     peopleAt.set(id as string, here);
 
-    // D-108. The four clocks and the language, each OPTIONAL, each refused by
+    // The four clocks and the language, each OPTIONAL, each refused by
     // name and by line when it is there and wrong. A clock that runs out at
     // once is a clock nobody set, so zero is refused with everything below it.
     const clocks: Partial<Record<(typeof STAMP_THRESHOLD_KEYS)[number], number>> = {};
@@ -861,7 +858,7 @@ export function loadRegistry(file: string): Registry {
       }
     }
 
-    // D-137 to D-139. The harvest, this person's own. Five more optional
+    // The harvest, this person's own. Five more optional
     // fields on the same spread-never-set rule, and seven refusals that each
     // name their key and their line. A key the file does not carry has no line
     // of its own, so its refusal names the line of the entry it belongs to,
@@ -901,7 +898,7 @@ export function loadRegistry(file: string): Registry {
             `relative one is a different vault in every directory a process starts in`,
         );
       }
-      // CONTAINMENT IS CHECKED AND EXISTENCE IS NOT (D-139). Whether a path
+      // CONTAINMENT IS CHECKED AND EXISTENCE IS NOT. Whether a path
       // exists is a question about a MACHINE and one file loads on three of
       // them, while whether one path lies inside another is string arithmetic
       // decidable from the file alone. It matters concretely: the harvester's
@@ -987,10 +984,10 @@ export function loadRegistry(file: string): Registry {
   });
   const knownPerson = new Set(people.map((person) => person.id));
 
-  // D-111. Every credential this household runs on, named here so a preset can
+  // Every credential this household runs on, named here so a preset can
   // point at one and so `check` can open every one of them. A door's
   // `token_file` stays exactly as it is and is treated as a credential without
-  // being an entry, which is what keeps every phase 2 and phase 3 fixture green.
+  // being an entry, so a file that declares no credentials still loads.
   const credentials: CredentialEntry[] = [];
   const credentialAt = new Map<string, number>();
   ((parsed.credentials ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
@@ -1032,8 +1029,8 @@ export function loadRegistry(file: string): Registry {
         `${id} names no owner, and the owner is the household or one person`,
       );
     }
-    // Asked only of a file that declares people at all, which is D-93's own
-    // tolerance and is here for the same reason: whether a person is declared
+    // Asked only of a file that declares people at all, the same tolerance a
+    // people-less file gets everywhere else: whether a person is declared
     // is a question this file may not be answering yet.
     if (knownPerson.size > 0 && owner !== "household" && !knownPerson.has(owner as string)) {
       refuse(
@@ -1052,7 +1049,7 @@ export function loadRegistry(file: string): Registry {
     });
   });
 
-  // D-111. A preset points at its login by id, and a typo is otherwise an agent
+  // A preset points at its login by id, and a typo is otherwise an agent
   // reading a login nobody owns. Fake adapters may omit a credential;
   // production presets are checked after the structural references below.
   const declaredCredential = new Set(credentials.map((one) => one.id));
@@ -1147,13 +1144,13 @@ export function loadRegistry(file: string): Registry {
         );
       }
     }
-    // IMP-160, D-173. Telegram's `getUpdates` offset confirms every update
+    // Telegram's `getUpdates` offset confirms every update
     // below it for the whole BOT, not for one chat, and Telegram refuses a
     // second long poll on a bot while one is open. The door keeps one cursor
     // per chat and runs one reader per agent, so a second agent on a Telegram
     // door acknowledges the first one's messages without accepting them.
     // Serving both would take one reader per bot with one cursor for every
-    // chat, which is not the cursor D-173 fixes, so the file is refused.
+    // chat, which is not the cursor the door keeps, so the file is refused.
     // Discord's cursor is a per-channel snowflake and stays legal there.
     if ((parsed.run as Record<string, unknown>[])[nth].platform !== "telegram") return;
     const readers = ((parsed.agents ?? []) as Record<string, unknown>[])

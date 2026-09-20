@@ -6,7 +6,7 @@ import { stamp } from "../records/stamps.ts";
 import type { StoreLike } from "../store/connect.ts";
 
 /**
- * STORE-06's three numbers, measured again.
+ * The store's three numbers, measured again.
  *
  * SPEC §1: "Measured on this Pi: 26 MB idle, about 1.3 ms per durable commit,
  * 0.6 KB of write-ahead log per message. Measure again under real traffic: WAL
@@ -16,7 +16,7 @@ import type { StoreLike } from "../store/connect.ts";
  *
  * It MEASURES AND PRINTS AND DOES NOTHING ELSE: no sheet, no finding, no
  * setting. The household runs it, reads the numbers, and puts them in the
- * record beside phase 1's.
+ * record.
  */
 export interface StoreNumbers {
   wal_bytes_per_message: number;
@@ -51,10 +51,10 @@ async function walBetween(store: StoreLike, from: string, to: string): Promise<n
  * measured is what a message costs and not what a probe costs.
  *
  * THESE ARE NOT SYNTHETIC TEST MESSAGES. They reach no door, no platform and no
- * person: MSG-11's forbidden thing is a synthetic message sent to test the
+ * person. What is forbidden is a synthetic message sent to test the
  * pipe, and these are rows written to weigh the store.
  *
- * THEIR KIND IS THEIR OWN (REVIEW S6). Left as `human` they would grow a
+ * THEIR KIND IS THEIR OWN. Left as `human` they would grow a
  * permanent `store-measure` person and agent in the household's own metrics
  * table, because `readStampMetrics` and `readStampRows` both select on
  * `kind = 'human'`. With a kind of their own they are invisible to every reader
@@ -83,7 +83,7 @@ async function oneMessage(store: StoreLike, nth: number, run: string): Promise<v
 /**
  * Take the rows away again.
  *
- * REVIEW S6. Owner ask 3 runs this on the household's own store after a week of
+ * This runs on the household's own store after a week of
  * real messages, and a tool that measured a store by permanently enlarging it
  * would be a poor tool. `outbox` first, because it references `inbound`.
  *

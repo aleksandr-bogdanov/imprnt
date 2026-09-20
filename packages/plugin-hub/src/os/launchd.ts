@@ -17,14 +17,14 @@ import { STARTED_WITH } from "../store/connect.ts";
  *   - `kickstart` on a running job does nothing and `kickstart -k` kills and
  *     starts it again, which is exactly `start` and `restart`.
  *   - `print` reports `runs`, which counts EXECUTIONS, and `last exit code`,
- *     which reads `(never exited)` until the program has exited once. D-101's
- *     four fields come from those two: a healthy KeepAlive job that has never
+ *     which reads `(never exited)` until the program has exited once. The
+ *     four reported fields come from those two: a healthy KeepAlive job that has never
  *     died is `runs = 1`, so `restarts` is `max(runs - 1, 0)` and is zero.
  *   - a `KeepAlive` job is back 0.03 s after a `kill -9` with `ThrottleInterval`
  *     1 and waits out launchd's own 10 s default without the key, so the key is
  *     always rendered.
  *   - launchd never gives up restarting, so there is no equivalent of systemd's
- *     `StartLimitBurst` and the renderer emits none (D-96). `check` carries the
+ * `StartLimitBurst` and the renderer emits none. `check` carries the
  *     `crash-loop` finding instead.
  */
 
@@ -68,7 +68,7 @@ function readPrint(label: string, text: string): UnitState {
     since: null,
     state: state === "" ? null : state,
     // launchd keeps no equivalent of systemd's `Result`: it never gives up, so
-    // there is no verdict to record (D-96).
+    // there is no verdict to record.
     result: null,
   };
 }
@@ -179,7 +179,7 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
     },
 
     async start(entryId: string): Promise<void> {
-      // D-102. The program runs NOW, and on a job that is already running this
+      // The program runs NOW, and on a job that is already running this
       // does nothing at all (measured).
       const result = await ask(["kickstart", `gui/${uid()}/${unitName(entryId)}`]);
       if (result.code !== 0) throw new Error(`start: ${entryId}: ${result.err}`);
@@ -226,7 +226,7 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
     },
 
     async unitFiles(): Promise<string[]> {
-      // REVIEW S6. The directory and nothing else, as on systemd: a plist the
+      // The directory and nothing else, as on systemd: a plist the
       // hub wrote and never bootstrapped, or one whose removal never finished,
       // is in no domain, so `launchctl` has nothing to say about it. Only the
       // RENDER prefix, because the owner's own jobs share this directory.
@@ -269,7 +269,7 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
 
     async memory(pid: number): Promise<MemoryReading> {
       // macOS keeps no peak for a running process at all, so the peak is null
-      // here and the running maximum is the hub's, in the sheet (D-84). `ps`
+      // here and the running maximum is the hub's, in the sheet. `ps`
       // reports KILOBYTES and the seam is bytes, so it converts at this edge.
       const proc = Bun.spawnSync(["ps", "-o", "rss=", "-p", String(pid)], {
         stdout: "pipe",
