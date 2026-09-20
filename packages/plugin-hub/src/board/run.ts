@@ -15,11 +15,12 @@ import { readPeaks } from "../hub/peak.ts";
 import { readStatus } from "../hub/status.ts";
 import { readStampMetrics } from "../metrics/stamps.ts";
 import { readSheet } from "../records/statesheet.ts";
-import { lifetimeFor, listAgents, listMachines, listPeople, listRunEntries } from "../registry/entries.ts";
+import { lifetimeFor, listAgents, listMachines, listPeople, listRunEntries, voiceFor } from "../registry/entries.ts";
 import { loadRegistry, type RunEntry } from "../registry/load.ts";
 import type { OsSeam } from "../os/types.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readOpenTurns } from "../store/turns.ts";
+import { readVoiceHealth } from "../voice/health.ts";
 import { serveArtifact } from "./artifacts.ts";
 import { findingsPage, machinesPage, metricsPage, peoplePage, type CheckRow, type ControlRow } from "./pages.ts";
 
@@ -204,8 +205,16 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
   const findingsOf = async (notice: string | null): Promise<Response> =>
     html(findingsPage({ findings: await findings(), notice }));
 
-  const metrics = async (notice: string | null): Promise<Response> =>
-    html(metricsPage({ rows: await readStampMetrics(store, { now: now() }), notice }));
+  const metrics = async (notice: string | null): Promise<Response> => {
+    // A household that names no recognizer reads no sheet and sees no voice
+    // block, which is a different answer from a recognizer that has never
+    // failed. The registry is what tells the two apart.
+    const health =
+      voiceFor(loadRegistry(registryFile)) === null
+        ? null
+        : [...(await readVoiceHealth(store))].map(([recognizer, row]) => ({ recognizer, ...row }));
+    return html(metricsPage({ rows: await readStampMetrics(store, { now: now() }), health, notice }));
+  };
 
   /** What a restart of this target is called, read off the file and nowhere else. */
   const kindOf = (registry: unknown, target: string): string => {
