@@ -11,7 +11,7 @@ import { decodeHarvestBody, type HarvestBody } from "./row.ts";
 import { readWatermark, watermarkRow } from "./sheet.ts";
 import { readSlice } from "./slice.ts";
 import { harvestNothing, harvestReport, type Language } from "../door/lines.ts";
-import { historyHarvestFrom, listAgents, harvestFor, languageOf, filingRulesFor, listRunEntries } from "../registry/entries.ts";
+import { historyHarvestFrom, listAgents, harvestFor, languageOf, filingRulesFor } from "../registry/entries.ts";
 import { readSetting, type Registry, type AgentEntry } from "../registry/load.ts";
 import { credentialOfPreset, getPreset, presetId, priceFor, type Preset } from "../registry/presets.ts";
 import type { StoreLike } from "../store/connect.ts";

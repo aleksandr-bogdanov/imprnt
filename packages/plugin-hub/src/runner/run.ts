@@ -2,7 +2,7 @@ import { executeHarvest } from "../harvest/execute.ts";
 import { watchControls } from "../hub/control.ts";
 import { prepareReply } from "../door/reply.ts";
 import type { InboundSource } from "../store/inbound.ts";
-import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { adapterFor, loopLaunch } from "../adapters/index.ts";
 import { AdapterMissing, type Adapter, type AdapterSession, type TurnEnd } from "../adapters/types.ts";
