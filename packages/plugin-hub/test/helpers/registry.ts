@@ -27,12 +27,18 @@ export interface PresetSpec {
   [key: string]: string | number | undefined;
 }
 
+/**
+ * An agent. `chat` and `door` are OPTIONAL together: an agent that names
+ * neither has no chat at all and exists only to be given jobs, and an agent
+ * that names one without the other is a shape a refusal check plants
+ * deliberately.
+ */
 export interface AgentSpec {
   id: string;
   person: string;
   preset: string;
-  chat: string;
-  door: string;
+  chat?: string;
+  door?: string;
   runner: string;
   [key: string]: string | number | undefined;
 }
@@ -77,6 +83,16 @@ export interface RunSpec {
    */
   residency?: string;
   idle_seconds?: number;
+  /** The three argvs an off-box copy runs, each a list of plain arguments. */
+  dump_argv?: string[];
+  upload_argv?: string[];
+  readback_argv?: string[];
+  /** Where the copy goes. The argvs receive it and code never parses it. */
+  destination?: string;
+  /** The Discord server a door resolves a channel name against. */
+  guild?: string;
+  /** The preset an agent adopted through this door is created with. */
+  default_preset?: string;
 }
 
 /**
@@ -220,8 +236,13 @@ const HUB_DEFAULTS: Record<string, string | number> = {
  * answer by accident: the `harvest_report` is the first false a check
  * ever asks this helper to write, and a quoted `"false"` is a string the loader
  * would refuse.
+ *
+ * A LIST renders as a TOML array of quoted strings, written out for the same
+ * reason: an argv left to `String` renders as one comma-joined string, which is
+ * the wrong shape and one the loader reads as a single argument.
  */
-function value(v: string | number | boolean): string {
+function value(v: string | number | boolean | string[]): string {
+  if (Array.isArray(v)) return `[${v.map((one) => JSON.stringify(one)).join(", ")}]`;
   if (typeof v === "boolean") return v ? "true" : "false";
   return typeof v === "number" ? String(v) : JSON.stringify(v);
 }
@@ -229,7 +250,7 @@ function value(v: string | number | boolean): string {
 function table(lines: string[], entries: Record<string, unknown>): void {
   for (const [key, raw] of Object.entries(entries)) {
     if (raw === undefined) continue;
-    lines.push(`${key} = ${value(raw as string | number | boolean)}`);
+    lines.push(`${key} = ${value(raw as string | number | boolean | string[])}`);
   }
 }
 
@@ -270,7 +291,9 @@ function impliedRun(agents: AgentSpec[]): RunSpec[] {
   const out: RunSpec[] = [];
   const seen = new Set<string>();
   for (const agent of agents) {
-    if (!seen.has(agent.door)) {
+    // An agent naming no door has no chat, so there is no door to imply for it
+    // and inventing one would render an entry with no id at all.
+    if (agent.door && !seen.has(agent.door)) {
       seen.add(agent.door);
       out.push({
         id: agent.door,
@@ -432,6 +455,12 @@ function renderRegistry(spec: RegistrySpec): string {
       enabled: entry.enabled,
       residency: entry.residency,
       idle_seconds: entry.idle_seconds,
+      guild: entry.guild,
+      default_preset: entry.default_preset,
+      destination: entry.destination,
+      dump_argv: entry.dump_argv,
+      upload_argv: entry.upload_argv,
+      readback_argv: entry.readback_argv,
     });
     lines.push("");
   }
