@@ -169,7 +169,7 @@ export async function runHub(options: {
     // The explicit asks come first, before the reconcile's own work, so a
     // request lands within one tick of being written rather than behind
     // whatever the registry happened to change in the same pass.
-    await acknowledge(registry, entries);
+    await acknowledge(entries);
     const started = new Set<string>();
 
     for (const entry of entries) {
@@ -214,7 +214,7 @@ export async function runHub(options: {
   };
 
   /** The restart requests, each acted on or refused exactly once. */
-  const acknowledge = async (registry: unknown, entries: RunEntry[]): Promise<void> => {
+  const acknowledge = async (entries: RunEntry[]): Promise<void> => {
     let requests: RestartRequest[];
     try {
       requests = await readRequests(store, { after: watermark });
