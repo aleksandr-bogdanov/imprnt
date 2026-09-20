@@ -58,13 +58,21 @@ export interface RunSpec {
   machine?: string;
   /** The limit the RUNNER enforces on its model child, not its own. */
   child_memory_limit_mb?: number;
+  /** The one specific address a board listens on. */
+  bind?: string;
   /**
-   * The three a `kind = "transcriber"` entry carries. The door reaches the
-   * recognizer on loopback at `port`; `residency` says whether the model is
-   * held or dropped between notes, and `idle_seconds` is the window the
-   * dropping one waits. Each renders nothing when the spec names none.
+   * The port, and the two kinds that carry one carry it for their own reason: a
+   * board is reached there on the address above, and a `kind = "transcriber"`
+   * entry is reached there on loopback by the door beside it.
    */
   port?: number;
+  /** Whether the hub keeps this entry running. Absent means it does. */
+  enabled?: boolean;
+  /**
+   * The recognizer's other two. `residency` says whether the model is held or
+   * dropped between notes, and `idle_seconds` is the window the dropping one
+   * waits. Each renders nothing when the spec names none.
+   */
   residency?: string;
   idle_seconds?: number;
 }
@@ -347,8 +355,11 @@ function renderRegistry(spec: RegistrySpec): string {
     lines.push("");
   }
 
-  // This call renders the keys it is GIVEN and nothing else, so every field a
-  // spec may carry has to be named here or the file says nothing about it.
+  // This call renders the keys it is HANDED and nothing else, so a field added
+  // to `RunSpec` alone is a field no rendered file ever carries and a check
+  // that planted it would assert against a registry it never wrote. An absent
+  // field still renders nothing, which is what keeps a spec that names none of
+  // these byte-identical to the file it produced before they existed.
   for (const entry of spec.run ?? impliedRun(spec.agents ?? [])) {
     lines.push("[[run]]");
     table(lines, {
@@ -361,7 +372,9 @@ function renderRegistry(spec: RegistrySpec): string {
       schedule: entry.schedule ?? "always",
       memory_limit_mb: entry.memory_limit_mb ?? 256,
       child_memory_limit_mb: entry.child_memory_limit_mb,
+      bind: entry.bind,
       port: entry.port,
+      enabled: entry.enabled,
       residency: entry.residency,
       idle_seconds: entry.idle_seconds,
     });
