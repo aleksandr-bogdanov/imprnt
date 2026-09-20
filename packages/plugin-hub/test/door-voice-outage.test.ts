@@ -218,6 +218,16 @@ test(`RUN-13 an unreachable recognizer yields one line per episode across forty 
     recognizer.setStatus(200)
     runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: it.scripted.adapter } })
     expect(await observe(async () => (await it.read.inbound())[0].media_state === "done", 30_000)).toBe(true)
+    // THE ROW'S OWN STATE IS NOT EVIDENCE THAT THE LINE EXISTS. The words are
+    // written by the statement that ends the step, and the sentence is a later
+    // row in a transaction of its own, behind the diary line, the health sheet,
+    // the projection's file write and the count of what is still queued. So
+    // `done` is readable for a few milliseconds before the line is, and a read
+    // taken the instant `done` appears can land inside that. This waits for the
+    // line to have been posted at all, keyed, and the assertions below are still
+    // the whole of what judges it: that it says exactly this, once.
+    await observe(async () => (await it.read.noticeRows())
+      .some(n => String(n.notice_key).startsWith("voice:back:")), 20_000)
     const back = (await it.read.noticeRows()).filter(n => n.body === transcriberBack("en", 0))
     expect(back, "RUN-13 one line when it works again").toHaveLength(1)
     expect(String(back[0].notice_key)).toMatch(/^voice:back:local:/)
