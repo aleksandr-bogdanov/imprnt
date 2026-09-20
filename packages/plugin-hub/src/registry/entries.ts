@@ -9,6 +9,7 @@ import {
   type CredentialEntry,
   type MachineEntry,
   type PersonEntry,
+  type Registry,
   type RepositoryEntry,
   type RunEntry,
 } from "./load.ts";
@@ -152,6 +153,18 @@ export function harvestFor(registry: unknown, personId: string): HarvestSettings
 export function languageOf(registry: unknown, personId: string): "en" | "ru" {
   const person = loaded(registry, "languageOf").people.find((one) => one.id === personId);
   return (person?.language ?? DEFAULT_LANGUAGE) as "en" | "ru";
+}
+
+/**
+ * Where a notice about this agent goes and how it is written: its door and
+ * chat, the platform that door speaks, and its person's language. Everything a
+ * notice needs beyond its own words, read from the file in one place, so the
+ * runner and the harvest cannot disagree about where a line lands.
+ */
+export function noticeRoute(registry: Registry, id: string) {
+  const agent = listAgents(registry).find(one => one.id === id)!;
+  const door = (registry.data.run as { id: string; platform?: string }[]).find(one => one.id === agent.door);
+  return { route: { door: agent.door, chat: agent.chat }, platform: door?.platform ?? "discord", language: languageOf(registry, agent.person) };
 }
 
 /**

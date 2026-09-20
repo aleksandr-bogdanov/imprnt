@@ -30,6 +30,7 @@ import {
   languageOf,
   listAgents,
   listRunEntries,
+  noticeRoute,
 } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
 import {
@@ -125,12 +126,6 @@ interface OpenTurn {
 
 function setting(registry: Registry, key: string): number {
   return Number(readSetting(registry, key));
-}
-
-function noticeRoute(registry: Registry, id: string) {
-  const agent = listAgents(registry).find(one => one.id === id)!;
-  const door = (registry.data.run as { id: string; platform?: string }[]).find(one => one.id === agent.door);
-  return { route: { door: agent.door, chat: agent.chat }, platform: door?.platform ?? "discord", language: languageOf(registry, agent.person) };
 }
 
 /**

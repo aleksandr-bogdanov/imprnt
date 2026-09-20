@@ -11,7 +11,7 @@ import { decodeHarvestBody, type HarvestBody } from "./row.ts";
 import { readWatermark, watermarkRow } from "./sheet.ts";
 import { readSlice } from "./slice.ts";
 import { harvestNothing, harvestReport, type Language } from "../door/lines.ts";
-import { historyHarvestFrom, listAgents, harvestFor, languageOf, filingRulesFor } from "../registry/entries.ts";
+import { historyHarvestFrom, harvestFor, languageOf, filingRulesFor, noticeRoute } from "../registry/entries.ts";
 import { readSetting, type Registry, type AgentEntry } from "../registry/load.ts";
 import { credentialOfPreset, getPreset, presetId, priceFor, type Preset } from "../registry/presets.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -30,11 +30,6 @@ async function launchFor(registry: Registry, agent: AgentEntry, presetName: stri
   });
 }
 
-function noticeRoute(registry: Registry, id: string) {
-  const agent = listAgents(registry).find(one => one.id === id)!;
-  const door = (registry.data.run as { id: string; platform?: string }[]).find(one => one.id === agent.door);
-  return { route: { door: agent.door, chat: agent.chat }, platform: door?.platform ?? "discord", language: languageOf(registry, agent.person) };
-}
 function failedSession(session: AdapterSession): Promise<never> {
   return session.exited ? session.exited.then(() => { throw new Error("harvest child exited"); }) : new Promise(() => {});
 }
