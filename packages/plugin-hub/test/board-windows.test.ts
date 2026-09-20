@@ -253,8 +253,19 @@ test(
       ]);
       await counter.unsafe("select 1 as warm");
 
-      /** One window: what the pair issued and what it burned. */
+      /**
+       * One window: what the pair issued, what the board issued beside them,
+       * and what each of them burned.
+       *
+       * THE PAIR'S STATEMENT COUNT IS PRINTED AND NOT BOUNDED. A door and a
+       * runner with nothing to do are not silent: the runner keeps a claim on
+       * the bound it reads, which is the behaviour `test/wait-idle.test.ts`
+       * says in its own closing note it went back to. What IS bounded is the
+       * board's own count, which is the difference between the two watches
+       * below, opened over the same window and reading the same log.
+       */
       const measure = async (boardPids: number[]) => {
+        const everything = await statementWatch(cluster, [await it.read.pid()]);
         const watch = await statementWatch(cluster, [await it.read.pid(), ...boardPids]);
         const before = {
           door: cpuSeconds(door!.pid),
@@ -272,8 +283,10 @@ test(
         };
         expect(after.door).not.toBeNull();
         expect(after.runner).not.toBeNull();
+        const seen = await watch.lines();
         return {
-          statements: await watch.lines(),
+          statements: seen,
+          board: (await everything.lines()).length - seen.length,
           door: after.door! - before.door!,
           runner: after.runner! - before.runner!,
           busy: after.busy! - before.busy!,
@@ -298,15 +311,21 @@ test(
       process.stderr.write(
         `[board-windows] door ${alone.door.toFixed(3)} s alone, ${beside.door.toFixed(3)} s with a board. ` +
           `runner ${alone.runner.toFixed(3)} s alone, ${beside.runner.toFixed(3)} s with a board. ` +
-          `statements ${alone.statements.length} alone, ${beside.statements.length} with a board.\n`,
+          `the pair issued ${alone.statements.length} statements alone and ${beside.statements.length} with a board, ` +
+          `and the board itself issued ${beside.board}.\n`,
       );
 
       // The control first: the probe can see a process that really spins.
       expect(alone.busy).toBeGreaterThan(BOUND_SECONDS);
       expect(beside.busy).toBeGreaterThan(BOUND_SECONDS);
-      // The counter, proved inside each window.
-      expect(alone.statements).toHaveLength(1);
-      expect(beside.statements).toHaveLength(1);
+      // The counter, proved inside each window: a window that counted nothing
+      // because its counter was unwired fails here.
+      for (const window of [alone, beside]) {
+        expect(window.statements.some((line) => line.includes("the deliberate statement"))).toBe(true);
+      }
+      // A board up beside them asks the store nothing of its own between
+      // requests, so the two watches over one window see the same statements.
+      expect(beside.board, "the board issued statements while nobody was looking").toBe(0);
 
       for (const [what, burned] of [
         ["the door alone", alone.door],

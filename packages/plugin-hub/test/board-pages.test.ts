@@ -57,7 +57,7 @@ const PAGES = ["/", "/people", "/findings", "/metrics"] as const;
  * these is what this check exists to catch.
  */
 const READERS: Record<string, { what: string; sql: RegExp }[]> = {
-  "/": [{ what: "a state sheet: the check sheet and the peaks", sql: /from state_row/ }],
+  "/": [{ what: "a state sheet: the check sheet, the peaks and the control sheet", sql: /from state_row/ }],
   "/people": [
     { what: "a state sheet: agent health, door health and the check sheet", sql: /from state_row/ },
     { what: "readOpenTurns", sql: /from inbound/ },
@@ -224,10 +224,13 @@ async function plantFinding(
   finding: { machine: string; kind: string; subject: string; says: string; fix: string },
 ): Promise<string> {
   const id = findingId(finding.machine, finding.kind, finding.subject);
+  // The object is BOUND, never serialised first: this client sends an already
+  // serialised object as a jsonb string, and the row a page then reads back is
+  // a string whose contents look like the finding rather than the finding.
   await it.read.sql(
-    `insert into state_row (sheet, id, data) values ('check', $1, $2::jsonb)
+    `insert into state_row (sheet, id, data) values ('check', $1, $2)
        on conflict (sheet, id) do update set data = excluded.data, updated_at = now()`,
-    [id, JSON.stringify({ id, ...finding })],
+    [id, { id, ...finding }],
   );
   return id;
 }
@@ -263,10 +266,12 @@ test(
             `${path} issued a statement no named reader of that page issues:\n${line}`,
           ).toBe(true);
         }
-        // The count, beside the shapes: the machines page reads two sheets, the
-        // findings page reads one, the people page reads three plus one open
-        // turn read per agent, and the metrics page is its two statements.
-        const expected: Record<string, number> = { "/": 2, "/people": 5, "/findings": 1, "/metrics": 2 };
+        // The count, beside the shapes: the machines page reads three sheets
+        // (the findings, the peaks, and the control rows that say what came of
+        // an act), the findings page reads one, the people page reads three
+        // plus one open turn read per agent, and the metrics page is its two
+        // statements.
+        const expected: Record<string, number> = { "/": 3, "/people": 5, "/findings": 1, "/metrics": 2 };
         expect(lines.length, `${path} issued:\n${lines.join("\n")}`).toBe(expected[path]);
       }
 
@@ -326,9 +331,9 @@ test(
         fix: "reset it there",
       });
       await it.read.sql(
-        `insert into state_row (sheet, id, data) values ('memory_peak', $1, $2::jsonb)
+        `insert into state_row (sheet, id, data) values ('memory_peak', $1, $2)
            on conflict (sheet, id) do update set data = excluded.data`,
-        [RUNNER_ENTRY.id, JSON.stringify({ bytes: 456_123_000, at: new Date().toISOString(), how: "vmhwm", machine: HERE, pid: 4242 })],
+        [RUNNER_ENTRY.id, { bytes: 456_123_000, at: new Date().toISOString(), how: "vmhwm", machine: HERE, pid: 4242 }],
       );
 
       const text = await bodyOf(board, "/");
@@ -460,6 +465,10 @@ test(
         );
       }
 
+      // A second person with a message and no stamps beyond its arrival, so the
+      // page has a measure with nothing in it to print.
+      await insertInbound(cluster, it.db, { id: "measured-none", body: "nothing came of it", person: "p2", agent: "p2-lair" });
+
       const rows = await readStampMetrics(store, { now: new Date(now.getTime() + 20_000) });
       expect(rows.length).toBeGreaterThan(0);
       const text = await bodyOf(board, "/metrics");
@@ -476,8 +485,8 @@ test(
       // A measure with nothing in it prints the same nothing the command line
       // prints, and never a zero, because a zero is a claim about a duration
       // nobody measured.
-      const week = rows.find((row) => row.window === "week")!;
-      expect(Object.values(week.measures).some((measure) => measure.count === 0)).toBe(true);
+      const none = rows.find((row) => row.id === "p2")!;
+      expect(Object.values(none.measures).every((measure) => measure.count === 0)).toBe(true);
       expect(text).toContain("-");
     } finally {
       await staged.stop();
@@ -497,7 +506,15 @@ test(
       await insertInbound(cluster, it.db, {
         id: "said-one",
         body: secret,
-        source: { log_id: "1", at: new Date().toISOString(), from: "p1", text: secret },
+        source: {
+          log_id: "1",
+          at: new Date().toISOString(),
+          from: "p1",
+          text: secret,
+          door: "door-fake",
+          chat: "fixture-chat",
+          sender_id: "fixture-sender",
+        },
       });
       await it.read.sql(
         `insert into outbox (inbound_id, seq_in_reply, body) values ('said-one', 1, $1)`,

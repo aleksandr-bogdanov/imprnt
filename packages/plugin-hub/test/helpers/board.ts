@@ -244,7 +244,7 @@ export interface DigestedFile {
 export function treeDigest(dir: string): DigestedFile[] {
   const out: DigestedFile[] = [];
   const walk = (at: string) => {
-    let found: ReturnType<typeof readdirSync>;
+    let found: { name: string; isDirectory(): boolean }[];
     try {
       found = readdirSync(at, { withFileTypes: true });
     } catch {
@@ -258,9 +258,9 @@ export function treeDigest(dir: string): DigestedFile[] {
         walk(full);
         continue;
       }
-      let bytes: Buffer;
+      let bytes: Uint8Array;
       try {
-        bytes = readFileSync(full);
+        bytes = new Uint8Array(readFileSync(full));
       } catch {
         continue;
       }

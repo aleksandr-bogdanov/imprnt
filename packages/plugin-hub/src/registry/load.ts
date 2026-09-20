@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { isAbsolute, resolve, sep } from "node:path";
 import { ADAPTERS } from "../adapters/index.ts";
 import {
+  artifactsNotBoolean,
   boardBindMissing,
   boardBindNotAddress,
   boardBindWide,
@@ -354,6 +355,14 @@ export interface PersonEntry {
   harvest_quiet_minutes?: number;
   harvest_min_messages?: number;
   harvest_report?: boolean;
+  /**
+   * Whether the board serves what an agent built for this person.
+   *
+   * Absent means NOT served, so a household that adds a second person does not
+   * publish their pages by adding them to the file. Widening what the household
+   * exposes is one deliberate line here.
+   */
+  artifacts?: boolean;
   allowed_senders?: Record<string, string[]>;
   history_harvest_after?: string;
   filing_rules?: string;
@@ -1374,6 +1383,14 @@ export function loadRegistry(file: string): Registry {
           `back is a true or a false`,
       );
     }
+    const shows = entry.artifacts;
+    if (shows !== undefined && shows !== null && typeof shows !== "boolean") {
+      refuse(
+        `${where}.artifacts`,
+        lines.get(`${where}.artifacts`) ?? here,
+        artifactsNotBoolean("en", { id, value: describeBare(shows) }),
+      );
+    }
     if (entry.filing_rules !== undefined) readable(entry.filing_rules, `${where}.filing_rules`);
     if (entry.history_harvest_after !== undefined &&
         (typeof entry.history_harvest_after !== "string" ||
@@ -1402,6 +1419,9 @@ export function loadRegistry(file: string): Registry {
         ? { harvest_min_messages: entry.harvest_min_messages }
         : {}),
       ...(typeof reports === "boolean" ? { harvest_report: reports } : {}),
+      // Spread, never set, like every optional field above: a check binds the
+      // shape of a person who declares none of them.
+      ...(typeof shows === "boolean" ? { artifacts: shows } : {}),
     };
 
     // Spread, never set: a file that carries none of the ten leaves an entry

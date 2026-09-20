@@ -90,6 +90,20 @@ export function enabledOf(entry: { enabled?: boolean }): boolean {
   return entry.enabled !== false;
 }
 
+/**
+ * The directory the board serves for this person, or null.
+ *
+ * Null for a person who did not opt in, for one the file does not declare and
+ * for one with no tree, which are the same answer to a reader: nothing here.
+ * Whether the directory exists is a question about a machine and is answered
+ * where the file is read, not here.
+ */
+export function artifactsFor(registry: unknown, personId: string): string | null {
+  const person = loaded(registry, "artifactsFor").people.find((one) => one.id === personId);
+  if (!person || person.artifacts !== true || person.tree === "") return null;
+  return join(person.tree, "artifacts");
+}
+
 /** Where an agent's chat is read from: the file its door wrote, or the store. */
 export type ChatStatePlacement = "file" | "store";
 
