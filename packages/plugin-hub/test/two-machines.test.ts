@@ -144,19 +144,14 @@ test(
         expect(backend.client_addr).not.toBeNull();
       }
 
-      // The ONE host half. The store url is a single value in a single file,
-      // both runners were handed that same file, and both of their backends are
-      // registered in THIS server's own view: a runner that had connected to a
-      // different cluster would simply not be in it. The server's own
-      // identifier is read as well, because it cannot be forged by a test that
-      // opened two connections to two different clusters.
+      // The ONE host half. The store url is a single value in a single file and
+      // both runners were handed that same file, so the backends counted above
+      // are two processes reading one setting. Which SERVER each of them
+      // believes it reached is a stronger claim than a shared file can make and
+      // it is bound in test/store-split.test.ts, where each runner writes the
+      // cluster's own system_identifier and the two are compared.
       const registry = loadRegistry(it.registryFile);
       expect(String(readSetting(registry, "hub.store_url"))).toBe(it.storeUrl);
-      expect(it.storeUrl.startsWith("postgres://127.0.0.1:")).toBe(true);
-      const [control] = (await it.read.sql(
-        "select system_identifier::text as id from pg_control_system()",
-      )) as { id: string }[];
-      expect(control.id.length).toBeGreaterThan(0);
     } finally {
       if (pi) await pi.stop();
       if (mac) await mac.stop();

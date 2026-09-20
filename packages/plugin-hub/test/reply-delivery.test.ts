@@ -70,8 +70,6 @@ test("ROLL-08 long and empty answers are visible ordered parts and permanent ref
       // Scoped faulty classification. The permanent classifier must reject retrying it.
       const classify = classifyPlatformError as (error: unknown) => { kind: string }
       expect(classify(denied).kind).toBe("permanent")
-      const endlesslyRetry = () => ({ kind: "transient" })
-      expect(() => expect(endlesslyRetry().kind).toBe("permanent")).toThrow()
       edge.postError(null)
       expect((await edge.platform.post({ chat: "1000000001", text: "same route after repair" })).id).not.toBeNull()
     } finally {
