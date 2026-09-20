@@ -15,6 +15,15 @@ alter table inbound drop constraint inbound_kind_is_known;
 alter table inbound add constraint inbound_kind_is_known
   check (kind in ('human', 'report', 'triage', 'room', 'harvest', 'measure', 'job'));
 
+-- When the report landed, which is a different question from when the person
+-- asked. A report carries the JOB's own arrival stamp, so the feed puts it
+-- ahead of a message that arrived while the job was running, and that stamp is
+-- as old as the job is. A clock measured from it has run out before the row
+-- exists, and the door would say the agent has not answered in the same second
+-- the answer arrives. Written once, by the function below, and null on every
+-- other row, which is measured from its own arrival exactly as it is today.
+alter table inbound add column reported_at timestamptz;
+
 -- The report a finished job sends back to the agent that dispatched it.
 --
 -- THE OWNER IS THE ROLE THAT ALREADY WRITES THE TABLE. This one inserts into
@@ -44,9 +53,9 @@ begin
   -- `received_at` is the JOB's own and never now(). The feed order is
   -- (rank, received_at, id), so a report stamped at completion time would sort
   -- after a human message that arrived while the job was running.
-  insert into public.inbound (id, person, agent, body, kind, received_at, source, log_ready)
+  insert into public.inbound (id, person, agent, body, kind, received_at, reported_at, source, log_ready)
   values ('report:' || job.id, job.person,
-          job.source -> 'dispatch' -> 'return' ->> 'agent', report, 'report', job.received_at,
+          job.source -> 'dispatch' -> 'return' ->> 'agent', report, 'report', job.received_at, now(),
           jsonb_build_object(
             'log_id', 'report:' || job.id,
             -- The chat line's own instant, which is when the line happens, and

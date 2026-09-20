@@ -513,10 +513,12 @@ export async function runDoor(options: {
                 // The media state travels with the row, because the clock it
                 // arms depends on it: a note still waiting for its words is
                 // waiting for a different stamp, and a row with no media is
-                // null here exactly as the store holds it.
+                // null here exactly as the store holds it. A row the door
+                // accepted is a person's own message and never a report, so
+                // the report's own stamp is null on all of these.
                 own.arrivals.push({ id, person: agent.person, agent: agent.id,
                   received_at: new Date(), state: "received", claimed_by: null,
-                  media_state: mediaState, media_done_at: null });
+                  media_state: mediaState, media_done_at: null, reported_at: null });
                 own.arrived.wake();
               },
               pending(row) {
@@ -1438,7 +1440,7 @@ export async function runDoor(options: {
       await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
       own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
         received_at: row.receivedAt, state: "received", claimed_by: null,
-        media_state: "failed", media_done_at: at });
+        media_state: "failed", media_done_at: at, reported_at: null });
       own.arrived.wake();
     };
 
@@ -1470,7 +1472,7 @@ export async function runDoor(options: {
         await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
         own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
           received_at: row.receivedAt, state: "received", claimed_by: null,
-          media_state: state.state, media_done_at: state.done_at });
+          media_state: state.state, media_done_at: state.done_at, reported_at: null });
         own.arrived.wake();
         return;
       }
@@ -1497,7 +1499,7 @@ export async function runDoor(options: {
         own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
           received_at: row.receivedAt, state: "received", claimed_by: null,
           media_state: outcome.state === "done" ? "done" : "failed",
-          media_done_at: outcome.doneAt });
+          media_done_at: outcome.doneAt, reported_at: null });
         own.arrived.wake();
         if (outcome.state === "done" && episode !== null) {
           const [count] = await store.sql`select count(*)::int as waiting from inbound
