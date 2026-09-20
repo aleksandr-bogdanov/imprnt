@@ -48,6 +48,7 @@ import { readStampRows, stampFindings } from "./stamps.ts";
 import { readVoiceState, transcribingFindings, voiceFindings } from "./voice.ts";
 import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
+import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { silentRunners } from "./silence.ts";
 
 export type { Finding } from "./finding.ts";
@@ -534,6 +535,23 @@ export async function runCheck(options: {
         rows: await readStampRows(options.store, { agents: mine.map((agent) => agent.id) }),
         thresholds: (person) => thresholdsFor(registry, person),
         runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        machine,
+        now,
+      }),
+    );
+
+    // --- every dispatched job past its person's own threshold (criterion 2) -
+    //
+    //     The same finding code as a scheduled job that stopped landing, and
+    //     no code shared with it: that producer reads an entry's own success
+    //     stamp and is keyed on the entry's id, this one reads the queue and is
+    //     keyed on the job row's id. They share the word an operator greps.
+    findings.push(
+      ...staleDispatchJobs({
+        jobs: await readOpenJobs(options.store, { agents: mine.map((agent) => agent.id) }),
+        thresholds: (person) => thresholdsFor(registry, person),
+        runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        graceSeconds: setting(registry, "hub.job_grace_seconds", 300),
         machine,
         now,
       }),
