@@ -67,7 +67,9 @@ export interface TurnRecord {
  */
 export async function settleTurn(
   store: StoreLike,
-  turn: { inboundId: string; chunks: string[]; turn: TurnRecord; person?: string; source?: InboundSource | null; imported?: Record<string, unknown>; receipts?: ({ at: string } | null)[] },
+  turn: { inboundId: string; chunks: string[]; turn: TurnRecord; person?: string; source?: InboundSource | null; imported?: Record<string, unknown>; receipts?: ({ at: string } | null)[];
+    /** What the row was. A `job` reports instead of writing chunks. */
+    kind?: string },
 ): Promise<void> {
   await store.sql.begin(async (tx) => {
     const inside = { ...store, sql: tx as unknown as StoreLike["sql"] };
@@ -89,7 +91,20 @@ export async function settleTurn(
       if (done.length) return;
       await appendEntry(inside, { stream: "turn", subject: turn.inboundId, kind: "imported", actor: "runner", detail: turn.imported });
     }
-    await appendChunks(inside, turn.inboundId, turn.chunks, turn.receipts);
+    if (turn.kind === "job") {
+      // A JOB'S TEXT IS THE REPORT and a job is never posted anywhere, so no
+      // chunk is written for it. The report goes through the function the door
+      // owns, inside this same transaction, so it lands with the settle or not
+      // at all: a settle split in two leaves a report the redo would write
+      // again, and the function's own conflict clause is the other half of that.
+      await tx`select hub_report(${turn.inboundId}, ${turn.chunks.join("\n")})`;
+      await appendEntry(inside, {
+        stream: "control", subject: turn.inboundId, kind: "dispatch.reported", actor: "runner",
+        detail: { agent: turn.turn.agent, runner: turn.turn.runner },
+      });
+    } else {
+      await appendChunks(inside, turn.inboundId, turn.chunks, turn.receipts);
+    }
     await stamp(inside, {
       messageId: turn.inboundId,
       kind: "answered",

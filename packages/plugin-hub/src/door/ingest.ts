@@ -12,7 +12,8 @@ import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markMediaPending } from "../voice/records.ts";
 import { writeCursor } from "./cursor.ts";
 import { recordDeniedSender } from "./denied.ts";
-import { controlUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
+import { requestDispatch, parseDispatch } from "./dispatch.ts";
+import { controlUsage, dispatchAccepted, dispatchRefused, dispatchUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
 import { saveMedia, type SavedMedia } from "./media.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
 
@@ -73,6 +74,38 @@ export async function acceptBatch(options: {
       }, skipBad);
       try { await platform.post({ chat: agent.chat, text }); }
       catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
+      continue;
+    }
+    const asked = parseDispatch(message.text);
+    if (asked !== null) {
+      const base = inboundId(platform.name, message.chat, message.platform_message_id);
+      const id = `dispatch:${base}`;
+      await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id, at: message.at, direction: "in", from: agent.person, text: message.text,
+      }, skipBad);
+      let text = dispatchUsage(language);
+      if (asked !== "usage") {
+        try {
+          await requestDispatch(store, { id: `job:${base}`, registry, person: agent.person,
+            door, chat: agent.chat, agent: agent.id, sender_id: sender, from: message.from,
+            target: asked.target, task: asked.task, at: message.at });
+          text = dispatchAccepted(language, { agent: asked.target });
+        } catch (error) {
+          if ((error as Error).name !== "DispatchRefused") throw error;
+          text = dispatchRefused(language, { agent: asked.target, cause: "access denied" });
+        }
+      }
+      // POSTED ONLY WHEN THE LINE IS NEW. The row, the diary entry and both
+      // chat lines are already idempotent by the platform message id, so a
+      // platform that redelivers a batch would otherwise say the same sentence
+      // twice about a job it created once.
+      const fresh = await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id: id + ":notice", at: message.at, direction: "out", from: door, text,
+      }, skipBad);
+      if (fresh) {
+        try { await platform.post({ chat: agent.chat, text }); }
+        catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
+      }
       continue;
     }
     const demand = isDemand(message.text);

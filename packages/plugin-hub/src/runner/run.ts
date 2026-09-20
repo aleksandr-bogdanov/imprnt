@@ -49,6 +49,7 @@ import { storeUrlFor } from "../store/secrets.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
+import { admitJob, refuseJob } from "./job.ts";
 import { clearProgress, writeProgress, type TurnProgress } from "./progress.ts";
 import {
   clearOutage,
@@ -481,6 +482,8 @@ export async function runRunner(options: {
     let claimed: string | null = null;
     /** Whether that claim is a person's message rather than a harvest. */
     let claimedHuman = false;
+    /** Where a claimed JOB's notice goes, which is never this agent's own chat. */
+    let claimedReturn: { door: string; chat: string } | null = null;
     let unhealthy = retries.has(agent.id);
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
@@ -598,7 +601,7 @@ export async function runRunner(options: {
 
     const oneTurn = async (
       message: { id: string; text: string },
-      about: { preset: Preset; tail: boolean; registry: Registry; source?: InboundSource | null },
+      about: { preset: Preset; tail: boolean; registry: Registry; source?: InboundSource | null; kind?: string },
     ): Promise<void> => {
       let finish: (end: TurnEnd) => void = () => {};
       const ended = new Promise<TurnEnd>((resolve) => {
@@ -757,7 +760,11 @@ export async function runRunner(options: {
         inboundId: message.id,
         person: agent.person,
         source: about.source,
-        chunks: prepareReply(end.text, about.source?.log_id.split(":")[0] ?? noticeRoute(about.registry, agent.id).platform, languageOf(about.registry, agent.person)),
+        kind: about.kind,
+        // A job's answer is the whole report and reaches no chat, so it is
+        // never cut to a platform's size.
+        chunks: about.kind === "job" ? [end.text]
+          : prepareReply(end.text, about.source?.log_id.split(":")[0] ?? noticeRoute(about.registry, agent.id).platform, languageOf(about.registry, agent.person)),
         turn: record,
       });
     };
@@ -1072,13 +1079,27 @@ export async function runRunner(options: {
           }
           continue;
         }
+        // THE GATE GOES ABOVE THE RESPAWN LINE, so a job nobody approved starts
+        // no child at all. The whole of it is a hash over a string already in
+        // hand, so it costs no statement between the claim and the feed.
+        if (row.kind === "job") {
+          const refusal = admitJob(row);
+          if (refusal) {
+            await refuseJob(store, { row, refusal, registry, runner: options.runner });
+            claimed = null;
+            claimedReturn = null;
+            continue;
+          }
+          claimedReturn = row.source?.dispatch?.return ?? null;
+        }
         const preset = getPreset(registry, agent.preset);
         // A session carries the preset it was started with, so a changed one is
         // a new child, and so is one whose child the memory watch killed. The
         // runner process itself never restarts for either.
         if (!own.session || presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
-        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source });
+        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source, kind: row.kind });
         claimed = null;
+        claimedReturn = null;
         lastWork = Date.now();
       }
     } catch (error) {
@@ -1101,7 +1122,11 @@ export async function runRunner(options: {
         // rather than nothing until the answered clock runs out. A harvest
         // failure tells nobody.
         if (claimed && claimedHuman && listAgents(registry).some(one => one.id === agent.id)) {
-          const said = noticeRoute(registry, agent.id);
+          // A job is read back to the agent that dispatched it, which is the
+          // only route it has: an agent that works jobs alone has no chat of
+          // its own for a notice to land in.
+          const ordinary = noticeRoute(registry, agent.id);
+          const said = claimedReturn ? { ...ordinary, route: claimedReturn } : ordinary;
           // A memory kill reaches here as the child's exit. `own.killed` alone
           // is also set by a credential refusal, which closes the child itself.
           const why = !(error as { childExited?: boolean }).childExited ? "task failed"

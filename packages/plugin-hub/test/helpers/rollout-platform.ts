@@ -81,5 +81,6 @@ export function rolloutPlatform(name: "telegram" | "discord") {
     attempts: () => structuredClone(postAttempts),
     posts: base.posts,
     edits: base.edits,
+    typings: base.typings,
   }
 }
