@@ -139,6 +139,22 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       updated_at: new Date(row.updated_at).toISOString(),
     }));
 
+  /**
+   * What the manager says about this machine's own entries, or nothing.
+   *
+   * A machine whose service manager does not answer is not a reason for the
+   * page to die: the list, the limits, the other machine's findings and the
+   * acts are all still readable, and the columns only the manager could fill
+   * print nothing rather than a guess.
+   */
+  const liveStatus = async () => {
+    try {
+      return await readStatus({ registryFile, machine, os });
+    } catch {
+      return [];
+    }
+  };
+
   const machines = async (notice: string | null): Promise<Response> => {
     const registry = loadRegistry(registryFile);
     const controls = (await sheet("control")).map((row) => ({
@@ -150,7 +166,7 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
         machine,
         entries: listRunEntries(registry),
         machines: listMachines(registry),
-        status: await readStatus({ registryFile, machine, os }),
+        status: await liveStatus(),
         findings: await findings(),
         peaks: await readPeaks(store),
         acts: controls,

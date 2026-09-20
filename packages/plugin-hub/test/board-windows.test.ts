@@ -205,6 +205,7 @@ async function startBoard(it: StagedHub, entry: RunSpec): Promise<BoardProcess> 
       }
     },
     30_000,
+    async () => `The board said: ${(await errors).slice(0, 600)}`,
   );
   return {
     pid: proc.pid,

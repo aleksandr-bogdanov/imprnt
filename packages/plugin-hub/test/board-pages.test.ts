@@ -609,3 +609,52 @@ test(
   },
   SLOW,
 );
+
+test(
+  "a machine whose service manager does not answer still has a page",
+  async () => {
+    // A box with no manager to ask is a degraded board and not a dead one: the
+    // list, the limits, the other machine's findings and the acts are all still
+    // readable, and the columns only the manager could fill print nothing
+    // rather than a guess. A container without systemd is exactly this box, and
+    // so is a Linux machine whose user manager is not running.
+    const staged = await stage();
+    let board: ServedBoard | undefined;
+    try {
+      // The staged board goes first: what is being served here is the same
+      // entry with a manager that refuses to answer.
+      await staged.board.stop();
+      const inner = plantedSeam(FLAVOUR);
+      const broken = recordingSeam({
+        ...inner.os,
+        async show() {
+          throw new Error("Executable not found in $PATH");
+        },
+        async list() {
+          throw new Error("Executable not found in $PATH");
+        },
+      });
+      board = await serveBoard({
+        registryFile: staged.it.registryFile,
+        entryId: staged.boardEntry.id,
+        store: staged.store,
+        os: broken.os,
+        now: () => new Date(),
+      });
+      const answer = await board.get("/");
+      expect(answer.status).toBe(200);
+      const text = await answer.text();
+      for (const entry of [DOOR_ENTRY, RUNNER_ENTRY, STOPPED_ENTRY]) expect(text).toContain(entry.id);
+      expect(text).toContain(String(RUNNER_ENTRY.memory_limit_mb));
+      // And the other three pages never asked the manager anything at all.
+      for (const path of ["/people", "/findings", "/metrics"]) {
+        expect((await board.get(path)).status, path).toBe(200);
+      }
+    } finally {
+      await board?.stop();
+      await staged.it.stop();
+      await staged.store.close();
+    }
+  },
+  SLOW,
+);

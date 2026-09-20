@@ -110,7 +110,10 @@ export async function serveBoard(options: ServeBoardOptions): Promise<ServedBoar
   try {
     handle = await start();
   } catch (error) {
-    if (!/EADDRINUSE|address already in use/i.test(String((error as Error).message))) throw error;
+    const taken =
+      (error as { code?: string }).code === "EADDRINUSE" ||
+      /EADDRINUSE|address already in use|port \d+ in use/i.test(String((error as Error).message));
+    if (!taken) throw error;
     setOnEntry(options.registryFile, options.entryId, "port", String(await freePort()));
     handle = await start();
   }
