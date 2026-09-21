@@ -57,7 +57,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
-  backendPid, hubPath, startCluster, statementWatch, until, untilIssued, type Cluster,
+  backendPid, hubPath, startCluster, startReadySubprocess, statementWatch, until, untilIssued, type Cluster, type ReadyProcess,
 } from "./helpers/cluster.ts"
 import { cpuSeconds } from "./helpers/cpu.ts"
 import { superStore } from "./helpers/hub-fixture.ts"
@@ -517,51 +517,68 @@ test("ROLL-19 a runner drains a job, a report and two messages with no new arriv
 // ---------------------------------------------------------------------------
 
 test("ROLL-19 a door and a runner with a job waiting on a stopped spoke are asleep, and the spoke's own wait stops inside the bound (SPEC §2, STORE-01)", async () => {
-  const it = await sixb()
-  let door: Handle | undefined
-  let hub: Handle | undefined
+  // wait-idle's own arrangement: the door and the runner are processes of their
+  // own, reading a platform and a loop served over the wire, so the processor
+  // time read is theirs alone and not this harness's or the fake's.
+  const it = await sixb({ servers: true })
+  // Every message the served fake hands out carries its one fixture sender.
+  writeFileSync(it.registryFile, readFileSync(it.registryFile, "utf8")
+    .replace('allowed_senders = { door-fake = ["p1"] }', 'allowed_senders = { door-fake = ["p1", "fixture-sender"] }'))
+  let door: ReadyProcess | null = null
+  let hub: ReadyProcess | null = null
   let spoke: Handle | undefined
   const busy = Bun.spawn([process.execPath, "-e",
     "setInterval(() => { let s = 0; for (let i = 0; i < 6e7; i++) s += i; globalThis.__sink = s; }, 100); setInterval(() => {}, 1e9);"],
   { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
   try {
-    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
-    hub = await runRunner({ runner: "runner-pi", registryFile: it.registryFile,
-      adapters: { [it.adapterName]: it.scripted.adapter } })
+    door = await startReadySubprocess("test/helpers/door-subprocess.ts", [it.registryFile, "door-fake", it.platformUrl])
+    hub = await startReadySubprocess("test/helpers/runner-subprocess.ts", [it.registryFile, "runner-pi", it.adapterUrl, it.adapterName])
     // One message the whole way, so what is measured is a pair that finished
     // its work rather than a pair that never started.
-    it.edge.batch([typed("90", "a message that goes the whole way")], "91")
+    it.fake.deliver({ chat: LAIR_CHAT, text: "a message that goes the whole way" })
     await until("the reply was delivered", async () =>
-      (await it.read.outbox()).length >= 1 && (await it.read.outbox()).every(row => row.delivered_at !== null), 60_000)
-    const job = await dispatched(it, "100", DISPATCH_JOB_ONLY, TASK_A)
+      (await it.read.outbox()).length >= 1 && (await it.read.outbox()).every(row => row.delivered_at !== null), 60_000,
+      async () => JSON.stringify(await it.read.inbound()))
+    it.fake.deliver({ chat: LAIR_CHAT, text: `${DISPATCH_PHRASES.en} ${DISPATCH_JOB_ONLY} ${TASK_A}` })
+    let job: Awaited<ReturnType<Stage["read"]["inbound"]>>[number] | undefined
+    await until("the job is on the queue and the dispatcher was told", async () => {
+      job = (await it.read.inbound()).find(row => row.kind === "job" && row.body === TASK_A)
+      return job !== undefined && it.fake.posts().some(post => post.text === dispatchAccepted("en", { agent: DISPATCH_JOB_ONLY }))
+    }, 30_000, async () => JSON.stringify(await it.read.inbound()))
     // wait-idle's own beat for the settling writes, which a processor bound
     // reads through: a handful of statements cost no measurable time.
     await Bun.sleep(1500)
 
-    // The door and the runner run in THIS process, so this is what both burn,
-    // with the check's own harness counted in as well. wait-idle measures the
-    // two as separate subprocesses, so this bound is held by more than it is
-    // there and is at least as hard to meet.
-    const before = { here: cpuSeconds(process.pid), busy: cpuSeconds(busy.pid) }
-    expect(before.here).not.toBeNull()
+    const before = { door: cpuSeconds(door.pid), hub: cpuSeconds(hub.pid), busy: cpuSeconds(busy.pid) }
+    expect(before.door).not.toBeNull()
+    expect(before.hub).not.toBeNull()
     expect(before.busy).not.toBeNull()
     await Bun.sleep(CPU_WINDOW_MS)
-    const burned = { here: cpuSeconds(process.pid)! - before.here!, busy: cpuSeconds(busy.pid)! - before.busy! }
+    const burned = {
+      door: cpuSeconds(door.pid)! - before.door!,
+      hub: cpuSeconds(hub.pid)! - before.hub!,
+      busy: cpuSeconds(busy.pid)! - before.busy!,
+    }
+    process.stderr.write(`[6b-windows] over ${CPU_WINDOW_MS / 1000} s the door burned ${burned.door.toFixed(3)} s, ` +
+      `the runner ${burned.hub.toFixed(3)} s and the spinning control ${burned.busy.toFixed(3)} s, against ${CPU_BOUND_SECONDS} s\n`)
     expect(burned.busy, "the probe sees a process that really polls").toBeGreaterThan(CPU_BOUND_SECONDS)
-    expect(burned.here, "a door and a runner with a job waiting on a stopped spoke").toBeLessThan(CPU_BOUND_SECONDS)
-    expect((await it.read.inbound()).find(row => row.id === job.id)!.claimed_by).toBeNull()
+    expect(burned.door, "a door with a job waiting on a stopped spoke").toBeLessThan(CPU_BOUND_SECONDS)
+    expect(burned.hub, "a runner beside a job waiting on a stopped spoke").toBeLessThan(CPU_BOUND_SECONDS)
+    expect(cpuSeconds(door.pid)).not.toBeNull()
+    expect(cpuSeconds(hub.pid)).not.toBeNull()
+    expect((await it.read.inbound()).find(row => row.id === job!.id)!.claimed_by).toBeNull()
 
     // --- The spoke: it takes the job on the shipped waiter, and once it is
     //     waiting again with its next bound half a minute away, a stop returns
     //     in its own time rather than at the end of that wait.
-    await hub.stop(); hub = undefined
-    await door.stop(); door = undefined
+    await hub.stop(); hub = null
+    await door.stop(); door = null
     writeFileSync(it.registryFile, readFileSync(it.registryFile, "utf8").replace(/^tick_seconds = \d+$/m, "tick_seconds = 30"))
     const readerPid = await it.read.pid()
     spoke = await runRunner({ runner: DISPATCH_RUNNER2, registryFile: it.registryFile,
       adapters: { [it.adapterName]: it.scripted.adapter } })
     await until("the spoke took the job and reported it", async () =>
-      (await it.read.inbound()).some(row => row.id === `report:${job.id}`), 60_000)
+      (await it.read.inbound()).some(row => row.id === `report:${job!.id}`), 60_000)
     await untilQuiet([readerPid], "the spoke after its report")
     const began = Date.now()
     await spoke.stop(); spoke = undefined
