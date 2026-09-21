@@ -361,7 +361,16 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     return new Response(body, { status: 200, headers: { "content-type": found.type } });
   };
 
-  /** Whether a host names this listener: its own address, however spelled, and its own port. */
+  /**
+   * Whether a host names this listener: its own address, however spelled, and
+   * its own port.
+   *
+   * THE ADDRESS AND NOTHING ELSE, which is what makes rebinding a name at the
+   * browser useless and what it costs: a board is opened at
+   * `http://<bind>:<port>`, and a name that resolves to that address, a tailnet
+   * one included, is refused. A household that wants a name here would have to
+   * say which names, in the file.
+   */
   const isOwn = (host: string | null, port: number): boolean => {
     const parts = hostParts(host);
     return parts !== null && parts.port === port && sameAddress(parts.address, entry.bind!);

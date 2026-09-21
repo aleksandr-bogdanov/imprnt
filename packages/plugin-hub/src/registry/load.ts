@@ -236,19 +236,6 @@ export class UnknownSetting extends Error {
 export const RUN_KINDS = ["hub", "door", "runner", "sync", "board"] as const;
 
 /**
- * The address that means every interface, in whatever spelling.
- *
- * A board bound to one would be reachable from anything that can route to this
- * machine, which is the opposite of what binding to one tailnet address buys.
- * `0.0.0.0` and `::` are what a person writes, and `::0`,
- * `0:0:0:0:0:0:0:0` and `::ffff:0.0.0.0` are the same two addresses said
- * differently, so the comparison is on the address and never on the text.
- */
-function isWildcard(bind: string): boolean {
-  return isUnspecified(bind);
-}
-
-/**
  * The kinds a household may not hold down with `enabled = false`.
  *
  * Neither could be started again from where it was stopped. The hub is what
@@ -1011,9 +998,12 @@ export function loadRegistry(file: string): Registry {
         refuse(`${at}.bind`, here, boardBindMissing("en", { id }));
       } else if (typeof bind !== "string") {
         refuse(`${at}.bind`, here, boardBindNotAddress("en", { id, bind: describeBare(bind) }));
-      } else if (isWildcard(bind)) {
-        // The file's OWN words go into the sentence, because what an operator
-        // has to find and change is what they wrote.
+      } else if (isUnspecified(bind)) {
+        // EVERY SPELLING OF EVERY INTERFACE. `0.0.0.0` and `::` are what a
+        // person writes, and `::0`, `0:0:0:0:0:0:0:0` and `::ffff:0.0.0.0` are
+        // those same two addresses said differently, so the comparison is on
+        // the address. The file's OWN words go into the sentence, because what
+        // an operator has to find and change is what they wrote.
         refuse(`${at}.bind`, here, boardBindWide("en", { id, bind }));
       } else if (isIP(bind) === 0) {
         // A NAME IS REFUSED WHERE AN ADDRESS IS NOT. A name resolves at bind

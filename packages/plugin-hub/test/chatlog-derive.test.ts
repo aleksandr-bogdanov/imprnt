@@ -488,8 +488,8 @@ test(
       expect(waiting.map(five), "every line of the chat while the note is transcribing").toEqual(
         fileLines().map(five),
       );
-      // Said on its own, because this is the line that used to be invented: a
-      // row with no words is not a line in either reader.
+      // Said on its own, because a row with no words is the line a reader
+      // could invent, and it is not a line in either of them.
       expect(waiting.some((line) => String(line.id) === String(pending.id))).toBe(false);
       // And the sentence the person really saw is in both.
       expect(waiting.some((line) => line.text === clockLine("en", "transcribed", 1))).toBe(true);

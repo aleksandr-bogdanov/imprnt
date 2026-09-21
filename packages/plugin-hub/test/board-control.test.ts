@@ -789,12 +789,11 @@ test(
 );
 
 test("D-244 a household that disables its hub is refused by the file itself, before anything is installed", async () => {
-  // The refusal is the LOADER's, which is earlier and wider than the shipped
-  // installer one this case used to meet: nothing that reads the file gets
-  // past it, so a household cannot disable the thing that would start
-  // everything again, its own hub included. The installer's own
-  // one-resident-hub rule is untouched and still answers a file that declares
-  // no resident hub at all.
+  // The refusal is the LOADER's, which is earlier and wider than the
+  // installer's own: nothing that reads the file gets past it, so a household
+  // cannot disable the thing that would start everything again, its own hub
+  // included. The installer's one-resident-hub rule is untouched, and the same
+  // check drives it below with a hub that is not a resident.
   const it = await stage([DOOR, RUNNER, HUB]);
   const os = recordingOs(join(it.stateDir, "units"));
   try {

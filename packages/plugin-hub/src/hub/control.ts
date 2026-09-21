@@ -93,9 +93,8 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
   // starts a service it is not running, so this would bring a stopped piece up
   // for as long as it takes the hub's next tick to stop it again, and the
   // household that asked for it to be down would watch it run.
-  if (wantedState((piece ?? door) ?? { schedule: "always" }) === "stopped") {
-    throw new Error("recovery-target-stopped");
-  }
+  const declared = piece ?? door;
+  if (declared && wantedState(declared) === "stopped") throw new Error("recovery-target-stopped");
   // The board is treated as the operator is, because nobody on a tailnet page
   // is identified and the row records that plainly.
   if (!["cli", "chat", "door", "board"].includes(request.source)) throw new Error("invalid-recovery-source");
