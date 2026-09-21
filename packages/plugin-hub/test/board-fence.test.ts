@@ -14,7 +14,7 @@
 // asserted in its own test below.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCluster, type Cluster } from "./helpers/cluster.ts";
@@ -359,3 +359,32 @@ test("every address this machine holds is this machine, and an address it does n
     expect(isLocalAddress(address), address).toBe(false);
   }
 });
+
+test(
+  "a page that fails tells a reader nothing about this box",
+  async () => {
+    // A READER ON THE TAILNET IS NOT AN OPERATOR. Bun's own error page carries
+    // the message and the stack of whatever threw, with the absolute paths of
+    // this machine in it, and it is what a server hands out unless it is told
+    // otherwise. What a reader gets is the status and nothing else, and the
+    // cause goes where the operator reads it.
+    const staged = await stage();
+    try {
+      const { board, it } = staged;
+      // A page whose reader throws: the registry becomes a file nothing can
+      // load, which is what every page here starts by doing.
+      const before = readFileSync(it.registryFile, "utf8");
+      writeFileSync(it.registryFile, "this is not a registry at all\n[[run\n", "utf8");
+      const answer = await board.get("/");
+      expect(answer.status).toBe(500);
+      const said = await answer.text();
+      expect(said, "a reader was handed something to read").toBe("");
+      expect(said).not.toContain("registry.toml");
+      writeFileSync(it.registryFile, before, "utf8");
+      expect((await board.get("/")).status, "the page is served again once the file loads").toBe(200);
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);

@@ -10,6 +10,7 @@ import {
   editApplied,
   editUnavailable,
   pageMissing,
+  safeValue,
 } from "../door/lines.ts";
 import { requestRecovery } from "../hub/control.ts";
 import { readPeaks } from "../hub/peak.ts";
@@ -337,7 +338,14 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     const parts = path.split("/").filter((one) => one !== "");
     // `/artifacts/<person>/<path>`, and nothing shorter is a file.
     if (parts.length < 3) return missing();
-    const person = decodeURIComponent(parts[1]);
+    let person: string;
+    try {
+      person = decodeURIComponent(parts[1]);
+    } catch {
+      // A percent escape that decodes to nothing names no person, which is the
+      // same answer as a person the registry does not declare.
+      return missing();
+    }
     const found = await serveArtifact({
       registry: loadRegistry(registryFile),
       person,
@@ -469,9 +477,26 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
   // and the program exits with the cause named: there is no fallback to any
   // other address, and no retry loop of the board's own, because the service
   // manager is the retry loop.
+  /**
+   * What a reader is handed when something throws: the status, and nothing
+   * else.
+   *
+   * Bun's own error page carries the message and the stack of whatever threw,
+   * with this machine's absolute paths in it, and it is what a server hands out
+   * unless it is told otherwise. A reader here is not identified and is
+   * certainly not an operator. The cause goes to the journal, where the person
+   * who runs the box reads it.
+   */
+  const failed = (error: Error): Response => {
+    process.stderr.write(`board: ${safeValue(error.message)}\n`);
+    return new Response("", { status: 500 });
+  };
+
   const server = Bun.serve({
     hostname: entry.bind,
     port: entry.port,
+    development: false,
+    error: failed,
     fetch: answer,
   });
 
@@ -481,7 +506,13 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
   try {
     artifacts = entry.artifacts_port === undefined
       ? null
-      : Bun.serve({ hostname: entry.bind, port: entry.artifacts_port, fetch: artifactsAnswer });
+      : Bun.serve({
+          hostname: entry.bind,
+          port: entry.artifacts_port,
+          development: false,
+          error: failed,
+          fetch: artifactsAnswer,
+        });
   } catch (error) {
     // The pages are already up on their own port, and a half-served board is
     // not what the household asked for, so the whole thing goes and the

@@ -256,6 +256,31 @@ test(
 );
 
 test(
+  "a percent escape that decodes to nothing is the one 404, not a page about this box",
+  async () => {
+    // A CLIENT REWRITES A STRAY PERCENT, so this goes over a socket of its own,
+    // exactly as written: what is being asserted is what the board does when a
+    // proxy or a client that does not normalise sends one. Bun's own error page
+    // carries the message and the stack of whatever threw, absolute paths and
+    // all, and a reader on the tailnet is not an operator.
+    const staged = await stage();
+    try {
+      for (const path of ["/artifacts/%E0%A4%A/index.html", "/artifacts/p1/%E0%A4%A", "/artifacts/%/x"]) {
+        const said = await rawGet(staged.board.artifactsPort!, path);
+        expect(said.split("\r\n")[0], path).toContain("404");
+        expect(said, path).toContain(pageMissing("en"));
+        // Nothing about this box travels with it.
+        expect(said, path).not.toContain("src/board");
+        expect(said, path).not.toContain("__bunfallback");
+      }
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
   "artifacts are served from an origin of their own, and neither origin answers for the other",
   async () => {
     // AN AGENT WRITES WHAT IS SERVED HERE. A page an agent wrote, opened from a
