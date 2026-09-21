@@ -3,6 +3,7 @@ import type { Cluster } from "./cluster.ts"
 import { stageHub, type StageOptions } from "./hub-fixture.ts"
 import type { RegistrySpec } from "./registry.ts"
 import { rolloutPlatform } from "./rollout-platform.ts"
+import type { FakeAdminOptions } from "./fake-platform.ts"
 
 /**
  * What a staged household says about transcribing voice notes.
@@ -106,7 +107,7 @@ function dispatchSpec(spec: RegistrySpec, secondDoor: boolean): RegistrySpec {
 export async function rolloutStage(
   cluster: Cluster,
   name: "telegram" | "discord",
-  options: StageOptions & { voice?: VoiceStage; dispatch?: boolean; secondDoor?: boolean } = {},
+  options: StageOptions & { voice?: VoiceStage; dispatch?: boolean; secondDoor?: boolean; admin?: FakeAdminOptions } = {},
 ) {
   const customize = options.registry
   const hub = await stageHub(cluster, {
@@ -130,5 +131,5 @@ export async function rolloutStage(
   if (options.voice) text += voiceTables(options.voice, hub.stateDir)
   text += "\n[door]\ndelivery_retry_seconds = 1\ndelivery_max_attempts = 3\nread_retry_seconds = 1\n[runner]\ntask_retry_seconds = 1\n"
   writeFileSync(hub.registryFile, text)
-  return { ...hub, edge: rolloutPlatform(name) }
+  return { ...hub, edge: rolloutPlatform(name, options.admin) }
 }

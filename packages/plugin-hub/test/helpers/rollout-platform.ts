@@ -1,5 +1,5 @@
 // A fetched-batch edge. Store and cursor work stays in src/.
-import { createFakePlatform } from "./fake-platform.ts"
+import { createFakePlatform, type FakeAdminOptions } from "./fake-platform.ts"
 
 export interface RolloutMedia {
   kind: "voice" | "photo" | "file" | "sticker" | "video"
@@ -20,8 +20,12 @@ export interface RolloutMessage {
   media: RolloutMedia[]
 }
 
-export function rolloutPlatform(name: "telegram" | "discord") {
-  const base = createFakePlatform({ name })
+/**
+ * `admin` is passed straight through. UNSET BUILDS THE EDGE EVERY SHIPPED CHECK
+ * ALREADY GETS: the platform then carries no administration member at all.
+ */
+export function rolloutPlatform(name: "telegram" | "discord", admin?: FakeAdminOptions) {
+  const base = createFakePlatform({ name, ...(admin === undefined ? {} : { admin }) })
   const batches: { messages: RolloutMessage[], cursor: string }[] = []
   const pulls: { chat: string, cursor: string | null }[] = []
   const downloads: string[] = []
@@ -82,5 +86,14 @@ export function rolloutPlatform(name: "telegram" | "discord") {
     posts: base.posts,
     edits: base.edits,
     typings: base.typings,
+    adminCalls: base.adminCalls,
+    setResolveAnswer: base.setResolveAnswer,
+    setRefuseOnce: base.setRefuseOnce,
+    setRefusing: base.setRefusing,
+    setAmbiguous: base.setAmbiguous,
+    setAbsent: base.setAbsent,
+    setDescribed: base.setDescribed,
+    renameChat: base.renameChat,
+    removeChat: base.removeChat,
   }
 }
