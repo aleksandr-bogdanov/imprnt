@@ -21,6 +21,7 @@ import { rolloutStage } from "./helpers/rollout-stage.ts"
 import { servePlatform } from "./helpers/fake-platform.ts"
 import { observe } from "./helpers/rollout-runner.ts"
 import { loadRegistry } from "../src/registry/load.ts"
+import type { RegistryKeyWriter } from "../src/board/run.ts"
 
 let cluster: Cluster
 beforeAll(async () => { cluster = await startCluster() })
@@ -317,6 +318,32 @@ test("D-219 each primitive refuses a path that is not its own and leaves the fil
     expect(halfBlock).toBeInstanceOf(RegistryEditRefused)
     expect(String((halfBlock as Error).message)).toContain("preset")
     expect(readFileSync(it.file, "utf8")).toBe(it.bytes)
+  } finally { it.stop() }
+})
+
+// The board sets two fields a hand-written file usually does not carry, through
+// the writer contract it already declares. The adapter below is typed against
+// that contract, so `setKey` fitting it is checked by the compiler as well as
+// by the diffs, and the board's own code changes by not one line.
+test("D-219 the board's writer contract is setKey, for both fields the board sets", async () => {
+  const it = scratch()
+  try {
+    const { setKey } = await writer()
+    const write: RegistryKeyWriter = async ({ file, table, id, key, value }) => {
+      await setKey(file, `${table}[${id}]`, key, value)
+    }
+    await write({ file: it.file, table: "run", id: "door-fake", key: "enabled", value: false })
+    const stopped = readFileSync(it.file, "utf8")
+    expect(lineDiff(it.bytes, stopped)).toEqual({ removed: [], added: ["enabled = false"] })
+    await write({ file: it.file, table: "agents", id: "p1-lair", key: "sleeping", value: true })
+    const paused = readFileSync(it.file, "utf8")
+    expect(lineDiff(stopped, paused)).toEqual({ removed: [], added: ["sleeping = true"] })
+    // Pressing start again replaces the line rather than writing a second one.
+    await write({ file: it.file, table: "run", id: "door-fake", key: "enabled", value: true })
+    expect(lineDiff(paused, readFileSync(it.file, "utf8"))).toEqual({ removed: ["enabled = false"], added: ["enabled = true"] })
+    const registry = loadRegistry(it.file)
+    expect(registry.run.find(one => one.id === "door-fake")!.enabled).toBe(true)
+    expect(registry.agents.find(one => one.id === "p1-lair")!.sleeping).toBe(true)
   } finally { it.stop() }
 })
 
