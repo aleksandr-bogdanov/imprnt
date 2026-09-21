@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { listRepositories, runEntriesFor, zoneFor } from "../registry/entries.ts";
+import { listPeople, listRepositories, runEntriesFor, zoneFor } from "../registry/entries.ts";
 import { findingId, type Finding } from "./finding.ts";
 
 /**
@@ -126,11 +126,16 @@ export function readZoneState(args: {
       if (found) mine.add(found.id);
     }
   }
+  const people = listPeople(args.registry);
   for (const one of marked) {
     if (!mine.has(one.id)) continue;
-    // The vault DIRECTORY is `vault/` inside the person's project, which is
-    // where the mount sits and where the roles file lives beside it.
-    const foldersFile = join(one.path, "..", "_folders.md");
+    // The roles file is the VAULT's, read from what the person declares rather
+    // than from the checkout's parent: `vault` names the project holding
+    // `vault/` and `raw/`, and the roles file sits inside `vault/` beside the
+    // mount. A person whose entry has no vault has no marked repository either,
+    // which the loader refuses, so the fallback is never the live path.
+    const vault = people.find((who) => who.id === one.person)?.vault ?? join(one.path, "..", "..");
+    const foldersFile = join(vault, "vault", "_folders.md");
     let mounted = false;
     try {
       mounted = mountsIn(readFileSync(foldersFile, "utf8")).has(zone.mount);
