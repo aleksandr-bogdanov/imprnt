@@ -103,6 +103,9 @@ interface Board {
   it: StagedHub;
   entry: RunEntry;
   entryId: string;
+  /** The runner declared beside it, which is the piece a household may stop. */
+  runner: RunEntry;
+  runnerId: string;
   os: OsSeam;
   context: Record<string, unknown>;
   argv: string[];
@@ -115,8 +118,11 @@ interface Board {
  * names the real program and a board that could not open a store would tell us
  * nothing about the manager.
  */
-async function stageBoard(options: { bind?: string; enabled?: boolean } = {}): Promise<Board> {
+async function stageBoard(options: { bind?: string; stopped?: boolean } = {}): Promise<Board> {
   const entryId = fixture.entryId("board");
+  // A name of this run's own, because a unit this check installs into the real
+  // manager must not collide with one another run left behind.
+  const runnerId = fixture.entryId("runner");
   const boardEntry: RunSpec = {
     id: entryId,
     kind: "board",
@@ -130,7 +136,7 @@ async function stageBoard(options: { bind?: string; enabled?: boolean } = {}): P
     machines: [MACHINE],
     run: [
       {
-        id: "runner-test",
+        id: runnerId,
         kind: "runner",
         machine: MACHINE.id,
         schedule: "always",
@@ -140,7 +146,11 @@ async function stageBoard(options: { bind?: string; enabled?: boolean } = {}): P
       boardEntry,
     ],
   });
-  if (options.enabled === false) setOnEntry(it.registryFile, entryId, "enabled", "false");
+  // THE STOPPED ENTRY IS THE RUNNER AND NOT THE BOARD. The file refuses a
+  // stopped board, because a stopped board cannot offer the start that would
+  // bring it back, so the state this check is about is asked of the piece a
+  // household really does stop.
+  if (options.stopped) setOnEntry(it.registryFile, runnerId, "enabled", "false");
   const { thisOs } = await seam("src/os/index.ts");
   const os = (thisOs as Function)({ unitDir: fixture.unitDir() }) as OsSeam;
   const entry = listRunEntries(loadRegistry(it.registryFile)).find((one) => one.id === entryId)!;
@@ -157,6 +167,8 @@ async function stageBoard(options: { bind?: string; enabled?: boolean } = {}): P
     it,
     entry,
     entryId,
+    runnerId,
+    runner: listRunEntries(loadRegistry(it.registryFile)).find((one) => one.id === runnerId)!,
     os,
     context,
     argv: [process.execPath, "run", programForKind("board"), it.registryFile, entryId],
@@ -345,10 +357,13 @@ test.skipIf(!gate.ok)(
   async () => {
     // The one state a faked seam could only approximate, asserted as the
     // observable rather than as the branch that produces it.
-    const board = await stageBoard({ enabled: false });
+    const board = await stageBoard({ stopped: true });
     try {
-      expect(await carried(board.entryId)).toBe(false);
-      const files = board.os.render(board.entry, board.context as never);
+      expect(await carried(board.runnerId)).toBe(false);
+      const files = board.os.render(board.runner, {
+        ...board.context,
+        entryScript: programForKind("runner"),
+      } as never);
       await board.os.install(files);
 
       const status = await readStatus({
@@ -356,25 +371,20 @@ test.skipIf(!gate.ok)(
         machine: MACHINE.id,
         os: board.os,
       });
-      expect(status.find((one) => one.id === board.entryId)).toMatchObject({
+      expect(status.find((one) => one.id === board.runnerId)).toMatchObject({
         wanted: "stopped",
         seen: "stopped",
       });
-      // Nothing is listening either, because nothing was started.
-      await expect(
-        Bun.connect({
-          hostname: "127.0.0.1",
-          port: Number(board.entry.port),
-          socket: { data() {}, open(socket) { socket.end(); } },
-        }),
-      ).rejects.toThrow();
+      // And the manager is not running it either, which is the half a fake
+      // could only assert about itself.
+      expect((await board.os.show(board.runnerId))?.running ?? false).toBe(false);
       // The control on the render: a stopped entry asks neither to be restarted
       // nor to be pulled in at boot.
       const text = files[0].text;
       expect(text).not.toContain("Restart=always");
       expect(text).not.toContain("[Install]");
     } finally {
-      await board.os.remove(board.entryId).catch(() => {});
+      await board.os.remove(board.runnerId).catch(() => {});
       await board.it.stop();
     }
   },
