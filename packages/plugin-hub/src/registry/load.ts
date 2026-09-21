@@ -1811,6 +1811,24 @@ export function loadRegistry(file: string): Registry {
         `${one.id} pulls from the remote ${describe(one.remote)}, and every checkout of the shared zone wears ${describe(zone!.remote)}`);
   }
 
+  // A SHARED ZONE BELONGS TO THE WHOLE HOUSEHOLD. Once the file declares one,
+  // every person who keeps a vault carries exactly one checkout of it, and a
+  // file that gave the zone to some of them is refused here. The refusal names
+  // the PERSON, because the entry a reader has to add is that person's, and the
+  // zone table is correct as written. Read as a warning instead, the household
+  // would keep running with one person's zone quietly not there, and nobody
+  // would learn until a shared note could not be read.
+  if (zone) {
+    for (const [nth, who] of people.entries()) {
+      if (!who.vault || zoneOfPerson.has(who.id)) continue;
+      const wants = resolve(join(who.vault, "vault", zone.mount));
+      refuse(`people[${nth}].vault`, lines.get(`people[${nth}]`) ?? 0,
+        `${who.id} keeps a vault and has no checkout of the shared zone, and one shared zone is one ` +
+        `checkout in every vault: add a [[repositories]] entry for ${who.id} at ${wants}, marked ` +
+        `zone = true and pulling from the remote ${describe(zone.remote)}`);
+    }
+  }
+
   entries.forEach((entry, nth) => {
     for (const id of entry.repositories ?? []) {
       if (!repositories.some(r => r.id === id)) refuse(`run[${nth}].repositories`, 0, "repository is undeclared");
