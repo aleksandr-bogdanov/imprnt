@@ -50,6 +50,7 @@ import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { silentRunners } from "./silence.ts";
+import { readZoneState, zoneFindings } from "./zone.ts";
 
 export type { Finding } from "./finding.ts";
 export { findingId } from "./finding.ts";
@@ -618,6 +619,18 @@ export async function runCheck(options: {
       }),
     );
   }
+
+  // --- the household's shared zone: whether each checkout this machine syncs
+  //     is there, whether it really pulls from the zone's remote, and whether
+  //     the vault declares the mount (criterion 1).
+  //
+  //     FILES AND THE REGISTRY ONLY. No store row is opened for any of it and
+  //     nothing is contacted: the remote comparison reads the checkout's own
+  //     git configuration, because the loader can only compare the strings the
+  //     file declares and this is the machine that can see the disk.
+  findings.push(
+    ...zoneFindings(readZoneState({ registry, machine, registryFile: options.registryFile })),
+  );
 
   // --- check OPENS every credential and asks whether it still works --------
   //     (L10 rule 2). The incident behind it: a login
