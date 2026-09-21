@@ -1151,3 +1151,91 @@ test(
   },
   SLOW,
 );
+
+test(
+  "a restart of an entry the file stopped is refused by name, and the hub refuses one planted for it",
+  async () => {
+    // RESTARTING A STOPPED PIECE STARTS IT. `restart` on a service the manager
+    // is not running starts it, so a board that offered restart beside stop
+    // could bring a piece back up for as long as it takes the hub to notice and
+    // stop it again, and the household that asked for it to be down would watch
+    // it run. The field is the answer to "should this be up", so a restart of
+    // something it says is down is refused where it is asked for.
+    const it = await stage([DOOR, RUNNER, SCHEDULED, HUB, BOARD]);
+    const store = await superStore(cluster, it.db);
+    const os = recordingOs(join(it.stateDir, "units"));
+    let hub: Awaited<ReturnType<typeof runHub>> | undefined;
+    try {
+      const { requestRecovery } = await seam("src/hub/control.ts");
+      const ask = requestRecovery as Recovery;
+      hub = await runHub({ registryFile: it.registryFile, machine: MACHINE, os: os.os });
+
+      setOnEntry(it.registryFile, SCHEDULED.id, "enabled", "false");
+      setOnEntry(it.registryFile, DOOR.id, "enabled", "false");
+      for (const [kind, target] of [["run", SCHEDULED.id], ["door", DOOR.id]] as const) {
+        await expect(
+          ask(store, {
+            id: crypto.randomUUID(),
+            registryFile: it.registryFile,
+            source: "board",
+            actor: "board",
+            target_kind: kind,
+            target_id: target,
+          }),
+          `${target} is on the list as stopped`,
+        ).rejects.toThrow("recovery-target-stopped");
+      }
+      expect(await it.read.sheet("control"), "a refused ask wrote a row").toEqual([]);
+
+      // And a row planted straight into the store for a stopped entry is
+      // refused by the hub, which is the side that would have performed it.
+      const planted = `planted-${crypto.randomUUID()}`;
+      await store.sql`insert into state_row (sheet,id,data) values ('control',${planted},${{
+        id: planted,
+        actor: "operator",
+        source: "cli",
+        person: null,
+        target_kind: "run",
+        target_id: SCHEDULED.id,
+        requested_at: new Date().toISOString(),
+        status: "pending",
+        cause: null,
+      }})`;
+      await store.sql`select pg_notify('hub_control',${planted})`;
+      expect(
+        await observe(async () =>
+          (await it.read.sheet("control")).some((row) => row.id === planted && row.data.status !== "pending"),
+        ),
+      ).toBe(true);
+      const said = (await it.read.sheet("control")).find((row) => row.id === planted)!.data;
+      expect(said.status).toBe("refused");
+      expect(said.cause).toBe("recovery-target-stopped");
+      expect(os.acting().filter((call) => call.operation === "restart")).toEqual([]);
+
+      // The control: with the field gone the same ask lands and is applied.
+      setOnEntry(it.registryFile, SCHEDULED.id, "enabled", null);
+      const allowed = crypto.randomUUID();
+      await ask(store, {
+        id: allowed,
+        registryFile: it.registryFile,
+        source: "board",
+        actor: "board",
+        target_kind: "run",
+        target_id: SCHEDULED.id,
+      });
+      expect(
+        await observe(async () =>
+          (await it.read.sheet("control")).some((row) => row.id === allowed && row.data.status === "applied"),
+        ),
+      ).toBe(true);
+      expect(os.acting().filter((call) => call.operation === "restart").map((call) => call.target)).toEqual([
+        SCHEDULED.id,
+      ]);
+    } finally {
+      await hub?.stop();
+      await store.close();
+      await it.stop();
+    }
+  },
+  SLOW,
+);

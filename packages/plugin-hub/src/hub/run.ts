@@ -334,9 +334,12 @@ export async function runHub(options: {
       // door and a runner hold may insert a control row straight into the
       // store, which never passes through `requestRecovery`, and the hub is
       // what would perform the restart.
-      const kind = runEntriesFor(loadRegistry(options.registryFile), options.machine)
-        .find(one => one.id === id)?.kind ?? "";
-      if (!mayReach(data.source, data.target_kind, kind)) throw new Error("recovery-not-authorized");
+      const named = runEntriesFor(loadRegistry(options.registryFile), options.machine).find(one => one.id === id);
+      if (!mayReach(data.source, data.target_kind, named?.kind ?? "")) throw new Error("recovery-not-authorized");
+      // The same answer the asking side gives, asked again for the same reason:
+      // the file may have stopped this piece since the row was written, and a
+      // restart would bring it up until the next tick stopped it again.
+      if (named && wantedState(named) === "stopped") throw new Error("recovery-target-stopped");
       // WHO IS BOUNDED AND WHY. The recognizer, because a wedged one asks for
       // itself back with no person involved. And everything the BOARD asks
       // for, because the board is the one front end that takes a request

@@ -1,5 +1,6 @@
 import { recoveryDone, recoveryRefused, safeValue, type Language } from "../door/lines.ts";
 import { languageOf, listAgents, listRunEntries, senderAllowed } from "../registry/entries.ts";
+import { wantedState } from "../os/diff.ts";
 import { loadRegistry, type Registry } from "../registry/load.ts";
 import { appendEntry } from "../records/diary.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -88,6 +89,13 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
   const piece = listRunEntries(registry).find(e => e.id === request.target_id && reachable.includes(e.kind));
   if (request.target_kind === "agent" ? !agent : request.target_kind === "door" ? !door
     : request.target_kind === "run" ? !piece : true) throw new Error("invalid-recovery-target");
+  // A PIECE THE FILE SAYS IS DOWN IS NEVER RESTARTED. The manager's restart
+  // starts a service it is not running, so this would bring a stopped piece up
+  // for as long as it takes the hub's next tick to stop it again, and the
+  // household that asked for it to be down would watch it run.
+  if (wantedState((piece ?? door) ?? { schedule: "always" }) === "stopped") {
+    throw new Error("recovery-target-stopped");
+  }
   // The board is treated as the operator is, because nobody on a tailnet page
   // is identified and the row records that plainly.
   if (!["cli", "chat", "door", "board"].includes(request.source)) throw new Error("invalid-recovery-source");
