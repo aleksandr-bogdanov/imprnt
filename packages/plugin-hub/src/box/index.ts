@@ -358,9 +358,22 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         ...(ctx.sessionDir ? ["--bind", ctx.sessionDir, ctx.sessionDir] : []),
         // The declared repositories and the launched login's directory, the only
         // other paths a turn writes to (the CLI rotates its token in place).
+        //
+        // A HARVEST KEEPS THE TREE READ-ONLY, repositories included. A person's
+        // declared repositories sit inside their own tree, and a writable bind
+        // here is a LATER mount than the read-only tree bind above, so binding
+        // them writable on a harvest handed back exactly the write that bind had
+        // just refused. The other flavour never had the hole, because its
+        // profile writes the harvest denial after the same grants. A path
+        // OUTSIDE the tree, such as the launched login's own directory, stays
+        // writable on both purposes: the model CLI rotates its token there.
         ...[...new Set(ctx.writePaths ?? [])]
           .filter((path) => path !== "" && existsSync(path))
-          .flatMap(path => ["--bind", path, path]),
+          .flatMap(path => [
+            ctx.purpose === "harvest" && ctx.tree !== "" &&
+            (path === ctx.tree || path.startsWith(`${ctx.tree}/`)) ? "--ro-bind" : "--bind",
+            path, path,
+          ]),
         // A tmpfs empties another person's tree and state root. Under the
         // read-only host bwrap cannot create a missing mount point, so a path
         // that is not there is skipped: it holds nothing to hide, and the host

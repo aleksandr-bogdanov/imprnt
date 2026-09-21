@@ -385,6 +385,46 @@ test.skipIf(!gate.ok)(
   SLOW,
 );
 
+test("ROLL-27 a harvest is read-only on the person's tree on BOTH flavours, declared repositories included (SPEC §6, L7)", async () => {
+  // FOUND BY THE CHECK ABOVE, on Linux: the harvest bound the tree read-only
+  // and then bound every declared repository of that person WRITABLE again, and
+  // a person's repositories are inside their tree, so the last mount won and a
+  // harvest could move a note after all. The two flavours disagreed, because
+  // the macOS profile writes the harvest deny after the same grants.
+  //
+  // Rendered rather than run, so this machine binds the other flavour too.
+  const { boxCommand } = await seam("src/box/index.ts");
+  const it = await scene();
+  try {
+    const p1 = it.stage.person("p1");
+    const ctx = (await seam("src/box/index.ts")).boxContextFor as Function;
+    const harvest = { ...ctx(it.registry(), "p1-lair"), purpose: "harvest" };
+    const under = (path: string) => path === p1.tree || path.startsWith(`${p1.tree}/`);
+
+    // The context really does carry a write path inside the tree, or the
+    // assertion below would be about a case that never arises.
+    expect((harvest.writePaths as string[]).some(under)).toBe(true);
+
+    const linux = (boxCommand as Function)(["/bin/true"], { ...harvest, platform: "linux" }, "linux") as { argv: string[] };
+    for (const [n, word] of linux.argv.entries()) {
+      if (word !== "--bind") continue;
+      expect(under(linux.argv[n + 1]), `${linux.argv[n + 1]} is bound writable for a harvest`).toBe(false);
+    }
+    // The tree itself is bound, read-only, so the assertion above is not passing
+    // on an argv that binds nothing at all.
+    expect(linux.argv.some((word, n) => word === "--ro-bind" && linux.argv[n + 1] === p1.tree)).toBe(true);
+
+    const mac = (boxCommand as Function)(["/bin/true"], { ...harvest, platform: "darwin" }, "darwin") as { profile: { text: string } };
+    const rules = mac.profile.text.split("\n").filter((line) => line.includes(JSON.stringify(p1.tree)));
+    expect(rules.length).toBeGreaterThan(0);
+    // The sandbox takes the LAST matching rule, so the last word on the tree has
+    // to be the harvest's own denial of every write.
+    expect(rules[rules.length - 1]).toContain("(deny file-write*");
+  } finally {
+    await it.close();
+  }
+}, SLOW);
+
 test("ROLL-27 no file under src/ implements a move, a link rewrite or a seam finding (SPEC §6)", async () => {
   // The hub spawns the core's verb and carries no half of it. A second
   // implementation would drift from the one `imprnt check` reads by, and the
