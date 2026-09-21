@@ -89,14 +89,25 @@ function clonable(path: string): boolean {
   }
 }
 
+/** Two paths that are one directory. A path this box cannot resolve is not. */
+function same(here: string, there: string): boolean {
+  try {
+    return realpathSync(here) === realpathSync(there);
+  } catch {
+    return false;
+  }
+}
+
 function look(one: RepositoryEntry, zone: { remote: string; url: string }): ZoneRefused | null {
   if (!existsSync(join(one.path, ".git"))) {
     return { person: one.person, id: one.id, path: one.path, cause: "not-a-repository", found: "no checkout at this path" };
   }
   // A path INSIDE another repository answers that repository's questions, so
-  // the top level is compared rather than trusted.
+  // the top level is compared rather than trusted. Both sides are resolved,
+  // because a scratch directory reached through a symlink is one path git
+  // prints one way and the file names another.
   const top = git(["-C", one.path, "rev-parse", "--show-toplevel"]);
-  if (!top.ok || realpathSync(top.out) !== realpathSync(one.path)) {
+  if (!top.ok || !same(top.out, one.path)) {
     return { person: one.person, id: one.id, path: one.path, cause: "not-a-repository", found: top.ok ? `the top of the repository here is ${top.out}` : "git cannot read this path as a repository" };
   }
   const url = git(["-C", one.path, "remote", "get-url", one.remote]);
