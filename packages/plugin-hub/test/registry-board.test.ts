@@ -47,9 +47,9 @@ function ownDir(what: string): string {
 }
 
 /**
- * The two answers this wave adds, read through the seam rather than imported at
- * the top of the file, so an absent export fails the ONE test that reads it and
- * the refusals below are red for the behaviour they are about.
+ * The board's two accessors, read through the seam rather than imported at the
+ * top of the file, so an absent export fails the ONE test that reads it and the
+ * refusals below stay red for the behaviour they are about.
  */
 async function boardOf(registry: unknown, machine: string): Promise<RunEntry | null> {
   const { boardFor } = await seam("src/registry/entries.ts");
@@ -482,9 +482,9 @@ test("D-241 a board is an ordinary entry, so the shipped memory refusal reaches 
 
 test("D-241 the board's program is src/entry/board.ts and the shipped four are unmoved", async () => {
   expect(await programOf("board")).toBe(hubPath("src/entry/board.ts"));
-  // ITS EXISTENCE IS NOT ASSERTED HERE. The file arrives in the wave that owns
-  // the process, all four waves land on one branch, and the check that owns
-  // the process is where `existsSync` belongs.
+  // ITS EXISTENCE IS NOT ASSERTED HERE. What this file is about is the answer
+  // the hub gives for a kind, and whether a file sits at that path is asserted
+  // by the check that starts the program, in test/board-idle.test.ts.
   for (const kind of ["hub", "door", "runner", "sync"]) {
     expect(await programOf(kind)).toBe(hubPath(`src/entry/${kind}.ts`));
   }

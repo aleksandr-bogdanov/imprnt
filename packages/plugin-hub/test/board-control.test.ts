@@ -1,5 +1,5 @@
 // Restart is the one verb, start and stop are a field in the file, and pause is
-// an edit. (SPEC §6 Forbidden, L13, D-178, RUN-05)
+// an edit. (SPEC §6 Forbidden, L13, RUN-05)
 //
 // RESTART REACHES THE SAME FUNCTION FROM BOTH FRONT ENDS. The board asks
 // `requestRecovery` exactly as the command line does, the widened targets are

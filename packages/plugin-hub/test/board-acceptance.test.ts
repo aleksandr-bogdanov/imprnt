@@ -161,7 +161,7 @@ const INVENTORY: Row[] = [
     notSatisfiedBy: ["a board served in this process"],
   },
   {
-    requirement: "the last wave",
+    requirement: "the voice-facing rows",
     observation: "the sixth measure beside the five, the recognizer's health shown, and the current reading beside the peak",
     seams: ["A"],
     evidence: [
@@ -222,71 +222,71 @@ function closedBy(row: Row, by: string): { ok: boolean; because: string } {
  * The decisions this phase wrote, with the check file that owns each clause.
  *
  * A clause string appears ONCE across the whole table, which is what says a
- * clause has an owner rather than a hope. `wave` is the round of this phase
+ * clause has an owner rather than a hope. `round` is the round of building
  * that closed it, counting from one, and it is recorded beside the file so a
  * decision whose clauses were closed in two different rounds reads as carried
  * rather than as a duplicate.
  */
 interface Owner {
-  wave: 1 | 2 | 3 | 4;
+  round: 1 | 2 | 3 | 4;
   file: string;
   clause: string;
 }
 
 const DECISIONS: Record<string, Owner[]> = {
   "scope and the regression sweep": [
-    { wave: 4, file: "test/board-acceptance.test.ts", clause: "the fence on the door and the six windows" },
+    { round: 4, file: "test/board-acceptance.test.ts", clause: "the fence on the door and the six windows" },
   ],
   "what a board is": [
-    { wave: 2, file: "test/registry-board.test.ts", clause: "the loader's bind and port refusals" },
-    { wave: 2, file: "test/run-kind-program.test.ts", clause: "the unit and the argv a board entry renders" },
-    { wave: 3, file: "test/board-idle.test.ts", clause: "the bind that fails and the exit it makes" },
-    { wave: 3, file: "test/board-pages.test.ts", clause: "every interpolated value through the escape helper" },
+    { round: 2, file: "test/registry-board.test.ts", clause: "the loader's bind and port refusals" },
+    { round: 2, file: "test/run-kind-program.test.ts", clause: "the unit and the argv a board entry renders" },
+    { round: 3, file: "test/board-idle.test.ts", clause: "the bind that fails and the exit it makes" },
+    { round: 3, file: "test/board-pages.test.ts", clause: "every interpolated value through the escape helper" },
   ],
   "who reads it": [
-    { wave: 3, file: "test/board-pages.test.ts", clause: "no page carries chat text and no page writes a file" },
-    { wave: 3, file: "test/board-acts.test.ts", clause: "every control row the board writes names the board as the actor" },
+    { round: 3, file: "test/board-pages.test.ts", clause: "no page carries chat text and no page writes a file" },
+    { round: 3, file: "test/board-acts.test.ts", clause: "every control row the board writes names the board as the actor" },
   ],
   "the pages and what each one reads": [
-    { wave: 3, file: "test/board-pages.test.ts", clause: "the four pages and the readers each one calls" },
-    { wave: 4, file: "test/metrics-transcribe.test.ts", clause: "the sixth measure beside the five" },
-    { wave: 4, file: "test/board-voice-rows.test.ts", clause: "the voice-facing rows the pages render" },
+    { round: 3, file: "test/board-pages.test.ts", clause: "the four pages and the readers each one calls" },
+    { round: 4, file: "test/metrics-transcribe.test.ts", clause: "the sixth measure beside the five" },
+    { round: 4, file: "test/board-voice-rows.test.ts", clause: "the voice-facing rows the pages render" },
   ],
   "the acts": [
-    { wave: 2, file: "test/board-control.test.ts", clause: "restart as the one verb, and stop and pause as a registry field" },
+    { round: 2, file: "test/board-control.test.ts", clause: "restart as the one verb, and stop and pause as a registry field" },
   ],
   "check watches the board": [
-    { wave: 2, file: "test/check-board.test.ts", clause: "the shipped findings reach a board entry and no port is opened" },
-    { wave: 4, file: "test/board-native.test.ts", clause: "the same watching against a real service manager" },
+    { round: 2, file: "test/check-board.test.ts", clause: "the shipped findings reach a board entry and no port is opened" },
+    { round: 4, file: "test/board-native.test.ts", clause: "the same watching against a real service manager" },
   ],
   "the read path's cost": [
-    { wave: 3, file: "test/board-idle.test.ts", clause: "a board nobody is looking at issues no statement" },
-    { wave: 3, file: "test/board-windows.test.ts", clause: "the shipped windows under this phase's registry" },
+    { round: 3, file: "test/board-idle.test.ts", clause: "a board nobody is looking at issues no statement" },
+    { round: 3, file: "test/board-windows.test.ts", clause: "the shipped windows under this phase's registry" },
   ],
   "the transport and the derived tail": [
-    { wave: 1, file: "test/chatlog-derive.test.ts", clause: "the derived lines of one chat between two instants" },
-    { wave: 1, file: "test/door-clock-replay.test.ts", clause: "the clock line written once, with its own id" },
-    { wave: 1, file: "test/spoke-tail.test.ts", clause: "a runner on the other machine fed from the store" },
+    { round: 1, file: "test/chatlog-derive.test.ts", clause: "the derived lines of one chat between two instants" },
+    { round: 1, file: "test/door-clock-replay.test.ts", clause: "the clock line written once, with its own id" },
+    { round: 1, file: "test/spoke-tail.test.ts", clause: "a runner on the other machine fed from the store" },
   ],
   "harvest on a spoke": [
-    { wave: 1, file: "test/spoke-harvest.test.ts", clause: "the derived slice and where the watermark lands" },
-    { wave: 4, file: "live/spoke-harvest.test.ts", clause: "a real harvester filing into a real vault" },
+    { round: 1, file: "test/spoke-harvest.test.ts", clause: "the derived slice and where the watermark lands" },
+    { round: 4, file: "live/spoke-harvest.test.ts", clause: "a real harvester filing into a real vault" },
   ],
   "what survives of the refusal": [
-    { wave: 1, file: "test/local-state-preflight.test.ts", clause: "the cross-machine case served and the unreadable root refused" },
+    { round: 1, file: "test/local-state-preflight.test.ts", clause: "the cross-machine case served and the unreadable root refused" },
   ],
   "the artifacts pages": [
-    { wave: 3, file: "test/board-artifacts.test.ts", clause: "the route, the opt-in field and the one 404" },
+    { round: 3, file: "test/board-artifacts.test.ts", clause: "the route, the opt-in field and the one 404" },
   ],
   "the six protected windows": [
-    { wave: 4, file: "test/board-acceptance.test.ts", clause: "the six windows byte-unchanged by digest" },
+    { round: 4, file: "test/board-acceptance.test.ts", clause: "the six windows byte-unchanged by digest" },
   ],
   "requirement seams and evidence": [
-    { wave: 4, file: "test/board-acceptance.test.ts", clause: "the inventory and what a skip cannot close" },
+    { round: 4, file: "test/board-acceptance.test.ts", clause: "the inventory and what a skip cannot close" },
   ],
   "the human output contract": [
-    { wave: 2, file: "test/board-lines.test.ts", clause: "the seventeen sentences, whole, in both languages" },
-    { wave: 4, file: "test/board-voice-rows.test.ts", clause: "no voice-facing row assembles a sentence from fragments" },
+    { round: 2, file: "test/board-lines.test.ts", clause: "the seventeen sentences, whole, in both languages" },
+    { round: 4, file: "test/board-voice-rows.test.ts", clause: "no voice-facing row assembles a sentence from fragments" },
   ],
 };
 
@@ -428,7 +428,7 @@ test("a missing, a skipped and a failed gated row are each refused, and a skip n
   expect(nothing.because).toContain("shows no run at all");
 
   // An automated row that ran on one operating system only.
-  const onlyHere = INVENTORY.find((row) => row.requirement === "the last wave")!;
+  const onlyHere = INVENTORY.find((row) => row.requirement === "the voice-facing rows")!;
   const halfway: Row = {
     ...onlyHere,
     evidence: onlyHere.evidence.map((one) => ({ ...one, runs: { macos: "ran" as Ran } })),
@@ -481,7 +481,7 @@ test("every clause of this phase's decisions has an owning check file, and no cl
     expect(owners.length, `${decision} has no owner`).toBeGreaterThan(0);
     for (const one of owners) {
       expect(existsSync(hubPath(one.file)), `${decision} names ${one.file}, which is not there`).toBe(true);
-      expect([1, 2, 3, 4]).toContain(one.wave);
+      expect([1, 2, 3, 4]).toContain(one.round);
     }
   }
 
@@ -492,7 +492,7 @@ test("every clause of this phase's decisions has an owning check file, and no cl
   // could only land in the round that could reach the evidence, later than the
   // round that opened the decision.
   const carried = decisions
-    .filter(([, owners]) => new Set(owners.map((one) => one.wave)).size > 1)
+    .filter(([, owners]) => new Set(owners.map((one) => one.round)).size > 1)
     .map(([decision]) => decision)
     .sort();
   expect(carried).toEqual(

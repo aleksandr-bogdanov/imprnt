@@ -2,13 +2,12 @@
 // and an agent whose own state root on THIS machine cannot be read is refused
 // before any model starts.
 //
-// The two cases used to be one refusal. The cross-machine one existed because
-// the tail was read from a local path, so an agent whose door was elsewhere
-// would have been served an empty chat in silence. There is no local path in
-// that case any more: the lines come out of the store, and refusing the
-// placement would be refusing the transport. The other case is about this
-// machine's own directory and is unchanged, which is what says the refusal
-// still has teeth.
+// WHY ONE IS SERVED AND THE OTHER REFUSED. A cross-machine agent reads no local
+// path at all: its lines come out of the store, so there is nothing about the
+// placement to refuse and refusing it would be refusing the transport. The
+// other case is this machine's own directory, which the runner does read, and a
+// root that exists and cannot be read would leave a session fed an empty chat
+// in silence.
 
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { mkdirSync, writeFileSync, rmSync } from "node:fs"

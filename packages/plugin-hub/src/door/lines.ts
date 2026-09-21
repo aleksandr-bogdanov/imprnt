@@ -729,7 +729,7 @@ export function pageMissing(language: Language, values: LineValues = {}): string
   return interpolate(language, language === "ru" ? "такой страницы нет." : "no such page.", values);
 }
 
-/** The one finding this phase adds: stopped on the list, running in the manager. */
+/** The finding that mirrors unit-missing: stopped on the list, up in the manager. */
 export function unitNotStopped(language: Language, values: LineValues = {}): string {
   return interpolate(language, language === "ru"
     ? "{id} в реестре остановлен, а менеджер служб всё ещё держит его запущенным."

@@ -690,12 +690,12 @@ test(
       });
 
       // --- 7. NO PAGE ASSEMBLES A SENTENCE FROM FRAGMENTS. Every piece of
-      //     prose on the two pages this wave touches is held here as data: a
-      //     column heading, or one of the lines the board already ships for an
+      //     prose on the machines page and the metrics page is held here as
+      //     data: a column heading, or one of the lines the board ships for an
       //     empty section. Anything else is a sentence somebody wrote into a
       //     render, which is what this assertion exists to catch.
       const known = [
-        // The shipped headings and lines the earlier waves put on these pages.
+        // The headings and the empty-section lines the two pages carry.
         "entry",
         "kind",
         "wanted",
@@ -723,7 +723,7 @@ test(
         "nobody has asked for anything.",
         "nothing has been measured yet.",
         `nothing is reported for ${THERE} in the check sheet this store holds.`,
-        // The ones this wave adds.
+        // The voice-facing ones.
         "reading bytes",
         "recognizer",
         "failing since",

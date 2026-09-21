@@ -16,10 +16,10 @@
 // commit this branch grew from rather than from the working tree, so a bound
 // this phase relaxed anywhere in its own history is caught here.
 //
-// WHICH ASSERTIONS ARE TRIVIALLY GREEN BEFORE THE BUILD, so nobody reads a
-// green window as evidence: the six digests, and the last test, whose finding
-// and whose registry shape were both shipped by the wave before this one. The
-// measurements in between need a board process, which does not exist.
+// WHICH ASSERTIONS ARE TRIVIALLY GREEN WITHOUT A BOARD, so nobody reads a green
+// window as evidence: the six digests, and the last test, whose finding and
+// whose registry shape are the loader's and the check's rather than the board
+// process's. The measurements in between are the ones that need it.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";

@@ -168,8 +168,8 @@ async function startBoard(it: StagedHub, entry: RunSpec): Promise<BoardProcess> 
 test("the program the hub renders for a board is the one this file starts", () => {
   // The hub writes this path into the unit file it installs, so a path with no
   // file behind it is a unit that fails at its first start and a crash loop
-  // nobody meant. The wave that taught the hub the kind deliberately left this
-  // assertion to the wave that writes the file.
+  // nobody meant. It is asserted here, beside the check that starts the
+  // program, rather than where the hub's answer is built.
   const program = programForKind("board");
   expect(existsSync(program)).toBe(true);
   expect(program).toBe(hubPath("src/entry/board.ts"));

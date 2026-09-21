@@ -26,10 +26,9 @@
 // | pageMissing         | no such page.                                                                                    | такой страницы нет. |
 // | unitNotStopped      | {id} is on the registry's list as stopped and the service manager is still running it.           | {id} в реестре остановлен, а менеджер служб всё ещё держит его запущенным. |
 //
-// The nine page strings are pinned here although nothing reads them until the
-// board process exists: the sentences are the contract and the code that posts
-// them is not, so a later wave writes pages against a fixed vocabulary rather
-// than inventing one.
+// The nine page strings are pinned here rather than beside the pages that post
+// them: the sentences are the contract and the code that posts them is not, so
+// a page is written against a fixed vocabulary rather than inventing one.
 //
 // NONE OF THE SEVENTEEN CARRIES THE MACHINERY MARKER. The marker names the
 // door, and it belongs on a line the hub writes INTO A CHAT. A loader refusal
@@ -383,9 +382,10 @@ test("D-253 the shipped vocabulary, the zero case and the shipped unavailable li
       `x: wanted ${en}, seen ${en}, pid 1.`,
     );
   }
-  // The status value D-253 names needs no new entry, said by name.
-  // `pid` is not one of the translated keys, and it is not meant to be: it
-  // carries a number or the word this line was handed.
+  // The stopped status needs no entry of its own in this module: it is the
+  // shipped vocabulary's own word. `pid` is not one of the translated keys, and
+  // it is not meant to be: it carries a number or the word this line was
+  // handed.
   expect(status("ru", { id: "board", wanted: "stopped", seen: "stopped", pid: 4242 })).toBe(
     "board: ожидается остановлен, наблюдается остановлен, pid 4242.",
   );
@@ -445,6 +445,6 @@ test("D-253 the shipped vocabulary, the zero case and the shipped unavailable li
   expect(checkClean("ru")).toBe("проверка: замечаний нет.");
   // `agent-state-unavailable` is a thrown name in the runner's own preflight
   // and not a sentence this module carries, so the check that drives that
-  // preflight is what pins it. What D-253 asks of THIS module is the reader's
-  // half of the same fact, asserted above.
+  // preflight is what pins it. What this module owns is the reader's half of
+  // the same fact, asserted above.
 });
