@@ -17,8 +17,8 @@
 // typing, no clock, no harvest, no cursor and no allowlist, and its runner
 // skips the tail at spawn. That is a DECLARED empty tail, which is a different
 // thing from an agent whose chat log lives on another machine: that one is
-// still refused before a model starts, and the refusal is asserted here beside
-// the new shape so nobody widens it to let the new shape through.
+// served, its chat read from the store where the machine holds no log, and it
+// is asserted here beside the new shape so the two are told apart.
 //
 // Red reasons: behaviour absent. The loader copies `door` and `chat` onto every
 // agent whether the file names them or not, so a job-only agent loads holding
@@ -49,7 +49,7 @@ import {
 } from "./helpers/rollout-stage.ts"
 import { message } from "./helpers/rollout-ingress.ts"
 import { controlledAdapter, editAgent, observe } from "./helpers/rollout-runner.ts"
-import { plantChatLine, superStore } from "./helpers/hub-fixture.ts"
+import { insertInbound, plantChatLine, superStore } from "./helpers/hub-fixture.ts"
 import { DISPATCH_PHRASES, agentRetry } from "../src/door/lines.ts"
 import { projectInbound } from "../src/chatlog/project.ts"
 import { loadRegistry, RegistryRefused } from "../src/registry/load.ts"
@@ -219,7 +219,7 @@ test("D-214 a job for a stopped runner waits unclaimed, is claimed when it start
   }
 }, 120_000)
 
-test("D-214 D-182 a job-only agent's empty tail is declared, and an agent whose chat is on another machine is still refused", async () => {
+test("D-214 D-182 a job-only agent's empty tail is declared, and an agent whose chat is on another machine is served", async () => {
   const it = await rolloutStage(cluster, "telegram", { dispatch: true, adapter: { answer: () => REPORT } })
   let door: Awaited<ReturnType<typeof runDoor>> | undefined
   let spoke: Awaited<ReturnType<typeof runRunner>> | undefined
@@ -238,24 +238,22 @@ test("D-214 D-182 a job-only agent's empty tail is declared, and an agent whose 
     await spoke.stop(); spoke = undefined
 
     // The control, in the same run: an agent that HAS a chat, moved onto a
-    // runner on a machine where its door is not, is refused by name before any
-    // model starts. The refusal was not widened to let the new shape through.
-    // The job-only agent steps off that runner first, so every start the runner
-    // could make would be the refused agent's.
+    // runner on a machine where its door is not, is SERVED, because there its
+    // chat is read from the store rather than from a log that machine does not
+    // hold. It is started for its work and refused nowhere, which is what tells
+    // it apart from the job-only agent above, whose tail is declared empty and
+    // is read from nowhere at all. The job-only agent steps off that runner
+    // first, so every start the runner makes is the moved agent's.
     const before = it.scripted.starts().length
     editAgent(it.registryFile, DISPATCH_JOB_ONLY, { runner: "runner-pi" })
     editAgent(it.registryFile, DISPATCH_TARGET, { runner: DISPATCH_RUNNER2 })
-    let error = ""
-    try {
-      spoke = await runRunner({ runner: DISPATCH_RUNNER2, registryFile: it.registryFile,
-        adapters: { [it.adapterName]: it.scripted.adapter } })
-      await until("the refusal is recorded", async () =>
-        JSON.stringify(await it.read.sheet("agent_health")).includes("agent-state-unavailable"), 20_000)
-    } catch (caught) { error = String(caught) }
-    const detail = JSON.stringify(await it.read.sheet("agent_health")) + JSON.stringify(await it.read.ledger()) + error
-    expect(detail).toContain("agent-state-unavailable")
-    // Before any model starts: the refused agent opened no session at all.
-    expect(it.scripted.starts()).toHaveLength(before)
+    spoke = await runRunner({ runner: DISPATCH_RUNNER2, registryFile: it.registryFile,
+      adapters: { [it.adapterName]: it.scripted.adapter } })
+    await insertInbound(cluster, it.db, { id: "moved-target-work", person: "p1", agent: DISPATCH_TARGET, body: "work for the moved agent" })
+    await until("the moved agent is served its work", async () =>
+      it.scripted.fed().some(one => one.id === "moved-target-work"), 20_000)
+    expect(it.scripted.starts().length).toBeGreaterThan(before)
+    expect(JSON.stringify(await it.read.sheet("agent_health"))).not.toContain("agent-state-unavailable")
   } finally { await spoke?.stop(); await door?.stop(); await it.stop() }
 }, 120_000)
 
