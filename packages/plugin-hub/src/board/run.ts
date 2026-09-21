@@ -22,6 +22,7 @@ import type { OsSeam } from "../os/types.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readOpenTurns } from "../store/turns.ts";
 import { readVoiceHealth } from "../voice/health.ts";
+import { sameAddress } from "../net/address.ts";
 import { serveArtifact } from "./artifacts.ts";
 import { findingsPage, machinesPage, metricsPage, peoplePage, type CheckRow, type ControlRow } from "./pages.ts";
 
@@ -94,8 +95,48 @@ function missing(): Response {
   });
 }
 
+/**
+ * A page, which no other page may frame.
+ *
+ * A board page inside somebody else's frame is a page whose buttons a person
+ * can be tricked into pressing, and that press would carry the board's own
+ * origin, so the origin rule below could not tell it apart.
+ */
 function html(text: string): Response {
-  return new Response(text, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  return new Response(text, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "x-frame-options": "DENY",
+      "content-security-policy": "frame-ancestors 'none'",
+    },
+  });
+}
+
+/**
+ * A `Host` header's address and port, the port defaulting to eighty, or null
+ * for anything that is not an address and a port.
+ */
+export function hostParts(header: string | null): { address: string; port: number } | null {
+  if (!header) return null;
+  const text = header.trim();
+  let address: string;
+  let port: string | null = null;
+  if (text.startsWith("[")) {
+    const close = text.indexOf("]");
+    if (close < 0) return null;
+    address = text.slice(1, close);
+    const rest = text.slice(close + 1);
+    if (rest.startsWith(":")) port = rest.slice(1);
+    else if (rest !== "") return null;
+  } else {
+    const colon = text.indexOf(":");
+    if (colon >= 0 && text.lastIndexOf(":") !== colon) return null;
+    address = colon >= 0 ? text.slice(0, colon) : text;
+    if (colon >= 0) port = text.slice(colon + 1);
+  }
+  if (port !== null && !/^\d{1,5}$/.test(port)) return null;
+  return { address, port: port === null ? 80 : Number(port) };
 }
 
 /**
@@ -298,7 +339,42 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     return new Response(body, { status: 200, headers: { "content-type": found.type } });
   };
 
+  /** Whether a host names this listener: its own address, however spelled, and its own port. */
+  const isOwn = (host: string | null, port: number): boolean => {
+    const parts = hostParts(host);
+    return parts !== null && parts.port === port && sameAddress(parts.address, entry.bind!);
+  };
+
+  /**
+   * Whether the browser says another page sent this.
+   *
+   * `Sec-Fetch-Site` is the browser's own word and a page cannot set it, and
+   * only `same-origin` is the board's own page: another port on this address
+   * is `same-site`, which is a different origin. `Origin`, where present, must
+   * be the board's own, and the `null` a sandboxed frame or a file sends is
+   * not. A request carrying neither is not a browser's, and the peer rule is
+   * what answers that one.
+   */
+  const fromAnotherPage = (request: Request, port: number): boolean => {
+    const site = request.headers.get("sec-fetch-site");
+    if (site !== null && site !== "same-origin") return true;
+    const origin = request.headers.get("origin");
+    if (origin === null) return false;
+    let url: URL;
+    try {
+      url = new URL(origin);
+    } catch {
+      return true;
+    }
+    return url.protocol !== "http:" || !isOwn(url.host, port);
+  };
+
   const answer = async (request: Request): Promise<Response> => {
+    // THE HOST MUST BE THE BOARD'S OWN. A website that rebinds its own name to
+    // this address reaches the socket with its own name in the header, and
+    // answering it would let that website read the pages it made a browser
+    // fetch.
+    if (!isOwn(request.headers.get("host"), port)) return missing();
     const url = new URL(request.url);
     const path = url.pathname;
     if (request.method === "GET") {
@@ -311,6 +387,7 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       return missing();
     }
     if (request.method === "POST") {
+      if (fromAnotherPage(request, port)) return missing();
       const form = new URLSearchParams(await request.text());
       const target = form.get("target") ?? "";
       const value = form.get("value") === "true";
@@ -332,6 +409,7 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     fetch: answer,
   });
 
+  // Read by `answer`, which no request reaches before this line has run.
   const port = Number(server.port);
   return {
     url: `http://${entry.bind}:${port}`,
