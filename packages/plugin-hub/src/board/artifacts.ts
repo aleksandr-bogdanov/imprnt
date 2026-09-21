@@ -60,7 +60,6 @@ export function contentTypeFor(path: string): string {
 /** An open artifact, which the caller streams and closes. */
 export interface OpenArtifact {
   handle: FileHandle;
-  size: number;
   type: string;
 }
 
@@ -132,7 +131,7 @@ export async function serveArtifact(args: {
     if (real !== base && !real.startsWith(base + sep)) throw new Error("outside");
     const named = statSync(real);
     if (named.dev !== opened.dev || named.ino !== opened.ino) throw new Error("moved");
-    return { handle, size: opened.size, type: contentTypeFor(real) };
+    return { handle, type: contentTypeFor(real) };
   } catch {
     await handle.close();
     return null;
