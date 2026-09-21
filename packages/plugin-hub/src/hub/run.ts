@@ -358,7 +358,12 @@ export async function runHub(options: {
     const existing = listAgents(registry).find(one => one.id === id);
     if (existing && existing.person !== person) throw new Error("invalid configuration");
     if (data.operation === "retire") {
-      if (!existing) throw new Error("invalid configuration");
+      // ALREADY GONE IS DONE. The edit renames the file before this row's own
+      // transaction commits, so a hub that dies between the two finds the row
+      // pending and the entry absent when it starts again, and the honest
+      // answer to that row is that the retire happened. The door's own drop
+      // takes its cursor with it.
+      if (!existing) return;
       await removeEntry(options.registryFile, `agents[${id}]`);
       // The door's own two sheets belong to a thing that is gone. The harvest
       // watermark STAYS, because the same id adopted again resumes where it
@@ -371,6 +376,11 @@ export async function runHub(options: {
     }
     const chat = String(said.chat ?? "");
     if (chat === "") throw new Error("invalid configuration");
+    // Asked again here for a row the door never checked: two agents of one
+    // door in one chat would both answer every message in it.
+    if (listAgents(registry).some(one => one.id !== id && one.door === door.id && one.chat === chat)) {
+      throw new Error("invalid configuration");
+    }
     if (existing) { await setKey(options.registryFile, `agents[${id}]`, "chat", chat); return; }
     // The machine's runner that the file says is running, because an agent
     // given to a runner somebody stopped would be an agent nothing ever serves.

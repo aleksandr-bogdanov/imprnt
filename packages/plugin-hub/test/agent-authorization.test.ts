@@ -18,7 +18,10 @@ import { observe } from "./helpers/rollout-runner.ts"
 import { runDoor } from "../src/door/run.ts"
 import { runHub } from "../src/hub/run.ts"
 import { runRunner } from "../src/runner/run.ts"
-import { agentRefused, agentUsage, AGENT_PHRASES } from "../src/door/lines.ts"
+import { agentRefused, agentUsage, AGENT_PHRASES, ADOPT_PHRASES } from "../src/door/lines.ts"
+import { appendChatLine, readTail } from "../src/chatlog.ts"
+import { rolloutDatabase } from "./helpers/rollout-fixtures.ts"
+import { hubPath } from "./helpers/cluster.ts"
 
 let cluster: Cluster
 beforeAll(async () => { cluster = await startCluster() })
@@ -37,7 +40,7 @@ const GUILD = "2000000000"
 function household(options: { samePerson?: boolean } = {}) {
   const os = process.platform === "darwin" ? "macos" : "linux"
   return {
-    admin: { chats: [{ name: "lair", chat: LAIR }, { name: "research", chat: RESEARCH }] },
+    admin: { chats: [{ name: "lair", chat: LAIR }, { name: "research", chat: RESEARCH }, { name: "other", chat: OTHER }] },
     machines: [{ id: "mac", os }],
     registry: (base: any) => ({
       ...base,
@@ -120,7 +123,9 @@ for (const planted of ["new-id", "other-person", "delete-history"] as const) {
     try {
       hub = await runHub({ registryFile: it.registryFile, machine: "mac", os: inertOs(it.stateDir).os })
       const before = readFileSync(it.registryFile, "utf8")
-      const history = join(it.stateDir, "p1", "chatlog", "p1-lair")
+      await appendChatLine({ stateDir: it.stateDir, person: "p1", agent: "p1-lair" }, {
+        id: "planted-history", at: new Date().toISOString(), direction: "in", from: "p1", text: "history that must survive",
+      })
       const id = `agent:${planted}`
       // Planted as a direct sheet write, because no door would ever write one.
       await store.sql`insert into state_row (sheet, id, data) values ('control', ${id}, ${{
@@ -138,10 +143,40 @@ for (const planted of ["new-id", "other-person", "delete-history"] as const) {
       const row = (await it.read.sheet("control")).find(one => one.id === id)!
       expect(row.data.cause).toBe("invalid configuration")
       expect(readFileSync(it.registryFile, "utf8"), "the registry is byte-identical after a refusal").toBe(before)
-      if (planted === "delete-history" && existsSync(history)) expect(readdirSync(history).length).toBeGreaterThanOrEqual(0)
+      expect(await readTail({ stateDir: it.stateDir, person: "p1", agent: "p1-lair", now: new Date(), hours: 24, tokens: 8000 }),
+        "the history is intact after a refusal").toContain("history that must survive")
+      // A refusal is not silent: the chat that asked is told, with the cause.
+      const operation = planted === "delete-history" ? "retire" : "adopt"
+      expect(await observe(async () => (await it.read.noticeRows()).some(one => one.notice_key === `recovery-outcome:${id}`), 5000)).toBe(true)
+      expect((await it.read.noticeRows()).find(one => one.notice_key === `recovery-outcome:${id}`)!.body)
+        .toBe(agentRefused("en", { operation, agent: "p1-lair", cause: "invalid configuration" }))
     } finally { await hub?.stop(); await store.close(); await it.stop() }
   }, 60_000)
 }
+
+// The file is renamed before the row's own transaction commits, so a hub that
+// dies between the two starts again to a pending retire whose entry is already
+// gone. The edit it asks for is true, and saying it was refused would be a lie.
+test("D-221 a retire whose entry is already gone is applied, and the file is left alone", async () => {
+  const it = await rolloutStage(cluster, "discord", household({ samePerson: true }))
+  const store = await superStore(cluster, it.db)
+  let hub: Awaited<ReturnType<typeof runHub>> | undefined
+  try {
+    hub = await runHub({ registryFile: it.registryFile, machine: "mac", os: inertOs(it.stateDir).os })
+    const before = readFileSync(it.registryFile, "utf8")
+    const id = "agent:already-gone"
+    await store.sql`insert into state_row (sheet, id, data) values ('control', ${id}, ${{
+      id, actor: "p1", source: "chat", person: "p1", target_kind: "agent-lifecycle",
+      target_id: "p1-gone", requested_at: new Date().toISOString(), status: "pending", cause: null,
+      door: "door-fake", agent: "p1-lair", route: { door: "door-fake", chat: LAIR },
+      operation: "retire", arguments: {},
+    }})`
+    await store.sql`select pg_notify('hub_control', ${id})`
+    expect(await observe(async () => (await it.read.sheet("control")).some(row => row.id === id && row.data.status !== "pending"), 10000)).toBe(true)
+    expect((await it.read.sheet("control")).find(row => row.id === id)!.data).toMatchObject({ status: "applied", cause: null })
+    expect(readFileSync(it.registryFile, "utf8")).toBe(before)
+  } finally { await hub?.stop(); await store.close(); await it.stop() }
+}, 60_000)
 
 test("D-221 each verb is recorded as requested then applied, with one notice on the pinned route and recovery's own row shape", async () => {
   const it = await rolloutStage(cluster, "discord", household({ samePerson: true }))
@@ -266,6 +301,69 @@ test("D-221 an agent's own text creates nothing, and a command's shape is answer
     expect((await it.read.inbound()).filter(row => shapes.includes(String(row.body)))).toEqual([])
   } finally { await runner?.stop(); await door?.stop(); await it.stop() }
 }, 90_000)
+
+test("D-221 an adopt into a chat another agent of this door already answers in is refused", async () => {
+  const it = await rolloutStage(cluster, "discord", household({ samePerson: true }))
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  let hub: Awaited<ReturnType<typeof runHub>> | undefined
+  try {
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    hub = await runHub({ registryFile: it.registryFile, machine: "mac", os: inertOs(it.stateDir).os })
+    const before = readFileSync(it.registryFile, "utf8")
+    // A new agent into p2-lair's chat, and p1-lair moved into it, which would
+    // each leave two agents answering every message there.
+    it.edge.batch([message("20", `/agent adopt p1-new ${OTHER}`), message("21", `/agent adopt p1-lair ${OTHER}`)], "22")
+    for (const agent of ["p1-new", "p1-lair"]) {
+      expect(await observe(() => it.edge.posts().some(post =>
+        post.text === agentRefused("en", { operation: "adopt", agent, cause: "invalid configuration" })), 10000),
+        `an adopt of ${agent} into a chat already answered is refused`).toBe(true)
+    }
+    expect(await it.read.sheet("control")).toEqual([])
+    expect(readFileSync(it.registryFile, "utf8")).toBe(before)
+  } finally { await hub?.stop(); await door?.stop(); await it.stop() }
+}, 60_000)
+
+test("D-221 the step that lets the hub say an outcome is in both ordered lists, and an upgraded store grants what a fresh one grants", async () => {
+  const file = "006-agent-lifecycle.sql"
+  expect(readFileSync(hubPath("src/store/migrate.ts"), "utf8")).toContain(`./migrations/${file}`)
+  // The installer's own list is the one place a check cannot reach by running,
+  // so it is bound by reading, as the dispatch step's is.
+  expect(readFileSync(hubPath("src/install/run.ts"), "utf8")).toContain(`[6, "${file}"]`)
+  const { migrate } = await seam("src/store/migrate.ts") as { migrate: (store: unknown, steps?: { version: number; sql: string }[]) => Promise<void> }
+  const granted = async (sql: any) => (await sql`select has_function_privilege('hub_hub',
+    'hub_door_notice(text, text, text, text, jsonb, integer)', 'execute') as yes`)[0].yes
+  const fresh = await rolloutDatabase(cluster)
+  expect(await granted(fresh.sql), "a fresh install grants it").toBe(true)
+  // The control: a store brought up to the step BEFORE this one does not, so the
+  // assertion below is about the step and not about a grant that was always there.
+  const stopped = await rolloutDatabase(cluster, true)
+  const earlier = [1, 2, 3, 4, 5].map(version => ({ version, sql: readFileSync(hubPath(`src/store/migrations/${
+    ["001-rollout", "002-door-health", "003-control", "004-voice", "005-dispatch"][version - 1]}.sql`), "utf8") }))
+  await migrate(stopped.store(), earlier)
+  expect(await granted(stopped.sql), "a store one step behind does not grant it").toBe(false)
+  const upgraded = await rolloutDatabase(cluster, true)
+  await migrate(upgraded.store())
+  await migrate(upgraded.store())
+  expect(await granted(upgraded.sql), "an upgraded store grants it").toBe(true)
+  expect((await upgraded.sql`select count(*)::int as n from schema_version where version = 6`)[0].n).toBe(1)
+}, 60_000)
+
+test("D-221 a person on a door that belongs to somebody else is refused in their own language", async () => {
+  const it = await rolloutStage(cluster, "discord", household())
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  try {
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    const before = readFileSync(it.registryFile, "utf8")
+    // The second person, allowed on this door, in their own chat, on a door the
+    // owner's entry names as the owner's.
+    it.edge.batch([{ ...message("20", `${AGENT_PHRASES.ru} ${ADOPT_PHRASES.ru} p2-new research`), chat: OTHER, sender_id: "p2", from: "p2" }], "21")
+    const refused = agentRefused("ru", { operation: "adopt", agent: "p2-new", cause: "access denied" })
+    expect(await observe(() => it.edge.posts().some(post => post.chat === OTHER && post.text === refused), 10000),
+      "the second person is told, in Russian, that this is not their door").toBe(true)
+    expect(await it.read.sheet("control")).toEqual([])
+    expect(readFileSync(it.registryFile, "utf8")).toBe(before)
+  } finally { await door?.stop(); await it.stop() }
+}, 60_000)
 
 test("D-221 the Russian verb is answered in Russian", async () => {
   const it = await rolloutStage(cluster, "discord", {

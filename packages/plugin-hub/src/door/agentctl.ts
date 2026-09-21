@@ -131,6 +131,13 @@ export async function requestAgentLifecycle(store: StoreLike, request: AgentLife
   }
   const door = listRunEntries(registry).find(one => one.id === request.door && one.kind === "door");
   if (!door) throw new AgentCommandRefused("invalid configuration");
+  // THE DOOR'S OWN PERSON is who an agent made or moved through it belongs to.
+  // A door two people share would otherwise let the second person make an
+  // agent under the first, which the hub refuses on apply, and the person would
+  // read a refusal about configuration for what is really a question of whose
+  // door this is.
+  const owner = (registry.data.run as { id: string; person?: string }[]).find(one => one.id === request.door)?.person;
+  if (owner !== person) throw new AgentCommandRefused("access denied");
   const existing = agents.find(one => one.id === request.target);
   // ANOTHER PERSON'S AGENT IS NOT THIS PERSON'S TO TOUCH, and an agent this
   // file does not name cannot be retired at all.
@@ -156,6 +163,12 @@ export async function requestAgentLifecycle(store: StoreLike, request: AgentLife
     maxAttempts: Number(readSetting(registry, "door.delivery_max_attempts")),
   });
   if (resolved.kind !== "chat") throw new AgentCommandRefused(resolved.cause);
+  // A chat another agent of this door already answers in would be answered
+  // twice for every message, and the loader does not refuse that on a Discord
+  // door, so it is refused here, before anything is asked of the hub.
+  if (agents.some(one => one.id !== request.target && one.door === request.door && one.chat === resolved.chat)) {
+    throw new AgentCommandRefused("invalid configuration");
+  }
   await ask(store, request, { chat: resolved.chat, name: resolved.name });
 }
 

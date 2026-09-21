@@ -76,8 +76,19 @@ test("D-220 adopt binds a new agent to a chat the person made, says so in both c
     const door = await startReadySubprocess("test/helpers/door-subprocess.ts", [it.registryFile, "door-fake", platform.url])
     children.push(door)
     const pid = door.pid
-    hub = await runHub({ registryFile: it.registryFile, machine: "mac", os: inertOs(it.stateDir).os })
+    const manager = inertOs(it.stateDir)
+    hub = await runHub({ registryFile: it.registryFile, machine: "mac", os: manager.os })
     const before = readFileSync(it.registryFile, "utf8")
+    // The agent nothing touches, whose block, history and watermark must come
+    // out of all four scenes byte for byte.
+    const untouched = /\[\[agents\]\]\nid = "p1-desk"[\s\S]*?\n\n/.exec(before)![0]
+    await appendChatLine({ stateDir: it.stateDir, person: "p1", agent: "p1-desk" }, {
+      id: "desk-line", at: new Date().toISOString(), direction: "in", from: "p1", text: "a line nobody touches",
+    })
+    const deskStore = await superStore(cluster, it.db)
+    await deskStore.sql`insert into state_row (sheet, id, data) values ('harvest', ${"p1/p1-desk"},
+      ${{ at: "2026-09-18T00:00:00.000Z", row: "planted", harvested_at: "2026-09-18T00:00:01.000Z", notes: 3 }})`
+    await deskStore.close()
     it.edge.batch([message("20", "/agent adopt p1-new research")], "21")
 
     expect(await observe(async () => (await it.read.sheet("control")).some(row => row.data.status === "applied"), 10000),
@@ -122,6 +133,10 @@ test("D-220 adopt binds a new agent to a chat the person made, says so in both c
     await store.sql`insert into state_row (sheet, id, data) values ('harvest', ${"p1/p1-new"},
       ${{ at: "2026-09-20T00:00:00.000Z", row: "planted", harvested_at: "2026-09-20T00:00:01.000Z", notes: 1 }})
       on conflict (sheet, id) do update set data = excluded.data`
+    // A progress line the door would be editing for this agent, which is its
+    // own sheet and goes with it.
+    await store.sql`insert into state_row (sheet, id, data) values ('door_progress', 'planted-progress',
+      ${{ post_id: "70999", chat: RESEARCH, agent: "p1-new", started_at: new Date().toISOString() }})`
     it.edge.batch([message("40", "/agent retire p1-new")], "41")
     expect(await observe(async () => (await it.read.sheet("control")).filter(row => row.data.status === "applied").length === 2, 10000),
       "the hub applies the retire").toBe(true)
@@ -139,6 +154,8 @@ test("D-220 adopt binds a new agent to a chat the person made, says so in both c
       .toContain("after the rename")
     expect(await observe(async () => !(await it.read.sheet("door_cursor")).some(row => row.id === `door-fake/${RESEARCH}`), 8000),
       "the door's own sheet for a chat it no longer serves is gone").toBe(true)
+    expect((await it.read.sheet("door_progress")).some(row => row.id === "planted-progress"),
+      "the door's progress sheet for a retired agent is gone").toBe(false)
     // The watermark STAYS, because the same id adopted again resumes there.
     expect((await it.read.sheet("harvest")).find(row => row.id === "p1/p1-new")?.data)
       .toMatchObject({ at: "2026-09-20T00:00:00.000Z" })
@@ -153,11 +170,18 @@ test("D-220 adopt binds a new agent to a chat the person made, says so in both c
       .toMatchObject({ at: "2026-09-20T00:00:00.000Z" })
     await store.close()
 
-    // The control: the agent nothing touched kept its chat, and the file's other
-    // entries are byte for byte where they were.
-    const finally_ = readFileSync(it.registryFile, "utf8")
-    expect(finally_).toContain(`chat = "${DESK}"`)
-    expect(finally_.split("\n").filter(line => line.includes("p1-desk")).length).toBeGreaterThan(0)
+    // The control: the agent nothing touched kept its block byte for byte, its
+    // history and its watermark, and its cursor is still there. The cursor is
+    // asserted present rather than equal, because it moves forward every time
+    // the door reads that chat, which is the door doing its job.
+    expect(readFileSync(it.registryFile, "utf8")).toContain(untouched)
+    expect(await readTail({ stateDir: it.stateDir, person: "p1", agent: "p1-desk", now: new Date(), hours: 24, tokens: 8000 }))
+      .toContain("a line nobody touches")
+    expect((await it.read.sheet("harvest")).find(row => row.id === "p1/p1-desk")?.data)
+      .toEqual({ at: "2026-09-18T00:00:00.000Z", row: "planted", harvested_at: "2026-09-18T00:00:01.000Z", notes: 3 })
+    expect((await it.read.sheet("door_cursor")).some(row => row.id === `door-fake/${DESK}`)).toBe(true)
+    // No process was restarted and the manager was asked to restart nothing.
+    expect(manager.calls.filter(call => call.operation === "restart")).toEqual([])
     expect(door.pid).toBe(pid)
   } finally {
     await hub?.stop(); for (const child of children.reverse()) await child.stop()
