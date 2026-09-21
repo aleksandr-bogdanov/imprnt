@@ -1,11 +1,12 @@
-import { recoveryDone, recoveryRefused, safeValue, type Language } from "../door/lines.ts";
+import { agentAdopted, agentBound, agentRefused, agentRetired, recoveryDone, recoveryRefused, safeValue, type Language } from "../door/lines.ts";
 import { languageOf, listAgents, listRunEntries, senderAllowed } from "../registry/entries.ts";
 import { wantedState } from "../os/diff.ts";
 import { loadRegistry, type Registry } from "../registry/load.ts";
 import { appendEntry } from "../records/diary.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { listenForWork, type Listener } from "../store/listen.ts";
-import { appendNotice, type ReplyRoute } from "../store/outbox.ts";
+import { prepareReply } from "../door/reply.ts";
+import type { ReplyRoute } from "../store/outbox.ts";
 
 /**
  * The entry kinds a restart may name through the `run` target.
@@ -54,7 +55,42 @@ interface RecoveryRequest {
   sender_id?: string; door?: string; chat?: string; target_kind: string; target_id: string;
   /** The agent whose chat a chat request came in on. */
   agent?: string;
+  /**
+   * What a lifecycle row asks for and what it asks it with. Only the two agent
+   * verbs carry them, and a recovery row is written without them, so its shape
+   * is the one two shipped checks compare whole.
+   */
+  operation?: string;
+  arguments?: Record<string, unknown>;
   registryFile?: string; registry?: Registry;
+}
+
+/**
+ * Every refusal `requestRecovery` names. A command typed in a chat that meets
+ * one of them is answered with a refusal, and never left as an error that
+ * stops the door from acknowledging the batch it came in.
+ */
+export const CONTROL_REFUSALS = ["invalid-recovery-target", "recovery-not-authorized", "recovery-target-stopped",
+  "invalid-recovery-source"] as const;
+
+/** The target kinds a control row may name, and there is no fifth. */
+const TARGET_KINDS = ["agent", "door", "run", "agent-lifecycle"];
+
+/**
+ * A notice asked for by a process that is not the runner.
+ *
+ * It goes through the security-definer function the door already asks with,
+ * because the hub owns no insert on the outbox and never will: the function
+ * writes a keyed machinery notice and nothing else, so what the hub can say
+ * through it is one sentence per control row and never a reply.
+ */
+async function sayNotice(store: StoreLike, notice: { person: string; agent: string; body: string;
+  noticeKey: string; route: ReplyRoute; platform: string; language: Language }): Promise<void> {
+  for (const [index, part] of prepareReply(notice.body, notice.platform, notice.language).entries()) {
+    const key = index === 0 ? notice.noticeKey : `${notice.noticeKey}:part:${index + 1}`;
+    await store.sql`select hub_door_notice(${notice.person}, ${notice.agent}, ${part}, ${key},
+      ${notice.route}::jsonb, ${index + 1})`;
+  }
 }
 
 /**
@@ -73,9 +109,39 @@ async function announceOutcome(store: StoreLike, registry: Registry, data: Recor
   const platform = ((registry.data.run ?? []) as { id: string; platform?: string }[])
     .find(entry => entry.id === route.door)?.platform ?? "discord";
   const target = String(data.target_id);
-  const body = data.status === "applied" ? recoveryDone(language, { target })
-    : recoveryRefused(language, { target, cause: data.cause ?? "operation failed" });
-  await appendNotice(store, { person, agent, body, noticeKey: `recovery-outcome:${data.id}`, route, platform, language });
+  const lifecycle = data.target_kind === "agent-lifecycle";
+  const operation = String(data.operation ?? "recover");
+  const named = (data.arguments ?? {}) as Record<string, unknown>;
+  const body = !lifecycle
+    ? (data.status === "applied" ? recoveryDone(language, { target })
+      : recoveryRefused(language, { target, cause: data.cause ?? "operation failed" }))
+    : data.status !== "applied"
+      ? agentRefused(language, { operation, agent: target, cause: data.cause ?? "operation failed" })
+      : operation === "retire" ? agentRetired(language, { agent: target })
+        : agentBound(language, { agent: target, name: named.name ?? named.chat });
+  await sayNotice(store, { person, agent, body, noticeKey: `recovery-outcome:${data.id}`, route, platform, language });
+  // THE ADOPTED CHAT IS TOLD TOO, on the route the resolution produced rather
+  // than the one the command came in on. That sentence landing where the new
+  // agent now answers is the proof the binding took: a notice that only went
+  // back where the command came from proves the command was read.
+  if (lifecycle && data.status === "applied" && operation !== "retire" && typeof named.chat === "string") {
+    await sayNotice(store, { person, agent: target, body: agentAdopted(language, { agent: target }),
+      noticeKey: `agent-adopted:${data.id}`, route: { door: String(data.door ?? route.door), chat: named.chat },
+      platform, language });
+  }
+}
+
+/**
+ * The one control verb, which the two agent lifecycle commands and the shipped
+ * recovery both ask through.
+ *
+ * `requestRecovery` is this function under its own name: the row shape, the
+ * replay fence, the pinned route, the diary kinds and the two refusal names are
+ * all the shipped ones, and a second implementation of a control verb is
+ * exactly what this project forbids.
+ */
+export async function requestControl(store: StoreLike, request: RecoveryRequest) {
+  return await requestRecovery(store, request);
 }
 
 export async function requestRecovery(store: StoreLike, request: RecoveryRequest) {
@@ -87,13 +153,23 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
   // refusal a check can bind by name.
   const reachable = reachableKinds(request.source);
   const piece = listRunEntries(registry).find(e => e.id === request.target_id && reachable.includes(e.kind));
-  if (request.target_kind === "agent" ? !agent : request.target_kind === "door" ? !door
-    : request.target_kind === "run" ? !piece : true) throw new Error("invalid-recovery-target");
+  if (!TARGET_KINDS.includes(request.target_kind)) throw new Error("invalid-recovery-target");
+  // A lifecycle row names an agent that may not exist yet, which is what an
+  // adopt of a new id is, so the file cannot be asked whether it is there. What
+  // may be asked of it is asked by the door, which authorized the sender, and
+  // by the hub, which is the only process that writes the file.
+  const lifecycle = request.target_kind === "agent-lifecycle";
+  if (!lifecycle && (request.target_kind === "agent" ? !agent : request.target_kind === "door" ? !door
+    : !piece)) throw new Error("invalid-recovery-target");
   // A PIECE THE FILE SAYS IS DOWN IS NEVER RESTARTED. The manager's restart
   // starts a service it is not running, so this would bring a stopped piece up
   // for as long as it takes the hub's next tick to stop it again, and the
   // household that asked for it to be down would watch it run.
-  const declared = piece ?? door;
+  //
+  // Asked of a run or door target only. An agent may carry the same id as an
+  // entry the file stopped, and neither restarting an agent nor making one is a
+  // restart of that entry.
+  const declared = request.target_kind === "run" ? piece : request.target_kind === "door" ? door : undefined;
   if (declared && wantedState(declared) === "stopped") throw new Error("recovery-target-stopped");
   // The board is treated as the operator is, because nobody on a tailnet page
   // is identified and the row records that plainly.
@@ -103,8 +179,8 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
   // its own supervisor is the failure this fence exists about.
   if (request.source === "door" && request.target_kind !== "run") throw new Error("recovery-not-authorized");
   const declaredDoor = (registry.data.run as { id: string; person?: string }[]).find(e => e.id === door?.id);
-  const person = agent?.person ?? declaredDoor?.person ?? request.person ?? null;
-  if (request.source === "chat" && (request.target_kind !== "agent" || person !== request.person ||
+  const person = lifecycle ? (request.person ?? null) : agent?.person ?? declaredDoor?.person ?? request.person ?? null;
+  if (request.source === "chat" && !lifecycle && (request.target_kind !== "agent" || person !== request.person ||
     !senderAllowed(registry, person!, request.door ?? "", request.sender_id ?? "") ||
     !listAgents(registry).some(a => a.person === person && a.door === request.door && a.chat === request.chat))) throw new Error("recovery-not-authorized");
   // A chat request pins where it came from, so its outcome can be said there.
@@ -118,7 +194,10 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
   // button is here.
   const data = { id: request.id, actor: request.actor, source: request.source, person,
     target_kind: request.target_kind, target_id: request.target_id,
-    requested_at: new Date().toISOString(), status: "pending", cause: null, ...asked };
+    requested_at: new Date().toISOString(), status: "pending", cause: null, ...asked,
+    // Only a lifecycle row carries these three, so a recovery row is written
+    // with the keys it has always had.
+    ...(lifecycle ? { door: request.door, operation: request.operation, arguments: request.arguments ?? {} } : {}) };
   // An active coordinator can confirm completion without polling. Otherwise
   // the durable request remains pending for its next startup.
   let completion: Listener | undefined;

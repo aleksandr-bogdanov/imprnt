@@ -1,18 +1,20 @@
 import { appendChatLineOnce, type BadRecord } from "../chatlog.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
-import { requestRecovery } from "../hub/control.ts";
+import { CONTROL_REFUSALS, requestRecovery } from "../hub/control.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import { encodeHarvestBody } from "../harvest/row.ts";
 import { readWatermark } from "../harvest/sheet.ts";
 import { isDemand, isRecoveryCommand, readSlice } from "../harvest/slice.ts";
 import { languageOf, senderAllowed, voiceFor } from "../registry/entries.ts";
-import { readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
+import { readSetting, type ChatAgent, type Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markMediaPending } from "../voice/records.ts";
 import { writeCursor } from "./cursor.ts";
 import { recordDeniedSender } from "./denied.ts";
-import { controlUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
+import { requestDispatch, parseDispatch } from "./dispatch.ts";
+import { parseAgentCommand, requestAgentLifecycle, type ResolvedRef } from "./agentctl.ts";
+import { agentAccepted, agentRefused, agentUsage, controlUsage, dispatchAccepted, dispatchRefused, dispatchUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
 import { saveMedia, type SavedMedia } from "./media.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
 
@@ -28,12 +30,18 @@ export interface PendingVoiceRow {
 /** Accepted work, its files and its projection precede the fetched boundary. */
 export async function acceptBatch(options: {
   store: StoreLike; registry: Registry; stateDir: string; door: string;
-  agent: AgentEntry; platform: Platform; batch: PlatformPull; cursor: string | null;
+  agent: ChatAgent; platform: Platform; batch: PlatformPull; cursor: string | null;
   received?(id: string, mediaState: string | null): void;
   /** A row the transcription step now owes its words, handed over with no query. */
   pending?(row: PendingVoiceRow): void;
   /** The door skips a bad complete chat log record and reports it. */
   skipBad?(bad: BadRecord): void | Promise<void>;
+  /**
+   * The chat lookups this batch's adopts needed, made before the batch was
+   * handed in, by platform message id. Given, an adopt is never looked up in
+   * here, where every chat of the door waits on the batch.
+   */
+  lookups?: Map<string, ResolvedRef>;
 }): Promise<string | null> {
   const { store, registry, stateDir, door, agent, platform, batch } = options;
   const skipBad = { skipBad: options.skipBad };
@@ -64,7 +72,9 @@ export async function acceptBatch(options: {
             person: agent.person, door, chat: agent.chat, agent: agent.id, target_kind: "agent", target_id: target[1] });
           text = recoveryAccepted(language, { target: target[1] });
         } catch (error) {
-          if (!["invalid-recovery-target", "recovery-not-authorized"].includes((error as Error).message)) throw error;
+          // Every refusal the verb names is answered, because one left as an
+          // error stops this batch being acknowledged and the chat stalls on it.
+          if (!(CONTROL_REFUSALS as readonly string[]).includes((error as Error).message)) throw error;
           text = recoveryRefused(language, { target: target[1], cause: "access denied" });
         }
       }
@@ -73,6 +83,74 @@ export async function acceptBatch(options: {
       }, skipBad);
       try { await platform.post({ chat: agent.chat, text }); }
       catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
+      continue;
+    }
+    const asked = parseDispatch(message.text);
+    if (asked !== null) {
+      const base = inboundId(platform.name, message.chat, message.platform_message_id);
+      const id = `dispatch:${base}`;
+      await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id, at: message.at, direction: "in", from: agent.person, text: message.text,
+      }, skipBad);
+      let text = dispatchUsage(language);
+      if (asked !== "usage") {
+        try {
+          await requestDispatch(store, { id: `job:${base}`, registry, person: agent.person,
+            door, chat: agent.chat, agent: agent.id, sender_id: sender, from: message.from,
+            target: asked.target, task: asked.task, at: message.at });
+          text = dispatchAccepted(language, { agent: asked.target });
+        } catch (error) {
+          if ((error as Error).name !== "DispatchRefused") throw error;
+          text = dispatchRefused(language, { agent: asked.target, cause: "access denied" });
+        }
+      }
+      // POSTED ONLY WHEN THE LINE IS NEW. The row, the diary entry and both
+      // chat lines are already idempotent by the platform message id, so a
+      // platform that redelivers a batch would otherwise say the same sentence
+      // twice about a job it created once.
+      const fresh = await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id: id + ":notice", at: message.at, direction: "out", from: door, text,
+      }, skipBad);
+      if (fresh) {
+        try { await platform.post({ chat: agent.chat, text }); }
+        catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
+      }
+      continue;
+    }
+    const lifecycle = parseAgentCommand(message.text);
+    if (lifecycle !== null) {
+      const base = inboundId(platform.name, message.chat, message.platform_message_id);
+      const id = `agent:${base}`;
+      await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id, at: message.at, direction: "in", from: agent.person, text: message.text,
+      }, skipBad);
+      let text = agentUsage(language);
+      if (lifecycle !== "usage") {
+        const values = { operation: lifecycle.operation, agent: lifecycle.agent };
+        try {
+          await requestAgentLifecycle(store, {
+            id, registry, person: agent.person, door, chat: agent.chat, agent: agent.id,
+            sender_id: sender, platform, operation: lifecycle.operation, target: lifecycle.agent,
+            ...(lifecycle.operation === "adopt" ? { ref: lifecycle.ref } : {}),
+            ...(options.lookups ? { resolved: options.lookups.get(message.platform_message_id) ?? null } : {}),
+          });
+          text = agentAccepted(language, values);
+        } catch (error) {
+          if ((error as Error).name !== "AgentCommandRefused") throw error;
+          text = agentRefused(language, { ...values, cause: (error as { cause: string }).cause });
+        }
+      }
+      // POSTED ONLY WHEN THE LINE IS NEW, for the reason the dispatch block
+      // beside it says: the row and both chat lines are idempotent by the
+      // platform message id, and a redelivered batch would otherwise say the
+      // same sentence twice about a command it acted on once.
+      const fresh = await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id: id + ":notice", at: message.at, direction: "out", from: door, text,
+      }, skipBad);
+      if (fresh) {
+        try { await platform.post({ chat: agent.chat, text }); }
+        catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
+      }
       continue;
     }
     const demand = isDemand(message.text);

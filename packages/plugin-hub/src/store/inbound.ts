@@ -9,10 +9,39 @@ export interface InboundSource {
   from?: string;
   text: string;
   media?: unknown[];
+  /** Present on a job row: who asked, for whom, and where the report goes. */
+  dispatch?: DispatchEnvelope;
+}
+
+/**
+ * What a person approved when they typed the command, and the only route a
+ * report may take. `digest` is the sha256 of the task bytes, so a task rewritten
+ * between the insert and the projection no longer matches what was approved.
+ */
+export interface DispatchEnvelope {
+  dispatcher: string;
+  target: string;
+  approved: { by: string; at: string; digest: string; source: string };
+  return: { agent: string; door: string; chat: string };
+}
+
+/**
+ * A job row's own provenance. It has no platform sender of its own, and an
+ * agent that has no chat has no door and no chat either, which is why these
+ * three are absent where an accepted message always carries them.
+ */
+export interface JobSource {
+  log_id: string;
+  at: string;
+  door?: string;
+  chat?: string;
+  from: string;
+  text: string;
+  dispatch: DispatchEnvelope;
 }
 
 export interface InboundMessage {
-  source?: InboundSource;
+  source?: InboundSource | JobSource;
   log_ready?: boolean;
   id: string;
   person: string;

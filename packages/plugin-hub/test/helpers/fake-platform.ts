@@ -46,6 +46,53 @@ export interface DoorPlatform {
   post(options: { chat: string; text: string }): Promise<{ id: string | null }>;
   edit(options: { chat: string; id: string; text: string }): Promise<void>;
   typing(options: { chat: string }): Promise<void>;
+  /**
+   * The administration member, PRESENT ONLY when a check asks for it. A
+   * platform that carries none is what the `unsupported` answer is about, and
+   * it is what every check that says nothing about admin is handed.
+   */
+  admin?: FakeAdmin;
+}
+
+/** What a chat looks like to the fake, and what a check plants. */
+export interface FakeChat {
+  name: string;
+  chat: string;
+  /** A chat deleted in the app is still known and no longer there. */
+  exists?: boolean;
+  kind?: string;
+}
+
+/** The four answers a resolution can give, written out here for the reason above. */
+export type FakeResolution =
+  | { kind: "chat"; chat: string; name: string }
+  | { kind: "absent"; cause: string }
+  | { kind: "ambiguous"; cause: string }
+  | { kind: "unsupported"; cause: string };
+
+export interface FakeDescription {
+  exists: boolean;
+  name: string | null;
+  kind: string | null;
+  /** A call the platform refused outright, which is not the same as a chat that is gone. */
+  failure?: { code: string; cause: string };
+}
+
+export interface FakeAdmin {
+  resolveChat(ref: string): Promise<FakeResolution>;
+  describeChat(chat: string): Promise<FakeDescription>;
+}
+
+/** One admin call, whole, because "called once per adopt" needs a log that kept everything. */
+export interface AdminRecord {
+  verb: "resolveChat" | "describeChat";
+  argument: string;
+  at: number;
+}
+
+export interface FakeAdminOptions {
+  /** The chats this platform knows, by name and by id. */
+  chats?: FakeChat[];
 }
 
 export interface PostRecord {
@@ -123,6 +170,24 @@ export interface FakePlatform {
    * always false and two branches nothing could reach.
    */
   holdPosts(on: boolean): void;
+  /** Every admin call, in order, whole. Empty on a platform that carries none. */
+  adminCalls(): AdminRecord[];
+  /** Teach this platform a chat, or change what it says about one it knows. */
+  setResolveAnswer(chat: FakeChat): void;
+  /** The next admin call throws, and the one after it answers. */
+  setRefuseOnce(): void;
+  /** Every admin call throws until it is turned off, for the retry bound. */
+  setRefusing(on: boolean): void;
+  /** Two chats carry this name, so resolving it is ambiguous. */
+  setAmbiguous(name: string): void;
+  /** No chat carries this name, whatever the table holds. */
+  setAbsent(name: string): void;
+  /** What `describeChat` says about this chat. */
+  setDescribed(chat: string, description: Partial<FakeChat>): void;
+  /** The person renamed the chat in the app. Nothing else about it changes. */
+  renameChat(chat: string, name: string): void;
+  /** The channel was deleted: it is gone to `describeChat` and a post to it fails. */
+  removeChat(chat: string): void;
 }
 
 export class PlatformRefused extends Error {
@@ -150,6 +215,12 @@ export interface FakePlatformOptions {
    * and a typing that threw would be a platform that has the verb.
    */
   noTyping?: boolean;
+  /**
+   * The administration member. OMITTED OR `false` BUILDS THE PLATFORM EVERY
+   * SHIPPED CHECK ALREADY GETS: the object has no `admin` property at all, so
+   * the `unsupported` answer is reachable and no shipped check sees a new verb.
+   */
+  admin?: false | FakeAdminOptions;
 }
 
 export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
@@ -260,12 +331,70 @@ export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
     typingLog.push({ chat: where.chat, at: Date.now() });
   };
 
+  // The chats this platform knows, by id, and the answers a check has planted.
+  const known = new Map<string, FakeChat>();
+  const adminLog: AdminRecord[] = [];
+  const ambiguous = new Set<string>();
+  const absent = new Set<string>();
+  let refuseOnce = false;
+  let adminRefusing = false;
+  for (const chat of (options.admin === undefined || options.admin === false ? [] : options.admin.chats ?? [])) {
+    known.set(chat.chat, { exists: true, kind: "channel", ...chat });
+  }
+  // The message carries a header the way a real client's error does, so a check
+  // can assert that none of it reaches a person's chat.
+  const refusal = (verb: string) =>
+    new PlatformRefused(`${options.name} refused ${verb} (authorization: Bot a-bot-token-shaped-string)`);
+  const admin: FakeAdmin = {
+    async resolveChat(ref: string): Promise<FakeResolution> {
+      adminLog.push({ verb: "resolveChat", argument: ref, at: Date.now() });
+      if (adminRefusing) throw refusal("a chat lookup");
+      if (refuseOnce) { refuseOnce = false; throw refusal("a chat lookup"); }
+      // A numeric ref is the chat itself, which is the floor that needs no
+      // discovery, and it is confirmed rather than believed.
+      if (/^-?\d+$/.test(ref)) {
+        const it = known.get(ref);
+        return it && it.exists !== false
+          ? { kind: "chat", chat: it.chat, name: it.name }
+          : { kind: "absent", cause: "chat missing" };
+      }
+      if (absent.has(ref)) return { kind: "absent", cause: "chat missing" };
+      if (ambiguous.has(ref)) return { kind: "ambiguous", cause: "chat name ambiguous" };
+      const found = [...known.values()].filter(one => one.name === ref && one.exists !== false);
+      if (found.length === 0) return { kind: "absent", cause: "chat missing" };
+      if (found.length > 1) return { kind: "ambiguous", cause: "chat name ambiguous" };
+      return { kind: "chat", chat: found[0].chat, name: found[0].name };
+    },
+    async describeChat(chat: string): Promise<FakeDescription> {
+      adminLog.push({ verb: "describeChat", argument: chat, at: Date.now() });
+      if (adminRefusing) throw refusal("a chat description");
+      if (refuseOnce) { refuseOnce = false; throw refusal("a chat description"); }
+      const it = known.get(chat);
+      if (!it || it.exists === false) return { exists: false, name: null, kind: null };
+      return { exists: true, name: it.name, kind: it.kind ?? "channel" };
+    },
+  };
+
   // The cast is the whole of `noTyping`: the object really has no `typing`
   // property, which is what a door that must refuse it has to meet. A typing
   // that threw would be a platform that HAS the verb and is having a bad day.
-  const platform = (
-    options.noTyping ? speaks : { ...speaks, typing }
-  ) as DoorPlatform;
+  const platform = {
+    ...(options.noTyping ? speaks : { ...speaks, typing }),
+    // The same rule for `admin`: a platform without one really has no property,
+    // so a build that answered `unsupported` by catching a throw would fail.
+    ...(options.admin === undefined || options.admin === false ? {} : { admin }),
+    async post(where: { chat: string; text: string }): Promise<{ id: string | null }> {
+      // A deleted channel refuses a post the way a real one does, so an owed
+      // reply pinned to it becomes the delivery failure it really is.
+      const it = known.get(where.chat);
+      if (it && it.exists === false) {
+        postLog.push({ chat: where.chat, text: where.text, at: Date.now(), accepted: false, id: null,
+          probe: options.probe ? options.probe(where) : null });
+        throw new PlatformRefused(`${options.name} refused a post to ${where.chat}: it is gone`);
+      }
+      return await speaks.post(where);
+    },
+  } as DoorPlatform;
 
   return {
     platform,
@@ -296,6 +425,28 @@ export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
     edits: () => editLog.map((e) => ({ ...e })),
     holdPosts(on) {
       refusing = on;
+    },
+    adminCalls: () => adminLog.map(one => ({ ...one })),
+    setResolveAnswer(chat) {
+      known.set(chat.chat, { exists: true, kind: "channel", ...chat });
+      absent.delete(chat.name);
+    },
+    setRefuseOnce() { refuseOnce = true; },
+    setRefusing(on) { adminRefusing = on; },
+    setAmbiguous(name) { ambiguous.add(name); },
+    setAbsent(name) { absent.add(name); },
+    setDescribed(chat, description) {
+      const it = known.get(chat) ?? { name: chat, chat, exists: true, kind: "channel" };
+      known.set(chat, { ...it, ...description, chat });
+    },
+    renameChat(chat, name) {
+      const it = known.get(chat);
+      if (!it) throw new Error(`the fake platform has no chat ${chat} to rename`);
+      known.set(chat, { ...it, name });
+    },
+    removeChat(chat) {
+      const it = known.get(chat) ?? { name: chat, chat, kind: "channel" };
+      known.set(chat, { ...it, chat, exists: false });
     },
   };
 }
@@ -382,6 +533,18 @@ export async function servePlatform(
         }
         return Response.json({ ok: true });
       }
+      if (path === "/admin/resolve" || path === "/admin/describe") {
+        const asked = await body(request);
+        if (!fake.platform.admin) return Response.json({ error: "this platform has no admin" }, { status: 404 });
+        try {
+          const answer = path === "/admin/resolve"
+            ? await fake.platform.admin.resolveChat(String(asked.ref))
+            : await fake.platform.admin.describeChat(String(asked.chat));
+          return Response.json({ ok: true, answer });
+        } catch (error) {
+          return Response.json({ error: String((error as Error).message) }, { status: 502 });
+        }
+      }
       if (path === "/about") {
         // What this platform IS, so a door in another process holds the same
         // typing lifetime the in-process one does rather than a number of its
@@ -389,6 +552,10 @@ export async function servePlatform(
         return Response.json({
           name: fake.platform.name,
           typingSeconds: fake.platform.typingSeconds,
+          // Whether it answers about its own chats at all. A door handed a
+          // client that always carried the member could never meet the
+          // `unsupported` answer, which is a platform without one.
+          admin: Boolean(fake.platform.admin),
         });
       }
       return new Response("not a platform verb", { status: 404 });
@@ -413,18 +580,41 @@ export async function platformClient(url: string): Promise<DoorPlatform> {
   // BOUNDED, and loud when it runs out. A door subprocess that hung here would
   // never print its ready line, and every check that starts one would report a
   // ninety second timeout with nothing saying why.
-  let about: { name: string; typingSeconds: number };
+  let about: { name: string; typingSeconds: number; admin?: boolean };
   try {
     const answered = await fetch(`${url}/about`, { signal: AbortSignal.timeout(5000) });
-    about = (await answered.json()) as { name: string; typingSeconds: number };
+    about = (await answered.json()) as { name: string; typingSeconds: number; admin?: boolean };
   } catch (error) {
     throw new PlatformRefused(
       `the platform at ${url} did not say what it is within 5 s: ${(error as Error).message}`,
     );
   }
+  const admin = {
+    async resolveChat(ref: string) {
+      const res = await fetch(`${url}/admin/resolve`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ ref }) });
+      if (!res.ok) {
+        const said = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new PlatformRefused(said.error ?? `chat lookup failed: ${res.status}`);
+      }
+      return ((await res.json()) as { answer: FakeResolution }).answer;
+    },
+    async describeChat(chat: string) {
+      const res = await fetch(`${url}/admin/describe`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ chat }) });
+      if (!res.ok) {
+        const said = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new PlatformRefused(said.error ?? `chat description failed: ${res.status}`);
+      }
+      return ((await res.json()) as { answer: FakeDescription }).answer;
+    },
+  };
   return {
     name: "fake-over-http",
     typingSeconds: Number(about.typingSeconds),
+    // Only when the platform behind the socket carries one, so a door in
+    // another process meets exactly what an in-process one would.
+    ...(about.admin ? { admin } : {}),
     async pull(where) {
       const res = await fetch(`${url}/pull`, {
         method: "POST",

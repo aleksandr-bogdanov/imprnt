@@ -49,6 +49,7 @@ import { storeUrlFor } from "../store/secrets.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
+import { admitJob, refuseJob } from "./job.ts";
 import { clearProgress, writeProgress, type TurnProgress } from "./progress.ts";
 import {
   clearOutage,
@@ -124,6 +125,22 @@ interface OpenTurn {
   /** When the sheet was last written, for the throttle that is a TIME. */
   wroteAt: number;
   finish(end: TurnEnd): void;
+}
+
+/**
+ * The platform an answer is cut for, read off the id of the row it answers.
+ *
+ * A person's message carries its platform at the front of its id. A report's
+ * id is its job's with `report:` in front, and the job's own id carries the
+ * platform of the chat the command was typed in, which is the return route the
+ * report and the answer to it go back on. Read as the front of the report's
+ * id, it would be the word `report`, and the answer would be cut at the shorter
+ * limit on every platform.
+ */
+function answerPlatform(logId: string | undefined): string | undefined {
+  if (logId === undefined) return undefined;
+  const parts = logId.split(":");
+  return parts[0] === "report" && parts[1] === "job" ? parts[2] : parts[0];
 }
 
 function setting(registry: Registry, key: string): number {
@@ -481,6 +498,8 @@ export async function runRunner(options: {
     let claimed: string | null = null;
     /** Whether that claim is a person's message rather than a harvest. */
     let claimedHuman = false;
+    /** Where a claimed JOB's notice goes, which is never this agent's own chat. */
+    let claimedReturn: { agent: string; door: string; chat: string } | null = null;
     let unhealthy = retries.has(agent.id);
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
@@ -598,7 +617,7 @@ export async function runRunner(options: {
 
     const oneTurn = async (
       message: { id: string; text: string },
-      about: { preset: Preset; tail: boolean; registry: Registry; source?: InboundSource | null },
+      about: { preset: Preset; tail: boolean; registry: Registry; source?: InboundSource | null; kind?: string },
     ): Promise<void> => {
       let finish: (end: TurnEnd) => void = () => {};
       const ended = new Promise<TurnEnd>((resolve) => {
@@ -757,7 +776,11 @@ export async function runRunner(options: {
         inboundId: message.id,
         person: agent.person,
         source: about.source,
-        chunks: prepareReply(end.text, about.source?.log_id.split(":")[0] ?? noticeRoute(about.registry, agent.id).platform, languageOf(about.registry, agent.person)),
+        kind: about.kind,
+        // A job's answer is the whole report and reaches no chat, so it is
+        // never cut to a platform's size.
+        chunks: about.kind === "job" ? [end.text]
+          : prepareReply(end.text, answerPlatform(about.source?.log_id) ?? noticeRoute(about.registry, agent.id)?.platform ?? "discord", languageOf(about.registry, agent.person)),
         turn: record,
       });
     };
@@ -835,6 +858,14 @@ export async function runRunner(options: {
 
       // A spawned session has no memory of what was said, so the tail of the
       // log is the first thing it is fed and a human message is never the first.
+      //
+      // AN AGENT WITH NO CHAT HAS NO TAIL, and its entry is what says so: it
+      // takes jobs alone, and a job's body is its whole input. That is a
+      // declared empty tail, and a different thing from an agent whose chat log
+      // lives on another machine, which is read from the store below. Whatever
+      // sits where a chat log would be is not this agent's conversation,
+      // because no door writes one for an agent with no door.
+      if (agent.chat === undefined) return;
       // Where those lines are read from is the registry's answer: the file this
       // machine's door wrote, or the store when that door is somewhere else.
       const where = {
@@ -1072,13 +1103,27 @@ export async function runRunner(options: {
           }
           continue;
         }
+        // THE GATE GOES ABOVE THE RESPAWN LINE, so a job nobody approved starts
+        // no child at all. The whole of it is a hash over a string already in
+        // hand, so it costs no statement between the claim and the feed.
+        if (row.kind === "job") {
+          const refusal = admitJob(row);
+          if (refusal) {
+            await refuseJob(store, { row, refusal, registry, runner: options.runner });
+            claimed = null;
+            claimedReturn = null;
+            continue;
+          }
+          claimedReturn = row.source?.dispatch?.return ?? null;
+        }
         const preset = getPreset(registry, agent.preset);
         // A session carries the preset it was started with, so a changed one is
         // a new child, and so is one whose child the memory watch killed. The
         // runner process itself never restarts for either.
         if (!own.session || presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
-        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source });
+        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source, kind: row.kind });
         claimed = null;
+        claimedReturn = null;
         lastWork = Date.now();
       }
     } catch (error) {
@@ -1101,14 +1146,25 @@ export async function runRunner(options: {
         // rather than nothing until the answered clock runs out. A harvest
         // failure tells nobody.
         if (claimed && claimedHuman && listAgents(registry).some(one => one.id === agent.id)) {
-          const said = noticeRoute(registry, agent.id);
+          // A job is read back to the agent that dispatched it, which is the
+          // only route it has: an agent that works jobs alone has no chat of
+          // its own for a notice to land in. The words are cut for the
+          // platform the return door speaks, which the dispatcher's own route
+          // names, and the chat is the one the job pinned when it was asked.
+          const said = claimedReturn
+            ? { ...(noticeRoute(registry, claimedReturn.agent)
+                ?? { platform: "discord", language: languageOf(registry, agent.person) }),
+                route: { door: claimedReturn.door, chat: claimedReturn.chat } }
+            : noticeRoute(registry, agent.id);
           // A memory kill reaches here as the child's exit. `own.killed` alone
           // is also set by a credential refusal, which closes the child itself.
           const why = !(error as { childExited?: boolean }).childExited ? "task failed"
             : own.killed ? "memory limit reached" : "child exited";
-          await appendNotice(inside, { person: agent.person, agent: agent.id, ...said,
-            body: agentRetry(said.language as Language, { agent: agent.id, cause: why, seconds: taskRetrySeconds }),
-            noticeKey: `agent-retry:${claimed}` });
+          if (said) {
+            await appendNotice(inside, { person: agent.person, agent: agent.id, ...said,
+              body: agentRetry(said.language as Language, { agent: agent.id, cause: why, seconds: taskRetrySeconds }),
+              noticeKey: `agent-retry:${claimed}` });
+          }
         }
         await appendEntry(inside, { stream: "refusal", subject: agent.id, kind: "refused.turn", actor: "runner",
           detail: { agent: agent.id, error: cause, retry_at: retryAt,

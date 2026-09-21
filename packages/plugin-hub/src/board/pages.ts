@@ -233,7 +233,9 @@ export function peoplePage(args: {
         const door = args.doorHealth.find((row) => row.data.door === agent.door && row.data.chat === agent.chat);
         const word = wordFor({
           findings: args.findings,
-          about: [agent.id, agent.door, `${agent.door}/${agent.chat}`],
+          // An agent that takes jobs alone names no door and no chat, so the
+          // only findings about it are the ones that name it by id.
+          about: agent.door === undefined ? [agent.id] : [agent.id, agent.door, `${agent.door}/${agent.chat}`],
           openTurns: args.openTurns[agent.id] ?? 0,
         });
         return (

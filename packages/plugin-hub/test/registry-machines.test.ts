@@ -37,7 +37,6 @@ function goodLines(): string[] {
     "",
     "[hub]",
     "tick_seconds = 5",
-    'shared_zone = "/var/lib/imprnt-hub/shared"',
     "restart_delay_seconds = 1",
     "give_up_after = 5",
     "give_up_window_seconds = 300",

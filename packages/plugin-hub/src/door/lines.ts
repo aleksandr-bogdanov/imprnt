@@ -317,9 +317,20 @@ export function safeValue(value: unknown): string {
     .replace(/[\u0000-\u001f\u007f]/g, "").trim();
 }
 
-const WORDS: Record<string, string> = {
+/**
+ * The closed list: every operation label and every named cause a sentence may
+ * carry, and its Russian. A cause is translated HERE and never spelled again
+ * inside a sentence, because a second spelling could not drift into the string
+ * it claims to define. It is exported so a check can hold the whole key set
+ * against it and a word nobody decided on fails there.
+ *
+ * A finding code is deliberately absent from it. An operator greps a code, so
+ * it stays ASCII machine vocabulary in every language.
+ */
+export const WORDS: Record<string, string> = {
   voice: "голосовое сообщение", photo: "фото", file: "файл", sticker: "стикер", video: "видео",
   install: "установка", recover: "восстановление", sync: "синхронизация", convert: "перенос",
+  dispatch: "передача", adopt: "принятие", retire: "отключение", backup: "копирование",
   done: "готово", refused: "отклонено", failed: "ошибка", waiting: "ожидание",
   running: "работает", stopped: "остановлен", scheduled: "по расписанию", missing: "отсутствует", unknown: "неизвестно",
   "access denied": "доступ запрещён", "chat missing": "чат отсутствует", "login refused": "вход отклонён",
@@ -328,6 +339,10 @@ const WORDS: Record<string, string> = {
   "state unavailable on this machine": "данные недоступны на этой машине",
   "delivery outcome unknown": "результат доставки неизвестен", "retry limit reached": "достигнут предел повторов",
   "operation failed": "операция не выполнена",
+  "command altered": "команда изменена", "not approved": "не подтверждено",
+  "same device": "то же устройство", "copy does not match": "копия не совпадает",
+  "unsupported on this platform": "на этой платформе недоступно",
+  "chat name ambiguous": "название чата неоднозначно", "one agent per bot": "один агент на бота",
 };
 
 type LineValues = Record<string, unknown>;
@@ -423,6 +438,108 @@ export function controlUsage(language: Language, values: LineValues = {}): strin
   return says(language, sentence);
 }
 
+/**
+ * The two commands a person types, and the two sub-verbs the agent command
+ * takes, each pinned whole in both languages.
+ *
+ * The recognizer that routes a message away from the agent, the usage line that
+ * tells a person what to type, and the parser that reads the arguments all read
+ * these, so a verb cannot end up spelled one way in the door and another way in
+ * the sentence asking for it.
+ */
+export const DISPATCH_PHRASES: Record<Language, string> = { en: "/dispatch", ru: "/передать" };
+export const AGENT_PHRASES: Record<Language, string> = { en: "/agent", ru: "/агент" };
+export const ADOPT_PHRASES: Record<Language, string> = { en: "adopt", ru: "принять" };
+export const RETIRE_PHRASES: Record<Language, string> = { en: "retire", ru: "отключить" };
+
+/** The job is on the other agent's queue, and the report comes back here. */
+export function dispatchAccepted(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "задача передана {agent}. Сообщу, когда придёт отчёт."
+    : "dispatched to {agent}. I will say when the report is back.", values);
+  return says(language, sentence);
+}
+
+/** The command was understood and refused, so nothing was queued. */
+export function dispatchRefused(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "передача {agent} отклонена: {cause}."
+    : "dispatch to {agent} refused: {cause}.", values);
+  return says(language, sentence);
+}
+
+export function dispatchUsage(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? `напишите ${DISPATCH_PHRASES.ru}, идентификатор агента и задачу.`
+    : `use ${DISPATCH_PHRASES.en} followed by an agent ID and the task.`, values);
+  return says(language, sentence);
+}
+
+/**
+ * The job was queued and then refused before it ran, which is a different
+ * sentence from a command refused at the door: the person already read that the
+ * task was on its way, so this one says plainly that nothing was run.
+ */
+export function jobRefused(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "задача для {agent} отклонена: {cause}. Ничего не выполнено."
+    : "the job for {agent} was refused: {cause}. Nothing was run.", values);
+  return says(language, sentence);
+}
+
+/** An agent lifecycle request was accepted and is on its way to the applier. */
+export function agentAccepted(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "запрошено: {operation} для {agent}."
+    : "{operation} requested for {agent}.", values);
+  return says(language, sentence);
+}
+
+/**
+ * One binding, two sentences, because the two sides of it read differently.
+ * `agentAdopted` is posted in the ADOPTED chat, where "this chat" is the thing
+ * a person can see, and `agentBound` in the chat the command was typed in,
+ * where the new chat has to be named. Landing in the adopted chat is also the
+ * proof the binding took, which is why it is not one line posted twice.
+ */
+export function agentAdopted(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "{agent} теперь отвечает в этом чате."
+    : "{agent} now answers in this chat.", values);
+  return says(language, sentence);
+}
+
+export function agentBound(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "{agent} теперь отвечает в чате {name}."
+    : "{agent} now answers in {name}.", values);
+  return says(language, sentence);
+}
+
+/** Retiring drops the entry and keeps the history, and the line says so. */
+export function agentRetired(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "{agent} отключён. История сохранена."
+    : "{agent} is retired. Its history is kept.", values);
+  return says(language, sentence);
+}
+
+export function agentRefused(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "{operation} для {agent} отклонено: {cause}."
+    : "{operation} for {agent} refused: {cause}.", values);
+  return says(language, sentence);
+}
+
+export function agentUsage(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? `напишите ${AGENT_PHRASES.ru} ${ADOPT_PHRASES.ru}, идентификатор агента и название или номер чата, ` +
+        `либо ${AGENT_PHRASES.ru} ${RETIRE_PHRASES.ru} и идентификатор агента.`
+    : `use ${AGENT_PHRASES.en} ${ADOPT_PHRASES.en} followed by an agent ID and the chat's name or ID, ` +
+        `or ${AGENT_PHRASES.en} ${RETIRE_PHRASES.en} followed by an agent ID.`, values);
+  return says(language, sentence);
+}
+
 export function operation(language: Language, values: LineValues = {}): string {
   const sentence = interpolate(language, language === "ru"
     ? "{operation}: {target}: {result}."
@@ -472,6 +589,13 @@ export function installServicePlan(language: Language, values: LineValues): stri
     : language === "ru"
       ? "установка: отдельная служба не запускается; apt-get создаёт и запускает {unit}."
       : "install: would start no service of its own; apt-get creates and starts {unit}.", values);
+}
+
+/** A zone checkout the provisioning stage would not touch, and what is there. */
+export function installZoneRefused(language: Language, values: { id: string; path: string; cause: string; found: string }): string {
+  return interpolate(language, language === "ru"
+    ? "\u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430: {id} \u0432 {path} \u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d \u043a\u0430\u043a \u0435\u0441\u0442\u044c ({cause}): {found}."
+    : "install: {id} at {path} was left as it is ({cause}): {found}.", values);
 }
 
 export function installDatabaseReady(language: Language): string {

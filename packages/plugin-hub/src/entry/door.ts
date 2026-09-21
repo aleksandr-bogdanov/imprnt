@@ -28,7 +28,7 @@ if (!raw) {
 
 const speaks = String(raw.platform ?? "");
 const tokenFile = String(raw.token_file ?? "");
-const platforms: Record<string, (options: { tokenFile: string }) => Platform> = {
+const platforms: Record<string, (options: { tokenFile: string; guild?: string }) => Platform> = {
   telegram,
   discord,
 };
@@ -40,5 +40,8 @@ if (!make) {
   process.exit(2);
 }
 
-const handle = await runDoor({ door, registryFile, platform: make({ tokenFile }) });
+// The server a channel name is resolved against, when the entry names one. A
+// door without it still takes a channel id, and nothing else reads the field.
+const guild = typeof raw.guild === "string" ? raw.guild : undefined;
+const handle = await runDoor({ door, registryFile, platform: make({ tokenFile, guild }) });
 await hold(handle);

@@ -509,7 +509,12 @@ test("RUN-13 a note that gave up counts the shipped clocks from the moment its t
     await door.stop()
     door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
     await Bun.sleep(3000)
-    // The control: this door does write into this person's chat, and did.
+    // The control: this door does write into this person's chat, and did. The
+    // line is waited for by its own text, because under load it lands after
+    // the three seconds kept above as the window for the line below.
+    expect(await observe(async () =>
+      it.edge.posts().some(p => p.chat === P1.chat && p.text === transcriberDown("en", 1)), 30_000),
+      "RUN-13 the person was told the recognizer was not answering").toBe(true)
     expect(it.edge.posts().filter(p => p.chat === P1.chat && p.text === transcriberDown("en", 1)),
       "RUN-13 the person was told the recognizer was not answering").toHaveLength(1)
     expect(it.edge.posts().filter(p => p.chat === P1.chat && /still waiting/.test(p.text)).map(p => p.text),

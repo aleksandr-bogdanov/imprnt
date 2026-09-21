@@ -4,16 +4,19 @@ import {
   DEFAULT_LANGUAGE,
   HARVEST_DEFAULTS,
   loaded,
+  readSetting,
   STAMP_THRESHOLD_DEFAULTS,
   TRANSCRIBED_DEFAULT_SECONDS,
   VOICE_DEFAULTS,
   type AgentEntry,
+  type ChatAgent,
   type CredentialEntry,
   type MachineEntry,
   type PersonEntry,
   type Registry,
   type RepositoryEntry,
   type RunEntry,
+  type ZoneEntry,
 } from "./load.ts";
 import { credentialOfPreset } from "./presets.ts";
 
@@ -33,10 +36,14 @@ export function listAgents(registry: unknown): AgentEntry[] {
  * The agents a piece serves. It is how a door and a runner learn what they are
  * for, from the file rather than from an argument.
  */
+export function agentsFor(registry: unknown, who: { door: string; runner?: string }): ChatAgent[];
+export function agentsFor(registry: unknown, who: { door?: string; runner?: string }): AgentEntry[];
 export function agentsFor(
   registry: unknown,
   who: { door?: string; runner?: string },
 ): AgentEntry[] {
+  // Asked by door, every answer has a door, and the loader refuses a door
+  // without a chat, so each one is an agent that answers in a chat.
   return listAgents(registry).filter(
     (agent) =>
       (who.door === undefined || agent.door === who.door) &&
@@ -313,9 +320,14 @@ export function languageOf(registry: unknown, personId: string): "en" | "ru" {
  * chat, the platform that door speaks, and its person's language. Everything a
  * notice needs beyond its own words, read from the file in one place, so the
  * runner and the harvest cannot disagree about where a line lands.
+ *
+ * Null for an agent that takes jobs alone, which has no chat for a notice to
+ * land in, and for an id this file no longer names. The caller is the one that
+ * knows where the notice goes instead.
  */
 export function noticeRoute(registry: Registry, id: string) {
-  const agent = listAgents(registry).find(one => one.id === id)!;
+  const agent = listAgents(registry).find(one => one.id === id);
+  if (agent?.door === undefined || agent.chat === undefined) return null;
   const door = (registry.data.run as { id: string; platform?: string }[]).find(one => one.id === agent.door);
   return { route: { door: agent.door, chat: agent.chat }, platform: door?.platform ?? "discord", language: languageOf(registry, agent.person) };
 }
@@ -387,6 +399,46 @@ export function repositoriesFor(registry: unknown, entryId: string) {
     const repository = it.repositories.find(one => one.id === id)!;
     return { ...repository, required: repository.required ?? true };
   });
+}
+
+/**
+ * Where the off-box copy is assembled: `backup` under `hub.state_dir`, beside
+ * every person's own state root and inside none of them, or null when the file
+ * names no state directory.
+ *
+ * It holds every person's vault, chat logs and inbox and the whole store dump
+ * at once, so it is a path no agent's box may read, which is why the box asks
+ * this same function where it is rather than spelling the path again.
+ */
+export function backupStagingFor(registry: unknown): string | null {
+  const state = readSetting(loaded(registry, "backupStagingFor"), "hub.state_dir");
+  return typeof state === "string" && state !== "" ? join(state, "backup") : null;
+}
+
+/** The household's shared zone: the folder name, the remote name and the url. */
+export type ZoneSettings = ZoneEntry;
+
+/**
+ * The shared zone this household declares, or NULL when it declares none.
+ *
+ * It takes no person on purpose. One zone is mounted into every vault, so a
+ * per-person answer would be a question the file cannot be asked.
+ */
+export function zoneFor(registry: unknown): ZoneSettings | null {
+  const it = loaded(registry, "zoneFor").zone;
+  return it ? { ...it } : null;
+}
+
+/** This person's checkout of the shared zone, or null when they declare none. */
+export function zoneRepositoryFor(registry: unknown, personId: string): RepositoryEntry | null {
+  const found = loaded(registry, "zoneRepositoryFor").repositories
+    .find((one) => one.zone === true && one.person === personId);
+  return found ? { ...found } : null;
+}
+
+/** Where this person's checkout of the shared zone is, or null. */
+export function zonePathFor(registry: unknown, personId: string): string | null {
+  return zoneRepositoryFor(registry, personId)?.path ?? null;
 }
 
 /** Imported history is excluded independently of the durable harvest watermark. */

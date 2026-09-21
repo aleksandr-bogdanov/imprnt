@@ -27,12 +27,18 @@ export interface PresetSpec {
   [key: string]: string | number | undefined;
 }
 
+/**
+ * An agent. `chat` and `door` are OPTIONAL together: an agent that names
+ * neither has no chat at all and exists only to be given jobs, and an agent
+ * that names one without the other is a shape a refusal check plants
+ * deliberately.
+ */
 export interface AgentSpec {
   id: string;
   person: string;
   preset: string;
-  chat: string;
-  door: string;
+  chat?: string;
+  door?: string;
   runner: string;
   [key: string]: string | number | undefined;
 }
@@ -77,6 +83,18 @@ export interface RunSpec {
    */
   residency?: string;
   idle_seconds?: number;
+  /** The three argvs an off-box copy runs, each a list of plain arguments. */
+  dump_argv?: string[];
+  upload_argv?: string[];
+  readback_argv?: string[];
+  /** Where the copy goes. The argvs receive it and code never parses it. */
+  destination?: string;
+  /** The Discord server a door resolves a channel name against. */
+  guild?: string;
+  /** The preset an agent adopted through this door is created with. */
+  default_preset?: string;
+  /** The declared repository ids a `kind = "sync"` entry keeps in step. */
+  repositories?: string[];
 }
 
 /**
@@ -156,6 +174,34 @@ export interface StoreSpec {
   [key: string]: string | number | undefined;
 }
 
+/**
+ * The household's shared zone: the folder name every vault carries it under,
+ * the git remote NAME every checkout wears, and the URL a clone reads. The
+ * index signature is there so a refusal check can render a field deliberately
+ * missing or deliberately of the wrong type.
+ */
+export interface ZoneSpec {
+  mount?: string;
+  remote?: string;
+  url?: string;
+  [key: string]: string | number | boolean | undefined;
+}
+
+/** One declared repository. `zone` marks a person's checkout of the zone. */
+export interface RepositorySpec {
+  id?: string;
+  person?: string;
+  path?: string;
+  remote?: string;
+  branch?: string;
+  required?: boolean;
+  zone?: boolean;
+  [key: string]: string | number | boolean | undefined;
+}
+
+/** The seven a repository entry renders first, in the order the file reads in. */
+const REPOSITORY_KEYS = ["id", "person", "path", "remote", "branch", "required", "zone"] as const;
+
 export interface RegistrySpec {
   hub?: Record<string, string | number>;
   store?: StoreSpec;
@@ -170,6 +216,10 @@ export interface RegistrySpec {
   machines?: MachineSpec[];
   people?: PersonSpec[];
   credentials?: CredentialSpec[];
+  /** The `[zone]` table, absent unless a check asks for one. */
+  zone?: ZoneSpec;
+  /** The `[[repositories]]` entries, absent unless a check asks for them. */
+  repositories?: RepositorySpec[];
 }
 
 const HUB_DEFAULTS: Record<string, string | number> = {
@@ -188,8 +238,13 @@ const HUB_DEFAULTS: Record<string, string | number> = {
  * answer by accident: the `harvest_report` is the first false a check
  * ever asks this helper to write, and a quoted `"false"` is a string the loader
  * would refuse.
+ *
+ * A LIST renders as a TOML array of quoted strings, written out for the same
+ * reason: an argv left to `String` renders as one comma-joined string, which is
+ * the wrong shape and one the loader reads as a single argument.
  */
-function value(v: string | number | boolean): string {
+function value(v: string | number | boolean | string[]): string {
+  if (Array.isArray(v)) return `[${v.map((one) => JSON.stringify(one)).join(", ")}]`;
   if (typeof v === "boolean") return v ? "true" : "false";
   return typeof v === "number" ? String(v) : JSON.stringify(v);
 }
@@ -197,7 +252,7 @@ function value(v: string | number | boolean): string {
 function table(lines: string[], entries: Record<string, unknown>): void {
   for (const [key, raw] of Object.entries(entries)) {
     if (raw === undefined) continue;
-    lines.push(`${key} = ${value(raw as string | number | boolean)}`);
+    lines.push(`${key} = ${value(raw as string | number | boolean | string[])}`);
   }
 }
 
@@ -238,7 +293,9 @@ function impliedRun(agents: AgentSpec[]): RunSpec[] {
   const out: RunSpec[] = [];
   const seen = new Set<string>();
   for (const agent of agents) {
-    if (!seen.has(agent.door)) {
+    // An agent naming no door has no chat, so there is no door to imply for it
+    // and inventing one would render an entry with no id at all.
+    if (agent.door && !seen.has(agent.door)) {
       seen.add(agent.door);
       out.push({
         id: agent.door,
@@ -304,6 +361,12 @@ function renderRegistry(spec: RegistrySpec): string {
     lines.push("");
   }
 
+  if (spec.zone) {
+    lines.push("[zone]");
+    table(lines, spec.zone as Record<string, unknown>);
+    lines.push("");
+  }
+
   // An absent section renders NOTHING, so a spec that names no machines and no
   // people produces the same file it produces today and no earlier check sees a
   // different registry.
@@ -322,6 +385,20 @@ function renderRegistry(spec: RegistrySpec): string {
   for (const credential of spec.credentials ?? []) {
     lines.push("[[credentials]]");
     table(lines, credential as Record<string, unknown>);
+    lines.push("");
+  }
+
+  // After the credentials, which is where the shipped example carries them.
+  // The seven keys are named in order and anything else the spec set follows,
+  // so a check can plant a field the loader has no rule about.
+  for (const repository of spec.repositories ?? []) {
+    lines.push("[[repositories]]");
+    table(lines, {
+      ...Object.fromEntries(REPOSITORY_KEYS.map((key) => [key, repository[key]])),
+      ...Object.fromEntries(
+        Object.entries(repository).filter(([key]) => !(REPOSITORY_KEYS as readonly string[]).includes(key)),
+      ),
+    });
     lines.push("");
   }
 
@@ -380,6 +457,13 @@ function renderRegistry(spec: RegistrySpec): string {
       enabled: entry.enabled,
       residency: entry.residency,
       idle_seconds: entry.idle_seconds,
+      guild: entry.guild,
+      default_preset: entry.default_preset,
+      destination: entry.destination,
+      dump_argv: entry.dump_argv,
+      upload_argv: entry.upload_argv,
+      readback_argv: entry.readback_argv,
+      repositories: entry.repositories,
     });
     lines.push("");
   }

@@ -103,6 +103,9 @@ export interface InboundRow {
   person: string;
   agent: string;
   body: string;
+  /** What the row is. `rank` is generated from it and cannot disagree. */
+  kind: string;
+  rank: number;
   received_at: Date;
   state: string;
   claimed_by: string | null;
@@ -117,6 +120,9 @@ export interface InboundRow {
   media_retry_at: Date | null;
   media_failure: Record<string, unknown> | null;
   media_done_at: Date | null;
+  /** The door's own provenance, and whether it has been projected yet. */
+  source: Record<string, unknown> | null;
+  log_ready: boolean;
 }
 
 /**
@@ -188,7 +194,8 @@ export function storeReader(cluster: Cluster, database: string): StoreReader {
     },
     async inbound() {
       return (await rows(
-        `select id, person, agent, body, received_at, state, claimed_by, claim_deadline,
+        `select id, person, agent, body, kind, rank, received_at, state, claimed_by,
+                claim_deadline, source, log_ready,
                 media_state, media_attempts, media_retry_at, media_failure, media_done_at
          from inbound order by received_at, id`,
       )) as unknown as InboundRow[];
@@ -816,7 +823,6 @@ export async function stageTwoMachines(cluster: Cluster): Promise<StagedHub> {
       { id: PERSON, tree: "/var/lib/imprnt-hub/p1" },
       { id: PERSON2, tree: "/var/lib/imprnt-hub/p2" },
     ],
-    hub: { shared_zone: "/var/lib/imprnt-hub/shared" },
     agents: [
       {
         id: AGENT2,

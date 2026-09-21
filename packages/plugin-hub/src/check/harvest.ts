@@ -58,6 +58,9 @@ export async function readHarvestState(
   );
   const out: ChatHarvestState[] = [];
   for (const agent of args.agents) {
+    // An agent that takes jobs alone has no chat, so there is nothing of it
+    // to harvest and no chat whose slice could grow stale.
+    if (agent.door === undefined) continue;
     const watermark = sheet.get(watermarkId(agent.person, agent.id))?.at ?? null;
     const where = { stateDir: args.stateDir, person: agent.person, agent: agent.id };
     const slice = {

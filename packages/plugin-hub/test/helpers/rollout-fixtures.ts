@@ -19,7 +19,7 @@ export function rolloutFixture() {
   }))
   const preset = { adapter: "synthetic-loop", model: "synthetic-alias", provider: "synthetic-provider", effort: "medium", paid: "key" }
   const file = writeRegistry(dir, {
-    hub: { state_dir: stateDir, shared_zone: trees.sharedZone },
+    hub: { state_dir: stateDir },
     people: trees.people.map(p => ({ id: p.id, tree: p.tree })),
     presets: { daily: preset, alternate: { ...preset, model: "synthetic-other" } },
     agents: [{ id: "p1-lair", person: "p1", preset: "daily", chat: "0000000000", door: "door-fake", runner: "runner-pi" }],

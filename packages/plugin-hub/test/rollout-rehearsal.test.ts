@@ -98,7 +98,7 @@ for (const osName of ["linux", "macos"] as const) {
     }))
     const manifest = structuredClone(f.registryManifest)
     manifest.active_registry = bootstrap.registryFile
-    manifest.hub = { ...(loadRegistry(bootstrap.registryFile).data.hub as object), imprnt: shim, cutover_batch: manifest.batch_id, shared_zone: f.trees.sharedZone }
+    manifest.hub = { ...(loadRegistry(bootstrap.registryFile).data.hub as object), imprnt: shim, cutover_batch: manifest.batch_id }
     manifest.machines = [{ id: bootstrap.machine, os: osName }]
     manifest.run = listRunEntries(loadRegistry(bootstrap.registryFile))
     manifest.run.push({ id: `door-telegram-${bootstrap.ids.hub}`, kind: "door", machine: bootstrap.machine, platform: "telegram", person: "p2", token_file: f.token, schedule: "always", memory_limit_mb: 256 })
@@ -137,7 +137,7 @@ for (const osName of ["linux", "macos"] as const) {
         const sessionDir=join(bootstrap.stateDir,person.id,"sessions",agent.id,crypto.randomUUID())
         mkdirSync(sessionDir,{recursive:true})
         const preset=(registry as any).presets[purpose === "harvest" ? (person as any).harvester : agent.preset]
-        const input={...launchInput(f,purpose),registry,agent,preset,sessionDir,box:{agent:agent.id,person:person.id,tree:person.tree,sharedZone:f.trees.sharedZone,otherTrees:registry.people.filter(p=>p.id!==person.id).map(p=>p.tree),stateRoot:join(bootstrap.stateDir,person.id),otherStateRoots:registry.people.filter(p=>p.id!==person.id).map(p=>join(bootstrap.stateDir,p.id)),sessionDir,purpose}}
+        const input={...launchInput(f,purpose),registry,agent,preset,sessionDir,box:{agent:agent.id,person:person.id,tree:person.tree,otherTrees:registry.people.filter(p=>p.id!==person.id).map(p=>p.tree),stateRoot:join(bootstrap.stateDir,person.id),otherStateRoots:registry.people.filter(p=>p.id!==person.id).map(p=>join(bootstrap.stateDir,p.id)),sessionDir,purpose}}
         const launch=await make(input)
         const capture=join(sessionDir,"launch.json")
         const session=await claudeCode.start({...launch,preset,sessionId:null,wrap:argv=>launch.wrap(captureCli(capture,f)(argv))})

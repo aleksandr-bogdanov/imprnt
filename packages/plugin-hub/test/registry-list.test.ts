@@ -102,15 +102,36 @@ test("RUN-01 a registry entry names each thing the hub runs with its schedule an
   }
 
   // Deferred kinds must refuse instead of silently joining the installed list.
-  // The board kind is not among them: the loader supports it, and its own
-  // loading is bound in test/registry-board.test.ts.
-  for (const kind of ["watcher", "backup", "transcriber"]) {
+  // The board and backup kinds are not among them: the loader supports both,
+  // and their own loading is bound in test/registry-board.test.ts and
+  // test/backup-registry.test.ts.
+  for (const kind of ["watcher", "transcriber"]) {
     const deferred = await scratch([...header(), ...entry({ id: kind, kind, schedule: "always", mb: 128 })]);
     try {
       expect(() => (loadRegistry as Function)(deferred)).toThrow("unsupported-run-kind");
     } finally {
       await rm(dirname(deferred), { recursive: true, force: true });
     }
+  }
+
+  // The off-box copy joins the list instead. The loop above renders each kind
+  // with `schedule = "always"`, which a backup refuses because a copy runs on a
+  // cadence, so its entry is written out here with the lines a copy needs.
+  const copy = await scratch([...header(), "[[run]]", 'id = "backup-copy"', 'kind = "backup"', 'schedule = "hourly"',
+    "memory_limit_mb = 256", 'destination = "/copies/household"',
+    'dump_argv = ["/usr/bin/sudo", "-n", "-u", "postgres", "pg_dump", "--dbname", "hub"]',
+    'upload_argv = ["/opt/example/bin/copy-tool", "{staging}/", "{destination}"]',
+    'readback_argv = ["/opt/example/bin/copy-tool", "{destination}/{path}", "{out}"]', ""]);
+  try {
+    const listed = (await (listRunEntries as Function)((loadRegistry as Function)(copy))) as {
+      id: string; kind: string; schedule: string; memory_limit_mb: number;
+    }[];
+    expect(listed.map((e) => e.id)).toEqual(["backup-copy"]);
+    expect(listed[0].kind).toBe("backup");
+    expect(listed[0].schedule).toBe("hourly");
+    expect(listed[0].memory_limit_mb).toBe(256);
+  } finally {
+    await rm(dirname(copy), { recursive: true, force: true });
   }
 
   await rm(dirname(file), { recursive: true, force: true });

@@ -102,7 +102,10 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   // by path at every access, so a rename lifts nothing there and the file masks
   // stand unchanged.
   const kept = (input.box.secretPaths ?? []).filter(path => !same(path, credential.file));
-  const needs = [input.box.tree, input.box.sharedZone, input.box.stateRoot ?? "", input.sessionDir, ...reads, ...writePaths]
+  // Every path this launch must be able to reach, which is what a mask is
+  // computed against: a directory holding one of these is masked file by file
+  // instead of whole.
+  const needs = [input.box.tree, input.box.stateRoot ?? "", input.sessionDir, ...reads, ...writePaths]
     .filter(path => path !== "");
   const holdsNeeded = (directory: string) =>
     needs.some(path => same(path, directory) || path.startsWith(`${directory}/`));
@@ -242,7 +245,7 @@ export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PRO
       credential: { id: "probe", owner: "probe", kind: "claude-login", file: source },
       agent: { id: "probe", person: "probe", preset: "probe", runner: "probe", door: "probe", chat: "probe" },
       sessionDir: join(root, "session"), purpose: "ordinary",
-      box: { agent: "probe", person: "probe", tree: root, sharedZone: "", otherTrees: [], writePaths },
+      box: { agent: "probe", person: "probe", tree: root, otherTrees: [], writePaths },
     });
     // A call that hangs is asked once more before the probe gives up:
     // measured on the Linux box, `auth status` hung in 4 of 36 runs and answered

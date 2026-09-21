@@ -29,8 +29,54 @@ export interface PlatformPull {
   cursor: string | null;
 }
 
+/**
+ * What a chat reference resolved to, and it is one of exactly four answers.
+ *
+ * A person types the name they gave the chat in the app, or its id. The name is
+ * the platform's to resolve, because only the platform knows what its own
+ * chats are called, and the id is the floor that needs no discovery at all.
+ */
+export type ChatResolution =
+  | { kind: "chat"; chat: string; name: string }
+  | { kind: "absent"; cause: string; detail?: string }
+  | { kind: "ambiguous"; cause: string; detail?: string }
+  | { kind: "unsupported"; cause: string; detail?: string };
+
+/**
+ * What a chat is, asked of the platform. `exists: false` with no failure is a
+ * chat that is gone, which is a different thing from a call the platform
+ * refused: one is an answer and the other is not knowing.
+ */
+export interface ChatDescription {
+  exists: boolean;
+  name: string | null;
+  kind: string | null;
+  failure?: { code: string; cause: string };
+}
+
+/**
+ * The administration seam, TWO VERBS WIDE ON PURPOSE.
+ *
+ * What is deliberately not here: create, rename and delete. Creating a chat
+ * needs Manage Channels on Discord and is impossible for a bot on Telegram,
+ * renaming needs the same class of permission on both, and each of them widens
+ * what a stolen bot token can do to a household's whole server. Deleting a chat
+ * deletes history, and a control that deletes history must fail. A person makes
+ * and renames a chat in the app, the registry holds its id, and nothing in the
+ * hub has to change for a rename at all.
+ */
+export interface PlatformAdmin {
+  resolveChat(ref: string): Promise<ChatResolution>;
+  describeChat(chat: string): Promise<ChatDescription>;
+}
+
 export interface Platform {
   readonly name: string;
+  /**
+   * Present on a platform that can answer about its own chats, absent on one
+   * that cannot, which is what the `unsupported` answer is about.
+   */
+  admin?: PlatformAdmin;
   fetchMedia?(media: MediaRef): Promise<Response>;
   /**
    * How long ONE typing call shows for, from the platform's own
@@ -50,6 +96,13 @@ export interface Platform {
     chat: string;
     cursor: string | null;
     timeoutMs: number;
+    /**
+     * Whether a sender is one this chat's person allows, for a platform that
+     * learns something from messages it does not serve. Telegram remembers the
+     * names of the groups its bot-wide poll sees, and a group a stranger wrote
+     * in must not become the chat a name a person types resolves to.
+     */
+    allowed?(sender: string): boolean;
   }): Promise<PlatformPull>;
   /**
    * Where `chat` stands NOW, as a cursor: a pull from it

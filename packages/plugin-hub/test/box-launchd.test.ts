@@ -29,7 +29,7 @@ const gate = boxGate();
 const onMac = gate.ok && process.platform === "darwin";
 
 function context(tree: string) {
-  return { agent: "p1-lair", person: "p1", tree, sharedZone: "", otherTrees: [] as string[], purpose: "ordinary" as const };
+  return { agent: "p1-lair", person: "p1", tree, otherTrees: [] as string[], purpose: "ordinary" as const };
 }
 
 test("the macOS profile denies job creation", async () => {

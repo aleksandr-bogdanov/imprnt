@@ -11,7 +11,8 @@ import { programForKind, transcriberArgv } from "../hub/program.ts";
 import { openStore } from "../store/connect.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { standardFor } from "./standard.ts";
-import { installAccountRole, installDatabaseReady, installPasswordsSet, installPlan, installServicePlan, installSocketRemains, installTrustRemains } from "../door/lines.ts";
+import { installZone } from "./zone.ts";
+import { installAccountRole, installDatabaseReady, installPasswordsSet, installPlan, installServicePlan, installSocketRemains, installTrustRemains, installZoneRefused } from "../door/lines.ts";
 import { HUB_ROLES, passwordFileOf, secretsDirOf, storeUrlFor } from "../store/secrets.ts";
 import { newPassword, scramMatches, scramVerifier } from "../store/scram.ts";
 
@@ -125,7 +126,17 @@ export async function runInstall(options: { registryFile: string; stage?: string
   const entries = listRunEntries(registry);
   for (const entry of entries) programForKind(entry.kind);
   const stage = options.stage ?? "all";
-  if (!["all", "database", "services", "entry"].includes(stage)) throw new Error("unknown-stage");
+  if (!["all", "zone", "database", "services", "entry"].includes(stage)) throw new Error("unknown-stage");
+  // The shared zone comes FIRST in a whole run: a checkout that is absent is a
+  // thing to make before anything is scheduled against it. A household that
+  // declares none is skipped in silence rather than refused, because not having
+  // chosen a zone is not a broken file. A checkout this stage would not touch is
+  // named here once and reported by `check` for as long as it stays wrong.
+  if (stage === "zone" || stage === "all") {
+    const zone = installZone(registry);
+    for (const one of zone.refused) process.stdout.write(installZoneRefused("en", one) + "\n");
+    if (stage === "zone") return { stage, result: "done", zone };
+  }
   const url = String(readSetting(registry, "hub.store_url"));
   const standard = standardFor(process.platform);
   if (options.dry) {
@@ -156,7 +167,7 @@ export async function runInstall(options: { registryFile: string; stage?: string
       // The same ordered list `src/store/migrate.ts` carries. A step that lands
       // in one of them and not the other leaves an upgraded box a version
       // behind a fresh one.
-      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"]] as const) {
+      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"], [5, "005-dispatch.sql"], [6, "006-agent-lifecycle.sql"]] as const) {
         if (ask(database, ["-c", `select 1 from schema_version where version = ${version}`])) continue;
         ask(database, ["-c", `begin; ${readFileSync(join(import.meta.dir, "../store/migrations", file), "utf8")} insert into schema_version values (${version}); commit;`]);
       }
@@ -199,9 +210,20 @@ export async function runInstall(options: { registryFile: string; stage?: string
     // The columns a voice note and a chat read from the store both need, asked
     // for in one probe so a box whose migration did not land says so here,
     // naming the column, rather than on the first voice note somebody sends or
-    // the first turn a runner has to serve for a door on another machine.
+    // the first turn a runner has to serve for a door on another machine. The
+    // dispatch step adds no column, so it is probed by the FUNCTION it creates:
+    // a column probe would pass on a store the step never reached.
     await store.sql`select source, log_ready, media_state from inbound limit 0`;
     await store.sql`select route, delivery_state from outbox limit 0`;
+    await store.sql`select 'hub_report(text, text)'::regprocedure`;
+    // The newest step grants rather than creates, so what is probed is the
+    // grant itself: without it this hub applies a lifecycle control and cannot
+    // say a word about it in the chat that asked.
+    await store.sql.unsafe(`do $$ begin
+      if not has_function_privilege('hub_door_notice(text, text, text, text, jsonb, integer)', 'execute')
+      then raise exception 'this role cannot ask for a machinery notice, so a control outcome could not be said';
+      end if;
+    end $$`);
     const os = options.os ?? thisOs();
     const rendered = (stage === "entry" ? [target] : selected).map(entry => ({ entry, files: os.render(entry, {
       machine: target.machine, execPath: process.execPath, entryScript: programForKind(entry.kind),

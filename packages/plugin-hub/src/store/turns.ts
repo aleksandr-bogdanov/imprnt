@@ -30,6 +30,16 @@ export interface OpenTurnRow {
    */
   media_state: string | null;
   media_done_at: Date | null;
+  /**
+   * When a report landed, and null on every other row.
+   *
+   * It comes back with this read for the reason the two above do: the door
+   * derives a CLOCK from it. A report carries the arrival stamp of the job it
+   * answers, so the queue feeds it ahead of a message that arrived while the
+   * job ran, and a clock measured from that stamp has run out before the row
+   * exists.
+   */
+  reported_at: Date | null;
 }
 
 /**
@@ -69,7 +79,7 @@ export async function readOpenTurns(
 ): Promise<OpenTurnRow[]> {
   return (await store.sql`
     select id, person, agent, received_at, state, claimed_by,
-           media_state, media_done_at
+           media_state, media_done_at, reported_at
     from inbound
     where agent = ${where.agent}
       and kind in ('human', 'report')

@@ -34,7 +34,7 @@ import {
 import {
   loadRegistry,
   readSetting,
-  type AgentEntry,
+  type ChatAgent,
   type Registry,
   type RunEntry,
 } from "../registry/load.ts";
@@ -55,9 +55,11 @@ import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
 import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
 import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
+import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
+import { lookUpAdopt, parseAgentCommand, type ResolvedRef } from "./agentctl.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
-import { readCursor, writeCursor } from "./cursor.ts";
+import { CURSOR_SHEET, cursorId, readCursor, writeCursor } from "./cursor.ts";
 import {
   clockLine,
   finding,
@@ -114,6 +116,12 @@ const TOTALS_WAIT_MS = 5000;
  * ledger row is what a restarted door reads to know it has already spoken.
  */
 const PROGRESS_SHEET = "door_progress";
+
+/**
+ * Where the store names a door that owes a chat line for a row it did not
+ * write. The payload is the door's id, and each door acts on its own alone.
+ */
+const PROJECT_CHANNEL = "hub_project";
 
 interface ProgressOnDisk {
   post_id: string;
@@ -181,7 +189,7 @@ export interface DoorHandle {
  * the door's outbox wait still issues nothing at all.
  */
 interface Served {
-  agent: AgentEntry;
+  agent: ChatAgent;
   rebinding: boolean;
   readDone: Promise<void>;
   reading: Promise<void>;
@@ -357,14 +365,14 @@ export async function runDoor(options: {
     await recordDiagnostic(store, { operation: "chatlog", target: where, actor: "door",
       error: { code: "chatlog-bad-record", message: "a record that is not a chat line was skipped" } }).catch(() => {});
   };
-  try {
-    // Only an explicit operator recovery releases terminal delivery failures.
-    // The door keeps its own delivery authority; the hub only restarts it.
-    await store.sql`update outbox set delivery_state='pending', attempts=0, retry_at=null, failure=null
-      where delivery_state='failed' and route->>'door'=${options.door}
-        and exists (select 1 from state_row where sheet='control'
-          and data->>'target_kind'='door' and data->>'target_id'=${options.door}
-          and data->>'status'='pending')`;
+  /**
+   * Every row this door owes a chat line, projected. The ONE implementation of
+   * projection that is not a door's own acceptance: the startup repair runs
+   * it, and so does the door when the store says a row it did not write is
+   * waiting. Two sweeps that overlap still write each line once, because a
+   * line is appended once by its id and a row is marked ready once.
+   */
+  const sweepOwed = async (): Promise<void> => {
     // A ROW WAITING FOR ITS OWN TEXT IS SKIPPED HERE. Projecting it would put a
     // voice note with no words into the chat log and make it claimable on every
     // door start, and the person would be answered about a note nobody has
@@ -374,6 +382,72 @@ export async function runDoor(options: {
       where not log_ready and source->>'door' = ${options.door}
         and media_state is distinct from 'pending'`;
     for (const row of pending) await projectInbound(store, { stateDir, inboundId: String(row.id), skipBad });
+  };
+
+  // THE DOOR IS TOLD ABOUT ROWS IT DID NOT WRITE. A report, and a job for an
+  // agent this door serves, are inserted by a runner or by another door, so no
+  // process of this door is in their loop. The store names the door on a
+  // channel of its own at the commit, and the door runs the sweep above.
+  //
+  // It is a THIRD connection per door process, beside the outbox waiter and the
+  // turn waiter, and one per process rather than one per agent, which is what
+  // keeps it cheaper than either. It rides the plain listener rather than a
+  // second channel on the shared waiter, because three statement-count windows
+  // sit on that waiter. It issues no statement while nothing arrives.
+  //
+  // Opened BEFORE the startup sweep, so a row committed between the sweep's
+  // read and the listen is announced to a listener that already exists.
+  let projecting: Promise<void> = Promise.resolve();
+  let projection: Listener | null = null;
+  let projectionClosed = false;
+  let projectionRetry: ReturnType<typeof setTimeout> | null = null;
+  const sweepSoon = (): void => {
+    projecting = projecting.then(() => projectionClosed ? undefined : sweepOwed()).catch(() => {
+      // A sweep the store refused leaves its rows owed, and the next
+      // notification or the next door start sweeps them again.
+    });
+  };
+  const listenForProjection = async (): Promise<void> => {
+    if (projectionClosed) return;
+    try {
+      projection = await listenForWork({
+        url: store.url,
+        channel: PROJECT_CHANNEL,
+        onNotify: (payload) => { if (payload === options.door) sweepSoon(); },
+        // Every notification after a drop is gone, so the rows they announced
+        // are found by sweeping once something is listening again.
+        onLost: () => { projection = null; void listenForProjection().then(() => { if (projection) sweepSoon(); }); },
+      });
+      if (projectionClosed) { await projection.close(); projection = null; }
+    } catch {
+      // A store that cannot be listened on is not a reason to refuse the door.
+      // Nothing announces the server coming back, so the tick is the bound,
+      // and the sweep after a listen that finally opens finds what was missed.
+      projectionRetry = setTimeout(() => {
+        projectionRetry = null;
+        void listenForProjection().then(() => { if (projection) sweepSoon(); });
+      }, timeoutMs);
+    }
+  };
+  const closeProjection = async (): Promise<void> => {
+    projectionClosed = true;
+    if (projectionRetry !== null) clearTimeout(projectionRetry);
+    const held = projection;
+    projection = null;
+    if (held) await held.close();
+    await projecting;
+  };
+  await listenForProjection();
+
+  try {
+    // Only an explicit operator recovery releases terminal delivery failures.
+    // The door keeps its own delivery authority; the hub only restarts it.
+    await store.sql`update outbox set delivery_state='pending', attempts=0, retry_at=null, failure=null
+      where delivery_state='failed' and route->>'door'=${options.door}
+        and exists (select 1 from state_row where sheet='control'
+          and data->>'target_kind'='door' and data->>'target_id'=${options.door}
+          and data->>'status'='pending')`;
+    await sweepOwed();
     for (const agent of agentsFor(registry, { door: options.door })) {
       for (const chunk of await readPendingChunks(store, { agent: agent.id })) {
         if (chunk.route && chunk.route.door !== options.door) continue;
@@ -385,6 +459,7 @@ export async function runDoor(options: {
       }
     }
   } catch {
+    await closeProjection();
     await store.close();
     throw new Error("chatlog-projection-repair-failed");
   }
@@ -400,7 +475,7 @@ export async function runDoor(options: {
   let releaseHealth!: () => void;
   const healthReady = new Promise<void>(resolve => { releaseHealth = resolve; });
   /** `seconds` is the retry that really follows: the read retry unless said otherwise. */
-  const sayReadFailure = async (agent: AgentEntry, seconds?: number) => {
+  const sayReadFailure = async (agent: ChatAgent, seconds?: number) => {
     const data = health.health.get(agent.chat);
     if (data?.status !== "failed" || data.notice_key) return;
     const key = `chat-read:${options.door}:${agent.chat}:${data.since}`;
@@ -421,7 +496,7 @@ export async function runDoor(options: {
   try { ingress = await openStore({ url: store.url }); }
   catch (error) { await store.close(); throw error; }
   let accepting: Promise<void> = Promise.resolve();
-  const read = async (agent: AgentEntry, own: Served, activate = false): Promise<void> => {
+  const read = async (agent: ChatAgent, own: Served, activate = false): Promise<void> => {
     let cursor = await readCursor(store, options.door, agent.chat);
     // A route this door has never read starts at the
     // platform's high-water mark, asked for ONCE at activation and saved before
@@ -458,7 +533,8 @@ export async function runDoor(options: {
       // gets, because it is a read of the same chat.
       const asking: Promise<{ mark: string | null } | { batch: PlatformPull }> = capturing
         ? options.platform.highWater({ chat: agent.chat }).then(mark => ({ mark }))
-        : options.platform.pull({ chat: agent.chat, cursor, timeoutMs: first ? 0 : timeoutMs }).then(batch => ({ batch }));
+        : options.platform.pull({ chat: agent.chat, cursor, timeoutMs: first ? 0 : timeoutMs,
+          allowed: sender => senderAllowed(fresh, agent.person, options.door, sender) }).then(batch => ({ batch }));
       const pulled = await Promise.race([
         asking.then(answer => answer, (error: unknown) => ({ error })), stopped, own.left,
       ]);
@@ -486,6 +562,24 @@ export async function runDoor(options: {
         }
         continue;
       }
+      // THE CHAT LOOKUP AN ADOPT NEEDS IS MADE HERE, in this chat's own reader
+      // and before the batch joins the accepting chain every chat of this door
+      // shares. It retries under the delivery bounds, so made inside the chain
+      // during a platform outage it would hold up every person on this door.
+      // Here it holds up only this chat, and the batch is still acknowledged
+      // only after the command in it has been asked for.
+      const lookups = new Map<string, ResolvedRef>();
+      for (const message of pulled.batch.messages) {
+        if (stopping || own.leaving) break;
+        if (message.chat !== agent.chat || !message.sender_id) continue;
+        const typed = parseAgentCommand(message.text);
+        if (typed === null || typed === "usage" || typed.operation !== "adopt") continue;
+        const answer = await Promise.race([lookUpAdopt({ id: "", registry: fresh, person: agent.person,
+          door: options.door, chat: agent.chat, agent: agent.id, sender_id: message.sender_id,
+          platform: options.platform, operation: "adopt", target: typed.agent, ref: typed.ref }), stopped, own.left]);
+        if (answer !== undefined && answer !== "stopped") lookups.set(message.platform_message_id, answer);
+      }
+      if (stopping || own.leaving) return;
       try {
         const accepted = accepting.then(async () => {
           let current: Registry;
@@ -508,15 +602,17 @@ export async function runDoor(options: {
           const connection = await ingress.sql.reserve();
           try {
             cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: current, stateDir,
-              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor, skipBad,
+              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor, skipBad, lookups,
               received(id, mediaState) {
                 // The media state travels with the row, because the clock it
                 // arms depends on it: a note still waiting for its words is
                 // waiting for a different stamp, and a row with no media is
-                // null here exactly as the store holds it.
+                // null here exactly as the store holds it. A row the door
+                // accepted is a person's own message and never a report, so
+                // the report's own stamp is null on all of these.
                 own.arrivals.push({ id, person: agent.person, agent: agent.id,
                   received_at: new Date(), state: "received", claimed_by: null,
-                  media_state: mediaState, media_done_at: null });
+                  media_state: mediaState, media_done_at: null, reported_at: null });
                 own.arrived.wake();
               },
               pending(row) {
@@ -554,7 +650,7 @@ export async function runDoor(options: {
     }
   };
 
-  const post = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const post = async (agent: ChatAgent, own: Served): Promise<void> => {
     let retryAt: number | null = null;
     const deliver = async (): Promise<void> => {
       retryAt = null;
@@ -701,7 +797,7 @@ export async function runDoor(options: {
    * notification, and once per clock that has run out. The typing refresh is a
    * timer over memory and issues no statement at all.
    */
-  const attending = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const attending = async (agent: ChatAgent, own: Served): Promise<void> => {
     const thresholds = thresholdsFor(registry, agent.person);
     // The fourth clock's own threshold, this person's. A note waiting for its
     // words is waiting for a stamp none of the three above measures.
@@ -1131,7 +1227,7 @@ export async function runDoor(options: {
     }
   };
 
-  const attend = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const attend = async (agent: ChatAgent, own: Served): Promise<void> => {
     // `runDoor` waits on `attending` before it hands its caller a
     // handle, and everything from here to the connect read can throw: the two
     // registry reads, and `openTurnWaiter`. A throw is swallowed by the
@@ -1189,7 +1285,7 @@ export async function runDoor(options: {
     return parsedRegistry;
   };
 
-  const harvesting = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const harvesting = async (agent: ChatAgent, own: Served): Promise<void> => {
     const chat = { stateDir, person: agent.person, agent: agent.id };
     const key = { person: agent.person, agent: agent.id };
     /** What a runner has SETTLED for this chat, or null when nothing has. */
@@ -1359,7 +1455,7 @@ export async function runDoor(options: {
    * receipt the download wrote, and a note whose bytes no longer match is
    * finished on the spot rather than waited on for ever.
    */
-  const transcribing = async (agent: AgentEntry, own: Served): Promise<void> => {
+  const transcribing = async (agent: ChatAgent, own: Served): Promise<void> => {
     const language = languageOf(registry, agent.person) as Language;
     /** Each note still owed, and when it is worth another try. */
     const waiting = new Map<string, { row: PendingVoiceRow; dueAt: number }>();
@@ -1438,7 +1534,7 @@ export async function runDoor(options: {
       await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
       own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
         received_at: row.receivedAt, state: "received", claimed_by: null,
-        media_state: "failed", media_done_at: at });
+        media_state: "failed", media_done_at: at, reported_at: null });
       own.arrived.wake();
     };
 
@@ -1470,7 +1566,7 @@ export async function runDoor(options: {
         await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
         own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
           received_at: row.receivedAt, state: "received", claimed_by: null,
-          media_state: state.state, media_done_at: state.done_at });
+          media_state: state.state, media_done_at: state.done_at, reported_at: null });
         own.arrived.wake();
         return;
       }
@@ -1497,7 +1593,7 @@ export async function runDoor(options: {
         own.arrivals.push({ id: row.id, person: row.person, agent: row.agent,
           received_at: row.receivedAt, state: "received", claimed_by: null,
           media_state: outcome.state === "done" ? "done" : "failed",
-          media_done_at: outcome.doneAt });
+          media_done_at: outcome.doneAt, reported_at: null });
         own.arrived.wake();
         if (outcome.state === "done" && episode !== null) {
           const [count] = await store.sql`select count(*)::int as waiting from inbound
@@ -1604,7 +1700,7 @@ export async function runDoor(options: {
 
   const served = new Map<string, Served>();
 
-  const serve = (agent: AgentEntry, activate = false): void => {
+  const serve = (agent: ChatAgent, activate = false): void => {
     let release: () => void = () => {};
     const left = new Promise<"stopped">((resolve) => {
       release = () => resolve("stopped");
@@ -1734,7 +1830,14 @@ export async function runDoor(options: {
           }
         }
         for (const id of [...served.keys()]) {
-          if (!wanted.some((agent) => agent.id === id)) await drop(id);
+          if (wanted.some((agent) => agent.id === id)) continue;
+          // The cursor is THIS DOOR'S OWN sheet about a chat it no longer
+          // serves, so it goes with the reader, after the reader has stopped
+          // and can no longer write it back. The hub deletes it too when it
+          // retires an agent, for the door that is not running at the time.
+          const chat = served.get(id)!.agent.chat;
+          await drop(id);
+          await removeRow(store, CURSOR_SHEET, cursorId(options.door, chat)).catch(() => {});
         }
       } catch {
         // A tick that could not finish is a tick. The next one runs.
@@ -1749,6 +1852,7 @@ export async function runDoor(options: {
       release();
       await supervise;
       await Promise.allSettled([...served.values()].flatMap((it) => [it.done, it.readDone]));
+      await closeProjection();
       await ingress.close();
       await store.close();
     },

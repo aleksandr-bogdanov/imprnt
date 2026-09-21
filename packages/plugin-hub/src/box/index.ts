@@ -1,7 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { listAgents, listCredentials, listPeople, listRepositories, listRunEntries, personOf } from "../registry/entries.ts";
+import { backupStagingFor, listAgents, listCredentials, listPeople, listRepositories, listRunEntries, personOf } from "../registry/entries.ts";
 import { readSetting } from "../registry/load.ts";
 import { secretsDirOf } from "../store/secrets.ts";
 import type { BoxContext, BoxedCommand } from "./types.ts";
@@ -150,8 +150,15 @@ function hostControlMasks(): string[] {
 function secretPathsOf(registry: unknown): string[] {
   // Every door's token, including a door no agent is served by yet: it is a
   // bot all the same, and a token is masked whether or not it is in use.
+  //
+  // The off-box copy's staging directory too. It sits beside every person's
+  // state root and inside none of them, so neither the other-tree masks nor
+  // the other-state masks reach it, and it holds every person's vault, chat
+  // logs and inbox plus a dump of every message at once. Under the read-only
+  // host on Linux it would otherwise be one read away from every agent.
   return [...new Set([
     secretsDirOf(registry) ?? "",
+    backupStagingFor(registry) ?? "",
     ...listRunEntries(registry).map((one) => typeof one.token_file === "string" ? one.token_file : ""),
     ...listCredentials(registry).map((one) => one.file),
   ].filter((path) => path !== ""))];
@@ -162,7 +169,6 @@ export function boxContextFor(registry: unknown, agentId: string): BoxContext {
   const agent = listAgents(registry).find((one) => one.id === agentId);
   if (!agent) throw new BoxUnavailable("registry", `${agentId} is not an agent of this registry`);
   const person = personOf(registry, agentId);
-  const zone = readSetting(registry, "hub.shared_zone");
   return {
     stateRoot: join(String(readSetting(registry, "hub.state_dir") ?? ""), agent.person),
     otherStateRoots: listPeople(registry).filter(one => one.id !== agent.person)
@@ -170,7 +176,6 @@ export function boxContextFor(registry: unknown, agentId: string): BoxContext {
     agent: agentId,
     person: agent.person,
     tree: person?.tree ?? "",
-    sharedZone: zone === undefined || zone === null ? "" : String(zone),
     // Every OTHER declared person, and never the agent's own: a box that masked
     // its own tree is a box the agent cannot work in, and one that forgot
     // another person is the leak this exists to close.
@@ -250,7 +255,6 @@ function profileText(ctx: BoxContext): string {
   // CLI rotates its token in place there, and this grant is after the read-only
   // grant for the same directory so the writable rule is the one that wins.
   for (const path of ctx.writePaths ?? []) if (path !== "") lines.push(`(allow file-read* file-write* (subpath ${JSON.stringify(path)}))`);
-  if (ctx.sharedZone !== "") lines.push(`(allow file-read* (subpath ${JSON.stringify(ctx.sharedZone)}))`);
   lines.push(
     "(allow process-exec process-fork)",
     "(allow sysctl-read)",
@@ -287,7 +291,7 @@ function profileText(ctx: BoxContext): string {
 
 function profilePath(ctx: BoxContext): string {
   const mark = new Bun.CryptoHasher("sha256")
-    .update([ctx.agent, ctx.tree, ctx.sharedZone, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])].join("|"))
+    .update([ctx.agent, ctx.tree, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])].join("|"))
     .digest("hex")
     .slice(0, 12);
   return join(tmpdir(), `imprnt-hub-box-${ctx.agent}-${mark}.sb`);
@@ -317,7 +321,7 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
     if (!path || !existsSync(path)) return path;
     try { return realpathSync(path); } catch { return path; }
   };
-  ctx = { ...ctx, tree: canonical(ctx.tree), sharedZone: canonical(ctx.sharedZone),
+  ctx = { ...ctx, tree: canonical(ctx.tree),
     stateRoot: ctx.stateRoot && canonical(ctx.stateRoot), sessionDir: ctx.sessionDir && canonical(ctx.sessionDir),
     otherTrees: ctx.otherTrees.map(canonical), otherStateRoots: ctx.otherStateRoots?.map(canonical),
     readPaths: ctx.readPaths?.map(canonical), writePaths: ctx.writePaths?.map(canonical),
@@ -361,9 +365,22 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         ...(ctx.sessionDir ? ["--bind", ctx.sessionDir, ctx.sessionDir] : []),
         // The declared repositories and the launched login's directory, the only
         // other paths a turn writes to (the CLI rotates its token in place).
+        //
+        // A HARVEST KEEPS THE TREE READ-ONLY, repositories included. A person's
+        // declared repositories sit inside their own tree, and a writable bind
+        // here is a LATER mount than the read-only tree bind above, so binding
+        // them writable on a harvest handed back exactly the write that bind had
+        // just refused. The other flavour never had the hole, because its
+        // profile writes the harvest denial after the same grants. A path
+        // OUTSIDE the tree, such as the launched login's own directory, stays
+        // writable on both purposes: the model CLI rotates its token there.
         ...[...new Set(ctx.writePaths ?? [])]
           .filter((path) => path !== "" && existsSync(path))
-          .flatMap(path => ["--bind", path, path]),
+          .flatMap(path => [
+            ctx.purpose === "harvest" && ctx.tree !== "" &&
+            (path === ctx.tree || path.startsWith(`${ctx.tree}/`)) ? "--ro-bind" : "--bind",
+            path, path,
+          ]),
         // A tmpfs empties another person's tree and state root. Under the
         // read-only host bwrap cannot create a missing mount point, so a path
         // that is not there is skipped: it holds nothing to hide, and the host

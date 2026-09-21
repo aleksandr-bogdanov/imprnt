@@ -1,8 +1,9 @@
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { isIP } from "node:net";
 import { isUnspecified } from "../net/address.ts";
-import { isAbsolute, resolve, sep } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { ADAPTERS } from "../adapters/index.ts";
+import { scheduleSeconds } from "../os/diff.ts";
 import {
   artifactsNotBoolean,
   boardArtifactsPort,
@@ -80,12 +81,6 @@ export const SETTING_FIELDS: SettingField[] = [
     key: "hub.claim_lease_seconds",
     type: "integer",
     what: "how long a runner's claim on a message stands before another may take it",
-    required: false,
-  },
-  {
-    key: "hub.shared_zone",
-    type: "string",
-    what: "the one zone every person's box can read, and there is no second one",
     required: false,
   },
   {
@@ -196,6 +191,21 @@ export const SETTING_FIELDS: SettingField[] = [
   { key: "install.admin_argv", type: "array", what: "the explicit database administrator command", required: false },
 ];
 
+/**
+ * The shape of an agent id: lower case letters and digits in runs joined by
+ * single hyphens.
+ *
+ * AN AGENT ID IS A FOLDER NAME. The chat log is kept under
+ * `<state_dir>/<person>/chatlog/<agent id>/` and a session under
+ * `<state_dir>/<person>/sessions/<agent id>/`, so an id with a separator or a
+ * pair of dots in it is a path into somebody else's history. One predicate
+ * refuses a slash, a backslash, a dot, a space and a capital together, which is
+ * the rule the zone's mount name already has for the same reason.
+ */
+export function isAgentId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(value);
+}
+
 export class RegistryRefused extends Error {
   readonly file: string;
   readonly line: number;
@@ -233,7 +243,24 @@ export class UnknownSetting extends Error {
  * carry only while the household names a recognizer that runs here, so the
  * condition below adds it for such a file and for no other.
  */
-export const RUN_KINDS = ["hub", "door", "runner", "sync", "board"] as const;
+export const RUN_KINDS = ["hub", "door", "runner", "sync", "board", "backup"] as const;
+
+/**
+ * The three commands an off-box copy runs, and the four placeholders they may
+ * carry.
+ *
+ * The job fills a placeholder into the argument it appears in and every
+ * argument stays one argument, so a destination with a space or a semicolon in
+ * it arrives whole and nothing is ever read by a shell. `{staging}` is the
+ * directory the copy is assembled in and `{destination}` is the entry's own
+ * string. `{path}` and `{out}` exist only for the read-back: the file being
+ * read back, relative to the copy, and the scratch file it is read into.
+ */
+export const BACKUP_ARGVS = ["dump_argv", "upload_argv", "readback_argv"] as const;
+export const BACKUP_PLACEHOLDERS = ["{staging}", "{destination}", "{path}", "{out}"] as const;
+
+/** A password written into a command line, which every process on the box can read. */
+const PASSWORD_LITERAL = /password\s*=|:\/\/[^/\s]*:[^/\s]*@/i;
 
 /**
  * The kinds a household may not hold down with `enabled = false`.
@@ -268,6 +295,17 @@ export interface RunEntry {
   /** A door's bot token file. Every agent's box masks it. */
   token_file?: string;
   /**
+   * The two a door entry may carry, both optional, and an entry that names
+   * neither reads back exactly as it does today.
+   *
+   * `guild` is the Discord server a channel NAME is resolved against, and a
+   * door without one still takes a channel id. `default_preset` is the preset
+   * an agent adopted through this door is created with, and an adopt is refused
+   * when the entry names none, because a new agent has to run as something.
+   */
+  guild?: string;
+  default_preset?: string;
+  /**
    * A board's one specific listening address.
    *
    * Binding to this machine's own tailnet address is what makes a board
@@ -300,6 +338,15 @@ export interface RunEntry {
    */
   residency?: string;
   idle_seconds?: number;
+  /**
+   * An off-box copy's three commands and where they send it. The destination
+   * is a string the commands receive and nothing here reads, which is what
+   * keeps every provider out of the code.
+   */
+  dump_argv?: string[];
+  upload_argv?: string[];
+  readback_argv?: string[];
+  destination?: string;
   /**
    * Whether the hub keeps this entry running. Absent means it does.
    *
@@ -518,6 +565,23 @@ export interface RepositoryEntry {
   remote: string;
   branch: string;
   required?: boolean;
+  /** Set on the one entry per person that is their checkout of the shared zone. */
+  zone?: boolean;
+}
+
+/**
+ * The household's shared zone, declared once.
+ *
+ * `mount` is the folder name every vault carries the zone under, `remote` is the
+ * git remote NAME every checkout wears, which is what `runSync` asks `git
+ * remote` for, and `url` is what a clone reads. The name and the url are two
+ * fields because they are two different strings, which keeps the loader's
+ * comparison against a repository's own `remote` a plain string test.
+ */
+export interface ZoneEntry {
+  mount: string;
+  remote: string;
+  url: string;
 }
 
 export interface AgentEntry {
@@ -531,10 +595,18 @@ export interface AgentEntry {
   id: string;
   person: string;
   preset: string;
-  chat: string;
-  door: string;
+  /**
+   * The chat this agent answers in, and the door that carries it. BOTH OR
+   * NEITHER: an agent with neither exists only to take jobs, and its entry
+   * declaring no chat is what makes its empty tail a fact rather than a gap.
+   */
+  chat?: string;
+  door?: string;
   runner: string;
 }
+
+/** An agent that answers in a chat, which is every agent a door serves. */
+export type ChatAgent = AgentEntry & { chat: string; door: string };
 
 export interface RateEntry {
   model: string;
@@ -568,6 +640,7 @@ export class Registry {
     credentials: CredentialEntry[] = [],
     readonly repositories: RepositoryEntry[] = [],
     readonly recognizers: Record<string, RecognizerEntry> = {},
+    readonly zone: ZoneEntry | null = null,
   ) {
     this.file = file;
     this.data = data;
@@ -600,8 +673,11 @@ export function loaded(registry: unknown, who: string): Registry {
  * The scan tracks the table header it is under, because `id` and
  * `memory_limit_mb` repeat in every entry and a refusal has to name the one a
  * human is looking for.
+ *
+ * Exported because the writer changes the line a refusal would point at, and
+ * two scans of the same file could disagree about which line a key is on.
  */
-function indexLines(text: string): Map<string, number> {
+export function indexLines(text: string): Map<string, number> {
   const index = new Map<string, number>();
   const seen = new Map<string, number>();
   let table = "";
@@ -714,7 +790,7 @@ export function loadRegistry(file: string): Registry {
   const admin = valueAt(parsed, "install.admin_argv");
   if (admin !== undefined) {
     strings(admin, "install.admin_argv", false);
-    if ((admin as string[]).some(arg => /password\s*=|:\/\/[^/\s]*:[^/\s]*@/i.test(arg)))
+    if ((admin as string[]).some(arg => PASSWORD_LITERAL.test(arg)))
       refuse("install.admin_argv", 0, "install.admin_argv must not contain password literals");
   }
 
@@ -1095,6 +1171,22 @@ export function loadRegistry(file: string): Registry {
       childLimit = typeof asked === "number" ? asked : undefined;
     }
 
+    // A door's two optional fields. A value of the wrong type is refused by
+    // name here, and whether `default_preset` names a preset this file defines
+    // is asked once the presets are parsed, further down.
+    for (const field of ["guild", "default_preset"] as const) {
+      const value = entry[field];
+      if (value === undefined || value === null) continue;
+      if (entry.kind !== "door") {
+        refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here,
+          `${id} is a ${entry.kind} and carries ${field}, which only a door reads`);
+      }
+      if (typeof value !== "string" || value.trim() === "") {
+        refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here,
+          `${id} has ${field} ${describe(value)}, and it must be a nonempty string`);
+      }
+    }
+
     // The transcriber's own three. The door posts to 127.0.0.1:<port>, so an
     // entry without one could never be reached at all.
     if (entry.kind === "transcriber") {
@@ -1137,6 +1229,59 @@ export function loadRegistry(file: string): Registry {
       if (says) positive(idle, `${at}.idle_seconds`);
     }
 
+    // The off-box copy's own rules. Each of its three commands is held to what
+    // `install.admin_argv` is held to, the other command in this file that runs
+    // with authority, plus two more: no path relative to wherever the process
+    // happens to start, and no placeholder the job would not fill in, because
+    // one it does not know would be passed through as a literal.
+    if (entry.kind === "backup") {
+      if (scheduleSeconds(String(entry.schedule)) === null) {
+        refuse(`${at}.schedule`, here,
+          `${id} is a backup with schedule ${describe(entry.schedule)}, and a copy runs on a cadence such as hourly ` +
+            `or every 30m: one that never stops, or that nobody starts, is not an hourly copy`);
+      }
+      for (const key of BACKUP_ARGVS) {
+        const where = `${at}.${key}`;
+        const argv = entry[key];
+        if (argv === undefined || argv === null) {
+          refuse(where, here, `${id} is a backup with no ${key}, and the copy runs exactly the three commands the file names`);
+        }
+        strings(argv, where, false);
+        const args = argv as string[];
+        if (args.some(arg => PASSWORD_LITERAL.test(arg))) refuse(where, here, `${where} must not contain password literals`);
+        const relative = args.find((arg, n) => arg === "." || arg === ".." || arg.startsWith("./") ||
+          arg.startsWith("../") || (n === 0 && arg.includes("/") && !isAbsolute(arg)));
+        if (relative !== undefined) {
+          refuse(where, here,
+            `${where} names ${describe(relative)}, a relative path, which is a different file in every directory a process starts in`);
+        }
+        for (const token of args.flatMap(arg => arg.match(/\{[A-Za-z_]+\}/g) ?? [])) {
+          if (!(BACKUP_PLACEHOLDERS as readonly string[]).includes(token)) {
+            refuse(where, here,
+              `${where} carries ${token}, and the four placeholders are ${BACKUP_PLACEHOLDERS.slice(0, 3).join(", ")} and ${BACKUP_PLACEHOLDERS[3]}`);
+          }
+          if (key !== "readback_argv" && (token === "{path}" || token === "{out}")) {
+            refuse(where, here, `${where} carries ${token}, which names the one file a read-back reads and means nothing here`);
+          }
+          // A read-back through the copy on this box compares that copy with
+          // itself, so it would say every copy landed.
+          if (key === "readback_argv" && token === "{staging}") {
+            refuse(where, here, `${where} reads {staging}, which is the copy on this box, so it would match whatever the upload did`);
+          }
+        }
+      }
+      // THE DESTINATION IS NOT PARSED. It is a value the commands receive and
+      // the code never interprets, so a loader that checked its shape would be
+      // naming a provider. A nonempty string is all it has to be.
+      const destination = entry.destination;
+      if (destination === undefined || destination === null) {
+        refuse(`${at}.destination`, here, `${id} is a backup with no destination, and a copy has to go somewhere`);
+      }
+      if (typeof destination !== "string" || destination.trim() === "") {
+        refuse(`${at}.destination`, here, `${id} has destination ${describe(destination)}, and it must be a nonempty string`);
+      }
+    }
+
     entries.push({
       id,
       kind: entry.kind as string,
@@ -1149,10 +1294,15 @@ export function loadRegistry(file: string): Registry {
       // IGNORED on every other, the way the loader has always tolerated a key
       // it has no rule about. A board is reached at an address and a port, the
       // recognizer at a port on loopback plus the two knobs that say how long
-      // it holds its model. Carrying any of them onto a door's row would put a
-      // field on it that nothing reads and that a reader would have to explain.
+      // it holds its model, a door names the server a channel name is
+      // resolved against and the preset it adopts agents with, and a backup
+      // carries its three commands and where they send the copy. Carrying any of
+      // them onto another kind's row would put a field on it that nothing reads
+      // and that a reader would have to explain.
       ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
-        : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"] : [])
+        : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"]
+        : entry.kind === "door" ? ["guild", "default_preset"]
+        : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
@@ -1583,9 +1733,29 @@ export function loadRegistry(file: string): Registry {
   }
 
   const agents: AgentEntry[] = [];
+  const agentAt = new Map<string, number>();
   ((parsed.agents ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
     const where = `agents[${nth}]`;
     const here = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
+    if (!isAgentId(entry.id)) {
+      refuse(
+        `${where}.id`,
+        here,
+        `this agent's id is ${describe(entry.id)}, and an agent id is lower case letters and digits joined by ` +
+          `single hyphens: it names the folder its chat log and its sessions are kept in, so an id that can ` +
+          `leave that folder is refused here`,
+      );
+    }
+    const already = agentAt.get(entry.id as string);
+    if (already !== undefined) {
+      refuse(
+        `${where}.id`,
+        here,
+        `${entry.id} is already an agent of this registry, on line ${already}. One id is one agent, ` +
+          `and two would share one chat log and one set of sessions`,
+      );
+    }
+    agentAt.set(entry.id as string, here);
     // The tail is one size for the household. A key the loader ignored quietly
     // would look like it worked and change nothing.
     for (const own of ["tail_hours", "tail_tokens"]) {
@@ -1626,22 +1796,50 @@ export function loadRegistry(file: string): Registry {
     if (entry.sleeping !== undefined && typeof entry.sleeping !== "boolean")
       refuse(`${where}.sleeping`, here, "sleeping must be boolean");
     if (entry.idle_seconds !== undefined) positive(entry.idle_seconds, `${where}.idle_seconds`);
+    // A chat and the door that carries it come as a pair. With neither, the
+    // agent exists only to take jobs and its empty tail is what the file says.
+    // With one of them, the file has half an agent: a chat no door reads, or a
+    // door with nowhere to post, and either would be served silently wrong.
+    for (const [said, missing] of [["chat", "door"], ["door", "chat"]] as const) {
+      if (entry[said] !== undefined && entry[missing] === undefined) {
+        refuse(
+          `${where}.${missing}`,
+          here,
+          `${entry.id} names a ${said} and no ${missing}, and an agent carries both or neither: ` +
+            `both to answer in a chat, neither to take jobs alone`,
+        );
+      }
+    }
     agents.push({
-      ...Object.fromEntries(["fragment", "settings", "mcp", "tools", "mode", "sleeping", "idle_seconds"]
+      ...Object.fromEntries(["fragment", "settings", "mcp", "tools", "mode", "sleeping", "idle_seconds", "chat", "door"]
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       id: entry.id as string,
       person: entry.person as string,
       preset: entry.preset as string,
-      chat: entry.chat as string,
-      door: entry.door as string,
       runner: entry.runner as string,
     });
   });
 
+  // The preset a door adopts an agent with, checked against the presets this
+  // file defines. Asked of EVERY door entry and not only of one that serves an
+  // agent, because the first agent a door ever gets is the one an adopt
+  // creates, and a preset nobody declared would be found at that moment.
+  entries.forEach((entry, nth) => {
+    if (entry.kind !== "door" || entry.default_preset === undefined) return;
+    if (!Object.hasOwn(presets, entry.default_preset)) {
+      refuse(
+        `run[${nth}].default_preset`,
+        lines.get(`run[${nth}].default_preset`) ?? lines.get(`run[${nth}].id`) ?? 0,
+        `${entry.id} adopts agents with the preset ${entry.default_preset}, which this file does not define`,
+      );
+    }
+  });
+
   // A door that serves an agent has to say which platform it speaks, whose it is
   // and where its credential lives, because that is all the hub is ever told
-  // about it. A door nobody points at is on the list and serves nobody yet.
-  const served = new Set(agents.map((agent) => agent.door));
+  // about it. A door nobody points at is on the list and serves nobody yet. An
+  // agent that takes jobs alone points at no door, so it adds none to the set.
+  const served = new Set(agents.flatMap((agent) => agent.door === undefined ? [] : [agent.door]));
   entries.forEach((entry, nth) => {
     if (entry.kind !== "door" || !served.has(entry.id)) return;
     const where = `run[${nth}]`;
@@ -1714,8 +1912,99 @@ export function loadRegistry(file: string): Registry {
     if (repositories.some(r => r.id === entry.id)) refuse(`${where}.id`, 0, "repository id is duplicated");
     if (entry.required !== undefined && typeof entry.required !== "boolean")
       refuse(`${where}.required`, 0, "required must be boolean");
+    if (entry.zone !== undefined && typeof entry.zone !== "boolean")
+      refuse(`${where}.zone`, 0, "zone marks a checkout of the shared zone and is a true or a false");
     repositories.push(entry as unknown as RepositoryEntry);
   }
+
+  // THE SHARED ZONE, declared ONCE for the household: one remote, checked out
+  // inside every vault under the same folder name. It is read after the people
+  // and after the repositories because two of its rules need a person's vault
+  // and a repository's own path, and neither is known before here.
+  let zone: ZoneEntry | null = null;
+  const declaredZone = parsed.zone;
+  if (declaredZone !== undefined && declaredZone !== null) {
+    if (typeof declaredZone !== "object" || Array.isArray(declaredZone))
+      refuse("zone", 0, "zone is one table for the household, naming its mount, its remote and its url");
+    const table = declaredZone as Record<string, unknown>;
+    const here = lines.get("zone") ?? 0;
+    const text = (key: string, what: string): string => {
+      const value = table[key];
+      if (typeof value !== "string" || value.trim() === "")
+        refuse(`zone.${key}`, here, `zone.${key} is ${what}, and this is ${describe(value)}`);
+      return value as string;
+    };
+    const mount = text("mount", "the folder name every vault carries the shared zone under");
+    // ONE FOLDER NAME, joined onto a vault path, so anything that could leave
+    // that folder is a path traversal wearing a folder's clothes. Kebab-case in
+    // one predicate refuses a slash, a backslash, a dot, a pair of dots and a
+    // space together, and a separator test for this platform would let the
+    // other platform's through.
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(mount))
+      refuse("zone.mount", here,
+        `the zone mounts at ${describe(mount)}, and a mount is one folder name in lower case letters, ` +
+        `digits and single hyphens: it is joined onto a vault path, so a name that can leave that folder is refused here`);
+    const remote = text("remote", "the git remote name every zone checkout wears");
+    const url = text("url", "the url a clone of the shared zone reads, and a zone nothing can clone is a zone nothing provisions");
+    zone = { mount, remote, url };
+  }
+
+  const zoneOfPerson = new Map<string, number>();
+  /** The first zone checkout, whose branch every other one has to share. */
+  let zoneBranch: { branch: string; line: number } | null = null;
+  for (const one of repositories.filter((one) => one.zone === true)) {
+    const nth = repositories.indexOf(one);
+    const where = `repositories[${nth}]`;
+    const at = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
+    if (!zone)
+      refuse(`${where}.zone`, at, `${one.id} is marked as a checkout of the shared zone and this file declares no [zone] table`);
+    const already = zoneOfPerson.get(one.person);
+    if (already !== undefined)
+      refuse(`${where}.zone`, at,
+        `${one.person} already has a zone checkout, declared on line ${already}, and one shared zone is one checkout per person`);
+    zoneOfPerson.set(one.person, at);
+    const vault = people.find((who) => who.id === one.person)?.vault;
+    if (!vault)
+      refuse(`${where}.person`, at,
+        `${one.person} declares no vault, and a zone checkout is the mount inside a vault, so there is no path for this entry to be at`);
+    // EQUALITY on the resolved paths, never a prefix test: a prefix accepts the
+    // vault itself and every sibling of the mount beside it.
+    const wants = resolve(join(vault as string, "vault", zone!.mount));
+    if (resolve(one.path) !== wants)
+      refuse(`${where}.path`, at,
+        `${one.id} is at ${describe(one.path)}, and the mount ${zone!.mount} puts ${one.person}'s zone checkout at ${wants}`);
+    if (one.remote !== zone!.remote)
+      refuse(`${where}.remote`, at,
+        `${one.id} pulls from the remote ${describe(one.remote)}, and every checkout of the shared zone wears ${describe(zone!.remote)}`);
+    // ONE ZONE IS ONE BRANCH. Each checkout is synced and verified against the
+    // branch its own entry names, so two that name different branches of the
+    // one remote pass every check while neither person sees what the other
+    // shares.
+    if (zoneBranch === null) zoneBranch = { branch: one.branch, line: lines.get(`${where}.branch`) ?? at };
+    else if (one.branch !== zoneBranch.branch)
+      refuse(`${where}.branch`, at,
+        `${one.id} is on the branch ${describe(one.branch)}, and the zone checkout on line ${zoneBranch.line} is on ` +
+        `${describe(zoneBranch.branch)}: one shared zone is one branch, or the two people never see each other's notes`);
+  }
+
+  // A SHARED ZONE BELONGS TO THE WHOLE HOUSEHOLD. Once the file declares one,
+  // every person who keeps a vault carries exactly one checkout of it, and a
+  // file that gave the zone to some of them is refused here. The refusal names
+  // the PERSON, because the entry a reader has to add is that person's, and the
+  // zone table is correct as written. Read as a warning instead, the household
+  // would keep running with one person's zone quietly not there, and nobody
+  // would learn until a shared note could not be read.
+  if (zone) {
+    for (const [nth, who] of people.entries()) {
+      if (!who.vault || zoneOfPerson.has(who.id)) continue;
+      const wants = resolve(join(who.vault, "vault", zone.mount));
+      refuse(`people[${nth}].vault`, lines.get(`people[${nth}]`) ?? 0,
+        `${who.id} keeps a vault and has no checkout of the shared zone, and one shared zone is one ` +
+        `checkout in every vault: add a [[repositories]] entry for ${who.id} at ${wants}, marked ` +
+        `zone = true and pulling from the remote ${describe(zone.remote)}`);
+    }
+  }
+
   entries.forEach((entry, nth) => {
     for (const id of entry.repositories ?? []) {
       if (!repositories.some(r => r.id === id)) refuse(`run[${nth}].repositories`, 0, "repository is undeclared");
@@ -1734,6 +2023,7 @@ export function loadRegistry(file: string): Registry {
     credentials,
     repositories,
     recognizers,
+    zone,
   );
 }
 

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { chatLogPath, validLine, type BadRecord } from "../chatlog.ts";
+import { AGENT_PHRASES, DISPATCH_PHRASES, type Language } from "../door/lines.ts";
 
 /**
  * The slice: the lines of one chat between two instants that a
@@ -7,8 +8,8 @@ import { chatLogPath, validLine, type BadRecord } from "../chatlog.ts";
  *
  * Two filters, and each is a rule rather than a hope. A machinery line is the
  * door speaking, and the probe measured the loop ignoring one once,
- * which is not the same as it never reading one. The demand phrase and the
- * recovery command are messages addressed to the machinery, and feeding them
+ * which is not the same as it never reading one. The demand phrase and every
+ * machinery command are messages addressed to the machinery, and feeding them
  * back to the harvester as conversation would teach it that the household
  * talks to itself.
  */
@@ -62,6 +63,37 @@ export function isDemand(text: string): boolean {
  */
 export function isRecoveryCommand(text: string): boolean {
   return /^\/(recover|восстановить)(?:\s|$)/i.test(String(text ?? ""));
+}
+
+/**
+ * The same rule as above, built from the phrase table the door's own sentences
+ * read, so the verb has one spelling and the usage line cannot ask for a
+ * command the recognizer will not take.
+ */
+function leadingVerb(phrases: Record<Language, string>): RegExp {
+  const verbs = Object.values(phrases)
+    .map((phrase) => phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  return new RegExp(`^(?:${verbs})(?:\\s|$)`, "i");
+}
+
+const DISPATCH_COMMAND = leadingVerb(DISPATCH_PHRASES);
+const AGENT_COMMAND = leadingVerb(AGENT_PHRASES);
+
+/**
+ * A dispatch command, the way the door recognises one: the verb at the very
+ * start of the message, in either language, in any case, followed by whitespace
+ * or by nothing. Never a prefix and never a substring, because a person who
+ * writes the word inside a sentence is talking to their agent and not issuing a
+ * command. Untrimmed on purpose, because the door does not trim either.
+ */
+export function isDispatchCommand(text: string): boolean {
+  return DISPATCH_COMMAND.test(String(text ?? ""));
+}
+
+/** An agent lifecycle command, recognised by the rule above. */
+export function isAgentCommand(text: string): boolean {
+  return AGENT_COMMAND.test(String(text ?? ""));
 }
 
 /** The UTC day a line's own time falls in, as a millisecond anchor. */
@@ -129,11 +161,17 @@ function walk(
 
 /**
  * Whose lines a harvest reads: this chat's two speakers and nobody else, less
- * the two messages a person addresses to the machinery rather than to anybody.
+ * the messages a person addresses to the machinery rather than to anybody.
+ *
+ * The door routes each of those commands to its own handler and never to the
+ * agent, and the slice drops it for the same reason, so the door's routing rule
+ * and this one must be ONE rule. A command that fell out of here becomes a note
+ * in somebody's vault, which is invisible until a month of harvests carries it.
  */
 function spoken(line: SliceLine, person: string, agent: string): boolean {
   return (line.from === person || line.from === agent) && !isDemand(line.text) &&
-    !isRecoveryCommand(line.text);
+    !isRecoveryCommand(line.text) && !isDispatchCommand(line.text) &&
+    !isAgentCommand(line.text);
 }
 
 /**

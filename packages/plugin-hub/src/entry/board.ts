@@ -11,6 +11,7 @@ import { runBoard } from "../board/run.ts";
 import { boardBindFailed } from "../door/lines.ts";
 import { thisOs } from "../os/index.ts";
 import { listRunEntries } from "../registry/entries.ts";
+import { setKey } from "../registry/edit.ts";
 import { loadRegistry } from "../registry/load.ts";
 import { openStore } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
@@ -39,12 +40,16 @@ try {
     registryFile,
     store,
     os: thisOs(),
-    // THIS MACHINE HAS NO REGISTRY WRITER YET. The writer that edits one key
-    // inside one table of the live file, validates the candidate by loading it
-    // and replaces it atomically belongs to the phase that settles who may edit
-    // a running household's registry. Until it is here the board's start, stop
-    // and pause say so on the page and a person edits the file, and wiring it
-    // in is passing it as `writeRegistryKey` on this call.
+    // Start, stop and pause edit the live file through the one registry writer,
+    // because the owner ruled that a board reachable only on the tailnet may.
+    // The writer names the entry by its id and never by its position, holds a
+    // lock no other writer on this machine can pass while it edits, and
+    // replaces the file only with a candidate it has loaded and compared
+    // against the one intended change. The board's own defences stay in front
+    // of it: an act from this machine or from another page never reaches it.
+    writeRegistryKey: async ({ file, table, id, key, value }) => {
+      await setKey(file, `${table}[${id}]`, key, value);
+    },
   });
 } catch (error) {
   // A bind this machine does not hold kills the process with the cause named.

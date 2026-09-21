@@ -84,7 +84,7 @@ function household(storeUrl = "postgres://127.0.0.1:5432/hub", admin?: string[])
   const apart = place(join(root, "tokens", "discord.token"), secret("discord-token"))
   const otherLogin = place(join(root, "other-login", ".credentials.json"), JSON.stringify({ marker: secret("other-login") }))
   const registryFile = writeRegistry(root, {
-    hub: { store_url: storeUrl, state_dir: stateDir, shared_zone: trees.sharedZone },
+    hub: { store_url: storeUrl, state_dir: stateDir },
     people: trees.people.map(p => ({ id: p.id, tree: p.tree })),
     credentials: [
       { id: "household-claude", kind: "claude-login", file: login.file, owner: "household" },

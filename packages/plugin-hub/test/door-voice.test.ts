@@ -371,7 +371,9 @@ test("RUN-15 a household that stops naming a recognizer finishes the notes that 
     const finished = (await it.read.inbound())[0]
     expect(finished.media_retry_at, "RUN-15 nothing is armed: no recognizer will come").toBeNull()
     expect(finished.media_failure).toMatchObject({ cause: "recognizer-unnamed" })
-    expect((await it.read.sql("select log_ready from inbound where id = $1", [row.id]))[0].log_ready,
+    // The failure, the notice and the projection are three writes, so the row
+    // is polled by its own key rather than read the instant the failure lands.
+    expect(await observe(async () => (await it.read.sql("select log_ready from inbound where id = $1", [row.id]))[0].log_ready === true, 30_000),
       "RUN-15 the row is projected, so the agent can answer it").toBe(true)
 
     // The same sentence a household that never had a recognizer reads.

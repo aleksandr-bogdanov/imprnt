@@ -27,12 +27,14 @@ for (const kind of ["hub", "door", "runner", "sync"] as const) for (const flavou
     } finally { await f.stop() }
   })
 }
-// Two kinds the hub renders are not in this list. `transcriber` is the
+// Three kinds the hub renders are not in this list. `transcriber` is the
 // recognizer's Python server, whose argv is bound in test/voice-units.test.ts,
-// and `board` is a page this package serves, whose own render assertions live
-// in test/registry-board.test.ts. The three that remain are still deferred, and
-// each one still refuses before the first file write or child start.
-for (const kind of ["watcher", "backup", "arbitrary-kind"]) {
+// `board` is a page this package serves, whose own render assertions live in
+// test/registry-board.test.ts, and `backup` is the off-box copy, whose program
+// and both renders are bound in test/backup-registry.test.ts. The two that
+// remain, a kind still deferred and a kind nobody declares, each still refuses
+// before the first file write or child start.
+for (const kind of ["watcher", "arbitrary-kind"]) {
   test(`ROLL-17 ${kind} refuses before the first file or child start and defeats hub fallback`, async () => {
     const f = await serviceFixture(cluster)
     try {

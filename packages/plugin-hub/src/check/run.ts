@@ -48,7 +48,10 @@ import { readStampRows, stampFindings } from "./stamps.ts";
 import { readVoiceState, transcribingFindings, voiceFindings } from "./voice.ts";
 import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
+import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { silentRunners } from "./silence.ts";
+import { readZoneState, zoneFindings } from "./zone.ts";
+import { backupFindings, readBackupState } from "./backup.ts";
 
 export type { Finding } from "./finding.ts";
 export { findingId } from "./finding.ts";
@@ -538,6 +541,23 @@ export async function runCheck(options: {
         now,
       }),
     );
+
+    // --- every dispatched job past its person's own threshold (criterion 2) -
+    //
+    //     The same finding code as a scheduled job that stopped landing, and
+    //     no code shared with it: that producer reads an entry's own success
+    //     stamp and is keyed on the entry's id, this one reads the queue and is
+    //     keyed on the job row's id. They share the word an operator greps.
+    findings.push(
+      ...staleDispatchJobs({
+        jobs: await readOpenJobs(options.store, { agents: mine.map((agent) => agent.id) }),
+        thresholds: (person) => thresholdsFor(registry, person),
+        runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        graceSeconds: setting(registry, "hub.job_grace_seconds", 300),
+        machine,
+        now,
+      }),
+    );
   }
 
   // --- the recognizer, and the rows waiting on it (criterion 1) ------------
@@ -601,6 +621,18 @@ export async function runCheck(options: {
     );
   }
 
+  // --- the household's shared zone: whether each checkout this machine syncs
+  //     is there, whether it really pulls from the zone's remote, and whether
+  //     the vault declares the mount (criterion 1).
+  //
+  //     FILES AND THE REGISTRY ONLY. No store row is opened for any of it and
+  //     nothing is contacted: the remote comparison reads the checkout's own
+  //     git configuration, because the loader can only compare the strings the
+  //     file declares and this is the machine that can see the disk.
+  findings.push(
+    ...zoneFindings(readZoneState({ registry, machine, registryFile: options.registryFile })),
+  );
+
   // --- check OPENS every credential and asks whether it still works --------
   //     (L10 rule 2). The incident behind it: a login
   //     died, thirteen turns failed over 31 hours, and `check` was green
@@ -632,9 +664,10 @@ export async function runCheck(options: {
     ...(await copyFindings({
       entries: declared,
       prober,
+      // A zone checkout sits inside a person's vault, and every person's tree
+      // is already on this list, so the sweep reaches it with no root of its own.
       roots: [
         ...listPeople(registry).map((person) => person.tree),
-        String(readSetting(registry, "hub.shared_zone") ?? ""),
         String(readSetting(registry, "hub.state_dir") ?? ""),
         ...opened.map((entry) => dirname(entry.file)),
       ],
@@ -735,6 +768,11 @@ export async function runCheck(options: {
         fix: syncRepair("en", { target }) });
     }
   }
+  // The off-box copy's last outcome, from its own sheet, in the same shape.
+  // `check` opens no destination: a missed hour is already job-stale, so a
+  // probe of the destination would say nothing new and would put a network
+  // connection inside a command that only reads.
+  findings.push(...backupFindings(await readBackupState(options.store), machine, entries));
   for (const row of await readSheet(options.store, "agent_health")) {
     if (row.data.status !== "retry" || !listAgents(registry).some(agent => agent.id === row.id &&
       runEntriesFor(registry, machine).some(entry => entry.id === agent.runner))) continue;

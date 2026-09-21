@@ -70,7 +70,7 @@ export function launchInput(f: LoopFixture, purpose = "ordinary", generation: st
   const agent = (registry as any).agents.find((one: any) => one.id === "p1-lair")
   return { registry, preset: (registry as any).presets.daily, credential: f.credential, agent,
     sessionDir, purpose, ambientEnv: { HOME: f.home, CLAUDE_CONFIG_DIR: join(f.home, ".claude"), CLAUDE_SECURESTORAGE_CONFIG_DIR: join(f.home, ".claude") }, box: { agent: "p1-lair", person: "p1", tree: f.trees.person("p1").tree,
-      sharedZone: f.trees.sharedZone, otherTrees: [f.trees.person("p2").tree],
+      otherTrees: [f.trees.person("p2").tree],
       stateRoot: join(f.stateDir, "p1"), otherStateRoots: [join(f.stateDir, "p2")], sessionDir, purpose } }
 }
 

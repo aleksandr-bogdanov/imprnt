@@ -30,6 +30,13 @@ export interface ClockDeadline {
  * row arms `transcribed` alone, and once the text exists the base moves to the
  * moment it existed. A row with no media is unchanged in every case.
  *
+ * A REPORT IS MEASURED FROM THE MOMENT IT LANDED, for the same reason. It
+ * carries the arrival stamp of the JOB it answers, which is what puts it ahead
+ * of a message that arrived while the job was running, and a job that ran for
+ * an hour carries an hour. Measured from that stamp, all three of a report's
+ * deadlines are in the past before the row exists, and the door would say the
+ * agent has not answered in the same second the answer arrives.
+ *
  * `delivered` is NOT here and never will be. The thing it measures is the
  * door's own post, and a door that cannot post cannot post a line about not
  * being able to post. It is a `check` finding and nothing else.
@@ -41,6 +48,7 @@ export function clockDeadlines(
   row: Pick<OpenTurnRow, "state" | "received_at"> & {
     media_state?: string | null;
     media_done_at?: Date | string | null;
+    reported_at?: Date | string | null;
   },
   thresholds: StampThresholds,
   transcribedSeconds: number = TRANSCRIBED_DEFAULT_SECONDS,
@@ -49,10 +57,11 @@ export function clockDeadlines(
   if (row.media_state === "pending") {
     return [{ stamp: "transcribed", at: received + transcribedSeconds * 1000 }];
   }
-  const from =
-    row.media_done_at === undefined || row.media_done_at === null
-      ? received
-      : new Date(row.media_done_at).getTime();
+  // The moment this row became answerable, when it has one: the transcript's
+  // for a note that arrived as sound, the report's for a report. A row with
+  // neither is every ordinary message, and it is measured from its arrival.
+  const answerable = row.reported_at ?? row.media_done_at ?? null;
+  const from = answerable === null ? received : new Date(answerable).getTime();
   const waits: Record<string, { stamp: string; seconds: number }> = {
     received: { stamp: "acked", seconds: thresholds.acked_seconds },
     acked: { stamp: "started", seconds: thresholds.started_seconds },

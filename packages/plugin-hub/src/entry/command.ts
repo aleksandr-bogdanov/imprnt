@@ -16,7 +16,7 @@ export async function command(args: string[]): Promise<number> {
   const usage = () => { process.stderr.write(cliUsage("en") + "\n"); return 2; };
   if (!registryFile || !["check", "status", "metrics", "install", "recover"].includes(verb) || rest.length) return usage();
   if (verb !== "install" && extra || verb === "metrics" && target || verb === "recover" && !/^(agent|door|run):[^:]+$/.test(target ?? "")) return usage();
-  if (verb === "install" && (target && !["database", "services", "entry", "--dry"].includes(target) || ["database", "--dry"].includes(target) && extra || ["services", "entry"].includes(target) && !extra)) return usage();
+  if (verb === "install" && (target && !["zone", "database", "services", "entry", "--dry"].includes(target) || ["zone", "database", "--dry"].includes(target) && extra || ["services", "entry"].includes(target) && !extra)) return usage();
   try {
     const registry = loadRegistry(registryFile);
     const machines = listMachines(registry);

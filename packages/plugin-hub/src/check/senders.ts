@@ -84,6 +84,10 @@ export function allowlistFindings(args: {
 }): Finding[] {
   const out: Finding[] = [];
   for (const agent of args.agents) {
+    // An agent that takes jobs alone has no door, so nobody can write to it and
+    // there is no list to leave empty. Reporting one would be a finding that no
+    // edit to the file could ever clear.
+    if (agent.door === undefined) continue;
     const senders = personOf(args.registry, agent.id)?.allowed_senders;
     const listed = senders && Object.hasOwn(senders, agent.door) ? senders[agent.door] : [];
     if (listed.length > 0) continue;
