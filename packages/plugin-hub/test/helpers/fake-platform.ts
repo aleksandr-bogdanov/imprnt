@@ -533,6 +533,18 @@ export async function servePlatform(
         }
         return Response.json({ ok: true });
       }
+      if (path === "/admin/resolve" || path === "/admin/describe") {
+        const asked = await body(request);
+        if (!fake.platform.admin) return Response.json({ error: "this platform has no admin" }, { status: 404 });
+        try {
+          const answer = path === "/admin/resolve"
+            ? await fake.platform.admin.resolveChat(String(asked.ref))
+            : await fake.platform.admin.describeChat(String(asked.chat));
+          return Response.json({ ok: true, answer });
+        } catch (error) {
+          return Response.json({ error: String((error as Error).message) }, { status: 502 });
+        }
+      }
       if (path === "/about") {
         // What this platform IS, so a door in another process holds the same
         // typing lifetime the in-process one does rather than a number of its
@@ -540,6 +552,10 @@ export async function servePlatform(
         return Response.json({
           name: fake.platform.name,
           typingSeconds: fake.platform.typingSeconds,
+          // Whether it answers about its own chats at all. A door handed a
+          // client that always carried the member could never meet the
+          // `unsupported` answer, which is a platform without one.
+          admin: Boolean(fake.platform.admin),
         });
       }
       return new Response("not a platform verb", { status: 404 });
@@ -564,18 +580,41 @@ export async function platformClient(url: string): Promise<DoorPlatform> {
   // BOUNDED, and loud when it runs out. A door subprocess that hung here would
   // never print its ready line, and every check that starts one would report a
   // ninety second timeout with nothing saying why.
-  let about: { name: string; typingSeconds: number };
+  let about: { name: string; typingSeconds: number; admin?: boolean };
   try {
     const answered = await fetch(`${url}/about`, { signal: AbortSignal.timeout(5000) });
-    about = (await answered.json()) as { name: string; typingSeconds: number };
+    about = (await answered.json()) as { name: string; typingSeconds: number; admin?: boolean };
   } catch (error) {
     throw new PlatformRefused(
       `the platform at ${url} did not say what it is within 5 s: ${(error as Error).message}`,
     );
   }
+  const admin = {
+    async resolveChat(ref: string) {
+      const res = await fetch(`${url}/admin/resolve`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ ref }) });
+      if (!res.ok) {
+        const said = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new PlatformRefused(said.error ?? `chat lookup failed: ${res.status}`);
+      }
+      return ((await res.json()) as { answer: FakeResolution }).answer;
+    },
+    async describeChat(chat: string) {
+      const res = await fetch(`${url}/admin/describe`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ chat }) });
+      if (!res.ok) {
+        const said = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new PlatformRefused(said.error ?? `chat description failed: ${res.status}`);
+      }
+      return ((await res.json()) as { answer: FakeDescription }).answer;
+    },
+  };
   return {
     name: "fake-over-http",
     typingSeconds: Number(about.typingSeconds),
+    // Only when the platform behind the socket carries one, so a door in
+    // another process meets exactly what an in-process one would.
+    ...(about.admin ? { admin } : {}),
     async pull(where) {
       const res = await fetch(`${url}/pull`, {
         method: "POST",

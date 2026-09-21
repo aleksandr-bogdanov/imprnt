@@ -58,7 +58,7 @@ import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
 import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
-import { readCursor, writeCursor } from "./cursor.ts";
+import { CURSOR_SHEET, cursorId, readCursor, writeCursor } from "./cursor.ts";
 import {
   clockLine,
   finding,
@@ -1810,7 +1810,14 @@ export async function runDoor(options: {
           }
         }
         for (const id of [...served.keys()]) {
-          if (!wanted.some((agent) => agent.id === id)) await drop(id);
+          if (wanted.some((agent) => agent.id === id)) continue;
+          // The cursor is THIS DOOR'S OWN sheet about a chat it no longer
+          // serves, so it goes with the reader, after the reader has stopped
+          // and can no longer write it back. The hub deletes it too when it
+          // retires an agent, for the door that is not running at the time.
+          const chat = served.get(id)!.agent.chat;
+          await drop(id);
+          await removeRow(store, CURSOR_SHEET, cursorId(options.door, chat)).catch(() => {});
         }
       } catch {
         // A tick that could not finish is a tick. The next one runs.
