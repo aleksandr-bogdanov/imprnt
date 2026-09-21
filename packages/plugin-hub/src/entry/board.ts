@@ -54,7 +54,9 @@ try {
   process.stderr.write(
     boardBindFailed("en", {
       bind: entry.bind,
-      port: entry.port,
+      // Which of the two ports refused, since a board that serves artifacts
+      // listens twice and an operator reads one line.
+      port: (error as { port?: number }).port ?? entry.port,
       cause: (error as Error).message,
     }) + "\n",
   );

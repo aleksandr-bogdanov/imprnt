@@ -11,6 +11,7 @@
 // | boardBindWide       | {id} binds to {bind}, and a board listens on one specific address, never a wildcard.             | {id} слушает {bind}, а доска слушает один конкретный адрес, а не все сразу. |
 // | boardBindNotAddress | {id} binds to {bind}, and bind is an IP address, not a name.                                     | {id} слушает {bind}, а bind - это IP-адрес, а не имя. |
 // | boardPort           | {id} has port {value}, and a board's port is a whole number from 1 to 65535.                     | {id} указывает порт {value}, а порт доски - целое число от 1 до 65535. |
+// | boardArtifactsPort  | {id} has artifacts_port {value}, and it is a whole number from 1 to 65535 that is not the board's own port. | {id} указывает artifacts_port {value}, а это целое число от 1 до 65535, отличное от порта самой доски. |
 // | enabledNotBoolean   | {id} has enabled {value}, and whether the hub keeps it running is a true or a false.             | {id} указывает enabled {value}, а держать ли его запущенным - это true или false. |
 // | artifactsNotBoolean | {id} has artifacts {value}, and whether the board serves this person's artifacts is a true or a false. | {id} указывает artifacts {value}, а показывать ли артефакты этого человека - это true или false. |
 // | boardBindFailed     | board: cannot listen on {bind}:{port}: {cause}.                                                  | доска: не удаётся слушать {bind}:{port}: {cause}. |
@@ -47,6 +48,7 @@ import {
   boardBindFailed,
   boardBindMissing,
   boardBindNotAddress,
+  boardArtifactsPort,
   boardBindWide,
   boardPort,
   cardBroken,
@@ -176,6 +178,26 @@ test("D-253 the seven loader and operator refusals are pinned whole in both lang
     "доска: не удаётся слушать 127.0.0.1:8794: address already in use.",
     ["127.0.0.1", "address already in use"],
   );
+});
+
+test("the refusals the fence adds are pinned whole in both languages", () => {
+  // A sentence a person reads is pinned here whole or it is not pinned at all,
+  // beside the seventeen the phase's own table holds.
+  pinned(
+    boardArtifactsPort,
+    { id: "board", value: "8794" },
+    "board has artifacts_port 8794, and it is a whole number from 1 to 65535 that is not the board's own port.",
+    "board указывает artifacts_port 8794, а это целое число от 1 до 65535, отличное от порта самой доски.",
+    ["8794"],
+  );
+  for (const language of ["en", "ru"] as Language[]) {
+    expect(boardArtifactsPort(language, { id: "board", value: "x" })).not.toContain(MACHINERY_LINES[language]);
+  }
+  // The sanitizer reaches this one too: a value that carried its own newline
+  // into an operator's terminal would be a value that wrote its own line.
+  const nasty = boardArtifactsPort("en", { id: "one\ntwo", value: "three\u0007four" });
+  expect(nasty).not.toContain("\n");
+  expect(nasty).not.toContain("\u0007");
 });
 
 test("D-253 the nine page strings and the one finding line are pinned whole in both languages", () => {

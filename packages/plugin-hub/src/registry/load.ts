@@ -4,6 +4,7 @@ import { isAbsolute, resolve, sep } from "node:path";
 import { ADAPTERS } from "../adapters/index.ts";
 import {
   artifactsNotBoolean,
+  boardArtifactsPort,
   boardBindMissing,
   boardBindNotAddress,
   boardBindWide,
@@ -272,6 +273,17 @@ export interface RunEntry {
    * where the door beside it posts.
    */
   port?: number;
+  /**
+   * The second port a board serves a person's artifacts on.
+   *
+   * It is a SEPARATE port because what it serves is written by an agent, and a
+   * page an agent wrote, served from the port the acts are on, would be the
+   * board's own origin in a browser: same origin, so its script may read every
+   * page and its form may press every button. A port of its own is a different
+   * origin and the browser refuses it that. Absent means no artifact is served
+   * at all, which is what a household that has not asked for the route gets.
+   */
+  artifacts_port?: number;
   /**
    * The recognizer's other two. `residency` says whether the model is held
    * between notes or dropped after `idle_seconds` of quiet, and only the one
@@ -993,6 +1005,21 @@ export function loadRegistry(file: string): Registry {
       ) {
         refuse(`${at}.port`, here, boardPort("en", { id, value: describeBare(port) }));
       }
+      // The artifacts port is optional, and a file that names none serves no
+      // artifact. Where it is named it is a port of its own: the same port
+      // would put an agent's own pages on the origin the acts are on.
+      const shows = entry.artifacts_port;
+      if (
+        shows !== undefined &&
+        shows !== null &&
+        (typeof shows !== "number" ||
+          !Number.isInteger(shows) ||
+          shows < 1 ||
+          shows > 65535 ||
+          shows === port)
+      ) {
+        refuse(`${at}.artifacts_port`, here, boardArtifactsPort("en", { id, value: describeBare(shows) }));
+      }
     }
 
     const machine = entry.machine;
@@ -1103,7 +1130,7 @@ export function loadRegistry(file: string): Registry {
       // recognizer at a port on loopback plus the two knobs that say how long
       // it holds its model. Carrying any of them onto a door's row would put a
       // field on it that nothing reads and that a reader would have to explain.
-      ...Object.fromEntries((entry.kind === "board" ? ["bind", "port"]
+      ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
         : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),

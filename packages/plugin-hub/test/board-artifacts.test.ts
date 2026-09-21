@@ -127,6 +127,7 @@ async function stage(): Promise<Staged> {
     memory_limit_mb: 128,
     bind: "127.0.0.1",
     port: await freePort(),
+    artifacts_port: await freePort(),
   };
   const it = await stageHub(cluster, {
     hub: { tick_seconds: 1 },
@@ -205,7 +206,7 @@ test(
         "data.bin": "application/octet-stream",
       };
       for (const [path, type] of Object.entries(types)) {
-        const answer = await board.get(`/artifacts/p1/${path}`);
+        const answer = await board.artifact(`/artifacts/p1/${path}`);
         expect(answer.status, `/artifacts/p1/${path}`).toBe(200);
         expect(await answer.text()).toBe(PLANTED[path]);
         expect(answer.headers.get("content-type") ?? "").toContain(type);
@@ -214,13 +215,13 @@ test(
       // The person who did not opt in, with the file proved present on disk in
       // the same check, so nobody can read the 404 as a missing file.
       expect(readFileSync(join(trees.p2, "artifacts", "index.html"), "utf8")).toBe(PLANTED["index.html"]);
-      const refused = await board.get("/artifacts/p2/index.html");
+      const refused = await board.artifact("/artifacts/p2/index.html");
       expect(refused.status).toBe(404);
       expect((await refused.text()).trim()).toBe(pageMissing("en"));
 
       // A person the file does not declare, and one whose tree is not here.
       for (const who of ["p9", "p3"]) {
-        const answer = await board.get(`/artifacts/${who}/index.html`);
+        const answer = await board.artifact(`/artifacts/${who}/index.html`);
         expect(answer.status, `/artifacts/${who}/index.html`).toBe(404);
       }
 
@@ -245,8 +246,54 @@ test(
       }
 
       // And a `..` exactly as a client that does not normalise would send it.
-      const raw = await rawGet(staged.board.port, "/artifacts/p1/../../secret.txt");
+      const raw = await rawGet(staged.board.artifactsPort!, "/artifacts/p1/../../secret.txt");
       expect(raw.split("\r\n")[0]).toContain("404");
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "artifacts are served from an origin of their own, and neither origin answers for the other",
+  async () => {
+    // AN AGENT WRITES WHAT IS SERVED HERE. A page an agent wrote, opened from a
+    // link in a chat, would be the board's own origin if the two shared one
+    // port: its script could read every page and its form could press every
+    // button, with the browser saying, truthfully, that the press came from the
+    // board's own origin. A port of its own is a different origin, so the
+    // browser refuses it all, and the acts are behind a port that serves no
+    // agent's bytes at all.
+    const staged = await stage();
+    try {
+      const { board } = staged;
+      expect(board.artifactsPort, "the board must serve artifacts on a port of its own").not.toBeNull();
+      expect(board.artifactsPort).not.toBe(board.port);
+
+      const served = await board.artifact("/artifacts/p1/index.html");
+      expect(served.status).toBe(200);
+      expect(await served.text()).toBe(PLANTED["index.html"]);
+
+      // The page's own origin serves no artifact at all.
+      const wrong = await board.get("/artifacts/p1/index.html");
+      expect(wrong.status, "the acts origin must not serve an agent's bytes").toBe(404);
+      expect((await wrong.text()).trim()).toBe(pageMissing("en"));
+
+      // And the artifacts origin carries no page and takes no act.
+      for (const path of ["/", "/people", "/findings", "/metrics"]) {
+        const page = await board.artifact(path);
+        expect(page.status, `${path} on the artifacts origin`).toBe(404);
+        expect((await page.text()).trim()).toBe(pageMissing("en"));
+      }
+      const pressed = await fetch(`${board.artifactsUrl}/act/restart`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "target=runner-test",
+      });
+      expect(pressed.status, "an act on the artifacts origin").toBe(404);
+      expect(await staged.it.read.sheet("control")).toEqual([]);
     } finally {
       await staged.stop();
     }
@@ -280,7 +327,7 @@ test(
       // tree, which its box already lets it write, so there is no publish verb
       // and nothing the hub has to hold.
       writeFileSync(join(trees.p1, "artifacts", "fresh.txt"), "written while the board was up", "utf8");
-      const answer = await board.get("/artifacts/p1/fresh.txt");
+      const answer = await board.artifact("/artifacts/p1/fresh.txt");
       expect(answer.status).toBe(200);
       expect(await answer.text()).toBe("written while the board was up");
     } finally {
@@ -298,14 +345,14 @@ test(
     const staged = await stage();
     try {
       const { board, it } = staged;
-      expect((await board.get("/artifacts/p1/index.html")).status).toBe(200);
-      expect((await board.get("/artifacts/p2/index.html")).status).toBe(404);
+      expect((await board.artifact("/artifacts/p1/index.html")).status).toBe(200);
+      expect((await board.artifact("/artifacts/p2/index.html")).status).toBe(404);
 
       setOnEntry(it.registryFile, "p1", "artifacts", null);
       setOnEntry(it.registryFile, "p2", "artifacts", "true");
 
-      expect((await board.get("/artifacts/p1/index.html")).status).toBe(404);
-      expect((await board.get("/artifacts/p2/index.html")).status).toBe(200);
+      expect((await board.artifact("/artifacts/p1/index.html")).status).toBe(404);
+      expect((await board.artifact("/artifacts/p2/index.html")).status).toBe(200);
     } finally {
       await staged.stop();
     }
@@ -326,6 +373,7 @@ async function stagePeople(trees: { p1: string; p2: string }): Promise<{ get(pat
     memory_limit_mb: 128,
     bind: "127.0.0.1",
     port: await freePort(),
+    artifacts_port: await freePort(),
   };
   const it = await stageHub(cluster, {
     hub: { tick_seconds: 1 },
@@ -344,7 +392,7 @@ async function stagePeople(trees: { p1: string; p2: string }): Promise<{ get(pat
     os: recordingSeam(plantedSeam(FLAVOUR).os).os,
   });
   return {
-    get: (path) => board.get(path),
+    get: (path) => board.artifact(path),
     async stop() {
       await board.stop();
       await store.close();
@@ -470,15 +518,15 @@ test(
     const staged = await stage();
     try {
       const open = () => readdirSync("/dev/fd").length;
-      const warm = await staged.board.get("/artifacts/p1/index.html");
+      const warm = await staged.board.artifact("/artifacts/p1/index.html");
       await warm.text();
       const before = open();
       for (let i = 0; i < 200; i++) {
-        const answer = await staged.board.get("/artifacts/p1/index.html");
+        const answer = await staged.board.artifact("/artifacts/p1/index.html");
         expect(await answer.text()).toBe(PLANTED["index.html"]);
       }
       for (let i = 0; i < 20; i++) {
-        const answer = await staged.board.get("/artifacts/p1/note.txt");
+        const answer = await staged.board.artifact("/artifacts/p1/note.txt");
         await answer.body?.cancel();
       }
       await until("the abandoned bodies let go of their descriptors", async () => open() - before < 20, 10_000,

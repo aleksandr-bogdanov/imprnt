@@ -242,6 +242,35 @@ test("D-241 a board with no port, or a port that is not a whole number in range,
   }
 });
 
+test("a board's artifacts port is its own port and no other, refused by key and by line", () => {
+  // What it buys: an agent writes what is served there, so a page an agent
+  // wrote must not arrive on the origin the acts are on. Sharing the board's
+  // own port would be exactly that, and it is refused beside the shapes that
+  // are not a port at all.
+  for (const value of [0, -1, 1.5, "8795", 65536, EXAMPLE_BOARD.port] as const) {
+    const { error, text } = refusalOf([
+      DOOR,
+      RUNNER,
+      { ...EXAMPLE_BOARD, artifacts_port: value as unknown as number },
+    ]);
+    expect(error.key).toBe("run[2].artifacts_port");
+    expect(error.line).toBe(lineOf(text, "board", "artifacts_port"));
+    expect(error.reason).toBe(
+      `board has artifacts_port ${value}, and it is a whole number from 1 to 65535 that is not the board's own port.`,
+    );
+  }
+
+  // The controls: a port of its own loads onto the entry, and a board that
+  // names none carries no such key at all, which is the board that serves no
+  // artifact.
+  const { file } = write([DOOR, RUNNER, { ...EXAMPLE_BOARD, artifacts_port: 8795 }]);
+  const board = listRunEntries(loadRegistry(file)).find((one) => one.id === "board")!;
+  expect((board as { artifacts_port?: number }).artifacts_port).toBe(8795);
+  const silent = write([DOOR, RUNNER, EXAMPLE_BOARD]);
+  const quiet = listRunEntries(loadRegistry(silent.file)).find((one) => one.id === "board")!;
+  expect(Object.hasOwn(quiet, "artifacts_port")).toBe(false);
+});
+
 test("D-244 whether the hub keeps an entry running is asked of every kind, by key and by line", () => {
   // The field is not a board's. It is the one place a household says it does
   // not want a piece up, and the hub re-reads the file on every tick, so it is

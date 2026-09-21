@@ -84,6 +84,9 @@ export interface BoardOptions {
 export interface BoardHandle {
   url: string;
   port: number;
+  /** Where artifacts are served, or null when this board serves none. */
+  artifactsUrl: string | null;
+  artifactsPort: number | null;
   stop(): Promise<void>;
 }
 
@@ -379,7 +382,6 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     const path = url.pathname;
     if (request.method === "GET") {
       const notice = noticeFrom(url.searchParams);
-      if (path.startsWith("/artifacts/")) return await artifact(path);
       if (path === "/") return await machines(notice);
       if (path === "/people") return await people(notice);
       if (path === "/findings") return await findingsOf(notice);
@@ -399,6 +401,25 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     return missing();
   };
 
+  /**
+   * The artifacts listener, on a port of its own.
+   *
+   * WHAT IT IS FOR: an agent writes what is served here, so a page an agent
+   * wrote and a person opened from a chat link must not be the board's own
+   * origin. On its own port it is a different origin, and a browser then
+   * refuses its script every page of the board and refuses its form every act,
+   * whatever that page tries. It serves GET and nothing else, it has no page
+   * and no act of its own, and a household that names no artifacts port serves
+   * no artifact at all.
+   */
+  const artifactsAnswer = async (request: Request): Promise<Response> => {
+    if (!isOwn(request.headers.get("host"), artifactsPort)) return missing();
+    if (request.method !== "GET") return missing();
+    const path = new URL(request.url).pathname;
+    if (!path.startsWith("/artifacts/")) return missing();
+    return await artifact(path);
+  };
+
   // ONE SPECIFIC ADDRESS. A bind this machine does not hold throws out of here
   // and the program exits with the cause named: there is no fallback to any
   // other address, and no retry loop of the board's own, because the service
@@ -411,11 +432,29 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
 
   // Read by `answer`, which no request reaches before this line has run.
   const port = Number(server.port);
+  let artifacts: ReturnType<typeof Bun.serve> | null = null;
+  try {
+    artifacts = entry.artifacts_port === undefined
+      ? null
+      : Bun.serve({ hostname: entry.bind, port: entry.artifacts_port, fetch: artifactsAnswer });
+  } catch (error) {
+    // The pages are already up on their own port, and a half-served board is
+    // not what the household asked for, so the whole thing goes and the
+    // service manager starts it again. The port that failed travels with the
+    // error, because the two ports fail the same way and say so differently.
+    await server.stop(true);
+    (error as { port?: number }).port = entry.artifacts_port;
+    throw error;
+  }
+  const artifactsPort = artifacts === null ? 0 : Number(artifacts.port);
   return {
     url: `http://${entry.bind}:${port}`,
     port,
+    artifactsUrl: artifacts === null ? null : `http://${entry.bind}:${artifactsPort}`,
+    artifactsPort: artifacts === null ? null : artifactsPort,
     async stop() {
       await server.stop(true);
+      await artifacts?.stop(true);
     },
   };
 }

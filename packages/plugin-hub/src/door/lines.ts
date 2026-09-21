@@ -639,6 +639,13 @@ export function enabledNotBoolean(language: Language, values: LineValues = {}): 
     : "{id} has enabled {value}, and whether the hub keeps it running is a true or a false.", values);
 }
 
+/** The second port a board serves artifacts on, which is their own origin. */
+export function boardArtifactsPort(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} указывает artifacts_port {value}, а это целое число от 1 до 65535, отличное от порта самой доски."
+    : "{id} has artifacts_port {value}, and it is a whole number from 1 to 65535 that is not the board's own port.", values);
+}
+
 export function artifactsNotBoolean(language: Language, values: LineValues = {}): string {
   return interpolate(language, language === "ru"
     ? "{id} указывает artifacts {value}, а показывать ли артефакты этого человека - это true или false."

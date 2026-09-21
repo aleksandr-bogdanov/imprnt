@@ -59,6 +59,11 @@ export function setOnEntry(file: string, id: string, key: string, value: string 
 export interface ServedBoard {
   url: string;
   port: number;
+  /** Where artifacts are served, which is an origin of its own, or null. */
+  artifactsUrl: string | null;
+  artifactsPort: number | null;
+  /** A GET against the artifacts origin, redirect not followed. */
+  artifact(path: string, init?: RequestInit): Promise<Response>;
   /** A GET that never follows a redirect, so a check can assert the redirect. */
   get(path: string, init?: RequestInit): Promise<Response>;
   /** A form post, urlencoded, redirect not followed. */
@@ -86,7 +91,13 @@ export interface ServeBoardOptions {
  */
 export async function serveBoard(options: ServeBoardOptions): Promise<ServedBoard> {
   const { runBoard } = (await import(hubPath("src/board/run.ts"))) as {
-    runBoard: (o: Record<string, unknown>) => Promise<{ url: string; port: number; stop(): Promise<void> }>;
+    runBoard: (o: Record<string, unknown>) => Promise<{
+      url: string;
+      port: number;
+      artifactsUrl: string | null;
+      artifactsPort: number | null;
+      stop(): Promise<void>;
+    }>;
   };
   const entryOf = (): RunEntry => {
     const found = listRunEntries(loadRegistry(options.registryFile)).find(
@@ -115,13 +126,20 @@ export async function serveBoard(options: ServeBoardOptions): Promise<ServedBoar
       /EADDRINUSE|address already in use|port \d+ in use/i.test(String((error as Error).message));
     if (!taken) throw error;
     setOnEntry(options.registryFile, options.entryId, "port", String(await freePort()));
+    if (entryOf().artifacts_port !== undefined) {
+      setOnEntry(options.registryFile, options.entryId, "artifacts_port", String(await freePort()));
+    }
     handle = await start();
   }
 
   const at = (path: string) => `${handle.url.replace(/\/$/, "")}${path}`;
+  const atArtifacts = (path: string) => `${(handle.artifactsUrl ?? handle.url).replace(/\/$/, "")}${path}`;
   return {
     url: handle.url,
     port: handle.port,
+    artifactsUrl: handle.artifactsUrl,
+    artifactsPort: handle.artifactsPort,
+    artifact: (path, init) => fetch(atArtifacts(path), { redirect: "manual", ...(init ?? {}) }),
     get: (path, init) => fetch(at(path), { redirect: "manual", ...(init ?? {}) }),
     post: (path, form = {}) =>
       fetch(at(path), {

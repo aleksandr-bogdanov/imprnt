@@ -66,6 +66,8 @@ export interface RunSpec {
    * entry is reached there on loopback by the door beside it.
    */
   port?: number;
+  /** The second port a board serves artifacts on, which is their own origin. */
+  artifacts_port?: number;
   /** Whether the hub keeps this entry running. Absent means it does. */
   enabled?: boolean;
   /**
@@ -374,6 +376,7 @@ function renderRegistry(spec: RegistrySpec): string {
       child_memory_limit_mb: entry.child_memory_limit_mb,
       bind: entry.bind,
       port: entry.port,
+      artifacts_port: entry.artifacts_port,
       enabled: entry.enabled,
       residency: entry.residency,
       idle_seconds: entry.idle_seconds,
