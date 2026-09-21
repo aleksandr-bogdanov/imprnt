@@ -4,6 +4,7 @@ import {
   DEFAULT_LANGUAGE,
   HARVEST_DEFAULTS,
   loaded,
+  readSetting,
   STAMP_THRESHOLD_DEFAULTS,
   TRANSCRIBED_DEFAULT_SECONDS,
   VOICE_DEFAULTS,
@@ -398,6 +399,20 @@ export function repositoriesFor(registry: unknown, entryId: string) {
     const repository = it.repositories.find(one => one.id === id)!;
     return { ...repository, required: repository.required ?? true };
   });
+}
+
+/**
+ * Where the off-box copy is assembled: `backup` under `hub.state_dir`, beside
+ * every person's own state root and inside none of them, or null when the file
+ * names no state directory.
+ *
+ * It holds every person's vault, chat logs and inbox and the whole store dump
+ * at once, so it is a path no agent's box may read, which is why the box asks
+ * this same function where it is rather than spelling the path again.
+ */
+export function backupStagingFor(registry: unknown): string | null {
+  const state = readSetting(loaded(registry, "backupStagingFor"), "hub.state_dir");
+  return typeof state === "string" && state !== "" ? join(state, "backup") : null;
 }
 
 /** The household's shared zone: the folder name, the remote name and the url. */

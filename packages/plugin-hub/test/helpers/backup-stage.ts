@@ -117,6 +117,8 @@ export interface Planted {
 export interface BackupStageOptions {
   /** The dump command. Absent means a full `pg_dump` of the stage's database. */
   dump_argv?: string[];
+  /** Leave the `backup` entry out of the registry, for a check about the household alone. */
+  withoutEntry?: boolean;
 }
 
 export interface BackupStage {
@@ -252,7 +254,9 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
     let credentialPath = "";
     const argv = {
       dump: options.dump_argv ?? [pgDumpGate().bin, "--dbname", cluster.url(db)],
-      upload: [recorder, "/bin/cp", "-R", "{staging}/.", "{destination}"],
+      // `-f`, because a second copy lands on the first and git writes its
+      // objects read-only, which a plain `cp` refuses to overwrite.
+      upload: [recorder, "/bin/cp", "-R", "-f", "{staging}/.", "{destination}"],
       readback: [recorder, "/bin/cp", "{destination}/{path}", "{out}"],
     };
     let destination = scratchUnder(base, "same-device-destination");
@@ -291,7 +295,7 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
           schedule: "always", memory_limit_mb: 192 },
         { id: "runner-backup", kind: "runner", machine: THIS_MACHINE, schedule: "always", memory_limit_mb: 512,
           child_memory_limit_mb: 1024 },
-        backupEntry(),
+        ...(options.withoutEntry ? [] : [backupEntry()]),
       ],
     });
 

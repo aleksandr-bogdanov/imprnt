@@ -1,7 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { listAgents, listCredentials, listPeople, listRepositories, listRunEntries, personOf } from "../registry/entries.ts";
+import { backupStagingFor, listAgents, listCredentials, listPeople, listRepositories, listRunEntries, personOf } from "../registry/entries.ts";
 import { readSetting } from "../registry/load.ts";
 import { secretsDirOf } from "../store/secrets.ts";
 import type { BoxContext, BoxedCommand } from "./types.ts";
@@ -150,8 +150,15 @@ function hostControlMasks(): string[] {
 function secretPathsOf(registry: unknown): string[] {
   // Every door's token, including a door no agent is served by yet: it is a
   // bot all the same, and a token is masked whether or not it is in use.
+  //
+  // The off-box copy's staging directory too. It sits beside every person's
+  // state root and inside none of them, so neither the other-tree masks nor
+  // the other-state masks reach it, and it holds every person's vault, chat
+  // logs and inbox plus a dump of every message at once. Under the read-only
+  // host on Linux it would otherwise be one read away from every agent.
   return [...new Set([
     secretsDirOf(registry) ?? "",
+    backupStagingFor(registry) ?? "",
     ...listRunEntries(registry).map((one) => typeof one.token_file === "string" ? one.token_file : ""),
     ...listCredentials(registry).map((one) => one.file),
   ].filter((path) => path !== ""))];
