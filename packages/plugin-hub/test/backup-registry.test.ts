@@ -8,7 +8,10 @@
 // staleness comes from its own "I ran and it landed" stamp. L4: a piece with no
 // measured memory limit is forbidden.
 //
-// PURE. No store, no manager, no unit installed.
+// PURE FOR THE LOADER, AND THE SHIPPED RENDERERS FOR THE REST. No store, no
+// manager, no unit installed: the renderers are called the way
+// `test/os-render.test.ts` calls them, so both flavours are asserted on both
+// machines.
 //
 // THE DESTINATION IS NOT PARSED, and that is asserted rather than promised: a
 // URL, a host and a path, a plain path and a string with spaces in it all load
@@ -18,13 +21,15 @@
 //
 // Red reason: behaviour absent. The loader refuses `kind = "backup"` outright
 // with `unsupported-run-kind`, so the everything-declared control is red first
-// and every refusal below names the wrong key behind it.
+// and every refusal below names the wrong key behind it, and `programForKind`
+// throws for the kind.
 
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { seam } from "./helpers/cluster.ts";
+import { hubPath, seam } from "./helpers/cluster.ts";
+import { parsePlistDict } from "./helpers/plist.ts";
 import { writeRegistry, type RegistrySpec, type RunSpec } from "./helpers/registry.ts";
 import { thisMachine } from "./helpers/os-gate.ts";
 
@@ -255,6 +260,94 @@ test("ROLL-32 a backup runs on a cadence: hourly and every 30m load as scheduled
     expect(refused.key).toBe("run[0].schedule");
     expect(refused.reason).toContain(schedule);
   }
+});
+
+// --- the render -------------------------------------------------------------
+
+/** A systemd unit as sections of `Key=Value`, so a value is read and never searched for. */
+function sections(text: string): Map<string, [string, string][]> {
+  const out = new Map<string, [string, string][]>();
+  let current = "";
+  for (const line of text.split("\n")) {
+    if (line.trim() === "" || line.startsWith("#")) continue;
+    const header = /^\[([A-Za-z]+)\]$/.exec(line.trim());
+    if (header) {
+      current = header[1];
+      out.set(current, out.get(current) ?? []);
+      continue;
+    }
+    const cut = line.indexOf("=");
+    if (cut <= 0 || current === "") throw new Error(`not a unit line: ${line}`);
+    out.get(current)!.push([line.slice(0, cut), line.slice(cut + 1)]);
+  }
+  return out;
+}
+
+function values(unit: Map<string, [string, string][]>, key: string): string[] {
+  return [...unit.values()].flat().filter(([name]) => name === key).map(([, value]) => value.trim());
+}
+
+async function rendering() {
+  const { programForKind } = await seam("src/hub/program.ts");
+  const { systemd } = await seam("src/os/systemd.ts");
+  const { launchd } = await seam("src/os/launchd.ts");
+  const file = write(household(backupSpec()));
+  const entry = await backupOf(file);
+  const unitDir = join(tmpdir(), "hub-backup-render-units");
+  const ctx = {
+    machine: thisMachine().id,
+    execPath: process.execPath,
+    entryScript: (programForKind as (kind: string) => string)("backup"),
+    registryFile: file,
+    restartDelaySeconds: 3,
+    giveUpAfter: 7,
+    giveUpWindowSeconds: 411,
+  };
+  type Renderer = { render(entry: unknown, ctx: unknown): { path: string; text: string }[] };
+  return {
+    programForKind: programForKind as (kind: string) => string,
+    entry,
+    ctx,
+    linux: (systemd as (o: unknown) => Renderer)({ unitDir }),
+    mac: (launchd as (o: unknown) => Renderer)({ unitDir }),
+  };
+}
+
+test("ROLL-32 programForKind(backup) is a bun entry under src/entry/, and every shipped kind still answers what it did", async () => {
+  const { programForKind, entry, ctx, linux } = await rendering();
+  const script = programForKind("backup");
+  expect(script).toBe(hubPath("src/entry/backup.ts"));
+  expect(existsSync(script)).toBe(true);
+  // The bun-run shape every other entry has, read off the rendered unit.
+  const service = linux.render(entry, ctx).find((one) => one.path.endsWith(".service"))!;
+  expect(values(sections(service.text), "ExecStart")).toHaveLength(1);
+  expect(values(sections(service.text), "ExecStart")[0].split(" ").map((one) => one.replace(/^"|"$/g, "")))
+    .toEqual([process.execPath, "run", script, ctx.registryFile, ID]);
+  // The control: the switch was widened, not replaced.
+  for (const kind of ["hub", "door", "runner", "sync", "board"]) expect(programForKind(kind)).toBe(hubPath(`src/entry/${kind}.ts`));
+  expect(programForKind("transcriber")).toBe(hubPath("tools/transcribe-server.py"));
+  for (const kind of ["watcher", "arbitrary-kind"]) expect(() => programForKind(kind)).toThrow(/unsupported-run-kind/);
+});
+
+test("ROLL-32 Linux renders a service at the entry's own memory limit with no Restart=always, and a timer at the schedule's seconds", async () => {
+  const { entry, ctx, linux } = await rendering();
+  const files = linux.render(entry, ctx);
+  expect(files).toHaveLength(2);
+  const service = sections(files.find((one) => one.path.endsWith(".service"))!.text);
+  const timer = sections(files.find((one) => one.path.endsWith(".timer"))!.text);
+  expect(values(service, "MemoryMax")).toEqual([`${MEMORY_MB}M`]);
+  expect(values(service, "Restart")).not.toContain("always");
+  expect(values(timer, "OnUnitActiveSec")).toEqual(["3600"]);
+  expect(values(timer, "OnActiveSec")).toEqual(["3600"]);
+});
+
+test("ROLL-32 macOS renders a StartInterval at the schedule's seconds and no KeepAlive", async () => {
+  const { entry, ctx, mac } = await rendering();
+  const files = mac.render(entry, ctx);
+  expect(files).toHaveLength(1);
+  const plist = parsePlistDict(files[0].text);
+  expect(plist.StartInterval).toBe(3600);
+  expect(plist.KeepAlive ?? false).toBe(false);
 });
 
 // --- freshness is the shipped arithmetic -----------------------------------
