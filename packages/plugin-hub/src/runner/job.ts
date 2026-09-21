@@ -17,9 +17,22 @@ export interface JobRefusal {
   cause: typeof NOT_APPROVED | typeof COMMAND_ALTERED;
 }
 
+/** A return route with every part a report needs, which the door always pins. */
+function wholeRoute(route: unknown): route is { agent: string; door: string; chat: string } {
+  const it = route as { agent?: unknown; door?: unknown; chat?: unknown } | null | undefined;
+  return !!it && [it.agent, it.door, it.chat].every(part => typeof part === "string" && part !== "");
+}
+
 /**
  * The gate a job passes before it is fed, and the whole of it is arithmetic
  * over a string already in hand, so it costs no statement.
+ *
+ * A JOB WITH NO WAY BACK IS NOT APPROVED. The report is written from the
+ * return route the job pinned, and a job missing any part of it would have its
+ * task run by the model and then fail to settle on every attempt, running
+ * again each time. The door pins a whole route with every approval it writes,
+ * so such a job was made some other way, and it is refused before any child
+ * starts.
  *
  * WHAT THE DIGEST PROTECTS is a window the door's own grant opens: between the
  * insert and the projection the door holds `update (body, ...)` on the row, and
@@ -35,6 +48,7 @@ export interface JobRefusal {
 export function admitJob(row: Pick<EligibleRow, "body" | "source">): JobRefusal | null {
   const approved = row.source?.dispatch?.approved;
   if (!approved || !isDigest(approved.digest)) return { cause: NOT_APPROVED };
+  if (!wholeRoute(row.source?.dispatch?.return)) return { cause: NOT_APPROVED };
   if (taskDigest(row.body) !== approved.digest) return { cause: COMMAND_ALTERED };
   return null;
 }
@@ -52,7 +66,9 @@ export async function refuseJob(
   refusal: { row: EligibleRow; refusal: JobRefusal; registry: Registry; runner: string },
 ): Promise<void> {
   const envelope = refusal.row.source?.dispatch;
-  const route = envelope?.return;
+  // Said only on a route that is whole: a job refused for having none has
+  // nowhere to be said, and its refusal is the diary line alone.
+  const route = wholeRoute(envelope?.return) ? envelope!.return : undefined;
   const language = languageOf(refusal.registry, refusal.row.person) as Language;
   const platform = ((refusal.registry.data.run ?? []) as { id: string; platform?: string }[])
     .find((entry) => entry.id === route?.door)?.platform ?? "discord";
