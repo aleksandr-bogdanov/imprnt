@@ -51,6 +51,7 @@ import {
   type StoreSpec,
 } from "./registry.ts";
 import { openStore, type Store } from "../../src/store/connect.ts";
+import type { InboundSource } from "../../src/store/inbound.ts";
 
 export const PERSON = "p1";
 export const AGENT = "p1-lair";
@@ -638,6 +639,15 @@ export async function startHub(
 /**
  * An inbound row written as the door role, with its received stamp, for a check
  * that needs a message on disk without running a door.
+ *
+ * `source` and `logReady` are what a message the DOOR accepted carries: the
+ * source is the platform's own record of the line (its log id, its time, its
+ * text) and `log_ready` says whether the chat log file already holds it. Both
+ * are absent by default and then this insert is the insert it has always been,
+ * which is what keeps every caller writing the row it writes today. A check
+ * that plants a source and leaves `logReady` false is planting a message that
+ * exists in the store and in no file anywhere, which is the whole of what a
+ * runner on another machine has to read.
  */
 export async function insertInbound(
   cluster: Cluster,
@@ -649,6 +659,8 @@ export async function insertInbound(
     agent?: string;
     kind?: string;
     receivedAt?: string;
+    source?: InboundSource;
+    logReady?: boolean;
     as?: string;
   },
 ): Promise<void> {
@@ -660,6 +672,7 @@ export async function insertInbound(
     close(): Promise<void>;
   };
   const columns = ["id", "person", "agent", "body"];
+  const casts: string[] = ["", "", "", ""];
   const values: unknown[] = [
     row.id,
     row.person ?? PERSON,
@@ -668,11 +681,27 @@ export async function insertInbound(
   ];
   if (row.kind !== undefined) {
     columns.push("kind");
+    casts.push("");
     values.push(row.kind);
   }
   if (row.receivedAt !== undefined) {
     columns.push("received_at");
+    casts.push("");
     values.push(row.receivedAt);
+  }
+  if (row.source !== undefined) {
+    columns.push("source");
+    // The cast is written out and the value travels as the OBJECT, the way the
+    // door's own insert writes one: handing the client a JSON string instead
+    // lands a jsonb string in the column rather than the record, and every
+    // reader of `source ->> 'text'` then reads null.
+    casts.push("::jsonb");
+    values.push(row.source);
+  }
+  if (row.logReady !== undefined) {
+    columns.push("log_ready");
+    casts.push("");
+    values.push(row.logReady);
   }
   try {
     // ONE transaction, the way the door's own step 2 is. Two commits would let
@@ -681,7 +710,7 @@ export async function insertInbound(
     await conn.unsafe("begin");
     await conn.unsafe(
       `insert into inbound (${columns.join(", ")})
-       values (${columns.map((_, i) => `$${i + 1}`).join(", ")})`,
+       values (${columns.map((_, i) => `$${i + 1}${casts[i]}`).join(", ")})`,
       values,
     );
     // THE STAMP CARRIES THE SAME TIME THE COLUMN DOES (the
@@ -833,4 +862,99 @@ export async function stageTwoMachines(cluster: Cluster): Promise<StagedHub> {
     text.replace(/runner = "runner-test"/, `runner = "${RUNNER_PI}"`),
   );
   return it;
+}
+
+/** The machine a spoke stage puts the DOOR on, and the one its runner is on. */
+export const DOOR_MACHINE = "pi";
+export const SPOKE_MACHINE = "mac";
+
+/**
+ * The stage options that put an agent's door on one machine and its runner on
+ * another, on top of whatever else a check is staging.
+ *
+ * Both entries are declared by name, because the refusal and the placement rule
+ * are read off the two `machine` fields and an agent whose door has no `[[run]]`
+ * entry at all is neither here nor there.
+ */
+export function spokeStage(): StageOptions {
+  return {
+    machines: [
+      { id: DOOR_MACHINE, os: "linux" },
+      { id: SPOKE_MACHINE, os: "macos" },
+    ],
+    run: [
+      {
+        id: DOOR,
+        kind: "door",
+        machine: DOOR_MACHINE,
+        platform: "fake",
+        person: PERSON,
+        token_file: "/dev/null",
+        schedule: "always",
+        memory_limit_mb: 192,
+      },
+      {
+        id: RUNNER2,
+        kind: "runner",
+        machine: SPOKE_MACHINE,
+        schedule: "always",
+        memory_limit_mb: 512,
+        child_memory_limit_mb: 2048,
+      },
+    ],
+    // The default agent ships on `runner-test`, which this registry has no entry
+    // for, so it is moved onto the spoke's runner the way `stageTwoMachines`
+    // moves its own.
+    registry: (base) => ({
+      ...base,
+      agents: (base.agents ?? []).map((one) =>
+        one.runner === RUNNER ? { ...one, runner: RUNNER2 } : one,
+      ),
+    }),
+  };
+}
+
+/**
+ * One registry with two machines, the default person and agent, the agent's
+ * DOOR on `pi` and its RUNNER on `mac`.
+ *
+ * It creates NO chat log directory. A runner on the spoke has none, and a
+ * helper that made one as a convenience would hide the whole point: the message
+ * such a runner reads exists as a store row and in no file on its machine.
+ *
+ * The person's tree is made under the stage's own scratch dir, because a
+ * registry carries an absolute path and the box binds it for real. A check that
+ * declares its own people owns them whole, tree or no tree.
+ */
+export async function stageSpoke(
+  cluster: Cluster,
+  options: StageOptions = {},
+): Promise<StagedHub> {
+  const spoke = spokeStage();
+  const placement = spoke.registry!;
+  const theirs = options.registry;
+  const ownPeople = options.people === undefined;
+  return await stageHub(cluster, {
+    ...spoke,
+    ...(ownPeople ? { people: [{ id: PERSON, language: "en" }] } : {}),
+    ...options,
+    registry: (base) => {
+      const placed = placement(base);
+      // The tree is filled in here rather than in the spec above because the
+      // scratch dir the path sits under is the stage's own and exists only once
+      // `stageHub` has made it.
+      const stateDir = String(base.hub?.state_dir ?? "");
+      const tree = join(stateDir, "trees", PERSON);
+      if (ownPeople) mkdirSync(tree, { recursive: true });
+      const withTree = ownPeople
+        ? {
+            ...placed,
+            people: (placed.people ?? []).map((one) =>
+              one.id === PERSON ? { ...one, tree } : one,
+            ),
+          }
+        : placed;
+      return theirs ? theirs(withTree) : withTree;
+    },
+  });
 }

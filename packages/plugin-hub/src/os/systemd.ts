@@ -52,6 +52,22 @@ function argument(value: string): string {
   return /[\s"'\\]/.test(value) ? JSON.stringify(value) : value;
 }
 
+/**
+ * Whether this unit text asks to be pinned.
+ *
+ * The section is what `enable` reads to place its symlink and what `disable`
+ * reads to take it away, so it is also what says whether a boot would pull the
+ * unit in.
+ */
+function pinned(text: string): boolean {
+  return text.split("\n").some((line) => line.trim() === "[Install]");
+}
+
+/** The file's own name, which is what every manager verb takes. */
+function nameOf(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
 function properties(block: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const line of block.split("\n")) {
@@ -213,7 +229,13 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
       ].join("\n");
       const files: UnitFile[] = [{ path: join(unitDir, `${name}.service`), text: unit }];
 
-      const every = wanted === "scheduled" ? scheduleSeconds(entry.schedule) : null;
+      // A cadence is carried by a unit of its own, so an entry the household
+      // stopped still renders its timer and the timer carries no [Install]:
+      // leaving the enabled one behind would let the timer start the service
+      // at the next boot, which is the one thing `enabled = false` promises
+      // will not happen. launchd needs none of this, because a cadence there is
+      // a key inside the one plist the render already drops.
+      const every = wanted === "scheduled" || wanted === "stopped" ? scheduleSeconds(entry.schedule) : null;
       if (every !== null) {
         files.push({
           path: join(unitDir, timer(entry.id)),
@@ -235,9 +257,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
             "AccuracySec=1s",
             `Unit=${name}.service`,
             "",
-            "[Install]",
-            "WantedBy=timers.target",
-            "",
+            ...(wanted === "scheduled" ? ["[Install]", "WantedBy=timers.target", ""] : []),
           ].join("\n"),
         });
       }
@@ -245,6 +265,19 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
     },
 
     async install(files: UnitFile[]): Promise<string[]> {
+      // A unit that is LOSING its [Install] section loses the symlink that
+      // section put in the manager's own wants directory, and it loses it
+      // BEFORE the overwrite, while the section naming the link is still on
+      // disk for `disable` to read. `stop` does not touch that link, so without
+      // this a piece the household stopped is pulled in again at the next boot.
+      // Same order and same reason as `remove` below, and best effort in the
+      // same way: a manager with nothing to drop says so and the install goes
+      // on.
+      for (const file of files) {
+        if (pinned(file.text)) continue;
+        if (!existsSync(file.path) || !pinned(readFileSync(file.path, "utf8"))) continue;
+        await ask(["--user", "disable", nameOf(file.path)]);
+      }
       const written: string[] = [];
       for (const file of files) {
         mkdirSync(dirname(file.path), { recursive: true });
@@ -257,8 +290,8 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
       // being answerable. The symlink is the manager's own, in its own wants
       // directory, and is not a file this installer wrote.
       for (const file of files) {
-        const name = file.path.slice(file.path.lastIndexOf("/") + 1);
-        if (!file.text.split("\n").some((line) => line.trim() === "[Install]")) continue;
+        const name = nameOf(file.path);
+        if (!pinned(file.text)) continue;
         await perform(
           name.endsWith(".timer")
             ? ["--user", "enable", "--now", name]

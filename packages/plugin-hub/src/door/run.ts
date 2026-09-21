@@ -3,7 +3,7 @@ import { historyHarvestFrom } from "../registry/entries.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
 import { classifyPlatformError, prepareReply } from "./reply.ts";
 import { requestRecovery } from "../hub/control.ts";
-import { appendChatLine, appendChatLineOnce, type BadRecord } from "../chatlog.ts";
+import { appendChatLineOnce, type BadRecord } from "../chatlog.ts";
 import { recordOperationFailure as recordDiagnostic } from "../diagnostics.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import {
@@ -833,14 +833,26 @@ export async function runDoor(options: {
         Math.round((Date.now() - countFrom(row)) / 1000),
       );
       const text = clockLine(language, stamp, seconds);
+      // One instant for the line and for the row below it, because the two are
+      // records of one sentence and a reader that rebuilds the line from the
+      // row has to land on the moment the file already holds.
+      const id = `clock:${row.id}:${stamp}`;
+      const at = new Date().toISOString();
       spoken.add(key);
       spokenAt.set(key, Date.now());
       // L2's "before sending", the same order a reply chunk is written in, so
       // the next spawned session reads exactly what the person read.
-      await appendChatLine(
+      //
+      // The id is the message and the clock, which is what makes the line
+      // unique: one message and one clock is said once. A door killed after
+      // this append and before the diary row below leaves no record that it
+      // spoke, so the door that replaces it says the clock again, and the id is
+      // what keeps that replay out of the chat log.
+      await appendChatLineOnce(
         { stateDir, person: row.person, agent: row.agent },
         {
-          at: new Date().toISOString(),
+          id,
+          at,
           direction: "out",
           // A machinery line is the DOOR speaking.
           from: options.door,
@@ -853,6 +865,8 @@ export async function runDoor(options: {
         seconds,
         person: row.person,
         agent: row.agent,
+        id,
+        at,
       });
       try {
         await options.platform.post({ chat: agent.chat, text });

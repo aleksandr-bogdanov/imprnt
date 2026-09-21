@@ -1,13 +1,56 @@
 import { recoveryDone, recoveryRefused, safeValue, type Language } from "../door/lines.ts";
 import { languageOf, listAgents, listRunEntries, senderAllowed } from "../registry/entries.ts";
+import { wantedState } from "../os/diff.ts";
 import { loadRegistry, type Registry } from "../registry/load.ts";
 import { appendEntry } from "../records/diary.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { listenForWork, type Listener } from "../store/listen.ts";
 import { appendNotice, type ReplyRoute } from "../store/outbox.ts";
 
+/**
+ * The entry kinds a restart may name through the `run` target.
+ *
+ * It is the pieces a person would press restart on, and it is a named constant
+ * rather than a literal inside the condition so that widening it is one line.
+ * The hub is absent because the hub is what acts on a restart, a board because
+ * the board is the asker and its own unit is what would go away, and a door
+ * because a door has a target kind of its own and two ways to name one thing is
+ * a difference somebody has to explain later.
+ *
+ * `transcriber` is on the list because a household that transcribes on its own
+ * machines declares one and a wedged recognizer is the thing its door asks to
+ * have back. A household that names no such recognizer carries no entry of that
+ * kind at all, so for it the name matches nothing.
+ */
+export const RUN_RECOVERY_KINDS = ["runner", "sync", "transcriber"] as const;
+
+/**
+ * The entry kinds a `run` target may name, for the front end that is asking.
+ *
+ * A DOOR REACHES EXACTLY ONE OF THEM: the recognizer beside it, whose failures
+ * the hub can classify. The wider set is for a person, at the command line or
+ * on the board, and a door asking for a runner back would be a door reaching
+ * past what it is allowed to know about. It is one function because the rule is
+ * asked twice: once where a request is made, and once by the hub before it acts
+ * on a row, since the roles a door and a runner hold may insert one into the
+ * store without passing through the first.
+ */
+export function reachableKinds(source: unknown): readonly string[] {
+  return source === "door" ? ["transcriber"] : RUN_RECOVERY_KINDS;
+}
+
+/** Whether a request from this source may name this target at all. */
+export function mayReach(source: unknown, targetKind: unknown, entryKind: string): boolean {
+  // A chat asks for an agent and for nothing a machine carries, and a source
+  // this hub has no name for asks for nothing at all.
+  if (source !== "cli" && source !== "board" && source !== "door") return false;
+  if (targetKind === "door") return source !== "door";
+  if (targetKind !== "run") return false;
+  return reachableKinds(source).includes(entryKind);
+}
+
 interface RecoveryRequest {
-  id: string; source: "cli" | "chat" | "door"; actor: string; person?: string;
+  id: string; source: "cli" | "chat" | "door" | "board"; actor: string; person?: string;
   sender_id?: string; door?: string; chat?: string; target_kind: string; target_id: string;
   /** The agent whose chat a chat request came in on. */
   agent?: string;
@@ -39,16 +82,25 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
   const registry = request.registry ?? loadRegistry(request.registryFile!);
   const agent = listAgents(registry).find(a => a.id === request.target_id);
   const door = listRunEntries(registry).find(e => e.id === request.target_id && e.kind === "door");
-  // The third target. It is ONLY a recognizer entry: the hub restarts a process
-  // whose failures it can classify, and a runner or a hub restarted from here
-  // would be a door reaching past what it is allowed to know about.
-  const run = listRunEntries(registry).find(e => e.id === request.target_id && e.kind === "transcriber");
+  // A `run` target is authorized by the entry's KIND and by nothing else, so
+  // the hub, the board and a door named this way all fall out through the one
+  // refusal a check can bind by name.
+  const reachable = reachableKinds(request.source);
+  const piece = listRunEntries(registry).find(e => e.id === request.target_id && reachable.includes(e.kind));
   if (request.target_kind === "agent" ? !agent : request.target_kind === "door" ? !door
-    : request.target_kind === "run" ? !run : true) throw new Error("invalid-recovery-target");
-  if (!["cli", "chat", "door"].includes(request.source)) throw new Error("invalid-recovery-source");
+    : request.target_kind === "run" ? !piece : true) throw new Error("invalid-recovery-target");
+  // A PIECE THE FILE SAYS IS DOWN IS NEVER RESTARTED. The manager's restart
+  // starts a service it is not running, so this would bring a stopped piece up
+  // for as long as it takes the hub's next tick to stop it again, and the
+  // household that asked for it to be down would watch it run.
+  const declared = piece ?? door;
+  if (declared && wantedState(declared) === "stopped") throw new Error("recovery-target-stopped");
+  // The board is treated as the operator is, because nobody on a tailnet page
+  // is identified and the row records that plainly.
+  if (!["cli", "chat", "door", "board"].includes(request.source)) throw new Error("invalid-recovery-source");
   // A door may ask for the recognizer beside it back and for nothing else. It
   // cannot ask for a door, its own included, because a piece that can restart
-  // its own supervisor is the failure L11 exists about.
+  // its own supervisor is the failure this fence exists about.
   if (request.source === "door" && request.target_kind !== "run") throw new Error("recovery-not-authorized");
   const declaredDoor = (registry.data.run as { id: string; person?: string }[]).find(e => e.id === door?.id);
   const person = agent?.person ?? declaredDoor?.person ?? request.person ?? null;
@@ -60,6 +112,10 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
     route: { door: request.door!, chat: request.chat! },
     agent: request.agent ?? listAgents(registry).find(a => a.person === person && a.door === request.door && a.chat === request.chat)!.id,
   } : {};
+  // `source` beside `actor`: which front end asked, as well as on whose behalf.
+  // The ledger's own actor column stays what the store's insert policy pins it
+  // to for the role that writes it, so the honest record of who pressed the
+  // button is here.
   const data = { id: request.id, actor: request.actor, source: request.source, person,
     target_kind: request.target_kind, target_id: request.target_id,
     requested_at: new Date().toISOString(), status: "pending", cause: null, ...asked };
@@ -80,7 +136,11 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
         on conflict (sheet,id) do nothing returning data`;
       if (!rows.length) return (await sql`select data from state_row where sheet='control' and id=${request.id}`)[0].data;
       await appendEntry({ ...store, sql: sql as unknown as StoreLike["sql"] }, { stream: "control", subject: request.id,
-        kind: "recovery.requested", actor: request.source === "cli" ? "hub" : "door", detail: data });
+        // The ledger's actor is the ROLE that wrote the line. A door writes the
+        // two a door asks for, and everything else reaches this function
+        // inside the hub's own process.
+        kind: "recovery.requested",
+        actor: request.source === "chat" || request.source === "door" ? "door" : "hub", detail: data });
       await sql`select pg_notify('hub_control',${request.id})`;
       return data;
     });

@@ -3,8 +3,9 @@ import { dirname } from "node:path";
 import { chatLogPath } from "../chatlog.ts";
 import { HARVEST_SHEET, watermarkId, watermarkOf } from "../harvest/sheet.ts";
 import { readSlice } from "../harvest/slice.ts";
+import { deriveSlice } from "../chatlog/derive.ts";
 import { readSheet } from "../records/statesheet.ts";
-import { historyHarvestFrom, type HarvestSettings } from "../registry/entries.ts";
+import { chatStateFor, historyHarvestFrom, type HarvestSettings } from "../registry/entries.ts";
 import type { AgentEntry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { findingId, type Finding } from "./finding.ts";
@@ -59,17 +60,30 @@ export async function readHarvestState(
   for (const agent of args.agents) {
     const watermark = sheet.get(watermarkId(agent.person, agent.id))?.at ?? null;
     const where = { stateDir: args.stateDir, person: agent.person, agent: agent.id };
-    const exists = existsSync(
-      dirname(chatLogPath({ ...where, at: args.now })),
-    );
+    const slice = {
+      from: historyHarvestFrom(args.registry, agent.person, watermark),
+      until: args.now.toISOString(),
+    };
+    // A chat whose door is on another machine has no directory here and never
+    // will, so what says it exists is whether the store holds a line of it at
+    // all. A chat nobody has used is not a chat, the same fact an absent
+    // directory carries locally.
+    const derived = chatStateFor(args.registry, agent.id) === "store";
+    let exists = derived
+      ? false
+      : existsSync(dirname(chatLogPath({ ...where, at: args.now })));
     let lines: { at: string }[] = [];
-    if (exists) {
+    if (derived || exists) {
       try {
-        lines = await readSlice({
-          ...where,
-          from: historyHarvestFrom(args.registry, agent.person, watermark),
-          until: args.now.toISOString(),
-        });
+        lines = derived
+          ? await deriveSlice(store, {
+              registry: args.registry,
+              person: agent.person,
+              agent: agent.id,
+              ...slice,
+            })
+          : await readSlice({ ...where, ...slice });
+        if (derived) exists = lines.length > 0;
       } catch {
         // A log this walk cannot read is a log `check` cannot measure, and a
         // finding invented from a half-written line would be worse than none.

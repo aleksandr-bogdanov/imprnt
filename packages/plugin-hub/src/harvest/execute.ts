@@ -10,8 +10,9 @@ import { harvestMessage } from "./prompt.ts";
 import { decodeHarvestBody, type HarvestBody } from "./row.ts";
 import { readWatermark, watermarkRow } from "./sheet.ts";
 import { readSlice } from "./slice.ts";
+import { deriveSlice } from "../chatlog/derive.ts";
 import { harvestNothing, harvestReport, type Language } from "../door/lines.ts";
-import { historyHarvestFrom, harvestFor, languageOf, filingRulesFor, noticeRoute } from "../registry/entries.ts";
+import { chatStateFor, historyHarvestFrom, harvestFor, languageOf, filingRulesFor, noticeRoute } from "../registry/entries.ts";
 import { readSetting, type Registry, type AgentEntry } from "../registry/load.ts";
 import { credentialOfPreset, getPreset, presetId, priceFor, type Preset } from "../registry/presets.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -187,14 +188,19 @@ export async function executeHarvest(args: {
   });
   const exclusion = historyHarvestFrom(registry, agent.person, null);
   const lower = [watermark?.at, offline?.from, exclusion].filter((v): v is string => typeof v === "string").sort().at(-1) ?? null;
-  const lines = await readSlice({
-    stateDir,
+  const slice = {
     person: agent.person,
     agent: agent.id,
     from: lower,
     until: body.until,
     includeFrom: Boolean(offline?.includeFrom && lower === offline.from && !watermark && !exclusion),
-  });
+  };
+  // The bound is the same arithmetic either way. Which reader answers it is the
+  // registry's: the file this machine's door wrote, or the store when the door
+  // that wrote it is on another machine.
+  const lines = chatStateFor(registry, agent.id) === "store"
+    ? await deriveSlice(store, { registry, ...slice })
+    : await readSlice({ stateDir, ...slice });
   if (offline) offline.lines = lines.length;
   const base = {
     from: lower,

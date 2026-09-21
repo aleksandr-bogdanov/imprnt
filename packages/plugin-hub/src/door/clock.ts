@@ -79,6 +79,10 @@ export async function recordExpiry(
     seconds: number;
     person: string;
     agent: string;
+    /** The chat log line's own id, the one the once-only append wrote under. */
+    id: string;
+    /** That line's own time, the same ISO instant the file got. */
+    at: string;
   },
 ): Promise<void> {
   await appendEntry(store, {
@@ -86,11 +90,17 @@ export async function recordExpiry(
     subject: expiry.messageId,
     kind: "expired",
     actor: "door",
+    // The line's id and its time are here and its TEXT is not. The sentence is
+    // a pure function of the stamp, the seconds and the person's language, so
+    // a reader that has this row can render it, and a second copy of a
+    // sentence is a copy that drifts from the one the person read.
     detail: {
       stamp: expiry.stamp,
       seconds: expiry.seconds,
       person: expiry.person,
       agent: expiry.agent,
+      id: expiry.id,
+      at: expiry.at,
     },
   });
 }

@@ -184,15 +184,19 @@ const WINDOWS: Record<string, string> = {
 };
 
 /**
- * Every file under `src/runner/`, and the digest each carried at the same
- * moment. The runner was rejected as the transcriber's parent, and this is the
- * assertion that says the rejection held.
+ * Every file under `src/runner/`, with the digest each one carries.
+ *
+ * The runner is not the recognizer's parent and nothing about transcription
+ * reaches it, so a change here that arrived with voice work means somebody made
+ * it one, which is what this table catches. An edit the runner earns for its own
+ * reasons updates the digest beside the change, and the directory listing above
+ * is what says a file was not quietly added or dropped instead.
  */
 const RUNNER: Record<string, string> = {
   "claim.ts": "3facf4135c6b27933d4e2193aec87c2aee03fb7209fa18cb794c07c70cfb76fa",
   "outage.ts": "3e363ae419beb0a974dae8587e550bf1ba051d76271e33a20c6aea85c678e7d8",
   "progress.ts": "5f52d49c969890f7979ff5dfeb5ed405869f75ac1a9d6a7c35f7fbf6c8546c8e",
-  "run.ts": "54eeda8f304ccd53d9cc7ea449766449569dea59688cbf808befa3922086d8a5",
+  "run.ts": "1970787e250394fc391accf7fa67f3a64193bc6276671911fa6f2c20776b19b8",
   "settle.ts": "5c671242861f975cb091c88b213b416feeebbf76f6b15619445d73c9f5fd37ee",
 };
 

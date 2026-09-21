@@ -1,6 +1,19 @@
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
+import { isIP } from "node:net";
+import { isUnspecified } from "../net/address.ts";
 import { isAbsolute, resolve, sep } from "node:path";
 import { ADAPTERS } from "../adapters/index.ts";
+import {
+  artifactsNotBoolean,
+  boardArtifactsPort,
+  boardBindMissing,
+  boardBindNotAddress,
+  boardBindWide,
+  boardPort,
+  enabledNotBoolean,
+  enabledOnBoard,
+  enabledOnHub,
+} from "../door/lines.ts";
 
 /**
  * The registry is the only place a setting lives. Every setting the code reads
@@ -212,6 +225,29 @@ export class UnknownSetting extends Error {
   }
 }
 
+/**
+ * The kinds every file may carry, as an ARRAY rather than a literal inside the
+ * condition that reads it, so adding one is a line here and nothing else.
+ *
+ * `transcriber` is deliberately not among them: it is the one kind a file may
+ * carry only while the household names a recognizer that runs here, so the
+ * condition below adds it for such a file and for no other.
+ */
+export const RUN_KINDS = ["hub", "door", "runner", "sync", "board"] as const;
+
+/**
+ * The kinds a household may not hold down with `enabled = false`.
+ *
+ * Neither could be started again from where it was stopped. The hub is what
+ * reads this file on its tick and starts what the file says should be running,
+ * and it renders itself without anything that would bring it back at the next
+ * boot, so a stopped hub is a household with nothing left to start anything.
+ * The board is the page a person would press start on. Taking either down is
+ * removing its entry, which is a deliberate edit rather than a field, and the
+ * page shows no stop on their rows for the same reason.
+ */
+export const NEVER_STOPPED = ["hub", "board"] as const;
+
 export interface RunEntry {
   id: string;
   kind: string;
@@ -232,14 +268,46 @@ export interface RunEntry {
   /** A door's bot token file. Every agent's box masks it. */
   token_file?: string;
   /**
-   * The three a `kind = "transcriber"` entry carries. The door reaches the
-   * recognizer on loopback at `port`. `residency` says whether the model is
-   * held between notes or dropped after `idle_seconds` of quiet, and only the
-   * one that drops it has an idle window anything reads.
+   * A board's one specific listening address.
+   *
+   * Binding to this machine's own tailnet address is what makes a board
+   * reachable on the tailnet and nowhere else. Nothing here can check that the
+   * address belongs to one, so what the loader refuses is the shape: a
+   * wildcard, an empty string, and a name.
+   */
+  bind?: string;
+  /**
+   * The port, carried by the two kinds that are reached at one: a board on the
+   * address above, and a `kind = "transcriber"` entry on loopback, which is
+   * where the door beside it posts.
    */
   port?: number;
+  /**
+   * The second port a board serves a person's artifacts on.
+   *
+   * It is a SEPARATE port because what it serves is written by an agent, and a
+   * page an agent wrote, served from the port the acts are on, would be the
+   * board's own origin in a browser: same origin, so its script may read every
+   * page and its form may press every button. A port of its own is a different
+   * origin and the browser refuses it that. Absent means no artifact is served
+   * at all, which is what a household that has not asked for the route gets.
+   */
+  artifacts_port?: number;
+  /**
+   * The recognizer's other two. `residency` says whether the model is held
+   * between notes or dropped after `idle_seconds` of quiet, and only the one
+   * that drops it has an idle window anything reads.
+   */
   residency?: string;
   idle_seconds?: number;
+  /**
+   * Whether the hub keeps this entry running. Absent means it does.
+   *
+   * It lives in the FILE because a hold kept anywhere else would be undone by
+   * the hub's own next tick, which starts whatever the file says should be
+   * running.
+   */
+  enabled?: boolean;
 }
 
 /**
@@ -308,6 +376,14 @@ export interface PersonEntry {
   harvest_quiet_minutes?: number;
   harvest_min_messages?: number;
   harvest_report?: boolean;
+  /**
+   * Whether the board serves what an agent built for this person.
+   *
+   * Absent means NOT served, so a household that adds a second person does not
+   * publish their pages by adding them to the file. Widening what the household
+   * exposes is one deliberate line here.
+   */
+  artifacts?: boolean;
   allowed_senders?: Record<string, string[]>;
   history_harvest_after?: string;
   filing_rules?: string;
@@ -570,6 +646,14 @@ function typeOfValue(value: unknown): string {
 
 function describe(value: unknown): string {
   return typeof value === "string" ? `"${value}"` : String(value);
+}
+
+/**
+ * The same value with no quotes around a string, for the sentences that already
+ * name the key they are about, where `"0.0.0.0"` reads as part of the address.
+ */
+function describeBare(value: unknown): string {
+  return typeof value === "string" ? value : String(value);
 }
 
 /**
@@ -870,7 +954,7 @@ export function loadRegistry(file: string): Registry {
     // itself and an absent one means the component is not installed, so in
     // either file the process is one nothing in production would ever reach,
     // and a piece that could never be reached cannot be configured.
-    const kinds = ["hub", "door", "runner", "sync"];
+    const kinds: string[] = [...RUN_KINDS];
     if (household?.provider === "sherpa-onnx") kinds.push("transcriber");
     if (!kinds.includes(entry.kind as string)) {
       refuse(
@@ -885,6 +969,78 @@ export function loadRegistry(file: string): Registry {
               }, so nothing would ever read the process`
             : ""),
       );
+    }
+
+    // Whether the hub keeps a piece running is asked of EVERY entry, and it is
+    // spread onto the entry only when the file carries it, so a file that says
+    // nothing produces the entry it produces today.
+    if (entry.enabled !== undefined && entry.enabled !== null && typeof entry.enabled !== "boolean") {
+      refuse(
+        `${at}.enabled`,
+        here,
+        enabledNotBoolean("en", { id, value: describeBare(entry.enabled) }),
+      );
+    }
+    if (entry.enabled === false && (NEVER_STOPPED as readonly string[]).includes(entry.kind as string)) {
+      refuse(
+        `${at}.enabled`,
+        here,
+        entry.kind === "hub" ? enabledOnHub("en", { id }) : enabledOnBoard("en", { id }),
+      );
+    }
+
+    // The address and the port, asked of a BOARD entry and of nothing else.
+    // The loader tolerates either key on another kind the way it tolerates any
+    // key it has no rule about.
+    if (entry.kind === "board") {
+      const bind = entry.bind;
+      if (bind === undefined || bind === null || bind === "") {
+        refuse(`${at}.bind`, here, boardBindMissing("en", { id }));
+      } else if (typeof bind !== "string") {
+        refuse(`${at}.bind`, here, boardBindNotAddress("en", { id, bind: describeBare(bind) }));
+      } else if (isUnspecified(bind)) {
+        // EVERY SPELLING OF EVERY INTERFACE. `0.0.0.0` and `::` are what a
+        // person writes, and `::0`, `0:0:0:0:0:0:0:0` and `::ffff:0.0.0.0` are
+        // those same two addresses said differently, so the comparison is on
+        // the address. The file's OWN words go into the sentence, because what
+        // an operator has to find and change is what they wrote.
+        refuse(`${at}.bind`, here, boardBindWide("en", { id, bind }));
+      } else if (isIP(bind) === 0) {
+        // A NAME IS REFUSED WHERE AN ADDRESS IS NOT. A name resolves at bind
+        // time to whatever the resolver answers, which can be a wildcard by
+        // another route, so a file that read as one specific address would end
+        // up serving every interface the box has. Nothing here validates a
+        // RANGE: a loader that did would carry a behaviour constant it cannot
+        // verify and would refuse a household that reaches its board another
+        // way.
+        refuse(`${at}.bind`, here, boardBindNotAddress("en", { id, bind }));
+      }
+      const port = entry.port;
+      if (
+        port === undefined ||
+        port === null ||
+        typeof port !== "number" ||
+        !Number.isInteger(port) ||
+        port < 1 ||
+        port > 65535
+      ) {
+        refuse(`${at}.port`, here, boardPort("en", { id, value: describeBare(port) }));
+      }
+      // The artifacts port is optional, and a file that names none serves no
+      // artifact. Where it is named it is a port of its own: the same port
+      // would put an agent's own pages on the origin the acts are on.
+      const shows = entry.artifacts_port;
+      if (
+        shows !== undefined &&
+        shows !== null &&
+        (typeof shows !== "number" ||
+          !Number.isInteger(shows) ||
+          shows < 1 ||
+          shows > 65535 ||
+          shows === port)
+      ) {
+        refuse(`${at}.artifacts_port`, here, boardArtifactsPort("en", { id, value: describeBare(shows) }));
+      }
     }
 
     const machine = entry.machine;
@@ -987,10 +1143,17 @@ export function loadRegistry(file: string): Registry {
       schedule: entry.schedule as string,
       memory_limit_mb: limit,
       machine: typeof machine === "string" && machine !== "" ? machine : (machines[0]?.id ?? ""),
-      ...Object.fromEntries([
-        "max_active_children", "child_memory_budget_mb", "repositories", "token_file",
-        "port", "residency", "idle_seconds",
-      ].filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
+      ...Object.fromEntries(["max_active_children", "child_memory_budget_mb", "repositories", "token_file", "enabled"]
+        .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
+      // The fields that belong to ONE kind, carried onto that kind's row and
+      // IGNORED on every other, the way the loader has always tolerated a key
+      // it has no rule about. A board is reached at an address and a port, the
+      // recognizer at a port on loopback plus the two knobs that say how long
+      // it holds its model. Carrying any of them onto a door's row would put a
+      // field on it that nothing reads and that a reader would have to explain.
+      ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
+        : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"] : [])
+        .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
   });
@@ -1268,6 +1431,14 @@ export function loadRegistry(file: string): Registry {
           `back is a true or a false`,
       );
     }
+    const shows = entry.artifacts;
+    if (shows !== undefined && shows !== null && typeof shows !== "boolean") {
+      refuse(
+        `${where}.artifacts`,
+        lines.get(`${where}.artifacts`) ?? here,
+        artifactsNotBoolean("en", { id, value: describeBare(shows) }),
+      );
+    }
     if (entry.filing_rules !== undefined) readable(entry.filing_rules, `${where}.filing_rules`);
     if (entry.history_harvest_after !== undefined &&
         (typeof entry.history_harvest_after !== "string" ||
@@ -1296,6 +1467,9 @@ export function loadRegistry(file: string): Registry {
         ? { harvest_min_messages: entry.harvest_min_messages }
         : {}),
       ...(typeof reports === "boolean" ? { harvest_report: reports } : {}),
+      // Spread, never set, like every optional field above: a check binds the
+      // shape of a person who declares none of them.
+      ...(typeof shows === "boolean" ? { artifacts: shows } : {}),
     };
 
     // Spread, never set: a file that carries none of the ten leaves an entry

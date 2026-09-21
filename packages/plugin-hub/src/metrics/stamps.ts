@@ -1,3 +1,4 @@
+import { MEDIA_STREAM } from "../voice/records.ts";
 import type { StoreLike } from "../store/connect.ts";
 
 /**
@@ -16,6 +17,33 @@ export const STAMP_METRICS = [
   { id: "answered-to-delivered", from: "answered", to: "delivered", alerts: true },
   { id: "time-to-delivered", from: "received", to: "delivered", alerts: false },
 ] as const;
+
+/**
+ * How long a voice note waited for its words, as a SIXTH measure beside the
+ * five and never inside them.
+ *
+ * It lives here rather than in the array above because a shipped check binds
+ * that array as a whole, so a sixth entry inside it would be a change nobody
+ * declared, and because it is a different kind of fact: the five are cut from
+ * one message's own stamps and this one is cut from the door's transcription
+ * diary. `alerts` is false for the reason the last of the five is false: the
+ * alert is `check`'s stamp finding, and a second path over the same numbers
+ * would be two implementations of one verb.
+ *
+ * It is measured from the two DIARY lines and never from `media_done_at`, which
+ * the ack clock already leans on. One number cut two ways is two numbers that
+ * disagree the first time one of the cuts moves.
+ */
+export const TRANSCRIBE_METRIC = {
+  id: "transcribe",
+  stream: MEDIA_STREAM,
+  from: "transcribe.started",
+  to: "transcribe.done",
+  alerts: false,
+} as const;
+
+/** The five and the sixth, in the order a table prints them. */
+const EVERY_METRIC = [...STAMP_METRICS, TRANSCRIBE_METRIC];
 
 /**
  * One metric over one window. NULL and not zero when nothing was measured: zero
@@ -80,10 +108,40 @@ gap as (
     join first_stamp b on b.subject = i.id and b.kind = m.to_kind
    where i.kind = 'human'
 ),
+media_stamp as (
+  -- The FIRST line of each kind per note, exactly as the stamps above: a
+  -- transcription that was retried writes a second start, and a retry cannot be
+  -- allowed to shorten the interval a household reads.
+  select subject, kind, min(at) as at
+    from ledger_event
+   where stream = '${TRANSCRIBE_METRIC.stream}'
+     and kind in ('${TRANSCRIBE_METRIC.from}', '${TRANSCRIBE_METRIC.to}')
+   group by subject, kind
+),
+voice as (
+  -- A note whose words never landed contributes NOTHING, and that falls out of
+  -- the join rather than out of a filter: there is no done line to join to. The
+  -- interval is from the moment the step began to the moment the text existed,
+  -- and a note that never got one has no interval to report.
+  select i.person, i.agent, '${TRANSCRIBE_METRIC.id}' as metric,
+         b.at as landed,
+         extract(epoch from (b.at - a.at))::float8 * 1000 as ms
+    from inbound i
+    join media_stamp a on a.subject = i.id and a.kind = '${TRANSCRIBE_METRIC.from}'
+    join media_stamp b on b.subject = i.id and b.kind = '${TRANSCRIBE_METRIC.to}'
+   where i.kind = 'human'
+),
 scoped as (
   select 'person' as scope, person as id, metric, landed, ms from gap
   union all
   select 'agent' as scope, agent as id, metric, landed, ms from gap
+  union all
+  -- The window rule is the shipped one and needs nothing new: the landed
+  -- column is the LATER stamp, so a note started yesterday whose words arrived
+  -- today counts in today.
+  select 'person' as scope, person as id, metric, landed, ms from voice
+  union all
+  select 'agent' as scope, agent as id, metric, landed, ms from voice
 )
 select s.scope, s.id, w.name as win, s.metric,
        count(*)::int as n,
@@ -116,8 +174,8 @@ export function percentileOf(sorted: number[], p: number): number | null {
 }
 
 /**
- * The five metrics, p50, p99 and a count, per person
- * and per agent, over today and over this week.
+ * The five metrics and the transcribing interval, p50, p99 and a count, per
+ * person and per agent, over today and over this week.
  *
  * A MEASUREMENT BELONGS TO THE WINDOW HOLDING ITS LATER STAMP, because
  * that is the moment the number became knowable. Anchoring on `received_at`
@@ -193,7 +251,7 @@ export async function readStampMetrics(
   for (const one of scopes) {
     for (const window of ["today", "week"] as const) {
       const measures: Record<string, Measure> = {};
-      for (const metric of STAMP_METRICS) {
+      for (const metric of EVERY_METRIC) {
         const said = found.get(`${one.scope}/${one.id}/${window}/${metric.id}`);
         measures[metric.id] = said
           ? { p50_ms: said.p50, p99_ms: said.p99, count: said.n }
@@ -219,7 +277,7 @@ const HEADINGS = ["scope", "who", "window", "metric", "p50 ms", "p99 ms", "count
 export function renderMetrics(rows: MetricsRow[]): string {
   const cells: string[][] = [HEADINGS];
   for (const row of rows) {
-    for (const metric of STAMP_METRICS) {
+    for (const metric of EVERY_METRIC) {
       const measure = row.measures[metric.id] ?? { p50_ms: null, p99_ms: null, count: 0 };
       const nothing = measure.count === 0;
       cells.push([

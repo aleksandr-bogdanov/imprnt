@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { appendEntry } from "../records/diary.ts";
-import { diffUnits, seenUnits, wantedState, wantedUnits } from "../os/diff.ts";
+import { diffUnits, seenUnits, stillUp, wantedState, wantedUnits } from "../os/diff.ts";
 import { entryIdOf } from "../os/names.ts";
 import { thisOs } from "../os/index.ts";
 import type { OsSeam, RenderContext } from "../os/types.ts";
@@ -10,7 +10,7 @@ import { openStore, type Store } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.ts";
 import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
-import { watchControls } from "./control.ts";
+import { mayReach, RUN_RECOVERY_KINDS, watchControls } from "./control.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { programForKind, transcriberArgv } from "./program.ts";
 
@@ -205,6 +205,20 @@ export async function runHub(options: {
       await say("unit.started", one.id, { entry: one.id, machine: options.machine });
     }
 
+    // The file says this piece should be down, and the manager is still
+    // carrying it: a running service, or a timer still armed to start one. It
+    // reads the WANTED STATE rather than the diff's stale set, because a
+    // stopped entry is still declared and stopping a declared, enabled entry is
+    // the one thing this pass must never do.
+    for (const entry of entries) {
+      if (wantedState(entry) !== "stopped") continue;
+      const running = found.some(unit => entryIdOf(unit.name) === entry.id && stillUp(unit));
+      if (!running) continue;
+      try { await os.stop(entry.id); }
+      catch (error) { await recordOperationFailure(store, { operation: "stop", target: entry.id, error }); continue; }
+      await say("unit.stopped", entry.id, { entry: entry.id, machine: options.machine });
+    }
+
     for (const unit of difference.stale) {
       const id = entryIdOf(unit.name);
       if (id === null) continue;
@@ -307,19 +321,34 @@ export async function runHub(options: {
    * be a fence widened for a diagnostic this side can already write.
    */
   const restartedAt = new Map<string, number>();
-  const targets = (data: Record<string, unknown>, kind: string): boolean =>
+  const targets = (data: Record<string, unknown>, kinds: readonly string[]): boolean =>
     runEntriesFor(loadRegistry(options.registryFile), options.machine)
-      .some(e => e.id === data.target_id && e.kind === kind);
+      .some(e => e.id === data.target_id && kinds.includes(e.kind));
   const controls = await watchControls(store, "hub",
-    // A recognizer entry of THIS machine joins the door as a target. Anything
-    // else, and anything on another machine, is not this hub's to act on.
-    data => (data.target_kind === "door" && targets(data, "door")) ||
-      (data.target_kind === "run" && targets(data, "transcriber")), async data => {
+    // A door, or a run target of one of the kinds a restart may name, on THIS
+    // machine. Another machine's entry belongs to that machine's hub.
+    data => (data.target_kind === "door" && targets(data, ["door"])) ||
+      (data.target_kind === "run" && targets(data, RUN_RECOVERY_KINDS)), async data => {
       const id = String(data.target_id);
-      // The limit is the RECOGNIZER's alone. An operator asking for a door back
-      // is a person who meant it, and nothing about a door's failures makes a
-      // second ask a loop.
-      const bounded = data.target_kind === "run";
+      // THE SAME RULE THE ASKING SIDE ENFORCES, asked again here. The roles a
+      // door and a runner hold may insert a control row straight into the
+      // store, which never passes through `requestRecovery`, and the hub is
+      // what would perform the restart.
+      const named = runEntriesFor(loadRegistry(options.registryFile), options.machine).find(one => one.id === id);
+      if (!mayReach(data.source, data.target_kind, named?.kind ?? "")) throw new Error("recovery-not-authorized");
+      // The same answer the asking side gives, asked again for the same reason:
+      // the file may have stopped this piece since the row was written, and a
+      // restart would bring it up until the next tick stopped it again.
+      if (named && wantedState(named) === "stopped") throw new Error("recovery-target-stopped");
+      // WHO IS BOUNDED AND WHY. The recognizer, because a wedged one asks for
+      // itself back with no person involved. And everything the BOARD asks
+      // for, because the board is the one front end that takes a request
+      // without anybody being identified: a page left open, a reload or
+      // anything on the tailnet that can post to it can ask as often as it
+      // likes, and a piece restarted in a loop is a piece that is never up. The
+      // operator at the terminal is a person who typed it, and nothing about a
+      // failed restart makes their second ask a loop.
+      const bounded = data.target_kind === "run" && (targets(data, ["transcriber"]) || data.source === "board");
       const seconds = setting(loadRegistry(options.registryFile), "hub.outage_retry_seconds", 300);
       const last = restartedAt.get(id);
       if (bounded && last !== undefined && Date.now() - last < seconds * 1000) {

@@ -69,6 +69,71 @@ export function runEntriesFor(registry: unknown, machine: string): RunEntry[] {
   return listRunEntries(it).filter((entry) => entry.machine === machine);
 }
 
+/**
+ * This machine's board entry, or null when it serves none.
+ *
+ * Null is a real answer: a household runs one board, on one machine, and every
+ * other machine has none.
+ */
+export function boardFor(registry: unknown, machine: string): RunEntry | null {
+  const found = runEntriesFor(loaded(registry, "boardFor"), machine).find(
+    (entry) => entry.kind === "board",
+  );
+  return found ? { ...found } : null;
+}
+
+/**
+ * Whether the hub keeps this entry running. Absent means it does, so a file
+ * written before the field existed says the same thing it always said.
+ */
+export function enabledOf(entry: { enabled?: boolean }): boolean {
+  return entry.enabled !== false;
+}
+
+/**
+ * The directory the board serves for this person, or null.
+ *
+ * Null for a person who did not opt in, for one the file does not declare and
+ * for one with no tree, which are the same answer to a reader: nothing here.
+ * Whether the directory exists is a question about a machine and is answered
+ * where the file is read, not here.
+ */
+export function artifactsFor(registry: unknown, personId: string): string | null {
+  const person = loaded(registry, "artifactsFor").people.find((one) => one.id === personId);
+  if (!person || person.artifacts !== true || person.tree === "") return null;
+  return join(person.tree, "artifacts");
+}
+
+/** Where an agent's chat is read from: the file its door wrote, or the store. */
+export type ChatStatePlacement = "file" | "store";
+
+/**
+ * Which of the two a runner serving this agent reads, decided by the registry
+ * and by nothing else.
+ *
+ * The chat log is one file per agent, written by its DOOR on the door's own
+ * machine. A runner elsewhere has no such file and never will, so it reads the
+ * same lines out of the store, which holds every message in both directions
+ * already. A file every household starts with declares one machine or none,
+ * and then the two entries agree and the file is the answer.
+ *
+ * It takes the registry and the agent, because a placement that could be
+ * switched from a command line or an environment variable is a second place for
+ * this household to disagree with itself about where its chat is.
+ */
+export function chatStateFor(registry: unknown, agentId: string): ChatStatePlacement {
+  const it = loaded(registry, "chatStateFor");
+  const agent = it.agents.find((one) => one.id === agentId);
+  if (!agent) return "file";
+  const door = it.run.find((one) => one.id === agent.door);
+  const runner = it.run.find((one) => one.id === agent.runner);
+  // An entry the file does not declare says nothing about where anything is,
+  // and inventing a placement from a missing entry would move an agent's chat
+  // on a typo.
+  if (!door || !runner) return "file";
+  return door.machine === runner.machine ? "file" : "store";
+}
+
 /** The person an agent belongs to, or null when the file declares none. */
 export function personOf(registry: unknown, agentId: string): PersonEntry | null {
   const it = loaded(registry, "personOf");

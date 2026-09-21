@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { loadRegistry, readSetting } from "../registry/load.ts";
-import { listAgents, listMachines, listRunEntries } from "../registry/entries.ts";
+import { listMachines, listRunEntries } from "../registry/entries.ts";
 import { thisOs } from "../os/index.ts";
 import { wantedState } from "../os/diff.ts";
 import type { OsSeam } from "../os/types.ts";
@@ -194,13 +194,12 @@ export async function runInstall(options: { registryFile: string; stage?: string
   const selected = entries.filter(e => e.machine === target.machine);
   const hubs = selected.filter(e => e.kind === "hub" && wantedState(e) === "running");
   if (hubs.length !== 1) throw new Error("one-resident-hub-required");
-  for (const agent of listAgents(registry)) {
-    if (entries.find(e => e.id === agent.runner)?.machine !== entries.find(e => e.id === agent.door)?.machine) throw new Error("agent-state-unavailable");
-  }
   const store = await openStore({ url: storeUrlFor(registry, "hub_hub") });
   try {
-    // A box whose migration did not land says so here rather than on the first
-    // voice note somebody sends.
+    // The columns a voice note and a chat read from the store both need, asked
+    // for in one probe so a box whose migration did not land says so here,
+    // naming the column, rather than on the first voice note somebody sends or
+    // the first turn a runner has to serve for a door on another machine.
     await store.sql`select source, log_ready, media_state from inbound limit 0`;
     await store.sql`select route, delivery_state from outbox limit 0`;
     const os = options.os ?? thisOs();

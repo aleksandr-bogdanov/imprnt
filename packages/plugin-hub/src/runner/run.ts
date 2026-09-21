@@ -9,6 +9,7 @@ import { AdapterMissing, type Adapter, type AdapterSession, type TurnEnd } from 
 import { credentialSource } from "../adapters/launch.ts";
 import { boxContextFor } from "../box/index.ts";
 import { readTail } from "../chatlog.ts";
+import { deriveTail } from "../chatlog/derive.ts";
 import { SAID_CAP } from "../harvest/parse.ts";
 import { thisOs } from "../os/index.ts";
 import { appendEntry, type NewEntry } from "../records/diary.ts";
@@ -25,6 +26,7 @@ import {
 } from "../door/lines.ts";
 import {
   agentsFor,
+  chatStateFor,
   lifetimeFor,
   runnerLimitsFor,
   languageOf,
@@ -458,10 +460,11 @@ export async function runRunner(options: {
       throw Object.assign(new Error(safeValue((exit as { cause?: string })?.cause ?? "child-exited")), { childExited: true });
     })
     : new Promise<never>(() => {});
+  // An agent whose door is on another machine reads its chat out of the store,
+  // so there is no local path for it to be unavailable. What is checked here is
+  // THIS machine's own state root: a path that exists and cannot be read as a
+  // directory is a chat that would be served empty in silence.
   const preflight = (registry: Registry, agent: AgentEntry) => {
-    const entries = listRunEntries(registry);
-    if (entries.find(one => one.id === agent.door) && entries.find(one => one.id === agent.door)?.machine !== entries.find(one => one.id === agent.runner)?.machine)
-      throw new Error("agent-state-unavailable");
     for (const path of [stateDir, join(stateDir, agent.person), join(stateDir, agent.person, "chatlog"), join(stateDir, agent.person, "chatlog", agent.id)]) {
       try {
         if (!statSync(path).isDirectory()) throw new Error("not a directory");
@@ -832,14 +835,18 @@ export async function runRunner(options: {
 
       // A spawned session has no memory of what was said, so the tail of the
       // log is the first thing it is fed and a human message is never the first.
-      const tail = await readTail({
-        stateDir,
+      // Where those lines are read from is the registry's answer: the file this
+      // machine's door wrote, or the store when that door is somewhere else.
+      const where = {
         person: agent.person,
         agent: agent.id,
         now: new Date(),
         hours: setting(registry, "hub.tail_hours"),
         tokens: setting(registry, "hub.tail_tokens"),
-      });
+      };
+      const tail = chatStateFor(registry, agent.id) === "store"
+        ? await deriveTail(store, { registry, ...where })
+        : await readTail({ stateDir, ...where });
       if (tail !== "") await oneTurn({ id: agent.id, text: tail }, { preset, tail: true, registry });
     };
 

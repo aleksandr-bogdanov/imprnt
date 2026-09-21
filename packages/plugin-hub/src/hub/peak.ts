@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { putRow, readSheet } from "../records/statesheet.ts";
+import { wantedState } from "../os/diff.ts";
 import { runEntriesFor } from "../registry/entries.ts";
 import { readSetting } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -156,8 +157,12 @@ export function overLimit(args: {
  * a permanent finding is noise.
  */
 export function residentIds(registry: unknown, machine: string): string[] {
+  // The wanted state rather than the raw schedule, which is the same answer for
+  // every entry whose file says nothing about `enabled` and keeps a piece the
+  // household stopped out of the resident set. Otherwise a deliberately stopped
+  // service earns `peak-missing` for as long as it is down.
   const own = runEntriesFor(registry, machine)
-    .filter((entry) => String(entry.schedule).trim().toLowerCase() === "always")
+    .filter((entry) => wantedState(entry) === "running")
     .map((entry) => entry.id);
   return [...own, POSTGRES_PEAK_ID];
 }

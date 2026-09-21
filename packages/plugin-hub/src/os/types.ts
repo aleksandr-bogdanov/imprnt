@@ -8,8 +8,14 @@ import type { RunEntry } from "../registry/load.ts";
  * Types only. No runtime code lives here.
  */
 
-/** What a `[[run]]` entry's schedule asks the manager for. */
-export type WantedState = "running" | "scheduled" | "loaded";
+/**
+ * What a `[[run]]` entry asks the manager for.
+ *
+ * Three of the four come from the schedule. The fourth, `stopped`, comes from
+ * the file's own `enabled` field, because a hold kept anywhere the hub does not
+ * re-read would be undone by its next tick.
+ */
+export type WantedState = "running" | "scheduled" | "loaded" | "stopped";
 
 export interface UnitState {
   name: string;            // imprnt-hub-runner-pi.service, or an imprnt-* stray
