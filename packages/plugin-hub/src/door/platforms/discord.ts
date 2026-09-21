@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import type { MediaRef, Platform, PlatformMessage } from "../platform.ts";
+import { classifyPlatformError } from "../reply.ts";
+import type { ChatDescription, ChatResolution, MediaRef, Platform, PlatformMessage } from "../platform.ts";
 
 /**
  * The transport, narrowed to what this file calls. It is NOT `typeof fetch`,
@@ -40,8 +41,39 @@ interface Message {
   author: { id: string; username?: string; bot?: boolean };
 }
 
+/**
+ * What Discord calls a channel of this type, in one word, for the description
+ * the seam answers. Anything else is a channel and says so.
+ */
+function channelKind(type: unknown): string {
+  return { 0: "text", 1: "dm", 2: "voice", 3: "group", 4: "category", 5: "announcement",
+    11: "thread", 12: "thread", 15: "forum" }[Number(type)] ?? "channel";
+}
+
+/**
+ * The guild's channels, through the authenticated API, with the transport the
+ * caller supplies. It is ONE function because the offline registry conversion
+ * and the seam ask the same question, and two spellings of the same request
+ * would validate the answer two ways.
+ */
+async function channelsOf(send: Send, token: string, guild: string): Promise<{ id: string; name: string }[]> {
+  const answer = await send(`${API}/guilds/${encodeURIComponent(guild)}/channels`, {
+    method: "GET", headers: { authorization: `Bot ${token}` }, signal: AbortSignal.timeout(ANSWER_WITHIN_MS),
+  });
+  if (!answer.ok) throw Object.assign(new Error(`channel lookup refused: ${answer.status}`), { status: answer.status });
+  const channels = await answer.json();
+  if (!Array.isArray(channels) || !channels.every(c => typeof c.id === "string" && typeof c.name === "string")) throw new Error("invalid channel response");
+  return channels as { id: string; name: string }[];
+}
+
 export function discord(options: {
   tokenFile: string;
+  /**
+   * The server this door's channels live in, which a name can be resolved
+   * against. Optional: a door without one still takes a channel id, and that is
+   * the floor that needs no discovery.
+   */
+  guild?: string;
   /** The transport, defaulting to the global. The same seam telegram() takes. */
   fetch?: typeof fetch;
 }): Platform {
@@ -53,8 +85,53 @@ export function discord(options: {
     throw Object.assign(new Error(`discord refused ${what}: ${answer.status} ${await answer.text()}`), { status: answer.status });
   };
 
+  /** One channel, or a throw a caller can classify and retry on. */
+  const channel = async (chat: string): Promise<{ id: string; name: string; type: unknown } | null> => {
+    const answer = await send(`${API}/channels/${encodeURIComponent(chat)}`, {
+      headers, signal: AbortSignal.timeout(ANSWER_WITHIN_MS),
+    });
+    // A channel that is gone is an ANSWER and not a failure, which is what a
+    // repair after somebody deleted one turns on.
+    if (answer.status === 404) { await answer.body?.cancel(); return null; }
+    if (!answer.ok) await refuse("a channel read", answer);
+    return (await answer.json()) as { id: string; name: string; type: unknown };
+  };
+
   return {
     name: "discord",
+    admin: {
+      async resolveChat(ref: string): Promise<ChatResolution> {
+        if (/^\d+$/.test(ref)) {
+          const found = await channel(ref);
+          return found === null
+            ? { kind: "absent", cause: "chat missing", detail: `this bot cannot see a channel with the id ${ref}` }
+            : { kind: "chat", chat: String(found.id), name: String(found.name) };
+        }
+        // A door whose entry names no server has nothing to resolve a name
+        // against, and asking for one would be asking for a permission this
+        // household never granted.
+        if (!options.guild) {
+          return { kind: "unsupported", cause: "unsupported on this platform",
+            detail: "this door's entry names no server, so a channel name cannot be looked up. Its id still works" };
+        }
+        // ONE listing, on the command a person typed, and never on a tick.
+        const channels = await channelsOf(send, token, options.guild);
+        const found = channels.filter(one => one.name === ref);
+        if (found.length === 0) return { kind: "absent", cause: "chat missing", detail: `no channel of this server is called ${ref}` };
+        if (found.length > 1) return { kind: "ambiguous", cause: "chat name ambiguous", detail: `${found.length} channels of this server are called ${ref}` };
+        return { kind: "chat", chat: found[0].id, name: found[0].name };
+      },
+      async describeChat(chat: string): Promise<ChatDescription> {
+        try {
+          const found = await channel(chat);
+          return found === null ? { exists: false, name: null, kind: null }
+            : { exists: true, name: String(found.name), kind: channelKind(found.type) };
+        } catch (error) {
+          const failure = classifyPlatformError(error);
+          return { exists: false, name: null, kind: null, failure: { code: failure.code, cause: failure.cause } };
+        }
+      },
+    },
     // "Post a typing indicator ... which expires after 10 seconds", API v10.
     typingSeconds: 10,
     async pull({ chat, cursor, timeoutMs }) {
@@ -167,11 +244,5 @@ export function discord(options: {
 /** Offline registry conversion resolves names through the same authenticated API. */
 export async function discordChannels(options: { guild: string; token_file: string }) {
   const token = readFileSync(options.token_file, "utf8").trim();
-  const answer = await fetch(`${API}/guilds/${encodeURIComponent(options.guild)}/channels`, {
-    method: "GET", headers: { authorization: `Bot ${token}` }, signal: AbortSignal.timeout(ANSWER_WITHIN_MS),
-  });
-  if (!answer.ok) throw new Error(`channel lookup refused: ${answer.status}`);
-  const channels = await answer.json();
-  if (!Array.isArray(channels) || !channels.every(c => typeof c.id === "string" && typeof c.name === "string")) throw new Error("invalid channel response");
-  return channels as { id: string; name: string }[];
+  return await channelsOf((input, init) => fetch(input, init), token, options.guild);
 }

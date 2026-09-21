@@ -262,6 +262,17 @@ export interface RunEntry {
   /** A door's bot token file. Every agent's box masks it. */
   token_file?: string;
   /**
+   * The two a door entry may carry, both optional, and an entry that names
+   * neither reads back exactly as it does today.
+   *
+   * `guild` is the Discord server a channel NAME is resolved against, and a
+   * door without one still takes a channel id. `default_preset` is the preset
+   * an agent adopted through this door is created with, and an adopt is refused
+   * when the entry names none, because a new agent has to run as something.
+   */
+  guild?: string;
+  default_preset?: string;
+  /**
    * A board's one specific listening address.
    *
    * Binding to this machine's own tailnet address is what makes a board
@@ -1118,6 +1129,22 @@ export function loadRegistry(file: string): Registry {
       childLimit = typeof asked === "number" ? asked : undefined;
     }
 
+    // A door's two optional fields. A value of the wrong type is refused by
+    // name here, and whether `default_preset` names a preset this file defines
+    // is asked once the presets are parsed, further down.
+    for (const field of ["guild", "default_preset"] as const) {
+      const value = entry[field];
+      if (value === undefined || value === null) continue;
+      if (entry.kind !== "door") {
+        refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here,
+          `${id} is a ${entry.kind} and carries ${field}, which only a door reads`);
+      }
+      if (typeof value !== "string" || value.trim() === "") {
+        refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here,
+          `${id} has ${field} ${describe(value)}, and it must be a nonempty string`);
+      }
+    }
+
     // The transcriber's own three. The door posts to 127.0.0.1:<port>, so an
     // entry without one could never be reached at all.
     if (entry.kind === "transcriber") {
@@ -1172,10 +1199,13 @@ export function loadRegistry(file: string): Registry {
       // IGNORED on every other, the way the loader has always tolerated a key
       // it has no rule about. A board is reached at an address and a port, the
       // recognizer at a port on loopback plus the two knobs that say how long
-      // it holds its model. Carrying any of them onto a door's row would put a
-      // field on it that nothing reads and that a reader would have to explain.
+      // it holds its model, and a door names the server a channel name is
+      // resolved against and the preset it adopts agents with. Carrying any of
+      // them onto another kind's row would put a field on it that nothing reads
+      // and that a reader would have to explain.
       ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
-        : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"] : [])
+        : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"]
+        : entry.kind === "door" ? ["guild", "default_preset"] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
@@ -1671,6 +1701,21 @@ export function loadRegistry(file: string): Registry {
       preset: entry.preset as string,
       runner: entry.runner as string,
     });
+  });
+
+  // The preset a door adopts an agent with, checked against the presets this
+  // file defines. Asked of EVERY door entry and not only of one that serves an
+  // agent, because the first agent a door ever gets is the one an adopt
+  // creates, and a preset nobody declared would be found at that moment.
+  entries.forEach((entry, nth) => {
+    if (entry.kind !== "door" || entry.default_preset === undefined) return;
+    if (!Object.hasOwn(presets, entry.default_preset)) {
+      refuse(
+        `run[${nth}].default_preset`,
+        lines.get(`run[${nth}].default_preset`) ?? lines.get(`run[${nth}].id`) ?? 0,
+        `${entry.id} adopts agents with the preset ${entry.default_preset}, which this file does not define`,
+      );
+    }
   });
 
   // A door that serves an agent has to say which platform it speaks, whose it is

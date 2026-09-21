@@ -341,8 +341,10 @@ export function createFakePlatform(options: FakePlatformOptions): FakePlatform {
   for (const chat of (options.admin === undefined || options.admin === false ? [] : options.admin.chats ?? [])) {
     known.set(chat.chat, { exists: true, kind: "channel", ...chat });
   }
+  // The message carries a header the way a real client's error does, so a check
+  // can assert that none of it reaches a person's chat.
   const refusal = (verb: string) =>
-    new PlatformRefused(`${options.name} refused ${verb} with token ${"a-bot-token-shaped-string"}`);
+    new PlatformRefused(`${options.name} refused ${verb} (authorization: Bot a-bot-token-shaped-string)`);
   const admin: FakeAdmin = {
     async resolveChat(ref: string): Promise<FakeResolution> {
       adminLog.push({ verb: "resolveChat", argument: ref, at: Date.now() });

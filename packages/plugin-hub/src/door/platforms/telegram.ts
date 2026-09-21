@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import type { MediaRef, Platform, PlatformMessage } from "../platform.ts";
+import { classifyPlatformError } from "../reply.ts";
+import type { ChatDescription, ChatResolution, MediaRef, Platform, PlatformMessage } from "../platform.ts";
 
 /**
  * The transport, narrowed to what this file calls. It is NOT `typeof fetch`,
@@ -30,7 +31,7 @@ interface Update {
     caption?: string;
     voice?: FileRef; audio?: FileRef; photo?: FileRef[]; document?: FileRef;
     sticker?: FileRef; video?: FileRef; video_note?: FileRef;
-    chat: { id: number | string };
+    chat: { id: number | string; title?: string; username?: string; type?: string };
     from?: { id: number | string; username?: string };
   };
 }
@@ -70,8 +71,66 @@ export function telegram(options: {
     return said;
   };
 
+  /**
+   * The chats this bot has seen a message in since the door started, by name.
+   *
+   * `getUpdates` is bot-wide, so the poll fetches messages from every chat the
+   * bot is in and the reader drops the ones its agent does not serve. Those
+   * updates are acknowledged either way, so remembering what they said costs no
+   * call and moves no cursor. A group the bot joined before the door last
+   * started is not in here until somebody writes in it, and the `absent` answer
+   * says so.
+   */
+  const seen = new Map<string, Set<string>>();
+  const remember = (chat: { id: number | string; title?: string; username?: string }) => {
+    const name = chat.title ?? chat.username;
+    if (name === undefined || name === "") return;
+    const holds = seen.get(name) ?? new Set<string>();
+    holds.add(String(chat.id));
+    seen.set(name, holds);
+  };
+  const describe = async (chat: string): Promise<{ id: string; name: string; kind: string } | null> => {
+    const said = await call("getChat", { chat_id: chat }, 0);
+    const it = said.result as { id: number | string; title?: string; username?: string; first_name?: string; type?: string };
+    return { id: String(it.id), name: String(it.title ?? it.username ?? it.first_name ?? it.id), kind: String(it.type ?? "chat") };
+  };
+
   return {
     name: "telegram",
+    admin: {
+      async resolveChat(ref: string): Promise<ChatResolution> {
+        if (/^-?\d+$/.test(ref)) {
+          try {
+            const found = await describe(ref);
+            return { kind: "chat", chat: found!.id, name: found!.name };
+          } catch (error) {
+            // Telegram answers 400 for a chat this bot cannot see at all, which
+            // is an answer, and anything else is a failure the caller retries.
+            if (classifyPlatformError(error).kind !== "permanent") throw error;
+            return { kind: "absent", cause: "chat missing", detail: `this bot cannot see a chat with the id ${ref}` };
+          }
+        }
+        const found = seen.get(ref);
+        if (found === undefined || found.size === 0) {
+          return { kind: "absent", cause: "chat missing",
+            detail: `this bot has not seen a chat called ${ref} since this door started, so send a message in it and try again` };
+        }
+        if (found.size > 1) return { kind: "ambiguous", cause: "chat name ambiguous", detail: `${found.size} chats this bot is in are called ${ref}` };
+        return { kind: "chat", chat: [...found][0], name: ref };
+      },
+      async describeChat(chat: string): Promise<ChatDescription> {
+        try {
+          const found = await describe(chat);
+          return { exists: true, name: found!.name, kind: found!.kind };
+        } catch (error) {
+          const failure = classifyPlatformError(error);
+          // A chat the bot was removed from, or one that is gone, answers
+          // permanently, and everything else is a call that did not happen.
+          if (failure.kind === "permanent") return { exists: false, name: null, kind: null };
+          return { exists: false, name: null, kind: null, failure: { code: failure.code, cause: failure.cause } };
+        }
+      },
+    },
     // "The status is set for 5 seconds or less", Bot API 10.3.
     typingSeconds: 5,
     async pull({ chat, cursor, timeoutMs }) {
@@ -88,7 +147,9 @@ export function telegram(options: {
       const messages: PlatformMessage[] = [];
       for (const update of updates) {
         const message = update.message;
-        if (!message || String(message.chat.id) !== chat) continue;
+        if (!message) continue;
+        remember(message.chat);
+        if (String(message.chat.id) !== chat) continue;
         const media: MediaRef[] = [];
         const photo = message.photo?.reduce((largest, item) =>
           (item.file_size ?? (item.width ?? 0) * (item.height ?? 0)) >
