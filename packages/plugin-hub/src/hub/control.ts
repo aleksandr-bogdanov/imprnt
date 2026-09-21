@@ -23,6 +23,31 @@ import { appendNotice, type ReplyRoute } from "../store/outbox.ts";
  */
 export const RUN_RECOVERY_KINDS = ["runner", "sync", "transcriber"] as const;
 
+/**
+ * The entry kinds a `run` target may name, for the front end that is asking.
+ *
+ * A DOOR REACHES EXACTLY ONE OF THEM: the recognizer beside it, whose failures
+ * the hub can classify. The wider set is for a person, at the command line or
+ * on the board, and a door asking for a runner back would be a door reaching
+ * past what it is allowed to know about. It is one function because the rule is
+ * asked twice: once where a request is made, and once by the hub before it acts
+ * on a row, since the roles a door and a runner hold may insert one into the
+ * store without passing through the first.
+ */
+export function reachableKinds(source: unknown): readonly string[] {
+  return source === "door" ? ["transcriber"] : RUN_RECOVERY_KINDS;
+}
+
+/** Whether a request from this source may name this target at all. */
+export function mayReach(source: unknown, targetKind: unknown, entryKind: string): boolean {
+  // A chat asks for an agent and for nothing a machine carries, and a source
+  // this hub has no name for asks for nothing at all.
+  if (source !== "cli" && source !== "board" && source !== "door") return false;
+  if (targetKind === "door") return source !== "door";
+  if (targetKind !== "run") return false;
+  return reachableKinds(source).includes(entryKind);
+}
+
 interface RecoveryRequest {
   id: string; source: "cli" | "chat" | "door" | "board"; actor: string; person?: string;
   sender_id?: string; door?: string; chat?: string; target_kind: string; target_id: string;
@@ -59,12 +84,7 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
   // A `run` target is authorized by the entry's KIND and by nothing else, so
   // the hub, the board and a door named this way all fall out through the one
   // refusal a check can bind by name.
-  //
-  // A DOOR REACHES EXACTLY ONE OF THOSE KINDS: the recognizer beside it, whose
-  // failures the hub can classify. The wider set is for a person, at the
-  // command line or on the board, and a door asking for a runner back would be
-  // a door reaching past what it is allowed to know about.
-  const reachable: readonly string[] = request.source === "door" ? ["transcriber"] : RUN_RECOVERY_KINDS;
+  const reachable = reachableKinds(request.source);
   const piece = listRunEntries(registry).find(e => e.id === request.target_id && reachable.includes(e.kind));
   if (request.target_kind === "agent" ? !agent : request.target_kind === "door" ? !door
     : request.target_kind === "run" ? !piece : true) throw new Error("invalid-recovery-target");

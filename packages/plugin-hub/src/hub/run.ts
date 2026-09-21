@@ -10,7 +10,7 @@ import { openStore, type Store } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.ts";
 import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
-import { RUN_RECOVERY_KINDS, watchControls } from "./control.ts";
+import { mayReach, RUN_RECOVERY_KINDS, watchControls } from "./control.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { programForKind, transcriberArgv } from "./program.ts";
 
@@ -330,6 +330,13 @@ export async function runHub(options: {
     data => (data.target_kind === "door" && targets(data, ["door"])) ||
       (data.target_kind === "run" && targets(data, RUN_RECOVERY_KINDS)), async data => {
       const id = String(data.target_id);
+      // THE SAME RULE THE ASKING SIDE ENFORCES, asked again here. The roles a
+      // door and a runner hold may insert a control row straight into the
+      // store, which never passes through `requestRecovery`, and the hub is
+      // what would perform the restart.
+      const kind = runEntriesFor(loadRegistry(options.registryFile), options.machine)
+        .find(one => one.id === id)?.kind ?? "";
+      if (!mayReach(data.source, data.target_kind, kind)) throw new Error("recovery-not-authorized");
       // WHO IS BOUNDED AND WHY. The recognizer, because a wedged one asks for
       // itself back with no person involved. And everything the BOARD asks
       // for, because the board is the one front end that takes a request

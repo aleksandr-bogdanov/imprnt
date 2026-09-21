@@ -1072,3 +1072,82 @@ test(
   },
   SLOW,
 );
+
+test(
+  "a control row written straight into the store is applied only when its source may reach its target",
+  async () => {
+    // THE FENCE HOLDS ON BOTH SIDES. `requestRecovery` is the front door and it
+    // refuses a door asking for a runner, but the roles a door and a runner
+    // hold may insert a control row into the store without going through it.
+    // The hub is what performs the restart, so it asks the same question from
+    // its own side before it acts.
+    const it = await stage([DOOR, RUNNER, SYNC, HUB, BOARD]);
+    const store = await superStore(cluster, it.db);
+    const os = recordingOs(join(it.stateDir, "units"));
+    let hub: Awaited<ReturnType<typeof runHub>> | undefined;
+    try {
+      hub = await runHub({ registryFile: it.registryFile, machine: MACHINE, os: os.os });
+      /** A row as a role with insert rights would write it, notify and all. */
+      const plant = async (data: Record<string, unknown>) => {
+        const id = `planted-${crypto.randomUUID()}`;
+        const row = {
+          id,
+          actor: "door",
+          person: null,
+          requested_at: new Date().toISOString(),
+          status: "pending",
+          cause: null,
+          ...data,
+        };
+        await store.sql`insert into state_row (sheet,id,data) values ('control',${id},${row})`;
+        await store.sql`select pg_notify('hub_control',${id})`;
+        return id;
+      };
+      const settled = async (id: string) => {
+        expect(
+          await observe(async () =>
+            (await it.read.sheet("control")).some((one) => one.id === id && one.data.status !== "pending"),
+          ),
+          `the row ${id} was never settled`,
+        ).toBe(true);
+        return (await it.read.sheet("control")).find((one) => one.id === id)!.data;
+      };
+
+      for (const [what, data] of [
+        ["a door asking for a runner", { source: "door", target_kind: "run", target_id: RUNNER.id }],
+        ["a door asking for a sync", { source: "door", target_kind: "run", target_id: SYNC.id }],
+        ["a door asking for a door", { source: "door", target_kind: "door", target_id: DOOR.id }],
+        ["a chat asking for a runner", { source: "chat", target_kind: "run", target_id: RUNNER.id }],
+        ["a row with no source at all", { target_kind: "run", target_id: RUNNER.id }],
+      ] as [string, Record<string, unknown>][]) {
+        const said = await settled(await plant(data));
+        expect(said.status, what).toBe("refused");
+        expect(said.cause, what).toBe("recovery-not-authorized");
+      }
+      // The hub's own reconcile starts this machine's residents, which nobody
+      // asked for, so what is asserted is that no RESTART was performed.
+      expect(
+        os.acting().filter((call) => call.operation === "restart"),
+        "a refused row reached the service manager",
+      ).toEqual([]);
+
+      // The controls, planted the same way: the operator and the board reach
+      // what they are allowed to reach, and the manager is asked for each.
+      for (const source of ["cli", "board"]) {
+        const target = source === "cli" ? RUNNER.id : SYNC.id;
+        const said = await settled(await plant({ source, target_kind: "run", target_id: target }));
+        expect(said.status, `${source} asking for ${target}`).toBe("applied");
+      }
+      const applied = await settled(await plant({ source: "cli", target_kind: "door", target_id: DOOR.id }));
+      expect(applied.status, "the operator asking for a door").toBe("applied");
+      expect(os.acting().filter((call) => call.operation === "restart").map((call) => call.target).sort()).toEqual(
+        [DOOR.id, RUNNER.id, SYNC.id].sort(),
+      );
+    } finally {
+      await hub?.stop();
+      await store.close();
+      await it.stop();
+    }
+  },
+  SLOW,
+);
