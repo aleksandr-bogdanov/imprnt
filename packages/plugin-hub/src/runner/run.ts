@@ -1005,9 +1005,27 @@ export async function runRunner(options: {
         }
 
         if (!own.reserved && !await admitChild(registry, own, false)) break;
-        const residentHarvest = agentsFor(registry, { runner: options.runner })
-          .filter(one => lifetimeFor(registry, one.id).mode === "resident" && !lifetimeFor(registry, one.id).sleeping)
-          .map(one => one.id);
+        // The resident agents whose harvest could be claimed right now, which
+        // is the question the RESIDENT's window answers and never this loop's:
+        // a cold agent on a per-token key beside a paused plan is still next
+        // to a harvest nothing will claim. A preset with no window always lets
+        // its harvest run. Only a loop with no session ever yields, so only
+        // that loop pays the reads, and residents on one credential share one.
+        const residentHarvest: string[] = [];
+        if (!own.session) {
+          const windows = new Map<string, WindowRow | null>();
+          for (const one of agentsFor(registry, { runner: options.runner })) {
+            const life = lifetimeFor(registry, one.id);
+            if (life.mode !== "resident" || life.sleeping) continue;
+            const limits = windowThresholds(registry, one.preset);
+            if (limits) {
+              const key = credentialFor(registry, one);
+              if (!windows.has(key)) windows.set(key, await readWindow(store, key));
+              if (maxRankFor(windows.get(key) ?? null, limits) !== 1) continue;
+            }
+            residentHarvest.push(one.id);
+          }
+        }
         const observedCapacity = capacityVersion;
         const connection = await store.sql.reserve();
         let next;
@@ -1015,7 +1033,6 @@ export async function runRunner(options: {
           [next] = await connection`select id, kind, exists (
             select 1 from inbound h where h.agent in (select jsonb_array_elements_text(${JSON.stringify(residentHarvest)}::text::jsonb)) and h.kind = 'harvest'
               and h.log_ready and h.state not in ('answered', 'delivered') and h.claimed_by is null
-              and h.rank <= ${maxRank}
               and (h.retry_at is null or h.retry_at <= now())
           ) as harvest_waiting from inbound where agent = ${agent.id}
             and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
@@ -1029,9 +1046,9 @@ export async function runRunner(options: {
         if (!next) { await sleep(); continue; }
         // Give an already waiting resident harvest its extra child before a
         // cold session. Capacity release, rather than a queue poll, wakes us.
-        // A harvest the window has paused is not waiting: nothing will claim
-        // it until the pause lifts, so yielding to it would park every cold
-        // agent's human row behind a row that cannot move.
+        // A harvest counts as waiting only when its own agent's window lets it
+        // run, which `residentHarvest` already decided, and a cold agent at
+        // its own window's pause still yields to one that can.
         if (next && next.kind !== "harvest" && next.harvest_waiting && !own.session) {
           // The harvest can start while this read is in flight. Its capacity
           // signal must not be lost before this task subscribes to it.
