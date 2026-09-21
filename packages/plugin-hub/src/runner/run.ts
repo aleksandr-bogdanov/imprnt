@@ -127,6 +127,22 @@ interface OpenTurn {
   finish(end: TurnEnd): void;
 }
 
+/**
+ * The platform an answer is cut for, read off the id of the row it answers.
+ *
+ * A person's message carries its platform at the front of its id. A report's
+ * id is its job's with `report:` in front, and the job's own id carries the
+ * platform of the chat the command was typed in, which is the return route the
+ * report and the answer to it go back on. Read as the front of the report's
+ * id, it would be the word `report`, and the answer would be cut at the shorter
+ * limit on every platform.
+ */
+function answerPlatform(logId: string | undefined): string | undefined {
+  if (logId === undefined) return undefined;
+  const parts = logId.split(":");
+  return parts[0] === "report" && parts[1] === "job" ? parts[2] : parts[0];
+}
+
 function setting(registry: Registry, key: string): number {
   return Number(readSetting(registry, key));
 }
@@ -764,7 +780,7 @@ export async function runRunner(options: {
         // A job's answer is the whole report and reaches no chat, so it is
         // never cut to a platform's size.
         chunks: about.kind === "job" ? [end.text]
-          : prepareReply(end.text, about.source?.log_id.split(":")[0] ?? noticeRoute(about.registry, agent.id)?.platform ?? "discord", languageOf(about.registry, agent.person)),
+          : prepareReply(end.text, answerPlatform(about.source?.log_id) ?? noticeRoute(about.registry, agent.id)?.platform ?? "discord", languageOf(about.registry, agent.person)),
         turn: record,
       });
     };
