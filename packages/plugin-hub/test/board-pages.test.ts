@@ -564,13 +564,18 @@ test(
 
       // The structural control beside it: no module under `src/board/` even
       // imports a way to write a file, so a build that wrote somewhere this
-      // check did not walk is still caught.
+      // check did not walk is still caught. The artifacts route opens the file
+      // it serves, read only, so the flags that would turn an open into a write
+      // are refused by name as well.
       const dir = hubPath("src/board");
       const modules = readdirSync(dir).filter((name) => name.endsWith(".ts"));
       expect(modules.length).toBeGreaterThan(0);
       for (const name of modules) {
         const source = readFileSync(join(dir, name), "utf8");
-        for (const writer of ["writeFile", "appendFile", "mkdir", "createWriteStream", "rmSync", "Bun.write", "openSync"]) {
+        for (const writer of [
+          "writeFile", "appendFile", "mkdir", "createWriteStream", "rmSync", "Bun.write", "openSync",
+          "O_WRONLY", "O_RDWR", "O_CREAT", "O_APPEND", "O_TRUNC",
+        ]) {
           expect(source, `src/board/${name} reaches for ${writer}`).not.toContain(writer);
         }
       }

@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import type { LoopProbeOptions } from "../adapters/launch.ts";
 import { runCheck, CHECK_SHEET } from "../check/run.ts";
 import type { CredentialProber } from "../check/credentials.ts";
@@ -277,18 +278,24 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     return redirect("/findings", { said: "checkRan", count: String(rows.length), at });
   };
 
-  const artifact = (path: string): Response => {
+  const artifact = async (path: string): Promise<Response> => {
     const parts = path.split("/").filter((one) => one !== "");
     // `/artifacts/<person>/<path>`, and nothing shorter is a file.
     if (parts.length < 3) return missing();
     const person = decodeURIComponent(parts[1]);
-    const found = serveArtifact({
+    const found = await serveArtifact({
       registry: loadRegistry(registryFile),
       person,
       path: parts.slice(2).join("/"),
     });
     if (!found) return missing();
-    return new Response(Bun.file(found.path), { status: 200, headers: { "content-type": found.type } });
+    // Served from the file that was checked, never reopened by name, which is
+    // what closes the gap between the check and the open. The stream closes it
+    // when the body ends or the reader goes away. Measured: `Bun.file` on a
+    // descriptor, or the handle's own web stream, holds the file open after
+    // the response, one per request.
+    const body = Readable.toWeb(found.handle.createReadStream({ autoClose: true })) as ReadableStream;
+    return new Response(body, { status: 200, headers: { "content-type": found.type } });
   };
 
   const answer = async (request: Request): Promise<Response> => {
@@ -296,7 +303,7 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     const path = url.pathname;
     if (request.method === "GET") {
       const notice = noticeFrom(url.searchParams);
-      if (path.startsWith("/artifacts/")) return artifact(path);
+      if (path.startsWith("/artifacts/")) return await artifact(path);
       if (path === "/") return await machines(notice);
       if (path === "/people") return await people(notice);
       if (path === "/findings") return await findingsOf(notice);

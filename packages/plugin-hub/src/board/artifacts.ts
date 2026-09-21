@@ -1,5 +1,6 @@
-import { realpathSync, statSync } from "node:fs";
-import { extname, join, sep } from "node:path";
+import { constants, lstatSync, realpathSync, statSync } from "node:fs";
+import { open, type FileHandle } from "node:fs/promises";
+import { basename, dirname, extname, join, sep } from "node:path";
 import { artifactsFor } from "../registry/entries.ts";
 
 /**
@@ -22,6 +23,15 @@ import { artifactsFor } from "../registry/entries.ts";
  * artifacts directory, which refuses a `..`, a symlink pointing out and a path
  * that is not a file together. No dotfile in any segment, and no listing
  * anywhere, because a listing is enumeration.
+ *
+ * THE AGENT WRITES THIS TREE, so the tree is not trusted to hold still. Two
+ * things follow. The artifacts directory itself must be a real directory and
+ * never a link: resolving a linked one would move the allowed root to wherever
+ * the link points, and an agent could point it at the other person's chat log
+ * or a secret and then fetch the result itself, since its box reaches this
+ * address. And the file is OPENED FIRST and only then checked, by what was
+ * opened: a path checked and opened later can have a directory swapped for a
+ * link in between, which the check never saw.
  */
 
 const TYPES: Record<string, string> = {
@@ -47,12 +57,28 @@ export function contentTypeFor(path: string): string {
   return TYPES[extname(path).toLowerCase()] ?? "application/octet-stream";
 }
 
-/** The file to serve, or null, which is the one 404 for every reason there is. */
-export function serveArtifact(args: {
+/** An open artifact, which the caller streams and closes. */
+export interface OpenArtifact {
+  handle: FileHandle;
+  size: number;
+  type: string;
+}
+
+/**
+ * The file to serve, already open, or null, which is the one 404 for every
+ * reason there is.
+ *
+ * `beforeOpen` runs between the decision about which path to open and the
+ * open itself. Production passes nothing. A check lands a directory swap there,
+ * which is the one moment a race against the tree could win, so the race is
+ * asserted exactly rather than by luck.
+ */
+export async function serveArtifact(args: {
   registry: unknown;
   person: string;
   path: string;
-}): { path: string; type: string } | null {
+  beforeOpen?: () => void;
+}): Promise<OpenArtifact | null> {
   const root = artifactsFor(args.registry, args.person);
   if (root === null) return null;
 
@@ -72,20 +98,43 @@ export function serveArtifact(args: {
     asked.push(one);
   }
 
-  let real: string;
-  let realRoot: string;
+  // The root is the person's tree resolved, plus `artifacts` NOT resolved. The
+  // tree is the household's own setting and may sit behind a link of its own
+  // (on macOS every temporary directory does), while the artifacts directory
+  // is the agent's to write, so it has to be a real directory where it stands.
+  let base: string;
   try {
-    realRoot = realpathSync(root);
-    real = realpathSync(join(root, ...asked));
+    base = join(realpathSync(dirname(root)), basename(root));
+    if (!lstatSync(base).isDirectory()) return null;
   } catch {
-    // A directory that is not on this machine, and a name that is not there.
+    // A directory that is not on this machine.
     return null;
   }
-  if (real !== realRoot && !real.startsWith(realRoot + sep)) return null;
+
+  const wanted = join(base, ...asked);
+  args.beforeOpen?.();
+  let handle: FileHandle;
   try {
-    if (!statSync(real).isFile()) return null;
+    // Read only, and non-blocking, so a pipe planted where a file should be
+    // cannot hold the board on its open. It changes nothing for a regular file.
+    handle = await open(wanted, constants.O_RDONLY | constants.O_NONBLOCK);
   } catch {
+    // A name that is not there.
     return null;
   }
-  return { path: real, type: contentTypeFor(real) };
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile()) throw new Error("not a file");
+    // What was opened must be what the path names NOW, and what it names must
+    // be inside. A swap before the open leads outside and fails the prefix, a
+    // swap back after it names a different file and fails the identity.
+    const real = realpathSync(wanted);
+    if (real !== base && !real.startsWith(base + sep)) throw new Error("outside");
+    const named = statSync(real);
+    if (named.dev !== opened.dev || named.ino !== opened.ino) throw new Error("moved");
+    return { handle, size: opened.size, type: contentTypeFor(real) };
+  } catch {
+    await handle.close();
+    return null;
+  }
 }

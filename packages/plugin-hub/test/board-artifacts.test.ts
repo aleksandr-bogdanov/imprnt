@@ -16,10 +16,10 @@
 // behind the rest.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { seam, startCluster, statementWatch, type Cluster } from "./helpers/cluster.ts";
+import { seam, startCluster, statementWatch, until, type Cluster } from "./helpers/cluster.ts";
 import { stageHub, superStore, type StagedHub } from "./helpers/hub-fixture.ts";
 import { freePort, plantedSeam, recordingSeam, serveBoard, setOnEntry, treeDigest, type ServedBoard } from "./helpers/board.ts";
 import { writeRegistry, type PersonSpec, type RegistrySpec, type RunSpec } from "./helpers/registry.ts";
@@ -306,6 +306,183 @@ test(
 
       expect((await board.get("/artifacts/p1/index.html")).status).toBe(404);
       expect((await board.get("/artifacts/p2/index.html")).status).toBe(200);
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+/**
+ * A board over two opted-in people whose trees a check lays out itself, so a
+ * check can plant a link where the stage above plants a directory.
+ */
+async function stagePeople(trees: { p1: string; p2: string }): Promise<{ get(path: string): Promise<Response>; stop(): Promise<void> }> {
+  const boardEntry: RunSpec = {
+    id: "board",
+    kind: "board",
+    machine: HERE,
+    schedule: "always",
+    memory_limit_mb: 128,
+    bind: "127.0.0.1",
+    port: await freePort(),
+  };
+  const it = await stageHub(cluster, {
+    hub: { tick_seconds: 1 },
+    machines: [{ id: HERE, os: HERE_OS }],
+    people: [
+      { id: "p1", tree: trees.p1, artifacts: true },
+      { id: "p2", tree: trees.p2, artifacts: true },
+    ],
+    run: [DOOR_ENTRY, RUNNER_ENTRY, boardEntry],
+  });
+  const store = await superStore(cluster, it.db);
+  const board = await serveBoard({
+    registryFile: it.registryFile,
+    entryId: boardEntry.id,
+    store,
+    os: recordingSeam(plantedSeam(FLAVOUR).os).os,
+  });
+  return {
+    get: (path) => board.get(path),
+    async stop() {
+      await board.stop();
+      await store.close();
+      await it.stop();
+    },
+  };
+}
+
+test(
+  "an artifacts directory that is itself a link is refused, wherever it points",
+  async () => {
+    // An agent can write its own tree, so it can replace its own artifacts
+    // directory with a link to anything the board can read: the other
+    // person's chat log, the state directory, a secret. What is planted here
+    // is a secret outside every tree and a p1 whose `artifacts` IS a link to
+    // the directory holding it.
+    const secretDir = scratchDir("hub-art-secret-");
+    const secret = "the other person's chat log, which nobody published";
+    writeFileSync(join(secretDir, "log.txt"), secret, "utf8");
+    const trees = { p1: scratchDir("hub-art-linked-p1-"), p2: scratchDir("hub-art-linked-p2-") };
+    symlinkSync(secretDir, join(trees.p1, "artifacts"));
+    // The control on the same path shape: p2's `artifacts` is a real directory
+    // holding a file of the same name, and it is served.
+    mkdirSync(join(trees.p2, "artifacts"), { recursive: true });
+    writeFileSync(join(trees.p2, "artifacts", "log.txt"), "an artifact the second person published", "utf8");
+    const staged = await stagePeople(trees);
+    try {
+      // The link is live and its target readable from this check, so the
+      // refusal below is about the rule and never about a broken link.
+      expect(readFileSync(join(trees.p1, "artifacts", "log.txt"), "utf8")).toBe(secret);
+
+      const refused = await staged.get("/artifacts/p1/log.txt");
+      const text = await refused.text();
+      expect(refused.status, "a linked artifacts directory must not be served").toBe(404);
+      expect(text).not.toContain(secret);
+      expect(text.trim()).toBe(pageMissing("en"));
+
+      const served = await staged.get("/artifacts/p2/log.txt");
+      expect(served.status).toBe(200);
+      expect(await served.text()).toBe("an artifact the second person published");
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+/** What the route hands back: an open file, or a path for a server to open. */
+type Opened = { handle?: { readFile(encoding: "utf8"): Promise<string>; close(): Promise<void> }; path?: string };
+
+test("a directory swapped for a link between the decision and the open never lets an outside file through", async () => {
+  // THE PATH IS DECIDED AND THEN OPENED, and a directory inside the tree can
+  // be swapped for a link between the two, because the agent writes that tree.
+  // Racing that for real is a matter of microseconds and luck, so the swap is
+  // landed exactly there, through the one hook the route takes for it, and what
+  // comes back is judged by its bytes.
+  const { serveArtifact } = await seam("src/board/artifacts.ts");
+  const serve = serveArtifact as (args: Record<string, unknown>) => Promise<Opened | null> | Opened | null;
+  const outside = scratchDir("hub-art-swap-outside-");
+  const secret = "outside bytes that no artifact route may ever serve";
+  writeFileSync(join(outside, "page.txt"), secret, "utf8");
+  const tree = scratchDir("hub-art-swap-p1-");
+  const box = join(tree, "artifacts", "box");
+  mkdirSync(box, { recursive: true });
+  writeFileSync(join(box, "page.txt"), "inside bytes", "utf8");
+  const registry = loadRegistry(
+    writeRegistry(scratchDir("hub-art-swap-registry-"), {
+      hub: { store_url: "postgres://127.0.0.1:5432/hub", state_dir: "/var/lib/imprnt-hub" },
+      machines: [{ id: "pi", os: "linux" }],
+      people: [{ id: "p1", tree, artifacts: true }],
+      presets: { daily: { adapter: "scripted", model: "m", provider: "p", effort: "medium", paid: "plan" } },
+      agents: [{ id: "p1-lair", person: "p1", preset: "daily", chat: "0000000000", door: "door-fake", runner: "runner-pi" }],
+      run: [
+        { id: "door-fake", kind: "door", machine: "pi", platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 },
+        { id: "runner-pi", kind: "runner", machine: "pi", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048 },
+      ],
+    }),
+  );
+  /**
+   * The bytes a caller would send for what the route handed back: the open
+   * file itself, or, for a route that hands back a path, whatever that path
+   * opens to when the server gets round to it.
+   */
+  const bytesOf = async (found: Opened): Promise<string> => {
+    if (found.handle) {
+      try {
+        return await found.handle.readFile("utf8");
+      } finally {
+        await found.handle.close();
+      }
+    }
+    return readFileSync(String(found.path), "utf8");
+  };
+
+  // The control on the same call: with nothing swapped the in-tree file comes
+  // back, so a null below is the rule and not a route that serves nothing.
+  const plain = await serve({ registry, person: "p1", path: "box/page.txt" });
+  expect(plain, "the in-tree file must be served when nothing moves").not.toBeNull();
+  expect(await bytesOf(plain!)).toBe("inside bytes");
+
+  // The swap, landed between the decision and the open.
+  const swapped = await serve({
+    registry,
+    person: "p1",
+    path: "box/page.txt",
+    beforeOpen() {
+      renameSync(box, `${box}-held`);
+      symlinkSync(outside, box);
+    },
+  });
+  const said = swapped === null ? null : await bytesOf(swapped);
+  expect(said, "the outside file's bytes came back").not.toBe(secret);
+  expect(swapped, "a path that led outside by the time it was opened must be refused").toBeNull();
+});
+
+test(
+  "serving an artifact holds no descriptor once the response is over, read whole or abandoned",
+  async () => {
+    // The file is served from the descriptor that was checked, so each request
+    // opens one. Two hundred requests read whole and twenty abandoned after the
+    // headers must leave the process holding what it held before, give or take
+    // the client's own pooled connections.
+    const staged = await stage();
+    try {
+      const open = () => readdirSync("/dev/fd").length;
+      const warm = await staged.board.get("/artifacts/p1/index.html");
+      await warm.text();
+      const before = open();
+      for (let i = 0; i < 200; i++) {
+        const answer = await staged.board.get("/artifacts/p1/index.html");
+        expect(await answer.text()).toBe(PLANTED["index.html"]);
+      }
+      for (let i = 0; i < 20; i++) {
+        const answer = await staged.board.get("/artifacts/p1/note.txt");
+        await answer.body?.cancel();
+      }
+      await until("the abandoned bodies let go of their descriptors", async () => open() - before < 20, 10_000,
+        async () => `descriptors held: ${open() - before} more than before`);
     } finally {
       await staged.stop();
     }
