@@ -1950,6 +1950,8 @@ export function loadRegistry(file: string): Registry {
   }
 
   const zoneOfPerson = new Map<string, number>();
+  /** The first zone checkout, whose branch every other one has to share. */
+  let zoneBranch: { branch: string; line: number } | null = null;
   for (const one of repositories.filter((one) => one.zone === true)) {
     const nth = repositories.indexOf(one);
     const where = `repositories[${nth}]`;
@@ -1974,6 +1976,15 @@ export function loadRegistry(file: string): Registry {
     if (one.remote !== zone!.remote)
       refuse(`${where}.remote`, at,
         `${one.id} pulls from the remote ${describe(one.remote)}, and every checkout of the shared zone wears ${describe(zone!.remote)}`);
+    // ONE ZONE IS ONE BRANCH. Each checkout is synced and verified against the
+    // branch its own entry names, so two that name different branches of the
+    // one remote pass every check while neither person sees what the other
+    // shares.
+    if (zoneBranch === null) zoneBranch = { branch: one.branch, line: lines.get(`${where}.branch`) ?? at };
+    else if (one.branch !== zoneBranch.branch)
+      refuse(`${where}.branch`, at,
+        `${one.id} is on the branch ${describe(one.branch)}, and the zone checkout on line ${zoneBranch.line} is on ` +
+        `${describe(zoneBranch.branch)}: one shared zone is one branch, or the two people never see each other's notes`);
   }
 
   // A SHARED ZONE BELONGS TO THE WHOLE HOUSEHOLD. Once the file declares one,
