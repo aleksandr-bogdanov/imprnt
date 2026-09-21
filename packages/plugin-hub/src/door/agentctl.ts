@@ -1,7 +1,7 @@
 import { classifyPlatformError } from "./reply.ts";
 import { ADOPT_PHRASES, AGENT_PHRASES, RETIRE_PHRASES } from "./lines.ts";
 import { isAgentCommand } from "../harvest/slice.ts";
-import { requestControl } from "../hub/control.ts";
+import { CONTROL_REFUSALS, requestControl } from "../hub/control.ts";
 import { listAgents, listRunEntries, senderAllowed } from "../registry/entries.ts";
 import { isAgentId, loadRegistry, readSetting, type Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -181,12 +181,25 @@ export async function requestAgentLifecycle(store: StoreLike, request: AgentLife
   await ask(store, request, { chat: resolved.chat, name: resolved.name });
 }
 
-/** The control row itself, in the shape the shipped recovery verb already has. */
+/**
+ * The control row itself, in the shape the shipped recovery verb already has.
+ *
+ * A refusal that verb names is this command's refusal too, and it is said to
+ * the person as one: left as an error it would stop the door acknowledging the
+ * batch, and the chat would get the same batch back for ever.
+ */
 async function ask(store: StoreLike, request: AgentLifecycleRequest, values: Record<string, unknown>): Promise<void> {
-  await requestControl(store, {
-    id: request.id, source: "chat", actor: request.sender_id, sender_id: request.sender_id,
-    person: request.person, door: request.door, chat: request.chat, agent: request.agent,
-    target_kind: "agent-lifecycle", target_id: request.target,
-    operation: request.operation, arguments: values, registry: request.registry,
-  });
+  try {
+    await requestControl(store, {
+      id: request.id, source: "chat", actor: request.sender_id, sender_id: request.sender_id,
+      person: request.person, door: request.door, chat: request.chat, agent: request.agent,
+      target_kind: "agent-lifecycle", target_id: request.target,
+      operation: request.operation, arguments: values, registry: request.registry,
+    });
+  } catch (error) {
+    if ((CONTROL_REFUSALS as readonly string[]).includes((error as Error).message)) {
+      throw new AgentCommandRefused("invalid configuration");
+    }
+    throw error;
+  }
 }

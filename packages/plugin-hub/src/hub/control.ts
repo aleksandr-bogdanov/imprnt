@@ -65,6 +65,14 @@ interface RecoveryRequest {
   registryFile?: string; registry?: Registry;
 }
 
+/**
+ * Every refusal `requestRecovery` names. A command typed in a chat that meets
+ * one of them is answered with a refusal, and never left as an error that
+ * stops the door from acknowledging the batch it came in.
+ */
+export const CONTROL_REFUSALS = ["invalid-recovery-target", "recovery-not-authorized", "recovery-target-stopped",
+  "invalid-recovery-source"] as const;
+
 /** The target kinds a control row may name, and there is no fifth. */
 const TARGET_KINDS = ["agent", "door", "run", "agent-lifecycle"];
 
@@ -157,7 +165,11 @@ export async function requestRecovery(store: StoreLike, request: RecoveryRequest
   // starts a service it is not running, so this would bring a stopped piece up
   // for as long as it takes the hub's next tick to stop it again, and the
   // household that asked for it to be down would watch it run.
-  const declared = piece ?? door;
+  //
+  // Asked of a run or door target only. An agent may carry the same id as an
+  // entry the file stopped, and neither restarting an agent nor making one is a
+  // restart of that entry.
+  const declared = request.target_kind === "run" ? piece : request.target_kind === "door" ? door : undefined;
   if (declared && wantedState(declared) === "stopped") throw new Error("recovery-target-stopped");
   // The board is treated as the operator is, because nobody on a tailnet page
   // is identified and the row records that plainly.

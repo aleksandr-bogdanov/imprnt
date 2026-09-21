@@ -1,6 +1,6 @@
 import { appendChatLineOnce, type BadRecord } from "../chatlog.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
-import { requestRecovery } from "../hub/control.ts";
+import { CONTROL_REFUSALS, requestRecovery } from "../hub/control.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import { encodeHarvestBody } from "../harvest/row.ts";
 import { readWatermark } from "../harvest/sheet.ts";
@@ -66,7 +66,9 @@ export async function acceptBatch(options: {
             person: agent.person, door, chat: agent.chat, agent: agent.id, target_kind: "agent", target_id: target[1] });
           text = recoveryAccepted(language, { target: target[1] });
         } catch (error) {
-          if (!["invalid-recovery-target", "recovery-not-authorized"].includes((error as Error).message)) throw error;
+          // Every refusal the verb names is answered, because one left as an
+          // error stops this batch being acknowledged and the chat stalls on it.
+          if (!(CONTROL_REFUSALS as readonly string[]).includes((error as Error).message)) throw error;
           text = recoveryRefused(language, { target: target[1], cause: "access denied" });
         }
       }
