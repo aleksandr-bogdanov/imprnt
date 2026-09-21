@@ -1,5 +1,6 @@
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { isIP } from "node:net";
+import { isUnspecified } from "../net/address.ts";
 import { isAbsolute, resolve, sep } from "node:path";
 import { ADAPTERS } from "../adapters/index.ts";
 import {
@@ -235,11 +236,17 @@ export class UnknownSetting extends Error {
 export const RUN_KINDS = ["hub", "door", "runner", "sync", "board"] as const;
 
 /**
- * The two addresses that mean every interface. A board that bound to one would
- * be reachable from anything that can route to this machine, which is the
- * opposite of what binding to one tailnet address buys.
+ * The address that means every interface, in whatever spelling.
+ *
+ * A board bound to one would be reachable from anything that can route to this
+ * machine, which is the opposite of what binding to one tailnet address buys.
+ * `0.0.0.0` and `::` are what a person writes, and `::0`,
+ * `0:0:0:0:0:0:0:0` and `::ffff:0.0.0.0` are the same two addresses said
+ * differently, so the comparison is on the address and never on the text.
  */
-export const WILDCARD_BINDS = ["0.0.0.0", "::"] as const;
+function isWildcard(bind: string): boolean {
+  return isUnspecified(bind);
+}
 
 /**
  * The kinds a household may not hold down with `enabled = false`.
@@ -1004,7 +1011,9 @@ export function loadRegistry(file: string): Registry {
         refuse(`${at}.bind`, here, boardBindMissing("en", { id }));
       } else if (typeof bind !== "string") {
         refuse(`${at}.bind`, here, boardBindNotAddress("en", { id, bind: describeBare(bind) }));
-      } else if ((WILDCARD_BINDS as readonly string[]).includes(bind)) {
+      } else if (isWildcard(bind)) {
+        // The file's OWN words go into the sentence, because what an operator
+        // has to find and change is what they wrote.
         refuse(`${at}.bind`, here, boardBindWide("en", { id, bind }));
       } else if (isIP(bind) === 0) {
         // A NAME IS REFUSED WHERE AN ADDRESS IS NOT. A name resolves at bind

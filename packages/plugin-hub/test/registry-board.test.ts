@@ -191,8 +191,23 @@ test("D-241 a board with no bind, an empty bind, either wildcard or a name is re
     expect(error.reason).toBe("board has no bind, and a board listens on one specific address.");
   }
 
-  // 3 and 4. The two wildcards, each asserted on its own.
-  for (const wide of ["0.0.0.0", "::"]) {
+  // 3 and 4, and every other spelling of the same two addresses, each asserted
+  // on its own. "Every interface" has many spellings and a refusal written
+  // against two of them is a refusal the third walks past, so what is compared
+  // is the address itself and what is printed is the file's own words.
+  for (const wide of [
+    "0.0.0.0",
+    "::",
+    "::0",
+    "0:0:0:0:0:0:0:0",
+    "0000:0000:0000:0000:0000:0000:0000:0000",
+    "::0.0.0.0",
+    // The IPv4 wildcard as a dual-stack socket names it, in both spellings.
+    "::ffff:0.0.0.0",
+    "::ffff:0:0",
+    // A zone names an interface, never a different address.
+    "::%lo0",
+  ]) {
     const { error, text } = refusalOf([DOOR, RUNNER, { ...EXAMPLE_BOARD, bind: wide }]);
     expect(error.key).toBe("run[2].bind");
     expect(error.line).toBe(lineOf(text, "board", "bind"));
@@ -378,7 +393,16 @@ test("D-241 the example block loads whole and boardFor answers the machine that 
 test("D-241 every other specific address is accepted, because the range is not the loader's to know", async () => {
   // Documentation addresses, on purpose: what the loader accepts is any
   // specific address, and naming a real range here would read as a rule.
-  for (const bind of ["127.0.0.1", "10.0.0.5", "2001:db8::1", "::1"]) {
+  for (const bind of [
+    "127.0.0.1",
+    "10.0.0.5",
+    "2001:db8::1",
+    "::1",
+    // The near misses: one bit away from every interface is one address.
+    "0.0.0.1",
+    "::2",
+    "::ffff:0.0.0.1",
+  ]) {
     const { file } = write([DOOR, RUNNER, { ...EXAMPLE_BOARD, bind }]);
     const board = await boardOf(loadRegistry(file), "pi");
     expect(board?.bind, `${bind} must load`).toBe(bind);

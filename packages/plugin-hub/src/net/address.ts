@@ -95,3 +95,19 @@ export function isLocalAddress(text: string | null): boolean {
   }
   return false;
 }
+
+/**
+ * Whether an address is the one that means EVERY interface.
+ *
+ * `0.0.0.0` and `::` have many spellings between them, and a dual-stack socket
+ * names the first as `::ffff:0.0.0.0`. A rule written against two of them is a
+ * rule the third walks past, and what walks past it is a service a household
+ * asked to put on one address and got on all of them.
+ */
+export function isUnspecified(text: string): boolean {
+  const bytes = addressBytes(text);
+  if (bytes === null) return false;
+  if (bytes.every((one) => one === 0)) return true;
+  const mappedZero = bytes.slice(0, 10).every((one) => one === 0) && bytes[10] === 0xff && bytes[11] === 0xff;
+  return mappedZero && bytes.slice(12).every((one) => one === 0);
+}
