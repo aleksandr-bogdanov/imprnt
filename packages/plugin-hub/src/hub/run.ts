@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { appendEntry } from "../records/diary.ts";
-import { diffUnits, seenUnits, wantedState, wantedUnits } from "../os/diff.ts";
+import { diffUnits, seenUnits, stillUp, wantedState, wantedUnits } from "../os/diff.ts";
 import { entryIdOf } from "../os/names.ts";
 import { thisOs } from "../os/index.ts";
 import type { OsSeam, RenderContext } from "../os/types.ts";
@@ -205,13 +205,14 @@ export async function runHub(options: {
       await say("unit.started", one.id, { entry: one.id, machine: options.machine });
     }
 
-    // The file says this piece should be down, and the manager is still running
-    // it. It reads the WANTED STATE rather than the diff's stale set, because a
+    // The file says this piece should be down, and the manager is still
+    // carrying it: a running service, or a timer still armed to start one. It
+    // reads the WANTED STATE rather than the diff's stale set, because a
     // stopped entry is still declared and stopping a declared, enabled entry is
     // the one thing this pass must never do.
     for (const entry of entries) {
       if (wantedState(entry) !== "stopped") continue;
-      const running = found.some(unit => entryIdOf(unit.name) === entry.id && unit.running === true);
+      const running = found.some(unit => entryIdOf(unit.name) === entry.id && stillUp(unit));
       if (!running) continue;
       try { await os.stop(entry.id); }
       catch (error) { await recordOperationFailure(store, { operation: "stop", target: entry.id, error }); continue; }

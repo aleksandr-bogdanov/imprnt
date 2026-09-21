@@ -64,6 +64,23 @@ export function wantedUnits(entries: RunEntry[]): WantedUnit[] {
   }));
 }
 
+/**
+ * Whether the manager is still carrying this unit in a way that would start
+ * work: a running service, or a timer it has armed.
+ *
+ * AN ARMED TIMER IS NOT A RUNNING SERVICE. A scheduled entry between runs has
+ * an inactive service and a timer the manager reports as active and waiting,
+ * and that timer starts the service on its own cadence. So a household that
+ * asked for a piece to be down and got only its service stopped would watch it
+ * run again every quarter of an hour while the file, the status and the board
+ * all said stopped. The word is the manager's own, carried verbatim through the
+ * seam, and a service that is merely loaded is not this: it is doing nothing
+ * and nothing will make it start.
+ */
+export function stillUp(unit: UnitState): boolean {
+  return unit.running === true || (unit.name.endsWith(".timer") && unit.state === "active");
+}
+
 /** Every found unit that belongs to this entry, whatever suffix it wears. */
 function unitsFor(found: UnitState[], entryId: string): UnitState[] {
   return found.filter((unit) => entryIdOf(unit.name) === entryId);

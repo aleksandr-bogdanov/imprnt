@@ -870,3 +870,194 @@ test(
   },
   SLOW,
 );
+
+/**
+ * A manager that carries a SERVICE and a TIMER for one entry, keyed by unit
+ * name, because that is the shape the question below is about.
+ *
+ * The other seam in this file keys its states by entry id and can hold one unit
+ * per entry, so a timer armed beside an inactive service cannot be planted in
+ * it at all. It renders through the real systemd renderer on both platforms,
+ * because a timer is a systemd unit and what a launchd box does with a cadence
+ * is a key inside the one plist.
+ */
+function timerOs(unitDir: string) {
+  mkdirSync(unitDir, { recursive: true });
+  const renderer = systemd({ unitDir });
+  const calls: { operation: string; target: string }[] = [];
+  const states = new Map<string, UnitState>();
+  const blank = (name: string): UnitState => ({
+    name,
+    loaded: true,
+    running: false,
+    pid: null,
+    runs: null,
+    ran: true,
+    restarts: 0,
+    lastExit: null,
+    since: null,
+    // The manager's own words for a unit that is loaded and doing nothing.
+    state: "inactive",
+    result: null,
+  });
+  const os: OsSeam = {
+    flavour: "systemd",
+    render: renderer.render,
+    async install(files) {
+      for (const file of files) writeFileSync(file.path, file.text, "utf8");
+      calls.push({ operation: "install", target: files[0]?.path ?? "" });
+      return files.map((file) => file.path);
+    },
+    async start(id) {
+      calls.push({ operation: "start", target: id });
+      states.set(`${unitName(id)}.service`, { ...blank(`${unitName(id)}.service`), running: true, pid: 4242, state: "active" });
+    },
+    async stop(id) {
+      // What `systemctl --user stop` does to the pair, in the order the seam
+      // asks for it: the timer first, then the service.
+      calls.push({ operation: "stop", target: id });
+      for (const name of [`${unitName(id)}.timer`, `${unitName(id)}.service`]) {
+        if (states.has(name)) states.set(name, blank(name));
+      }
+    },
+    async restart(id) {
+      calls.push({ operation: "restart", target: id });
+    },
+    async remove(id) {
+      calls.push({ operation: "remove", target: id });
+      states.delete(`${unitName(id)}.service`);
+      states.delete(`${unitName(id)}.timer`);
+    },
+    async list() {
+      return [...states.values()];
+    },
+    async unitFiles() {
+      return [];
+    },
+    async show(id) {
+      return states.get(`${unitName(id)}.service`) ?? null;
+    },
+    async memory() {
+      return { current_bytes: 4096, peak_bytes: 8192, source: "ps-rss" };
+    },
+    async available() {
+      return { ok: true, reason: "a manager this check records and never calls" };
+    },
+  };
+  return {
+    os,
+    calls,
+    states,
+    acting: () => calls.filter((call) => call.operation !== "install"),
+    /** A timer the manager has ARMED: active, waiting for its next run. */
+    armTimer(id: string) {
+      const name = `${unitName(id)}.timer`;
+      states.set(name, { ...blank(name), state: "active" });
+    },
+    plantService(id: string, running: boolean) {
+      const name = `${unitName(id)}.service`;
+      states.set(name, running ? { ...blank(name), running: true, pid: 4243, state: "active" } : blank(name));
+    },
+    stateOf: (name: string) => states.get(name)?.state ?? null,
+  };
+}
+
+test(
+  "a stopped entry whose timer the manager still has armed is stopped by the hub within a tick",
+  async () => {
+    // AN ARMED TIMER IS NOT A RUNNING SERVICE. A scheduled entry between runs
+    // has an inactive service and a timer the manager reports as active and
+    // waiting, so a pass that looked only at the service saw nothing to stop
+    // and left the timer to fire on its own cadence for as long as the box
+    // stayed up, while the file, the status and the board all said stopped.
+    const it = await stage([DOOR, RUNNER, SCHEDULED, HUB]);
+    const os = timerOs(join(it.stateDir, "timer-units"));
+    let hub: Awaited<ReturnType<typeof runHub>> | undefined;
+    try {
+      os.armTimer(SCHEDULED.id);
+      os.plantService(SCHEDULED.id, false);
+      setOnEntry(it.registryFile, SCHEDULED.id, "enabled", "false");
+
+      hub = await runHub({ registryFile: it.registryFile, machine: MACHINE, os: os.os });
+      expect(
+        await observe(() => os.acting().some((call) => call.operation === "stop" && call.target === SCHEDULED.id)),
+        "the hub never stopped the entry whose timer was armed",
+      ).toBe(true);
+      expect(os.stateOf(`${unitName(SCHEDULED.id)}.timer`)).toBe("inactive");
+
+      // And it is stopped ONCE: a tick that read a disarmed timer as something
+      // to stop would stop it on every tick for ever.
+      await Bun.sleep(2500);
+      expect(os.acting().filter((call) => call.operation === "stop")).toHaveLength(1);
+      // Nothing else was touched.
+      expect(os.acting().filter((call) => call.operation === "stop" && call.target !== SCHEDULED.id)).toEqual([]);
+      expect(os.acting().filter((call) => call.operation === "remove")).toEqual([]);
+    } finally {
+      await hub?.stop();
+      await it.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "check reports a stopped entry whose timer is armed, and names the timer in the fix",
+  async () => {
+    const it = await stage([DOOR, RUNNER, SCHEDULED, HUB]);
+    const store = await superStore(cluster, it.db);
+    const os = timerOs(join(it.stateDir, "timer-units"));
+    try {
+      const { runCheck } = await seam("src/check/run.ts");
+      const { stopCommand } = await seam("src/os/diff.ts");
+      const stop = stopCommand as (flavour: string, unit: string) => string;
+      const check = runCheck as (o: Record<string, unknown>) => Promise<
+        { kind: string; subject: string; says: string; fix: string }[]
+      >;
+      const ask = async () =>
+        await check({
+          machine: MACHINE,
+          registryFile: it.registryFile,
+          store,
+          os: os.os,
+          kernel: null,
+          credentials: { open: async () => ({ ok: true }), secrets: async () => [] },
+          now: new Date(),
+        });
+
+      setOnEntry(it.registryFile, SCHEDULED.id, "enabled", "false");
+
+      // The control first: the service is loaded, the timer is not armed, and
+      // that is the state the household asked for, so there is no finding.
+      os.plantService(SCHEDULED.id, false);
+      expect((await ask()).filter((one) => one.kind === "unit-not-stopped")).toEqual([]);
+
+      os.armTimer(SCHEDULED.id);
+      const said = (await ask()).filter((one) => one.kind === "unit-not-stopped");
+      expect(said, "an armed timer on a stopped entry is the finding this is").toHaveLength(1);
+      expect(said[0].subject).toBe(SCHEDULED.id);
+      // THE FIX MUST NAME THE TIMER. Stopping the service alone leaves the
+      // timer armed to start it again on its own cadence, so a fix that named
+      // the service would be a command that does not fix it.
+      expect(said[0].fix).toBe(stop("systemd", `${unitName(SCHEDULED.id)}.timer`));
+      // And nothing here ran it.
+      expect(os.acting()).toEqual([]);
+
+      // With the service running beside the armed timer, both are named, and
+      // the shipped case of a running service alone still names the service.
+      os.plantService(SCHEDULED.id, true);
+      const both = (await ask()).filter((one) => one.kind === "unit-not-stopped");
+      expect(both).toHaveLength(1);
+      expect(both[0].fix).toBe(
+        stop("systemd", `${unitName(SCHEDULED.id)}.timer ${unitName(SCHEDULED.id)}.service`),
+      );
+      os.states.delete(`${unitName(SCHEDULED.id)}.timer`);
+      const service = (await ask()).filter((one) => one.kind === "unit-not-stopped");
+      expect(service).toHaveLength(1);
+      expect(service[0].fix).toBe(stop("systemd", `${unitName(SCHEDULED.id)}.service`));
+    } finally {
+      await store.close();
+      await it.stop();
+    }
+  },
+  SLOW,
+);

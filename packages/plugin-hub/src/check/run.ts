@@ -8,6 +8,7 @@ import {
   resetCommand,
   seenUnits,
   startCommand,
+  stillUp,
   stopCommand,
   wantedUnits,
 } from "../os/diff.ts";
@@ -246,19 +247,28 @@ export async function runCheck(options: {
       });
     }
     // The mirror of `unit-missing`, beside it so a reader sees the pair: the
-    // registry says this piece is stopped and the manager is still running it.
-    // The command is TEXT and nothing here or anywhere else runs it (L13).
+    // registry says this piece is stopped and the manager is still carrying it,
+    // as a running service or as a timer still armed to start one.
+    //
+    // THE FIX NAMES EVERY UNIT THAT IS STILL UP, the timer first, which is the
+    // order the hub's own stop uses. Stopping the service of a scheduled entry
+    // and leaving its timer armed is a command that does not fix what it was
+    // handed. The command is TEXT and nothing here or anywhere else runs it
+    // (L13).
     for (const one of wanted) {
       if (one.state !== "stopped") continue;
-      const still = found.find((unit) => entryIdOf(unit.name) === one.id && unit.running === true);
-      if (!still) continue;
+      const still = found
+        .filter((unit) => entryIdOf(unit.name) === one.id && stillUp(unit))
+        .map((unit) => unit.name)
+        .sort((a, b) => Number(b.endsWith(".timer")) - Number(a.endsWith(".timer")));
+      if (still.length === 0) continue;
       findings.push({
         id: findingId(machine, "unit-not-stopped", one.id),
         kind: "unit-not-stopped",
         subject: one.id,
         machine,
         says: unitNotStopped("en", { id: one.id }),
-        fix: stopCommand(os.flavour, still.name),
+        fix: stopCommand(os.flavour, still.join(" ")),
       });
     }
 
