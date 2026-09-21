@@ -533,7 +533,8 @@ export async function runDoor(options: {
       // gets, because it is a read of the same chat.
       const asking: Promise<{ mark: string | null } | { batch: PlatformPull }> = capturing
         ? options.platform.highWater({ chat: agent.chat }).then(mark => ({ mark }))
-        : options.platform.pull({ chat: agent.chat, cursor, timeoutMs: first ? 0 : timeoutMs }).then(batch => ({ batch }));
+        : options.platform.pull({ chat: agent.chat, cursor, timeoutMs: first ? 0 : timeoutMs,
+          allowed: sender => senderAllowed(fresh, agent.person, options.door, sender) }).then(batch => ({ batch }));
       const pulled = await Promise.race([
         asking.then(answer => answer, (error: unknown) => ({ error })), stopped, own.left,
       ]);

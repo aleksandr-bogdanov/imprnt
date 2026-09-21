@@ -80,6 +80,11 @@ export function telegram(options: {
    * call and moves no cursor. A group the bot joined before the door last
    * started is not in here until somebody writes in it, and the `absent` answer
    * says so.
+   *
+   * ONLY AN ALLOWED SENDER TEACHES IT A NAME. Anybody can add a bot to a group
+   * and write in it, and a stranger's group remembered under a name a person
+   * later types would be the chat that name resolves to. The door says who is
+   * allowed with every pull.
    */
   const seen = new Map<string, Set<string>>();
   const remember = (chat: { id: number | string; title?: string; username?: string }) => {
@@ -133,7 +138,7 @@ export function telegram(options: {
     },
     // "The status is set for 5 seconds or less", Bot API 10.3.
     typingSeconds: 5,
-    async pull({ chat, cursor, timeoutMs }) {
+    async pull({ chat, cursor, timeoutMs, allowed }) {
       const said = await call(
         "getUpdates",
         {
@@ -148,7 +153,7 @@ export function telegram(options: {
       for (const update of updates) {
         const message = update.message;
         if (!message) continue;
-        remember(message.chat);
+        if (allowed === undefined || (message.from !== undefined && allowed(String(message.from.id)))) remember(message.chat);
         if (String(message.chat.id) !== chat) continue;
         const media: MediaRef[] = [];
         const photo = message.photo?.reduce((largest, item) =>

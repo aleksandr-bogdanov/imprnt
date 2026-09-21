@@ -96,6 +96,13 @@ export interface Platform {
     chat: string;
     cursor: string | null;
     timeoutMs: number;
+    /**
+     * Whether a sender is one this chat's person allows, for a platform that
+     * learns something from messages it does not serve. Telegram remembers the
+     * names of the groups its bot-wide poll sees, and a group a stranger wrote
+     * in must not become the chat a name a person types resolves to.
+     */
+    allowed?(sender: string): boolean;
   }): Promise<PlatformPull>;
   /**
    * Where `chat` stands NOW, as a cursor: a pull from it
