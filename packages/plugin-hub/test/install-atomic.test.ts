@@ -19,16 +19,15 @@ test("SPEC §1 a failed fresh schema leaves no partial installation and can be r
   writeFileSync(wrapper, `
     import { existsSync, readFileSync, writeFileSync } from "node:fs";
     const args = process.argv.slice(2);
-    const file = args.indexOf("-f");
-    if (file >= 0 && existsSync(${JSON.stringify(fail)})) {
-      const original = readFileSync(args[file + 1], "utf8");
+    let stdin = await Bun.stdin.bytes();
+    const schema = args.includes("--single-transaction") && args.includes("-f");
+    if (schema && existsSync(${JSON.stringify(fail)})) {
+      const original = new TextDecoder().decode(stdin);
       const broken = original.replace("create table inbound", "select 1 / 0;\\ncreate table inbound");
       if (broken === original) throw new Error("schema fault was not installed");
-      const path = ${JSON.stringify(join(dir, "broken.sql"))};
-      writeFileSync(path, broken);
-      args[file + 1] = path;
+      stdin = new TextEncoder().encode(broken);
     }
-    const result = Bun.spawnSync([${JSON.stringify(pgBin("psql"))}, ...args], { stdout: "inherit", stderr: "inherit" });
+    const result = Bun.spawnSync([${JSON.stringify(pgBin("psql"))}, ...args], { stdin, stdout: "inherit", stderr: "inherit" });
     process.exit(result.exitCode);
   `);
   const registryFile = writeRegistry(dir, { hub: { store_url: cluster.url(database), state_dir: dir } });

@@ -155,13 +155,16 @@ export async function runInstall(options: { registryFile: string; stage?: string
       if (result.exitCode !== 0) throw new Error(result.stderr.toString());
       return result.stdout.toString().trim();
     };
-    const feed = (db: string, sql: string) => {
-      const result = Bun.spawnSync([...argv, "-X", "-v", "ON_ERROR_STOP=1", "-At", "-d", db, "-f", "-"], { env: process.env, stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" });
+    // SQL goes to the administrator on standard input, never as a path. On a
+    // stock box the administrator is another account, and the checkout sits in
+    // a home directory that account cannot enter.
+    const feed = (db: string, sql: string, extra: string[] = []) => {
+      const result = Bun.spawnSync([...argv, "-X", "-v", "ON_ERROR_STOP=1", "-At", "-d", db, ...extra, "-f", "-"], { env: process.env, stdin: new TextEncoder().encode(sql), stdout: "pipe", stderr: "pipe" });
       if (result.exitCode !== 0) throw new Error(result.stderr.toString());
     };
     if (!ask("postgres", ["-c", `select 1 from pg_database where datname = '${database}'`])) ask("postgres", ["-c", `create database "${database}"`]);
     if (!ask(database, ["-c", "select to_regclass('public.ledger_event')"])) {
-      ask(database, ["--single-transaction", "-f", join(import.meta.dir, "../schema.sql")]);
+      feed(database, readFileSync(join(import.meta.dir, "../schema.sql"), "utf8"), ["--single-transaction"]);
     } else {
       ask(database, ["-c", "create table if not exists schema_version (version integer primary key)"]);
       // The same ordered list `src/store/migrate.ts` carries. A step that lands
