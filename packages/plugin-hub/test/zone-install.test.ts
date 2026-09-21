@@ -213,6 +213,33 @@ test("ROLL-27 a checkout that is not the zone's is refused and left exactly as i
     expect(second.cloned).toEqual([]);
     expect(second.verified.map((one) => one.person).sort()).toEqual(["p1", "p2"]);
     expect(second.refused.map((one) => one.person).sort()).toEqual(["p3", "p4"]);
+
+    // A REFUSAL IS SAID OUT LOUD, and the command still exits 0: a checkout
+    // this stage would not touch is a thing to tell a person about, not a
+    // reason to stop installing the rest of the household.
+    const { command } = await seam("src/entry/command.ts");
+    const said: string[] = [];
+    const write = process.stdout.write;
+    process.stdout.write = ((chunk: unknown) => { said.push(String(chunk)); return true }) as typeof process.stdout.write;
+    let code: number;
+    try {
+      code = await (command as Function)(["install", it.stage.registryFile, "zone"]) as number;
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(code).toBe(0);
+    const printed = said.join("");
+    for (const person of ["p3", "p4"]) {
+      expect(printed).toContain(`${person}-zone`);
+      expect(printed).toContain(it.stage.person(person).zonePath);
+    }
+    expect(printed).toContain("remote-mismatch");
+    expect(printed).toContain("not-a-repository");
+    expect(printed).toContain(elsewhere.remote);
+    // The stage's own line is still the last word, through the shipped template.
+    expect(printed.trimEnd().split("\n").at(-1)).toBe(
+      operation("en", { operation: "install", target: "zone", result: "done" }),
+    );
   } finally {
     await it.close();
   }
