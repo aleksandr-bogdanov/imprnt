@@ -26,10 +26,10 @@
 // directories under `/var/folders/...` which is a symlink into `/private`, the
 // box resolves a path before it grants it, and `runSync` compares real paths.
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { seam } from "./cluster.ts";
+import { hubPath, seam } from "./cluster.ts";
 import { writeImprntShim } from "./imprnt-shim.ts";
 import { scratchVault, type ScratchVault } from "./scratch-vault.ts";
 import { fixtureGit, localRepository } from "./rollout-git.ts";
@@ -96,6 +96,8 @@ export interface ZoneStage {
   other(id: string): ZonePerson;
   /** The path `hub.imprnt` names: the real CLI behind a one line shim. */
   imprnt: string;
+  /** A config home a BOXED command may write, so no real registry is touched. */
+  configHome: string;
   /** Write a note into this person's vault and commit it. Answers its path. */
   plantNote(person: string, slug: string, text: string): string;
   /** Commit everything standing in this person's own vault tree. */
@@ -119,6 +121,37 @@ function idsOf(people: ZoneStageOptions["people"]): string[] {
  * default, so the vault's entities, domains and forms stay exactly what every
  * other vault has, and the file says one new thing.
  */
+/**
+ * An `imprnt` a BOXED command can actually read, and a config home it can write.
+ *
+ * On macOS the box grants `/usr`, `/bin`, brew's prefix, `~/.local`, `~/.bun`
+ * and `/private/tmp`, which is where an installed `imprnt` lives. A repository
+ * checkout under the home directory is none of those, so the core's own scripts
+ * are copied under `/private/tmp` and the shim runs THAT copy: the same bytes at
+ * a path the box reaches, which is the shape a household really has. On Linux
+ * the whole host is bound read-only inside the box, so the checkout is reachable
+ * where it stands and the plain shim is the one used everywhere else.
+ */
+function reachableImprnt(dir: string): { imprnt: string; configHome: string; home: string | null } {
+  if (process.platform !== "darwin") {
+    const configHome = join(dir, "xdg-boxed");
+    mkdirSync(configHome, { recursive: true });
+    return { imprnt: writeImprntShim(dir), configHome, home: null };
+  }
+  const home = mkdtempSync("/private/tmp/imprnt-hub-cli-");
+  cpSync(hubPath("../imprnt/scripts"), join(home, "scripts"), { recursive: true });
+  const shim = join(home, "imprnt");
+  writeFileSync(
+    shim,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(home, "scripts", "cli.ts"))} "$@"\n`,
+    "utf8",
+  );
+  chmodSync(shim, 0o755);
+  const configHome = join(home, "xdg");
+  mkdirSync(configHome, { recursive: true });
+  return { imprnt: shim, configHome, home };
+}
+
 function declareMount(vaultDir: string, mount: string): void {
   const file = join(vaultDir, "_folders.md");
   const had = existsSync(file) ? readFileSync(file, "utf8") : "";
@@ -173,7 +206,8 @@ export async function zoneStage(base: string, options: ZoneStageOptions = {}): P
       });
     }
 
-    const imprnt = writeImprntShim(dir);
+    const reachable = reachableImprnt(dir);
+    const imprnt = reachable.imprnt;
     const repositories: RepositorySpec[] = [];
     const run: RunSpec[] = [];
     for (const person of people) {
@@ -224,6 +258,7 @@ export async function zoneStage(base: string, options: ZoneStageOptions = {}): P
         return rest[0];
       },
       imprnt,
+      configHome: reachable.configHome,
       plantNote(id, slug, text) {
         const at = person(id).notePath(slug);
         mkdirSync(dirname(at), { recursive: true });
@@ -250,6 +285,8 @@ export async function zoneStage(base: string, options: ZoneStageOptions = {}): P
         await rm(remotes, { recursive: true, force: true }).catch(() => {});
         await rm(join(dir, "state"), { recursive: true, force: true }).catch(() => {});
         await rm(imprnt, { force: true }).catch(() => {});
+        if (reachable.home) await rm(reachable.home, { recursive: true, force: true }).catch(() => {});
+        await rm(join(dir, "xdg-boxed"), { recursive: true, force: true }).catch(() => {});
         await rm(registryFile, { force: true }).catch(() => {});
         for (const id of ids) await rm(join(dir, id), { recursive: true, force: true }).catch(() => {});
       },
