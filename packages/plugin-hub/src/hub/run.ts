@@ -4,7 +4,7 @@ import { diffUnits, seenUnits, stillUp, wantedState, wantedUnits } from "../os/d
 import { entryIdOf } from "../os/names.ts";
 import { thisOs } from "../os/index.ts";
 import type { OsSeam, RenderContext } from "../os/types.ts";
-import { listAgents, listMachines, listRunEntries, runEntriesFor } from "../registry/entries.ts";
+import { listAgents, listMachines, listRunEntries, runEntriesFor, senderAllowed } from "../registry/entries.ts";
 // Aliased because the diary's own `appendEntry` is imported above, and the two
 // write different things: one a ledger line, one a block of the registry file.
 import { appendEntry as appendRegistryEntry, removeEntry, setKey } from "../registry/edit.ts";
@@ -354,9 +354,21 @@ export async function runHub(options: {
     if (Object.keys(said).some(key => !["chat", "name"].includes(key))) throw new Error("invalid configuration");
     // An id that can leave its folder, asked again for a row nobody's door wrote.
     if (!isAgentId(id)) throw new Error("invalid configuration");
+    if (data.operation !== "adopt" && data.operation !== "retire") throw new Error("invalid configuration");
     const door = listRunEntries(registry).find(e => e.id === data.door && e.kind === "door");
     const person = (registry.data.run as { id: string; person?: string }[]).find(e => e.id === door?.id)?.person;
     if (!door || !person || person !== data.person) throw new Error("invalid configuration");
+    // WHO ASKED, re-derived from the row, which is the rule the door asks before
+    // it writes one: a chat, a sender on this person's allowlist for this door,
+    // and a route that is this door and a chat one of this person's agents
+    // answers in, that agent being the one the row names. The door, the runner
+    // and the hub roles can all insert a control row without passing through
+    // the door, which is why the recovery rows above are asked again as well.
+    const route = (data.route ?? {}) as { door?: unknown; chat?: unknown };
+    const commanding = listAgents(registry)
+      .find(one => one.person === person && one.door === door.id && one.chat === route.chat);
+    if (data.source !== "chat" || !senderAllowed(registry, person, door.id, String(data.actor ?? "")) ||
+      route.door !== door.id || !commanding || commanding.id !== data.agent) throw new Error("access denied");
     const existing = listAgents(registry).find(one => one.id === id);
     if (existing && existing.person !== person) throw new Error("invalid configuration");
     if (data.operation === "retire") {
