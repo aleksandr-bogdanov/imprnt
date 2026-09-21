@@ -329,11 +329,15 @@ export async function runHub(options: {
     data => (data.target_kind === "door" && targets(data, ["door"])) ||
       (data.target_kind === "run" && targets(data, RUN_RECOVERY_KINDS)), async data => {
       const id = String(data.target_id);
-      // The limit is the RECOGNIZER's alone, because a wedged recognizer is the
-      // one target that asks for itself back without a person involved. Every
-      // other ask is somebody who pressed restart and meant it, and nothing
-      // about those failures makes a second ask a loop.
-      const bounded = data.target_kind === "run" && targets(data, ["transcriber"]);
+      // WHO IS BOUNDED AND WHY. The recognizer, because a wedged one asks for
+      // itself back with no person involved. And everything the BOARD asks
+      // for, because the board is the one front end that takes a request
+      // without anybody being identified: a page left open, a reload or
+      // anything on the tailnet that can post to it can ask as often as it
+      // likes, and a piece restarted in a loop is a piece that is never up. The
+      // operator at the terminal is a person who typed it, and nothing about a
+      // failed restart makes their second ask a loop.
+      const bounded = data.target_kind === "run" && (targets(data, ["transcriber"]) || data.source === "board");
       const seconds = setting(loadRegistry(options.registryFile), "hub.outage_retry_seconds", 300);
       const last = restartedAt.get(id);
       if (bounded && last !== undefined && Date.now() - last < seconds * 1000) {

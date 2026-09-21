@@ -459,6 +459,75 @@ test(
   SLOW,
 );
 
+test(
+  "a second restart asked for from the board inside the household's own interval is refused, and the command line is not bounded",
+  async () => {
+    // WHAT THE BOUND IS FOR. The board is the one front end a request can reach
+    // without anybody being identified, so a page left open, a reload, or
+    // anything on the tailnet that can post to it can ask for a restart as
+    // often as it likes, and a piece restarted in a loop is a piece that is
+    // never up. The operator at the terminal is a person who typed it and is
+    // bounded by nothing, which is what the control below says.
+    const it = await stage([DOOR, RUNNER, SYNC, HUB, BOARD], { outage_retry_seconds: 300 });
+    const store = await superStore(cluster, it.db);
+    const os = recordingOs(join(it.stateDir, "units"));
+    let hub: Awaited<ReturnType<typeof runHub>> | undefined;
+    try {
+      const { requestRecovery } = await seam("src/hub/control.ts");
+      const ask = requestRecovery as Recovery;
+      hub = await runHub({ registryFile: it.registryFile, machine: MACHINE, os: os.os });
+      const restart = async (source: string, target: string) => {
+        const id = `recover-${crypto.randomUUID()}`;
+        await ask(store, {
+          id,
+          registryFile: it.registryFile,
+          source,
+          actor: source,
+          target_kind: "run",
+          target_id: target,
+        });
+        expect(
+          await observe(async () =>
+            (await it.read.sheet("control")).some((row) => row.id === id && row.data.status !== "pending"),
+          ),
+        ).toBe(true);
+        return (await it.read.sheet("control")).find((row) => row.id === id)!.data;
+      };
+
+      for (const target of [RUNNER.id, SYNC.id]) {
+        const first = await restart("board", target);
+        expect(first.status, `the first ask for ${target}`).toBe("applied");
+        const second = await restart("board", target);
+        expect(second.status, `the second ask for ${target}`).toBe("refused");
+        expect(second.cause).toBe(
+          `${target} was restarted less than 300 s ago, which is this household's retry interval`,
+        );
+      }
+      // The manager was asked once per entry, which is what the bound is worth.
+      expect(os.acting().filter((call) => call.operation === "restart").map((call) => call.target).sort()).toEqual(
+        [RUNNER.id, SYNC.id].sort(),
+      );
+
+      // The control, on the SAME entry inside the SAME window: the operator at
+      // the terminal asks twice and both land, because a person who typed it
+      // meant it.
+      for (const nth of [1, 2]) {
+        const said = await restart("cli", RUNNER.id);
+        expect(said.status, `the operator's ask number ${nth}`).toBe("applied");
+      }
+      expect(
+        os.acting().filter((call) => call.operation === "restart" && call.target === RUNNER.id),
+        "one restart for the board's two asks and one for each of the operator's",
+      ).toHaveLength(3);
+    } finally {
+      await hub?.stop();
+      await store.close();
+      await it.stop();
+    }
+  },
+  SLOW,
+);
+
 test("D-244 enabled is a fourth wanted state derived from the file, and the renders follow it", async () => {
   const { wantedState } = await seam("src/os/diff.ts");
   expect(typeof wantedState).toBe("function");
