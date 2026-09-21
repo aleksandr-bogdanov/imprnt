@@ -57,6 +57,7 @@ import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
 import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
 import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
+import { lookUpAdopt, parseAgentCommand, type ResolvedRef } from "./agentctl.ts";
 import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
 import { CURSOR_SHEET, cursorId, readCursor, writeCursor } from "./cursor.ts";
 import {
@@ -560,6 +561,24 @@ export async function runDoor(options: {
         }
         continue;
       }
+      // THE CHAT LOOKUP AN ADOPT NEEDS IS MADE HERE, in this chat's own reader
+      // and before the batch joins the accepting chain every chat of this door
+      // shares. It retries under the delivery bounds, so made inside the chain
+      // during a platform outage it would hold up every person on this door.
+      // Here it holds up only this chat, and the batch is still acknowledged
+      // only after the command in it has been asked for.
+      const lookups = new Map<string, ResolvedRef>();
+      for (const message of pulled.batch.messages) {
+        if (stopping || own.leaving) break;
+        if (message.chat !== agent.chat || !message.sender_id) continue;
+        const typed = parseAgentCommand(message.text);
+        if (typed === null || typed === "usage" || typed.operation !== "adopt") continue;
+        const answer = await Promise.race([lookUpAdopt({ id: "", registry: fresh, person: agent.person,
+          door: options.door, chat: agent.chat, agent: agent.id, sender_id: message.sender_id,
+          platform: options.platform, operation: "adopt", target: typed.agent, ref: typed.ref }), stopped, own.left]);
+        if (answer !== undefined && answer !== "stopped") lookups.set(message.platform_message_id, answer);
+      }
+      if (stopping || own.leaving) return;
       try {
         const accepted = accepting.then(async () => {
           let current: Registry;
@@ -582,7 +601,7 @@ export async function runDoor(options: {
           const connection = await ingress.sql.reserve();
           try {
             cursor = await acceptBatch({ store: { ...ingress, sql: connection as unknown as Store["sql"] }, registry: current, stateDir,
-              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor, skipBad,
+              door: options.door, agent, platform: options.platform, batch: pulled.batch, cursor, skipBad, lookups,
               received(id, mediaState) {
                 // The media state travels with the row, because the clock it
                 // arms depends on it: a note still waiting for its words is

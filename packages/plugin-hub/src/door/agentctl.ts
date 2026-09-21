@@ -104,17 +104,30 @@ export interface AgentLifecycleRequest {
   target: string;
   /** What the person typed for the chat: its name in the app, or its id. */
   ref?: string;
+  /**
+   * The chat lookup an adopt needs, when the door has already made it outside
+   * the batch's acceptance. `null` is a lookup the door did not make, and an
+   * adopt is then refused rather than looked up where every chat waits on it.
+   * Absent, the lookup is made here.
+   */
+  resolved?: ResolvedRef | null;
+}
+
+/** The household's delivery bounds, which a chat lookup retries under. */
+function lookupBounds(registry: Registry): { retrySeconds: number; maxAttempts: number } {
+  return {
+    retrySeconds: Number(readSetting(registry, "door.delivery_retry_seconds")),
+    maxAttempts: Number(readSetting(registry, "door.delivery_max_attempts")),
+  };
 }
 
 /**
- * Authorize one lifecycle command and ask the control sheet for it.
- *
- * The chat is resolved HERE, at the door, because the door is the only process
- * that holds a platform at all. The hub is handed the chat id the resolution
- * produced and edits the file, which is why a hub needs no platform and no
- * token to make an agent.
+ * Every check a lifecycle command passes before anything is looked up or
+ * written, asked ONCE per command and in one place, so the lookup made before
+ * a batch is accepted and the request made while it is accepted cannot decide
+ * differently about who may ask for what. A refusal is thrown by name.
  */
-export async function requestAgentLifecycle(store: StoreLike, request: AgentLifecycleRequest): Promise<void> {
+function authorize(request: AgentLifecycleRequest): { registry: Registry; agents: ReturnType<typeof listAgents> } {
   const { person } = request;
   // THE FILE IS READ AGAIN HERE, and the reason is measured: the door parses
   // the registry once a tick, and a lifecycle decision taken on a copy that old
@@ -152,8 +165,7 @@ export async function requestAgentLifecycle(store: StoreLike, request: AgentLife
   const reachable = (one: typeof existing) => one !== undefined && one.person === person && one.door === request.door;
   if (request.operation === "retire") {
     if (!reachable(existing)) throw new AgentCommandRefused("access denied");
-    await ask(store, request, {});
-    return;
+    return { registry, agents };
   }
   if (existing && !reachable(existing)) throw new AgentCommandRefused("access denied");
   if (!existing) {
@@ -167,10 +179,51 @@ export async function requestAgentLifecycle(store: StoreLike, request: AgentLife
     // household says what that is.
     if (!door.default_preset) throw new AgentCommandRefused("invalid configuration");
   }
-  const resolved = await resolveChatRef(request.platform, String(request.ref ?? ""), {
-    retrySeconds: Number(readSetting(registry, "door.delivery_retry_seconds")),
-    maxAttempts: Number(readSetting(registry, "door.delivery_max_attempts")),
-  });
+  return { registry, agents };
+}
+
+/**
+ * The chat lookup an adopt needs, made by the door BEFORE the batch it came in
+ * joins the door's accepting chain.
+ *
+ * Every chat a door serves hands its batches through that one chain and one
+ * reserved connection, and a lookup retries for as long as the household's
+ * delivery bounds allow, so a lookup made inside it during a platform outage
+ * would hold up every person's chat on the door. Made here, it holds up only
+ * the chat it was typed in, and the batch is still acknowledged only once the
+ * command in it has been asked for. Nothing is looked up for a command the
+ * door would refuse anyway, which is what keeps a stranger from making the
+ * platform calls: the answer is undefined and the refusal is said when the
+ * batch is accepted.
+ */
+export async function lookUpAdopt(request: AgentLifecycleRequest): Promise<ResolvedRef | undefined> {
+  if (request.operation !== "adopt") return undefined;
+  let registry: Registry;
+  try { ({ registry } = authorize(request)); }
+  catch (error) {
+    if (error instanceof AgentCommandRefused) return undefined;
+    throw error;
+  }
+  return await resolveChatRef(request.platform, String(request.ref ?? ""), lookupBounds(registry));
+}
+
+/**
+ * Authorize one lifecycle command and ask the control sheet for it.
+ *
+ * The chat is resolved HERE, at the door, because the door is the only process
+ * that holds a platform at all. The hub is handed the chat id the resolution
+ * produced and edits the file, which is why a hub needs no platform and no
+ * token to make an agent.
+ */
+export async function requestAgentLifecycle(store: StoreLike, request: AgentLifecycleRequest): Promise<void> {
+  const { registry, agents } = authorize(request);
+  if (request.operation === "retire") {
+    await ask(store, request, {});
+    return;
+  }
+  const resolved = request.resolved === undefined
+    ? await resolveChatRef(request.platform, String(request.ref ?? ""), lookupBounds(registry))
+    : request.resolved ?? { kind: "failed" as const, cause: "operation failed" };
   if (resolved.kind !== "chat") throw new AgentCommandRefused(resolved.cause);
   // A chat another agent of this door already answers in would be answered
   // twice for every message, and the loader does not refuse that on a Discord

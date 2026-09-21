@@ -13,7 +13,7 @@ import { markMediaPending } from "../voice/records.ts";
 import { writeCursor } from "./cursor.ts";
 import { recordDeniedSender } from "./denied.ts";
 import { requestDispatch, parseDispatch } from "./dispatch.ts";
-import { parseAgentCommand, requestAgentLifecycle } from "./agentctl.ts";
+import { parseAgentCommand, requestAgentLifecycle, type ResolvedRef } from "./agentctl.ts";
 import { agentAccepted, agentRefused, agentUsage, controlUsage, dispatchAccepted, dispatchRefused, dispatchUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
 import { saveMedia, type SavedMedia } from "./media.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
@@ -36,6 +36,12 @@ export async function acceptBatch(options: {
   pending?(row: PendingVoiceRow): void;
   /** The door skips a bad complete chat log record and reports it. */
   skipBad?(bad: BadRecord): void | Promise<void>;
+  /**
+   * The chat lookups this batch's adopts needed, made before the batch was
+   * handed in, by platform message id. Given, an adopt is never looked up in
+   * here, where every chat of the door waits on the batch.
+   */
+  lookups?: Map<string, ResolvedRef>;
 }): Promise<string | null> {
   const { store, registry, stateDir, door, agent, platform, batch } = options;
   const skipBad = { skipBad: options.skipBad };
@@ -126,6 +132,7 @@ export async function acceptBatch(options: {
             id, registry, person: agent.person, door, chat: agent.chat, agent: agent.id,
             sender_id: sender, platform, operation: lifecycle.operation, target: lifecycle.agent,
             ...(lifecycle.operation === "adopt" ? { ref: lifecycle.ref } : {}),
+            ...(options.lookups ? { resolved: options.lookups.get(message.platform_message_id) ?? null } : {}),
           });
           text = agentAccepted(language, values);
         } catch (error) {
