@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { isUnspecified } from "../net/address.ts";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { ADAPTERS } from "../adapters/index.ts";
+import { scheduleSeconds } from "../os/diff.ts";
 import {
   artifactsNotBoolean,
   boardArtifactsPort,
@@ -227,7 +228,24 @@ export class UnknownSetting extends Error {
  * carry only while the household names a recognizer that runs here, so the
  * condition below adds it for such a file and for no other.
  */
-export const RUN_KINDS = ["hub", "door", "runner", "sync", "board"] as const;
+export const RUN_KINDS = ["hub", "door", "runner", "sync", "board", "backup"] as const;
+
+/**
+ * The three commands an off-box copy runs, and the four placeholders they may
+ * carry.
+ *
+ * The job fills a placeholder into the argument it appears in and every
+ * argument stays one argument, so a destination with a space or a semicolon in
+ * it arrives whole and nothing is ever read by a shell. `{staging}` is the
+ * directory the copy is assembled in and `{destination}` is the entry's own
+ * string. `{path}` and `{out}` exist only for the read-back: the file being
+ * read back, relative to the copy, and the scratch file it is read into.
+ */
+export const BACKUP_ARGVS = ["dump_argv", "upload_argv", "readback_argv"] as const;
+export const BACKUP_PLACEHOLDERS = ["{staging}", "{destination}", "{path}", "{out}"] as const;
+
+/** A password written into a command line, which every process on the box can read. */
+const PASSWORD_LITERAL = /password\s*=|:\/\/[^/\s]*:[^/\s]*@/i;
 
 /**
  * The kinds a household may not hold down with `enabled = false`.
@@ -305,6 +323,15 @@ export interface RunEntry {
    */
   residency?: string;
   idle_seconds?: number;
+  /**
+   * An off-box copy's three commands and where they send it. The destination
+   * is a string the commands receive and nothing here reads, which is what
+   * keeps every provider out of the code.
+   */
+  dump_argv?: string[];
+  upload_argv?: string[];
+  readback_argv?: string[];
+  destination?: string;
   /**
    * Whether the hub keeps this entry running. Absent means it does.
    *
@@ -748,7 +775,7 @@ export function loadRegistry(file: string): Registry {
   const admin = valueAt(parsed, "install.admin_argv");
   if (admin !== undefined) {
     strings(admin, "install.admin_argv", false);
-    if ((admin as string[]).some(arg => /password\s*=|:\/\/[^/\s]*:[^/\s]*@/i.test(arg)))
+    if ((admin as string[]).some(arg => PASSWORD_LITERAL.test(arg)))
       refuse("install.admin_argv", 0, "install.admin_argv must not contain password literals");
   }
 
@@ -1187,6 +1214,59 @@ export function loadRegistry(file: string): Registry {
       if (says) positive(idle, `${at}.idle_seconds`);
     }
 
+    // The off-box copy's own rules. Each of its three commands is held to what
+    // `install.admin_argv` is held to, the other command in this file that runs
+    // with authority, plus two more: no path relative to wherever the process
+    // happens to start, and no placeholder the job would not fill in, because
+    // one it does not know would be passed through as a literal.
+    if (entry.kind === "backup") {
+      if (scheduleSeconds(String(entry.schedule)) === null) {
+        refuse(`${at}.schedule`, here,
+          `${id} is a backup with schedule ${describe(entry.schedule)}, and a copy runs on a cadence such as hourly ` +
+            `or every 30m: one that never stops, or that nobody starts, is not an hourly copy`);
+      }
+      for (const key of BACKUP_ARGVS) {
+        const where = `${at}.${key}`;
+        const argv = entry[key];
+        if (argv === undefined || argv === null) {
+          refuse(where, here, `${id} is a backup with no ${key}, and the copy runs exactly the three commands the file names`);
+        }
+        strings(argv, where, false);
+        const args = argv as string[];
+        if (args.some(arg => PASSWORD_LITERAL.test(arg))) refuse(where, here, `${where} must not contain password literals`);
+        const relative = args.find((arg, n) => arg === "." || arg === ".." || arg.startsWith("./") ||
+          arg.startsWith("../") || (n === 0 && arg.includes("/") && !isAbsolute(arg)));
+        if (relative !== undefined) {
+          refuse(where, here,
+            `${where} names ${describe(relative)}, a relative path, which is a different file in every directory a process starts in`);
+        }
+        for (const token of args.flatMap(arg => arg.match(/\{[A-Za-z_]+\}/g) ?? [])) {
+          if (!(BACKUP_PLACEHOLDERS as readonly string[]).includes(token)) {
+            refuse(where, here,
+              `${where} carries ${token}, and the four placeholders are ${BACKUP_PLACEHOLDERS.slice(0, 3).join(", ")} and ${BACKUP_PLACEHOLDERS[3]}`);
+          }
+          if (key !== "readback_argv" && (token === "{path}" || token === "{out}")) {
+            refuse(where, here, `${where} carries ${token}, which names the one file a read-back reads and means nothing here`);
+          }
+          // A read-back through the copy on this box compares that copy with
+          // itself, so it would say every copy landed.
+          if (key === "readback_argv" && token === "{staging}") {
+            refuse(where, here, `${where} reads {staging}, which is the copy on this box, so it would match whatever the upload did`);
+          }
+        }
+      }
+      // THE DESTINATION IS NOT PARSED. It is a value the commands receive and
+      // the code never interprets, so a loader that checked its shape would be
+      // naming a provider. A nonempty string is all it has to be.
+      const destination = entry.destination;
+      if (destination === undefined || destination === null) {
+        refuse(`${at}.destination`, here, `${id} is a backup with no destination, and a copy has to go somewhere`);
+      }
+      if (typeof destination !== "string" || destination.trim() === "") {
+        refuse(`${at}.destination`, here, `${id} has destination ${describe(destination)}, and it must be a nonempty string`);
+      }
+    }
+
     entries.push({
       id,
       kind: entry.kind as string,
@@ -1199,13 +1279,15 @@ export function loadRegistry(file: string): Registry {
       // IGNORED on every other, the way the loader has always tolerated a key
       // it has no rule about. A board is reached at an address and a port, the
       // recognizer at a port on loopback plus the two knobs that say how long
-      // it holds its model, and a door names the server a channel name is
-      // resolved against and the preset it adopts agents with. Carrying any of
+      // it holds its model, a door names the server a channel name is
+      // resolved against and the preset it adopts agents with, and a backup
+      // carries its three commands and where they send the copy. Carrying any of
       // them onto another kind's row would put a field on it that nothing reads
       // and that a reader would have to explain.
       ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
         : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"]
-        : entry.kind === "door" ? ["guild", "default_preset"] : [])
+        : entry.kind === "door" ? ["guild", "default_preset"]
+        : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
