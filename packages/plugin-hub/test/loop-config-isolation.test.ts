@@ -1,5 +1,5 @@
 import { beforeAll, expect, test } from "bun:test"
-import { readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { claudeCode } from "../src/adapters/claude-code.ts"
 import { harvestMessage } from "../src/harvest/prompt.ts"
@@ -112,4 +112,18 @@ for (const source of ["explicit", "default"]) test(`ROLL-24 runner feeds ${sourc
     if (profile) rmSync(profile.path, { force: true })
     await stage.stop()
   }
+})
+
+test("an ordinary loop is told where its person's vault is, so recall and ingest reach it from the clean session directory", async () => {
+  const f = loopFixture()
+  try {
+    const make = await launchSeam(), input = launchInput(f)
+    const vault = join(input.box.tree, "vault")
+    mkdirSync(vault, { recursive: true })
+    const ordinary = await make(input)
+    expect(ordinary.env.IMPRNT_VAULT, "the ordinary loop names the person's vault").toBe(vault)
+    expect(ordinary.cwd.startsWith(input.box.tree), "the loop still runs outside the tree").toBe(false)
+    const harvest = await make({ ...input, purpose: "harvest" })
+    expect(harvest.env.IMPRNT_VAULT, "a harvest files through apply, never through its own loop").toBeUndefined()
+  } finally { f.stop() }
 })

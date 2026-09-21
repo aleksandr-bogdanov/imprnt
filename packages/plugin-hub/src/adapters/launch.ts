@@ -127,6 +127,11 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1", CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
     CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   });
+  // The loop runs in a clean session directory, so `imprnt recall` and
+  // `imprnt ingest` find the person's vault only by being told where it is.
+  // Without it an agent answers from an empty memory and files nowhere.
+  const vault = join(input.box.tree, "vault");
+  if (ordinary && existsSync(vault)) env.IMPRNT_VAULT = vault;
   const tools = ordinary ? input.agent.tools : ["Read", "Glob", "Grep"];
   const argv = ["claude", "--print", "--input-format", "stream-json", "--output-format", "stream-json",
     "--verbose", "--replay-user-messages", "--include-partial-messages",
