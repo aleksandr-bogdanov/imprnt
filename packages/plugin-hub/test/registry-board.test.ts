@@ -301,6 +301,46 @@ test("D-244 whether the hub keeps an entry running is asked of every kind, by ke
   );
 });
 
+test("the hub and the board are refused a false enabled, by key and by line", () => {
+  // NEITHER CAN BE STOPPED FROM THE FILE. The hub is what reads the file and
+  // starts what it says should be running, so a stopped hub is a household
+  // with nothing left to start anything, itself included, and the render it
+  // leaves behind carries nothing that would bring it back at the next boot.
+  // The board is the page a person would press start on, and a stopped board
+  // cannot offer it. Taking either down is removing its entry, which is a
+  // deliberate edit and not a field.
+  const said: Record<string, string> = {
+    [HUB.id]:
+      `${HUB.id} has enabled false, and the hub is never stopped from the file, because a stopped hub starts nothing again, itself included.`,
+    board:
+      "board has enabled false, and a board is never stopped from the file, because a stopped board cannot offer the start that brings it back. Remove the entry to take it down.",
+  };
+  for (const entry of [HUB, EXAMPLE_BOARD]) {
+    const run = [DOOR, RUNNER, HUB, EXAMPLE_BOARD].map((one) =>
+      one.id === entry.id ? { ...one, enabled: false } : one,
+    );
+    const { error, text } = refusalOf(run);
+    expect(error.key).toBe(`run[${run.findIndex((one) => one.id === entry.id)}].enabled`);
+    expect(error.line).toBe(lineOf(text, entry.id, "enabled"));
+    expect(error.reason).toBe(said[entry.id]);
+  }
+
+  // The controls. A true loads on both, because saying what is already true is
+  // not a hold, and every other kind may still be stopped by the field.
+  for (const entry of [HUB, EXAMPLE_BOARD]) {
+    const { file } = write([DOOR, RUNNER, HUB, EXAMPLE_BOARD].map((one) =>
+      one.id === entry.id ? { ...one, enabled: true } : one,
+    ));
+    expect(listRunEntries(loadRegistry(file)).find((one) => one.id === entry.id)!.enabled).toBe(true);
+  }
+  for (const entry of [DOOR, RUNNER, SYNC]) {
+    const { file } = write([DOOR, RUNNER, SYNC, HUB, EXAMPLE_BOARD].map((one) =>
+      one.id === entry.id ? { ...one, enabled: false } : one,
+    ));
+    expect(listRunEntries(loadRegistry(file)).find((one) => one.id === entry.id)!.enabled).toBe(false);
+  }
+});
+
 test("D-244 an entry that says nothing about enabled is enabled", async () => {
   const { enabledOf } = await seam("src/registry/entries.ts");
   expect(typeof enabledOf, "enabledOf must be a function").toBe("function");

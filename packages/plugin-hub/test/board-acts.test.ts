@@ -367,6 +367,41 @@ test(
 );
 
 test(
+  "the hub's row and the board's row offer no stop, and every other entry's does",
+  async () => {
+    // Neither can be stopped from the file, which the loader refuses by name,
+    // so a button that wrote that field would be a button whose only answer is
+    // a refusal. The hub is what would have to start it again and the board is
+    // the page the start would be pressed on.
+    const staged = await stage({ writer: "yes" });
+    try {
+      const machines = await (await staged.board.get("/")).text();
+      const rowFor = (id: string) => {
+        const row = new RegExp(`<tr[^>]*>(?:(?!</tr>)[\\s\\S])*${id}(?:(?!</tr>)[\\s\\S])*</tr>`).exec(machines)?.[0] ?? "";
+        expect(row, `${id} should have a row`).not.toBe("");
+        return row;
+      };
+      for (const id of [HUB_ENTRY.id, staged.boardEntry.id]) {
+        expect(rowFor(id), `${id} offers a stop`).not.toContain("/act/enabled");
+        // The one act they do carry, so the row is not simply empty.
+        expect(rowFor(id)).toContain("/act/restart");
+      }
+      for (const id of [RUNNER_ENTRY.id, SCHEDULED_ENTRY.id, DOOR_ENTRY.id]) {
+        expect(rowFor(id), `${id} should offer a stop`).toContain("/act/enabled");
+      }
+      // And pressing it on the hub, for a caller that wrote the form by hand,
+      // changes no file: the writer is never reached.
+      const pressed = await press(staged.board, "/act/enabled", { target: HUB_ENTRY.id, value: "false" });
+      expect(staged.writes, "a hand-written form reached the registry writer").toEqual([]);
+      expect(pressed.landed).toContain(actRefused("en", { target: HUB_ENTRY.id, cause: "enabled-not-for-this-kind" }));
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
   "with no writer the page says so and changes nothing, and restart still works in the same run",
   async () => {
     const staged = await stage({ writer: "no" });

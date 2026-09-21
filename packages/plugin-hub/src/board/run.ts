@@ -17,7 +17,7 @@ import { readStatus } from "../hub/status.ts";
 import { readStampMetrics } from "../metrics/stamps.ts";
 import { readSheet } from "../records/statesheet.ts";
 import { lifetimeFor, listAgents, listMachines, listPeople, listRunEntries, voiceFor } from "../registry/entries.ts";
-import { loadRegistry, type RunEntry } from "../registry/load.ts";
+import { loadRegistry, NEVER_STOPPED, type RunEntry } from "../registry/load.ts";
 import type { OsSeam } from "../os/types.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readOpenTurns } from "../store/turns.ts";
@@ -430,7 +430,16 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       const target = form.get("target") ?? "";
       const value = form.get("value") === "true";
       if (path === "/act/restart") return await restart(target);
-      if (path === "/act/enabled") return await edit("/", "run", target, "enabled", value);
+      if (path === "/act/enabled") {
+        // The file refuses this field on the hub and on the board, so a form
+        // somebody wrote by hand is answered here rather than by a writer that
+        // would produce a candidate file nothing could load.
+        const kind = listRunEntries(loadRegistry(registryFile)).find((one) => one.id === target)?.kind ?? "";
+        if ((NEVER_STOPPED as readonly string[]).includes(kind)) {
+          return redirect("/", { said: "actRefused", target, cause: "enabled-not-for-this-kind" });
+        }
+        return await edit("/", "run", target, "enabled", value);
+      }
       if (path === "/act/sleeping") return await edit("/people", "agents", target, "sleeping", value);
       if (path === "/act/check") return await checkNow();
     }

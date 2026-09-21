@@ -59,6 +59,8 @@ import {
   editApplied,
   editUnavailable,
   enabledNotBoolean,
+  enabledOnBoard,
+  enabledOnHub,
   finding,
   mediaKind,
   operation,
@@ -198,6 +200,23 @@ test("the refusals the fence adds are pinned whole in both languages", () => {
   const nasty = boardArtifactsPort("en", { id: "one\ntwo", value: "three\u0007four" });
   expect(nasty).not.toContain("\n");
   expect(nasty).not.toContain("\u0007");
+});
+
+test("the two refusals for a piece that cannot be stopped from the file are pinned whole in both languages", () => {
+  pinned(
+    enabledOnHub,
+    { id: "hub-pi" },
+    "hub-pi has enabled false, and the hub is never stopped from the file, because a stopped hub starts nothing again, itself included.",
+    "hub-pi указывает enabled false, а хаб нельзя остановить из файла: остановленный хаб больше ничего не запустит, в том числе себя.",
+    ["hub-pi"],
+  );
+  pinned(
+    enabledOnBoard,
+    { id: "board" },
+    "board has enabled false, and a board is never stopped from the file, because a stopped board cannot offer the start that brings it back. Remove the entry to take it down.",
+    "board указывает enabled false, а доску нельзя остановить из файла: остановленная доска не сможет предложить запуск, который её вернёт. Чтобы убрать её, удалите запись.",
+    ["board"],
+  );
 });
 
 test("D-253 the nine page strings and the one finding line are pinned whole in both languages", () => {

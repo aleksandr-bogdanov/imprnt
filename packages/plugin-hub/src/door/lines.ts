@@ -639,6 +639,24 @@ export function enabledNotBoolean(language: Language, values: LineValues = {}): 
     : "{id} has enabled {value}, and whether the hub keeps it running is a true or a false.", values);
 }
 
+/**
+ * The two kinds a household may not hold down from the file.
+ *
+ * Each says why in the sentence, because a refusal a person cannot act on is a
+ * wall. Taking either down is removing its entry.
+ */
+export function enabledOnHub(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} указывает enabled false, а хаб нельзя остановить из файла: остановленный хаб больше ничего не запустит, в том числе себя."
+    : "{id} has enabled false, and the hub is never stopped from the file, because a stopped hub starts nothing again, itself included.", values);
+}
+
+export function enabledOnBoard(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} указывает enabled false, а доску нельзя остановить из файла: остановленная доска не сможет предложить запуск, который её вернёт. Чтобы убрать её, удалите запись."
+    : "{id} has enabled false, and a board is never stopped from the file, because a stopped board cannot offer the start that brings it back. Remove the entry to take it down.", values);
+}
+
 /** The second port a board serves artifacts on, which is their own origin. */
 export function boardArtifactsPort(language: Language, values: LineValues = {}): string {
   return interpolate(language, language === "ru"

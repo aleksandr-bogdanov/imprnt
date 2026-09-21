@@ -10,6 +10,8 @@ import {
   boardBindWide,
   boardPort,
   enabledNotBoolean,
+  enabledOnBoard,
+  enabledOnHub,
 } from "../door/lines.ts";
 
 /**
@@ -238,6 +240,19 @@ export const RUN_KINDS = ["hub", "door", "runner", "sync", "board"] as const;
  * opposite of what binding to one tailnet address buys.
  */
 export const WILDCARD_BINDS = ["0.0.0.0", "::"] as const;
+
+/**
+ * The kinds a household may not hold down with `enabled = false`.
+ *
+ * Neither could be started again from where it was stopped. The hub is what
+ * reads this file on its tick and starts what the file says should be running,
+ * and it renders itself without anything that would bring it back at the next
+ * boot, so a stopped hub is a household with nothing left to start anything.
+ * The board is the page a person would press start on. Taking either down is
+ * removing its entry, which is a deliberate edit rather than a field, and the
+ * page shows no stop on their rows for the same reason.
+ */
+export const NEVER_STOPPED = ["hub", "board"] as const;
 
 export interface RunEntry {
   id: string;
@@ -970,6 +985,13 @@ export function loadRegistry(file: string): Registry {
         `${at}.enabled`,
         here,
         enabledNotBoolean("en", { id, value: describeBare(entry.enabled) }),
+      );
+    }
+    if (entry.enabled === false && (NEVER_STOPPED as readonly string[]).includes(entry.kind as string)) {
+      refuse(
+        `${at}.enabled`,
+        here,
+        entry.kind === "hub" ? enabledOnHub("en", { id }) : enabledOnBoard("en", { id }),
       );
     }
 

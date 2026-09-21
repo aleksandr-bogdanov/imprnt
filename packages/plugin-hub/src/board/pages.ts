@@ -1,5 +1,5 @@
 import { cardBroken, cardOk, cardWaiting } from "../door/lines.ts";
-import type { AgentEntry, MachineEntry, PersonEntry, RunEntry } from "../registry/load.ts";
+import { NEVER_STOPPED, type AgentEntry, type MachineEntry, type PersonEntry, type RunEntry } from "../registry/load.ts";
 import type { MetricsRow } from "../metrics/stamps.ts";
 import type { VoiceHealthRow } from "../voice/health.ts";
 import { escape, page } from "./html.ts";
@@ -122,8 +122,14 @@ export function machinesPage(args: {
     // An entry's own act is stop or start, which is one edit to one field. An
     // agent's is pause, and it lives on the people page: the two are never
     // offered on one thing, because on a run entry they are the same edit.
+    //
+    // THE HUB AND THE BOARD CARRY NO STOP. The file refuses the field on both,
+    // because neither could be started again from where it was stopped, so a
+    // button here would be a button whose only answer is a refusal.
     const enabled = entry.enabled !== false;
-    const hold = act("/act/enabled", entry.id, enabled ? "stop" : "start", enabled ? "false" : "true");
+    const hold = (NEVER_STOPPED as readonly string[]).includes(entry.kind)
+      ? ""
+      : act("/act/enabled", entry.id, enabled ? "stop" : "start", enabled ? "false" : "true");
     return (
       "<tr>" +
       cell(entry.id) +

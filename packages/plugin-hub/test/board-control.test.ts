@@ -788,14 +788,13 @@ test(
   SLOW,
 );
 
-test("D-244 a household that disables its hub meets the shipped installer refusal", async () => {
-  // No refusal sentence is invented for this. What it costs is the shipped
-  // consequence, asserted rather than left to be found: the installer requires
-  // exactly one RESIDENT hub, and a hub the file stopped is not one.
-  //
-  // The residue, in plain words: a household that disables its hub has disabled
-  // the thing that would start it again, and whether that deserves a refusal of
-  // its own is a line for a later contract.
+test("D-244 a household that disables its hub is refused by the file itself, before anything is installed", async () => {
+  // The refusal is the LOADER's, which is earlier and wider than the shipped
+  // installer one this case used to meet: nothing that reads the file gets
+  // past it, so a household cannot disable the thing that would start
+  // everything again, its own hub included. The installer's own
+  // one-resident-hub rule is untouched and still answers a file that declares
+  // no resident hub at all.
   const it = await stage([DOOR, RUNNER, HUB]);
   const os = recordingOs(join(it.stateDir, "units"));
   try {
@@ -804,10 +803,22 @@ test("D-244 a household that disables its hub meets the shipped installer refusa
     setOnEntry(it.registryFile, HUB.id, "enabled", "false");
     await expect(
       install({ registryFile: it.registryFile, stage: "services", target: HUB.id, os: os.os }),
+    ).rejects.toThrow(
+      `${HUB.id} has enabled false, and the hub is never stopped from the file, because a stopped hub starts nothing again, itself included.`,
+    );
+    expect(os.acting()).toEqual([]);
+    setOnEntry(it.registryFile, HUB.id, "enabled", null);
+
+    // The shipped installer rule, still where it was: a hub that is not a
+    // resident is not the one resident hub a machine installs against.
+    setOnEntry(it.registryFile, HUB.id, "schedule", '"on demand"');
+    await expect(
+      install({ registryFile: it.registryFile, stage: "services", target: HUB.id, os: os.os }),
     ).rejects.toThrow("one-resident-hub-required");
     expect(os.acting()).toEqual([]);
-    // The control on the same path: with the field gone it installs.
-    setOnEntry(it.registryFile, HUB.id, "enabled", null);
+
+    // The control on the same path: with the file back as it was it installs.
+    setOnEntry(it.registryFile, HUB.id, "schedule", '"always"');
     await install({ registryFile: it.registryFile, stage: "services", target: HUB.id, os: os.os });
     expect(os.acting().filter((call) => call.operation === "start").length).toBeGreaterThan(0);
   } finally {
