@@ -291,9 +291,10 @@ test("ROLL-17 D-171 loader refuses unsupported kinds by name", () => {
     // Same syntactically valid standalone entry, changing only the kind.
     const entry = '\n[[run]]\nid = "hub-pi"\nkind = "hub"\nschedule = "always"\nmemory_limit_mb = 128\n'
     expect(() => loadRegistry(f.write(f.base + entry))).not.toThrow()
-    // The board kind is supported now, so it is not in this list. Its own
-    // loading is bound in test/registry-board.test.ts.
-    for (const kind of ["watcher", "transcriber", "backup", "synthetic-unknown"]) {
+    // The board and backup kinds are supported, so neither is in this list.
+    // Their own loading is bound in test/registry-board.test.ts and
+    // test/backup-registry.test.ts.
+    for (const kind of ["watcher", "transcriber", "synthetic-unknown"]) {
       const file = f.write(f.base + entry.replace('kind = "hub"', `kind = "${kind}"`))
       expect(() => loadRegistry(file), `unsupported-run-kind ${kind}`).toThrow("unsupported-run-kind")
     }

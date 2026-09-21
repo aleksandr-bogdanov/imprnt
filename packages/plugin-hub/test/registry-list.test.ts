@@ -102,9 +102,10 @@ test("RUN-01 a registry entry names each thing the hub runs with its schedule an
   }
 
   // Deferred kinds must refuse instead of silently joining the installed list.
-  // The board kind is not among them: the loader supports it, and its own
-  // loading is bound in test/registry-board.test.ts.
-  for (const kind of ["watcher", "backup", "transcriber"]) {
+  // The board and backup kinds are not among them: the loader supports both,
+  // and their own loading is bound in test/registry-board.test.ts and
+  // test/backup-registry.test.ts.
+  for (const kind of ["watcher", "transcriber"]) {
     const deferred = await scratch([...header(), ...entry({ id: kind, kind, schedule: "always", mb: 128 })]);
     try {
       expect(() => (loadRegistry as Function)(deferred)).toThrow("unsupported-run-kind");
