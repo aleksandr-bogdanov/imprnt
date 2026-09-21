@@ -7,7 +7,7 @@
 // writer that rewrote it from the parse.
 //
 // What it carries, and why each one is here:
-//   - a header comment and a comment above two entries
+//   - a header comment and a comment above most entries
 //   - a comment INSIDE an entry, between two of its keys
 //   - an inline table value (`allowed_senders`)
 //   - keys in an order that is not the loader's
@@ -94,6 +94,7 @@ export function handWrittenRegistry(dir: string, options: { stateDir?: string; s
     'preset = "daily"',
     'runner = "runner-pi"',
     "",
+    "# takes jobs only, and answers in no chat",
     "[[agents]]",
     'id = "p1-batch"',
     'person = "p1"',

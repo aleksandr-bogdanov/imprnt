@@ -620,8 +620,11 @@ export function loaded(registry: unknown, who: string): Registry {
  * The scan tracks the table header it is under, because `id` and
  * `memory_limit_mb` repeat in every entry and a refusal has to name the one a
  * human is looking for.
+ *
+ * Exported because the writer changes the line a refusal would point at, and
+ * two scans of the same file could disagree about which line a key is on.
  */
-function indexLines(text: string): Map<string, number> {
+export function indexLines(text: string): Map<string, number> {
   const index = new Map<string, number>();
   const seen = new Map<string, number>();
   let table = "";
