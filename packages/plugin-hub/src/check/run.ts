@@ -51,6 +51,7 @@ import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { silentRunners } from "./silence.ts";
 import { readZoneState, zoneFindings } from "./zone.ts";
+import { backupFindings, readBackupState } from "./backup.ts";
 
 export type { Finding } from "./finding.ts";
 export { findingId } from "./finding.ts";
@@ -767,6 +768,11 @@ export async function runCheck(options: {
         fix: syncRepair("en", { target }) });
     }
   }
+  // The off-box copy's last outcome, from its own sheet, in the same shape.
+  // `check` opens no destination: a missed hour is already job-stale, so a
+  // probe of the destination would say nothing new and would put a network
+  // connection inside a command that only reads.
+  findings.push(...backupFindings(await readBackupState(options.store), machine, entries));
   for (const row of await readSheet(options.store, "agent_health")) {
     if (row.data.status !== "retry" || !listAgents(registry).some(agent => agent.id === row.id &&
       runEntriesFor(registry, machine).some(entry => entry.id === agent.runner))) continue;
