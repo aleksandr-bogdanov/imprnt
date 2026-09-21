@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import type { Cluster } from "./cluster.ts"
 import { stageHub, type StageOptions } from "./hub-fixture.ts"
 import type { RegistrySpec } from "./registry.ts"
@@ -104,12 +105,81 @@ function dispatchSpec(spec: RegistrySpec, secondDoor: boolean): RegistrySpec {
   }
 }
 
+/**
+ * Every shape dispatch, the shared zone and the off-box copy give a household,
+ * in ONE file the hub would really accept: the dispatch household on two doors,
+ * a `[zone]` table with one marked repository per vault-holding person listed
+ * in that person's sync entry, an hourly `backup` entry with its three commands
+ * and a destination, and `guild` plus `default_preset` on every door.
+ *
+ * NOTHING IS ON DISK. The vaults and the checkouts are paths under the stage's
+ * own directory that nothing creates, and the destination is a string no
+ * command in a stage ever receives, because the loader compares declared
+ * strings and a check that wants a checkout present, or a copy landed, builds
+ * that itself. Absence is also what makes `check` report the zone findings here
+ * without anything being planted for them.
+ *
+ * UNSET MEANS THE FILE IS THE ONE EVERY SHIPPED CHECK ALREADY LOADS.
+ */
+export const SIXB_MOUNT = "shared"
+export const SIXB_ZONE_REMOTE = "origin"
+export const SIXB_BACKUP = "backup-hourly"
+/** The Discord server a channel name is resolved against. A digit string, as Discord's are. */
+export const SIXB_GUILD = "2000000000"
+/**
+ * The copy's three commands. Absolute programs, no password literal, and only
+ * the placeholders each one may carry, because those are the loader's rules.
+ * Nothing in a stage runs them: a check that needs a copy to land builds one
+ * with the backup stage and its own recorder.
+ */
+export const SIXB_BACKUP_ARGV = {
+  dump_argv: ["/usr/bin/env", "pg_dump", "hub"],
+  upload_argv: ["/usr/bin/rsync", "-a", "{staging}/", "{destination}"],
+  readback_argv: ["/usr/bin/rsync", "{destination}/{path}", "{out}"],
+}
+
+/** Where a person's vault would be, under the stage's own directory. */
+export function sixbVault(stateDir: string, person: string): string {
+  return join(stateDir, "vaults", person)
+}
+
+function sixbSpec(spec: RegistrySpec): RegistrySpec {
+  const stateDir = String(spec.hub?.state_dir)
+  const people = (spec.people ?? []).map(one => ({ ...one, vault: sixbVault(stateDir, one.id) }))
+  const repositories = people.map(one => ({
+    id: `${one.id}-zone`, person: one.id, path: join(sixbVault(stateDir, one.id), "vault", SIXB_MOUNT),
+    remote: SIXB_ZONE_REMOTE, branch: "main", required: true, zone: true,
+  }))
+  return {
+    ...spec,
+    people,
+    zone: { mount: SIXB_MOUNT, remote: SIXB_ZONE_REMOTE, url: `file://${join(stateDir, "zone.git")}` },
+    repositories: [...(spec.repositories ?? []), ...repositories],
+    run: [
+      ...(spec.run ?? []).map(entry => entry.kind === "door" ? { ...entry, guild: SIXB_GUILD, default_preset: "daily" } : entry),
+      ...people.map(one => ({
+        id: `sync-${one.id}`, kind: "sync", machine: "pi", schedule: "every 5m", memory_limit_mb: 128,
+        repositories: [`${one.id}-zone`],
+      })),
+      {
+        id: SIXB_BACKUP, kind: "backup", machine: "pi", schedule: "hourly", memory_limit_mb: 256,
+        destination: "mac:hub-copies", ...SIXB_BACKUP_ARGV,
+      },
+    ],
+  }
+}
+
 export async function rolloutStage(
   cluster: Cluster,
   name: "telegram" | "discord",
-  options: StageOptions & { voice?: VoiceStage; dispatch?: boolean; secondDoor?: boolean; admin?: FakeAdminOptions } = {},
+  options: StageOptions & { voice?: VoiceStage; dispatch?: boolean; secondDoor?: boolean; sixb?: boolean; admin?: FakeAdminOptions } = {},
 ) {
   const customize = options.registry
+  // Every shape at once is the dispatch household on two doors with the zone,
+  // the copy and the door fields laid over it, so it is built from the two
+  // options that already exist rather than beside them.
+  const dispatch = options.dispatch === true || options.sixb === true
+  const secondDoor = options.secondDoor === true || options.sixb === true
   const hub = await stageHub(cluster, {
     ...options,
     hub: { tick_seconds: 1, ...options.hub },
@@ -120,7 +190,8 @@ export async function rolloutStage(
     }],
     registry: base => {
       const one = { ...base, agents: base.agents!.map(one => ({ ...one, runner: "runner-pi" })) }
-      const spec = options.dispatch ? dispatchSpec(one, options.secondDoor === true) : one
+      const two = dispatch ? dispatchSpec(one, secondDoor) : one
+      const spec = options.sixb ? sixbSpec(two) : two
       return customize ? customize(spec) : spec
     },
   })
