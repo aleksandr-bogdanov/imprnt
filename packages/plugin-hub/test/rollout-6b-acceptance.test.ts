@@ -95,7 +95,8 @@ const BOTH: Record<"macos" | "linux", Ran> = { macos: "ran", linux: "ran" }
  * and the named files on Linux in the container CI's own image. A K test ran
  * on both because each gate here has an answer on each system (the box is
  * sandbox-exec on one and bwrap on the other, and a second device is a disk
- * image on one and /dev/shm on the other).
+ * image on one and /dev/shm on the other). That round had no real Linux box,
+ * and the one test a container cannot pass is recorded as failed.
  */
 const INVENTORY: Row[] = [
   {
@@ -277,7 +278,13 @@ const INVENTORY: Row[] = [
         "a reader that asks for the retired zone setting fails at run time",
         "check sweeps no zone root of its own",
       ] },
-      { seam: "K", file: "test/box-tenancy.test.ts", gates: ["box"], runs: BOTH, tests: [
+      // FAILED ON LINUX IN THIS ROUND, and recorded as failed rather than as a
+      // pass. The only Linux this round had is a container, whose whole process
+      // table is single digits, and the probe's unboxed control wants more than
+      // fifty. The box half of the probe is not what failed, but a run that
+      // failed closes nothing, so this row stays open until a real Linux box
+      // runs it.
+      { seam: "K", file: "test/box-tenancy.test.ts", gates: ["box"], runs: { macos: "ran", linux: "failed" }, tests: [
         "the tenancy probe with its control, per agent",
       ] },
     ],
@@ -324,6 +331,15 @@ const NOT_PROVED: { gap: string; why: string }[] = [
   { gap: "a zone checkout whose remote is the same local path written two ways reads as a mismatch",
     why: "the remote comparison is a string comparison of urls" },
 ]
+
+/**
+ * The rows whose automated half this round could NOT close, and why. Every
+ * other row is asserted closed, so a row that goes open without a line here
+ * fails, and so does a line here for a row that closed.
+ */
+const OPEN: Record<string, string> = {
+  "ROLL-16, kept": "test/box-tenancy.test.ts failed on linux",
+}
 
 /** Every shipped check this phase edited, with the reason in one line. */
 const EDITED: Record<string, string> = {
@@ -516,10 +532,20 @@ test("ROLL-19 ROLL-27 ROLL-28 ROLL-32 a row with a skip, a failure or no run is 
 
   // THE CONTROL, so a validator that refused everything fails: every row with
   // no owner-only half is accepted as the round ran it, and every row with one
-  // has its automated half closed.
+  // has its automated half closed, except the rows named open, each for the
+  // reason named beside it.
   for (const row of INVENTORY) {
+    const open = OPEN[row.requirement]
+    if (open !== undefined) {
+      expect(automatedClosed(row).ok, `${row.requirement} is named open and closed`).toBe(false)
+      expect(automatedClosed(row).because).toContain(open)
+      continue
+    }
     if (row.owner.length === 0) expect(accepted(row), row.requirement).toEqual({ ok: true, because: "" })
     expect(automatedClosed(row), row.requirement).toEqual({ ok: true, because: "" })
+  }
+  for (const requirement of Object.keys(OPEN)) {
+    expect(INVENTORY.some(row => row.requirement === requirement), `${requirement} is named open and has no row`).toBe(true)
   }
 })
 
