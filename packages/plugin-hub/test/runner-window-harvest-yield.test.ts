@@ -13,15 +13,18 @@
 // Every stage is one runner with two agents of one person: the default agent
 // resident with a harvest row, and a second agent on-demand with no session.
 // The plan preset reads 88% against the shipped 85, 95 and 100, which is the
-// pause and short of the hold, so rank 0 still flows on it. The per-token
-// preset has no window at all.
+// pause and short of the hold, so rank 0 still flows on it, and the last stage
+// starts it at 50% and moves it there mid-turn. The per-token preset has no
+// window at all.
 //
 // Red reason: a build that asks whether a resident harvest is waiting with no
 // rank ceiling, or with the COLD agent's ceiling in place of the resident's,
 // sees a paused harvest as waiting in one of the first two stages, and the
 // wait there times out with the cold agent's row still `received` and
 // unclaimed. A build that stops yielding altogether answers the cold row while
-// the resident is busy in the control, and fails there.
+// the resident is busy in the control, and fails there. A build whose yield
+// waits on capacity alone never wakes the cold agent in the last stage, where
+// the harvest stops being claimable while the cold agent already waits on it.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { startCluster, until, type Cluster } from "./helpers/cluster.ts";
@@ -49,9 +52,13 @@ const CREDENTIAL = "household-claude";
 const COLD = "p1-drinks";
 /** Past the shipped pause at 85 and short of the hold at 100. */
 const PAUSED = 0.88;
+/** Under the shipped pause, where a plan agent's harvest can run. */
+const OPEN = 0.5;
 /** The plan preset the stage ships, and a per-token one beside it. */
 const PLAN = "daily";
 const KEY = "metered";
+/** An hour out, so no reading in this file is stale while a stage runs. */
+const RESETS_AT = new Date(Date.now() + 3_600_000).toISOString();
 
 type Runner = Awaited<ReturnType<typeof runRunner>>;
 
@@ -76,11 +83,13 @@ async function inboundNow(it: StagedHub): Promise<string> {
 
 /**
  * The resident agent and the cold one, each on the preset named, with the
- * household's plan window already past its pause before the runner reads a
- * row, exactly as a runner restarted into a busy window finds it.
+ * household's plan window already at the reading given before the runner
+ * reads a row, exactly as a runner restarted into a busy window finds it.
  */
-async function stage(presets: { resident: string; cold: string }): Promise<StagedHub> {
-  const resetsAt = new Date(Date.now() + 3_600_000).toISOString();
+async function stage(
+  presets: { resident: string; cold: string },
+  reading = PAUSED,
+): Promise<StagedHub> {
   const it = await stageHub(cluster, {
     hub: { tick_seconds: 1 },
     credentials: [
@@ -93,9 +102,9 @@ async function stage(presets: { resident: string; cold: string }): Promise<Stage
     ],
     // No window thresholds here: a plan preset gets the shipped 85, 95 and 100.
     preset: { credential: CREDENTIAL },
-    // Every turn reports the same reading, so no turn in a stage can move the
-    // household off the pause.
-    adapter: { window: { utilization: PAUSED, resets_at: resetsAt } },
+    // Every turn reports the same reading, so no turn in a stage moves the
+    // household unless the stage changes what the loop reports.
+    adapter: { window: { utilization: reading, resets_at: RESETS_AT } },
     agents: [
       {
         id: COLD,
@@ -126,13 +135,18 @@ async function stage(presets: { resident: string; cold: string }): Promise<Stage
       ),
     }),
   });
+  await plantWindow(it, reading);
+  return it;
+}
+
+/** The household's one reading, as a turn on any runner would write it. */
+async function plantWindow(it: StagedHub, utilization: number): Promise<void> {
   const owner = await superStore(cluster, it.db);
   try {
-    await recordWindow(owner, { credential: CREDENTIAL, utilization: PAUSED, resetsAt, runner: RUNNER });
+    await recordWindow(owner, { credential: CREDENTIAL, utilization, resetsAt: RESETS_AT, runner: RUNNER });
   } finally {
     await owner.close();
   }
-  return it;
 }
 
 async function plantHarvest(it: StagedHub): Promise<string> {
@@ -236,6 +250,50 @@ test("a cold agent at its own window's pause still yields its first child to a r
     expect(settled).toBeDefined();
     expect(cold.length).toBeGreaterThan(0);
     expect(settled.seq).toBeLessThan(cold[0].seq);
+  } finally {
+    it.scripted.holdTurnEnd(false);
+    await runner?.stop();
+    await it.stop();
+  }
+}, 120_000);
+
+test("a cold agent waiting on a resident harvest answers its person when the window pauses that harvest mid-turn", async () => {
+  const it = await stage({ resident: PLAN, cold: PLAN }, OPEN);
+  let runner: Runner | undefined;
+  try {
+    runner = await start(it);
+    await Bun.sleep(1500);
+    // The resident is busy with a turn that has not ended, and its window is
+    // under the pause, so its harvest is waiting and the cold agent yields.
+    it.scripted.holdTurnEnd(true);
+    await insertInbound(cluster, it.db, { id: "resident-busy", agent: AGENT, body: "a long question" });
+    await until(
+      "the resident agent was fed its human row",
+      () => it.scripted.fed().some((one) => one.id === "resident-busy"),
+      30_000,
+      () => inboundNow(it),
+    );
+    const harvest = await plantHarvest(it);
+    await insertInbound(cluster, it.db, { id: "cold-human", agent: COLD, body: "what is in the fridge" });
+    await Bun.sleep(2500);
+    expect(await rowOf(it, "cold-human")).toMatchObject({ state: "received", claimed_by: null });
+
+    // The window crosses its pause while that turn is still open, and the turn
+    // that ends reports the same reading. Nothing announces either one, and no
+    // child is started or released by them.
+    await plantWindow(it, PAUSED);
+    it.scripted.setWindow({ utilization: PAUSED, resets_at: RESETS_AT });
+    it.scripted.holdTurnEnd(false);
+    await until(
+      "the cold agent's human row was answered once the harvest it waited on was paused",
+      () => answered(it, "cold-human"),
+      10_000,
+      () => inboundNow(it),
+    );
+    expect(await answered(it, "resident-busy")).toBe(true);
+    await Bun.sleep(2500);
+    expect(await rowOf(it, harvest)).toMatchObject({ state: "received", claimed_by: null });
+    expect(await answered(it, harvest)).toBe(false);
   } finally {
     it.scripted.holdTurnEnd(false);
     await runner?.stop();

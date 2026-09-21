@@ -1045,17 +1045,23 @@ export async function runRunner(options: {
         // through selection and reservation before it can start a child.
         if (!next) { await sleep(); continue; }
         // Give an already waiting resident harvest its extra child before a
-        // cold session. Capacity release, rather than a queue poll, wakes us.
-        // A harvest counts as waiting only when its own agent's window lets it
-        // run, which `residentHarvest` already decided, and a cold agent at
-        // its own window's pause still yields to one that can.
+        // cold session. A harvest counts as waiting only when its own agent's
+        // window lets it run, which `residentHarvest` already decided, and a
+        // cold agent at its own window's pause still yields to one that can.
+        //
+        // Capacity release is the normal wake: the harvest starting its child
+        // is what lets this loop go. The tick is the bound for a harvest that
+        // stops being claimable while this loop waits on it. A window that
+        // crosses its pause during the resident's turn arrives with no
+        // notification and starts no child, so without the bound this loop
+        // would wait on a capacity change that never comes.
         if (next && next.kind !== "harvest" && next.harvest_waiting && !own.session) {
           // The harvest can start while this read is in flight. Its capacity
           // signal must not be lost before this task subscribes to it.
           if (capacityVersion !== observedCapacity) continue;
           let wake!: () => void;
           const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
-          try { await Promise.race([available, stopped, own.left]); }
+          try { await Promise.race([available, stopped, own.left, Bun.sleep(setting(registry, "hub.tick_seconds") * 1000)]); }
           finally { capacity.delete(wake); }
           continue;
         }
