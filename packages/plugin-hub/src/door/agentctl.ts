@@ -3,7 +3,7 @@ import { ADOPT_PHRASES, AGENT_PHRASES, RETIRE_PHRASES } from "./lines.ts";
 import { isAgentCommand } from "../harvest/slice.ts";
 import { requestControl } from "../hub/control.ts";
 import { listAgents, listRunEntries, senderAllowed } from "../registry/entries.ts";
-import { loadRegistry, readSetting, type Registry } from "../registry/load.ts";
+import { isAgentId, loadRegistry, readSetting, type Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import type { ChatResolution, Platform } from "./platform.ts";
 
@@ -138,6 +138,10 @@ export async function requestAgentLifecycle(store: StoreLike, request: AgentLife
   // door this is.
   const owner = (registry.data.run as { id: string; person?: string }[]).find(one => one.id === request.door)?.person;
   if (owner !== person) throw new AgentCommandRefused("access denied");
+  // AN ID THAT CAN LEAVE ITS FOLDER NEVER REACHES THE CONTROL SHEET. The loader
+  // refuses one in the file, and this is the same rule asked before anything is
+  // written, so a typed command cannot even propose one.
+  if (!isAgentId(request.target)) throw new AgentCommandRefused("invalid configuration");
   const existing = agents.find(one => one.id === request.target);
   // ANOTHER PERSON'S AGENT IS NOT THIS PERSON'S TO TOUCH, and an agent this
   // file does not name cannot be retired at all.

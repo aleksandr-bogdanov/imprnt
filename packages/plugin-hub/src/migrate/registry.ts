@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { loadRegistry } from "../registry/load.ts";
+import { isAgentId, loadRegistry } from "../registry/load.ts";
 import { absolute, canonical, digest, toml, version, within, writePrivate } from "./files.ts";
 
 /**
@@ -58,7 +58,9 @@ export async function convertV2Registry(manifest: any, platformLookup: (request:
     }
     for (const legacy of source.agents) {
       const id = legacy.name;
-      if (typeof id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(id) || agents.some(a => a.id === id)) throw new Error("invalid or duplicate agent");
+      // The loader's own rule, so a v2 name the loader would refuse stops the
+      // conversion here rather than producing a file nothing can load.
+      if (!isAgentId(id) || agents.some(a => a.id === id)) throw new Error("invalid or duplicate agent");
       const binding = manifest.bindings.find((b: any) => b.agent === id);
       if (!binding) throw new Error("agent binding missing");
       const fragment = absolute(legacy.fragment);

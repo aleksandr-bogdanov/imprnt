@@ -191,6 +191,21 @@ export const SETTING_FIELDS: SettingField[] = [
   { key: "install.admin_argv", type: "array", what: "the explicit database administrator command", required: false },
 ];
 
+/**
+ * The shape of an agent id: lower case letters and digits in runs joined by
+ * single hyphens.
+ *
+ * AN AGENT ID IS A FOLDER NAME. The chat log is kept under
+ * `<state_dir>/<person>/chatlog/<agent id>/` and a session under
+ * `<state_dir>/<person>/sessions/<agent id>/`, so an id with a separator or a
+ * pair of dots in it is a path into somebody else's history. One predicate
+ * refuses a slash, a backslash, a dot, a space and a capital together, which is
+ * the rule the zone's mount name already has for the same reason.
+ */
+export function isAgentId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(value);
+}
+
 export class RegistryRefused extends Error {
   readonly file: string;
   readonly line: number;
@@ -1718,9 +1733,29 @@ export function loadRegistry(file: string): Registry {
   }
 
   const agents: AgentEntry[] = [];
+  const agentAt = new Map<string, number>();
   ((parsed.agents ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
     const where = `agents[${nth}]`;
     const here = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
+    if (!isAgentId(entry.id)) {
+      refuse(
+        `${where}.id`,
+        here,
+        `this agent's id is ${describe(entry.id)}, and an agent id is lower case letters and digits joined by ` +
+          `single hyphens: it names the folder its chat log and its sessions are kept in, so an id that can ` +
+          `leave that folder is refused here`,
+      );
+    }
+    const already = agentAt.get(entry.id as string);
+    if (already !== undefined) {
+      refuse(
+        `${where}.id`,
+        here,
+        `${entry.id} is already an agent of this registry, on line ${already}. One id is one agent, ` +
+          `and two would share one chat log and one set of sessions`,
+      );
+    }
+    agentAt.set(entry.id as string, here);
     // The tail is one size for the household. A key the loader ignored quietly
     // would look like it worked and change nothing.
     for (const own of ["tail_hours", "tail_tokens"]) {

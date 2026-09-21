@@ -9,7 +9,7 @@ import { listAgents, listMachines, listRunEntries, runEntriesFor } from "../regi
 // write different things: one a ledger line, one a block of the registry file.
 import { appendEntry as appendRegistryEntry, removeEntry, setKey } from "../registry/edit.ts";
 import { readSheet, removeRow } from "../records/statesheet.ts";
-import { loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
+import { isAgentId, loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
 import { openStore, type Store } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.ts";
@@ -352,6 +352,8 @@ export async function runHub(options: {
     // The two verbs produce a chat and the name it was resolved from, and
     // nothing else. A new id, another person or a history flag is neither.
     if (Object.keys(said).some(key => !["chat", "name"].includes(key))) throw new Error("invalid configuration");
+    // An id that can leave its folder, asked again for a row nobody's door wrote.
+    if (!isAgentId(id)) throw new Error("invalid configuration");
     const door = listRunEntries(registry).find(e => e.id === data.door && e.kind === "door");
     const person = (registry.data.run as { id: string; person?: string }[]).find(e => e.id === door?.id)?.person;
     if (!door || !person || person !== data.person) throw new Error("invalid configuration");
