@@ -14,12 +14,14 @@
 // - A `[zone]` table. No window declares a vault, so the household rule asks
 //   nothing more of the file, and a zone with no checkout is what a household
 //   that has declared one and not provisioned it yet looks like.
-// - A job-only agent on the same runner as the window's own agents, so the
-//   runner the window measures starts one more agent loop, with its own work
-//   waiter, and has to stay as quiet as the window says it does. It goes on the
-//   last runner an explicit `[[run]]` list names, or on the first agent's runner
-//   when the file implies its entries, because a window that rewrites its first
-//   agent's runner by text (the silence window does) must still load.
+// - A job-only agent on the runner the window measures, so that runner starts
+//   one more agent loop, with its own work waiter, and has to stay as quiet as
+//   the window says it does. When the file implies its entries that is the
+//   first agent's runner. When the window spells out its `[[run]]` list it is
+//   the runner entry no agent names yet, because the one window that does this
+//   (the silence window) moves its first agent onto that runner by rewriting
+//   the file's text afterwards, and that is the runner it then measures. With
+//   no such entry it is the last runner the list names, so the file loads.
 // - An hourly `backup` entry with its three commands, on the first declared
 //   machine, which nothing in a window runs.
 // - `guild` and `default_preset` on every door entry.
@@ -60,12 +62,13 @@ function overlay(spec: RegistrySpec): RegistrySpec {
   const run = spec.run ?? implied(spec);
   const first = agents[0];
   const runners = run.filter((entry) => entry.kind === "runner").map((entry) => entry.id);
+  const unnamed = runners.find((id) => !agents.some((one) => one.runner === id));
   const jobOnly: AgentSpec[] = first && !agents.some((one) => one.id === SIXB_JOB_ONLY)
     ? [{
         id: SIXB_JOB_ONLY,
         person: first.person,
         preset: first.preset,
-        runner: spec.run ? runners[runners.length - 1] ?? first.runner : first.runner,
+        runner: spec.run ? unnamed ?? runners[runners.length - 1] ?? first.runner : first.runner,
       }]
     : [];
   const stateDir = String(spec.hub?.state_dir ?? tmpdir());

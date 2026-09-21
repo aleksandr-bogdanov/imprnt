@@ -228,6 +228,9 @@ test("ROLL-19 ROLL-27 ROLL-28 ROLL-32 the six protected windows run unchanged an
   const record = join(scratch, "registries.jsonl")
   try {
     const files = Object.keys(WINDOWS)
+    // Every one of the six declares its tests with a plain `test(`, none behind
+    // a gate or an alias, so this count is the number the child must report as
+    // passed. A window that later gains a gated test changes this count first.
     const tests = files.reduce((sum, file) =>
       sum + [...readFileSync(hubPath(file), "utf8").matchAll(/(?<![\w.])test\(/g)].length, 0)
     const child = Bun.spawn([process.execPath, "test", "--timeout", "90000",
@@ -535,7 +538,10 @@ test("ROLL-19 a door and a runner with a job waiting on a stopped spoke are asle
     // reads through: a handful of statements cost no measurable time.
     await Bun.sleep(1500)
 
-    // The door and the runner run in THIS process, so this is what both burn.
+    // The door and the runner run in THIS process, so this is what both burn,
+    // with the check's own harness counted in as well. wait-idle measures the
+    // two as separate subprocesses, so this bound is held by more than it is
+    // there and is at least as hard to meet.
     const before = { here: cpuSeconds(process.pid), busy: cpuSeconds(busy.pid) }
     expect(before.here).not.toBeNull()
     expect(before.busy).not.toBeNull()

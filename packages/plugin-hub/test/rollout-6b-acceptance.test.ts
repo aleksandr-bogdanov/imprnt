@@ -330,6 +330,8 @@ const NOT_PROVED: { gap: string; why: string }[] = [
     why: "it would let a tailnet page with no identified person write the live registry, which is the owner's to decide" },
   { gap: "a zone checkout whose remote is the same local path written two ways reads as a mismatch",
     why: "the remote comparison is a string comparison of urls" },
+  { gap: "the list of shipped checks this phase edited was measured on one machine only",
+    why: "it needs git and the phase's base commit, and the Linux container copies the tree without .git, as a shallow CI clone would lack the base" },
 ]
 
 /**
