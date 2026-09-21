@@ -144,13 +144,18 @@ export async function requestAgentLifecycle(store: StoreLike, request: AgentLife
   if (!isAgentId(request.target)) throw new AgentCommandRefused("invalid configuration");
   const existing = agents.find(one => one.id === request.target);
   // ANOTHER PERSON'S AGENT IS NOT THIS PERSON'S TO TOUCH, and an agent this
-  // file does not name cannot be retired at all.
+  // file does not name cannot be retired at all. NOR IS AN AGENT OF ANOTHER
+  // DOOR: its chat id means something only on its own door, so a Telegram
+  // agent repaired from a Discord chat would be given a channel id it can never
+  // answer in, and the cursor a retire removes is keyed by the agent's door.
+  // The same verb typed on the agent's own door is the way to it.
+  const reachable = (one: typeof existing) => one !== undefined && one.person === person && one.door === request.door;
   if (request.operation === "retire") {
-    if (!existing || existing.person !== person) throw new AgentCommandRefused("access denied");
+    if (!reachable(existing)) throw new AgentCommandRefused("access denied");
     await ask(store, request, {});
     return;
   }
-  if (existing && existing.person !== person) throw new AgentCommandRefused("access denied");
+  if (existing && !reachable(existing)) throw new AgentCommandRefused("access denied");
   if (!existing) {
     // One Telegram door serves one agent in one chat, by the loader's own rule,
     // because `getUpdates` confirms updates for the whole bot. A second agent

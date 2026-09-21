@@ -371,6 +371,10 @@ export async function runHub(options: {
       route.door !== door.id || !commanding || commanding.id !== data.agent) throw new Error("access denied");
     const existing = listAgents(registry).find(one => one.id === id);
     if (existing && existing.person !== person) throw new Error("invalid configuration");
+    // An agent of another door is that door's to repair or retire, for the
+    // reason the door gives: a chat id means something only on its own door,
+    // and the cursor removed below is keyed by the agent's door.
+    if (existing && existing.door !== door.id) throw new Error("access denied");
     if (data.operation === "retire") {
       // ALREADY GONE IS DONE. The edit renames the file before this row's own
       // transaction commits, so a hub that dies between the two finds the row
