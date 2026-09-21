@@ -65,7 +65,7 @@ test("D-210 the dispatch migration is ordered, idempotent, and the version set i
   const versions = (await f.sql`select version from schema_version order by version`).map((r: any) => Number(r.version))
   // The WHOLE sorted set, which is the assertion that catches a skipped number:
   // a gap breaks the ordered list every later step is applied against.
-  expect(versions).toEqual([1, 2, 3, 4, VERSION])
+  expect(versions).toEqual([1, 2, 3, 4, VERSION, 6])
   expect((await f.sql`select count(*)::int as n from schema_version where version = ${VERSION}`)[0].n).toBe(1)
 })
 

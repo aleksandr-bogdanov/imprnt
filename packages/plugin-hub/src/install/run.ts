@@ -167,7 +167,7 @@ export async function runInstall(options: { registryFile: string; stage?: string
       // The same ordered list `src/store/migrate.ts` carries. A step that lands
       // in one of them and not the other leaves an upgraded box a version
       // behind a fresh one.
-      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"], [5, "005-dispatch.sql"]] as const) {
+      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"], [5, "005-dispatch.sql"], [6, "006-agent-lifecycle.sql"]] as const) {
         if (ask(database, ["-c", `select 1 from schema_version where version = ${version}`])) continue;
         ask(database, ["-c", `begin; ${readFileSync(join(import.meta.dir, "../store/migrations", file), "utf8")} insert into schema_version values (${version}); commit;`]);
       }
