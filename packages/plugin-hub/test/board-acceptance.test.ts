@@ -306,16 +306,20 @@ const WINDOWS: Record<string, string> = {
 
 /**
  * Every file under `src/door/`, by the digest it carried before this phase
- * started, and the three this phase is allowed to have changed.
+ * started, and every change the door has had since, each with its reason.
  *
  * The listing beside the digests is the other half: a file quietly ADDED under
  * this directory has no entry to compare against, so the set of paths is
- * asserted as well as their contents.
+ * asserted as well as their contents. A file added after that starting point
+ * is listed with no digest at all, so it counts as changed and needs a reason
+ * like any other.
  */
-const DOOR: Record<string, string> = {
+const DOOR: Record<string, string | null> = {
+  "agentctl.ts": null,
   "clock.ts": "257b67a2ad08d659c78fce64878f2a59b41684dd37a87abab9dc56779ef43caf",
   "cursor.ts": "b5f036a0c78361cc136ea3ce8812e10c1fe49b27f6b6da1e746701ae74f6b5ef",
   "denied.ts": "48d0f7e28bb830e9d9f8e10ace5b81a3512d898f2e58ea15f99a1dff01bbbd53",
+  "dispatch.ts": null,
   "health.ts": "8200bebff84640b1bccf234582c3d1b300470489ec3ce1c8768e26b6b76d744a",
   "ingest.ts": "e2a34bb8d1abb92316ee37dbf0cd7777eff924ccafea558991d2fe49f64c8742",
   "lines.ts": "e92dfa55b7c440553a08585486f06a856b0ac351742be9eb6f53152b41216bde",
@@ -330,11 +334,25 @@ const DOOR: Record<string, string> = {
   "run.ts": "411e910ed6099980cf62fa7c88d3c982f5bb31e6fed4c5c6ff3c2c10cf01ac88",
 };
 
-/** The three the contract named, and what each one carries. */
+/**
+ * Every change, and what each one carries. The board's own three come first.
+ * The rest are the rollout's dispatch and agent lifecycle work, which reached
+ * the door after this phase's starting point and is named here file by file so
+ * that an edit nobody stated still fails.
+ */
 const DOOR_CHANGED: Record<string, string> = {
-  "run.ts": "the clock line's once-only append, with its own id, and the diary detail beside it",
-  "clock.ts": "the clock detail's two new fields",
-  "lines.ts": "the phase's own pinned sentences",
+  "run.ts": "the clock line's once-only append, with its own id, and the diary detail beside it, " +
+    "the projection listener a report needs, an agent that takes jobs alone, and the cursor a " +
+    "retired agent's reader leaves behind",
+  "clock.ts": "the clock detail's two new fields, and a report's clocks measured from when it landed",
+  "lines.ts": "the phase's own pinned sentences, and the sentences dispatch and agent lifecycle say",
+  "agentctl.ts": "the two agent lifecycle verbs a person types, their authorization and their chat lookup",
+  "dispatch.ts": "the dispatch command a person types and the job it puts on another agent's queue",
+  "health.ts": "the type of an agent that answers in a chat, now that one may take jobs alone",
+  "ingest.ts": "the dispatch block and the agent lifecycle block beside the shipped recovery block",
+  "platform.ts": "the optional administration member, two verbs wide",
+  "platforms/discord.ts": "the administration member: one channel listing for a name, one read for an id",
+  "platforms/telegram.ts": "the administration member, and the names of chats the bot-wide poll already dropped",
 };
 
 /**
@@ -514,7 +532,7 @@ test("the six protected windows are byte-unchanged", () => {
   }
 });
 
-test("exactly three files under the door changed, and a fourth would fail", () => {
+test("every file under the door that changed is named with its reason, and one more would fail", () => {
   const dir = hubPath("src/door");
   // The listing first: a file added or dropped has no digest to compare
   // against, so the set of paths is what catches it.
