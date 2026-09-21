@@ -127,15 +127,23 @@ for (const [shape, digest] of [["missing", null], ["empty", ""], ["not hex", "z"
     try {
       const approved = digest === null ? {}
         : { approved: { by: "p1", at: new Date().toISOString(), digest, source: "chat-command" } }
+      // Sent as TEXT and parsed by the database, so the stored source is an
+      // object and the refusal is about the approval it carries. A string
+      // handed straight to a jsonb parameter is stored as a JSON string, whose
+      // `dispatch` key does not exist, and any approval planted that way would
+      // be refused whatever it said.
       await it.read.sql(
         `insert into inbound (id, person, agent, body, kind, source, log_ready)
-         values ($1, 'p1', $2, $3, 'job', $4::jsonb, true)`,
+         values ($1, 'p1', $2, $3, 'job', $4::text::jsonb, true)`,
         ["planted", DISPATCH_TARGET, TASK, JSON.stringify({
           log_id: "planted", at: new Date().toISOString(), door: "door-fake", chat: "1000000002",
           from: "p1", text: TASK,
           dispatch: { dispatcher: "p1-lair", target: DISPATCH_TARGET, ...approved,
             return: { agent: "p1-lair", door: "door-fake", chat: LAIR_CHAT } },
         })])
+      const [stored] = await it.read.sql(`select jsonb_typeof(source) as shape, source->'dispatch'->>'target' as target
+        from inbound where id = 'planted'`)
+      expect(stored).toEqual({ shape: "object", target: DISPATCH_TARGET })
       runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile,
         adapters: { [it.adapterName]: it.scripted.adapter } })
       await until("the planted job is settled", async () =>
