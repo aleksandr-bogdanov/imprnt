@@ -10,8 +10,17 @@ import { type Registry, type RunEntry } from "../registry/load.ts";
 import { openStore, type StoreLike } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 
+/**
+ * One git call in a synced repository, with the repository's hooks turned off.
+ *
+ * The sync runs outside every box, as the household's account, in trees an
+ * agent can write, and a hook is a program git runs on the repository's
+ * behalf. A hook an agent planted in `.git/hooks` would otherwise run here,
+ * unboxed, on the next fetch, rebase or push.
+ */
 async function git(path: string, args: string[], code: string): Promise<string> {
-  const child = Bun.spawn(["git", "-C", path, ...args], { env: process.env, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  const child = Bun.spawn(["git", "-C", path, "-c", "core.hooksPath=/dev/null", ...args],
+    { env: process.env, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
   const [out, status] = await Promise.all([new Response(child.stdout).text(), child.exited]);
   // Git diagnostics can contain credential-bearing remote URLs.
   if (status !== 0) throw new Error(code);
