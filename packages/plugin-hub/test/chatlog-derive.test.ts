@@ -25,7 +25,12 @@
 // function. One spelling, not two that have to be kept in step.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
+import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { startCluster, seam, until, type Cluster } from "./helpers/cluster.ts";
+import { rolloutStage } from "./helpers/rollout-stage.ts";
+import { fakeRecognizer } from "./helpers/fake-recognizer.ts";
+import { WAV_RATE, plantSamples, writeWav } from "./helpers/wav.ts";
 import { stageHub } from "./helpers/authorized-registry.ts";
 import {
   AGENT,
@@ -358,6 +363,181 @@ test(
     } finally {
       if (door) await door.stop();
       if (store) await store.close();
+      await it.stop();
+    }
+  },
+  SLOW,
+);
+
+const FFMPEG = Bun.which("ffmpeg");
+const NEEDS_FFMPEG = FFMPEG ? "" : " [the words-have-landed half is skipped: ffmpeg is not on PATH]";
+
+/** A decodable clip, as the bytes a platform would hand over. */
+function clip(seconds = 1): Uint8Array {
+  const path = `${tmpdir()}/derive-${crypto.randomUUID()}.wav`;
+  try {
+    writeWav(path, plantSamples({ seconds, rate: WAV_RATE, quietAt: [] }), WAV_RATE);
+    return new Uint8Array(readFileSync(path));
+  } finally {
+    Bun.spawnSync(["rm", "-f", path]);
+  }
+}
+
+test(
+  `the two readers agree over a voice note, while it is still transcribing and once its words have landed${NEEDS_FFMPEG}`,
+  async () => {
+    // A VOICE NOTE IS THE ONE MESSAGE THAT IS A ROW BEFORE IT IS A LINE. The
+    // door writes the note down at once and the words arrive later, and until
+    // they do the file deliberately carries no line for it and carries the
+    // door's own "still transcribing" line instead. A derivation that read
+    // every row with a source served a spoke a line with no words in it and
+    // dropped the sentence the person actually saw, which is the gap this
+    // covers: the same conversation, read both ways, at both moments.
+    const audio = clip();
+    const recognizer = await fakeRecognizer();
+    recognizer.setAnswer({ text: "synthetic spoken codeword", audio_s: 1, decode_ms: 1 });
+    // The recognizer refuses, which is an infra failure, so the note stays
+    // pending and the moment before the words is a state that holds still.
+    recognizer.setStatus(503);
+    const it = await rolloutStage(cluster, "telegram", {
+      people: [
+        // One second to the transcribing line, and every other clock long
+        // enough that no other line of the door's own arrives in the window.
+        {
+          id: PERSON,
+          language: "en",
+          transcribed_seconds: 1,
+          acked_seconds: 600,
+          started_seconds: 600,
+          answered_seconds: 600,
+          delivered_seconds: 600,
+        },
+        { id: "p2", language: "ru" },
+      ],
+      voice: { port: recognizer.port, chunk_seconds: 0, retry_seconds: 1 },
+    });
+    const registry = loadRegistry(it.registryFile);
+    const { deriveLines, deriveTail } = await seam("src/chatlog/derive.ts");
+    let door: { stop(): Promise<void> } | null = null;
+    let store: Store | null = null;
+    try {
+      store = await openStore({ url: cluster.url(it.db) });
+      const derived = () =>
+        (deriveLines as Function)(store, {
+          registry,
+          person: PERSON,
+          agent: AGENT,
+          from: new Date(Date.now() - 86_400_000).toISOString(),
+          until: new Date(Date.now() + 60_000).toISOString(),
+        }) as Promise<{ id?: string; at: string; direction: string; from: string; text: string }[]>;
+      /**
+       * The file's lines in the order EITHER reader answers them.
+       *
+       * The file is appended to as the door writes, and a voice note's line is
+       * written when its words land rather than when it arrived, so the file
+       * holds it after lines that are older than it is. Both readers answer in
+       * the line's own time order (`readTail` sorts the file walk by it), so
+       * that is the order the two are compared in, and the rendered tails
+       * below are compared as the bytes a session is fed.
+       */
+      const fileLines = () =>
+        [...chatLogLines(it.stateDir, PERSON, AGENT)].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+      /** Nothing the door owes the chat is still in flight. */
+      const settled = async () =>
+        (await it.read.sql(
+          "select count(*)::int as owed from outbox where coalesce(agent, $1) = $1 and delivered_at is null",
+          [AGENT],
+        ))[0].owed === 0;
+
+      it.edge.file("voice", audio);
+      door = await (runDoor as Function)({
+        door: DOOR,
+        registryFile: it.registryFile,
+        platform: it.edge.platform,
+      });
+      it.edge.batch(
+        [
+          {
+            platform_message_id: "1",
+            chat: "1000000001",
+            sender_id: PERSON,
+            from: PERSON,
+            text: "",
+            at: new Date().toISOString(),
+            media: [
+              { kind: "voice", remote_id: "voice", name: "note.wav", mime: "audio/wav", bytes: audio.length, caption: null },
+            ],
+          },
+        ],
+        "1",
+      );
+
+      // --- while the words do not exist yet ------------------------------
+      await until(
+        "the door said it is still transcribing, and nothing is in flight",
+        async () =>
+          fileLines().some((line) => line.text === clockLine("en", "transcribed", 1)) && (await settled()),
+        40_000,
+        async () => JSON.stringify(fileLines()),
+      );
+      const [pending] = await it.read.sql("select id, log_ready, media_state from inbound where agent = $1", [AGENT]);
+      expect(pending.media_state, "the note is waiting for its words").toBe("pending");
+      expect(pending.log_ready, "a note with no words is no line").toBe(false);
+
+      const waiting = await derived();
+      expect(waiting.map(five), "every line of the chat while the note is transcribing").toEqual(
+        fileLines().map(five),
+      );
+      // Said on its own, because this is the line that used to be invented: a
+      // row with no words is not a line in either reader.
+      expect(waiting.some((line) => String(line.id) === String(pending.id))).toBe(false);
+      // And the sentence the person really saw is in both.
+      expect(waiting.some((line) => line.text === clockLine("en", "transcribed", 1))).toBe(true);
+      // The tail a spoke would feed a session, over the same window.
+      const now = new Date();
+      const hours = Number(readSetting(registry, "hub.tail_hours"));
+      const tokens = Number(readSetting(registry, "hub.tail_tokens"));
+      expect(
+        await (deriveTail as Function)(store, { registry, person: PERSON, agent: AGENT, now, hours, tokens }),
+      ).toBe(await readTail({ stateDir: it.stateDir, person: PERSON, agent: AGENT, now, hours, tokens }));
+      // The row is STILL waiting, so both reads above were taken at the moment
+      // this test is about.
+      expect(
+        (await it.read.sql("select log_ready from inbound where agent = $1", [AGENT]))[0].log_ready,
+      ).toBe(false);
+
+      // --- and once they land --------------------------------------------
+      if (!FFMPEG) return;
+      recognizer.setStatus(200);
+      await until(
+        "the words landed, the line was written and nothing is in flight",
+        async () =>
+          fileLines().some((line) => line.text.includes("synthetic spoken codeword")) && (await settled()),
+        60_000,
+        async () => JSON.stringify(fileLines()),
+      );
+      const landed = await derived();
+      expect(landed.map(five), "every line of the chat once the words landed").toEqual(fileLines().map(five));
+      const spoken = landed.find((line) => line.text.includes("synthetic spoken codeword"));
+      expect(spoken?.direction, "the note is the person's own message").toBe("in");
+      expect(spoken?.from).toBe(PERSON);
+      expect(landed.some((line) => line.text === clockLine("en", "transcribed", 1))).toBe(true);
+      expect(
+        await (deriveTail as Function)(store, {
+          registry,
+          person: PERSON,
+          agent: AGENT,
+          now: new Date(),
+          hours,
+          tokens,
+        }),
+      ).toBe(
+        await readTail({ stateDir: it.stateDir, person: PERSON, agent: AGENT, now: new Date(), hours, tokens }),
+      );
+    } finally {
+      if (door) await door.stop();
+      if (store) await store.close();
+      await recognizer.stop();
       await it.stop();
     }
   },

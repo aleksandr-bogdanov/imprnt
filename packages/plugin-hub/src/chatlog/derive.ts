@@ -36,8 +36,14 @@ const MARGIN_MS = 86_400_000;
 
 const DAY_MS = 86_400_000;
 
-/** The three stamps a clock line can be about, and the whole set of them. */
-const CLOCK_STAMPS = ["acked", "started", "answered"];
+/**
+ * The stamps a clock line can be about, and the whole set of them.
+ *
+ * `transcribed` is one of them: while a voice note has no words the door says
+ * so in the chat, and a spoke that did not know the stamp would drop the one
+ * line the person actually saw in that window.
+ */
+const CLOCK_STAMPS = ["transcribed", "acked", "started", "answered"];
 
 export async function deriveLines(
   store: StoreLike,
@@ -65,9 +71,15 @@ export async function deriveLines(
   // clock cannot separate them and the outbox id is what does.
   const candidates: { line: ChatLine; order: number }[] = [];
 
+  // A ROW IS A LINE ONLY ONCE IT HAS BEEN PROJECTED. A voice note is written
+  // down the moment it arrives and its words land later, and the file carries
+  // no line for it until they do, which is what `log_ready` records. Without
+  // this the tail a spoke feeds a session carries the note with no words in it,
+  // and the line the person really saw, the door's own "still transcribing",
+  // arrives beside it.
   const said = (await store.sql`
     select id, person, source from inbound
-    where agent = ${args.agent} and source is not null
+    where agent = ${args.agent} and source is not null and log_ready
       and received_at >= ${wideFrom}::timestamptz
       and received_at <= ${wideUntil}::timestamptz`) as unknown as {
     id: string;
