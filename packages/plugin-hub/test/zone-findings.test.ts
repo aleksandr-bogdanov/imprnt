@@ -1,6 +1,6 @@
 // Check: four findings say what is wrong with a household's shared zone, each
 // carries its fix as text, and each one clears when the state is repaired.
-// (L13, L17, D-183, ROLL-27)
+// (L13, L17, ROLL-27)
 //
 // The loader compares DECLARED STRINGS and `check` compares WHAT IS ON DISK.
 // That is the whole division: a file can say a checkout pulls from the zone's
@@ -204,7 +204,7 @@ test("ROLL-27 a vault that does not declare the mount is one finding, in each of
   }
 }, SLOW);
 
-test("ROLL-27 each finding is reported by the machine that runs THAT person's sync, and neither machine clears the other's rows (L13, D-183)", async () => {
+test("ROLL-27 each finding is reported by the machine that runs THAT person's sync, and neither machine clears the other's rows (L13)", async () => {
   const it = await scene({
     machines: [{ id: "pi", os: "linux" }, { id: "mac", os: "macos" }],
     machineOf: (person) => (person === "p1" ? "pi" : "mac"),
