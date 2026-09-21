@@ -12,7 +12,7 @@
 // text edit can produce a file that loads and says something other than what
 // was asked for.
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 import { handWrittenRegistry, lineDiff } from "./helpers/registry-fixture.ts"
@@ -382,4 +382,76 @@ test("D-219 a door mid-run serves an agent the writer appended, with its process
       "the door reads the new agent's chat within a tick").toBe(true)
     expect(door.pid).toBe(before)
   } finally { for (const child of children.reverse()) await child.stop(); await platform.stop(); await it.stop() }
+})
+
+// AN ID IS NEVER A POSITION. The hub and the board both hand this writer an id
+// somebody typed, and an agent id may be all digits. Read as a list position,
+// `agents[0]` is whichever entry happens to be first in the file, which can be
+// the other person's.
+function withDigitAgent(it: { file: string }, id: string): string {
+  const bytes = readFileSync(it.file, "utf8") +
+    `\n\n# an agent whose id is all digits\n[[agents]]\nid = "${id}"\nperson = "p1"\npreset = "daily"\nrunner = "runner-pi"`
+  writeFileSync(it.file, bytes)
+  return bytes
+}
+
+test("an all-digit id names the entry carrying that id, and never the entry at that position", async () => {
+  const it = scratch()
+  try {
+    const { setKey } = await writer()
+    const bytes = withDigitAgent(it, "0")
+    expect(loadRegistry(it.file).agents.map(one => one.id)).toEqual(["p1-lair", "p2-lair", "p1-batch", "0"])
+    expect((await setKey(it.file, "agents[0]", "sleeping", true)).changed).toBe(true)
+    const after = readFileSync(it.file, "utf8")
+    expect(lineDiff(bytes, after)).toEqual({ removed: [], added: ["sleeping = true"] })
+    // The new line is the last line of the file, inside the block of the agent
+    // whose id is "0", and the first agent in the file is untouched.
+    expect(after.endsWith('runner = "runner-pi"\nsleeping = true')).toBe(true)
+    const agents = loadRegistry(it.file).agents
+    expect(agents.find(one => one.id === "0")!.sleeping).toBe(true)
+    expect(agents.find(one => one.id === "p1-lair")!.sleeping).toBeUndefined()
+  } finally { it.stop() }
+})
+
+test("a position with no entry of that id behind it is refused, and the entry at that position is left alone", async () => {
+  const it = scratch()
+  try {
+    const { setKey, removeEntry, RegistryEditRefused } = await writer()
+    for (const edit of [
+      () => removeEntry(it.file, "agents[1]"),
+      () => setKey(it.file, "agents[0]", "chat", "1000000009"),
+      () => setKey(it.file, "run[0]", "enabled", false),
+    ]) {
+      const refused = await edit().then(() => null, (error: Error) => error)
+      expect(refused).toBeInstanceOf(RegistryEditRefused)
+      expect((refused as unknown as { step: string }).step).toBe("path")
+      expect(readFileSync(it.file, "utf8")).toBe(it.bytes)
+    }
+    // A refusal about the path is answered before anything is written at all.
+    expect(readdirSync(it.dir).filter(name => name !== "hand-written.toml")).toEqual([])
+    // The control: the same writer with the id of the entry at that position.
+    expect((await removeEntry(it.file, "agents[p2-lair]")).changed).toBe(true)
+    expect(loadRegistry(it.file).agents.map(one => one.id)).toEqual(["p1-lair", "p1-batch"])
+  } finally { it.stop() }
+})
+
+// A board page on the tailnet can press the same refused edit as often as it
+// likes, so what a refusal leaves beside the registry has to have a bound.
+test("a refusal repeated many times leaves one candidate beside the registry, and the latest one is readable", async () => {
+  const it = scratch()
+  try {
+    const { setKey, RegistryEditRefused } = await writer()
+    let last: { candidate: string } | null = null
+    for (let n = 0; n < 12; n += 1) {
+      const refused = await setKey(it.file, "agents[p1-lair]", "preset", `a-preset-nobody-declared-${n}`)
+        .then(() => null, (error: Error) => error)
+      expect(refused).toBeInstanceOf(RegistryEditRefused)
+      last = refused as unknown as { candidate: string }
+    }
+    const left = readdirSync(it.dir).filter(name => name !== "hand-written.toml")
+    expect(left).toHaveLength(1)
+    expect(dirname(last!.candidate)).toBe(it.dir)
+    expect(readFileSync(last!.candidate, "utf8")).toContain('preset = "a-preset-nobody-declared-11"')
+    expect(readFileSync(it.file, "utf8")).toBe(it.bytes)
+  } finally { it.stop() }
 })

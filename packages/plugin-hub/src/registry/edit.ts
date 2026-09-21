@@ -1,5 +1,5 @@
-import { closeSync, fsyncSync, openSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { indexLines, loadRegistry } from "./load.ts";
 
 /**
@@ -19,8 +19,10 @@ import { indexLines, loadRegistry } from "./load.ts";
  *
  * A refusal leaves the candidate on disk beside the registry, on purpose: it is
  * the only record of what the hub was about to write, and a person reads it and
- * deletes it. The live file is never half written, because the only thing that
- * ever touches it is a rename.
+ * deletes it. It is kept under ONE name that each refusal replaces, because a
+ * board page on the tailnet can press the same refused edit as often as it
+ * likes, and a file per press would fill the card. The live file is never half
+ * written, because the only thing that ever touches it is a rename.
  */
 export class RegistryEditRefused extends Error {
   /** Which step refused: `path`, `value`, `load`, `diff` or `concurrent`. */
@@ -92,12 +94,15 @@ function headerOf(lines: string[], table: string, nth: number): number {
 }
 
 /**
- * An entry named as `agents[p1-lair]` or as `agents[1]`.
+ * An entry named as `agents[p1-lair]` or `run[door-fake]`, which is always its
+ * ID.
  *
- * AN ID IS THE ADDRESS AND AN INDEX IS THE FALLBACK. An index computed by one
- * reader and used by another points at a different agent the moment somebody
- * reorders the file by hand, and this writer runs against a file people
- * reorder. Anything that is not all digits is read as an id.
+ * NEVER A POSITION, and that holds for an id that is all digits. The hub and
+ * the board both hand this function an id somebody typed, an agent id may be
+ * `0`, and read as a position `agents[0]` is whichever entry is first in the
+ * file, which can be the other person's. A position is also wrong the moment
+ * somebody reorders the file by hand. The position this module works with
+ * afterwards is the one the id was found at, and nothing a caller says.
  */
 function locate(data: Record<string, unknown>, path: string): { table: string; index: number } {
   const said = /^([A-Za-z0-9_-]+)\[([^\]]+)\]$/.exec(path.trim());
@@ -105,11 +110,6 @@ function locate(data: Record<string, unknown>, path: string): { table: string; i
   const [, table, which] = said;
   const list = data[table];
   if (!Array.isArray(list)) throw new RegistryEditRefused("path", `this registry has no ${table} entries at all`);
-  if (/^\d+$/.test(which)) {
-    const index = Number(which);
-    if (index >= list.length) throw new RegistryEditRefused("path", `${path} is past the end of ${table}, which has ${list.length} entries`);
-    return { table, index };
-  }
   const index = list.findIndex(one => (one as Record<string, unknown>)?.id === which);
   if (index < 0) throw new RegistryEditRefused("path", `this registry names no ${table} entry with the id ${which}`);
   return { table, index };
@@ -163,36 +163,62 @@ async function apply(file: string, text: string, intend: (before: Record<string,
   if (text === before) return { changed: false };
   // Beside the registry, with a name of its own per attempt, so two refusals do
   // not erase each other's evidence.
-  const candidate = join(dirname(file), `.${file.split("/").pop()}.candidate-${crypto.randomUUID().slice(0, 8)}`);
+  const candidate = join(dirname(file), `.${basename(file)}.candidate-${crypto.randomUUID().slice(0, 8)}`);
   // The registry's OWN mode, because the file the hub renames into place is the
   // file a person reads and promotes, and a candidate written at the default
   // would widen it.
   const mode = statSync(file).mode & 0o777;
   writeFileSync(candidate, text, { encoding: "utf8", mode });
-  await options.seam?.beforeValidate?.(candidate);
-  let parsed: Record<string, unknown>;
   try {
-    parsed = loadRegistry(candidate).data as Record<string, unknown>;
+    await options.seam?.beforeValidate?.(candidate);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = loadRegistry(candidate).data as Record<string, unknown>;
+    } catch (error) {
+      throw new RegistryEditRefused("load", `this edit makes a file the loader refuses: ${(error as Error).message}`, candidate);
+    }
+    if (!same(parsed, wanted)) {
+      throw new RegistryEditRefused("diff",
+        `this edit would have said something other than what was asked for, so ${file} was left alone`, candidate);
+    }
+    await options.seam?.beforeRename?.(candidate);
+    // READ AGAIN, at the last moment. Somebody editing the file in an editor
+    // while the hub applies a command from a phone is the case that loses work.
+    if (readFileSync(file, "utf8") !== before) {
+      throw new RegistryEditRefused("concurrent",
+        `${file} changed while this edit was being prepared, so the edit was dropped rather than written over it`, candidate);
+    }
+    const handle = openSync(candidate, "r+");
+    try { fsyncSync(handle); } finally { closeSync(handle); }
+    renameSync(candidate, file);
   } catch (error) {
-    throw new RegistryEditRefused("load", `this edit makes a file the loader refuses: ${(error as Error).message}`, candidate);
+    throw keep(file, candidate, error);
   }
-  if (!same(parsed, wanted)) {
-    throw new RegistryEditRefused("diff",
-      `this edit would have said something other than what was asked for, so ${file} was left alone`, candidate);
-  }
-  await options.seam?.beforeRename?.(candidate);
-  // READ AGAIN, at the last moment. Somebody editing the file in an editor
-  // while the hub applies a command from a phone is the case that loses work.
-  if (readFileSync(file, "utf8") !== before) {
-    throw new RegistryEditRefused("concurrent",
-      `${file} changed while this edit was being prepared, so the edit was dropped rather than written over it`, candidate);
-  }
-  const handle = openSync(candidate, "r+");
-  try { fsyncSync(handle); } finally { closeSync(handle); }
-  renameSync(candidate, file);
   const directory = openSync(dirname(file), "r");
   try { fsyncSync(directory); } finally { closeSync(directory); }
   return { changed: true };
+}
+
+/**
+ * What a failed edit leaves beside the registry: the refused candidate under
+ * the one name each refusal replaces, so a person can read the last thing the
+ * hub was refused and there is never more than one of them. Anything that is
+ * not a refusal (a machine going away, a rename the filesystem refused) says
+ * nothing a person needs, and its candidate is removed.
+ */
+function keep(file: string, candidate: string, error: unknown): unknown {
+  if (!(error instanceof RegistryEditRefused)) {
+    rmSync(candidate, { force: true });
+    return error;
+  }
+  const refused = join(dirname(file), `.${basename(file)}.refused`);
+  try {
+    renameSync(candidate, refused);
+  } catch {
+    rmSync(candidate, { force: true });
+    return new RegistryEditRefused(error.step, error.message, null);
+  }
+  return new RegistryEditRefused(error.step, error.message, refused);
 }
 
 /**
