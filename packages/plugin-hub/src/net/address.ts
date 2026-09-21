@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { networkInterfaces } from "node:os";
 
 /**
  * IP addresses as the sixteen bytes they name, so two spellings of one address
@@ -73,4 +74,24 @@ export function isLoopback(text: string): boolean {
   const v4 = bytes.slice(0, 10).every((one) => one === 0) && bytes[10] === 0xff && bytes[11] === 0xff;
   if (v4) return bytes[12] === 127;
   return bytes.slice(0, 15).every((one) => one === 0) && bytes[15] === 1;
+}
+
+/**
+ * Whether an address is one of THIS machine's.
+ *
+ * It is the machine's own interfaces and not loopback alone, because a process
+ * on this box reaching a service bound to this box's own tailnet address is
+ * handed that address as its source, not `127.0.0.1`. An address nobody could
+ * name at all counts as this machine, because the rule that reads this refuses
+ * what it cannot place.
+ */
+export function isLocalAddress(text: string | null): boolean {
+  if (text === null || text === "") return true;
+  if (isLoopback(text)) return true;
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const one of addresses ?? []) {
+      if (sameAddress(one.address, text)) return true;
+    }
+  }
+  return false;
 }

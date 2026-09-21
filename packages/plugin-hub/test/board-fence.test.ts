@@ -20,6 +20,8 @@ import { join } from "node:path";
 import { startCluster, type Cluster } from "./helpers/cluster.ts";
 import { stageHub, superStore, type StagedHub } from "./helpers/hub-fixture.ts";
 import { freePort, plantedSeam, recordingSeam, serveBoard, type ServedBoard } from "./helpers/board.ts";
+import { isLocalAddress } from "../src/net/address.ts";
+import { networkInterfaces } from "node:os";
 import type { RunSpec } from "./helpers/registry.ts";
 import type { Store } from "../src/store/connect.ts";
 import { pageMissing } from "../src/door/lines.ts";
@@ -76,7 +78,7 @@ interface Staged {
   stop(): Promise<void>;
 }
 
-async function stage(): Promise<Staged> {
+async function stage(peer?: unknown): Promise<Staged> {
   const boardEntry: RunSpec = {
     id: "board",
     kind: "board",
@@ -98,6 +100,7 @@ async function stage(): Promise<Staged> {
     entryId: boardEntry.id,
     store,
     os: recordingSeam(plantedSeam(FLAVOUR).os).os,
+    peer,
   });
   return {
     it,
@@ -276,3 +279,83 @@ test(
   },
   SLOW,
 );
+
+test(
+  "an act asked for from this machine is refused, and the same act from another device lands",
+  async () => {
+    // EVERY AGENT ON THIS BOX REACHES THE BOARD FROM THIS BOX. An agent's box
+    // shares the machine's network, so a model that decided to press restart,
+    // or a page it wrote that a person opened, arrives from one of this
+    // machine's own addresses. A person arrives from a phone, which is not one.
+    // So an act from here is refused and a read is not, and the residual is
+    // named where the rule is written: an agent on ANOTHER machine of the
+    // household is not this, and reader identity is what would answer it.
+    const staged = await stage("production");
+    try {
+      const { board, it } = staged;
+      for (const path of ["/act/restart", "/act/check"]) {
+        const answer = await board.post(path, { target: RUNNER_ENTRY.id });
+        expect(answer.status, path).toBe(404);
+        expect((await answer.text()).trim()).toBe(pageMissing("en"));
+      }
+      expect(await it.read.sheet("control"), "an act from this machine wrote a row").toEqual([]);
+
+      // A READ IS LEFT ALONE. Every page is a read of the store and the seam,
+      // there is nothing on one an agent could not already see, and a rule that
+      // refused reads would refuse the household's own box its own status.
+      for (const path of ["/", "/people", "/findings", "/metrics"]) {
+        expect((await board.get(path)).status, path).toBe(200);
+      }
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "a peer nothing could resolve is refused too, and a peer on another device acts",
+  async () => {
+    // The control on the rule above, in the same shape: the act lands when it
+    // comes from somewhere that is not this machine, and a peer the server
+    // could not name at all is refused rather than assumed to be a person.
+    const unknown = await stage(() => null);
+    try {
+      const answer = await unknown.board.post("/act/restart", { target: RUNNER_ENTRY.id });
+      expect(answer.status, "a peer nobody could name").toBe(404);
+      expect(await unknown.it.read.sheet("control")).toEqual([]);
+    } finally {
+      await unknown.stop();
+    }
+    const staged = await stage(() => "192.0.2.10");
+    try {
+      const answer = await staged.board.post("/act/restart", { target: RUNNER_ENTRY.id });
+      expect(answer.status).toBe(303);
+      const rows = await staged.it.read.sheet("control");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].data.target_id).toBe(RUNNER_ENTRY.id);
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test("every address this machine holds is this machine, and an address it does not hold is not", () => {
+  // The rule reads the machine's own interfaces rather than loopback alone,
+  // because an agent on this box reaches the board at the board's own bind
+  // address and the kernel hands it that address as its source.
+  const mine = Object.values(networkInterfaces())
+    .flatMap((one) => one ?? [])
+    .map((one) => one.address);
+  expect(mine.length, "this machine holds no address at all").toBeGreaterThan(0);
+  for (const address of mine) expect(isLocalAddress(address), address).toBe(true);
+  for (const address of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
+    expect(isLocalAddress(address), address).toBe(true);
+  }
+  // Documentation addresses, which no box on any network this household has
+  // holds, so naming a real one here would read as a rule.
+  for (const address of ["192.0.2.10", "198.51.100.7", "2001:db8::9"]) {
+    expect(isLocalAddress(address), address).toBe(false);
+  }
+});

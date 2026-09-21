@@ -22,7 +22,7 @@ import type { OsSeam } from "../os/types.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readOpenTurns } from "../store/turns.ts";
 import { readVoiceHealth } from "../voice/health.ts";
-import { sameAddress } from "../net/address.ts";
+import { isLocalAddress, sameAddress } from "../net/address.ts";
 import { serveArtifact } from "./artifacts.ts";
 import { findingsPage, machinesPage, metricsPage, peoplePage, type CheckRow, type ControlRow } from "./pages.ts";
 
@@ -78,7 +78,18 @@ export interface BoardOptions {
    * own, because opening a household's real login from a test is not a test.
    */
   check?: { credentials?: CredentialProber; kernel?: KernelView | null; loopProbe?: LoopProbeOptions };
+  /**
+   * Who a request came from, as an address. The default is the server's own
+   * answer. A check hands in its own, because a check in this runtime IS this
+   * machine and the rule below is about which machine asked.
+   */
+  peer?: (request: Request, server: PeerReader) => string | null;
   now?: () => Date;
+}
+
+/** As much of the server as the peer reader needs. */
+export interface PeerReader {
+  requestIP(request: Request): { address: string } | null;
 }
 
 export interface BoardHandle {
@@ -372,7 +383,31 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     return url.protocol !== "http:" || !isOwn(url.host, port);
   };
 
-  const answer = async (request: Request): Promise<Response> => {
+  /**
+   * Who asked, and whether that is this machine.
+   *
+   * WHY AN ACT FROM THIS MACHINE IS REFUSED. Every agent in this household
+   * runs in a box that shares this machine's network, so an agent that decided
+   * to restart a runner, or a page it wrote that somebody opened, reaches the
+   * board from one of this machine's own addresses. A person reaches it from
+   * another device on the tailnet. Nobody here is identified, so which machine
+   * asked is the one honest thing a request carries, and it is enough to keep
+   * the household's own agents out of its controls.
+   *
+   * WHAT IT DOES NOT COVER, said plainly: an agent on ANOTHER machine of the
+   * household reaches this board from an address that is not this machine's,
+   * and this rule does not stop it. That one needs reader identity, which the
+   * contract defers.
+   *
+   * READS ARE LEFT ALONE. Every page is a read of the store and the seam, an
+   * agent can already see its own household's state, and a rule that refused
+   * reads would refuse this box its own status page.
+   */
+  const asked = options.peer ?? ((request: Request, server: PeerReader) => server.requestIP(request)?.address ?? null);
+  const fromThisMachine = (request: Request, server: PeerReader): boolean =>
+    isLocalAddress(asked(request, server));
+
+  const answer = async (request: Request, server: PeerReader): Promise<Response> => {
     // THE HOST MUST BE THE BOARD'S OWN. A website that rebinds its own name to
     // this address reaches the socket with its own name in the header, and
     // answering it would let that website read the pages it made a browser
@@ -390,6 +425,7 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     }
     if (request.method === "POST") {
       if (fromAnotherPage(request, port)) return missing();
+      if (fromThisMachine(request, server)) return missing();
       const form = new URLSearchParams(await request.text());
       const target = form.get("target") ?? "";
       const value = form.get("value") === "true";

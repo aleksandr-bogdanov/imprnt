@@ -71,6 +71,17 @@ export interface ServedBoard {
   stop(): Promise<void>;
 }
 
+/**
+ * The peer a check presents, which is a device that is not this machine.
+ *
+ * The board refuses an ACT whose peer is this machine, because every agent on
+ * this box reaches it from this box while a person reaches it from a phone. A
+ * check in this runtime is this machine, so it says who it is instead, the way
+ * it hands in a seam and a clock. A documentation address, because naming a
+ * real one would read as a rule.
+ */
+export const ANOTHER_DEVICE = "192.0.2.10";
+
 export interface ServeBoardOptions {
   registryFile: string;
   entryId: string;
@@ -79,6 +90,11 @@ export interface ServeBoardOptions {
   writeRegistryKey?: unknown;
   /** What `check now` runs with, so a check never opens a real credential. */
   check?: unknown;
+  /**
+   * Who the request came from. Absent is another device, `"production"` is the
+   * board's own reader, which answers this machine for a check in this runtime.
+   */
+  peer?: unknown;
   now?: () => Date;
 }
 
@@ -115,6 +131,7 @@ export async function serveBoard(options: ServeBoardOptions): Promise<ServedBoar
       writeRegistryKey: options.writeRegistryKey,
       check: options.check,
       now: options.now,
+      peer: options.peer === "production" ? undefined : (options.peer ?? (() => ANOTHER_DEVICE)),
     });
 
   let handle: Awaited<ReturnType<typeof start>>;
