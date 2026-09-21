@@ -160,11 +160,20 @@ async function git(dir: string, args: string[], absent = false): Promise<string 
 }
 
 /**
- * The device a destination would be written to, or null when it does not name
- * a local path at all. This is the one question asked of the destination, and
- * it is asked of the filesystem rather than of the string: an absolute path is
- * judged by the nearest directory of it that exists, so a copy aimed at a drive
- * that is not plugged in is judged by the card it would really land on.
+ * The filesystem a destination would be written to, or null when it does not
+ * name a local path at all. This is the one question asked of the
+ * destination, and it is asked of the filesystem rather than of the string: an
+ * absolute path is judged by the nearest directory of it that exists, so a copy
+ * aimed at a drive that is not plugged in is judged by the card it would really
+ * land on.
+ *
+ * WHAT IT CAN PROMISE, AND WHAT IT CANNOT. It compares filesystems, which is
+ * all a device number says. A destination on the staging directory's own
+ * filesystem is refused. Another filesystem on the same card or disk is NOT
+ * told apart from a separate drive: a boot partition beside the root one, a
+ * sibling volume in the same APFS container, and a RAM disk, which is gone at
+ * the next boot, all pass. Choosing a destination that is really somewhere
+ * else stays the household's part.
  */
 function deviceOf(destination: string): number | null {
   if (!isAbsolute(destination)) return null;
@@ -209,6 +218,21 @@ function copyTree(from: string, to: string, left: string[]): void {
   }
 }
 
+/**
+ * Whether the upload command is handed the destination as a path of its own,
+ * which is the only case in which the destination names a place on this box.
+ *
+ * The household's likely shape puts the other machine in the command itself
+ * (`mac:{destination}`) and keeps the destination a plain path on that
+ * machine. Judged here, that path is a directory on this box's own disk, and
+ * every copy would be refused. Nothing about the argument is parsed: one that
+ * starts with the destination hands the command a path, and one that carries
+ * it after anything else is the command's business.
+ */
+function handedAsPath(upload: string[]): boolean {
+  return upload.some((arg) => arg.startsWith("{destination}"));
+}
+
 /** Where a path on the box lands inside the copy: its own absolute path, under `files/`. */
 function mirror(staging: string, path: string): string {
   return join(staging, FILES_DIR, path.replace(/^\/+/, ""));
@@ -225,12 +249,12 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
   const store = await openStore({ url: storeUrlFor(registry, "hub_hub", declared.id) });
   const readback = join(staging, READBACK_DIR);
   try {
-    // REFUSE FIRST, before anything is dumped or sent. A copy on the card that
-    // dies is not a copy. The staging directory is the account's own, because
-    // it holds every person's files at once.
+    // REFUSE FIRST, before anything is dumped or sent. A copy on the filesystem
+    // that dies is not a copy. The staging directory is the account's own,
+    // because it holds every person's files at once.
     mkdirSync(staging, { recursive: true, mode: 0o700 });
-    if (deviceOf(destination) === statSync(staging).dev) {
-      throw new BackupRefused("device", "same device", "the destination is on the staging directory's own device");
+    if (handedAsPath(declared.upload_argv ?? []) && deviceOf(destination) === statSync(staging).dev) {
+      throw new BackupRefused("device", "same device", "the destination is on the staging directory's own filesystem");
     }
 
     // THE DUMP, in its own repository, committed only when it changed. A dump
