@@ -216,6 +216,14 @@ export async function runInstall(options: { registryFile: string; stage?: string
     await store.sql`select source, log_ready, media_state from inbound limit 0`;
     await store.sql`select route, delivery_state from outbox limit 0`;
     await store.sql`select 'hub_report(text, text)'::regprocedure`;
+    // The newest step grants rather than creates, so what is probed is the
+    // grant itself: without it this hub applies a lifecycle control and cannot
+    // say a word about it in the chat that asked.
+    await store.sql.unsafe(`do $$ begin
+      if not has_function_privilege('hub_door_notice(text, text, text, text, jsonb, integer)', 'execute')
+      then raise exception 'this role cannot ask for a machinery notice, so a control outcome could not be said';
+      end if;
+    end $$`);
     const os = options.os ?? thisOs();
     const rendered = (stage === "entry" ? [target] : selected).map(entry => ({ entry, files: os.render(entry, {
       machine: target.machine, execPath: process.execPath, entryScript: programForKind(entry.kind),

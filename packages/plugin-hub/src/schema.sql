@@ -587,3 +587,12 @@ create trigger inbound_notify_project after insert on inbound
   execute function hub_notify_project();
 
 insert into schema_version (version) values (5);
+
+-- The hub says the outcome of a lifecycle control in the chat it was asked in.
+-- It applies those controls because it is the only process that writes the
+-- registry, and it owns no insert on `outbox`. The function below writes one
+-- keyed machinery notice on a pinned route and nothing else, so granting it is
+-- one sentence rather than every row of the table.
+grant execute on function hub_door_notice(text, text, text, text, jsonb, integer) to hub_hub;
+
+insert into schema_version (version) values (6);
