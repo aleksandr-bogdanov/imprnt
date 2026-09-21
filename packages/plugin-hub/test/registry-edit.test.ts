@@ -12,7 +12,7 @@
 // text edit can produce a file that loads and says something other than what
 // was asked for.
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, chownSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 import { handWrittenRegistry, lineDiff } from "./helpers/registry-fixture.ts"
@@ -455,3 +455,104 @@ test("a refusal repeated many times leaves one candidate beside the registry, an
     expect(readFileSync(it.file, "utf8")).toBe(it.bytes)
   } finally { it.stop() }
 })
+
+// TWO WRITERS ON ONE MACHINE. The hub applies an adopt from a phone and the
+// board sets a key from the tailnet, each in its own process. The first edit
+// is held after its last read-back and before its rename, which is where two
+// unserialised writers both pass the check and the later rename throws the
+// earlier edit away while both callers are told it applied.
+test("two processes editing the registry at once both land, and neither edit is thrown away", async () => {
+  const it = scratch()
+  const signals = mkdtempSync(join(tmpdir(), "registry-edit-signals-"))
+  const helper = join(import.meta.dir, "helpers/registry-writer.ts")
+  const ready = join(signals, "ready")
+  const release = join(signals, "release")
+  const out = (child: ReturnType<typeof Bun.spawn>) => new Response(child.stdout as ReadableStream).text()
+  try {
+    const first = Bun.spawn([process.execPath, "run", helper, it.file, "agents[p1-lair]", "sleeping", "true", ready, release], { stdout: "pipe" })
+    const firstSaid = out(first)
+    expect(await observe(() => existsSync(ready), 20000), "the first edit reached its rename").toBe(true)
+    const second = Bun.spawn([process.execPath, "run", helper, it.file, "agents[p2-lair]", "sleeping", "true"], { stdout: "pipe" })
+    const secondSaid = out(second)
+    // The second edit's chance to run its whole course while the first is held.
+    await observe(() => second.exitCode !== null, 3000)
+    writeFileSync(release, "")
+    await Promise.all([first.exited, second.exited])
+    expect(JSON.parse(await firstSaid)).toEqual({ changed: true })
+    expect(JSON.parse(await secondSaid)).toEqual({ changed: true })
+    const after = readFileSync(it.file, "utf8")
+    expect(after.split("\n").filter(line => line === "sleeping = true")).toHaveLength(2)
+    const agents = loadRegistry(it.file).agents
+    expect(agents.find(one => one.id === "p1-lair")!.sleeping).toBe(true)
+    expect(agents.find(one => one.id === "p2-lair")!.sleeping).toBe(true)
+  } finally { it.stop(); rmSync(signals, { recursive: true, force: true }) }
+}, 60_000)
+
+// The read an edit is built from and the read its last check compares against
+// are ONE read. A hand edit that lands between two reads would otherwise be
+// the bytes the check trusts, and the candidate, built from the earlier read,
+// would be renamed over it.
+test("a hand edit that lands just after an edit read the file is detected, not written over", async () => {
+  const it = scratch()
+  try {
+    const { setKey, RegistryEditRefused } = await writer()
+    const byHand = it.bytes.replace("# the owner", "# the owner, and a note written while the hub was editing")
+    const refused = await setKey(it.file, "agents[p1-lair]", "chat", "1000000009", {
+      seam: { afterRead() { writeFileSync(it.file, byHand) } },
+    }).then(() => null, (error: Error) => error)
+    expect(refused).toBeInstanceOf(RegistryEditRefused)
+    expect((refused as unknown as { step: string }).step).toBe("concurrent")
+    expect(readFileSync(it.file, "utf8")).toBe(byHand)
+  } finally { it.stop() }
+})
+
+test("a registry reached through a symbolic link keeps the link, and the file it points at is the one edited", async () => {
+  const it = scratch()
+  try {
+    const { setKey } = await writer()
+    const kept = join(it.dir, "private")
+    mkdirSync(kept)
+    const target = join(kept, "hand-written.toml")
+    renameSync(it.file, target)
+    symlinkSync(target, it.file)
+    expect((await setKey(it.file, "agents[p1-lair]", "sleeping", true)).changed).toBe(true)
+    expect(lstatSync(it.file).isSymbolicLink()).toBe(true)
+    expect(readlinkSync(it.file)).toBe(target)
+    expect(lineDiff(it.bytes, readFileSync(target, "utf8"))).toEqual({ removed: [], added: ["sleeping = true"] })
+    expect(statSync(target).mode & 0o777).toBe(0o640)
+  } finally { it.stop() }
+})
+
+/**
+ * A group this process may give a file that a new file here would not get on
+ * its own, or null when there is none to test with. Root may give any, so a
+ * run as root also checks the owner itself.
+ */
+const OWNERSHIP = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "registry-edit-owner-"))
+  try {
+    const probe = join(dir, "probe")
+    writeFileSync(probe, "")
+    const fresh = statSync(probe)
+    const root = process.getuid?.() === 0
+    const gid = root ? (fresh.gid === 1 ? 2 : 1) : (process.getgroups?.() ?? []).find(one => one !== fresh.gid)
+    if (gid === undefined) return null
+    return { gid, uid: root ? (fresh.uid === 1 ? 2 : 1) : fresh.uid }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})()
+
+test.skipIf(OWNERSHIP === null)(
+  `an edit keeps the registry's owner and group${OWNERSHIP === null ? " (skipped: this process belongs to one group only)" : ""}`,
+  async () => {
+    const it = scratch()
+    try {
+      const { setKey } = await writer()
+      chownSync(it.file, OWNERSHIP!.uid, OWNERSHIP!.gid)
+      expect((await setKey(it.file, "agents[p1-lair]", "sleeping", true)).changed).toBe(true)
+      const after = statSync(it.file)
+      expect(after.gid).toBe(OWNERSHIP!.gid)
+      expect(after.uid).toBe(OWNERSHIP!.uid)
+      expect(after.mode & 0o777).toBe(0o640)
+    } finally { it.stop() }
+  },
+)
