@@ -93,6 +93,8 @@ export interface RunSpec {
   guild?: string;
   /** The preset an agent adopted through this door is created with. */
   default_preset?: string;
+  /** The declared repository ids a `kind = "sync"` entry keeps in step. */
+  repositories?: string[];
 }
 
 /**
@@ -461,6 +463,7 @@ function renderRegistry(spec: RegistrySpec): string {
       dump_argv: entry.dump_argv,
       upload_argv: entry.upload_argv,
       readback_argv: entry.readback_argv,
+      repositories: entry.repositories,
     });
     lines.push("");
   }

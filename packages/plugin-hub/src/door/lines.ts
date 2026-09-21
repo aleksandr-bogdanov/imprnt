@@ -591,6 +591,13 @@ export function installServicePlan(language: Language, values: LineValues): stri
       : "install: would start no service of its own; apt-get creates and starts {unit}.", values);
 }
 
+/** A zone checkout the provisioning stage would not touch, and what is there. */
+export function installZoneRefused(language: Language, values: { id: string; path: string; cause: string; found: string }): string {
+  return interpolate(language, language === "ru"
+    ? "\u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430: {id} \u0432 {path} \u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d \u043a\u0430\u043a \u0435\u0441\u0442\u044c ({cause}): {found}."
+    : "install: {id} at {path} was left as it is ({cause}): {found}.", values);
+}
+
 export function installDatabaseReady(language: Language): string {
   return language === "ru"
     ? "установка: схема postgres готова; существующие настройки хранилища не изменены."

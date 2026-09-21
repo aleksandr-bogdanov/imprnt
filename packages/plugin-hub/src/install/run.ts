@@ -11,7 +11,8 @@ import { programForKind, transcriberArgv } from "../hub/program.ts";
 import { openStore } from "../store/connect.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { standardFor } from "./standard.ts";
-import { installAccountRole, installDatabaseReady, installPasswordsSet, installPlan, installServicePlan, installSocketRemains, installTrustRemains } from "../door/lines.ts";
+import { installZone } from "./zone.ts";
+import { installAccountRole, installDatabaseReady, installPasswordsSet, installPlan, installServicePlan, installSocketRemains, installTrustRemains, installZoneRefused } from "../door/lines.ts";
 import { HUB_ROLES, passwordFileOf, secretsDirOf, storeUrlFor } from "../store/secrets.ts";
 import { newPassword, scramMatches, scramVerifier } from "../store/scram.ts";
 
@@ -125,7 +126,17 @@ export async function runInstall(options: { registryFile: string; stage?: string
   const entries = listRunEntries(registry);
   for (const entry of entries) programForKind(entry.kind);
   const stage = options.stage ?? "all";
-  if (!["all", "database", "services", "entry"].includes(stage)) throw new Error("unknown-stage");
+  if (!["all", "zone", "database", "services", "entry"].includes(stage)) throw new Error("unknown-stage");
+  // The shared zone comes FIRST in a whole run: a checkout that is absent is a
+  // thing to make before anything is scheduled against it. A household that
+  // declares none is skipped in silence rather than refused, because not having
+  // chosen a zone is not a broken file. A checkout this stage would not touch is
+  // named here once and reported by `check` for as long as it stays wrong.
+  if (stage === "zone" || stage === "all") {
+    const zone = installZone(registry);
+    for (const one of zone.refused) process.stdout.write(installZoneRefused("en", one) + "\n");
+    if (stage === "zone") return { stage, result: "done", zone };
+  }
   const url = String(readSetting(registry, "hub.store_url"));
   const standard = standardFor(process.platform);
   if (options.dry) {
