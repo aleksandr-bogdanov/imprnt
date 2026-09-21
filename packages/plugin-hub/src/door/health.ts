@@ -58,7 +58,7 @@ export async function routeNotice(store: StoreLike, options: {
   if (!route) return false;
   const language = languageOf(options.registry, route.person) as Language;
   const render = options.operation === "read" ? chatUnreadable : options.failure.kind === "uncertain" ? deliveryUncertain : deliveryFailed;
-  const parts = prepareReply(render(language, { chat: options.chat, cause: options.failure.cause, seconds: options.seconds }), options.platform, language);
+  const parts = prepareReply(render(language, { chat: options.agent.id, cause: options.failure.cause, seconds: options.seconds }), options.platform, language);
   await store.sql.begin(async tx => {
     for (const [index, part] of parts.entries()) await tx`select hub_door_notice(${route.person}, ${route.id}, ${part},
       ${index === 0 ? options.key : `${options.key}:part:${index + 1}`},

@@ -209,7 +209,7 @@ for (const platform of ["telegram", "discord"] as const) for (const kind of ["pe
       expect(stderr).toContain("1000000001")
       expect(stderr).not.toContain(token)
       expect(stderr).not.toContain("https://example.invalid/media")
-      const notices = edge.posts().filter(row => row.text.includes("1000000001") && row.text.includes("[door]"))
+      const notices = edge.posts().filter(row => row.text.includes("p1-lair") && row.text.includes("[door]"))
       if (samePerson) {
         expect(notices).toHaveLength(1)
         expect(notices[0].chat).toBe("0000000000")

@@ -157,6 +157,7 @@ test("ROLL-15 Forbidden empty allowlist granting access: accessor denies absent/
 for (const [scope, key, defaultValue] of [
   ["door", "media_max_bytes", 20971520], ["door", "delivery_retry_seconds", 30],
   ["door", "delivery_max_attempts", 5], ["door", "read_retry_seconds", 30],
+  ["door", "read_notice_after_seconds", 300],
   ["runner", "task_retry_seconds", 30],
 ] as const) {
   test(`ROLL-01 ROLL-20 D-171 ${scope}.${key} default and positive integer validation`, () => {

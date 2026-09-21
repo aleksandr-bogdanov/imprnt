@@ -36,6 +36,7 @@ const ROLLOUT_DEFAULTS: Record<string, number> = {
   "door.delivery_max_attempts": 5,
   "door.read_retry_seconds": 30,
   "door.read_timeout_seconds": 60,
+  "door.read_notice_after_seconds": 300,
   "runner.task_retry_seconds": 30,
 };
 

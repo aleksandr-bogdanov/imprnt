@@ -478,6 +478,15 @@ export async function runDoor(options: {
   const sayReadFailure = async (agent: ChatAgent, seconds?: number) => {
     const data = health.health.get(agent.chat);
     if (data?.status !== "failed" || data.notice_key) return;
+    // A platform blip that heals on the next retry costs nobody a message, and
+    // Discord answers about one read in five thousand with a 503 or a stall,
+    // which across seventeen channels is a notice every few minutes. So a
+    // transient failure speaks only once the chat has stayed unreadable past
+    // the grace. The health row and the `check` finding are written at once
+    // either way, and a refused or missing chat, or a batch this door cannot
+    // accept, speaks on the first failure because no retry fixes it.
+    const grace = Number(readSetting(registryThisTick(), "door.read_notice_after_seconds")) * 1000;
+    if (data.kind === "transient" && data.code !== ACCEPT_FAILED && Date.now() - Date.parse(String(data.since)) < grace) return;
     const key = `chat-read:${options.door}:${agent.chat}:${data.since}`;
     const sent = await routeNotice(store, { registry: registryThisTick(), door: options.door,
       platform: options.platform.name, agent, chat: agent.chat, health: health.health, key,

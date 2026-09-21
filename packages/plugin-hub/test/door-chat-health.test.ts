@@ -1,5 +1,6 @@
 // The platform-read half of a chat's health.
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test"
+import { readFileSync, writeFileSync } from "node:fs"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"
 import { rolloutStage } from "./helpers/rollout-stage.ts"
 import { deliveryEdge, proveDeliveryEdge } from "./helpers/rollout-delivery.ts"
@@ -53,7 +54,7 @@ for (const platform of ["telegram", "discord"] as const) for (const [status, cau
         const reads = edge.reads.filter(row => row.chat === "1000000001")
         expect(reads.length).toBeGreaterThan(1)
         for (let n = 1; n < reads.length; n++) expect(reads[n].at - reads[n - 1].at).toBeGreaterThanOrEqual(900)
-        const notices = edge.posts().filter(post => post.text.includes("1000000001") && post.text.includes("[door]"))
+        const notices = edge.posts().filter(post => post.text.includes("p1-lair") && post.text.includes("[door]"))
         if (samePerson) {
           expect(notices).toHaveLength(1)
           expect(notices[0].chat).toBe("0000000000")
@@ -93,3 +94,44 @@ test("ROLL-21 Forbidden healthy token and process cannot conceal a stored failed
     expect(JSON.stringify(await check())).not.toContain("access denied")
   } finally { await store.sql.close(); await it.stop() }
 })
+
+// A platform blip that heals on the next retry is written down at once and said
+// to nobody. A transient failure that outlasts the grace is said once, the same
+// way a refused chat is said at once.
+for (const platform of ["telegram", "discord"] as const) {
+  test(`ROLL-21 ${platform} a transient read failure is announced only after the grace, once`, async () => {
+    const it = await rolloutStage(cluster, platform, {
+      machines: [{ id: "pi", os: "linux" }],
+      run: [{ id: "door-fake", kind: "door", machine: "pi", platform: "fake", person: "p1", token_file: "/dev/null" }, { id: "runner-pi", kind: "runner", machine: "pi", child_memory_limit_mb: 256 }],
+      registry: spec => ({ ...spec, agents: spec.agents!.map(agent => agent.id === "p2-lair" ? { ...agent, person: "p1" } : agent) }),
+    })
+    writeFileSync(it.registryFile, readFileSync(it.registryFile, "utf8").replace("read_notice_after_seconds = 1", "read_notice_after_seconds = 3"))
+    const edge = deliveryEdge(platform)
+    const blip = () => Object.assign(new Error("upstream connect error or disconnect/reset before headers"), { status: 503 })
+    const capture = spyOn(process.stderr, "write").mockImplementation((() => true) as any)
+    let door: Awaited<ReturnType<typeof runDoor>> | undefined
+    const health = async () => (await it.read.sheet("door_health")).find(row => row.id === "door-fake/1000000001")
+    const notices = () => edge.posts().filter(post => post.text.includes("p1-lair") && post.text.includes("[door]"))
+    try {
+      door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: edge.platform })
+      expect(await observe(async () => (await health())?.data.status === "healthy"), "the chat is read before the blip").toBe(true)
+      edge.readFault("1000000001", blip())
+      expect(await observe(async () => (await health())?.data.status === "failed"), "the blip is written down at once").toBe(true)
+      expect((await health())!.data.kind).toBe("transient")
+      edge.readFault("1000000001", null)
+      expect(await observe(async () => (await health())?.data.status === "healthy", 6000), "the next read heals it").toBe(true)
+      await Bun.sleep(3500)
+      expect(notices(), "a blip that healed inside the grace says nothing").toHaveLength(0)
+
+      edge.readFault("1000000001", blip())
+      expect(await observe(async () => (await health())?.data.status === "failed"), "the second failure is written down at once").toBe(true)
+      await Bun.sleep(1000)
+      expect(notices(), "still inside the grace").toHaveLength(0)
+      expect(await observe(async () => notices().length > 0, 8000), "a failure that outlasts the grace is said").toBe(true)
+      await Bun.sleep(2500)
+      expect(notices(), "one notice per episode").toHaveLength(1)
+      expect(notices()[0].chat).toBe("0000000000")
+      expect(notices()[0].text, "the notice names the agent, not a platform id").not.toContain("1000000001")
+    } finally { edge.readFault("1000000001", null); edge.release(); await door?.stop(); capture.mockRestore(); await it.stop() }
+  })
+}

@@ -200,7 +200,7 @@ export async function rolloutStage(
     text = text.replace(`id = "${person}"\n`, `id = "${person}"\nallowed_senders = { door-fake = ["${person}"] }\n`)
   }
   if (options.voice) text += voiceTables(options.voice, hub.stateDir)
-  text += "\n[door]\ndelivery_retry_seconds = 1\ndelivery_max_attempts = 3\nread_retry_seconds = 1\n[runner]\ntask_retry_seconds = 1\n"
+  text += "\n[door]\ndelivery_retry_seconds = 1\ndelivery_max_attempts = 3\nread_retry_seconds = 1\nread_notice_after_seconds = 1\n[runner]\ntask_retry_seconds = 1\n"
   writeFileSync(hub.registryFile, text)
   return { ...hub, edge: rolloutPlatform(name, options.admin) }
 }

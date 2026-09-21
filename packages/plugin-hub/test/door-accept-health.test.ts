@@ -43,7 +43,7 @@ for (const blocked of [true, false]) {
       credentials: { open: async () => ({ ok: true }), secrets: async () => [] } })
     const health = async () => (await it.read.sheet("door_health")).find(row => row.id === "door-fake/1000000001")
     const finding = async () => (await check()).find(row => JSON.stringify(row).includes("door-fake/1000000001"))
-    const notices = () => edge.posts().filter(post => post.text.includes("1000000001") && post.text.includes("[door]"))
+    const notices = () => edge.posts().filter(post => post.text.includes("p1-lair") && post.text.includes("[door]"))
     try {
       door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: edge.platform })
       edge.batch([{ platform_message_id: "1", chat: "1000000001", sender_id: "p1", from: "p1", text: "blocked codeword", at, media: [] }], "2")
