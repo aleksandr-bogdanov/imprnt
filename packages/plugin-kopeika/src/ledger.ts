@@ -136,7 +136,14 @@ export interface AppendResult {
   skippedDuplicate: number;
   /** Existing rows that had no time of day and gained one from the re-imported export. */
   healedTime: number;
+  /** Candidates skipped because the bank renamed the merchant on a row already in the ledger. */
+  renamed: { candidate: Transaction; existing: Transaction }[];
   merged: Transaction[];
+}
+
+/** Account, booking date, time of day, amount and currency: what a merchant rename leaves unchanged. */
+function renameKey(t: Transaction): string {
+  return `${t.account}|${t.date}|${t.time}|${t.amount_native.toFixed(2)}|${t.currency}`;
 }
 
 /**
@@ -144,6 +151,14 @@ export interface AppendResult {
  * Existing rows are never re-valued: re-importing an overlapping file is a no-op,
  * except that a row imported before the ledger carried a time of day gains it
  * (the one field a re-import may fill, and only when it was empty).
+ *
+ * The id hashes the merchant text, and Revolut rewrites it between exports ("Steam"
+ * becomes "Valve Corporation" on the same charge). A candidate with a new id is
+ * therefore also checked against existing rows of the same account with the same
+ * date, time of day, amount and currency but a different merchant. Such a row is
+ * the same transaction renamed and is skipped and reported, never appended. An
+ * existing row that an exact-id candidate of this batch already matched cannot be
+ * claimed this way, and rows without a time of day are never compared.
  */
 export function appendDeduped(
   existing: readonly Transaction[],
@@ -154,6 +169,15 @@ export function appendDeduped(
   let appended = 0;
   let skippedDuplicate = 0;
   let healedTime = 0;
+  const renamed: AppendResult["renamed"] = [];
+
+  const claimed = new Set(candidates.map((c) => c.id).filter((id) => seen.has(id)));
+  const byRenameKey = new Map<string, Transaction[]>();
+  for (const t of existing) {
+    if (t.time === "" || claimed.has(t.id)) continue;
+    const key = renameKey(t);
+    byRenameKey.set(key, [...(byRenameKey.get(key) ?? []), t]);
+  }
 
   for (const cand of candidates) {
     const at = seen.get(cand.id);
@@ -165,12 +189,21 @@ export function appendDeduped(
       }
       continue;
     }
+    if (cand.time !== "") {
+      const pool = byRenameKey.get(renameKey(cand)) ?? [];
+      const hit = pool.findIndex((t) => t.merchant_raw !== cand.merchant_raw);
+      if (hit !== -1) {
+        renamed.push({ candidate: cand, existing: pool[hit]! });
+        pool.splice(hit, 1);
+        continue;
+      }
+    }
     seen.set(cand.id, merged.length);
     merged.push(cand);
     appended += 1;
   }
 
-  return { appended, skippedDuplicate, healedTime, merged };
+  return { appended, skippedDuplicate, healedTime, renamed, merged };
 }
 
 /**

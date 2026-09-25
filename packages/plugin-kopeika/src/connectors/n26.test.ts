@@ -134,4 +134,17 @@ describe("parseN26", () => {
     const rows = parseN26(csv('2025-01-01,,X,,Presentment,-,Main,-1,,,'));
     expect((rows[0] as unknown as Record<string, unknown>).id).toBeUndefined();
   });
+  test("same-day identical rows stay distinct: repeats carry their occurrence number", () => {
+    const rows = parseN26(
+      csv(
+        "2025-05-05,2025-05-05,Sparkasse,,Presentment,,Main,-500,500,EUR,1",
+        "2025-05-05,2025-05-05,Sparkasse,,Presentment,,Main,-500,500,EUR,1",
+        "2025-05-05,2025-05-05,Scooter,,Presentment,ride 1,Main,-1.50,,,",
+        "2025-05-05,2025-05-05,Scooter,,Presentment,ride 2,Main,-1.50,,,",
+        "2025-05-05,2025-05-05,Sparkasse,,Presentment,,Main,-500,500,EUR,1",
+        "2025-05-06,2025-05-06,Sparkasse,,Presentment,,Main,-500,500,EUR,1",
+      ),
+    );
+    expect(rows.map((r) => r.dedupExtra)).toEqual(["", "#2", "", "#2", "#3", ""]);
+  });
 });

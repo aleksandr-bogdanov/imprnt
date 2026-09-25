@@ -22,6 +22,13 @@
  *
  * Partner Name may be non-Latin (e.g. Cyrillic "Отложение") and Value Date may be
  * blank — both are handled without special-casing because we key off Booking Date.
+ *
+ * The export has no transaction id and no time of day, so two real charges with the
+ * same date, partner, amount and currency (two 1.50 scooter rides, two 500 ATM
+ * withdrawals) hash to the same ledger id and the second one would be dropped as a
+ * duplicate. Each repeat inside one file therefore carries its occurrence number in
+ * dedupExtra ("#2", "#3"). The first occurrence carries none, so its id is the same
+ * as before, and a later export of the same days numbers the repeats the same way.
  */
 
 import { parseCsv } from "../csv.ts";
@@ -69,6 +76,7 @@ export function parseN26(text: string): ParsedRow[] {
   }
 
   const rows: ParsedRow[] = [];
+  const seen = new Map<string, number>();
 
   for (const rec of records) {
     const date = rec.get("Booking Date").trim();
@@ -112,6 +120,10 @@ export function parseN26(text: string): ParsedRow[] {
     const transferCandidate =
       n26Type === "MoneyBeam" || isOwnIban(partnerIban) || matchesOwnName(partnerName);
 
+    const key = `${date}|${partnerName}|${amount_native.toFixed(2)}|${currency}`;
+    const occurrence = (seen.get(key) ?? 0) + 1;
+    seen.set(key, occurrence);
+
     rows.push({
       date,
       merchant_raw: partnerName,
@@ -125,6 +137,7 @@ export function parseN26(text: string): ParsedRow[] {
       amountEur,
       // N26's export carries no running-balance column.
       balance: null,
+      dedupExtra: occurrence > 1 ? `#${occurrence}` : "",
     });
   }
 

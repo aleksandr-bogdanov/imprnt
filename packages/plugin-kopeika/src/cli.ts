@@ -63,6 +63,7 @@ import { loadTiers, tiersConfigured, type Tiers } from "./tiers.ts";
 import { loadPins } from "./pins.ts";
 import {
   DEFAULT_TRANSFER_OPTIONS,
+  matchCardFunding,
   matchTransfers,
 } from "./transfers.ts";
 import {
@@ -313,7 +314,7 @@ async function cmdImport(args: Args): Promise<number> {
   });
 
   const existing = loadLedger(LEDGER_PATH);
-  const { appended, skippedDuplicate, healedTime, merged } = appendDeduped(existing, candidates);
+  const { appended, skippedDuplicate, healedTime, renamed, merged } = appendDeduped(existing, candidates);
   // Rows imported before their FX rate existed carry amount_eur=null; now that
   // the rates table may have grown, resolve them (deterministic, never guessed).
   const backfilled = backfillEur(merged, rates);
@@ -321,6 +322,12 @@ async function cmdImport(args: Args): Promise<number> {
 
   console.log(`imported ${appended} / skipped-dup ${skippedDuplicate} / skipped-non-completed ${skippedNonCompleted}`);
   if (healedTime > 0) console.log(`filled the time of day on ${healedTime} earlier row(s)`);
+  if (renamed.length > 0) {
+    console.log(`skipped ${renamed.length} row(s) the bank renamed since the last export (same date, time, amount):`);
+    for (const { candidate, existing: was } of renamed) {
+      console.log(`    ${candidate.date} ${candidate.time}  ${candidate.amount_native.toFixed(2)} ${candidate.currency}  "${was.merchant_raw}" -> "${candidate.merchant_raw}"  (kept ${was.id})`);
+    }
+  }
   if (backfilled > 0) {
     console.log(`backfilled amount_eur for ${backfilled} earlier row(s) from data/rates.csv`);
   }
@@ -1535,7 +1542,10 @@ async function cmdTransfers(_args: Args): Promise<number> {
     return 0;
   }
 
-  const { pairs, unmatched, updated } = matchTransfers(ledger, DEFAULT_TRANSFER_OPTIONS);
+  const { pairs, unmatched, updated: afterTransfers } = matchTransfers(ledger, DEFAULT_TRANSFER_OPTIONS);
+  const decided = new Set<string>([...loadPins(PINS_PATH).keys(), ...loadSplits(SPLITS_PATH).keys()]);
+  const funding = matchCardFunding(afterTransfers, decided);
+  const updated = funding.updated;
   writeLedger(LEDGER_PATH, updated);
 
   console.log(
@@ -1551,6 +1561,21 @@ async function cmdTransfers(_args: Args): Promise<number> {
       console.log(
         `    in   ${p.inflow.date}  ${padEnd(p.inflow.account, 14)} ${padStart(fmtEur(p.inflow.amount_eur), 12)} EUR  ${p.inflow.merchant_raw}`,
       );
+    }
+  }
+
+  if (funding.pairs.length > 0) {
+    console.log("");
+    console.log(`paired ${funding.pairs.length} bank charge(s) with the PayPal card funding they duplicate:`);
+    for (const p of funding.pairs) {
+      console.log(`    ${p.card.date}  ${padEnd(p.card.account, 14)} ${padStart(fmtEur(p.card.amount_eur), 12)} EUR  ${p.card.merchant_raw}  <-  ${p.funding.account} ${p.funding.date}`);
+    }
+  }
+  if (funding.held.length > 0) {
+    console.log("");
+    console.log(`${funding.held.length} bank charge(s) look like the copy of a PayPal card payment but carry a pin, split or tax disposition, left as they are:`);
+    for (const h of funding.held) {
+      console.log(`    ${h.card.date}  ${padEnd(h.card.account, 14)} ${padStart(fmtEur(h.card.amount_eur), 12)} EUR  ${h.card.merchant_raw}  (${h.card.id})  <-  ${h.funding.account} ${h.funding.date}`);
     }
   }
 

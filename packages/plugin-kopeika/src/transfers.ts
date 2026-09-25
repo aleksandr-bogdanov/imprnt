@@ -42,8 +42,14 @@ export interface TransferResult {
   updated: Transaction[];
 }
 
-/** A transaction is a transfer candidate if a connector flagged it or it's typed transfer. */
+/**
+ * A transaction is a transfer candidate if a connector flagged it or it's typed
+ * transfer. A PayPal card-funding leg is not: its counterpart is a card charge,
+ * paired by `matchCardFunding` on merchant evidence, and amount alone would pair
+ * it with any own transfer of the same size.
+ */
 function isCandidate(tx: Transaction): boolean {
+  if (isFundingLeg(tx)) return false;
   return tx.is_transfer || tx.type === "transfer";
 }
 
@@ -123,4 +129,145 @@ export function matchTransfers(
 
   const unmatched = candidates.filter((t) => !consumed.has(t.id));
   return { pairs, unmatched, updated };
+}
+
+/**
+ * PayPal card funding.
+ *
+ * A PayPal purchase paid from a card shows up twice: in the PayPal export as the
+ * purchase plus a funding leg ("General Card Deposit"), and in the card's bank
+ * export as the charge itself, usually under the merchant's own name ("Temu"),
+ * sometimes as "PAYPAL *MERCHANT". The PayPal purchase carries the real merchant,
+ * so the bank charge is the copy: this pass pairs it with the funding leg as a
+ * transfer. A refund runs the same way through "General Card Withdrawal", and a
+ * payout to a bank account through "User Initiated Withdrawal", whose bank row
+ * reads "Payment from PAYPAL EUROPE".
+ *
+ * A bank row qualifies only on the exact opposite amount, dated 0 to `maxDayGap`
+ * days after the funding leg, and with merchant evidence: its text contains
+ * "paypal", or it shares a word with the purchase that the funding leg paid
+ * (same PayPal account, same date and time, opposite amount). A row somebody
+ * decided by hand (a pin, a split, a tax disposition) is never re-typed here. It
+ * is returned as `held` so the decision stays visible.
+ */
+
+const FUNDING_LEGS: ReadonlySet<string> = new Set([
+  "General Card Deposit",
+  "Bank Deposit to PP Account",
+  "General Card Withdrawal",
+  "User Initiated Withdrawal",
+]);
+
+export function isFundingLeg(tx: Transaction): boolean {
+  return tx.data_source === "paypal" && FUNDING_LEGS.has(tx.merchant_raw);
+}
+
+/** Sources that never hold a card charge: PayPal itself and the bookkeeping exports and manual rows. */
+const NOT_A_CARD: ReadonlySet<string> = new Set(["paypal", "norman-dump", "lexoffice-datev", "manual"]);
+
+const STOP_WORDS: ReadonlySet<string> = new Set([
+  "paypal", "gmbh", "com", "the", "and", "www", "europe", "sarl", "cie", "bank",
+  "payment", "payments", "ltd", "inc", "llc", "ag", "se", "bv", "sca",
+]);
+
+function fold(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+    .normalize("NFD").replace(/\p{M}/gu, "");
+}
+
+function words(text: string): Set<string> {
+  return new Set((fold(text).match(/\p{L}{3,}/gu) ?? []).filter((w) => !STOP_WORDS.has(w)));
+}
+
+function squash(text: string): string {
+  return fold(text).replace(/\P{L}/gu, "");
+}
+
+/**
+ * Card descriptors squash a PayPal payee into one token ("Jordanrivers" for
+ * "Jordan Rivers", "Riverssam7" for "Sam Rivers"), so a shared whole
+ * word is not the only evidence: a payee word of five or more letters inside the
+ * squashed descriptor counts, and so does the descriptor inside the squashed payee.
+ */
+function sameCounterparty(cardMerchant: string, payees: readonly string[]): boolean {
+  const cardWords = words(cardMerchant);
+  const cardSquashed = squash(cardMerchant);
+  for (const payee of payees) {
+    const payeeWords = words(payee);
+    for (const w of cardWords) if (payeeWords.has(w)) return true;
+    for (const w of payeeWords) if (w.length >= 5 && cardSquashed.includes(w)) return true;
+    if (cardSquashed.length >= 6 && squash(payee).includes(cardSquashed)) return true;
+  }
+  return false;
+}
+
+export interface CardFundingPair {
+  groupId: string;
+  funding: Transaction;
+  card: Transaction;
+}
+
+export interface CardFundingResult {
+  pairs: CardFundingPair[];
+  /** Matches left alone because the bank row carries a pin, a split or a tax disposition. */
+  held: { funding: Transaction; card: Transaction }[];
+  updated: Transaction[];
+}
+
+export function matchCardFunding(
+  txs: readonly Transaction[],
+  decided: ReadonlySet<string>,
+  maxDayGap = 5,
+): CardFundingResult {
+  const updated: Transaction[] = txs.map((t) => ({ ...t }));
+  const bank = updated
+    .filter((t) => !NOT_A_CARD.has(t.data_source) && t.transfer_group === "")
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const paypalByMoment = new Map<string, Transaction[]>();
+  for (const t of updated) {
+    if (t.data_source !== "paypal") continue;
+    const key = `${t.account}|${t.date}|${t.time}`;
+    paypalByMoment.set(key, [...(paypalByMoment.get(key) ?? []), t]);
+  }
+
+  const consumed = new Set<string>();
+  const pairs: CardFundingPair[] = [];
+  const held: CardFundingResult["held"] = [];
+
+  const legs = updated.filter((t) => isFundingLeg(t) && t.transfer_group === "");
+  for (const leg of legs) {
+    // The purchase the leg paid: same PayPal account and moment. A card can fund
+    // only part of a purchase, and an export without a time of day shares the
+    // moment across a whole day, so every non-funding row there is a candidate payee.
+    const payees = (paypalByMoment.get(`${leg.account}|${leg.date}|${leg.time}`) ?? [])
+      .filter((t) => t.id !== leg.id && !FUNDING_LEGS.has(t.merchant_raw) && Math.sign(t.amount_native) !== Math.sign(leg.amount_native))
+      .map((t) => t.merchant_raw);
+
+    const card = bank.find((b) => {
+      if (consumed.has(b.id) || b.amount_eur === null || leg.amount_eur === null) return false;
+      if (Math.abs(b.amount_eur + leg.amount_eur) >= 0.005) return false;
+      const gap = (Date.parse(b.date) - Date.parse(leg.date)) / 86_400_000;
+      if (gap < 0 || gap > maxDayGap) return false;
+      if (b.merchant_raw.toLowerCase().includes("paypal")) return true;
+      return sameCounterparty(b.merchant_raw, payees);
+    });
+    if (!card) continue;
+    consumed.add(card.id);
+
+    if (decided.has(card.id) || card.tax_person !== "") {
+      held.push({ funding: leg, card });
+      continue;
+    }
+    const groupId = groupIdFor(leg.id, card.id);
+    for (const t of [leg, card]) {
+      t.is_transfer = true;
+      t.transfer_group = groupId;
+      if (t.type === "unknown" || t.type === "spend" || t.type === "income") t.type = "transfer";
+    }
+    pairs.push({ groupId, funding: leg, card });
+  }
+
+  return { pairs, held, updated };
 }

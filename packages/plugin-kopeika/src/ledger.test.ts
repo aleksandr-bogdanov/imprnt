@@ -173,6 +173,28 @@ describe("appendDeduped", () => {
     expect(twice.appended).toBe(0);
     expect(twice.merged).toHaveLength(2);
   });
+
+  test("a merchant renamed between exports is the same row, skipped and reported", () => {
+    const old = tx({ id: "a", account: "rev", date: "2026-09-04", time: "00:10", merchant_raw: "Steam", amount_native: -9.7 });
+    const renamedRow = tx({ id: "b", account: "rev", date: "2026-09-04", time: "00:10", merchant_raw: "Valve Corporation", amount_native: -9.7 });
+    const res = appendDeduped([old], [renamedRow]);
+    expect(res.appended).toBe(0);
+    expect(res.renamed).toHaveLength(1);
+    expect(res.renamed[0]!.existing.id).toBe("a");
+    expect(res.merged).toHaveLength(1);
+  });
+
+  test("the rename check never fires without a time of day, across accounts, or on a claimed row", () => {
+    const base = { date: "2026-07-14", merchant_raw: "Scooter", amount_native: -1.5 };
+    const noTime = appendDeduped([tx({ id: "a", account: "n26", time: "", ...base })], [tx({ id: "b", account: "n26", time: "", ...base, merchant_raw: "Other" })]);
+    expect(noTime.appended).toBe(1);
+    const otherAccount = appendDeduped([tx({ id: "a", account: "rev", time: "09:00", ...base })], [tx({ id: "b", account: "rev2", time: "09:00", ...base, merchant_raw: "Other" })]);
+    expect(otherAccount.appended).toBe(1);
+    const existing = tx({ id: "a", account: "rev", time: "09:00", ...base });
+    const claimedByExact = appendDeduped([existing], [tx({ id: "a", account: "rev", time: "09:00", ...base }), tx({ id: "c", account: "rev", time: "09:00", ...base, merchant_raw: "Other" })]);
+    expect(claimedByExact.appended).toBe(1);
+    expect(claimedByExact.renamed).toHaveLength(0);
+  });
 });
 
 describe("archiveRaw", () => {
