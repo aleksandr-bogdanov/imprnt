@@ -25,12 +25,12 @@ describe("parseEuroNumber", () => {
 describe("parsePaypal statement shape (personal account)", () => {
   test("a student payment is income named after the payer, id rides on Transaction ID", () => {
     const rows = parsePaypal(
-      stmt('"09.01.2026","10:00:00","Europe/Berlin","Mobile Payment","EUR","40,00","0,00","40,00","367,61","1AB2CD3EF","x@y.de","Arina Capanu","","","0,00","0,00","",""'),
+      stmt('"09.01.2026","10:00:00","Europe/Berlin","Mobile Payment","EUR","40,00","0,00","40,00","367,61","1AB2CD3EF","x@y.de","Robin Lake","","","0,00","0,00","",""'),
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       date: "2026-01-09",
-      merchant_raw: "Arina Capanu",
+      merchant_raw: "Robin Lake",
       amount_native: 40,
       currency: "EUR",
       type: "income",
@@ -69,7 +69,7 @@ describe("parsePaypal activity report shape (business account)", () => {
     const rows = parsePaypal(
       act(
         '"03/01/2026","06:59:16","PST","Zalando Payments GmbH","Express Checkout Payment","Completed","EUR","-27,75","0,00","-27,75","a@b","c@d","T1","","","100,00","","Debit"',
-        '"14/01/2026","06:59:16","PST","Tatiana Kligman","Mobile Payment","Completed","EUR","480,00","0,00","480,00","a@b","c@d","T2","","","580,00","","Credit"',
+        '"14/01/2026","06:59:16","PST","Sam Rivers","Mobile Payment","Completed","EUR","480,00","0,00","480,00","a@b","c@d","T2","","","580,00","","Credit"',
         '"15/01/2026","06:59:16","PST","Somebody","General Authorization","Pending","EUR","-9,00","0,00","-9,00","a@b","c@d","T3","","","580,00","","Memo"',
         '"16/01/2026","06:59:16","PST","Somebody","General Card Deposit","Denied","EUR","50,00","0,00","50,00","a@b","c@d","T4","","","580,00","","Memo"',
         '"11/09/2026","01:10:34","PDT","Mix Management GmbH","Website Payment","Completed","EUR","-50,00","0,00","-50,00","a@b","c@d","T5","Room 1 (deposit)","","530,00","","Debit"',
@@ -77,8 +77,19 @@ describe("parsePaypal activity report shape (business account)", () => {
     );
     expect(rows.map((r) => r.dedupExtra)).toEqual(["T1", "T2", "T5"]);
     expect(rows[0]).toMatchObject({ date: "2026-01-03", type: "spend", amount_native: -27.75 });
-    expect(rows[1]).toMatchObject({ date: "2026-01-14", type: "income", merchant_raw: "Tatiana Kligman", balance: 580 });
+    expect(rows[1]).toMatchObject({ date: "2026-01-14", type: "income", merchant_raw: "Sam Rivers", balance: 580 });
     expect(rows[2]!.note).toBe("Room 1 (deposit) · Website Payment");
+  });
+
+  test("Pacific-time rows move to Berlin: date, time, and the id keeps the stated date", () => {
+    const rows = parsePaypal(
+      act(
+        '"07/09/2026","23:59:59","PDT","Sam Rivers","Mobile Payment","Completed","EUR","200,00","0,00","200,00","a@b","c@d","T6","","","730,00","","Credit"',
+        '"07/01/2026","19:42:06","PST","Phone Co","Express Checkout Payment","Completed","EUR","-10,00","0,00","-10,00","a@b","c@d","T7","","","720,00","","Debit"',
+      ),
+    );
+    expect(rows[0]).toMatchObject({ date: "2026-09-08", time: "08:59", idDate: "2026-09-07" });
+    expect(rows[1]).toMatchObject({ date: "2026-01-08", time: "04:42", idDate: "2026-01-07" });
   });
 
   test("rejects a file that is neither shape", () => {

@@ -83,6 +83,24 @@ function timeOfDay(raw: string, tz: string): string {
   return t.slice(0, 5);
 }
 
+/**
+ * The business Activity report states US Pacific time (PST/PDT). The row is moved
+ * to Berlin, where the money actually moved for the owner: a payment at 23:59 PDT
+ * is the next morning in Berlin. Other zones pass through unchanged.
+ */
+function toBerlin(date: string, time: string, tz: string): { date: string; time: string } {
+  const offset = tz.trim() === "PDT" ? 7 : tz.trim() === "PST" ? 8 : null;
+  if (offset === null || !/^\d{2}:\d{2}/.test(time.trim())) return { date, time: timeOfDay(time, tz) };
+  const [h, m, sec] = time.trim().split(":").map(Number);
+  const utc = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), h! + offset, m!, sec ?? 0);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+      .formatToParts(new Date(utc))
+      .map((p) => [p.type, p.value]),
+  );
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+}
+
 function isoDate(raw: string): string {
   const m = raw.trim().match(/^(\d{2})[./](\d{2})[./](\d{4})$/);
   if (!m) throw new Error(`parsePaypal: unexpected date "${raw}" (want DD.MM.YYYY or DD/MM/YYYY)`);
@@ -103,9 +121,8 @@ export function parsePaypal(text: string): ParsedRow[] {
   }
   const hasImpact = header.includes("Balance Impact");
   const hasBalance = header.includes("Balance");
-  // Time of day is kept only when the export states a Central European zone (the
-  // personal statement is Europe/Berlin; the business Activity report is PST/PDT,
-  // and a nine-hour-shifted time is worse than none).
+  // The personal statement is Europe/Berlin already; the business Activity report is
+  // PST/PDT and is converted to Berlin (see toBerlin), its id keeping the stated date.
   const tzColumn = header.includes("Time Zone") ? "Time Zone" : header.includes("TimeZone") ? "TimeZone" : "";
   const hasTime = header.includes("Time");
 
@@ -119,7 +136,9 @@ export function parsePaypal(text: string): ParsedRow[] {
     }
     if (SKIP_TYPES.has(ppType)) continue;
 
-    const date = isoDate(rec.get("Date"));
+    const statedDate = isoDate(rec.get("Date"));
+    const moment = toBerlin(statedDate, hasTime ? rec.get("Time") : "", tzColumn ? rec.get(tzColumn) : "");
+    const date = moment.date;
     const currency = rec.get("Currency").trim().toUpperCase();
     const gross = parseEuroNumber(rec.get("Gross"), `Gross on ${date}`);
     const fee = Math.abs(parseEuroNumber(rec.get("Fee"), `Fee on ${date}`));
@@ -152,8 +171,9 @@ export function parsePaypal(text: string): ParsedRow[] {
       transferCandidate: type === "transfer",
       amountEur: null,
       balance,
-      time: timeOfDay(hasTime ? rec.get("Time") : "", tzColumn ? rec.get(tzColumn) : ""),
+      time: moment.time,
       dedupExtra: rec.get("Transaction ID").trim(),
+      idDate: statedDate,
     });
   }
   return rows;

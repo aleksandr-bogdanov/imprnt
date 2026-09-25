@@ -75,11 +75,12 @@ describe("parseRevolut", () => {
     expect(rows).toHaveLength(0);
   });
 
-  test("date uses Completed Date, date part only", () => {
+  test("the row is dated on the Started Date, the id keeps the Completed Date", () => {
     const rows = parseRevolut(
       csv("Topup,Current,2025-02-01 09:00:00,2025-02-02 23:59:59,Top,50,0,EUR,COMPLETED,1"),
     );
-    expect(rows[0]!.date).toBe("2025-02-02");
+    expect(rows[0]!.date).toBe("2025-02-01");
+    expect(rows[0]!.idDate).toBe("2025-02-02");
   });
 
   test("type mapping: ATM->spend, Topup->income, Transfer->transfer, Fee->fee, Exchange->exchange, unknown->unknown", () => {

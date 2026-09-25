@@ -5,7 +5,7 @@ import type { Transaction } from "../types.ts";
 function tx(over: Partial<Transaction>): Transaction {
   return {
     id: "x", date: "2026-08-18", data_source: "paypal", account: "paypal-shoom", owner: "anna",
-    merchant_raw: "Ekaterina Grinchenko", merchant_clean: "", amount_native: 250, currency: "EUR", amount_eur: 250,
+    merchant_raw: "Jordan Hale", merchant_clean: "", amount_native: 250, currency: "EUR", amount_eur: 250,
     category: "", type: "income", is_transfer: false, transfer_group: "", fee: 0, note: "", source_file: "",
     balance: null, tax_person: "", tax_category: "", tax_source: "",
     ...over,
@@ -14,15 +14,15 @@ function tx(over: Partial<Transaction>): Transaction {
 function rule(over: Partial<TaxRule>): TaxRule {
   return { pattern: "*", match: "client", field: "merchant_raw", category: "revenue_ku", accounts: [], from: "", note: "", regex: null, ...over };
 }
-const clients = new Set(["ekaterina grinchenko", "tatiana kligman"]);
+const clients = new Set(["jordan hale", "sam rivers"]);
 
 describe("taxRuleMatches", () => {
   test("client rule fires on a registered payer, case- and space-insensitive, never on a stranger", () => {
     expect(taxRuleMatches(rule({}), tx({}), clients)).toBe(true);
-    expect(taxRuleMatches(rule({}), tx({ merchant_raw: "  EKATERINA   Grinchenko " }), clients)).toBe(true);
+    expect(taxRuleMatches(rule({}), tx({ merchant_raw: "  JORDAN   Hale " }), clients)).toBe(true);
     expect(taxRuleMatches(rule({}), tx({ merchant_raw: "Maria Kirichenko" }), clients)).toBe(false);
-    expect(taxRuleMatches(rule({}), tx({ merchant_raw: "Transfer from TATIANA KLIGMAN" }), clients)).toBe(true);
-    expect(taxRuleMatches(rule({}), tx({ merchant_raw: "Payment from TATIANA KLIGMAN" }), clients)).toBe(true);
+    expect(taxRuleMatches(rule({}), tx({ merchant_raw: "Transfer from SAM RIVERS" }), clients)).toBe(true);
+    expect(taxRuleMatches(rule({}), tx({ merchant_raw: "Payment from SAM RIVERS" }), clients)).toBe(true);
     expect(taxRuleMatches(rule({}), tx({}), undefined)).toBe(false);
   });
   test("from is an inclusive lower bound on the row date", () => {

@@ -42,7 +42,7 @@ export function renderRowsHtml(txs: readonly Transaction[], o: RowsOptions): str
         id: x.id,
         d: x.date,
         a: o.accountLabels[x.account]?.[o.lang] ?? x.account,
-        m: x.merchant_raw,
+        m: x.merchant_clean || x.merchant_raw,
         e: x.amount_eur,
         n: x.currency !== "EUR" ? `${x.amount_native} ${x.currency}` : "",
         c: x.category,

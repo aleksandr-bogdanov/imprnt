@@ -87,7 +87,10 @@ export function parseRevolut(text: string): ParsedRow[] {
 
     const completed = datePart(rec.get("Completed Date"));
     const started = datePart(rec.get("Started Date"));
-    const date = completed !== "" ? completed : started;
+    // The row is shown on the day the card was used (Started Date). The settlement
+    // date (Completed Date) runs a day or more later and stays the id's date only.
+    const date = started !== "" ? started : completed;
+    const idDate = completed !== "" ? completed : started;
     if (date === "") continue; // no usable date — cannot dedup or FX; skip defensively
 
     const description = rec.get("Description").trim();
@@ -139,6 +142,7 @@ export function parseRevolut(text: string): ParsedRow[] {
       // equal metro tickets, two equal P2P payments) that would share an id on
       // date alone. Started Date is always populated; "" when it has no time.
       dedupExtra: timePart(rec.get("Started Date")),
+      idDate,
     });
   }
 

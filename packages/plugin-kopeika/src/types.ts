@@ -127,6 +127,12 @@ export interface ParsedRow {
    * keep both rows. Omitted by connectors without one, leaving their ids unchanged.
    */
   dedupExtra?: string;
+  /**
+   * The date the id hashes, when it differs from the date the row is shown under.
+   * Revolut ids were first derived from the settlement date, so they keep it while
+   * the row itself carries the day the card was used.
+   */
+  idDate?: string;
 }
 
 /**

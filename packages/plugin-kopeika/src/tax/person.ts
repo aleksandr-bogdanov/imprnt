@@ -239,7 +239,7 @@ export function taxRuleMatches(rule: TaxRule, tx: Transaction, clientNames?: Set
 /**
  * Lower-case, single-spaced, and stripped of a bank's "Transfer from" / "Payment from"
  * prefix: the equality a payer name is tested under. Revolut writes a student's
- * transfer as "Transfer from MARIIA LOGVANEVA", PayPal writes the bare name.
+ * transfer as "Transfer from JORDAN HALE", PayPal writes the bare name.
  */
 export function normClientName(s: string): string {
   return s

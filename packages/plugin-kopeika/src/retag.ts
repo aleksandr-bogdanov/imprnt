@@ -19,6 +19,7 @@ import { tierOf, type Tiers } from "./tiers.ts";
 import type { Transaction } from "./types.ts";
 import { CATEGORIES, categoryLabel, pickableCategories } from "./categories.ts";
 import { isLegId, parentOf } from "./splits.ts";
+import type { MerchantInfoEntry } from "./profile.ts";
 
 export interface RetagOptions {
   lang: "en" | "ru";
@@ -30,6 +31,28 @@ export interface RetagOptions {
   salaryCategory: string;
   /** Persons with a tax profile: the values of the books dropdown. */
   persons: readonly string[];
+  /** What a merchant is, matched by substring, shown under its name. */
+  merchantInfo?: readonly MerchantInfoEntry[];
+  /** The human's note per row (data/pins.csv), shown under the merchant. */
+  pinNotes?: ReadonlyMap<string, string>;
+}
+
+/**
+ * One line under the merchant saying what the payment was: what the merchant is,
+ * the bank's or PayPal's own text for the row, and the human's pinned note. PayPal
+ * type words ("Mobile Payment") and bare reference ids say nothing and are dropped.
+ */
+function describe(x: Transaction, o: RetagOptions): string {
+  const raw = x.merchant_raw.toLowerCase();
+  const info = (o.merchantInfo ?? []).find((m) => raw.includes(m.pat.toLowerCase()));
+  const what = info ? (o.lang === "ru" ? info.ru ?? info.en : info.en) ?? "" : "";
+  const bankText = x.note
+    .split(" · ")
+    .map((p) => p.trim())
+    .filter((p) => p !== "" && !/(Payment|Payment Refund|Card Deposit|Card Withdrawal)$/.test(p) && !/^[A-Za-z0-9]{16,}$/.test(p))
+    .join(" · ");
+  const parts = [what, bankText, o.pinNotes?.get(x.id) ?? ""].filter((p) => p !== "");
+  return [...new Set(parts)].join(" · ");
 }
 
 const T = {
@@ -93,13 +116,14 @@ export function renderRetagHtml(txs: readonly Transaction[], o: RetagOptions): s
         pe: leg ? parentEur.get(pid)! : Math.round(-x.amount_eur! * 100) / 100,
         d: x.date,
         tm: x.time,
-        m: x.merchant_raw,
+        m: x.merchant_clean || x.merchant_raw,
         a: o.accountLabels[x.account]?.[o.lang] ?? x.account,
         e: Math.round(-x.amount_eur! * 100) / 100,
         c0: x.category,
         t0: tierOf(o.tiers, x.category, x.merchant_raw, x.id),
         b0: x.tax_person,
         nt: leg ? x.note : "",
+        ds: leg ? "" : describe(x, o),
       };
     });
 
@@ -184,7 +208,7 @@ var table=new Tabulator('#table',{data:[],index:'id',layout:'fitColumns',renderV
     {title:C.cols.m,field:'m',minWidth:180,headerSort:false,formatter:function(c){var r=c.getRow().getData();
       if(r.lg){var left=LEGS[r.pid]?remainder(r.pid):0; var hasEmpty=LEGS[r.pid]&&LEGS[r.pid].some(function(l){return l.eur==null;}); var off=!hasEmpty&&Math.abs(left)>0.004;
         return '<div class="t-wrap"><span class="t-name">'+escH(r.nt||r.m)+'</span><span class="t-acct"><span class="t-part" data-pid="'+escH(r.pid)+'">'+escH(r.m)+' '+fmtE(r.pe)+' \\u00b7 '+r.lg+'</span>'+(off?' <span class="t-left">'+C.left+' '+fmtE(left)+'</span>':'')+'</span></div>';}
-      return '<div class="t-wrap"><span class="t-name">'+escH(r.m)+'</span><span class="t-acct">'+escH(r.a)+'</span></div>';}},
+      return '<div class="t-wrap"><span class="t-name">'+escH(r.m)+'</span>'+(r.ds?'<span class="t-desc">'+escH(r.ds)+'</span>':'')+'<span class="t-acct">'+escH(r.a)+'</span></div>';}},
     {title:C.cols.e,field:'e',width:104,hozAlign:'right',headerHozAlign:'right',cssClass:'mono',sorter:'number',headerSort:true,formatter:function(c){var r=c.getRow().getData(); if(r.lg&&LEGS[r.pid]){var i=parseInt(r.lg)-1; var v=LEGS[r.pid][i].eur; return '<input type="number" step="0.01" class="amt" data-id="'+escH(r.id)+'" data-f="e" value="'+(v==null?'':v)+'" placeholder="'+fmtE(legEur(r.pid,i))+'">';} return fmtE(c.getValue());}},
     {title:C.cols.c,field:'c',width:210,headerSort:false,formatter:function(c){var r=c.getRow().getData();var cur=r.c;var opts='';
       if(!C.labels[cur]||!CT.hasOwnProperty(cur))opts+='<option value="'+escH(cur)+'" selected>'+escH(label(cur))+'</option>';
@@ -289,7 +313,7 @@ select{min-width:220px;padding-right:28px}button:hover{border-color:var(--ink-fa
 .g-tier{font-family:var(--serif);font-size:26px;font-weight:600;letter-spacing:-.005em}.g-cat{font-size:17px;letter-spacing:-.004em}.g-n{color:var(--ink-chrome);font-family:var(--mono);font-size:12px}
 .g-sum{margin-left:auto !important;font-family:var(--mono);font-size:13.5px;color:var(--ink-soft);font-variant-numeric:tabular-nums}.tabulator-group-level-0 .g-sum{font-size:14px;color:var(--ink)}
 .g-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
-.t-wrap{min-width:0;overflow:hidden}.t-time{font-family:var(--mono);font-size:11.5px}.t-name{display:block;line-height:1.3;overflow:hidden;text-overflow:ellipsis}.t-acct{display:block;font-size:11.5px;color:var(--ink-chrome);margin-top:2px}
+.t-wrap{min-width:0;overflow:hidden}.t-time{font-family:var(--mono);font-size:11.5px}.t-name{display:block;line-height:1.3;overflow:hidden;text-overflow:ellipsis}.t-acct{display:block;font-size:11.5px;color:var(--ink-chrome);margin-top:2px}.t-desc{display:block;font-size:12.5px;line-height:1.35;color:var(--ink-soft,var(--ink-chrome));margin-top:2px;white-space:normal}
 .tabulator select.pick{width:auto;max-width:100%;min-width:0;padding:6px 22px 6px 8px;font-size:13.5px;color:var(--ink);border-color:transparent;appearance:none;-webkit-appearance:none;background-color:transparent;background-image:linear-gradient(45deg,transparent 50%,var(--ink-chrome) 50%),linear-gradient(135deg,var(--ink-chrome) 50%,transparent 50%);background-position:right 12px center,right 8px center;background-size:4px 4px,4px 4px;background-repeat:no-repeat}
 .tabulator select.pick:hover,.tabulator select.pick:focus{border-color:var(--border);background-color:var(--card);outline:none}
 .tabulator .tick{display:flex;justify-content:center;width:100%;cursor:pointer}.tabulator .tick input{width:16px;height:16px;margin:0;accent-color:var(--green);cursor:pointer}

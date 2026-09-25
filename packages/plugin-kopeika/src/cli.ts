@@ -279,7 +279,7 @@ async function cmdImport(args: Args): Promise<number> {
     const id = transactionId({
       data_source: source,
       account,
-      date: row.date,
+      date: row.idDate ?? row.date,
       merchant_raw: row.merchant_raw,
       amount_native: row.amount_native,
       currency: row.currency,
@@ -1822,7 +1822,7 @@ async function cmdRows(args: Args): Promise<number> {
     from,
     accountLabels: PROFILE.accountLabels,
     tiers: householdTiers(),
-    salaryCategory: "Salary",
+    salaryCategory: "salary",
     taxCategories,
     persons,
   });
@@ -1859,8 +1859,10 @@ async function cmdRetag(args: Args): Promise<number> {
     from,
     accountLabels: PROFILE.accountLabels,
     tiers: householdTiers(),
-    salaryCategory: "Salary",
+    salaryCategory: "salary",
     persons: listPersons(ROOT),
+    merchantInfo: PROFILE.merchantInfo,
+    pinNotes: new Map([...loadPins(PINS_PATH)].map(([id, pin]) => [id, pin.note])),
   });
   mkdirSync(dirname(htmlPath), { recursive: true });
   writeFileSync(htmlPath, html, "utf8");
