@@ -289,6 +289,43 @@ test(`RUN-13 with two people on one recognizer, a person told "not answering" is
   } finally { await door?.stop(); await recognizer.stop(); await it.stop() }
 }, 180_000)
 
+test(`RUN-13 a person whose note ended without words is told about the next outage: the episode ends with their last waiting note${NEEDS_FFMPEG}`, async () => {
+  if (!FFMPEG) return
+  const recognizer = await fakeRecognizer()
+  recognizer.setStatus(503)
+  const it = await rolloutStage(cluster, "telegram", {
+    people: [{ id: "p1", language: "en", transcribed_seconds: 600 }, { id: "p2", language: "ru", transcribed_seconds: 600 }],
+    voice: { port: recognizer.port, chunk_seconds: 0, retry_seconds: 1 },
+  })
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  const downLines = (chat: string) => it.edge.posts().filter(p => p.chat === chat && /not answering|не отвечает/.test(p.text))
+  const backLines = (chat: string) => it.edge.posts().filter(p => p.chat === chat && /works again|снова работает/.test(p.text))
+  try {
+    it.edge.file("voice", AUDIO)
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    it.edge.batch([note("1", P1)], "2")
+    await firstRow(it)
+    expect(await observe(() => downLines(P1.chat).length === 1, 30_000), "RUN-13 told once").toBe(true)
+    // The recognizer answers, and hears no words: the note ends, and nothing
+    // is said about the recognizer working, because a note with no words in
+    // it says nothing about that.
+    recognizer.setAnswer({ text: "", audio_s: 1, decode_ms: 1 })
+    recognizer.setStatus(200)
+    expect(await observe(async () => (await it.read.inbound()).find(r => r.person === "p1")?.media_state === "failed", 30_000)).toBe(true)
+    expect(backLines(P1.chat)).toHaveLength(0)
+    // The other person's note works, which ends the recognizer's episode.
+    recognizer.setAnswer({ text: "synthetic spoken codeword", audio_s: 1, decode_ms: 1 })
+    it.edge.batch([note("2", P2)], "3")
+    expect(await observe(async () => (await it.read.sheet("voice_health")).find(r => r.id === "local")?.data.since === null, 30_000)).toBe(true)
+    // The next outage is a new episode, and the first person, whose story
+    // ended with their last note, hears of it.
+    recognizer.setStatus(503)
+    it.edge.batch([note("3", P1)], "4")
+    expect(await observe(() => downLines(P1.chat).length === 2, 30_000), "RUN-13 told of the next outage").toBe(true)
+    expect(backLines(P1.chat), "and never told it works when their note held no words").toHaveLength(0)
+  } finally { await door?.stop(); await recognizer.stop(); await it.stop() }
+}, 180_000)
+
 test(`RUN-13 a dialled recognizer whose key file is blank is the same episode${NEEDS_FFMPEG}`, async () => {
   // The converter runs BEFORE the key is read, so a box without one never
   // reaches the key at all and this is about the key.

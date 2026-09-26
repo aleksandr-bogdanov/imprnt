@@ -57,6 +57,17 @@ test("the remote url is read off the checkout's configuration, a pointer .git is
     const https = checkout(it.dir, "https", { origin: "https://github.invalid/x/y.git" })
     expect(localRemotePath(https, "origin")).toBeNull()
     expect(remoteUrlOf(join(it.dir, "not-a-checkout"), "origin")).toBeNull()
+    // A linked worktree: its .git file points at a directory under the main
+    // repository's .git that holds a commondir pointer and no config of its
+    // own, and the remotes live in the main repository's config.
+    const main = checkout(it.dir, "main", { origin: bare })
+    const linked = join(it.dir, "linked")
+    const worktreeDir = join(main, ".git", "worktrees", "linked")
+    mkdirSync(worktreeDir, { recursive: true })
+    mkdirSync(linked, { recursive: true })
+    writeFileSync(join(linked, ".git"), `gitdir: ${worktreeDir}\n`)
+    writeFileSync(join(worktreeDir, "commondir"), "../..\n")
+    expect(localRemotePath(linked, "origin"), "a worktree's remote is the main repository's").toBe(bare)
   } finally { it.stop() }
 })
 

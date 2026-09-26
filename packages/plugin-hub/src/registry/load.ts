@@ -588,6 +588,13 @@ export interface RepositoryEntry {
   required?: boolean;
   /** Set on the one entry per person that is their checkout of the shared zone. */
   zone?: boolean;
+  /**
+   * The ssh command the sync fetches and pushes this repository with, such as
+   * one naming a deploy key. It is passed on git's command line, because the
+   * same key inside the repository's own config is refused there: an agent
+   * can write that file, and the registry is the owner's hand.
+   */
+  ssh_command?: string;
 }
 
 /**
@@ -1942,6 +1949,8 @@ export function loadRegistry(file: string): Registry {
       refuse(`${where}.required`, 0, "required must be boolean");
     if (entry.zone !== undefined && typeof entry.zone !== "boolean")
       refuse(`${where}.zone`, 0, "zone marks a checkout of the shared zone and is a true or a false");
+    if (entry.ssh_command !== undefined && (typeof entry.ssh_command !== "string" || entry.ssh_command.trim() === ""))
+      refuse(`${where}.ssh_command`, 0, "ssh_command is the command the sync runs ssh as, a nonempty string");
     repositories.push(entry as unknown as RepositoryEntry);
   }
 

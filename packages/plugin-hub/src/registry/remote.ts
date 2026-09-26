@@ -69,6 +69,15 @@ function gitConfigOf(repoPath: string): string | null {
     // A bare repository keeps its configuration at its own root.
     gitDir = repoPath;
   }
+  // A linked worktree's directory holds no configuration of its own: it names
+  // the main repository's, and the remotes live there.
+  const commondir = join(gitDir, "commondir");
+  if (existsSync(commondir)) {
+    try {
+      const common = readFileSync(commondir, "utf8").trim();
+      gitDir = isAbsolute(common) ? common : resolve(gitDir, common);
+    } catch { /* an unreadable pointer is no configuration */ }
+  }
   const config = join(gitDir, "config");
   return existsSync(config) ? config : null;
 }

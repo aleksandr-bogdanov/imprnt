@@ -87,6 +87,21 @@ test("a registry a person wrote is refused whole, because a render from the pars
   } finally { it.stop() }
 })
 
+test("a note at the end of a line is a note too, and a hash inside a quoted value is not", async () => {
+  const it = scratch()
+  try {
+    const file = inlineRegistry(it.dir)
+    const before = readFileSync(file, "utf8")
+    // The structure diff cannot see a note, so the refusal is the only thing
+    // standing between an end-of-line note and its silent loss.
+    writeFileSync(file, before.replace('"repositories" = []', '"repositories" = [] # nothing declared yet'))
+    await expect(relayoutRegistry(file)).rejects.toMatchObject({ step: "notes" })
+    writeFileSync(file, before.replace('"language" = "en"', '"language" = "en", "aliases" = ["the #1 owner"]'))
+    expect((await relayoutRegistry(file)).changed, "a hash in a string is a value").toBe(true)
+    expect((loadRegistry(file).data as { people: { aliases?: string[] }[] }).people[0].aliases).toEqual(["the #1 owner"])
+  } finally { it.stop() }
+})
+
 test("the writer's output is what the loader reads back, with bare keys where the grammar allows and quoted ones where it does not", () => {
   const it = scratch()
   try {

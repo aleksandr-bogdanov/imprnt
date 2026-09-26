@@ -19,11 +19,15 @@ import { storeUrlFor } from "../store/secrets.ts";
  * behalf. A hook an agent planted in `.git/hooks` would otherwise run here,
  * unboxed, on the next fetch, rebase or push.
  */
-async function git(path: string, args: string[], code: string, options: { input?: string; raw?: boolean } = {}): Promise<string> {
+async function git(path: string, args: string[], code: string,
+  options: { input?: string; raw?: boolean; config?: string[] } = {}): Promise<string> {
   // The two transports that run a program named in a remote url are shut on
   // the command line, which outranks anything the repository's config says.
+  // `config` is what the registry says for this repository, on the same
+  // command line and for the same reason: the owner's hand, not the file's.
   const child = Bun.spawn(["git", "-C", path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-    "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never", ...args],
+    "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never",
+    ...(options.config ?? []).flatMap(one => ["-c", one]), ...args],
     { env: process.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), stdout: "pipe", stderr: "ignore" });
   const [out, status] = await Promise.all([new Response(child.stdout).text(), child.exited]);
   // Git diagnostics can contain credential-bearing remote URLs.
@@ -241,11 +245,14 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           const nested = nestedIn(path, registry).map(one => `:(exclude,literal)${one}`);
           committed = await commitPending(path, nested, code);
           code = "fetch";
-          await git(path, ["fetch", "--", repo.remote, repo.branch], code);
+          // The registry's own ssh command for this repository, a deploy key
+          // above all, rides on the two calls that dial the remote.
+          const dial = repo.ssh_command === undefined ? [] : [`core.sshCommand=${repo.ssh_command}`];
+          await git(path, ["fetch", "--", repo.remote, repo.branch], code, { config: dial });
           code = "conflict";
           await git(path, ["-c", "rebase.autoStash=false", "rebase", "FETCH_HEAD"], code);
           code = "push";
-          await git(path, ["push", "--", repo.remote, `HEAD:refs/heads/${repo.branch}`], code);
+          await git(path, ["push", "--", repo.remote, `HEAD:refs/heads/${repo.branch}`], code, { config: dial });
         } finally {
           try {
             if (locked) await connection`select pg_advisory_unlock(hashtextextended(${`sync:${declared.machine}:${identity}`}, 0))`;

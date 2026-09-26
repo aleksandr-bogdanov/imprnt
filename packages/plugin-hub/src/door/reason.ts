@@ -71,9 +71,13 @@ export function waitReason(f: WaitFacts): WaitVerdict {
   return { kind: "unknown", values: { state: `${f.row.state}/${f.row.claimed_by ?? "unclaimed"}${raw}` } };
 }
 
-/** Which credential this agent's outage is keyed by, or null when the file cannot say. */
+/**
+ * Which credential this agent's outage is keyed by: the preset's credential,
+ * or the preset's own name when it declares none, which is the key the runner
+ * opens an outage under for such a preset too.
+ */
 export function credentialKeyOf(registry: unknown, agent: Pick<ChatAgent, "preset">): string | null {
-  try { return credentialOfPreset(registry, agent.preset); } catch { return null; }
+  try { return credentialOfPreset(registry, agent.preset) ?? `preset:${agent.preset}`; } catch { return null; }
 }
 
 /**

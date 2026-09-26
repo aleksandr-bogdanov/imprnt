@@ -20,15 +20,21 @@ export interface UnexplainedWait {
  */
 export async function readUnexplainedWaits(store: StoreLike, where: { agents: string[] }): Promise<UnexplainedWait[]> {
   const mine = new Set(where.agents);
+  // The NEWEST clock line of each message, and only then the ones that said
+  // "unknown": a message whose later clock line found a reason is explained,
+  // however its earlier one read.
   const rows = (await store.sql`
-    select distinct on (e.subject) e.subject as id, i.person, i.agent,
-           e.detail ->> 'stamp' as stamp, e.detail -> 'why' ->> 'state' as state, e.at
-      from ledger_event e
-      join inbound i on i.id = e.subject
-     where e.stream = ${CLOCK_STREAM} and e.kind = 'expired'
-       and e.detail -> 'why' ->> 'kind' = 'unknown'
-       and i.state in ('received', 'acked', 'started')
-     order by e.subject, e.at desc`) as unknown as {
+    select newest.id, i.person, i.agent, newest.stamp, newest.state, newest.at
+      from (
+        select distinct on (e.subject) e.subject as id, e.detail ->> 'stamp' as stamp,
+               e.detail -> 'why' ->> 'kind' as kind, e.detail -> 'why' ->> 'state' as state, e.at
+          from ledger_event e
+         where e.stream = ${CLOCK_STREAM} and e.kind = 'expired'
+         order by e.subject, e.at desc, e.seq desc
+      ) newest
+      join inbound i on i.id = newest.id
+     where newest.kind = 'unknown'
+       and i.state in ('received', 'acked', 'started')`) as unknown as {
     id: string; person: string; agent: string; stamp: string; state: string; at: Date | string;
   }[];
   return rows.filter(row => mine.has(row.agent)).map(row => ({

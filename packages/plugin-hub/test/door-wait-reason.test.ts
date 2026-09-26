@@ -13,11 +13,12 @@
 // connected that has written down the slots it is waiting for.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { startCluster, until, type Cluster } from "./helpers/cluster.ts"
-import { AGENT, CHAT, DOOR, PERSON, RUNNER, chatLogLines, stageHub } from "./helpers/hub-fixture.ts"
+import { AGENT, CHAT, DOOR, PERSON, RUNNER, chatLogLines, insertInbound, stageHub, superStore } from "./helpers/hub-fixture.ts"
 import { runDoor } from "../src/door/run.ts"
 import { WAIT_REASONS, clockLine, waitReasonLine } from "../src/door/lines.ts"
-import { waitReason, type WaitFacts } from "../src/door/reason.ts"
-import { unexplainedFindings } from "../src/check/waits.ts"
+import { credentialKeyOf, waitReason, type WaitFacts } from "../src/door/reason.ts"
+import { readUnexplainedWaits, unexplainedFindings } from "../src/check/waits.ts"
+import { loadRegistry } from "../src/registry/load.ts"
 import type { OpenTurnRow } from "../src/store/turns.ts"
 
 let cluster: Cluster
@@ -107,6 +108,25 @@ test("with no runner connected, the clock line is followed by the runner-down re
     expect(expired.detail.why).toMatchObject({ kind: "runner-down", values: { runner: RUNNER } })
     expect(String((expired.detail.why as { id: string }).id)).toBe(`clock:${(await it.read.inbound())[0].id}:acked:why`)
   } finally { await door?.stop(); await it.stop() }
+}, 60_000)
+
+test("check reads the newest clock line of a message, so one explained later is no longer an unexplained wait, and a credential-less preset is keyed the way the runner keys it", async () => {
+  const it = await stage("en")
+  const store = await superStore(cluster, it.db)
+  try {
+    expect(credentialKeyOf(loadRegistry(it.registryFile), { preset: "daily" }), "the runner's own key for a preset with no credential").toBe("preset:daily")
+    await insertInbound(cluster, it.db, { id: "m-explained", body: "first unknown, then working" })
+    await insertInbound(cluster, it.db, { id: "m-unknown", body: "still unknown" })
+    const clock = async (subject: string, stamp: string, kind: string, at: string) => {
+      await it.read.sql("insert into ledger_event (at, stream, subject, kind, actor, detail) values ($1, 'clock', $2, 'expired', 'door', $3::text::jsonb)",
+        [at, subject, JSON.stringify({ stamp, seconds: 30, why: { id: `clock:${subject}:${stamp}:why`, kind, values: { state: "received/unclaimed" } } })])
+    }
+    await clock("m-explained", "acked", "unknown", "2026-09-26T10:00:00.000Z")
+    await clock("m-explained", "started", "working", "2026-09-26T10:01:00.000Z")
+    await clock("m-unknown", "acked", "unknown", "2026-09-26T10:00:00.000Z")
+    const waits = await readUnexplainedWaits(store, { agents: [AGENT] })
+    expect(waits.map(w => w.id), "only the message whose newest line found no reason").toEqual(["m-unknown"])
+  } finally { await store.close(); await it.stop() }
 }, 60_000)
 
 test("with a runner connected that wrote down the slots it is waiting for, the reason names the agents holding them, in Russian", async () => {

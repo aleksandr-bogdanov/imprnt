@@ -394,13 +394,17 @@ export async function removeEntry(file: string, entryPath: string,
 export async function rewriteRegistry(file: string, render: (data: Record<string, unknown>) => string,
   options: RegistryEditOptions = {}): Promise<RegistryEditResult> {
   return await locked(file, async live => {
-    const read = readLive(live);
-    await options.seam?.afterRead?.(file);
-    const noted = read.before.split("\n").findIndex(isComment);
+    // A note anywhere on a line, at its end as much as on its own, outside a
+    // quoted value: `# ` inside a string is a value and stays. Asked of the
+    // bytes before they are parsed, so the answer is about the note and not
+    // about whether the file loads.
+    const noted = readFileSync(live, "utf8").split("\n").findIndex(line => /^(?:[^"'#]|"(?:[^"\\]|\\.)*"|'[^']*')*#/.test(line));
     if (noted >= 0) {
       throw new RegistryEditRefused("notes",
         `${file} carries a note on line ${noted + 1}, and a rewrite from the parse would drop it, so the file was left alone`);
     }
+    const read = readLive(live);
+    await options.seam?.afterRead?.(file);
     return await apply(file, live, read, render(read.data), before => before, options);
   });
 }

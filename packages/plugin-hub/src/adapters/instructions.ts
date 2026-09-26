@@ -1,4 +1,4 @@
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { listPeople } from "../registry/entries.ts";
 import type { PersonEntry } from "../registry/load.ts";
@@ -74,13 +74,13 @@ const under = (path: string, roots: string[]) => roots.some(root => path === roo
  *
  * A trusted file is trusted by its NAME in the registry, and a link is not
  * that file: the registry named a place the owner wrote, and an agent that
- * can write the directory the name sits in could point the name anywhere. So
- * a trusted name that turns out to be a symbolic link is judged like an
- * import, by where it lands.
+ * can write the tree could point the name, or any directory above it, at
+ * somewhere else. So a trusted name whose path is not exactly what the file
+ * system resolves it to is judged like an import, by where it lands.
  */
 function readable(file: string, scope: Scope, from?: string): string {
   const said = from ? `${file} (imported by ${from})` : file;
-  const trusted = scope.trusted.has(file) && !isLink(file);
+  const trusted = scope.trusted.has(file) && isItself(file);
   const allowed = (real: string) => {
     if (under(real, scope.forbidden) || (!trusted && !under(real, scope.inside))) {
       throw new Error(`instructions-forbidden: ${said} is a place this agent may not read`);
@@ -127,8 +127,9 @@ function isFile(path: string): boolean {
   try { return statSync(path).isFile(); } catch { return false; }
 }
 
-function isLink(path: string): boolean {
-  try { return lstatSync(path).isSymbolicLink(); } catch { return false; }
+/** Whether the path resolves to itself, with no link in any of its components. */
+function isItself(path: string): boolean {
+  try { return realpathSync(path) === resolve(path); } catch { return false; }
 }
 
 /**

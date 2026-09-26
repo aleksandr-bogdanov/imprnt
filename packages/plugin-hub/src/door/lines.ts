@@ -740,7 +740,7 @@ export function syncCause(language: Language, code: string): string {
     path: ["repository path is missing or invalid", "путь репозитория отсутствует или неверен"],
     person: ["repository is outside the person's tree", "репозиторий вне дерева человека"],
     locked: ["repository is already being synchronized", "репозиторий уже синхронизируется"],
-    config: ["repository config names a filter program, which the sync will not run", "в настройках репозитория указана программа-фильтр, синхронизация её не запустит"],
+    config: ["repository config names a program, which the sync will not run: declare an ssh command in the registry entry, or keep such keys in the account's own config", "в настройках репозитория указана программа, синхронизация её не запустит: укажите команду ssh в реестре или держите такие ключи в настройках учётной записи"],
     commit: ["committing the uncommitted changes failed", "не удалось сохранить несохранённые изменения"],
     branch: ["repository is on the wrong branch", "в репозитории выбрана другая ветка"],
     remote: ["configured remote is absent", "указанный удалённый репозиторий отсутствует"],

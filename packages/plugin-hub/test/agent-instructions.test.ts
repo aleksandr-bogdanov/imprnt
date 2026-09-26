@@ -199,6 +199,19 @@ test("an import can never reach what the box hides: another person's tree, a log
     require("node:fs").rmSync(inside)
     symlinkSync(f.login, inside)
     await expect(make(launchInput(f)), "the declared name swapped for a link to a login").rejects.toThrow(/instructions-forbidden/)
+    // A directory above the name swapped for a link is the same trick one
+    // level up: the name is untouched and lands somewhere else.
+    const nested = join(root, "rules", "declared.md")
+    mkdirSync(join(root, "rules"))
+    writeFileSync(nested, "p1-nested-declared-rule\n")
+    f.write(f.field("p1", "instructions", JSON.stringify([nested]), f.text))
+    expect((await make(launchInput(f))).argv).toContain("--append-system-prompt-file")
+    const elsewhere = join(f.dir, "elsewhere-rules")
+    mkdirSync(elsewhere)
+    writeFileSync(join(elsewhere, "declared.md"), "synthetic-planted-rule\n")
+    require("node:fs").renameSync(join(root, "rules"), join(root, "rules-moved"))
+    symlinkSync(elsewhere, join(root, "rules"))
+    await expect(make(launchInput(f)), "the declared name under a swapped directory").rejects.toThrow(/instructions-forbidden/)
   } finally { f.stop() }
 })
 

@@ -616,6 +616,21 @@ test("the sync refuses to commit over an unfinished merge or under a filter prog
     fixtureGit(r.path, "config", "pull.rebase", "true")
     expect(await code()).toBeUndefined()
     fixtureGit(r.path, "config", "--unset", "pull.rebase")
+    // The way out for a repository that needs its own ssh command: the
+    // registry entry declares it, and the sync hands it to git on the command
+    // line for the fetch and the push, which is the owner's hand and not the
+    // file's. The remote here is a path, so ssh is never started.
+    ;(r as { sshCommand?: string }).sshCommand = "ssh -i /a/deploy/key -o BatchMode=yes"
+    f.registry()
+    const dialledFrom = git.events().length
+    expect(await code()).toBeUndefined()
+    const dialled = git.events().slice(dialledFrom).filter(e => e.phase === "start" && e.cwd === realpathSync(r.path) &&
+      e.args.some(a => a === "fetch" || a === "push"))
+    expect(dialled.length).toBe(2)
+    for (const e of dialled) expect(e.args, `${e.args.find(a => a === "fetch" || a === "push")} carries the registry's ssh command`)
+      .toContain("core.sshCommand=ssh -i /a/deploy/key -o BatchMode=yes")
+    delete (r as { sshCommand?: string }).sshCommand
+    f.registry()
     // A merge stopped on a conflict: the markers must never be committed as the resolution.
     commitChange(r.path, "base.txt", "local side\n")
     fixtureGit(r.path, "switch", "--quiet", "-c", "other", "HEAD~1")

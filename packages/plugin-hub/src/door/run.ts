@@ -1559,6 +1559,9 @@ export async function runDoor(options: {
         recognizer: voice.recognizer, chunks: held?.chunks.length ?? null, audio_s: null,
         decode_ms: null, attempts: null, class: "infra", cause: "gave-up" });
       waiting.delete(row.id);
+      // The person read the give-up line, and with nothing of theirs left
+      // waiting their episode is over: a later outage is theirs to hear of.
+      if (waiting.size === 0) episode = null;
       await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
     };
 
@@ -1572,6 +1575,7 @@ export async function runDoor(options: {
      */
     const finishUnnamed = async (row: PendingVoiceRow): Promise<void> => {
       waiting.delete(row.id);
+      if (waiting.size === 0) episode = null;
       const at = new Date();
       await markMediaFailed(store, { id: row.id, state: "failed", retryAt: null,
         failure: { class: "infra", cause: "recognizer-unnamed" }, at });
@@ -1659,6 +1663,11 @@ export async function runDoor(options: {
             `voice:back:${voice.recognizer}:${episode}:${agent.person}`);
           episode = null;
         }
+        // A note that ended with no words says nothing about the recognizer,
+        // so no "works again" is said for it. With no note of theirs left
+        // waiting, this person's story is over and the episode is forgotten:
+        // held open, it would swallow every later outage they should hear of.
+        if (waiting.size === 0) episode = null;
         return;
       }
       arm(row, outcome.retryAt?.getTime() ?? Date.now() + voice.retry_seconds * 1000);
@@ -1709,11 +1718,17 @@ export async function runDoor(options: {
         // twice with no "works again" between, and one that took the sheet's
         // standing episode after a restart would never tell a person who had
         // not heard it yet.
+        // The first part of the newest line, because a line cut for the
+        // platform carries its key on every part with a suffix after the person.
         const [told] = (await store.sql`select notice_key from outbox
           where kind = 'notice' and agent = ${agent.id} and notice_key like 'voice:%'
+            and notice_key not like '%:part:%'
           order by id desc limit 1`) as unknown as { notice_key: string }[];
         const last = /^voice:(down|back):[^:]+:(.+):[^:]+$/.exec(String(told?.notice_key ?? ""));
-        episode = last?.[1] === "down" ? last[2] : null;
+        // Restored only while a note of theirs is still waiting: a note that
+        // gave up or ended without words left no "works again" behind, and
+        // its episode is over with it.
+        episode = last?.[1] === "down" && rows.length > 0 ? last[2] : null;
         for (const row of rows) {
           const it: PendingVoiceRow = { id: String(row.id), person: String(row.person),
             agent: String(row.agent), source: row.source, receivedAt: new Date(row.received_at) };
