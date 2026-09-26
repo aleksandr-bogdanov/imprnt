@@ -102,13 +102,22 @@ export async function saveMedia(options: {
         chunks.push(next.value);
       }
     } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-    if ((media.bytes !== null && size !== media.bytes) || (length !== null && size !== Number(length))) throw new Error("media-truncated");
+    // A body shorter than the response's own length, or shorter than what
+    // the platform advertised, is cut off. A LONGER body than advertised is
+    // whole: Discord reports one size for a phone photo and serves a larger
+    // file, so holding the body to that exact number threw every such photo away.
+    if ((length !== null && size !== Number(length)) || (media.bytes !== null && size < media.bytes)) throw new Error("media-truncated");
     bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-  } catch {
-    // Remote failures may include authorization or signed URLs. Never persist them.
-    const content = JSON.stringify({ kind: media.kind, name, cause: "media-save-failed" }) + "\n";
+  } catch (error) {
+    // Remote failures may include authorization or signed URLs. Never persist
+    // them. The door's own named causes carry no such thing, so a record
+    // says which check failed; anything else is a bare fetch failure.
+    const said = error instanceof Error ? error.message : "";
+    const cause = /^media-[a-z-]+$/.test(said) ? said : "media-save-failed";
+    process.stderr.write(`media-save-failed: ${media.kind} ${name}: ${cause}\n`);
+    const content = JSON.stringify({ kind: media.kind, name, cause }) + "\n";
     publish(descriptor, content);
     return { path: descriptor, failed: true, kind: media.kind, name, sha256: digest(content) };
   }

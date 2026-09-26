@@ -67,6 +67,22 @@ test("ROLL-01 Discord native sticker_items survive wire normalization", async ()
   } finally { f.stop() }
 })
 
+test("ROLL-01 a photo whose advertised size differs from the served size is saved whole", async () => {
+  const f = rolloutFixture()
+  const server = mediaServer()
+  try {
+    const { saveMedia } = await seam("src/door/media.ts")
+    const save = saveMedia as (options: any) => Promise<{ path: string, failed: boolean }>
+    mkdirSync(join(f.stateDir, "p1"), { recursive: true })
+    // Discord reports one size for a phone photo and serves a larger file.
+    const media = { kind: "photo", remote_id: "fixture", name: "IMG_0001.jpg", mime: "image/jpeg", bytes: 2, caption: null }
+    const saved = await save({ stateDir: f.stateDir, person: "p1", inboundId: "discord:1:1", index: 0, media, maxBytes: 6,
+      platform: { fetchMedia: () => fetch(server.url("/bytes")) } })
+    expect(saved.failed, "the served file is the photo").toBe(false)
+    expect(readFileSync(saved.path).length).toBe(4)
+  } finally { await server.stop(); f.stop() }
+})
+
 for (const hazard of ["declared oversize", "streamed oversize", "traversal", "symlink", "truncated", "expired"] as const) test(`ROLL-01 saveMedia ${hazard} yields an honest descriptor and repaired input saves bytes`, async () => {
   const f = rolloutFixture()
   const server = mediaServer()
