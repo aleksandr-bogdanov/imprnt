@@ -27,15 +27,42 @@ export function remoteUrlOf(repoPath: string, remote: string): string | null {
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
-    const section = /^\[remote\s+"((?:[^"\\]|\\.)*)"\]$/.exec(line);
+    // A header may carry a note after its bracket, the way a value may.
+    const section = /^\[remote\s+"((?:[^"\\]|\\.)*)"\]\s*(?:[#;].*)?$/i.exec(line);
     if (section) { inside = section[1].replace(/\\(.)/g, "$1") === remote; continue; }
     if (line.startsWith("[")) { inside = false; continue; }
     if (!inside) continue;
     const pair = /^url\s*=\s*(.*)$/i.exec(line);
     // The last value wins, which is git's own rule for a single-valued key.
-    if (pair) url = unquote(pair[1]);
+    if (pair) url = configValue(pair[1]);
   }
   return url;
+}
+
+/**
+ * A value the way git reads it: a `#` or `;` outside quotes starts a note
+ * and ends the value, a backslash escapes the next character (`\n`, `\t`,
+ * `\b`, `\\`, `\"`), quotes may enclose any part of the value, and the
+ * whitespace around it is dropped.
+ */
+function configValue(rest: string): string {
+  let out = "";
+  let quoted = false;
+  for (let at = 0; at < rest.length; at += 1) {
+    const char = rest[at];
+    if (char === "\\") {
+      const next = rest[at + 1];
+      out += next === "n" ? "\n" : next === "t" ? "\t" : next === "b" ? "\b" : (next ?? "");
+      at += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (!quoted && (char === "#" || char === ";")) {
+      break;
+    } else {
+      out += char;
+    }
+  }
+  return out.trim();
 }
 
 /**
@@ -82,10 +109,3 @@ function gitConfigOf(repoPath: string): string | null {
   return existsSync(config) ? config : null;
 }
 
-function unquote(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
-    return trimmed.slice(1, -1).replace(/\\(.)/g, "$1");
-  }
-  return trimmed;
-}

@@ -68,7 +68,7 @@ export function clockLine(language: Language, stamp: string, seconds: number): s
  * new kind of silence cannot hide behind a vague sentence.
  */
 export const WAIT_REASONS = [
-  "previous", "slots", "starting", "harvest", "retry", "login", "window", "off", "runner-down", "working", "unknown",
+  "previous", "slots", "memory", "starting", "harvest", "retry", "login", "window", "off", "runner-down", "working", "unknown",
 ] as const;
 export type WaitReason = (typeof WAIT_REASONS)[number];
 
@@ -76,6 +76,7 @@ const WAIT: Record<Language, Record<WaitReason, string>> = {
   en: {
     previous: "still answering your previous message in this chat.",
     slots: "all {count} agent slots are busy: {holders}.",
+    memory: "the runner's memory budget of {budget} MB is used up: {used} MB held, and this agent needs {reserve} MB.",
     starting: "starting the agent from cold, up to a minute.",
     harvest: "a background summary of the chat is going first.",
     retry: "the last attempt failed: {cause}. Next try in {seconds} s.",
@@ -89,6 +90,7 @@ const WAIT: Record<Language, Record<WaitReason, string>> = {
   ru: {
     previous: "ещё отвечаю на ваше предыдущее сообщение в этом чате.",
     slots: "все слоты агентов заняты ({count}): {holders}.",
+    memory: "память раннера ({budget} МБ) исчерпана: занято {used} МБ, этому агенту нужно {reserve} МБ.",
     starting: "запускаю агента с нуля, это занимает до минуты.",
     harvest: "сначала идёт фоновая сводка чата.",
     retry: "последняя попытка не удалась: {cause}. Следующая через {seconds} с.",

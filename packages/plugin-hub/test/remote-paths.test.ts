@@ -9,11 +9,11 @@
 //
 // No Postgres and no git: a configuration file is a file.
 import { expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { boxContextFor, otherPeoplesRemotes } from "../src/box/index.ts"
-import { repositoriesToCopy } from "../src/backup/run.ts"
+import { excludedFromCopy, repositoriesToCopy } from "../src/backup/run.ts"
 import { loadRegistry } from "../src/registry/load.ts"
 import { localRemotePath, remoteUrlOf } from "../src/registry/remote.ts"
 import { writeRegistry } from "./helpers/registry.ts"
@@ -68,6 +68,16 @@ test("the remote url is read off the checkout's configuration, a pointer .git is
     writeFileSync(join(linked, ".git"), `gitdir: ${worktreeDir}\n`)
     writeFileSync(join(worktreeDir, "commondir"), "../..\n")
     expect(localRemotePath(linked, "origin"), "a worktree's remote is the main repository's").toBe(bare)
+    // Read the way git reads a value: a note after the value ends it, quotes
+    // may enclose part of it and escapes are unescaped, and a header may
+    // carry a note of its own. A reader that kept the note would answer a
+    // path that does not exist, and a path that does not exist is not hidden.
+    const noted = join(it.dir, "noted")
+    mkdirSync(join(noted, ".git"), { recursive: true })
+    writeFileSync(join(noted, ".git", "config"),
+      `[remote "origin"] ; the vault's own copy\n\turl = ${bare} # vault\n[remote "quoted"]\n\turl = "${join(it.dir, "with space")}/x\\"y.git" ; note\n`)
+    expect(localRemotePath(noted, "origin")).toBe(bare)
+    expect(remoteUrlOf(noted, "quoted")).toBe(`${join(it.dir, "with space")}/x"y.git`)
   } finally { it.stop() }
 })
 
@@ -77,11 +87,15 @@ test("the box hides the git copy of every repository another person declares, an
     const bareP1 = join(it.dir, "remotes", "p1-vault.git"), bareP2 = join(it.dir, "remotes", "p2-vault.git")
     const zone = join(it.dir, "remotes", "shared-notes.git")
     const p1 = join(it.dir, "p1"), p2 = join(it.dir, "p2")
-    mkdirSync(p1, { recursive: true }); mkdirSync(p2, { recursive: true })
+    mkdirSync(p1, { recursive: true }); mkdirSync(p2, { recursive: true }); mkdirSync(bareP2, { recursive: true })
     checkout(p1, "vault-project", { origin: bareP1 })
     checkout(p2, "vault-project", { origin: bareP2 })
+    // The two people reach the one shared repository by different spellings,
+    // one of them through a link: still one repository, and still theirs.
+    mkdirSync(zone, { recursive: true })
+    symlinkSync(join(it.dir, "remotes"), join(it.dir, "remotes-link"))
     checkout(join(p1, "vault-project", "vault"), "shared-notes", { origin: zone })
-    checkout(join(p2, "vault-project", "vault"), "shared-notes", { origin: zone })
+    checkout(join(p2, "vault-project", "vault"), "shared-notes", { origin: join(it.dir, "remotes-link", "shared-notes.git") })
     const file = writeRegistry(it.dir, {
       hub: { state_dir: join(it.dir, "state") },
       people: [{ id: "p1", tree: p1 }, { id: "p2", tree: p2 }],
@@ -95,12 +109,14 @@ test("the box hides the git copy of every repository another person declares, an
       ],
     })
     const registry = loadRegistry(file)
-    expect(otherPeoplesRemotes(registry, "p1")).toEqual([bareP2])
+    expect(otherPeoplesRemotes(registry, "p1")).toEqual([realpathSync(bareP2)])
     const ctx = boxContextFor(registry, "p1-lair")
     expect(ctx.otherTrees).toContain(p2)
-    expect(ctx.otherTrees, "the other person's git copy is hidden").toContain(bareP2)
+    expect(ctx.otherTrees, "the other person's git copy is hidden").toContain(realpathSync(bareP2))
     expect(ctx.otherTrees, "this person's own copy is not").not.toContain(bareP1)
     expect(ctx.otherTrees, "the shared zone's copy is both people's and stays reachable").not.toContain(zone)
+    expect(ctx.otherTrees).not.toContain(join(it.dir, "remotes-link", "shared-notes.git"))
+    expect(ctx.otherTrees, "and the other person's copy is hidden as the file system names it").toContain(realpathSync(bareP2))
   } finally { it.stop() }
 })
 
@@ -124,8 +140,14 @@ test("the off-box copy leaves out a repository whose remote is on another host, 
         { id: "notes", person: "p1", path: unnamed, remote: "origin", branch: "main", required: false },
       ],
     })
-    const { copied, leftOut } = repositoriesToCopy(loadRegistry(file))
+    const registry = loadRegistry(file)
+    const { copied, leftOut } = repositoriesToCopy(registry)
     expect(copied.map(r => r.id).sort()).toEqual(["notes", "p1-vault"])
     expect(leftOut.map(r => r.id)).toEqual(["whenful"])
+    // A repository left out sits inside the person's tree, and the vault is
+    // copied whole, so the walk has to step over it by name or it goes anyway.
+    const stepped = excludedFromCopy(registry, { stateDir: join(it.dir, "state"), staging: join(it.dir, "state", "backup"), leftOut })
+    expect(stepped).toContain(realpathSync(elsewhere))
+    expect(stepped).not.toContain(realpathSync(vault))
   } finally { it.stop() }
 })

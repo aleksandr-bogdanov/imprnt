@@ -455,7 +455,9 @@ export async function runRunner(options: {
       const entry = listRunEntries(loadRegistry(options.registryFile)).find(one => one.id === options.runner);
       const limits = runnerAdmission(entry ?? {});
       const reserveMb = limits.reserve_mb;
-      if (reservations < limits.max_active_children && Math.max(reservations * reserveMb, measuredBytes / 1048576) + reserveMb <= limits.child_memory_budget_mb) {
+      const usedMb = Math.max(reservations * reserveMb, measuredBytes / 1048576);
+      const roomByCount = reservations < limits.max_active_children;
+      if (roomByCount && usedMb + reserveMb <= limits.child_memory_budget_mb) {
         if (reserve) reservations++;
         if (recorded) await own.noteWait(null);
         return true;
@@ -467,12 +469,16 @@ export async function runRunner(options: {
           detail: { cause: "admission", children: reservations, reserved_mb: reservations * reserveMb, peak_bytes: peakBytes } });
         continue;
       }
-      // Who holds the slots, for the door's line: every agent with a child
-      // reserved and every resident whose harvest has one of its own.
-      await own.noteWait({ kind: "slots", count: limits.max_active_children, holders: [...new Set([
-        ...[...live.values()].filter(other => other.reserved && other !== own).map(other => other.agent.id),
-        ...[...harvestSessions.values()].map(owner => owner.agent.id),
-      ])] });
+      // What blocks, for the door's line. A count that is full names who
+      // holds the slots: every agent with a child reserved and every resident
+      // whose harvest has one of its own. A budget that is full with slots to
+      // spare is a different sentence, with the numbers.
+      await own.noteWait(roomByCount
+        ? { kind: "memory", budget_mb: limits.child_memory_budget_mb, used_mb: Math.round(usedMb), reserve_mb: reserveMb }
+        : { kind: "slots", count: limits.max_active_children, holders: [...new Set([
+            ...[...live.values()].filter(other => other.reserved && other !== own).map(other => other.agent.id),
+            ...[...harvestSessions.values()].map(owner => owner.agent.id),
+          ])] });
       // Woken by a child starting or being released, by the tick seeing a
       // changed limit or a fallen aggregate reading, and by the tick itself
       // as the bound: the re-check above is in memory and reads no table, so

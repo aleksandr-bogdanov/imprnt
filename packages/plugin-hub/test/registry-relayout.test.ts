@@ -96,6 +96,10 @@ test("a note at the end of a line is a note too, and a hash inside a quoted valu
     // standing between an end-of-line note and its silent loss.
     writeFileSync(file, before.replace('"repositories" = []', '"repositories" = [] # nothing declared yet'))
     await expect(relayoutRegistry(file)).rejects.toMatchObject({ step: "notes" })
+    // A multiline string can end on a line with a note after it, which no scan
+    // by line can tell from text, and nothing the hub writes ever holds one.
+    writeFileSync(file, before + '"note" = """\nwritten by hand\n""" # and noted\n')
+    await expect(relayoutRegistry(file)).rejects.toMatchObject({ step: "multiline" })
     writeFileSync(file, before.replace('"language" = "en"', '"language" = "en", "aliases" = ["the #1 owner"]'))
     expect((await relayoutRegistry(file)).changed, "a hash in a string is a value").toBe(true)
     expect((loadRegistry(file).data as { people: { aliases?: string[] }[] }).people[0].aliases).toEqual(["the #1 owner"])

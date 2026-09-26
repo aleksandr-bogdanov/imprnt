@@ -220,7 +220,8 @@ test("an @ inside a sentence imports a file that exists and leaves a mention of 
   try {
     const root = withVault(f)
     writeFileSync(join(root, "plugins", "inline.md"), "p1-inline-rule\n")
-    writeFileSync(join(root, "CLAUDE.local.md"), "Read @plugins/inline.md before answering.\nAsk @someone, and see `@plugins/code-span.md`.\nAlso (@plugins/bracketed.md).\nA span may hold a backtick: `` `@plugins/double-span.md` `` is code too, and @plugins/after-span.md is not.\n")
+    writeFileSync(join(root, "CLAUDE.local.md"), "Read @plugins/inline.md before answering.\nAsk @someone, and see `@plugins/code-span.md`.\nAlso (@plugins/bracketed.md).\nA span may hold a backtick: `` `@plugins/double-span.md` `` is code too, and @plugins/after-span.md is not.\nExample: `` @plugins/unmatched.md ``` literal `` end\n")
+    writeFileSync(join(root, "plugins", "unmatched.md"), "p1-unmatched-rule\n")
     writeFileSync(join(root, "plugins", "bracketed.md"), "p1-bracketed-rule\n")
     writeFileSync(join(root, "plugins", "code-span.md"), "p1-code-span-rule\n")
     writeFileSync(join(root, "plugins", "double-span.md"), "p1-double-span-rule\n")
@@ -231,6 +232,10 @@ test("an @ inside a sentence imports a file that exists and leaves a mention of 
     expect(prompt.text).not.toContain("p1-code-span-rule")
     expect(prompt.text, "a double-backtick span is code, the way Claude Code reads it").not.toContain("p1-double-span-rule")
     expect(prompt.text, "and the prose after it is still prose").toContain("p1-after-span-rule")
+    // A span closes only on a run of exactly its opening length, so a longer
+    // run inside it is text and the span runs to the next matching run: a
+    // reader that fell back to a shorter opening left the @ exposed.
+    expect(prompt.text, "a triple run inside a double span does not end it").not.toContain("p1-unmatched-rule")
     expect(prompt.after("Also (@plugins/bracketed.md).", "p1-bracketed-rule")).toBe(true)
   } finally { f.stop() }
 })

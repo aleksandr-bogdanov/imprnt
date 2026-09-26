@@ -134,11 +134,23 @@ function isItself(path: string): boolean {
 
 /**
  * A line with its code spans blanked, so an `@` inside one is not an import.
- * A span opens on a run of backticks and closes on a run of the same length,
- * which is what lets a single backtick sit inside a double-backtick span.
+ * A span opens on a run of backticks and closes on the next run of exactly
+ * the same length, and a run that never finds its match is text, which is
+ * how CommonMark reads it and what lets a shorter or longer run sit inside.
  */
 function withoutCodeSpans(line: string): string {
-  return line.replace(/(`+)(?:(?!\1)[^`]|(?!\1)`+)*?\1(?!`)/g, " ");
+  const runs = [...line.matchAll(/`+/g)].map(run => ({ at: run.index, length: run[0].length }));
+  let out = "";
+  let from = 0;
+  for (let n = 0; n < runs.length; n += 1) {
+    const open = runs[n];
+    const close = runs.findIndex((run, m) => m > n && run.length === open.length);
+    if (close === -1) continue;
+    out += line.slice(from, open.at) + " ";
+    from = runs[close].at + runs[close].length;
+    n = close;
+  }
+  return out + line.slice(from);
 }
 
 /**

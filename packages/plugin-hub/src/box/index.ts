@@ -171,8 +171,14 @@ function secretPathsOf(registry: unknown): string[] {
  */
 export function otherPeoplesRemotes(registry: unknown, person: string): string[] {
   const repositories = listRepositories(registry).filter((repo) => repo.path !== "");
+  // As the file system names it, so two spellings of one bare repository,
+  // one of them through a link, are one path on both sides of the comparison.
   const remoteOf = (repo: { path: string; remote: string }): string | null => {
-    try { return localRemotePath(repo.path, repo.remote); } catch { return null; }
+    try {
+      const path = localRemotePath(repo.path, repo.remote);
+      if (path === null) return null;
+      try { return realpathSync(path); } catch { return path; }
+    } catch { return null; }
   };
   const mine = new Set(repositories.filter((repo) => repo.person === person).map(remoteOf));
   return [...new Set(repositories

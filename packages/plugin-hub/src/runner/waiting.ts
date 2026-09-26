@@ -15,6 +15,7 @@ export const AGENT_WAIT_SHEET = "agent_wait";
 
 export type AgentWait =
   | { kind: "slots"; count: number; holders: string[] }
+  | { kind: "memory"; budget_mb: number; used_mb: number; reserve_mb: number }
   | { kind: "starting" }
   | { kind: "harvest" };
 

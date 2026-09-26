@@ -60,6 +60,7 @@ export function waitReason(f: WaitFacts): WaitVerdict {
     return { kind: "retry", values: { cause: f.health.cause ?? "unknown", seconds: Math.max(1, Math.ceil((retryAt - f.now) / 1000)) } };
   }
   if (wait?.kind === "slots") return { kind: "slots", values: { count: wait.count, holders: wait.holders.join(", ") || "nobody" } };
+  if (wait?.kind === "memory") return { kind: "memory", values: { budget: wait.budget_mb, used: wait.used_mb, reserve: wait.reserve_mb } };
   if (wait?.kind === "starting") return { kind: "starting", values: {} };
   if (wait?.kind === "harvest") return { kind: "harvest", values: {} };
   if (f.row.claimed_by !== null && (f.row.state === "acked" || f.row.state === "started")) return { kind: "working", values: {} };
@@ -98,7 +99,7 @@ export function waitFacts(sidecar: WaitSidecar, input: {
   // A row that names no kind this list knows is no wait at all, so a runner
   // ahead of or behind this door cannot make every reason "unknown".
   const noted = sidecar.wait;
-  const wait = noted && ["slots", "starting", "harvest"].includes(String(noted.kind)) ? (noted as unknown as AgentWait) : null;
+  const wait = noted && ["slots", "memory", "starting", "harvest"].includes(String(noted.kind)) ? (noted as unknown as AgentWait) : null;
   return {
     row: input.row,
     stamp: input.stamp,

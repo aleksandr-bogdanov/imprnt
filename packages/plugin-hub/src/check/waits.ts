@@ -27,7 +27,7 @@ export async function readUnexplainedWaits(store: StoreLike, where: { agents: st
     select newest.id, i.person, i.agent, newest.stamp, newest.state, newest.at
       from (
         select distinct on (e.subject) e.subject as id, e.detail ->> 'stamp' as stamp,
-               e.detail -> 'why' ->> 'kind' as kind, e.detail -> 'why' ->> 'state' as state, e.at
+               e.detail -> 'why' ->> 'kind' as kind, e.detail -> 'why' -> 'values' ->> 'state' as state, e.at
           from ledger_event e
          where e.stream = ${CLOCK_STREAM} and e.kind = 'expired'
          order by e.subject, e.at desc, e.seq desc

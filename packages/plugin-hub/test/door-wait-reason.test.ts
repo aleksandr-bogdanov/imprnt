@@ -60,6 +60,11 @@ test("the precedence: switched off, then the runner down, then the credential's 
   expect(waitReason(facts({ health: { ...health, retry_at: new Date(NOW - 1000).toISOString() } })).kind).not.toBe("retry")
   expect(waitReason(facts({ wait: { kind: "slots", count: 1, holders: ["p2-lair"] } })))
     .toEqual({ kind: "slots", values: { count: 1, holders: "p2-lair" } })
+  // A budget that is full with slots to spare is its own sentence, with the numbers.
+  expect(waitReason(facts({ wait: { kind: "memory", budget_mb: 3072, used_mb: 2048, reserve_mb: 2048 } })))
+    .toEqual({ kind: "memory", values: { budget: 3072, used: 2048, reserve: 2048 } })
+  expect(waitReasonLine("en", "memory", { budget: 3072, used: 2048, reserve: 2048 }))
+    .toBe("[door] the runner's memory budget of 3072 MB is used up: 2048 MB held, and this agent needs 2048 MB.")
   expect(waitReason(facts({ wait: { kind: "starting" } })).kind).toBe("starting")
   expect(waitReason(facts({ wait: { kind: "harvest" } })).kind).toBe("harvest")
   const started = row({ state: "started", claimed_by: RUNNER })
@@ -126,6 +131,8 @@ test("check reads the newest clock line of a message, so one explained later is 
     await clock("m-unknown", "acked", "unknown", "2026-09-26T10:00:00.000Z")
     const waits = await readUnexplainedWaits(store, { agents: [AGENT] })
     expect(waits.map(w => w.id), "only the message whose newest line found no reason").toEqual(["m-unknown"])
+    expect(waits[0].state, "the raw state the door wrote, read from where it wrote it").toBe("received/unclaimed")
+    expect(unexplainedFindings({ waits, runnerOf: () => RUNNER, machine: "pi" })[0].says).toContain("received/unclaimed")
   } finally { await store.close(); await it.stop() }
 }, 60_000)
 

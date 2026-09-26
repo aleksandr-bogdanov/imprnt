@@ -105,6 +105,21 @@ export interface BackupResult {
  * copy for nothing. One whose remote is on this box, or whose checkout names
  * no remote this can read, is the household's only copy and goes.
  */
+/**
+ * Every path the copy's walk steps over, as the file system names it: what
+ * never leaves the box, the staging directory itself, and every repository
+ * left out because its remote is off the box. The last matters when such a
+ * repository is a person's vault or sits inside one: the vault is copied
+ * whole, and without this the repository named as left out went anyway.
+ */
+export function excludedFromCopy(registry: Registry, where: { stateDir: string; staging: string; leftOut: RepositoryEntry[] }): string[] {
+  return [
+    ...NEVER_COPIED.flatMap((one) => one.paths(registry, where.stateDir)),
+    where.staging,
+    ...where.leftOut.map((repo) => repo.path),
+  ].filter((path) => path !== "").map((path) => real(path) ?? path);
+}
+
 export function repositoriesToCopy(registry: Registry): { copied: RepositoryEntry[]; leftOut: RepositoryEntry[] } {
   const copied: RepositoryEntry[] = [];
   const leftOut: RepositoryEntry[] = [];
@@ -304,11 +319,8 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
     // THE REST, fresh every time. Only what this job put here is cleared, so
     // nothing else that happens to sit beside the dump is ever deleted.
     for (const own of [FILES_DIR, MANIFEST_FILE, READBACK_DIR]) rmSync(join(staging, own), { recursive: true, force: true });
-    const left = [
-      ...NEVER_COPIED.flatMap((one) => one.paths(registry, stateDir)),
-      staging,
-    ].filter((path) => path !== "").map((path) => real(path) ?? path);
     const repositories = repositoriesToCopy(registry);
+    const left = excludedFromCopy(registry, { stateDir, staging, leftOut: repositories.leftOut });
     const trees: { path: string; required: boolean }[] = [
       // Working trees whole, repositories included, so uncommitted and
       // unpushed work is in the copy. A zone checkout sits inside its vault.
