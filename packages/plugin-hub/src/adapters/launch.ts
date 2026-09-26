@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { boxCommand, type BoxContext } from "../box/index.ts";
+import { assemblePrompt, instructionFiles, personOf, vaultRootOf } from "./instructions.ts";
 import { listCredentials } from "../registry/entries.ts";
 import type { AgentEntry, CredentialEntry } from "../registry/load.ts";
 import { credentialOfPreset, type Preset } from "../registry/presets.ts";
@@ -65,7 +66,12 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   const credential = input.credential ?? credentialSource(input.registry, input.agent.preset);
   validateCredentialSource(credential);
   const ordinary = input.purpose === "ordinary";
-  const settings = ordinary ? jsonFile(input.agent.settings, {}) : {};
+  // An agent's own settings and MCP servers replace its person's, and an
+  // agent that names neither, which is every agent made from a chat, starts
+  // with the person's.
+  const person = personOf(input.registry, input.agent.person);
+  const settingsFile = input.agent.settings ?? person?.settings;
+  const settings = ordinary ? jsonFile(settingsFile, {}) : {};
   if (Object.keys(settings).some(key => key !== "permissions")) throw new Error("invalid-settings-configuration");
   if (settings.permissions !== undefined) {
     const permissions = settings.permissions as Record<string, unknown>;
@@ -75,14 +81,18 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
       throw new Error("invalid-settings-permissions");
     }
   }
-  const mcp = ordinary ? jsonFile(input.agent.mcp, { mcpServers: {} }) : { mcpServers: {} };
+  const mcp = ordinary ? jsonFile(input.agent.mcp ?? person?.mcp, { mcpServers: {} }) : { mcpServers: {} };
   if (!mcp.mcpServers || typeof mcp.mcpServers !== "object" || Array.isArray(mcp.mcpServers)) {
     throw new Error("invalid-mcp-configuration");
   }
-  const mcpFile = ordinary ? input.agent.mcp : undefined;
+  const mcpFile = ordinary ? input.agent.mcp ?? person?.mcp : undefined;
   const fragment = ordinary ? input.agent.fragment : undefined;
   if (fragment) accessSync(fragment, constants.R_OK);
   const ambient = process.env.HOME;
+  const root = vaultRootOf(person, input.box.tree);
+  // Read before the box is built, because every file it reads, imports
+  // included, is a path the box has to let the launch reach.
+  const prompt = ordinary ? assemblePrompt({ files: instructionFiles(person, root), fragment, home: ambient }) : null;
   // The box masks every credential file, and this launch keeps the one login its
   // loop runs on. Every other one, bot tokens and any other model login alike,
   // stays masked. The launched login's own directory is bound writable because
@@ -90,7 +100,7 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   // write paths rather than left to the read-only host.
   const same = (a: string, b: string) => a === b || existsSync(a) && existsSync(b) && realpathSync(a) === realpathSync(b);
   const writePaths = [...(input.box.writePaths ?? []), dirname(credential.file)];
-  const reads = [dirname(credential.file), credential.file, ...(fragment ? [fragment] : []), ...(mcpFile ? [mcpFile] : []),
+  const reads = [dirname(credential.file), credential.file, ...(prompt?.reads ?? []), ...(mcpFile ? [mcpFile] : []),
     ...(ambient ? [join(ambient, ".claude", "settings.json"), join(ambient, ".claude", "CLAUDE.md")] : [])];
   // Every other credential file is masked. On Linux a single-file mask is a bind
   // over one directory entry, and the kernel lifts it if the host later replaces
@@ -130,7 +140,7 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   // The loop runs in a clean session directory, so `imprnt recall` and
   // `imprnt ingest` find the person's vault only by being told where it is.
   // Without it an agent answers from an empty memory and files nowhere.
-  const vault = join(input.box.tree, "vault");
+  const vault = join(root, "vault");
   if (ordinary && existsSync(vault)) env.IMPRNT_VAULT = vault;
   const tools = ordinary ? input.agent.tools : ["Read", "Glob", "Grep"];
   const argv = ["claude", "--print", "--input-format", "stream-json", "--output-format", "stream-json",
@@ -139,7 +149,13 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
     "--setting-sources", "", "--settings", JSON.stringify(settings),
     "--strict-mcp-config", "--mcp-config", mcpFile ?? JSON.stringify(mcp),
     "--tools", tools === undefined ? "default" : tools.join(","), "--disable-slash-commands"];
-  if (fragment) argv.push("--append-system-prompt-file", fragment);
+  if (prompt) {
+    // Written into the session's own directory, which the box already lets
+    // the loop read, and never into a tree an agent could rewrite.
+    const file = join(boxed.cwd, "instructions.md");
+    writeFileSync(file, prompt.text, { mode: 0o600 });
+    argv.push("--append-system-prompt-file", file);
+  }
   if (ordinary) argv.push("--dangerously-skip-permissions");
   else argv.push("--allowedTools", "Read,Glob,Grep");
   return { ...boxed, argv, env, credentialId: credential.id };

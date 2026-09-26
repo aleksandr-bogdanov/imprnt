@@ -435,6 +435,17 @@ export interface PersonEntry {
   allowed_senders?: Record<string, string[]>;
   history_harvest_after?: string;
   filing_rules?: string;
+  /**
+   * What every agent of this person starts with, unless the agent names its
+   * own. `instructions` is the list of files an ordinary launch appends to the
+   * system prompt, and its absence means the vault's own `CLAUDE.md` and
+   * `CLAUDE.local.md`, each when it exists. `mcp` and `settings` stand in for
+   * an agent that declares none, so an agent made from a chat, which carries
+   * only its id, person, preset, chat, door and runner, starts complete.
+   */
+  instructions?: string[];
+  mcp?: string;
+  settings?: string;
 }
 
 /**
@@ -1591,6 +1602,13 @@ export function loadRegistry(file: string): Registry {
       );
     }
     if (entry.filing_rules !== undefined) readable(entry.filing_rules, `${where}.filing_rules`);
+    for (const key of ["mcp", "settings"]) {
+      if (entry[key] !== undefined) readable(entry[key], `${where}.${key}`);
+    }
+    if (entry.instructions !== undefined) {
+      strings(entry.instructions, `${where}.instructions`);
+      (entry.instructions as string[]).forEach((file, n) => readable(file, `${where}.instructions[${n}]`));
+    }
     if (entry.history_harvest_after !== undefined &&
         (typeof entry.history_harvest_after !== "string" ||
          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(entry.history_harvest_after) ||
@@ -1607,7 +1625,7 @@ export function loadRegistry(file: string): Registry {
       }
     }
     const harvest: Record<string, unknown> = {
-      ...Object.fromEntries(["filing_rules", "history_harvest_after", "allowed_senders"]
+      ...Object.fromEntries(["filing_rules", "history_harvest_after", "allowed_senders", "instructions", "mcp", "settings"]
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(namesHarvester ? { harvester: harvester as string } : {}),
       ...(namesVault ? { vault: vault as string } : {}),

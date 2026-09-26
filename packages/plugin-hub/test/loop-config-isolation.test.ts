@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { claudeCode } from "../src/adapters/claude-code.ts"
 import { harvestMessage } from "../src/harvest/prompt.ts"
-import { loopFixture, launchInput, launchSeam, captureCli, ending, controlledMcp, nativeWrap } from "./helpers/rollout-loop.ts"
+import { loopFixture, launchInput, launchSeam, captureCli, ending, controlledMcp, nativeWrap, appended } from "./helpers/rollout-loop.ts"
 import { boxGate } from "./helpers/box-gate.ts"
 beforeAll(async () => { await import("../live/prove-rollout-loop.ts") })
 
@@ -15,7 +15,9 @@ test("ROLL-24 ambient account and project sources stay absent while declared fra
     const launch = await make(input), capture = join(input.sessionDir, "isolation.json")
     const noAmbient = (got: any) => {
       expect(got.ambient).toEqual([])
-      expect(got.fragment).toBe(readFileSync(f.files.fragment, "utf8"))
+      expect(appended(got.fragment).preamble).toBe(true)
+      expect(got.fragment.endsWith(readFileSync(f.files.fragment, "utf8"))).toBe(true)
+      expect(got.fragment).not.toContain("ambient-project-instruction-sentinel")
       expect(got.mcp).toEqual(JSON.parse(readFileSync(f.files.mcp, "utf8")))
     }
     // The defective launch uses the same fake executable with ambient sources enabled.

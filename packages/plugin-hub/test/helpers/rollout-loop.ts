@@ -9,6 +9,22 @@ import { boxCommand } from "../../src/box/index.ts"
 import type { BoxContext } from "../../src/box/types.ts"
 import type { AdapterSession, TurnEnd } from "../../src/adapters/types.ts"
 
+const projectOf = (tree: string) => join(tree, "project")
+
+/** The appended prompt the fake CLI saw, split into the code's own section and the rest. */
+export function appended(prompt: string | null) {
+  const text = prompt ?? ""
+  return { text, preamble: text.startsWith("# How this agent runs\n"), after: (...parts: string[]) => {
+    let at = 0
+    for (const part of parts) {
+      const found = text.indexOf(part, at)
+      if (found < 0) return false
+      at = found + part.length
+    }
+    return true
+  } }
+}
+
 export function loopFixture() {
   const f = rolloutFixture()
   const home = join(f.dir, "ambient")
@@ -17,13 +33,17 @@ export function loopFixture() {
   const poison = "synthetic-ambient-login-" + crypto.randomUUID()
   const credential = { id: "loop-login", kind: "claude-login", file: login, owner: "p1" }
   const loginBytes = (value: string) => JSON.stringify({ claudeAiOauth: { accessToken: value, refreshToken: value, refreshTokenExpiresAt: 4102444800000 } })
-  for (const dir of [dirname(login), join(home, ".claude", "plugins"), join(home, ".claude"), join(f.trees.person("p1").tree, ".claude")]) mkdirSync(dir, { recursive: true })
+  // A project directory inside the tree, whose CLAUDE.md only Claude Code's own
+  // discovery would read. The tree's top-level CLAUDE.md is the person's vault
+  // instruction file, which the launch now loads on purpose.
+  const project = projectOf(f.trees.person("p1").tree)
+  for (const dir of [dirname(login), join(home, ".claude", "plugins"), join(home, ".claude"), join(project, ".claude")]) mkdirSync(dir, { recursive: true })
   writeFileSync(login, loginBytes(marker), { mode: 0o600 })
   writeFileSync(join(home, ".claude", ".credentials.json"), loginBytes(poison))
   writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: "ambient-hook-sentinel" }] }] }, enabledPlugins: { "ambient-plugin-sentinel": true } }))
   writeFileSync(join(home, ".claude", "CLAUDE.md"), "ambient-account-instruction-sentinel")
-  writeFileSync(join(f.trees.person("p1").tree, "CLAUDE.md"), "ambient-project-instruction-sentinel")
-  writeFileSync(join(f.trees.person("p1").tree, ".claude", "settings.local.json"), '{"env":{"AMBIENT_SENTINEL":"ambient-local-settings-sentinel"}}')
+  writeFileSync(join(project, "CLAUDE.md"), "ambient-project-instruction-sentinel")
+  writeFileSync(join(project, ".claude", "settings.local.json"), '{"env":{"AMBIENT_SENTINEL":"ambient-local-settings-sentinel"}}')
   writeFileSync(f.files.fragment, "declared-fragment-sentinel\nRead the declared files.\n")
   writeFileSync(f.files.filing_rules, "declared-filing-rules-sentinel\nUse the synthetic note envelope.\n")
   let text = f.base.replace('adapter = "synthetic-loop"', 'adapter = "claude-code"')
@@ -112,7 +132,7 @@ const config = process.env.CLAUDE_CONFIG_DIR;
 if (config) { fs.mkdirSync(config, {recursive:true}); fs.writeFileSync(path.join(config, 'session-write'), 'synthetic-session-state'); }
 const noSettings = value('--setting-sources') === '';
 const noInstructions = process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY === '1' && noSettings;
-const planted = ${JSON.stringify(f.trees.person("p1").tree)};
+const planted = ${JSON.stringify(projectOf(f.trees.person("p1").tree))};
 const ambient = noSettings ? [] : [read(path.join(home,'.claude','settings.json')), read(path.join(planted,'.claude','settings.local.json'))];
 if (!noInstructions) ambient.push(read(path.join(home,'.claude','CLAUDE.md')), read(path.join(planted,'CLAUDE.md')));
 const data = { argv: args, cwd: process.cwd(), env: { HOME: home, CLAUDE_CONFIG_DIR: config, CLAUDE_SECURESTORAGE_CONFIG_DIR: process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR },
