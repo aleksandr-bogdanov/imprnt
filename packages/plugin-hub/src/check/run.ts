@@ -50,6 +50,7 @@ import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { silentRunners } from "./silence.ts";
+import { admissionFindings } from "./admission.ts";
 import { readZoneState, zoneFindings } from "./zone.ts";
 import { backupFindings, readBackupState } from "./backup.ts";
 
@@ -525,6 +526,9 @@ export async function runCheck(options: {
       }),
     );
   }
+
+  // --- a runner whose numbers admit fewer agents than its count says --------
+  findings.push(...admissionFindings({ entries, machine }));
 
   // --- every human row past its person's own threshold (criterion 1) ------
   //
