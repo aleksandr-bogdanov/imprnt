@@ -6,7 +6,6 @@ import { assemblePrompt, instructionFiles, personOf, vaultRootOf } from "./instr
 import { listCredentials } from "../registry/entries.ts";
 import type { AgentEntry, CredentialEntry } from "../registry/load.ts";
 import { credentialOfPreset, type Preset } from "../registry/presets.ts";
-import { exportKeychainLogin, readKeychainItem, type KeychainOptions } from "./keychain.ts";
 
 export function credentialSource(registry: unknown, preset: string): CredentialEntry {
   const id = credentialOfPreset(registry, preset);
@@ -16,40 +15,32 @@ export function credentialSource(registry: unknown, preset: string): CredentialE
 }
 
 /**
- * Whether this credential is one the loop can be handed at all.
- *
- * A login kept in a keychain item is checked at its SOURCE: the item must read
- * and hold a login. Its file is made from the item at every launch, so whether
- * the file is there yet says nothing about the login.
+ * Whether this credential is one the loop can be handed at all: a login FILE,
+ * on every machine. On a Mac that file is a login made for the runner itself
+ * with `claude auth login` under the storage directory the launch names, never
+ * the owner's keychain item and never a copy of one: a refresh token is single
+ * use, and a copy that refreshes revokes the login it was copied from.
  */
-export function validateCredentialSource(entry: CredentialEntry, options: KeychainOptions = {}): void {
+export function validateCredentialSource(entry: CredentialEntry): void {
   if (entry.kind !== "claude-login" || !isAbsolute(entry.file) || basename(entry.file) !== ".credentials.json") {
     throw new Error("credential-source-unsupported");
-  }
-  if (entry.keychain !== undefined) {
-    const read = readKeychainItem(entry.keychain, options);
-    if (!read.ok) throw new Error(`credential-source-unreadable: ${read.says}`);
-    let held: unknown;
-    try { held = JSON.parse(read.text); } catch { held = null; }
-    const login = held !== null && typeof held === "object" ? (held as Record<string, unknown>).claudeAiOauth : null;
-    if (login === null || login === undefined || typeof login !== "object") {
-      throw new Error(`credential-source-unreadable: the keychain item ${JSON.stringify(entry.keychain)} holds no claudeAiOauth login`);
-    }
-    return;
   }
   accessSync(entry.file, constants.R_OK);
   if (!statSync(entry.file).isFile()) throw new Error("credential-source-unreadable");
 }
 
 /**
- * The credential as the loop reads it: its file, present. A login kept in a
- * keychain item is copied into the file here, mode 600, on every launch.
+ * The command that makes a runner's own login file on a Mac, once. MEASURED
+ * on the owner's Mac: with `CLAUDE_SECURESTORAGE_CONFIG_DIR` set the CLI keeps
+ * its login in `.credentials.json` under that directory, reading it and
+ * removing it on logout, and with `CLAUDE_CONFIG_DIR` set beside it the
+ * owner's own keychain item is neither read nor written. The config directory
+ * sits inside the login directory, so the launch's box reaches both through
+ * the one directory it already binds.
  */
-export function readyCredentialSource(entry: CredentialEntry, options: KeychainOptions = {}): void {
-  validateCredentialSource(entry, options);
-  if (entry.keychain !== undefined) exportKeychainLogin({ service: entry.keychain, file: entry.file, keychain: options.keychain });
-  accessSync(entry.file, constants.R_OK);
-  if (!statSync(entry.file).isFile()) throw new Error("credential-source-unreadable");
+export function loginCommand(file: string): string {
+  const dir = dirname(file);
+  return `CLAUDE_CONFIG_DIR=${join(dir, "config")} CLAUDE_SECURESTORAGE_CONFIG_DIR=${dir} claude auth login`;
 }
 
 export interface LoopLaunchInput {
@@ -60,8 +51,6 @@ export interface LoopLaunchInput {
   sessionDir: string;
   purpose: "ordinary" | "harvest";
   box: BoxContext;
-  /** A scratch keychain file a check reads a keychain login from. Production never sets it. */
-  keychain?: string;
 }
 
 /** Prepare the wrapper before any model child can start. */
@@ -96,7 +85,7 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   if (!statSync(input.box.tree).isDirectory()) throw new Error("box-tree-unavailable");
   if (input.purpose !== "ordinary" && input.purpose !== "harvest") throw new Error("invalid-configuration");
   const credential = input.credential ?? credentialSource(input.registry, input.agent.preset);
-  readyCredentialSource(credential, { keychain: input.keychain });
+  validateCredentialSource(credential);
   const ordinary = input.purpose === "ordinary";
   // An agent's own settings and MCP servers replace its person's, and an
   // agent that names neither, which is every agent made from a chat, starts
@@ -208,7 +197,7 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
  * read-only host unless it is named: the checks use this to hand their scripted
  * CLI its own directory.
  */
-export interface LoopProbeOptions { bin?: string; timeoutMs?: number; writePaths?: string[]; keychain?: string }
+export interface LoopProbeOptions { bin?: string; timeoutMs?: number; writePaths?: string[] }
 export const LOOP_PROBE_TIMEOUT_MS = 10_000;
 
 /**
@@ -269,17 +258,13 @@ function stampOf(file: string): string | null {
 }
 
 export function loopCapabilitiesFor(credential: CredentialEntry, probe: LoopProbeOptions = {}) {
-  validateCredentialSource(credential, { keychain: probe.keychain });
+  validateCredentialSource(credential);
   const bin = probe.bin ?? "claude";
   const key = [bin, credential.id, credential.file].join("\0");
   let stamp: string | null = null;
   try {
     const executable = Bun.which(bin);
-    // A keychain login's file is remade at every launch, so its identity says
-    // nothing about the binary, which is what the answer is a property of.
-    const both = executable
-      ? [stampOf(executable), ...(credential.keychain === undefined ? [stampOf(credential.file)] : [])]
-      : [null];
+    const both = executable ? [stampOf(executable), stampOf(credential.file)] : [null];
     if (both.every(one => one !== null)) stamp = both.join("|");
   } catch { stamp = null; }
   const kept = probed.get(key), clock = clockLead();

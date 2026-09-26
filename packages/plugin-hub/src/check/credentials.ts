@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import type { CredentialEntry } from "../registry/load.ts";
-import { readKeychainItem, type KeychainOptions } from "../adapters/keychain.ts";
+import { loginCommand } from "../adapters/launch.ts";
 import { findingId, type Finding } from "./finding.ts";
 
 /**
@@ -58,28 +58,8 @@ function readText(file: string): string | null {
   }
 }
 
-/**
- * Where a login is kept, for the sentences below: its keychain item on a Mac,
- * its file everywhere else.
- */
-export function loginPlace(entry: Pick<CredentialEntry, "file" | "keychain">): string {
-  return entry.keychain === undefined ? entry.file : `the keychain item ${JSON.stringify(entry.keychain)}`;
-}
-
-/**
- * The login's own text: the keychain item when the entry names one, the file
- * otherwise. Null when it cannot be read, with the reason beside it.
- */
-function loginText(entry: CredentialEntry, options: KeychainOptions): { text: string } | { text: null; says: string } {
-  if (entry.keychain !== undefined) {
-    const read = readKeychainItem(entry.keychain, options);
-    return read.ok ? { text: read.text } : { text: null, says: read.says };
-  }
-  const text = readText(entry.file);
-  return text === null ? { text: null, says: `${entry.file} cannot be read` } : { text };
-}
-
-function loginOf(text: string | null): Record<string, unknown> | null | "unreadable" {
+function loginOf(file: string): Record<string, unknown> | null | "unreadable" {
+  const text = readText(file);
   if (text === null) return "unreadable";
   let parsed: unknown;
   try {
@@ -102,21 +82,18 @@ function loginOf(text: string | null): Record<string, unknown> | null | "unreada
  * would report the working household dead and the household would stop trusting
  * `check` altogether.
  */
-function loginHealth(entry: CredentialEntry, options: KeychainOptions): CredentialHealth {
-  const read = loginText(entry, options);
-  if (read.text === null) return unreadable(read.says);
-  const place = loginPlace(entry);
-  const held = loginOf(read.text);
+function loginHealth(file: string): CredentialHealth {
+  const held = loginOf(file);
   if (held === "unreadable") {
-    return unreadable(`${place} cannot be read as JSON`);
+    return unreadable(`${file} cannot be read as JSON`);
   }
   if (held === null) {
-    return { ok: false, kind: "blank", says: `${place} carries no claudeAiOauth object` };
+    return { ok: false, kind: "blank", says: `${file} carries no claudeAiOauth object` };
   }
   const access = String(held.accessToken ?? "");
   const refresh = String(held.refreshToken ?? "");
   if (access === "" && refresh === "") {
-    return { ok: false, kind: "blank", says: `${place} carries no access token and no refresh token` };
+    return { ok: false, kind: "blank", says: `${file} carries no access token and no refresh token` };
   }
   const now = Date.now();
   const refreshUntil = held.refreshTokenExpiresAt;
@@ -159,9 +136,8 @@ function tokenOf(file: string): { token: string } | CredentialHealth {
  * one: a check binds the identity REQUEST without reaching the platform, and
  * what stays the cutover's is whether the platform accepts it.
  */
-export function realProber(options: { fetch?: typeof fetch } & KeychainOptions = {}): CredentialProber {
+export function realProber(options: { fetch?: typeof fetch } = {}): CredentialProber {
   const send: Send = options.fetch ?? ((input, init) => fetch(input, init));
-  const keychain: KeychainOptions = { keychain: options.keychain };
 
   const askTelegram = async (token: string): Promise<CredentialHealth> => {
     try {
@@ -206,7 +182,7 @@ export function realProber(options: { fetch?: typeof fetch } & KeychainOptions =
 
   return {
     async open(entry) {
-      if (entry.kind === "claude-login") return loginHealth(entry, keychain);
+      if (entry.kind === "claude-login") return loginHealth(entry.file);
       const held = tokenOf(entry.file);
       if (!("token" in held)) return held;
       if (entry.kind === "telegram") return await askTelegram(held.token);
@@ -221,7 +197,7 @@ export function realProber(options: { fetch?: typeof fetch } & KeychainOptions =
     },
     async secrets(entry) {
       if (entry.kind === "claude-login") {
-        const held = loginOf(loginText(entry, keychain).text);
+        const held = loginOf(entry.file);
         if (held === "unreadable" || held === null) return [];
         return [String(held.accessToken ?? ""), String(held.refreshToken ?? "")].filter(
           (one) => one.length >= SHORTEST_SECRET,
@@ -248,21 +224,27 @@ export async function credentialFindings(args: {
   entries: CredentialEntry[];
   prober: CredentialProber;
   machine: string;
+  /** What the machine runs, from its `[[machines]]` entry, so the fix names the Mac's own login step. */
+  os?: string;
 }): Promise<Finding[]> {
   const out: Finding[] = [];
   for (const entry of args.entries) {
     const health = await args.prober.open(entry);
     if (health.ok) continue;
     const kind = FINDING_FOR[health.kind];
+    // On a Mac the model login is a file made for the runner, once, by the
+    // owner, with the CLI pointed at that file's directory. Until that has
+    // happened the file is not there, and the fix is the command.
+    const macLogin = args.os === "macos" && entry.kind === "claude-login";
     out.push({
       id: findingId(args.machine, kind, entry.id),
       kind,
       subject: entry.id,
       machine: args.machine,
-      says: `${entry.id} is a ${entry.kind} credential ${entry.keychain === undefined ? "at" : "in"} ${loginPlace(entry)} and it is ${health.kind}: ${health.says}`,
+      says: `${entry.id} is a ${entry.kind} credential at ${entry.file} and it is ${health.kind}: ${health.says}`,
       fix:
-        entry.keychain !== undefined
-          ? `log in with claude on the Mac that holds ${loginPlace(entry)}, then run check`
+        macLogin
+          ? `log the runner in on ${args.machine} once, which makes ${entry.file}: ${loginCommand(entry.file)}`
           : health.kind === "unreadable"
             ? `check that ${entry.file} exists and is readable by the hub's user`
             : health.kind === "refused"

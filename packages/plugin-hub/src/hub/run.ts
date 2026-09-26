@@ -17,6 +17,7 @@ import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
 import { mayReach, RUN_RECOVERY_KINDS, watchControls } from "./control.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { programForKind, transcriberArgv } from "./program.ts";
+import { recordRegistryDigest } from "./digest.ts";
 
 /**
  * The hub: one process per machine, ours, unsandboxed, and the only thing that
@@ -177,6 +178,10 @@ export async function runHub(options: {
       return;
     }
     const entries = runEntriesFor(registry, options.machine);
+    // What this machine's copy of the registry is, for the spoke runners that
+    // measure their own copy against the store machine's before they claim.
+    try { await recordRegistryDigest(store, options.machine, options.registryFile); }
+    catch (error) { await recordOperationFailure(store, { operation: "digest", target: options.machine, error }); }
     // The explicit asks come first, before the reconcile's own work, so a
     // request lands within one tick of being written rather than behind
     // whatever the registry happened to change in the same pass.

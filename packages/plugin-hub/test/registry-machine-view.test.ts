@@ -6,7 +6,7 @@
 // hub machine. So a `[[machines]]` entry may carry its own `state_dir`,
 // `secrets_dir` and `store_url`, a person may say where their tree and vault
 // are on a machine under `on.<machine>`, and a credential may say where its
-// file is there and which keychain item it comes from. A process loads the
+// file is there. A process loads the
 // file FOR its machine and every reader below the loader sees one file with
 // one answer, exactly as before.
 //
@@ -68,7 +68,7 @@ function goodLines(): string[] {
     'kind = "claude-login"',
     'file = "/var/lib/imprnt-hub/credentials/.credentials.json"',
     'owner = "household"',
-    'on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json", keychain = "Claude Code-credentials" } }',
+    'on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json" } }',
     "",
     "[presets.daily]",
     'credential = "household-claude"',
@@ -143,7 +143,7 @@ function refusalOf(file: string, machine?: string): RegistryRefused {
 
 test("the file as written is the hub machine's view, and a view for another machine carries that machine's own paths", async () => {
   const { MACHINE_SETTINGS } = await seam("src/registry/load.ts");
-  expect(MACHINE_SETTINGS).toEqual(["state_dir", "secrets_dir", "store_url"]);
+  expect(MACHINE_SETTINGS).toEqual(["state_dir", "secrets_dir", "store_url", "imprnt"]);
   const file = write(goodLines());
 
   // --- the file as written: nothing about the Mac shows through.
@@ -207,7 +207,6 @@ test("the file as written is the hub machine's view, and a view for another mach
     kind: "claude-login",
     file: "/Users/owner/.imprnt-hub/login/.credentials.json",
     owner: "household",
-    keychain: "Claude Code-credentials",
   });
   // The reader of a chat is still decided by the two entries' machines, and
   // reads the same on every view.
@@ -326,35 +325,19 @@ test("every wrong placement is refused by key and by line", () => {
     },
     {
       name: "a credential placement with no file",
-      lines: replace(base, 'on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json", keychain = "Claude Code-credentials" } }',
-        'on = { mac = { keychain = "Claude Code-credentials" } }'),
+      lines: replace(base, 'on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json" } }',
+        'on = { mac = { file = "login/.credentials.json" } }'),
       key: "credentials[0].on.mac.file",
-      line: 'on = { mac = { keychain = "Claude Code-credentials" } }',
+      line: 'on = { mac = { file = "login/.credentials.json" } }',
       reason: "absolute",
     },
     {
-      name: "a keychain item on a machine that has no keychain",
-      lines: replace(base, 'on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json", keychain = "Claude Code-credentials" } }',
-        'on = { pi = { file = "/srv/login/.credentials.json", keychain = "Claude Code-credentials" } }'),
-      key: "credentials[0].on.pi.keychain",
-      line: 'on = { pi = { file = "/srv/login/.credentials.json", keychain = "Claude Code-credentials" } }',
-      reason: "linux",
-    },
-    {
-      name: "a keychain item on the entry itself while a Linux machine is left to it",
-      lines: replace(base, 'owner = "household"', 'owner = "household"\nkeychain = "Claude Code-credentials"'),
-      key: "credentials[0].keychain",
-      line: 'keychain = "Claude Code-credentials"',
-      reason: "pi",
-    },
-    {
-      name: "a keychain item on a credential that is not a login",
-      lines: replace(replace(base, 'kind = "claude-login"', 'kind = "telegram"'),
-        'on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json", keychain = "Claude Code-credentials" } }',
-        'on = { mac = { file = "/Users/owner/.imprnt-hub/telegram.token", keychain = "Claude Code-credentials" } }'),
+      name: "a credential placement naming a source a placement cannot carry",
+      lines: replace(base, 'on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json" } }',
+        'on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json", keychain = "Claude Code-credentials" } }'),
       key: "credentials[0].on.mac.keychain",
-      line: 'on = { mac = { file = "/Users/owner/.imprnt-hub/telegram.token", keychain = "Claude Code-credentials" } }',
-      reason: "telegram",
+      line: 'on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json", keychain = "Claude Code-credentials" } }',
+      reason: "keychain",
     },
   ];
   for (const one of cases) {

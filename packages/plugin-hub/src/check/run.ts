@@ -31,7 +31,8 @@ import {
   voiceFor,
 } from "../registry/entries.ts";
 import { credentialOfPreset } from "../registry/presets.ts";
-import { loadRegistry, readSetting, type CredentialEntry } from "../registry/load.ts";
+import { loadRegistry, readSetting, registryDigest, type CredentialEntry } from "../registry/load.ts";
+import { readRegistryDigests, storeMachineOf } from "../hub/digest.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { overLimit, readPeaks, residentIds } from "../hub/peak.ts";
 import {
@@ -503,6 +504,35 @@ export async function runCheck(options: {
     });
   }
 
+  // --- every machine runs the ONE registry ---------------------------------
+  //
+  // A spoke reads a copy of the file, and a copy that fell behind is two
+  // machines disagreeing about who serves whom. Every hub writes the digest of
+  // the file it runs on, and this compares each machine's against the store
+  // machine's: the machine being checked by the file being read here, every
+  // other by the row its hub wrote. The store machine's own row is the
+  // reference and is never reported.
+  const reference = storeMachineOf(registry);
+  if (reference !== null) {
+    const digests = await readRegistryDigests(options.store);
+    const theirs = digests.find((row) => row.machine === reference);
+    if (theirs && theirs.sha256 !== "") {
+      for (const one of listMachines(registry)) {
+        if (one.id === reference) continue;
+        const sha = one.id === machine ? registryDigest(options.registryFile) : digests.find((row) => row.machine === one.id)?.sha256 ?? "";
+        if (sha === "" || sha === theirs.sha256) continue;
+        findings.push({
+          id: findingId(machine, "registry-stale", one.id),
+          kind: "registry-stale",
+          subject: one.id,
+          machine,
+          says: `the registry on ${one.id} is not the one ${reference} runs, so ${one.id}'s runner claims nothing new until it is: an agent moved between the two would be served by both or by neither`,
+          fix: `copy the registry from ${reference} to ${one.id} again, over the file ${one.id}'s units were started with${one.id === machine ? ` (${options.registryFile})` : ""}`,
+        });
+      }
+    }
+  }
+
   // --- what the kernel could add (criterion 8) ----------------------------
   findings.push(...kernelFindings(options.kernel ?? null, machine));
 
@@ -653,7 +683,29 @@ export async function runCheck(options: {
   //     died, thirteen turns failed over 31 hours, and `check` was green
   //     throughout because it never opened the file.
   const prober = options.credentials ?? realProber();
-  const declared = listCredentials(registry);
+  // ON A MACHINE THAT IS NOT THE HUB'S, only the credentials that are on it: the
+  // ones placed there and the ones its own agents and harvesters run on. A bot
+  // token lives on the hub machine alone, and opening it here at the hub
+  // machine's path would report every Mac check unreadable for a file the Mac
+  // was never meant to have.
+  const credentialsHere = new Set<string>();
+  for (const agent of mine) {
+    const own = credentialOfPreset(registry, agent.preset);
+    if (own) credentialsHere.add(own);
+    const harvest = harvestFor(registry, agent.person);
+    const harvester = harvest ? credentialOfPreset(registry, harvest.harvester) : null;
+    if (harvester) credentialsHere.add(harvester);
+  }
+  const spoken = voiceFor(registry);
+  if (spoken?.credential && transcriberFor(registry, machine)) credentialsHere.add(spoken.credential);
+  // The file as written is the store machine's, so a check there opens every
+  // credential the file names, exactly as before. A file in which no machine
+  // names a route of its own to the store has one route, and every machine on
+  // it is the file's own.
+  const elsewhere = reference !== null && registry.machine !== null && registry.machine !== reference;
+  const declared = listCredentials(registry).filter(
+    (one) => !elsewhere || registry.placed.credentials.includes(one.id) || credentialsHere.has(one.id),
+  );
   const doors: CredentialEntry[] = [];
   for (const entry of entries) {
     if (entry.kind !== "door") continue;
@@ -671,7 +723,7 @@ export async function runCheck(options: {
   }
   const opened = [...declared, ...doors];
   findings.push(
-    ...(await credentialFindings({ entries: opened, prober, machine })),
+    ...(await credentialFindings({ entries: opened, prober, machine, os: listMachines(registry).find((one) => one.id === machine)?.os })),
   );
 
   // --- a copy anywhere inside the roots the registry names (criterion 2) ---

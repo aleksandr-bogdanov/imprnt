@@ -34,7 +34,8 @@ import {
   listRunEntries,
   noticeRoute,
 } from "../registry/entries.ts";
-import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
+import { entryMachine, loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
+import { registryStale } from "../hub/digest.ts";
 import { waitRecorder, type AgentWait } from "./waiting.ts";
 import {
   credentialOfPreset,
@@ -402,7 +403,7 @@ export async function runRunner(options: {
   // each person's tree and vault there, so a runner on a spoke keeps its
   // session state on its own disk and files into the vault checkout that is
   // there, with nothing below this line knowing the difference.
-  const machine = listRunEntries(loadRegistry(options.registryFile)).find((one) => one.id === options.runner)?.machine ?? "";
+  const machine = entryMachine(options.registryFile, options.runner);
   const load = () => loadRegistry(options.registryFile, { machine });
   const first = load();
   // The memory reader for this platform. Nothing else of the seam is used here:
@@ -430,6 +431,13 @@ export async function runRunner(options: {
     const due = Date.parse(String(row.data.retry_at));
     if (Number.isFinite(due)) retries.set(row.id, due);
   }
+  /**
+   * Whether this runner's copy of the registry is behind the store machine's.
+   * A stale spoke keeps the sessions it has and claims nothing new, because the
+   * agents it would claim for are the ones the file it cannot see has moved.
+   * Measured against the store machine's own digest on every tick.
+   */
+  let stale = false;
   let reservations = 0;
   let measuredBytes = 0;
   let peakBytes = 0;
@@ -985,7 +993,7 @@ export async function runRunner(options: {
           own.session = null;
           if (own.reserved) { own.reserved = false; releaseCapacity(); }
         }
-        if (lifetime.sleeping) {
+        if (lifetime.sleeping || stale) {
           await Promise.race([Bun.sleep(setting(registry, "hub.tick_seconds") * 1000), stopped, own.left]);
           continue;
         }
@@ -1372,8 +1380,21 @@ export async function runRunner(options: {
     if (measuredBytes < before) capacityChanged();
   };
 
+  /**
+   * The copy of the registry this runner reads, measured against the store
+   * machine's on every tick. One diary line on each change, so a spoke that
+   * went quiet says why, and none at all while nothing changes.
+   */
+  const measureRegistry = async (): Promise<void> => {
+    const now = await registryStale(store, { registry: first, machine, file: options.registryFile });
+    if (now === stale) return;
+    stale = now;
+    await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: now ? "registry.stale" : "registry.current", actor: "runner",
+      detail: { machine, file: options.registryFile } });
+  };
+  await measureRegistry();
   for (const agent of agentsFor(first, { runner: options.runner })) {
-    if (Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
+    if (!stale && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
   }
   // Ready means SERVING, so a caller that is handed this runner is handed one
   // whose agents are up and fed rather than one that is still starting, and its
@@ -1395,8 +1416,9 @@ export async function runRunner(options: {
         continue;
       }
       try {
+        await measureRegistry();
         const wanted = agentsFor(registry, { runner: options.runner });
-        for (const agent of wanted) if (!live.has(agent.id) && !recovering.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
+        for (const agent of wanted) if (!stale && !live.has(agent.id) && !recovering.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
         for (const id of [...live.keys()]) {
           if (!wanted.some((agent) => agent.id === id)) await drop(id);
         }

@@ -65,16 +65,19 @@ os = "linux"
 
 # A machine that is not the hub's keeps its state and its role passwords on its
 # own disk and reaches the one store over the tailnet, so its entry may carry
-# its own state_dir, secrets_dir (`secrets` under its state_dir when absent)
-# and store_url. A process on that machine reads them in place of the [hub]
-# table's. THE ADDRESS BELOW IS AN EXAMPLE: it is the hub machine's tailnet
-# address, and the url carries no user and no password, because a process
-# supplies its own role and reads that role's password file from secrets_dir.
+# its own state_dir, secrets_dir (`secrets` under its state_dir when absent),
+# store_url and imprnt (the command that files a note there, a bare word
+# resolving through the unit's PATH). A process on that machine reads them in
+# place of the [hub] table's. THE ADDRESS BELOW IS AN EXAMPLE: it is the hub
+# machine's tailnet address, and the url carries no user and no password,
+# because a process supplies its own role and reads that role's password file
+# from secrets_dir.
 [[machines]]
 id = "mac"
 os = "macos"
 state_dir = "/Users/owner/.imprnt-hub"
 store_url = "postgres://100.64.0.1:5432/hub"
+imprnt = "imprnt"
 
 # A person, and the tree that is the boundary. Each agent's box reaches its own
 # person's tree and nothing else. The shared zone is a checkout inside that
@@ -106,8 +109,10 @@ harvest_report = true
 # Where this person's tree and vault are on a machine that is not the hub's,
 # keyed by machine id. An agent whose runner is on that machine is boxed in the
 # tree there and files into the vault there. A placement names a tree, and it
-# names a vault whenever the entry does. A person who says nothing about a
-# machine keeps the paths above on it.
+# names a vault whenever the entry does; it may also name the person's
+# filing_rules, instructions, mcp and settings there. Those four are checked
+# readable only on a machine one of the person's agents runs on. A person who
+# says nothing about a machine keeps the paths above on it.
 on = { mac = { tree = "/Users/owner/vault-project", vault = "/Users/owner/vault-project" } }
 
 [[people]]
@@ -131,12 +136,13 @@ id = "household-claude"
 kind = "claude-login"
 file = "/var/lib/imprnt-hub/credentials/.credentials.json"
 owner = "household"
-# Where the same login is on a machine that is not the hub's. On a Mac, Claude
-# Code keeps its login in the keychain item named here, so `check` opens that
-# item, the copy scan takes its tokens from it, and a launch copies it into
-# `file` (mode 600, remade for every session) because the boxed loop reads a
-# file and never the keychain. `keychain` is allowed on a macOS machine only.
-on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json", keychain = "Claude Code-credentials" } }
+# Where this credential's file is on a machine that is not the hub's. A model
+# login there is a login FILE made for that machine's runner, once, with the
+# CLI pointed at the file's directory (`check` prints the command while the
+# file is missing). It is never the owner's own login and never a copy of one:
+# a refresh token is single use, and a copy that refreshes revokes the login it
+# was copied from.
+on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json" } }
 
 [[credentials]]
 id = "telegram-bot"
@@ -247,6 +253,16 @@ machine = "mac"
 schedule = "always"
 memory_limit_mb = 128
 
+# The other machine's sync, over the checkouts placed there, so a note the
+# runner there files reaches the remote and the hub machine's agents.
+[[run]]
+id = "vault-sync-mac"
+kind = "sync"
+machine = "mac"
+repositories = ["p1-vault"]
+schedule = "every 15m"
+memory_limit_mb = 128
+
 [[run]]
 id = "vault-sync"
 machine = "pi"
@@ -309,6 +325,10 @@ path = "/var/lib/imprnt-hub/p1/vault-project"
 remote = "origin"
 branch = "main"
 required = true
+# Where this checkout is on a machine that is not the hub's (and, when it
+# differs, the remote name it wears there), so a sync entry on that machine
+# keeps the vault checkout there in step with the same remote.
+on = { mac = { path = "/Users/owner/vault-project" } }
 
 # One checkout of the shared zone per person, inside that person's own vault at
 # the path the mount implies. `zone = true` is what the loader checks that path

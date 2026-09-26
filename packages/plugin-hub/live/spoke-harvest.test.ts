@@ -17,9 +17,13 @@
 // IT MAKES ITS OWN SCRATCH VAULT with the real `imprnt init`, under a
 // temporary directory it removes at the end, so it needs no vault of anybody's
 // and never writes into one. What it needs is the real `claude` on PATH and a
-// real login where this machine keeps one: the keychain item on a Mac, the
-// login file on Linux. Both are checked before the test is named, the reason
-// is printed, and a box without them skips by name rather than passing.
+// login FILE made for a runner on this machine, the one the operator makes once
+// with `claude auth login` pointed at the runner's own login directory (on a
+// Linux box the account's own login file stands in). Never the owner's keychain
+// item and never a copy of one: a refresh token is single use, and a copy that
+// refreshes revokes the login it was copied from. Both are checked before the
+// test is named, the reason is printed, and a box without them skips by name
+// rather than passing.
 //
 // THE SPOKE SHAPE IS THE REAL ONE. The hub machine's paths in the registry are
 // paths this box does not have, and the person's tree, vault and login on the
@@ -35,7 +39,7 @@
 // to produce.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { seam, startCluster, until, type Cluster } from "../test/helpers/cluster.ts";
@@ -57,7 +61,7 @@ import {
   type StagedHub,
 } from "../test/helpers/hub-fixture.ts";
 import type { CredentialSpec, PresetSpec } from "../test/helpers/registry.ts";
-import { readKeychainItem } from "../src/adapters/keychain.ts";
+import { loginCommand } from "../src/adapters/launch.ts";
 import { encodeHarvestBody, harvestRowId } from "../src/harvest/row.ts";
 import type { SliceLine } from "../src/harvest/slice.ts";
 
@@ -68,9 +72,6 @@ const ANSWER_MS = 300_000;
 /** The cheap real model, named here and nowhere else in this file. */
 const MODEL = "claude-haiku-4-5-20251001";
 
-/** The keychain item Claude Code keeps its login in on a Mac. */
-const KEYCHAIN_ITEM = "Claude Code-credentials";
-
 /** Paths the hub machine has and this box does not. */
 const HUB_ONLY = join("/nowhere-on-this-machine", crypto.randomUUID());
 
@@ -78,24 +79,23 @@ const CLAUDE = claudeGate();
 announceGate(CLAUDE, "the live spoke harvest");
 
 /**
- * Where this machine keeps the login the spoke's runner will run on: the
- * keychain item on a Mac, the login file on Linux. Asked once, at module load,
- * so the reason goes into the test name.
+ * The login file the spoke's runner will run on: the runner's own login under
+ * the account's hub state directory, made once by the operator, and on a Linux
+ * box the account's own login file when there is no runner login. Asked once,
+ * at module load, so the reason goes into the test name.
  */
-function loginSource(): { ok: true; keychain?: string; file?: string } | { ok: false; reason: string } {
-  if (process.platform === "darwin") {
-    const read = readKeychainItem(KEYCHAIN_ITEM);
-    if (!read.ok) return { ok: false, reason: read.says };
+function loginSource(): { ok: true; file: string } | { ok: false; reason: string } {
+  const own = join(homedir(), ".imprnt-hub", "login", ".credentials.json");
+  const candidates = process.platform === "darwin" ? [own] : [own, join(homedir(), ".claude", ".credentials.json")];
+  for (const file of candidates) {
+    if (!existsSync(file)) continue;
     try {
-      if (typeof JSON.parse(read.text).claudeAiOauth !== "object") throw new Error("no login");
+      if (typeof JSON.parse(readFileSync(file, "utf8")).claudeAiOauth === "object") return { ok: true, file };
     } catch {
-      return { ok: false, reason: `the keychain item ${JSON.stringify(KEYCHAIN_ITEM)} holds no claudeAiOauth login` };
+      // Not a login: the next candidate, or the reason below.
     }
-    return { ok: true, keychain: KEYCHAIN_ITEM };
   }
-  const file = join(homedir(), ".claude", ".credentials.json");
-  if (!existsSync(file)) return { ok: false, reason: `${file} is not there` };
-  return { ok: true, file };
+  return { ok: false, reason: `no runner login at ${own}: make one once with ${loginCommand(own)}` };
 }
 
 const LOGIN = loginSource();
@@ -164,19 +164,14 @@ test.skipIf(reason !== "")(
         credential: "household-claude",
       };
       // One credential for the household, at the hub machine's path on the
-      // entry and at this machine's under its placement: the keychain item on
-      // a Mac, copied into the spoke's state directory for every launch, or the
-      // login file on Linux.
+      // entry and at this machine's under its placement: the runner's own
+      // login file here.
       const credential: CredentialSpec = {
         id: "household-claude",
         kind: "claude-login",
         file: join(HUB_ONLY, "credentials", ".credentials.json"),
         owner: "household",
-        on: {
-          [SPOKE_MACHINE]: LOGIN.ok && LOGIN.keychain !== undefined
-            ? { file: join(spokeState, "login", ".credentials.json"), keychain: LOGIN.keychain }
-            : { file: LOGIN.ok ? LOGIN.file! : "" },
-        },
+        on: { [SPOKE_MACHINE]: { file: LOGIN.ok ? LOGIN.file : "" } },
       };
       const placement = spokeStage().registry!;
       it = await stageHub(cluster, {
@@ -314,13 +309,6 @@ test.skipIf(reason !== "")(
       // the hub machine's.
       expect(existsSync(join(spokeState, PERSON, "harvest"))).toBe(true);
       expect(existsSync(join(it.stateDir, PERSON))).toBe(false);
-      // On a Mac the login the loop ran on was the keychain item, copied into
-      // the spoke's state directory for the launch and readable by nobody else.
-      if (LOGIN.ok && LOGIN.keychain !== undefined) {
-        const copy = join(spokeState, "login", ".credentials.json");
-        expect(existsSync(copy)).toBe(true);
-        expect(statSync(copy).mode & 0o777).toBe(0o600);
-      }
 
       // --- 3. THE WATERMARK IS THE LAST HARVESTED LINE'S OWN TIME, which is
       //     the property that stops a slice being harvested twice and is the
@@ -345,10 +333,8 @@ test.skipIf(reason !== "")(
     } finally {
       await runner?.stop();
       await it?.stop();
-      // --- 5. Everything this run made goes, the copy of the login first: it
-      //     is a real login and it lives under a directory that is about to
-      //     be removed, but a removal that failed must not leave it behind.
-      rmSync(join(spokeState, "login"), { recursive: true, force: true });
+      // --- 5. Everything this run made goes. The login file is the runner's
+      //     own, outside this directory, and is left exactly where it was.
       await vault?.remove();
       rmSync(dir, { recursive: true, force: true });
     }

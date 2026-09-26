@@ -16,7 +16,10 @@ export async function command(args: string[]): Promise<number> {
   const [verb, registryFile, target, extra, ...rest] = args;
   const usage = () => { process.stderr.write(cliUsage("en") + "\n"); return 2; };
   if (!registryFile || !["check", "status", "metrics", "install", "recover", "relayout"].includes(verb) || rest.length) return usage();
-  if (verb !== "install" && extra || ["metrics", "relayout"].includes(verb) && target || verb === "recover" && !/^(agent|door|run):[^:]+$/.test(target ?? "")) return usage();
+  // `check`, `status` and `metrics` take the machine as their target, and
+  // `recover` takes it after the piece to recover. A machine says which copy
+  // of the file to read and which route to the store to take.
+  if (!["install", "recover"].includes(verb) && extra || verb === "relayout" && target || verb === "recover" && !/^(agent|door|run):[^:]+$/.test(target ?? "")) return usage();
   if (verb === "install" && (target && !["zone", "database", "services", "entry", "--dry"].includes(target) || ["zone", "database", "--dry"].includes(target) && extra || ["services", "entry"].includes(target) && !extra)) return usage();
   try {
     if (verb === "relayout") {
@@ -26,10 +29,17 @@ export async function command(args: string[]): Promise<number> {
       process.stdout.write(operation("en", { operation: "relayout", target: registryFile, result: changed ? "done" : "unchanged" }) + "\n");
       return 0;
     }
-    const registry = loadRegistry(registryFile);
-    const machines = listMachines(registry);
-    const machine = target ?? (machines.length === 1 ? machines[0].id : undefined);
+    const machines = listMachines(loadRegistry(registryFile));
+    const named = verb === "recover" ? extra : verb === "install" ? undefined : target;
+    const machine = named ?? (machines.length === 1 ? machines[0].id : undefined);
     if (["check", "status"].includes(verb) && (!machine || !machines.some(m => m.id === machine))) return usage();
+    // A file with two machines has two routes to the store, and the command
+    // has to be told which one it is on.
+    if (["metrics", "recover"].includes(verb) && machines.length >= 2 && (!machine || !machines.some(m => m.id === machine))) return usage();
+    // Read FOR THIS MACHINE: its own state directory, its own secrets and its
+    // own route to the store, so a command on a spoke reaches the store the
+    // spoke reaches rather than dialling the hub machine's loopback.
+    const registry = loadRegistry(registryFile, { machine: machine ?? "" });
     if (verb === "install") {
       if (!target && (machines.length !== 1 || listRunEntries(registry).filter(e => e.kind === "hub").length !== 1)) return usage();
       await runInstall({ registryFile, stage: target === "--dry" ? "database" : target, target: extra, ...(target === "--dry" ? { dry: true } : {}) });
