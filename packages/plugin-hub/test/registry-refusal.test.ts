@@ -371,3 +371,141 @@ test("a watch count that is not a whole number above zero, and a schedule that i
   expect(refused.line).toBe(lines.lastIndexOf('schedule = "always"') + 1);
   expect(refused.reason).toContain("cadence");
 });
+
+// ---------------------------------------------------------------------------
+// A hunt entry (a watch on kleinanzeigen, mydealz or vstdeals). Each source has
+// its own keys: a sentry key on a hunt and a hunt key on the sentry are refused
+// by key and line, the audit agent and the triage master are this person's
+// agents with a door and a chat, the master carries `role = "triage"`, the
+// specs folder is absolute and the lane is one of two.
+// ---------------------------------------------------------------------------
+
+/** The watch household above plus a triage master and one hunt, each line replaceable. */
+function huntFixture(over: Record<string, string | null> = {}): string[] {
+  const line = (key: string, fallback: string): string[] => {
+    const said = Object.hasOwn(over, key) ? over[key] : fallback;
+    return said === null ? [] : [said];
+  };
+  const base = watchFixture(Object.fromEntries(Object.entries(over).filter(([key]) => key.startsWith("sentry."))
+    .map(([key, value]) => [key.slice("sentry.".length), value])));
+  return [
+    ...base,
+    "",
+    "[[agents]]",
+    'id = "p1-triage"',
+    'person = "p1"',
+    'preset = "daily"',
+    'chat = "1000000002"',
+    'door = "door-fake"',
+    'runner = "runner-pi"',
+    ...line("role", 'role = "triage"'),
+    "",
+    "[[run]]",
+    'id = "watch-kleinanzeigen"',
+    'kind = "watch"',
+    ...line("source", 'source = "kleinanzeigen"'),
+    'machine = "pi"',
+    ...line("schedule", 'schedule = "every 30m"'),
+    ...line("person", 'person = "p1"'),
+    ...line("specs", 'specs = "/var/lib/imprnt-hub/p1/watch/specs/kleinanzeigen"'),
+    ...line("audit", 'audit = "p1-triage"'),
+    ...line("triage", 'triage = "p1-triage"'),
+    ...line("lane", 'lane = "digest"'),
+    // One more line a check plants, such as a key of the other source.
+    ...(typeof over.extra === "string" ? [over.extra] : []),
+    "memory_limit_mb = 192",
+  ];
+}
+
+test("a hunt entry loads with its own fields on the row, a cadence schedule, and the triage role on the master", async () => {
+  const { loadRegistry } = await seam("src/registry/load.ts");
+  const { listRunEntries, listAgents } = await seam("src/registry/entries.ts");
+  const file = await scratch(huntFixture());
+  const registry = (loadRegistry as Function)(file);
+  const entries = (listRunEntries as Function)(registry) as Record<string, unknown>[];
+  const hunt = entries.find((one) => one.id === "watch-kleinanzeigen")!;
+  expect(hunt).toMatchObject({
+    kind: "watch", source: "kleinanzeigen", machine: "pi", schedule: "every 30m", person: "p1",
+    specs: "/var/lib/imprnt-hub/p1/watch/specs/kleinanzeigen", audit: "p1-triage", triage: "p1-triage", lane: "digest", memory_limit_mb: 192,
+  });
+  for (const key of ["agent", "credential", "org", "query", "min_events"]) expect(hunt).not.toHaveProperty(key);
+  const master = ((listAgents as Function)(registry) as Record<string, unknown>[]).find((one) => one.id === "p1-triage")!;
+  expect(master.role).toBe("triage");
+  expect(((listAgents as Function)(registry) as Record<string, unknown>[]).find((one) => one.id === "p1-lair")).not.toHaveProperty("role");
+  // The three optional keys absent: the reader's defaults, never the loader's.
+  const bare = await scratch(huntFixture({ specs: null, triage: null, lane: null }));
+  const lean = ((listRunEntries as Function)((loadRegistry as Function)(bare)) as Record<string, unknown>[]).find((one) => one.id === "watch-kleinanzeigen")!;
+  for (const key of ["specs", "triage", "lane"]) expect(lean).not.toHaveProperty(key);
+  // The other two sources load the same way.
+  for (const source of ["mydealz", "vstdeals"]) {
+    const other = await scratch(huntFixture({ source: `source = "${source}"` }));
+    expect(((listRunEntries as Function)((loadRegistry as Function)(other)) as Record<string, unknown>[]).find((one) => one.id === "watch-kleinanzeigen")).toMatchObject({ source });
+    await rm(dirname(other), { recursive: true, force: true });
+  }
+  await rm(dirname(file), { recursive: true, force: true });
+  await rm(dirname(bare), { recursive: true, force: true });
+});
+
+test("a hunt carrying a sentry key, and the sentry carrying a hunt key, are refused by key and by line", async () => {
+  for (const raw of ['agent = "p1-lair"', 'credential = "sentry"', 'org = "example-org"', 'query = "is:unresolved"', "min_events = 3", "notify_events = 3", "reminder_days = 3"]) {
+    const key = raw.split(" ")[0];
+    const lines = huntFixture({ extra: raw });
+    const refused = await watchRefusal(lines);
+    expect(refused.key, raw).toBe(`run[3].${key}`);
+    expect(refused.line, raw).toBe(lines.lastIndexOf(raw) + 1);
+    expect(refused.reason, raw).toContain(`carries ${key}, which is a key of the sentry source`);
+  }
+  for (const raw of ['audit = "p1-lair"', 'triage = "p1-triage"', 'specs = "/var/lib/imprnt-hub/x"', 'lane = "digest"']) {
+    const key = raw.split(" ")[0];
+    const lines = watchFixture({ reminder_days: raw });
+    const refused = await watchRefusal(lines);
+    expect(refused.key, raw).toBe(`run[2].${key}`);
+    expect(refused.line, raw).toBe(lineOf(lines, raw));
+    expect(refused.reason, raw).toContain(`carries ${key}, which is a key of a hunt source`);
+  }
+});
+
+test("a hunt with no audit is refused on the entry's own line, and an audit or triage that is not this person's chat agent is refused on its line", async () => {
+  {
+    const lines = huntFixture({ audit: null });
+    const refused = await watchRefusal(lines);
+    expect(refused.key).toBe("run[3].audit");
+    expect(refused.line).toBe(lineOf(lines, 'id = "watch-kleinanzeigen"'));
+    expect(refused.reason).toContain("no audit");
+  }
+  for (const [key, raw, said] of [
+    ["audit", 'audit = "p2-lair"', "p2's agent and not p1's"],
+    ["audit", 'audit = "p1-batch"', "names no door and no chat"],
+    ["audit", 'audit = "nobody"', "is not an agent of this file"],
+    ["triage", 'triage = "p2-lair"', "p2's agent and not p1's"],
+    ["triage", 'triage = "p1-batch"', "names no door and no chat"],
+    ["triage", 'triage = "nobody"', "is not an agent of this file"],
+    ["triage", 'triage = "p1-lair"', 'carries no role = "triage"'],
+    ["audit", 'audit = ""', "must be a nonempty string"],
+  ]) {
+    const lines = huntFixture({ [key]: raw });
+    const refused = await watchRefusal(lines);
+    expect(refused.key, raw).toBe(`run[3].${key}`);
+    expect(refused.line, raw).toBe(lineOf(lines, raw));
+    expect(refused.reason, raw).toContain(said);
+  }
+});
+
+test("a relative specs folder, a lane that is not one of the two, a stopped schedule and an agent role that is not triage are refused by key and by line", async () => {
+  for (const [key, raw, said] of [
+    ["specs", 'specs = "watch/specs"', "absolute path"],
+    ["lane", 'lane = "fast"', "tripwire or digest"],
+    ["schedule", 'schedule = "always"', "cadence"],
+  ]) {
+    const lines = huntFixture({ [key]: raw });
+    const refused = await watchRefusal(lines);
+    expect(refused.key, raw).toBe(`run[3].${key}`);
+    expect(refused.line, raw).toBe(lines.lastIndexOf(raw) + 1);
+    expect(refused.reason, raw).toContain(said);
+  }
+  const lines = huntFixture({ role: 'role = "boss"' });
+  const refused = await watchRefusal(lines);
+  expect(refused.key).toBe("agents[3].role");
+  expect(refused.line).toBe(lineOf(lines, 'role = "boss"'));
+  expect(refused.reason).toContain('the one role an agent may carry is "triage"');
+});

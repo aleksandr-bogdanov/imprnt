@@ -61,6 +61,48 @@ export function link(value: unknown): string {
   }
 }
 
+/**
+ * A string from a source as inert chat text: every Discord markdown character
+ * escaped and every mention broken.
+ *
+ * A title is whatever a stranger wrote, so `**`, a masked link or `@everyone`
+ * inside one would be markup the chat honours and a ping the bot may fire. The
+ * backslash is Discord's own escape. A mention has no escape, so the `@` is
+ * followed by a zero-width space, which breaks `@everyone`, `@here` and
+ * `<@id>` alike and reads as the same characters.
+ */
+export function inert(text: string): string {
+  return text.replace(/[\\*_`~|[\]]/g, (one) => `\\${one}`).replace(/@/g, "@\u200b");
+}
+
+export interface NoticeTarget {
+  person: string;
+  agent: string;
+  route: ReplyRoute;
+  platform: string;
+  language: Language;
+  key: string;
+}
+
+/**
+ * One keyed notice through the security-definer function the door and the hub
+ * already ask with, because the hub's role owns no insert on the outbox.
+ * Split into parts by the reply splitter, and the FIRST key decides for every
+ * part: each part carries a key of its own and the function's conflict clause
+ * is per row, so a longer body later under the same key would otherwise post
+ * its second part under a key the first posting never used, half a message
+ * whose first half was never posted. False when the key was already there.
+ */
+export async function postNotice(sql: StoreLike["sql"], notice: NoticeTarget, body: string): Promise<boolean> {
+  const already = (await sql`select id from outbox where notice_key = ${notice.key}`) as unknown as unknown[];
+  if (already.length > 0) return false;
+  for (const [index, part] of prepareReply(body, notice.platform, notice.language).entries()) {
+    const key = index === 0 ? notice.key : `${notice.key}:part:${index + 1}`;
+    await sql`select hub_door_notice(${notice.person}, ${notice.agent}, ${part}, ${key}, ${notice.route}::jsonb, ${index + 1})`;
+  }
+  return true;
+}
+
 export interface SweepLanding {
   entry: string;
   machine: string;
@@ -72,14 +114,7 @@ export interface SweepLanding {
   removed: string[];
   /** The digest, or null when the day had nothing to say. */
   digest: string | null;
-  notice: {
-    person: string;
-    agent: string;
-    route: ReplyRoute;
-    platform: string;
-    language: Language;
-    key: string;
-  };
+  notice: NoticeTarget;
   /** The counts the diary line carries, never the text. */
   counts: Record<string, number | boolean>;
   at: Date;
@@ -105,22 +140,9 @@ export async function landSweep(store: StoreLike, landing: SweepLanding): Promis
     const inside = { sql, url: store.url } as StoreLike;
     for (const id of landing.removed) await removeRow(inside, landing.sheet, id);
     for (const [id, data] of Object.entries(landing.rows)) await putRow(inside, landing.sheet, id, data);
-    if (landing.digest !== null) {
-      const { notice } = landing;
-      // The day's key decides for EVERY part. Each part carries a key of its
-      // own and the function's conflict clause is per row, so a longer digest
-      // later the same day would post its second part under a key the morning
-      // never used, half a message whose first half was never posted.
-      const already = (await sql`select id from outbox where notice_key = ${notice.key}`) as unknown as unknown[];
-      posted = already.length === 0;
-      if (posted) {
-        for (const [index, part] of prepareReply(landing.digest, notice.platform, notice.language).entries()) {
-          const key = index === 0 ? notice.key : `${notice.key}:part:${index + 1}`;
-          await sql`select hub_door_notice(${notice.person}, ${notice.agent}, ${part}, ${key},
-            ${notice.route}::jsonb, ${index + 1})`;
-        }
-      }
-    }
+    // The day's key decides for every part, which is what makes a second
+    // sweep on the same day write the state again and post nothing.
+    if (landing.digest !== null) posted = await postNotice(sql as unknown as StoreLike["sql"], landing.notice, landing.digest);
     // The hub's own stream, because this process opens the store as the hub's
     // role and the ledger admits that role on this stream and no other kind
     // of its own. The counts and never the text: a title is a string a

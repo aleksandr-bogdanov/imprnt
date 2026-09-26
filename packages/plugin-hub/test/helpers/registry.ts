@@ -108,6 +108,11 @@ export interface RunSpec {
   min_events?: number;
   notify_events?: number;
   reminder_days?: number;
+  /** A hunt's own: its specs folder, its audit agent, its triage master and its lane. */
+  specs?: string;
+  audit?: string;
+  triage?: string;
+  lane?: string;
 }
 
 /**
@@ -514,6 +519,10 @@ function renderRegistry(spec: RegistrySpec): string {
       min_events: entry.min_events,
       notify_events: entry.notify_events,
       reminder_days: entry.reminder_days,
+      specs: entry.specs,
+      audit: entry.audit,
+      triage: entry.triage,
+      lane: entry.lane,
     });
     lines.push("");
   }
