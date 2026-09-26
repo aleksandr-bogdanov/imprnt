@@ -14,12 +14,15 @@
  *      name and the number it lost by. A listing that does not carry the fact
  *      a rule needs PASSES the rule: an unknown price is not a price above the
  *      ceiling, and dropping on what is not known is judgment.
- *   2. the seen row. Announced at this price or lower is `seen`. A fall of five
- *      percent or more re-enters, and so does a fall of any size that crosses
- *      the spec's `price_at_or_under` line: told 270 with the line at 260, 259
- *      is the event the spec was written for, eleven euro or not. A listing
- *      declined before (never announced, or its verdict was ignore) at the
- *      same numbers is `seen` too; any other price is evaluated afresh.
+ *   2. the seen row. Every price change is re-evaluated and its audit row
+ *      carries old and new, but an announced listing re-enters the person's
+ *      chat only on a fall of five percent or more, or on a fall of any size
+ *      that crosses the spec's `price_at_or_under` line: told 270 with the
+ *      line at 260, 259 is the event the spec was written for, eleven euro or
+ *      not, while 200 to 195 is a bump and drops `seen` with both prices on
+ *      the row. A listing declined before (never announced, or its verdict
+ *      was ignore) at the same numbers is `seen` too; any other price is
+ *      evaluated afresh.
  *   3. the notify predicate. True is notify. False on a tripwire drops with the
  *      predicate's own name. False or absent on a digest is triage: `price
  *      changed` when the listing re-entered by price, carrying old and new,

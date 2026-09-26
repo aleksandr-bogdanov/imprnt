@@ -40,7 +40,9 @@ export function triageBody(items: { listing: Listing; spec: WatchSpec; from?: nu
   const blocks = items.map(({ listing, spec, from, reason }) => {
     const price = listing.price === null ? "no price" : `${listing.price} ${listing.currency ?? "EUR"}`;
     const lines = [
-      `id: ${listing.id}`,
+      // The spec's own id in front, because two hunts may see one listing
+      // and each is asked and answered on its own.
+      `id: ${spec.id}/${listing.id}`,
       `watch: ${spec.id}`,
       `title: ${listing.title}`,
       `price: ${price}${from == null ? "" : ` (was ${from})`}`,

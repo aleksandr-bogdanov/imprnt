@@ -87,7 +87,7 @@ export async function deriveLines(
       and received_at <= ${wideUntil}::timestamptz`) as unknown as {
     id: string;
     person: string;
-    source: { log_id?: string; at?: string; text?: string; media?: unknown[] } | null;
+    source: { log_id?: string; at?: string; text?: string; media?: unknown[]; origin?: string } | null;
   }[];
   for (const row of said) {
     // Every kind of row, because a harvest demand's committed row is a line in
@@ -106,6 +106,9 @@ export async function deriveLines(
         direction: "in",
         from: row.person,
         text,
+        // A watcher's row carries its origin in its provenance, the way a
+        // watcher's notice carries it on the route.
+        ...(source.origin === "watcher" ? { origin: "watcher" as const } : {}),
       } as ChatLine,
       order: 0,
     });

@@ -191,19 +191,22 @@ test(
 
       // The state: one row per listing, the announced ones marked at their price.
       const rows = await stateRows(staged);
-      expect(rows.map((row) => row.id).sort()).toEqual(["410001", "410002", "410003", "410004", "410005", "410006", "620001", "620002", "730001", "730002", "730003"]);
+      expect(rows.map((row) => row.id).sort()).toEqual([
+        "de__ddr5/410001", "de__ddr5/410002", "de__ddr5/410003", "de__ddr5/410004", "de__ddr5/410005", "de__ddr5/410006",
+        "de__gpu/620001", "de__gpu/620002", "de__monitor/730001", "de__monitor/730002", "de__monitor/730003",
+      ]);
       const at = T0.toISOString();
-      expect(rows.find((row) => row.id === "410001")!.data).toEqual({
+      expect(rows.find((row) => row.id === "de__ddr5/410001")!.data).toEqual({
         spec: "de__ddr5", first_seen: at, last_seen: at, price: 180, announced_price: 180, announced_at: at, outcome: "triage", reason: "no-target (price_at_or_under by +30)",
       });
-      expect(rows.find((row) => row.id === "620001")!.data).toMatchObject({ spec: "de__gpu", price: 90, announced_price: 90, announced_at: at, outcome: "notify", reason: "hit" });
-      expect(rows.find((row) => row.id === "410002")!.data).toMatchObject({ price: 310, announced_price: null, announced_at: null, outcome: "drop", reason: "max_price by +50 (max 260)" });
-      expect(rows.find((row) => row.id === "410003")!.data).toMatchObject({ outcome: "drop", reason: "wanted_ad (wanted ad)" });
-      expect(rows.find((row) => row.id === "410004")!.data).toMatchObject({ outcome: "drop", reason: "exclude (laptop)" });
-      expect(rows.find((row) => row.id === "410005")!.data).toMatchObject({ outcome: "drop", reason: "rental_ad (rental ad)" });
-      expect(rows.find((row) => row.id === "410006")!.data).toMatchObject({ outcome: "drop", reason: "max_price by +950.5 (max 260)" });
-      expect(rows.find((row) => row.id === "620002")!.data).toMatchObject({ outcome: "drop", reason: "price_at_or_under by +300 (price_at_or_under 100)" });
-      expect(rows.find((row) => row.id === "730001")!.data).toMatchObject({ outcome: "triage", reason: "no-target", announced_price: 120 });
+      expect(rows.find((row) => row.id === "de__gpu/620001")!.data).toMatchObject({ spec: "de__gpu", price: 90, announced_price: 90, announced_at: at, outcome: "notify", reason: "hit" });
+      expect(rows.find((row) => row.id === "de__ddr5/410002")!.data).toMatchObject({ price: 310, announced_price: null, announced_at: null, outcome: "drop", reason: "max_price by +50 (max 260)" });
+      expect(rows.find((row) => row.id === "de__ddr5/410003")!.data).toMatchObject({ outcome: "drop", reason: "wanted_ad (wanted ad)" });
+      expect(rows.find((row) => row.id === "de__ddr5/410004")!.data).toMatchObject({ outcome: "drop", reason: "exclude (laptop)" });
+      expect(rows.find((row) => row.id === "de__ddr5/410005")!.data).toMatchObject({ outcome: "drop", reason: "rental_ad (rental ad)" });
+      expect(rows.find((row) => row.id === "de__ddr5/410006")!.data).toMatchObject({ outcome: "drop", reason: "max_price by +950.5 (max 260)" });
+      expect(rows.find((row) => row.id === "de__gpu/620002")!.data).toMatchObject({ outcome: "drop", reason: "price_at_or_under by +300 (price_at_or_under 100)" });
+      expect(rows.find((row) => row.id === "de__monitor/730001")!.data).toMatchObject({ outcome: "triage", reason: "no-target", announced_price: 120 });
 
       // The audit file: one JSON row per listing, the same fields as the chat line.
       const filed = auditRows(staged, "2026-09-26");
@@ -218,7 +221,7 @@ test(
       // The notices: the audit notice on the master's chat and the notify on
       // the owner's, both pinned as a watcher's.
       const notices = await noticesOf(staged);
-      expect(notices.map((one) => one.notice_key)).toEqual([`watch-notify:${ENTRY}:620001:90`, `watch-audit:${ENTRY}:${at}`]);
+      expect(notices.map((one) => one.notice_key)).toEqual([`watch-notify:${ENTRY}:de__gpu/620001:90`, `watch-audit:${ENTRY}:${at}`]);
       expect(notices[0]).toMatchObject({ agent: "p1-lair", body: "de\\_\\_gpu: Wolkenkarte GPU 8GB - 90 EUR <https://www.kleinanzeigen.de/s-anzeige/wolkenkarte-8gb/620001-225-1000>", route: { door: "door-fake", chat: CHAT, origin: "watcher" } });
       expect(notices[1]).toMatchObject({ agent: TRIAGE, route: { door: "door-fake", chat: AUDIT_CHAT, origin: "watcher" } });
       const audit = notices[1].body.split("\n");
@@ -241,8 +244,8 @@ test(
       });
       // The body: every triage listing with the owner's own words, then the fixed instruction and nothing else.
       expect(job.body.endsWith(TRIAGE_INSTRUCTION)).toBe(true);
-      for (const id of ["410001", "730001", "730002", "730003"]) expect(job.body).toContain(`id: ${id}\n`);
-      expect(job.body).not.toContain("id: 620001");
+      for (const id of ["de__ddr5/410001", "de__monitor/730001", "de__monitor/730002", "de__monitor/730003"]) expect(job.body).toContain(`id: ${id}\n`);
+      expect(job.body).not.toContain("620001");
       expect(job.body).toContain("owner says: a 2x16 kit only, not 1x32");
       expect(job.body).toContain("owner's note: the build wants 32GB at 6000");
       expect(job.body).toContain("owner says: 27 inch or bigger");
@@ -273,7 +276,7 @@ test(
       expect(second.filter((row) => row.repeat === true).map((row) => row.id).sort()).toEqual(["410002", "410003", "410004", "410005", "410006"]);
       expect((await noticesOf(staged)).length).toBe(2);
       expect((await pendingRows(staged)).map((row) => row.id)).toEqual([first.job!]);
-      expect((await stateRows(staged)).find((row) => row.id === "410001")!.data).toMatchObject({ last_seen: later(30).toISOString(), announced_price: 180, outcome: "drop", reason: "seen by 0 (announced before)" });
+      expect((await stateRows(staged)).find((row) => row.id === "de__ddr5/410001")!.data).toMatchObject({ last_seen: later(30).toISOString(), announced_price: 180, outcome: "drop", reason: "seen by 0 (announced before)" });
       expect((await stampOf(staged))?.data).toMatchObject({ at: later(30).toISOString() });
     } finally {
       await staged.stop();
@@ -289,10 +292,11 @@ test(
     try {
       const first = await tick(staged, T0);
       await settle(staged, first.job!, [
-        "410001 | tell | a clean 2x16 kit well under the going rate",
-        "730001 | ignore | 27 inch at 120 is the ordinary price",
-        "730002 | draft | Hallo, ist der Monitor noch zu haben und wann kann ich ihn abholen?",
+        "de__ddr5/410001 | tell | a clean 2x16 kit well under the going rate",
+        "de__monitor/730001 | ignore | 27 inch at 120 is the ordinary price",
+        "de__monitor/730002 | draft | Hallo, ist der Monitor noch zu haben und wann kann ich ihn abholen?",
         "999999 | tell | an id that was never in the batch",
+        "730003 | tell | a bare listing id without its spec is not a line about anything",
         "this line is not a verdict at all",
       ].join("\n"));
 
@@ -305,15 +309,15 @@ test(
       // The rows: the verdict written into each listing's row, and the two
       // declined ones re-enter only on a price change.
       const rows = await stateRows(staged);
-      expect(rows.find((row) => row.id === "410001")!.data).toMatchObject({ verdict: "tell", announced_price: 180, outcome: "drop", reason: "seen by 0 (announced before)" });
-      expect(rows.find((row) => row.id === "730001")!.data).toMatchObject({ verdict: "ignore", announced_price: null, announced_at: null, reason: "seen (declined before, unchanged)" });
-      expect(rows.find((row) => row.id === "730002")!.data).toMatchObject({ verdict: "draft", draft: "Hallo, ist der Monitor noch zu haben und wann kann ich ihn abholen?", announced_price: 200 });
-      expect(rows.find((row) => row.id === "730003")!.data).toMatchObject({ verdict: "unreadable", announced_price: null, announced_at: null });
+      expect(rows.find((row) => row.id === "de__ddr5/410001")!.data).toMatchObject({ verdict: "tell", announced_price: 180, outcome: "drop", reason: "seen by 0 (announced before)" });
+      expect(rows.find((row) => row.id === "de__monitor/730001")!.data).toMatchObject({ verdict: "ignore", announced_price: null, announced_at: null, reason: "seen (declined before, unchanged)" });
+      expect(rows.find((row) => row.id === "de__monitor/730002")!.data).toMatchObject({ verdict: "draft", draft: "Hallo, ist der Monitor noch zu haben und wann kann ich ihn abholen?", announced_price: 200 });
+      expect(rows.find((row) => row.id === "de__monitor/730003")!.data).toMatchObject({ verdict: "unreadable", announced_price: null, announced_at: null });
 
       // The tell: one notice on the owner's chat, marked as a watcher's. The
       // draft and the ignore post nothing anywhere.
       const notices = await noticesOf(staged);
-      const tell = notices.find((one) => one.notice_key === `watch-tell:${ENTRY}:410001:180`)!;
+      const tell = notices.find((one) => one.notice_key === `watch-tell:${ENTRY}:de__ddr5/410001:180`)!;
       expect(tell).toMatchObject({ agent: "p1-lair", route: { door: "door-fake", chat: CHAT, origin: "watcher" } });
       expect(tell.body).toBe("de\\_\\_ddr5: a clean 2x16 kit well under the going rate - Meridian Vale DDR5 6000 32GB 2x16 180 EUR <https://www.kleinanzeigen.de/s-anzeige/meridian-vale-ddr5-6000-32gb/410001-225-1000>");
       expect(notices.filter((one) => one.body.includes("Hallo, ist der Monitor"))).toHaveLength(1);
@@ -346,16 +350,16 @@ test(
       });
       expect(third.counts).toMatchObject({ notified: 1, triage: 1, seen: 4, verdicts: 0 });
       expect(third.job).toBe(`watch:${ENTRY}:${later(60).toISOString()}`);
-      const fell = (await noticesOf(staged)).find((one) => one.notice_key === `watch-notify:${ENTRY}:410001:150`)!;
+      const fell = (await noticesOf(staged)).find((one) => one.notice_key === `watch-notify:${ENTRY}:de__ddr5/410001:150`)!;
       expect(fell.body).toBe("de\\_\\_ddr5: Meridian Vale DDR5 6000 32GB 2x16 - 150 EUR (was 180) <https://www.kleinanzeigen.de/s-anzeige/meridian-vale-ddr5-6000-32gb/410001-225-1000>");
-      expect((await stateRows(staged)).find((row) => row.id === "410001")!.data).toMatchObject({ announced_price: 150, outcome: "notify", reason: "price fell" });
+      expect((await stateRows(staged)).find((row) => row.id === "de__ddr5/410001")!.data).toMatchObject({ announced_price: 150, outcome: "notify", reason: "price fell" });
       const moved = auditRows(staged, "2026-09-26").find((row) => row.id === "730001" && row.at === later(60).toISOString())!;
       expect(moved).toMatchObject({ outcome: "triage", reason: "price changed", old_price: 120, price: 110, reached: `triage ${TRIAGE}` });
       const jobs = (await staged.it.read.inbound()).filter((row) => row.kind === "job");
       expect(jobs).toHaveLength(2);
-      expect(jobs[1].body).toContain("id: 730001\n");
+      expect(jobs[1].body).toContain("id: de__monitor/730001\n");
       expect(jobs[1].body).toContain("price: 110 EUR (was 120)");
-      expect(jobs[1].body).not.toContain("id: 410001");
+      expect(jobs[1].body).not.toContain("410001");
       expect((await pendingRows(staged)).map((row) => row.id)).toEqual([third.job!]);
 
       // The master says tell about the moved monitor: one notice, keyed on
@@ -365,21 +369,21 @@ test(
         [URLS.gpu]: GPU_PAGE,
         [URLS.monitor]: monitorPage([monitor, 200, 80]),
       });
-      await settle(staged, third.job!, "730001 | tell | now under the ordinary price");
+      await settle(staged, third.job!, "de__monitor/730001 | tell | now under the ordinary price");
       const fourth = await tick(staged, later(90), pages(110));
       expect(fourth.counts).toMatchObject({ verdicts: 1, told: 1, seen: 6 });
       expect(await pendingRows(staged)).toEqual([]);
-      const firstTell = (await noticesOf(staged)).find((one) => one.notice_key === `watch-tell:${ENTRY}:730001:110`)!;
+      const firstTell = (await noticesOf(staged)).find((one) => one.notice_key === `watch-tell:${ENTRY}:de__monitor/730001:110`)!;
       expect(firstTell.body).toBe("de\\_\\_monitor: now under the ordinary price - Klarblick Monitor 27 Zoll 110 EUR <https://www.kleinanzeigen.de/s-anzeige/klarblick-27/730001-225-1000>");
       // It falls again, re-enters, the master says tell again: a SECOND
       // notice under a second key, and the audit says it was told.
       const fifth = await tick(staged, later(120), pages(100));
       expect(fifth.job).toBe(`watch:${ENTRY}:${later(120).toISOString()}`);
-      await settle(staged, fifth.job!, "730001 | tell | lower still");
+      await settle(staged, fifth.job!, "de__monitor/730001 | tell | lower still");
       const sixth = await tick(staged, later(150), pages(100));
       expect(sixth.counts).toMatchObject({ verdicts: 1, told: 1 });
-      const tells = (await noticesOf(staged)).filter((one) => one.notice_key.startsWith(`watch-tell:${ENTRY}:730001:`)).map((one) => one.notice_key);
-      expect(tells).toEqual([`watch-tell:${ENTRY}:730001:110`, `watch-tell:${ENTRY}:730001:100`]);
+      const tells = (await noticesOf(staged)).filter((one) => one.notice_key.startsWith(`watch-tell:${ENTRY}:de__monitor/730001:`)).map((one) => one.notice_key);
+      expect(tells).toEqual([`watch-tell:${ENTRY}:de__monitor/730001:110`, `watch-tell:${ENTRY}:de__monitor/730001:100`]);
       expect(auditRows(staged, "2026-09-26").filter((row) => row.id === "730001" && row.outcome === "verdict").map((row) => row.reached)).toEqual(["nothing", "told p1-lair", "told p1-lair"]);
 
       // A job the runner refused is audited once as failed and leaves the list.
@@ -409,9 +413,9 @@ test(
       const before = { rows: await stateRows(staged), stamp: await stampOf(staged), notices: (await noticesOf(staged)).length };
       // With no triage master, a triage hit is a look line to the owner, zero model turns.
       expect((await noticesOf(staged)).map((one) => one.notice_key).filter((key) => key.startsWith("watch-look:"))).toEqual([
-        `watch-look:${ENTRY}:410001:180`, `watch-look:${ENTRY}:730001:120`, `watch-look:${ENTRY}:730002:200`, `watch-look:${ENTRY}:730003:80`,
+        `watch-look:${ENTRY}:de__ddr5/410001:180`, `watch-look:${ENTRY}:de__monitor/730001:120`, `watch-look:${ENTRY}:de__monitor/730002:200`, `watch-look:${ENTRY}:de__monitor/730003:80`,
       ]);
-      expect((await noticesOf(staged)).find((one) => one.notice_key === `watch-look:${ENTRY}:410001:180`)!.body)
+      expect((await noticesOf(staged)).find((one) => one.notice_key === `watch-look:${ENTRY}:de__ddr5/410001:180`)!.body)
         .toBe("de\\_\\_ddr5: look - Meridian Vale DDR5 6000 32GB 2x16 - 180 EUR <https://www.kleinanzeigen.de/s-anzeige/meridian-vale-ddr5-6000-32gb/410001-225-1000> (no-target (price\\_at\\_or\\_under by +30))");
       expect((await staged.it.read.inbound()).filter((row) => row.kind === "job")).toEqual([]);
 
@@ -427,8 +431,14 @@ test(
       expect((caught as WatchRefused).reason).toBe("operation failed");
       expect(await stateRows(staged)).toEqual(before.rows);
       expect(await stampOf(staged)).toEqual(before.stamp);
-      expect((await noticesOf(staged)).length).toBe(before.notices);
-      expect(auditRows(staged, "2026-09-26")).toHaveLength(11);
+      // What the tick could still say reached the chat and the file: one
+      // notice naming every dark spec, three failure rows, and no listing row.
+      expect((await noticesOf(staged)).length).toBe(before.notices + 1);
+      const dark = (await noticesOf(staged)).find((one) => one.notice_key === `watch-audit:${ENTRY}:${later(30).toISOString()}`)!;
+      expect(dark.body.split("\n")[0]).toBe("kleinanzeigen 2026-09-26 07:30: every spec dark, 3 failed");
+      expect(dark.body.split("\n")).toHaveLength(4);
+      expect(auditRows(staged, "2026-09-26")).toHaveLength(14);
+      expect(auditRows(staged, "2026-09-26").slice(11).map((row) => row.outcome)).toEqual(["spec failed", "spec failed", "spec failed"]);
       const failed = await staged.it.read.ledger({ stream: "machine", subject: ENTRY, kind: "failed" });
       expect(failed.map((row) => (row.detail as { code: string }).code)).toEqual(["watch-fetch"]);
 
@@ -446,20 +456,21 @@ test(
       }
       expect(await stampOf(staged)).toEqual(before.stamp);
 
-      // One spec dark of three: the other two land, the failure is audited by
-      // name, the sweep is partial, and a row twenty days stale is kept.
+      // One spec dark of three, on a tick of its own: the other two land, the
+      // failure is audited by name, the sweep is partial, and a row twenty
+      // days stale is kept.
       await staged.it.read.sql(
-        "insert into state_row (sheet, id, data) values ($1, 'stale-1', $2::jsonb)",
+        "insert into state_row (sheet, id, data) values ($1, 'de__gpu/stale-1', $2::jsonb)",
         [`watch:${ENTRY}`, { spec: "de__gpu", first_seen: "2026-09-01T00:00:00.000Z", last_seen: "2026-09-06T00:00:00.000Z", price: 1, announced_price: null, announced_at: null, outcome: "drop", reason: "seen" }],
       );
-      const partial = await tick(staged, later(30), { ...ALL_PAGES, [URLS.gpu]: 503 });
+      const partial = await tick(staged, later(45), { ...ALL_PAGES, [URLS.gpu]: 503 });
       expect(partial.counts).toMatchObject({ specs: 3, failed: 1, partial: true, listings: 9, removed: 0 });
-      expect((await stampOf(staged))?.data).toMatchObject({ at: later(30).toISOString() });
-      expect((await stateRows(staged)).some((row) => row.id === "stale-1")).toBe(true);
-      const said = auditRows(staged, "2026-09-26").find((row) => row.outcome === "spec failed")!;
+      expect((await stampOf(staged))?.data).toMatchObject({ at: later(45).toISOString() });
+      expect((await stateRows(staged)).some((row) => row.id === "de__gpu/stale-1")).toBe(true);
+      const said = [...auditRows(staged, "2026-09-26")].reverse().find((row) => row.outcome === "spec failed")!;
       expect(said).toMatchObject({ watch: "de__gpu", reason: "operation failed: www.kleinanzeigen.de answered 503", reached: "nothing" });
-      const audit = (await noticesOf(staged)).find((one) => one.notice_key === `watch-audit:${ENTRY}:${later(30).toISOString()}`)!;
-      expect(audit.body.split("\n")[0]).toBe("kleinanzeigen 2026-09-26 07:30: 9 listings, 0 notified, 0 to triage, 9 dropped, 1 spec failed");
+      const audit = (await noticesOf(staged)).find((one) => one.notice_key === `watch-audit:${ENTRY}:${later(45).toISOString()}`)!;
+      expect(audit.body.split("\n")[0]).toBe("kleinanzeigen 2026-09-26 07:45: 9 listings, 0 notified, 0 to triage, 9 dropped, 1 spec failed");
       expect(audit.body).toContain("· de\\_\\_gpu · de\\_\\_gpu · spec failed · operation failed: www.kleinanzeigen.de answered 503 · nothing");
       const swept = await staged.it.read.ledger({ stream: "machine", subject: ENTRY, kind: "watch.swept" });
       expect(swept[swept.length - 1].detail).toMatchObject({ partial: true, failed: 1, removed: 0 });
@@ -467,7 +478,7 @@ test(
       // A complete sweep: the stale row goes, and the ones seen today stay.
       const whole = await tick(staged, later(60));
       expect(whole.counts).toMatchObject({ partial: false, removed: 1 });
-      expect((await stateRows(staged)).some((row) => row.id === "stale-1")).toBe(false);
+      expect((await stateRows(staged)).some((row) => row.id === "de__gpu/stale-1")).toBe(false);
       expect((await stateRows(staged)).length).toBe(11);
     } finally {
       await staged.stop();
@@ -609,7 +620,7 @@ test(
       expect(overdue[0]).toMatchObject({ kind: "watch-triage-overdue", subject: first.job!, machine: HERE, fix: `read the runner log for ${TRIAGE}` });
       expect(overdue[0].says).toContain(`${ENTRY} handed ${first.job} to ${TRIAGE}`);
       expect(overdue[0].says).toContain("past its 1800 second interval plus the 60 second grace");
-      await settle(staged, first.job!, "410001 | ignore | ordinary price");
+      await settle(staged, first.job!, "de__ddr5/410001 | ignore | ordinary price");
       await tick(staged, later(60));
       expect(about(await check(new Date(T0.getTime() + 90 * 60_000)))).toEqual([]);
     } finally {
@@ -633,7 +644,7 @@ test(
       // job's own provenance and the verdict lines as the one chunk.
       await settleTurn(store, {
         inboundId: job.id, kind: "job", person: "p1", source: job.source as never,
-        chunks: ["730001 | ignore | ordinary price", "730002 | tell | a 32 inch at 200 is worth a look", "730003 | ignore | too small"],
+        chunks: ["de__monitor/730001 | ignore | ordinary price", "de__monitor/730002 | tell | a 32 inch at 200 is worth a look", "de__monitor/730003 | ignore | too small"],
         turn: { agent: TRIAGE, runner: "runner-test", preset: "daily", preset_id: "p", preset_settings: {}, input_tokens: 1, cached_input_tokens: 0,
           output_tokens: 1, price: null, plan_usage: null, raw_usage: {}, session_id: null, lacks: [], tail: false },
       });
@@ -649,7 +660,7 @@ test(
       // And the next tick reads the verdicts by id.
       const second = await tick(staged, later(30));
       expect(second.counts).toMatchObject({ verdicts: 3, told: 1 });
-      expect((await noticesOf(staged)).some((one) => one.notice_key === `watch-tell:${ENTRY}:730002:200`)).toBe(true);
+      expect((await noticesOf(staged)).some((one) => one.notice_key === `watch-tell:${ENTRY}:de__monitor/730002:200`)).toBe(true);
       expect(await pendingRows(staged)).toEqual([]);
       expect(first.job).toBe(job.id);
     } finally {
@@ -676,25 +687,25 @@ test(
       expect(second.job).not.toBeNull();
       const risen = auditRows(staged, "2026-09-26").find((row) => row.id === "620001" && row.at === later(30).toISOString())!;
       expect(risen).toMatchObject({ outcome: "notify", reason: "price changed", old_price: 90, price: 120 });
-      expect((await noticesOf(staged)).find((one) => one.notice_key === `watch-notify:${ENTRY}:620001:120`)!.body).toContain("120 EUR (was 90)");
-      expect((await stateRows(staged)).find((row) => row.id === "730001")!.data).toMatchObject({ announced_price: 110 });
+      expect((await noticesOf(staged)).find((one) => one.notice_key === `watch-notify:${ENTRY}:de__gpu-floor/620001:120`)!.body).toContain("120 EUR (was 90)");
+      expect((await stateRows(staged)).find((row) => row.id === "de__monitor/730001")!.data).toMatchObject({ announced_price: 110 });
       // Job A settles ignore AFTER job B re-announced the listing at 110: the
       // stale ignore is written as the verdict and clears nothing.
-      await settle(staged, first.job!, "730001 | ignore | ordinary at 120\n730002 | ignore | x\n730003 | ignore | x");
+      await settle(staged, first.job!, "de__monitor/730001 | ignore | ordinary at 120\nde__monitor/730002 | ignore | x\nde__monitor/730003 | ignore | x");
       const third = await tick(staged, later(60), pages(110, 120));
       expect(third.counts).toMatchObject({ verdicts: 3 });
-      expect((await stateRows(staged)).find((row) => row.id === "730001")!.data).toMatchObject({ verdict: "ignore", announced_price: 110, announced_at: later(30).toISOString(), reason: "seen by 0 (announced before)" });
+      expect((await stateRows(staged)).find((row) => row.id === "de__monitor/730001")!.data).toMatchObject({ verdict: "ignore", announced_price: 110, announced_at: later(30).toISOString(), reason: "seen by 0 (announced before)" });
       // The other two were asked about at the price the row holds, so they are declined.
-      expect((await stateRows(staged)).find((row) => row.id === "730002")!.data).toMatchObject({ verdict: "ignore", announced_price: null });
+      expect((await stateRows(staged)).find((row) => row.id === "de__monitor/730002")!.data).toMatchObject({ verdict: "ignore", announced_price: null });
       // Job B settles tell, but the owner was already told at 110 (a row the
       // door delivered earlier under that key): nothing is posted twice and
       // the audit row says so.
       await staged.it.read.sql(
         `insert into outbox (kind, person, agent, notice_key, seq_in_reply, body, route)
          values ('notice', 'p1', 'p1-lair', $1, 1, 'told earlier', $2::jsonb)`,
-        [`watch-tell:${ENTRY}:730001:110`, { door: "door-fake", chat: CHAT, origin: "watcher" }],
+        [`watch-tell:${ENTRY}:de__monitor/730001:110`, { door: "door-fake", chat: CHAT, origin: "watcher" }],
       );
-      await settle(staged, second.job!, "730001 | tell | still worth it");
+      await settle(staged, second.job!, "de__monitor/730001 | tell | still worth it");
       const before = (await noticesOf(staged)).length;
       const fourth = await tick(staged, later(90), pages(110, 120));
       expect(fourth.counts).toMatchObject({ verdicts: 1, told: 0 });
@@ -722,7 +733,122 @@ test(
       expect(one.asked.map((row) => row.url)).toEqual([URLS.gpu]);
       // The card that left the gpu board fifteen days ago goes, the monitors stay.
       expect(one.counts).toMatchObject({ removed: 1 });
-      expect((await stateRows(staged)).map((row) => row.id).sort()).toEqual(["620001", "620009", "730001", "730002", "730003"]);
+      expect((await stateRows(staged)).map((row) => row.id).sort()).toEqual(["de__gpu-floor/620001", "de__gpu-floor/620009", "de__monitor/730001", "de__monitor/730002", "de__monitor/730003"]);
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "the triage job and its report are projected into the master's chat log marked as a watcher's, and neither tail the master is fed carries a word of them",
+  async () => {
+    const staged = await stage({ specs: [MONITOR_SPEC] });
+    const { it, registry } = staged;
+    let door: { stop(): Promise<void> } | null = null;
+    let store: Awaited<ReturnType<typeof superStore>> | null = null;
+    try {
+      const first = await tick(staged, T0);
+      const [job] = (await it.read.inbound()).filter((row) => row.kind === "job") as unknown as { id: string; body: string; source: Record<string, unknown> }[];
+      expect(job.source.origin).toBe("watcher");
+      door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.fake.platform });
+      await until("the door projected the job", async () => chatLogLines(it.stateDir, "p1", TRIAGE).some((line) => line.text === job.body), 30_000);
+      const projected = chatLogLines(it.stateDir, "p1", TRIAGE).find((line) => line.text === job.body) as { origin?: string; from: string };
+      expect(projected.origin).toBe("watcher");
+      // The master's settle, as the runner does it: the report row carries the mark from the job it reports on.
+      store = await superStore(cluster, it.db);
+      const report = "de__monitor/730001 | ignore | ordinary price\nde__monitor/730002 | tell | worth a look\nde__monitor/730003 | ignore | too small";
+      await settleTurn(store, {
+        inboundId: job.id, kind: "job", person: "p1", source: job.source as never, chunks: [report],
+        turn: { agent: TRIAGE, runner: "runner-test", preset: "daily", preset_id: "p", preset_settings: {}, input_tokens: 1, cached_input_tokens: 0,
+          output_tokens: 1, price: null, plan_usage: null, raw_usage: {}, session_id: null, lacks: [], tail: false },
+      });
+      const reported = (await it.read.inbound()).find((row) => row.id === `report:${job.id}`) as unknown as { source: Record<string, unknown> };
+      expect(reported.source.origin).toBe("watcher");
+      await until("the door projected the report", async () => chatLogLines(it.stateDir, "p1", TRIAGE).some((line) => line.text === report), 30_000);
+      const line = chatLogLines(it.stateDir, "p1", TRIAGE).find((one) => one.text === report) as { origin?: string; from: string };
+      expect(line.origin).toBe("watcher");
+      expect(line.from).toBe(TRIAGE);
+      // Both lines are in the file for the person, and in neither tail.
+      const now = new Date();
+      const where = { person: "p1", agent: TRIAGE, now, hours: 24, tokens: 8000 };
+      for (const tail of [await readTail({ stateDir: it.stateDir, ...where }), await deriveTail(store, { registry, ...where })]) {
+        expect(tail).not.toContain("Klarblick");
+        expect(tail).not.toContain("| ignore |");
+        expect(tail).not.toContain("| tell |");
+      }
+      expect(first.job).toBe(job.id);
+    } finally {
+      await door?.stop();
+      await store?.close();
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "two specs seeing one listing are two rows: the first drops it by its ceiling while the second notifies its owner, and a drop after a price move carries the old price",
+  async () => {
+    const strict = { ...GPU_SPEC, id: "de__gpu-strict", lane: "digest", hard: { max_price: 50 }, notify: { price_at_or_under: 50 } };
+    const staged = await stage({ specs: [strict, GPU_SPEC] });
+    try {
+      const first = await tick(staged, T0, { [URLS.gpu]: GPU_PAGE });
+      // One request for the two specs' shared query, two evaluations of each card.
+      expect(first.asked.map((one) => one.url)).toEqual([URLS.gpu, URLS.gpu]);
+      expect(first.counts).toMatchObject({ listings: 4, notified: 1, dropped: 3 });
+      const rows = await stateRows(staged);
+      expect(rows.map((row) => row.id).sort()).toEqual(["de__gpu-strict/620001", "de__gpu-strict/620002", "de__gpu/620001", "de__gpu/620002"]);
+      expect(rows.find((row) => row.id === "de__gpu-strict/620001")!.data).toMatchObject({ outcome: "drop", reason: "max_price by +40 (max 50)" });
+      expect(rows.find((row) => row.id === "de__gpu/620001")!.data).toMatchObject({ outcome: "notify", announced_price: 90 });
+      const notices = await noticesOf(staged);
+      expect(notices.map((one) => one.notice_key).filter((key) => key.startsWith("watch-notify:"))).toEqual([`watch-notify:${ENTRY}:de__gpu/620001:90`]);
+      const filed = auditRows(staged, "2026-09-26");
+      expect(filed.filter((row) => row.id === "620001").map((row) => [row.watch, row.outcome])).toEqual([["de__gpu-strict", "drop"], ["de__gpu", "notify"]]);
+      // The card moves to 88: still over the strict ceiling, so a drop, and
+      // the row says what it moved from; a two percent bump on the other spec
+      // is seen, with both prices on its row.
+      const second = await tick(staged, later(30), { [URLS.gpu]: GPU_PAGE.replace(">90 €<", ">88 €<") });
+      const moved = auditRows(staged, "2026-09-26").filter((row) => row.id === "620001" && row.at === later(30).toISOString());
+      expect(moved.find((row) => row.watch === "de__gpu-strict")).toMatchObject({ outcome: "drop", reason: "max_price by +38 (max 50)", price: 88, old_price: 90 });
+      expect(moved.find((row) => row.watch === "de__gpu")).toMatchObject({ outcome: "drop", reason: "seen by -2 (announced before)", price: 88, old_price: 90 });
+      // An unchanged price carries none.
+      expect(moved.length).toBe(2);
+      expect(auditRows(staged, "2026-09-26").find((row) => row.id === "620002" && row.at === later(30).toISOString())).not.toHaveProperty("old_price");
+      // Both of the second spec's cards are seen: the notified one and the one its tripwire declined.
+      expect(second.counts).toMatchObject({ seen: 2, dropped: 4 });
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "a folder with one refused spec and one walled search audits the refusal and the failure in the file and the chat, then fails with no state and no stamp",
+  async () => {
+    const staged = await stage({ specs: [GPU_SPEC, { ...DDR5_SPEC, id: "de__broken", hard: { colour: "red" } }] });
+    try {
+      let caught: unknown;
+      try {
+        await tick(staged, T0, { [URLS.gpu]: 503 });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(WatchRefused);
+      expect(await stateRows(staged)).toEqual([]);
+      expect(await stampOf(staged)).toBeNull();
+      const filed = auditRows(staged, "2026-09-26");
+      expect(filed.map((row) => [row.outcome, row.watch])).toEqual([["spec refused", "de__broken.json"], ["spec failed", "de__gpu"]]);
+      const notices = await noticesOf(staged);
+      expect(notices.map((one) => one.notice_key)).toEqual([`watch-audit:${ENTRY}:${T0.toISOString()}`]);
+      const said = notices[0].body.split("\n");
+      expect(said[0]).toBe("kleinanzeigen 2026-09-26 07:00: every spec dark, 1 failed, 1 refused");
+      expect(said[1]).toContain("· spec refused · hard.colour is not a rule");
+      expect(said[2]).toContain("· spec failed · operation failed: www.kleinanzeigen.de answered 503");
+      const failed = await staged.it.read.ledger({ stream: "machine", subject: ENTRY, kind: "failed" });
+      expect(failed).toHaveLength(1);
     } finally {
       await staged.stop();
     }

@@ -268,9 +268,14 @@ test("vstdeals reads one tracked product's price page and says whether it sits a
   expect(off[0]).toMatchObject({ price: null, record_low: false, seller_text: "not on sale · full $439 · lowest ever $349 on 2026-08-30 at Example Boutique · last sale $349" });
   const above = vst.parse({ kind: "track", html: fixture("vstdeals", "track-above-low.html"), entry: { slug: "s", name: "n", url } }, it);
   expect(above[0]).toMatchObject({ price: 379, record_low: false });
-  // A page with the history rows on it and no price parsed is a markup change.
-  const broken = { kind: "track", html: fixture("vstdeals", "track-broken.html"), entry: { slug: "s", name: "n", url } };
-  expect(vst.parse(broken, it)).toEqual([]);
-  expect(vst.pageLooksLikeResults(broken)).toBe(true);
-  expect(vst.pageLooksLikeResults({ kind: "track", html: "<html>moved</html>", entry: { slug: "s", name: "n", url } })).toBe(false);
+  // A price page with no price row is never an empty market: the history
+  // rows in a shape the parser does not know, and a consent page with none,
+  // both refuse the spec and keep its sheet.
+  for (const name of ["track-broken.html", "track-consent.html"]) {
+    let caught: unknown;
+    try { vst.parse({ kind: "track", html: fixture("vstdeals", name), entry: { slug: "s", name: "n", url } }, it); } catch (error) { caught = error; }
+    expect(caught, name).toBeInstanceOf(WatchRefused);
+    expect((caught as WatchRefused).code, name).toBe("parse");
+    expect((caught as WatchRefused).detail, name).toContain("holds no price row");
+  }
 });

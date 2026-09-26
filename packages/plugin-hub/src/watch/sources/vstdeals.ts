@@ -297,7 +297,10 @@ export function parse(raw: unknown, spec: WatchSpec): Listing[] {
   if (!it) return [];
   if (it.kind === "track") {
     const item = parseTracker(it.html, it.entry.name);
-    if (item === null) return [];
+    // A tracked product always has a price page. One that holds no price row
+    // is a consent page, a moved page or a markup change, never an empty
+    // market, so the spec fails and its sheet stands.
+    if (item === null) throw new WatchRefused("parse", "operation failed", `${spec.id}: the price page holds no price row (a consent page, a moved page or a markup change)`);
     const usd = (n: number | null) => (n == null ? "-" : `$${n}`);
     const seller = [
       item.onSale ? "on sale" : "not on sale",

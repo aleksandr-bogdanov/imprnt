@@ -30,6 +30,9 @@ const MIGRATIONS: Migration[] = [{
 }, {
   version: 8,
   sql: readFileSync(new URL("./migrations/008-watch.sql", import.meta.url), "utf8"),
+}, {
+  version: 9,
+  sql: readFileSync(new URL("./migrations/009-watch-origin.sql", import.meta.url), "utf8"),
 }];
 
 /** DDL and its version commit together. A failed step can be retried unchanged. */

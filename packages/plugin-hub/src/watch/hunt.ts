@@ -145,6 +145,9 @@ export function auditLine(row: AuditRow): string {
   return `${when} · ${inert(row.watch)} · ${inert(row.title)}${price} · ${what} · ${inert(row.reason)}${draft} · ${inert(row.reached)}`;
 }
 
+/** The state key: a hunt sees a listing on its own, so two specs seeing one ad are two rows. */
+export const keyOf = (spec: string, id: string): string => `${spec}/${id}`;
+
 const snapshotOf = (listing: Listing, spec: WatchSpec): Snapshot => ({
   id: listing.id, spec: spec.id, owner: spec.owner, title: listing.title, price: listing.price, currency: listing.currency ?? "EUR", url: listing.url,
 });
@@ -195,11 +198,12 @@ async function readVerdicts(store: StoreLike, args: {
       rows.push({ ...base, watch: job.id, id: job.id, title: `${job.data.listings.length} listing(s)`, price: null, currency: "EUR", url: "", outcome: "triage failed", reason: failed, reached: "nothing" });
       continue;
     }
-    const answers = parseVerdicts(report ?? "", job.data.listings.map((one) => one.id));
+    const answers = parseVerdicts(report ?? "", job.data.listings.map((one) => keyOf(one.spec, one.id)));
     for (const listing of job.data.listings) {
-      const answer = answers.get(listing.id) as TriageVerdict;
+      const key = keyOf(listing.spec, listing.id);
+      const answer = answers.get(key) as TriageVerdict;
       verdicts += 1;
-      const held = args.state[listing.id];
+      const held = args.state[key];
       if (held) {
         const next: ListingState = { ...held, verdict: answer.verdict };
         delete next.draft;
@@ -211,7 +215,7 @@ async function readVerdicts(store: StoreLike, args: {
           next.announced_at = null;
           next.announced_price = null;
         }
-        args.state[listing.id] = next;
+        args.state[key] = next;
       }
       const row: AuditRow = {
         ...base, watch: listing.spec, id: listing.id, title: listing.title, price: listing.price, currency: listing.currency, url: listing.url,
@@ -224,7 +228,7 @@ async function readVerdicts(store: StoreLike, args: {
           // Keyed on the price the master was asked about, the way a notify
           // is, so a tell after a re-entry is a second notice and not a no-op.
           notices.push({
-            target: { ...owner, key: `watch-tell:${args.entry.id}:${listing.id}:${listing.price ?? "np"}` },
+            target: { ...owner, key: `watch-tell:${args.entry.id}:${key}:${listing.price ?? "np"}` },
             body: `${inert(listing.spec)}: ${inert(answer.text)} - ${inert(listing.title)} ${priceText(listing.price, listing.currency)}${bare(listing.url)}`,
             row,
           });
@@ -318,15 +322,31 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
         failed.push({ spec, cause });
       }
     }
-    // Every spec dark is a tick that did not happen: nothing lands, nothing is
-    // stamped, and the diary says why. A verdict read above waits for the next tick.
-    if (loaded.ok.length > 0 && failed.length === loaded.ok.length) throw failed[0].cause;
     if (failed.length > 0) complete = false;
     for (const { spec, cause } of failed) {
       rows.push({ ...base, watch: spec.id, id: spec.id, title: spec.id, price: null, currency: "EUR", url: "", outcome: "spec failed", reason: `${cause.reason}: ${cause.detail}`, reached: "nothing" });
     }
+    const auditKey = `watch-audit:${entry.id}:${atIso}`;
+    const auditFile = join(auditDir, `${atIso.slice(0, 10)}.jsonl`);
+    // Every spec dark is a tick that did not happen: no state, no stamp, and
+    // the diary says why. What the tick could still say, the refused spec
+    // files and the failures by name, reaches the file and the audit chat
+    // first, so a folder with one broken spec and one walled search is not a
+    // folder that says nothing. A verdict read above waits for the next tick.
+    if (loaded.ok.length > 0 && failed.length === loaded.ok.length) {
+      const said = rows.filter((row) => row.outcome === "spec refused" || row.outcome === "spec failed");
+      const header = `${source.source} ${atIso.slice(0, 16).replace("T", " ")}: every spec dark, ${failed.length} failed${loaded.refused.length > 0 ? `, ${loaded.refused.length} refused` : ""}`;
+      await store.sql.begin(async (sql) => {
+        await postNotice(sql as unknown as StoreLike["sql"], target(auditWhere, String(entry.audit), auditKey), [header, ...said.map(auditLine)].join("\n"));
+      });
+      mkdirSync(auditDir, { recursive: true, mode: 0o700 });
+      appendFileSync(auditFile, said.map((row) => JSON.stringify(row)).join("\n") + "\n", { mode: 0o600 });
+      throw failed[0].cause;
+    }
 
-    // The sort. A listing two specs both see is evaluated once, under the first.
+    // The sort, per spec and listing: two hunts seeing one ad are two rows,
+    // two verdicts and two notices, because each was written with its own
+    // ceiling and its own owner.
     const writes: Record<string, ListingState> = {};
     for (const id of settled.done.length > 0 ? Object.keys(state) : []) {
       if (settled.rows.some((row) => row.id === id && row.outcome === "verdict")) writes[id] = state[id];
@@ -336,10 +356,11 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
     const counts = { listings: 0, dropped: 0, seen: 0, notified: 0, triage: 0, looked: 0 };
     for (const { spec, listings } of results) {
       for (const listing of listings) {
-        if (seen.has(listing.id)) continue;
-        seen.add(listing.id);
+        const key = keyOf(spec.id, listing.id);
+        if (seen.has(key)) continue;
+        seen.add(key);
         counts.listings += 1;
-        const prior = state[listing.id] ?? null;
+        const prior = state[key] ?? null;
         const verdict = evaluate(listing, spec, prior);
         const row: ListingState = {
           spec: spec.id, first_seen: prior?.first_seen ?? atIso, last_seen: atIso, price: listing.price,
@@ -350,6 +371,10 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
         };
         const currency = listing.currency ?? "EUR";
         const from = verdict.bin === "drop" ? undefined : verdict.from;
+        // Every row whose price moved carries the old one, whatever the
+        // outcome: a re-entry says what the person was told, a drop says what
+        // the tick before saw.
+        const oldPrice = from !== undefined ? from : prior !== null && (prior.price ?? null) !== (listing.price ?? null) ? prior.price : undefined;
         // The same drop as last tick is not news: on a half-hour timer an ad
         // over the ceiling would otherwise be forty-eight identical chat lines
         // a day. The file keeps every one.
@@ -368,7 +393,7 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
             counts.notified += 1;
             if (owner) {
               notices.push({
-                target: { ...owner, key: `watch-notify:${entry.id}:${listing.id}:${listing.price ?? "np"}` },
+                target: { ...owner, key: `watch-notify:${entry.id}:${key}:${listing.price ?? "np"}` },
                 body: `${inert(spec.id)}: ${inert(listing.title)} - ${priceText(listing.price, currency)}${from == null ? "" : ` (was ${from})`}${bare(listing.url)}`,
               });
               reached = `notified ${spec.owner}`;
@@ -381,16 +406,16 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
             // No master named: the look goes to the owner, zero model turns.
             counts.looked += 1;
             notices.push({
-              target: { ...owner, key: `watch-look:${entry.id}:${listing.id}:${listing.price ?? "np"}` },
+              target: { ...owner, key: `watch-look:${entry.id}:${key}:${listing.price ?? "np"}` },
               body: `${inert(spec.id)}: look - ${inert(listing.title)} - ${priceText(listing.price, currency)}${from == null ? "" : ` (was ${from})`}${bare(listing.url)} (${inert(reasonOf(verdict, listing))})`,
             });
             reached = `look ${spec.owner}`;
           }
         }
-        writes[listing.id] = row;
+        writes[key] = row;
         rows.push({
           ...base, watch: spec.id, id: listing.id, title: listing.title, price: listing.price, currency,
-          ...(from === undefined ? {} : { old_price: from }), url: listing.url, outcome: verdict.bin, reason: reasonOf(verdict, listing), ...(repeat ? { repeat: true } : {}), reached,
+          ...(oldPrice === undefined ? {} : { old_price: oldPrice }), url: listing.url, outcome: verdict.bin, reason: reasonOf(verdict, listing), ...(repeat ? { repeat: true } : {}), reached,
         });
       }
     }
@@ -401,8 +426,8 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
     // or gone from the folder): those rows stay until their board is read.
     const swept = new Set(results.map(({ spec }) => spec.id));
     const removed = !complete ? [] : Object.entries(state)
-      .filter(([id, row]) => swept.has(row.spec) && !seen.has(id) && at.getTime() - Date.parse(row.last_seen) >= GONE_AFTER_DAYS * 86_400_000)
-      .map(([id]) => id);
+      .filter(([key, row]) => swept.has(row.spec) && !seen.has(key) && at.getTime() - Date.parse(row.last_seen) >= GONE_AFTER_DAYS * 86_400_000)
+      .map(([key]) => key);
 
     // The triage batch: ONE job row for the master, shaped the way the door
     // shapes a dispatched job, so the runner's own gate admits it and its
@@ -418,7 +443,9 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
       };
       job = {
         id, body,
-        source: { log_id: id, at: atIso, door: triageWhere.route.door, chat: triageWhere.route.chat, from: person, text: body, dispatch: envelope },
+        // Marked as a watcher's, so the job's own chat line is left out of
+        // every tail, the master's included: it judges the batch in front of it.
+        source: { log_id: id, at: atIso, door: triageWhere.route.door, chat: triageWhere.route.chat, from: person, text: body, dispatch: envelope, origin: "watcher" },
         pending: { at: atIso, listings: triage.map(({ listing, spec }) => snapshotOf(listing, spec)) },
       };
     }
@@ -445,7 +472,7 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
       }
       // Composed here, after the notices, so every line says what was posted.
       const auditBody = chatRows.length === 0 ? null : [header, ...chatRows.map(auditLine)].join("\n");
-      if (auditBody !== null) postedAudit = await postNotice(tx, target(auditWhere, String(entry.audit), `watch-audit:${entry.id}:${atIso}`), auditBody);
+      if (auditBody !== null) postedAudit = await postNotice(tx, target(auditWhere, String(entry.audit), auditKey), auditBody);
       if (job !== null) {
         // The master has a chat, so its row is written unprojected with its
         // door and chat, which is what the projection sweep keys on, and the
@@ -476,7 +503,7 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
     // The file, after the commit: one JSON object per row, the day's file.
     if (rows.length > 0) {
       mkdirSync(auditDir, { recursive: true, mode: 0o700 });
-      appendFileSync(join(auditDir, `${atIso.slice(0, 10)}.jsonl`), rows.map((row) => JSON.stringify(row)).join("\n") + "\n", { mode: 0o600 });
+      appendFileSync(auditFile, rows.map((row) => JSON.stringify(row)).join("\n") + "\n", { mode: 0o600 });
     }
     return {
       rows,
