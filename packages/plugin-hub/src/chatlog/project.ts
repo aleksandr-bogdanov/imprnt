@@ -29,8 +29,12 @@ export async function projectInbound(
   // registry id in `source.from`. So it is the one line that names somebody
   // else, and a person reading their log sees who answered.
   const from = row.kind === "report" && typeof source.from === "string" ? source.from : row.person;
+  // A watcher's row (a hunt's triage job, and the report on it) carries its
+  // origin in its provenance, and the line carries it the way a watcher's
+  // notice does, so both tails leave it out.
   await appendChatLineOnce({ stateDir: options.stateDir, person: row.person, agent: row.agent }, {
     id: source.log_id, at: source.at, direction: "in", from, text: source.text,
+    ...(source.origin === "watcher" ? { origin: "watcher" as const } : {}),
   }, { skipBad: options.skipBad });
   await store.sql`update inbound set log_ready = true where id = ${options.inboundId} and not log_ready`;
 }

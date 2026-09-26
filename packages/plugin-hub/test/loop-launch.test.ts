@@ -5,7 +5,7 @@ import { claudeCode } from "../src/adapters/claude-code.ts"
 import { loopFixture, launchInput, launchSeam, captureCli, ending, appended } from "./helpers/rollout-loop.ts"
 beforeAll(async () => { await import("../live/prove-rollout-loop.ts") })
 
-for (const purpose of ["ordinary", "harvest"]) test(`ROLL-06 ROLL-30 ${purpose} actual child receives explicit launch configuration`, async () => {
+for (const purpose of ["ordinary", "harvest", "triage"]) test(`ROLL-06 ROLL-30 ${purpose} actual child receives explicit launch configuration`, async () => {
   const f = loopFixture()
   let session: Awaited<ReturnType<typeof claudeCode.start>> | undefined
   try {
@@ -32,12 +32,24 @@ for (const purpose of ["ordinary", "harvest"]) test(`ROLL-06 ROLL-30 ${purpose} 
       const tail = value.argv.slice(n + 1)
       const next = tail.findIndex((arg: string) => arg.startsWith("--"))
       const tools = tail.slice(0, next < 0 ? undefined : next).flatMap((arg: string) => arg.split(/[, ]/)).filter(Boolean).sort()
-      expect(tools).toEqual((purpose === "ordinary" ? ["Read", "Write", "Glob", "Grep"] : ["Read", "Glob", "Grep"]).sort())
+      expect(tools).toEqual((purpose === "ordinary" ? ["Read", "Write", "Glob", "Grep"] : purpose === "harvest" ? ["Read", "Glob", "Grep"] : []).sort())
       if (purpose === "ordinary") expect(value.argv).toContain("--dangerously-skip-permissions")
       else {
         expect(tools).not.toContain("Write")
         expect(value.argv).not.toContain("--dangerously-skip-permissions")
         expect(value.mcp).toEqual({ mcpServers: {} })
+        expect(value.argv).toContain("--strict-mcp-config")
+        const allowed = value.argv.indexOf("--allowedTools")
+        expect(allowed).toBeGreaterThan(-1)
+        expect(value.argv[allowed + 1]).toBe(purpose === "triage" ? "" : "Read,Glob,Grep")
+      }
+      if (purpose === "triage") {
+        // The hunt's master: no tools at all, no MCP server, no fragment and
+        // no person instructions, and the empty list is explicit in the argv.
+        expect(value.argv[n + 1]).toBe("")
+        expect(value.argv.some((arg: string) => arg === "--append-system-prompt-file")).toBe(false)
+        expect(value.argv[value.argv.indexOf("--mcp-config") + 1]).toBe(JSON.stringify({ mcpServers: {} }))
+        expect(value.fragment).toBeNull()
       }
       expect(value.cwd.startsWith(input.sessionDir)).toBe(true)
     }

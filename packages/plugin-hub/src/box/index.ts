@@ -7,6 +7,13 @@ import { localRemotePath } from "../registry/remote.ts";
 import { secretsDirOf } from "../store/secrets.ts";
 import type { BoxContext, BoxedCommand } from "./types.ts";
 
+/**
+ * Whether this purpose only READS the person's tree. A harvest files nothing
+ * itself, and the hunt's triage master has no tools at all, so the tree is
+ * bound read-only for both and writable for an ordinary turn alone.
+ */
+const readsOnly = (ctx: { purpose?: string }) => ctx.purpose === "harvest" || ctx.purpose === "triage";
+
 export type { BoxContext, BoxedCommand } from "./types.ts";
 
 /** No box tool on this platform, or the one it has will not run. */
@@ -306,7 +313,7 @@ function profileText(ctx: BoxContext): string {
   // Last, because the sandbox takes the last matching rule: every other
   // person's tree is denied by name, whatever a broader allow above said, and
   // the deny covers writing as well as reading.
-  for (const path of [ctx.stateRoot, ...(ctx.purpose === "harvest" ? [ctx.tree] : [])]) {
+  for (const path of [ctx.stateRoot, ...(readsOnly(ctx) ? [ctx.tree] : [])]) {
     if (path) lines.push(`(deny file-write* (subpath ${JSON.stringify(path)}))`);
   }
   if (ctx.sessionDir) lines.push(`(allow file-read* file-write* (subpath ${JSON.stringify(ctx.sessionDir)}))`);
@@ -385,7 +392,7 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         // The agent WORKS in its own tree, so an ordinary turn binds it writable.
         // A harvest only reads it.
         ...(ctx.tree && existsSync(ctx.tree)
-          ? [ctx.purpose === "harvest" ? "--ro-bind" : "--bind", ctx.tree, ctx.tree]
+          ? [readsOnly(ctx) ? "--ro-bind" : "--bind", ctx.tree, ctx.tree]
           : []),
         // State stays readable, never writable. This comes after the tree bind so
         // that when a person's tree and state root are the same directory the
@@ -410,7 +417,7 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         ...[...new Set(ctx.writePaths ?? [])]
           .filter((path) => path !== "" && existsSync(path))
           .flatMap(path => [
-            ctx.purpose === "harvest" && ctx.tree !== "" &&
+            readsOnly(ctx) && ctx.tree !== "" &&
             (path === ctx.tree || path.startsWith(`${ctx.tree}/`)) ? "--ro-bind" : "--bind",
             path, path,
           ]),

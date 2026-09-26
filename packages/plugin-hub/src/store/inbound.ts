@@ -11,6 +11,13 @@ export interface InboundSource {
   media?: unknown[];
   /** Present on a job row: who asked, for whom, and where the report goes. */
   dispatch?: DispatchEnvelope;
+  /**
+   * Set on a row a WATCHER caused: a hunt's triage job and the report on it.
+   * The line is projected into the master's chat log for the person to read,
+   * and both tails leave it out, because no model reads watcher text except
+   * the master judging the batch in front of it (SPEC section 5).
+   */
+  origin?: "watcher";
 }
 
 /**
@@ -38,6 +45,7 @@ export interface JobSource {
   from: string;
   text: string;
   dispatch: DispatchEnvelope;
+  origin?: "watcher";
 }
 
 export interface InboundMessage {

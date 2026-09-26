@@ -36,7 +36,8 @@ for (const [shape, text, refused] of [
   test(`IMP-160 D-173 ${shape} is ${refused ? "refused by name" : "loaded"}`, () => {
     const file = write(text)
     if (!refused) {
-      expect(loadRegistry(file).agents.map(agent => agent.id).sort()).toEqual(["p1-lair", "p1-study"])
+      // The shipped example carries the hunt's triage master beside the lair.
+      expect(loadRegistry(file).agents.map(agent => agent.id).sort()).toEqual(["p1-lair", "p1-study", "p1-triage"])
       return
     }
     let error: unknown

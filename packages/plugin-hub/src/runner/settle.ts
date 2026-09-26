@@ -102,6 +102,13 @@ export async function settleTurn(
         stream: "control", subject: turn.inboundId, kind: "dispatch.reported", actor: "runner",
         detail: { agent: turn.turn.agent, runner: turn.turn.runner },
       });
+      if (turn.source?.dispatch?.approved?.source === "watch") {
+        // A hunt reads its master's verdicts by id on the next tick. Nobody is
+        // waiting on this report as a turn, so it is recorded and never fed:
+        // the door still projects the line into the master's chat log, and
+        // every feed path leaves an answered row alone.
+        await stamp(inside, { messageId: `report:${turn.inboundId}`, kind: "answered", actor: "runner" });
+      }
     } else {
       await appendChunks(inside, turn.inboundId, turn.chunks, turn.receipts);
     }

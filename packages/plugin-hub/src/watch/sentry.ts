@@ -5,7 +5,7 @@ import { credentialFor, noticeRoute } from "../registry/entries.ts";
 import { WATCH_DEFAULTS, type Registry, type RunEntry } from "../registry/load.ts";
 import { openStore } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
-import { field, landSweep, link, WatchRefused } from "./record.ts";
+import { field, inert, landSweep, link, WatchRefused } from "./record.ts";
 
 /**
  * The Sentry morning digest: what is going on, once a day, in one message.
@@ -281,20 +281,7 @@ function plural(n: number, one: string): string {
   return `${n} ${one}${n === 1 ? "" : "s"}`;
 }
 
-/**
- * A string from Sentry as inert chat text: every Discord markdown character
- * escaped and every mention broken.
- *
- * A title is whatever the app threw, and an exception message can carry
- * request input, so `**`, a masked link or `@everyone` inside one would be
- * markup the chat honours and a ping the bot may fire. The backslash is
- * Discord's own escape. A mention has no escape, so the `@` is followed by a
- * zero-width space, which breaks `@everyone`, `@here` and `<@id>` alike and
- * reads as the same characters.
- */
-export function inert(text: string): string {
-  return text.replace(/[\\*_`~|[\]]/g, (one) => `\\${one}`).replace(/@/g, "@\u200b");
-}
+export { inert } from "./record.ts";
 
 function lineOf(line: DigestLine): string {
   // Closed again on the way into the line, whichever way the issue arrived,

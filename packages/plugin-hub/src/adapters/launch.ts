@@ -49,7 +49,14 @@ export interface LoopLaunchInput {
   credential?: CredentialEntry;
   agent: AgentEntry;
   sessionDir: string;
-  purpose: "ordinary" | "harvest";
+  /**
+   * What the child is for. `ordinary` is a turn with the agent's own tools.
+   * `harvest` reads the tree and writes nothing. `triage` is the hunt's
+   * master: NO tools, no MCP server, no fragment and no person instructions,
+   * because what it reads is seller text (SPEC section 5) and the only way
+   * that text never becomes a hand is a child that has none.
+   */
+  purpose: "ordinary" | "harvest" | "triage";
   box: BoxContext;
 }
 
@@ -83,7 +90,7 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   if (input.preset.adapter !== "claude-code") throw new Error("loop-configuration-unsupported");
   if (!input.box) throw new Error("box-required");
   if (!statSync(input.box.tree).isDirectory()) throw new Error("box-tree-unavailable");
-  if (input.purpose !== "ordinary" && input.purpose !== "harvest") throw new Error("invalid-configuration");
+  if (!["ordinary", "harvest", "triage"].includes(input.purpose)) throw new Error("invalid-configuration");
   const credential = input.credential ?? credentialSource(input.registry, input.agent.preset);
   validateCredentialSource(credential);
   const ordinary = input.purpose === "ordinary";
@@ -171,7 +178,9 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   // Without it an agent answers from an empty memory and files nowhere.
   const vault = join(root, "vault");
   if (ordinary && existsSync(vault)) env.IMPRNT_VAULT = vault;
-  const tools = ordinary ? input.agent.tools : ["Read", "Glob", "Grep"];
+  // The triage master's empty list is explicit in the argv, the way an
+  // agent's own empty list is: `--tools ""` and `--allowedTools ""`.
+  const tools = ordinary ? input.agent.tools : input.purpose === "triage" ? [] : ["Read", "Glob", "Grep"];
   const argv = ["claude", "--print", "--input-format", "stream-json", "--output-format", "stream-json",
     "--verbose", "--replay-user-messages", "--include-partial-messages",
     "--model", input.preset.model, "--effort", input.preset.effort,
@@ -186,7 +195,7 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
     argv.push("--append-system-prompt-file", file);
   }
   if (ordinary) argv.push("--dangerously-skip-permissions");
-  else argv.push("--allowedTools", "Read,Glob,Grep");
+  else argv.push("--allowedTools", input.purpose === "triage" ? "" : "Read,Glob,Grep");
   return { ...boxed, argv, env, credentialId: credential.id };
 }
 

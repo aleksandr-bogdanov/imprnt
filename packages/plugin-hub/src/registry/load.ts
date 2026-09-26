@@ -260,18 +260,26 @@ export class UnknownSetting extends Error {
 export const RUN_KINDS = ["hub", "door", "runner", "sync", "board", "backup", "watch"] as const;
 
 /**
- * What a `kind = "watch"` entry may fetch from, and what it counts by when the
- * file says nothing.
+ * What a `kind = "watch"` entry may fetch from, and what the Sentry one counts
+ * by when the file says nothing.
  *
- * ONE SOURCE. A watch is a program with no hands: it fetches one site, compares
- * with what it saw last time and writes one notice the door delivers, and each
- * site is its own reader. A source this list does not name is refused by line,
- * because a file naming a reader that does not exist would run a timer that
- * exits every morning. The defaults are chosen, not measured: one event is the
- * floor under which an issue is not even counted, ten is where a new issue is
- * worth a line, and a week is when an open one is worth a second look.
+ * ONE SOURCE PER ENTRY. A watch is a program with no hands: it fetches one
+ * site, compares with what it saw last time and writes notices the door
+ * delivers, and each site is its own reader. A source this list does not name
+ * is refused by line, because a file naming a reader that does not exist would
+ * run a timer that exits every morning. Sentry is the digest; the three hunt
+ * sources read a folder of spec files each and carry their own keys, so a
+ * sentry key on a hunt and a hunt key on the sentry are each refused by line.
+ * The Sentry defaults are chosen, not measured: one event is the floor under
+ * which an issue is not even counted, ten is where a new issue is worth a
+ * line, and a week is when an open one is worth a second look.
  */
-export const WATCH_SOURCES = ["sentry"] as const;
+export const WATCH_SOURCES = ["sentry", "kleinanzeigen", "mydealz", "vstdeals"] as const;
+export const HUNT_SOURCES = ["kleinanzeigen", "mydealz", "vstdeals"] as const;
+export const WATCH_LANES = ["tripwire", "digest"] as const;
+/** The keys only the Sentry source reads, and the keys only a hunt reads. */
+export const SENTRY_KEYS = ["agent", "credential", "org", "query", "min_events", "notify_events", "reminder_days"] as const;
+export const HUNT_KEYS = ["specs", "audit", "triage", "lane"] as const;
 export const WATCH_DEFAULTS = {
   query: "is:unresolved",
   min_events: 1,
@@ -408,6 +416,20 @@ export interface RunEntry {
   min_events?: number;
   notify_events?: number;
   reminder_days?: number;
+  /**
+   * A hunt's own (`source` is `kleinanzeigen`, `mydealz` or `vstdeals`): the
+   * folder of spec files it reads (`specs`, absolute; absent means
+   * `<state_dir>/<person>/watch/specs/<source>`), the agent whose chat is the
+   * audit channel (`audit`, this person's, with a door and a chat), the
+   * optional triage master (`triage`, this person's agent with `role =
+   * "triage"`; absent means a triage hit is told to the spec's owner as a look
+   * line with zero model turns), and the optional `lane` (`tripwire` or
+   * `digest`; absent runs every unpaused spec of the source).
+   */
+  specs?: string;
+  audit?: string;
+  triage?: string;
+  lane?: string;
   /**
    * Whether the hub keeps this entry running. Absent means it does.
    *
@@ -740,6 +762,13 @@ export interface AgentEntry {
   mode?: "resident" | "on-demand";
   sleeping?: boolean;
   idle_seconds?: number;
+  /**
+   * `"triage"` marks the master a hunt hands seller text to. Its runner
+   * launches it with no tools, no MCP server and no instructions beyond the
+   * fixed triage text, so what it reads can never become a hand. Absent is an
+   * ordinary agent.
+   */
+  role?: "triage";
   id: string;
   person: string;
   preset: string;
@@ -1554,31 +1583,63 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
           `${id} is a watch with schedule ${describe(entry.schedule)}, and a watch runs on a cadence such as ` +
             `daily at 07:00 or every 6h: one that never stops, or that nobody starts, is not a morning digest`);
       }
-      for (const field of ["source", "person", "agent", "credential", "org"] as const) {
+      const text = (field: string, missing: string) => {
         const value = entry[field];
-        if (value === undefined || value === null) {
-          refuse(`${at}.${field}`, here, `${id} is a watch with no ${field}, and a watch is a source, a person, an agent, a credential and an org`);
-        }
+        if (value === undefined || value === null) refuse(`${at}.${field}`, here, missing);
         if (typeof value !== "string" || value.trim() === "") {
-          refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here,
-            `${id} has ${field} ${describe(value)}, and it must be a nonempty string`);
+          refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here, `${id} has ${field} ${describe(value)}, and it must be a nonempty string`);
         }
+      };
+      for (const field of ["source", "person"] as const) {
+        text(field, `${id} is a watch with no ${field}, and a watch is a source and a person before anything else`);
       }
       if (!(WATCH_SOURCES as readonly string[]).includes(entry.source as string)) {
         refuse(`${at}.source`, lines.get(`${at}.source`) ?? here,
-          `unsupported-watch-source: ${entry.source}. The one source this hub reads is ${WATCH_SOURCES.join(", ")}`);
+          `unsupported-watch-source: ${entry.source}. The sources this hub reads are ${WATCH_SOURCES.join(", ")}`);
       }
-      const query = entry.query;
-      if (query !== undefined && query !== null && (typeof query !== "string" || query.trim() === "")) {
-        refuse(`${at}.query`, lines.get(`${at}.query`) ?? here,
-          `${id} has query ${describe(query)}, and it must be a nonempty string`);
-      }
-      for (const field of ["min_events", "notify_events", "reminder_days"] as const) {
-        const value = entry[field];
-        if (value === undefined || value === null) continue;
-        if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-          refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here,
-            `${id} has ${field} ${describe(value)}, and it must be a whole number above zero`);
+      // Each source has its own keys. A hunt carrying a sentry key, or the
+      // sentry carrying a hunt key, is a line nothing would read, refused
+      // rather than ignored so a person who meant one source and typed the
+      // other's keys is told on that line.
+      if ((HUNT_SOURCES as readonly string[]).includes(entry.source as string)) {
+        for (const key of SENTRY_KEYS) {
+          if (entry[key] === undefined) continue;
+          refuse(`${at}.${key}`, lines.get(`${at}.${key}`) ?? here,
+            `${id} reads ${entry.source} and carries ${key}, which is a key of the sentry source: a hunt names a specs folder, an audit agent and, optionally, a triage master and a lane`);
+        }
+        text("audit", `${id} is a watch on ${entry.source} with no audit, and a hunt posts every listing's row into an audit chat`);
+        if (entry.triage !== undefined) text("triage", "");
+        if (entry.specs !== undefined) {
+          text("specs", "");
+          if (!isAbsolute(entry.specs as string)) {
+            refuse(`${at}.specs`, lines.get(`${at}.specs`) ?? here, `${id} has specs ${describe(entry.specs)}, and the folder of spec files must be an absolute path`);
+          }
+        }
+        if (entry.lane !== undefined && !(WATCH_LANES as readonly unknown[]).includes(entry.lane)) {
+          refuse(`${at}.lane`, lines.get(`${at}.lane`) ?? here,
+            `${id} has lane ${describe(entry.lane)}, and a lane is ${WATCH_LANES.join(" or ")}: absent runs every unpaused spec of the source`);
+        }
+      } else {
+        for (const key of HUNT_KEYS) {
+          if (entry[key] === undefined) continue;
+          refuse(`${at}.${key}`, lines.get(`${at}.${key}`) ?? here,
+            `${id} reads sentry and carries ${key}, which is a key of a hunt source (${HUNT_SOURCES.join(", ")}): the sentry digest names an agent, a credential and an org`);
+        }
+        for (const field of ["agent", "credential", "org"] as const) {
+          text(field, `${id} is a watch with no ${field}, and a watch is a source, a person, an agent, a credential and an org`);
+        }
+        const query = entry.query;
+        if (query !== undefined && query !== null && (typeof query !== "string" || query.trim() === "")) {
+          refuse(`${at}.query`, lines.get(`${at}.query`) ?? here,
+            `${id} has query ${describe(query)}, and it must be a nonempty string`);
+        }
+        for (const field of ["min_events", "notify_events", "reminder_days"] as const) {
+          const value = entry[field];
+          if (value === undefined || value === null) continue;
+          if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+            refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here,
+              `${id} has ${field} ${describe(value)}, and it must be a whole number above zero`);
+          }
         }
       }
     }
@@ -1606,7 +1667,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"]
         : entry.kind === "door" ? ["guild", "default_preset"]
         : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS]
-        : entry.kind === "watch" ? ["source", "person", "agent", "credential", "org", "query", "min_events", "notify_events", "reminder_days"] : [])
+        : entry.kind === "watch" ? ["source", "person", ...SENTRY_KEYS, ...HUNT_KEYS] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
@@ -2208,6 +2269,10 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     if (entry.sleeping !== undefined && typeof entry.sleeping !== "boolean")
       refuse(`${where}.sleeping`, here, "sleeping must be boolean");
     if (entry.idle_seconds !== undefined) positive(entry.idle_seconds, `${where}.idle_seconds`);
+    if (entry.role !== undefined && entry.role !== "triage") {
+      refuse(`${where}.role`, lines.get(`${where}.role`) ?? here,
+        `${entry.id} has role ${describe(entry.role)}, and the one role an agent may carry is "triage": the master a hunt hands seller text to, launched with no tools`);
+    }
     // A chat and the door that carries it come as a pair. With neither, the
     // agent exists only to take jobs and its empty tail is what the file says.
     // With one of them, the file has half an agent: a chat no door reads, or a
@@ -2223,7 +2288,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       }
     }
     agents.push({
-      ...Object.fromEntries(["fragment", "settings", "mcp", "tools", "mode", "sleeping", "idle_seconds", "chat", "door"]
+      ...Object.fromEntries(["fragment", "settings", "mcp", "tools", "mode", "sleeping", "idle_seconds", "chat", "door", "role"]
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       id: entry.id as string,
       person: entry.person as string,
@@ -2294,7 +2359,9 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
   // a chat, because a digest is a notice on that agent's door and chat, and an
   // agent that takes jobs alone has nowhere for one to land. The credential
   // has to be a key, because the reader sends it as a bearer token and a login
-  // file or a bot token is not one.
+  // file or a bot token is not one. A hunt's audit agent and triage master are
+  // held to the same chat rule, and the master has to carry the triage role,
+  // because that role is what launches it with no tools.
   entries.forEach((entry, nth) => {
     if (entry.kind !== "watch") return;
     const where = `run[${nth}]`;
@@ -2302,6 +2369,27 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     if (knownPerson.size > 0 && !knownPerson.has(entry.person as string)) {
       refuse(`${where}.person`, lines.get(`${where}.person`) ?? here,
         `${entry.id} writes to the person ${entry.person}, which this file does not declare`);
+    }
+    if ((HUNT_SOURCES as readonly string[]).includes(entry.source as string)) {
+      for (const key of ["audit", "triage"] as const) {
+        const named = entry[key];
+        if (named === undefined) continue;
+        const what = key === "audit" ? "posts its audit rows into the chat of" : "hands its triage hits to";
+        const atKey = lines.get(`${where}.${key}`) ?? here;
+        const found = agents.find((one) => one.id === named);
+        if (!found) refuse(`${where}.${key}`, atKey, `${entry.id} ${what} ${named}, which is not an agent of this file`);
+        if (found!.person !== entry.person) {
+          refuse(`${where}.${key}`, atKey, `${entry.id} ${what} ${named}, which is ${found!.person}'s agent and not ${entry.person}'s`);
+        }
+        if (found!.door === undefined || found!.chat === undefined) {
+          refuse(`${where}.${key}`, atKey, `${entry.id} ${what} ${named}, which names no door and no chat, so nothing it is handed has a chat to land in`);
+        }
+        if (key === "triage" && found!.role !== "triage") {
+          refuse(`${where}.${key}`, atKey,
+            `${entry.id} names ${named} as its triage master, which carries no role = "triage": that role is what launches the master with no tools, and seller text goes to nothing else`);
+        }
+      }
+      return;
     }
     const agent = agents.find((one) => one.id === entry.agent);
     const atAgent = lines.get(`${where}.agent`) ?? here;

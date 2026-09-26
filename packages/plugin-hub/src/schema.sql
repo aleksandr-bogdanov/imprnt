@@ -618,3 +618,73 @@ grant select, insert on media to hub_door;
 grant select on media to hub_runner;
 
 insert into schema_version (version) values (7);
+-- The one job row a hunt writes for its triage master.
+--
+-- A hunt runs as the hub's role, which holds no insert on `inbound`, and the
+-- row has to land in the same transaction as the hunt's state, its notices and
+-- its stamp. So the insert goes through a function owned by the role that
+-- already writes the table, which is the door's, exactly as `hub_report` is,
+-- and it is granted to the hub. It writes the row in the shape the door writes
+-- a dispatched job: kind `job`, the provenance carrying the approval digest
+-- and the return route, unprojected when the master has a chat, so the
+-- runner's own gate admits it and the door projects it. True when the row is
+-- new, so a replayed tick lands no second job and no second receipt.
+create function hub_watch_job(job_id text, person_id text, agent_id text, task text, provenance jsonb)
+returns boolean language plpgsql security definer set search_path = pg_catalog, public as $$
+begin
+  insert into public.inbound (id, person, agent, body, kind, source, log_ready)
+  values (job_id, person_id, agent_id, task, 'job', provenance, false)
+  on conflict (id) do nothing;
+  if not found then
+    return false;
+  end if;
+  insert into public.ledger_event (stream, subject, kind, actor)
+  values ('inbound', job_id, 'received', 'door');
+  return true;
+end $$;
+alter function hub_watch_job(text, text, text, text, jsonb) owner to hub_door;
+revoke all on function hub_watch_job(text, text, text, text, jsonb) from public;
+grant execute on function hub_watch_job(text, text, text, text, jsonb) to hub_hub;
+
+insert into schema_version (version) values (8);
+-- The report on a hunt's triage job carries the watcher's mark.
+--
+-- The job row itself is written by the hunt with `origin` in its provenance.
+-- The report is written by this function from the job it reports on, so the
+-- mark is read off the job's approval and carried onto the report's
+-- provenance the same way: both projections then put it on the chat line, and
+-- both tails leave the line out. Nothing else about the function changes.
+create or replace function hub_report(job_id text, report text)
+returns void language plpgsql security definer set search_path = pg_catalog, public as $$
+declare
+  job public.inbound%rowtype;
+begin
+  select * into job from public.inbound where id = job_id;
+  if not found then
+    raise exception 'hub_report was given no job to report on (id %)', job_id;
+  end if;
+  if job.kind <> 'job' then
+    raise exception 'hub_report was given a % row, and a report belongs to a job (id %)', job.kind, job_id;
+  end if;
+  insert into public.inbound (id, person, agent, body, kind, received_at, reported_at, source, log_ready)
+  values ('report:' || job.id, job.person,
+          job.source -> 'dispatch' -> 'return' ->> 'agent', report, 'report', job.received_at, now(),
+          jsonb_build_object(
+            'log_id', 'report:' || job.id,
+            'at', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+            'door', job.source -> 'dispatch' -> 'return' ->> 'door',
+            'chat', job.source -> 'dispatch' -> 'return' ->> 'chat',
+            'from', job.agent,
+            'text', report,
+            'job', job.id)
+          || case when job.source -> 'dispatch' -> 'approved' ->> 'source' = 'watch'
+                  then jsonb_build_object('origin', 'watcher') else '{}'::jsonb end,
+          false)
+  on conflict (id) do nothing;
+  if found then
+    insert into public.ledger_event (stream, subject, kind, actor)
+    values ('inbound', 'report:' || job.id, 'received', 'door');
+  end if;
+end $$;
+
+insert into schema_version (version) values (9);
