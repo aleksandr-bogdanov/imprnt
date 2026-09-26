@@ -300,7 +300,7 @@ async function sayWhichServer(
 }
 
 /** Configuration and filesystem work happen only when a session starts. */
-async function launchFor(registry: Registry, agent: AgentEntry, presetName: string, purpose: "ordinary" | "harvest") {
+async function launchFor(registry: Registry, agent: AgentEntry, presetName: string, purpose: "ordinary" | "harvest" | "triage") {
   const stateDir = String(readSetting(registry, "hub.state_dir") ?? "");
   const credential = credentialOfPreset(registry, presetName);
   return loopLaunch({ registry, agent, preset: getPreset(registry, presetName), purpose,
@@ -846,7 +846,9 @@ export async function runRunner(options: {
       preflight(registry, agent);
       const adapter = adapterFor(options.adapters, preset.adapter);
       if (own.session) { readings.delete(own.session); await own.session.close().catch(() => {}); }
-      const launch = await launchFor(registry, agent, agent.preset, "ordinary");
+      // The hunt's triage master launches with no tools, whatever its preset
+      // or its fragment say: the role on its registry row is the truth.
+      const launch = await launchFor(registry, agent, agent.preset, agent.role === "triage" ? "triage" : "ordinary");
       own.session = await adapter.start({
         preset,
         sessionId: null,
