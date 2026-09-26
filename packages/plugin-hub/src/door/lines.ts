@@ -497,6 +497,8 @@ export function controlUsage(language: Language, values: LineValues = {}): strin
  * the sentence asking for it.
  */
 export const DISPATCH_PHRASES: Record<Language, string> = { en: "/dispatch", ru: "/передать" };
+/** One question to every council seat of the person, answered once in this chat. */
+export const COUNCIL_PHRASES: Record<Language, string> = { en: "/council", ru: "/совет" };
 export const AGENT_PHRASES: Record<Language, string> = { en: "/agent", ru: "/агент" };
 export const ADOPT_PHRASES: Record<Language, string> = { en: "adopt", ru: "принять" };
 export const RETIRE_PHRASES: Record<Language, string> = { en: "retire", ru: "отключить" };
@@ -521,6 +523,56 @@ export function dispatchUsage(language: Language, values: LineValues = {}): stri
   const sentence = interpolate(language, language === "ru"
     ? `напишите ${DISPATCH_PHRASES.ru}, идентификатор агента и задачу.`
     : `use ${DISPATCH_PHRASES.en} followed by an agent ID and the task.`, values);
+  return says(language, sentence);
+}
+
+/** How much of the question the acknowledgement repeats, so a long one stays one line. */
+export const COUNCIL_QUESTION_CAP = 120;
+
+/**
+ * The seats are on their way and one answer comes back here. The question is
+ * repeated so a person with two councils running can tell which one this is,
+ * and it is capped because the whole of a pasted page is not an acknowledgement.
+ */
+export function councilRequested(language: Language, values: { count: number; question: string }): string {
+  const question = values.question.length > COUNCIL_QUESTION_CAP
+    ? values.question.slice(0, COUNCIL_QUESTION_CAP) + "..."
+    : values.question;
+  const sentence = interpolate(language, language === "ru"
+    ? "совет из {count} начат по вопросу: {question}"
+    : "council of {count} started on: {question}", { count: values.count, question });
+  return says(language, sentence);
+}
+
+/** The command was understood and refused, so nothing was queued. */
+export function councilRefused(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "совет отклонён: {cause}."
+    : "council refused: {cause}.", values);
+  return says(language, sentence);
+}
+
+/**
+ * What to type, and what a council is made of. A person whose file names fewer
+ * than two seats reads this line too, because the thing they are missing is a
+ * registry entry and not a permission.
+ */
+export function councilUsage(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? `напишите ${COUNCIL_PHRASES.ru} и вопрос. Совету нужны минимум два ваших агента с role = "council".`
+    : `use ${COUNCIL_PHRASES.en} followed by a question. A council needs at least two of your agents with role = "council".`, values);
+  return says(language, sentence);
+}
+
+/**
+ * The council has run past the grace and is said ONCE, for the council and
+ * never per seat: the seats are jobs nobody sees, and the one thing the person
+ * is waiting on is the merged answer.
+ */
+export function councilLate(language: Language, values: { answered: number; seats: number; seconds: number }): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "всё ещё жду совет: ответили {answered} из {seats}. Прошло {seconds} с."
+    : "still waiting on the council: {answered} of {seats} seats have answered. {seconds} s so far.", values);
   return says(language, sentence);
 }
 

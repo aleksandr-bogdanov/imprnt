@@ -12,13 +12,18 @@ export interface InboundSource {
   /** Present on a job row: who asked, for whom, and where the report goes. */
   dispatch?: DispatchEnvelope;
   /**
-   * Set on a row a WATCHER caused: a hunt's triage job and the report on it.
-   * The line is projected into the master's chat log for the person to read,
-   * and both tails leave it out, because no model reads watcher text except
-   * the master judging the batch in front of it (SPEC section 5).
+   * Set on a row a WATCHER caused (a hunt's triage job and the report on it)
+   * or a COUNCIL caused (a seat's job, its report, and the merge row). The
+   * line is projected into the chat log for the person to read, and both
+   * tails leave it out: no model reads watcher text except the master judging
+   * the batch in front of it (SPEC section 5), and the chat's agent reads the
+   * seats' answers only inside the merge row it is fed as a turn.
    */
-  origin?: "watcher";
+  origin?: RowOrigin;
 }
+
+/** Who caused a row that is in the log for the person and in neither tail. */
+export type RowOrigin = "watcher" | "council";
 
 /**
  * What a person approved when they typed the command, and the only route a
@@ -30,6 +35,12 @@ export interface DispatchEnvelope {
   target: string;
   approved: { by: string; at: string; digest: string; source: string };
   return: { agent: string; door: string; chat: string };
+  /**
+   * Present on a council seat's job: which council, every seat of it, and
+   * which seat this is. The settle reads it to mark the seat answered and to
+   * know when the last one has landed.
+   */
+  council?: { id: string; seats: string[]; seat: string };
 }
 
 /**
@@ -45,7 +56,7 @@ export interface JobSource {
   from: string;
   text: string;
   dispatch: DispatchEnvelope;
-  origin?: "watcher";
+  origin?: RowOrigin;
 }
 
 export interface InboundMessage {

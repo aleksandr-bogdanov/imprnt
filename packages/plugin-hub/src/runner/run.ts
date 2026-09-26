@@ -52,7 +52,7 @@ import { storeUrlFor } from "../store/secrets.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
 import { claimNext } from "./claim.ts";
-import { admitJob, refuseJob } from "./job.ts";
+import { abandonJob, admitJob, refuseJob } from "./job.ts";
 import { clearProgress, writeProgress, type TurnProgress } from "./progress.ts";
 import {
   clearOutage,
@@ -537,6 +537,8 @@ export async function runRunner(options: {
     let claimedHuman = false;
     /** Where a claimed JOB's notice goes, which is never this agent's own chat. */
     let claimedReturn: { agent: string; door: string; chat: string } | null = null;
+    /** The claimed row itself when it is a council seat's job, for the give-up path. */
+    let claimedSeat: EligibleRow | null = null;
     let unhealthy = retries.has(agent.id);
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
@@ -762,6 +764,34 @@ export async function runRunner(options: {
           end.refused.cause === "window" && reading?.resets_at
             ? reading.resets_at
             : new Date(Date.now() + every * 1000).toISOString();
+        // A council seat refused again after the council's grace has run out
+        // is given up on here, the way a seat whose child died is given up
+        // on in the catch below: a refused seat retried for ever holds the
+        // merge back for ever, and the door leaves a claimed seat to this
+        // runner. The refusal is still written down for what it was, and a
+        // credential-scoped one still opens the household's outage, because
+        // that is a fact about the login and not about this seat.
+        const envelope = about.kind === "job" && about.source?.dispatch?.approved?.source === "council" ? about.source.dispatch : null;
+        const convened = Date.parse(String(envelope?.approved?.at ?? ""));
+        const grace = Number(readSetting(about.registry, "hub.job_grace_seconds") ?? 300) * 1000;
+        if (envelope?.council && Number.isFinite(convened) && Date.now() > convened + grace) {
+          const kind = scope.scope === "local" ? "refused.local" : "refused.outage";
+          await store.sql.begin(async (tx) => {
+            const inside = { ...store, sql: tx as unknown as Store["sql"] };
+            await appendEntry(inside, {
+              stream: "refusal", subject: message.id, kind, actor: "runner",
+              detail: { agent: agent.id, runner: options.runner, cause: end.refused!.cause, said: end.refused!.said, retry_at: null },
+            });
+            await abandonJob(inside, { row: { id: message.id, agent: agent.id, source: about.source }, runner: options.runner, cause: end.refused!.cause });
+          });
+          if (scope.scope === "credential") {
+            const standing = await openOutage(store, {
+              credential, cause: end.refused.cause, said: end.refused.said, runner: options.runner, retryAt,
+            });
+            await sayOutage(about.registry, credential, standing);
+          }
+          return;
+        }
         await refuseTurn(store, {
           inboundId: message.id,
           runner: options.runner,
@@ -1221,6 +1251,7 @@ export async function runRunner(options: {
             continue;
           }
           claimedReturn = row.source?.dispatch?.return ?? null;
+          claimedSeat = row.source?.dispatch?.approved?.source === "council" ? row : null;
         }
         const preset = getPreset(registry, agent.preset);
         // A session carries the preset it was started with, so a changed one is
@@ -1243,6 +1274,7 @@ export async function runRunner(options: {
         await oneTurn({ id: row.id, text }, { preset, tail: false, registry, source: row.source, kind: row.kind });
         claimed = null;
         claimedReturn = null;
+        claimedSeat = null;
         lastWork = Date.now();
       }
     } catch (error) {
@@ -1257,6 +1289,24 @@ export async function runRunner(options: {
       await store.sql.begin(async tx => {
         const inside = { ...store, sql: tx as unknown as Store["sql"] };
         if (claimed) await clearProgress(inside, claimed);
+        // A council seat whose turn failed after the council's grace has run
+        // out is given up on rather than retried: the person has already read
+        // that the council is late, and a seat retried for ever holds the
+        // merge back for ever. Settled here, so the retry below never sees it.
+        if (claimedSeat && claimed === claimedSeat.id) {
+          const grace = Number(readSetting(registry, "hub.job_grace_seconds") ?? 300) * 1000;
+          const convened = Date.parse(String(claimedSeat.source?.dispatch?.approved?.at ?? ""));
+          if (Number.isFinite(convened) && Date.now() > convened + grace) {
+            await abandonJob(inside, { row: claimedSeat, runner: options.runner, cause });
+            // Settled, so nothing below may say it stopped and will be tried
+            // again: that line would be false, and it would carry the seat's
+            // id into the chat that asked the question.
+            claimedSeat = null;
+            claimed = null;
+            claimedReturn = null;
+            claimedHuman = false;
+          }
+        }
         await tx`update inbound set claimed_by = null, claim_deadline = null, retry_at = ${retryAt}::timestamptz
           where agent = ${agent.id} and claimed_by = ${options.runner} and state not in ('answered', 'delivered')`;
         await putRow(inside, "agent_health", agent.id, { status: "retry", cause, retry_at: retryAt });

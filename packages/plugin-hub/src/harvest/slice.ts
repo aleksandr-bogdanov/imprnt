@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { chatLogPath, validLine, type BadRecord } from "../chatlog.ts";
-import { AGENT_PHRASES, DISPATCH_PHRASES, type Language } from "../door/lines.ts";
+import { AGENT_PHRASES, COUNCIL_PHRASES, DISPATCH_PHRASES, type Language } from "../door/lines.ts";
 
 /**
  * The slice: the lines of one chat between two instants that a
@@ -78,6 +78,7 @@ function leadingVerb(phrases: Record<Language, string>): RegExp {
 }
 
 const DISPATCH_COMMAND = leadingVerb(DISPATCH_PHRASES);
+const COUNCIL_COMMAND = leadingVerb(COUNCIL_PHRASES);
 const AGENT_COMMAND = leadingVerb(AGENT_PHRASES);
 
 /**
@@ -89,6 +90,14 @@ const AGENT_COMMAND = leadingVerb(AGENT_PHRASES);
  */
 export function isDispatchCommand(text: string): boolean {
   return DISPATCH_COMMAND.test(String(text ?? ""));
+}
+
+/**
+ * A council command, recognised by the rule above, so the door routes it to
+ * the council and a harvest never files the question as content.
+ */
+export function isCouncilCommand(text: string): boolean {
+  return COUNCIL_COMMAND.test(String(text ?? ""));
 }
 
 /** An agent lifecycle command, recognised by the rule above. */
@@ -171,7 +180,7 @@ function walk(
 function spoken(line: SliceLine, person: string, agent: string): boolean {
   return (line.from === person || line.from === agent) && !isDemand(line.text) &&
     !isRecoveryCommand(line.text) && !isDispatchCommand(line.text) &&
-    !isAgentCommand(line.text);
+    !isCouncilCommand(line.text) && !isAgentCommand(line.text);
 }
 
 /**

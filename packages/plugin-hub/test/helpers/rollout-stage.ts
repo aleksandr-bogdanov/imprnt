@@ -79,6 +79,28 @@ export const DISPATCH_RUNNER2 = "runner-mac"
  */
 export const DISPATCH_TARGET_DOOR2 = "door-fake-2"
 
+/**
+ * The seats a council check needs: three for the first person and two for the
+ * second, every one `role = "council"` with no door and no chat, on the hub's
+ * own runner, spawned on demand the way the example registry declares a seat:
+ * a resident seat holds one of the runner's four child slots while it waits
+ * for a question, and five of them would starve the chat agents. Absent unless
+ * a check asks, so no shipped check sees a seat.
+ */
+export const COUNCIL_SEATS = ["p1-seat-1", "p1-seat-2", "p1-seat-3"]
+export const COUNCIL_SEATS_RU = ["p2-seat-1", "p2-seat-2"]
+
+function councilSpec(spec: RegistrySpec): RegistrySpec {
+  return {
+    ...spec,
+    agents: [
+      ...(spec.agents ?? []),
+      ...COUNCIL_SEATS.map(id => ({ id, person: "p1", preset: "daily", runner: "runner-pi", role: "council", mode: "on-demand" })),
+      ...COUNCIL_SEATS_RU.map(id => ({ id, person: "p2", preset: "daily", runner: "runner-pi", role: "council", mode: "on-demand" })),
+    ],
+  }
+}
+
 function dispatchSpec(spec: RegistrySpec, secondDoor: boolean): RegistrySpec {
   // Both machines carry the os this suite runs on, so a check may really start
   // either runner here. Two of them is what makes `machine` required on every
@@ -172,7 +194,7 @@ function sixbSpec(spec: RegistrySpec): RegistrySpec {
 export async function rolloutStage(
   cluster: Cluster,
   name: "telegram" | "discord",
-  options: StageOptions & { voice?: VoiceStage; dispatch?: boolean; secondDoor?: boolean; sixb?: boolean; admin?: FakeAdminOptions } = {},
+  options: StageOptions & { voice?: VoiceStage; dispatch?: boolean; secondDoor?: boolean; sixb?: boolean; council?: boolean; admin?: FakeAdminOptions } = {},
 ) {
   const customize = options.registry
   // Every shape at once is the dispatch household on two doors with the zone,
@@ -191,7 +213,8 @@ export async function rolloutStage(
     registry: base => {
       const one = { ...base, agents: base.agents!.map(one => ({ ...one, runner: "runner-pi" })) }
       const two = dispatch ? dispatchSpec(one, secondDoor) : one
-      const spec = options.sixb ? sixbSpec(two) : two
+      const three = options.council ? councilSpec(two) : two
+      const spec = options.sixb ? sixbSpec(three) : three
       return customize ? customize(spec) : spec
     },
   })

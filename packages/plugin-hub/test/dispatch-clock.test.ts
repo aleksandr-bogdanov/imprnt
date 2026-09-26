@@ -27,8 +27,13 @@ import { startCluster, until, type Cluster } from "./helpers/cluster.ts"
 import { rolloutStage, DISPATCH_TARGET } from "./helpers/rollout-stage.ts"
 import { message } from "./helpers/rollout-ingress.ts"
 import { observe } from "./helpers/rollout-runner.ts"
-import { DISPATCH_PHRASES } from "../src/door/lines.ts"
-import { clockDeadlines } from "../src/door/clock.ts"
+import { COUNCIL_PHRASES, councilLate, DISPATCH_PHRASES } from "../src/door/lines.ts"
+import { clockDeadlines, councilDeadline, COUNCIL_STAMP } from "../src/door/clock.ts"
+import { COUNCIL_SHEET, mergeIdOf } from "../src/door/council.ts"
+import { settleTurn } from "../src/runner/settle.ts"
+import { openStore, storeUrlAs } from "../src/store/connect.ts"
+import { COUNCIL_SEATS } from "./helpers/rollout-stage.ts"
+import { chatLogLines } from "./helpers/hub-fixture.ts"
 import { projectInbound } from "../src/chatlog/project.ts"
 import { readOpenTurns } from "../src/store/turns.ts"
 import { loadRegistry } from "../src/registry/load.ts"
@@ -188,3 +193,94 @@ test("D-213 the door says nothing about a report whose job ran for an hour, whil
     await door?.stop(); await asRunner.close(); await store.close(); await it.stop()
   }
 }, 120_000)
+
+test("a council past the grace is said late ONCE, its unclaimed seat is given up on, a claimed seat is left to its runner whatever its lease says, and a restarted door says it no second time", async () => {
+  // The grace is four seconds, so the council's one clock runs out inside this
+  // check. Two seats are claimed by a runner before the grace, one on a live
+  // lease and one on a lease that has run out, and neither is settled until
+  // the end, so the council stays open past the late line.
+  const it = await rolloutStage(cluster, "telegram", { council: true, hub: { job_grace_seconds: 4 } })
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  const runner = await openStore({ url: storeUrlAs(cluster.url(it.db), "hub_runner") })
+  try {
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    it.edge.batch([{ ...message("500", `${COUNCIL_PHRASES.en} weigh the synthetic council`), chat: LAIR_CHAT, sender_id: "p1", from: "p1" }], "501")
+    await until("the seats' jobs reach the queue", async () =>
+      (await it.read.inbound()).filter(r => r.kind === "job").length === COUNCIL_SEATS.length, 20_000)
+    const jobs = (await it.read.inbound()).filter(r => r.kind === "job")
+    const held = jobs.find(j => j.agent === COUNCIL_SEATS[2])!
+    const lapsed = jobs.find(j => j.agent === COUNCIL_SEATS[1])!
+    await it.read.sql("update inbound set claimed_by = 'runner-pi', claim_deadline = now() + interval '1 hour' where id = $1", [held.id])
+    // A lease that ran out is not a turn that stopped: the deadline is fixed
+    // at the claim and a long turn outlives it.
+    await it.read.sql("update inbound set claimed_by = 'runner-pi', claim_deadline = now() - interval '1 minute' where id = $1", [lapsed.id])
+    const [council] = await it.read.sheet(COUNCIL_SHEET)
+    expect(council).toBeDefined()
+    expect(councilDeadline({ at: String(council.data.at) }, 4)).toBe(new Date(String(council.data.at)).getTime() + 4000)
+
+    const late = () => it.edge.posts().filter(p => p.chat === LAIR_CHAT && p.text.includes("council")).filter(p => !p.text.includes("started on"))
+    await until("the door says the council is late", () => late().length > 0, 20_000)
+    // ONE line, naming the council's count and none of the seats, and one
+    // diary row under the council's own id.
+    expect(late()).toHaveLength(1)
+    const seconds = Number(/(\d+) s so far/.exec(late()[0].text)?.[1])
+    expect(late()[0].text).toBe(councilLate("en", { answered: 0, seats: COUNCIL_SEATS.length, seconds }))
+    for (const seat of COUNCIL_SEATS) expect(late()[0].text).not.toContain(seat)
+    const spoken = await it.read.ledger({ stream: "clock", subject: council.id })
+    expect(spoken).toHaveLength(1)
+    expect(spoken[0].detail).toMatchObject({ stamp: COUNCIL_STAMP, person: "p1", agent: "p1-lair", id: `clock:${council.id}:${COUNCIL_STAMP}` })
+    // No seat's job was ever spoken about: a seat's row is the seat's and
+    // never an open turn of the chat's agent.
+    for (const job of jobs) expect(await it.read.ledger({ stream: "clock", subject: job.id })).toEqual([])
+
+    // The one seat nobody claimed is given up on in the same transaction, by
+    // the door through the runner-owned function; both held ones are left,
+    // the lapsed lease included.
+    const rows = await it.read.inbound()
+    {
+      const job = rows.find(r => r.agent === COUNCIL_SEATS[0] && r.kind === "job")!
+      expect(job.state).toBe("answered")
+      expect(rows.find(r => r.id === `report:${job.id}`)).toBeUndefined()
+      const abandoned = await it.read.ledger({ subject: job.id, kind: "dispatch.abandoned" })
+      expect(abandoned).toHaveLength(1)
+      expect(abandoned[0].actor).toBe("runner")
+      expect(abandoned[0].detail).toMatchObject({ agent: COUNCIL_SEATS[0], council: council.id, cause: "unclaimed past the grace", by: "door", dispatcher: "p1-lair" })
+    }
+    for (const job of [held, lapsed]) {
+      expect(rows.find(r => r.id === job.id)!.state).toBe("received")
+      expect(rows.find(r => r.id === job.id)!.claimed_by).toBe("runner-pi")
+      expect(await it.read.ledger({ subject: job.id, kind: "dispatch.abandoned" })).toEqual([])
+    }
+    expect(rows.filter(r => String(r.id).startsWith("merge:"))).toEqual([])
+    const marked = (await it.read.sheet(COUNCIL_SHEET))[0]
+    expect(marked.data.late).toEqual(expect.any(String))
+    expect(marked.data.answered).toEqual({ [COUNCIL_SEATS[0]]: null })
+    // No "stopped, will retry" line about any seat reached the chat.
+    expect((await it.read.noticeRows()).filter(one => String(one.notice_key).startsWith("agent-retry:"))).toEqual([])
+    // Not a second time in this door's life, well past a second grace.
+    expect(await observe(() => late().length > 1, 5_000)).toBe(false)
+    // Not a second time from a door started again either: the mark is on the row.
+    await door.stop()
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    expect(await observe(() => late().length > 1, 5_000)).toBe(false)
+    expect(await it.read.ledger({ stream: "clock", subject: council.id })).toHaveLength(1)
+    expect(chatLogLines(it.stateDir, "p1", "p1-lair").filter(l => l.text === late()[0].text)).toHaveLength(1)
+    // And the ordinary still-waiting lines are absent: nothing here is a turn.
+    expect(it.edge.posts().filter(p => p.text.startsWith("[door] still waiting:"))).toEqual([])
+
+    // The held seats' runner settles them at last: the merge lands with the
+    // given-up seat as "no answer", and the row goes.
+    const record = (agent: string) => ({ agent, runner: "runner-pi", preset: "daily", preset_id: "p", preset_settings: {}, input_tokens: 1, cached_input_tokens: 0,
+      output_tokens: 1, price: null, plan_usage: null, raw_usage: {}, session_id: null, lacks: [], tail: false })
+    await settleTurn(runner, { inboundId: lapsed.id, kind: "job", person: "p1", source: lapsed.source as never, chunks: ["the lapsed seat's answer"], turn: record(COUNCIL_SEATS[1]) })
+    expect((await it.read.inbound()).filter(r => String(r.id).startsWith("merge:"))).toEqual([])
+    await settleTurn(runner, { inboundId: held.id, kind: "job", person: "p1", source: held.source as never, chunks: ["the held seat's answer"], turn: record(COUNCIL_SEATS[2]) })
+    const merge = (await it.read.inbound()).find(r => r.id === mergeIdOf(council.id))!
+    expect(merge).toBeDefined()
+    expect(merge.body).toContain("Seat 1:\nno answer")
+    expect(merge.body).toContain("Seat 2:\nthe lapsed seat's answer")
+    expect(merge.body).toContain("Seat 3:\nthe held seat's answer")
+    expect(await it.read.sheet(COUNCIL_SHEET)).toEqual([])
+    expect(await it.read.ledger({ kind: "council.merged" })).toHaveLength(1)
+  } finally { await door?.stop(); await runner.close(); await it.stop() }
+}, 90_000)

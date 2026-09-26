@@ -1,4 +1,4 @@
-import { appendChatLineOnce, type BadRecord } from "../chatlog.ts";
+import { appendChatLineOnce, lineOrigin, type BadRecord } from "../chatlog.ts";
 import type { StoreLike } from "../store/connect.ts";
 import type { InboundSource } from "../store/inbound.ts";
 
@@ -29,12 +29,14 @@ export async function projectInbound(
   // registry id in `source.from`. So it is the one line that names somebody
   // else, and a person reading their log sees who answered.
   const from = row.kind === "report" && typeof source.from === "string" ? source.from : row.person;
-  // A watcher's row (a hunt's triage job, and the report on it) carries its
-  // origin in its provenance, and the line carries it the way a watcher's
-  // notice does, so both tails leave it out.
+  // A watcher's row (a hunt's triage job, and the report on it) and a
+  // council's (a seat's job, its report, the merge) carry their origin in the
+  // provenance, and the line carries it the way a watcher's notice does, so
+  // both tails leave it out.
+  const origin = lineOrigin(source.origin);
   await appendChatLineOnce({ stateDir: options.stateDir, person: row.person, agent: row.agent }, {
     id: source.log_id, at: source.at, direction: "in", from, text: source.text,
-    ...(source.origin === "watcher" ? { origin: "watcher" as const } : {}),
+    ...(origin ? { origin } : {}),
   }, { skipBad: options.skipBad });
   await store.sql`update inbound set log_ready = true where id = ${options.inboundId} and not log_ready`;
 }

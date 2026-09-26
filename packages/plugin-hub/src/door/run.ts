@@ -3,7 +3,7 @@ import { historyHarvestFrom } from "../registry/entries.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
 import { classifyPlatformError, prepareReply } from "./reply.ts";
 import { requestRecovery } from "../hub/control.ts";
-import { appendChatLineOnce, type BadRecord } from "../chatlog.ts";
+import { appendChatLineOnce, lineOrigin, type BadRecord } from "../chatlog.ts";
 import { recordOperationFailure as recordDiagnostic } from "../diagnostics.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import {
@@ -58,10 +58,13 @@ import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
 import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
 import { lookUpAdopt, parseAgentCommand, type ResolvedRef } from "./agentctl.ts";
-import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
+import { claimCouncilLate, clockDeadlines, COUNCIL_STAMP, councilDeadline, readOpenCouncils, readSpokenClocks, recordExpiry, type OpenCouncil } from "./clock.ts";
+import { openSeatsOf, seatJobId } from "./council.ts";
+import { recordSeatAnswer } from "../runner/council.ts";
 import { CURSOR_SHEET, cursorId, readCursor, writeCursor } from "./cursor.ts";
 import {
   clockLine,
+  councilLate,
   finding,
   progressLine,
   progressTotals,
@@ -226,6 +229,8 @@ interface Served {
   /** Rows this door wrote down itself, handed to `attend` with no read. */
   arrivals: OpenTurnRow[];
   arrived: Nudge;
+  /** Councils this door convened itself, handed to `attend` with no read. */
+  councils: OpenCouncil[];
   /** Notes this door wrote down that are waiting for their words. */
   voice: PendingVoiceRow[];
   voiced: Nudge;
@@ -460,7 +465,7 @@ export async function runDoor(options: {
           from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
           // The same mark the delivery projection writes, so a watcher's line
           // projected at start is left out of the tail too.
-          ...(chunk.route?.origin === "watcher" ? { origin: "watcher" as const } : {}),
+          ...(lineOrigin(chunk.route?.origin) ? { origin: lineOrigin(chunk.route?.origin) } : {}),
         }, { skipBad });
         projected.add(chunk.id);
       }
@@ -635,6 +640,12 @@ export async function runDoor(options: {
                 own.voice.push(row);
                 own.voiced.wake();
               },
+              council(row) {
+                // The council's one clock is armed on the next pass, the way a
+                // row's is, and nothing was asked of the store.
+                own.councils.push(row);
+                own.arrived.wake();
+              },
             });
           } finally { connection.release(); }
         });
@@ -692,7 +703,7 @@ export async function runDoor(options: {
             from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
             // A watcher's notice is marked in the log as it is on the row, so
             // the file tail leaves it out the way the store tail does.
-            ...(chunk.route?.origin === "watcher" ? { origin: "watcher" as const } : {}),
+            ...(lineOrigin(chunk.route?.origin) ? { origin: lineOrigin(chunk.route?.origin) } : {}),
           }, { skipBad });
           projected.add(chunk.id);
         }
@@ -909,10 +920,19 @@ export async function runDoor(options: {
       return out;
     };
 
+    /** The councils this agent convened that are still owed their one line. */
+    let councils: OpenCouncil[] = [];
+    const graceSeconds = (): number => Number(readSetting(registryThisTick(), "hub.job_grace_seconds") ?? 300);
+
     const nextDeadline = (): number | null => {
       let soonest: number | null = null;
       for (const clock of clocksOf(open)) {
         soonest = soonest === null ? clock.at : Math.min(soonest, clock.at);
+      }
+      // A council's one clock, from the moment the question was typed.
+      for (const council of councils) {
+        const due = councilDeadline(council, graceSeconds());
+        soonest = soonest === null ? due : Math.min(soonest, due);
       }
       // The first progress line is a deadline of this door's own, held in
       // memory: a turn with no tool call reports nothing after `started`, so
@@ -1012,6 +1032,56 @@ export async function runDoor(options: {
       } catch {
         // The platform refused the line. The row is in the diary either way,
         // and `check`'s stamp finding is the half a household still sees.
+      }
+    };
+
+    /**
+     * The council's one clock line: claimed on the sheet row, then the chat
+     * log, the diary, and the chat. Said for the council and never per seat.
+     *
+     * The claim is the read: a council whose merge has landed has no row, and
+     * one a door before this one spoke about carries the mark, and in both
+     * cases there is nothing to say. What the line reports is how many seats
+     * have answered as the row stood at the claim.
+     */
+    const sayCouncilLate = async (council: OpenCouncil): Promise<void> => {
+      councils = councils.filter((one) => one.id !== council.id);
+      const at = new Date().toISOString();
+      const id = `clock:${council.id}:${COUNCIL_STAMP}`;
+      // ONE transaction: the claim, the seats nobody claimed given up on, and
+      // the diary row. The grace has run out, so a seat no runner has taken
+      // is a seat no runner is going to take in time, and the merge lands
+      // with "no answer" for it rather than never. A seat some runner holds
+      // is left to that runner. What the line reports is the count as the
+      // row stood at the claim, which is what the person has been waiting on.
+      const said = await store.sql.begin(async (tx) => {
+        const inside = { ...store, sql: tx as unknown as Store["sql"] };
+        const standing = await claimCouncilLate(inside, { id: council.id, at });
+        if (standing === null) return null;
+        const seconds = Math.max(1, Math.round((Date.now() - new Date(standing.at).getTime()) / 1000));
+        const answered = Object.keys(standing.answered ?? {}).length;
+        for (const seat of openSeatsOf(standing)) {
+          const [gone] = (await tx`select hub_council_abandon(${seatJobId(council.id, seat)}, ${"unclaimed past the grace"}) as closed`) as
+            unknown as { closed: boolean }[];
+          if (gone?.closed) await recordSeatAnswer(inside, { council: { id: council.id, seat }, answer: null }, { actor: "door" });
+        }
+        await recordExpiry(inside, {
+          messageId: council.id, stamp: COUNCIL_STAMP, seconds,
+          person: standing.person, agent: standing.agent, id, at,
+        });
+        return { standing, seconds, answered };
+      });
+      if (said === null) return;
+      const text = councilLate(language, { answered: said.answered, seats: said.standing.seats.length, seconds: said.seconds });
+      await appendChatLineOnce(
+        { stateDir, person: said.standing.person, agent: said.standing.agent },
+        { id, at, direction: "out", from: options.door, text },
+      );
+      try {
+        await options.platform.post({ chat: agent.chat, text });
+      } catch {
+        // The platform refused the line. The row is marked and the diary has
+        // it either way.
       }
     };
 
@@ -1163,6 +1233,9 @@ export async function runDoor(options: {
           spoken.add(key);
           spokenAt.set(key, Date.now());
         }
+        // The councils a door before this one convened and had not yet said
+        // were late, the same way it picks up the turns it owed.
+        councils = await readOpenCouncils(store, { agent: agent.id });
         // The progress lines a door before this one posted. One that belongs to
         // a turn still open is INHERITED, and one whose turn has ended is swept:
         // the door that posted it died before it could edit its totals, so
@@ -1199,6 +1272,11 @@ export async function runDoor(options: {
       while (!stopping && !own.leaving) {
         // Rows this door wrote down since the last pass. In memory, so a
         // message that nobody has claimed still has its acked clock armed.
+        if (own.councils.length > 0) {
+          for (const council of own.councils.splice(0)) {
+            if (!councils.some((one) => one.id === council.id)) councils.push(council);
+          }
+        }
         if (own.arrivals.length > 0) {
           for (const row of own.arrivals.splice(0)) {
             const at = open.findIndex((one) => one.id === row.id);
@@ -1256,6 +1334,9 @@ export async function runDoor(options: {
 
         // A clock that is really due is the one recorded deadline a wake is
         // allowed on.
+        for (const council of [...councils]) {
+          if (councilDeadline(council, graceSeconds()) <= Date.now()) await sayCouncilLate(council);
+        }
         const ripe = clocksOf(open).filter((clock) => clock.at <= Date.now());
         if (ripe.length === 0) continue;
         // The one read an expiry makes, with the facts the reason line needs
@@ -1831,6 +1912,7 @@ export async function runDoor(options: {
       progress: new Map<string, ProgressLine>(),
       arrivals: [],
       arrived: nudge(),
+      councils: [],
       voice: [],
       voiced: nudge(),
       inFlight: new Set<string>(),

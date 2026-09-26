@@ -21,6 +21,7 @@ export const MIGRATION_FILES: readonly (readonly [number, string])[] = [
   [7, "007-media.sql"],
   [8, "008-watch.sql"],
   [9, "009-watch-origin.sql"],
+  [10, "010-council.sql"],
 ];
 
 const MIGRATIONS: Migration[] = MIGRATION_FILES.map(([version, file]) => ({
