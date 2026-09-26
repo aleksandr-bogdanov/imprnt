@@ -378,3 +378,29 @@ export async function removeEntry(file: string, entryPath: string,
     }, options);
   });
 }
+
+/**
+ * The whole file written again from what it parses to, saying exactly what it
+ * said before.
+ *
+ * This is the one edit that is not a line operation, and it exists for a file
+ * no person wrote: a converter's output that carries every table on one line,
+ * which the three primitives above cannot locate an entry in. The proof is the
+ * same as theirs, a load and a structure diff, and here the intended structure
+ * is the file's own, so a render that changed one value is refused. A file
+ * holding a note is refused before anything is rendered, because a person's
+ * notes are the one thing a render from the parse cannot carry.
+ */
+export async function rewriteRegistry(file: string, render: (data: Record<string, unknown>) => string,
+  options: RegistryEditOptions = {}): Promise<RegistryEditResult> {
+  return await locked(file, async live => {
+    const read = readLive(live);
+    await options.seam?.afterRead?.(file);
+    const noted = read.before.split("\n").findIndex(isComment);
+    if (noted >= 0) {
+      throw new RegistryEditRefused("notes",
+        `${file} carries a note on line ${noted + 1}, and a rewrite from the parse would drop it, so the file was left alone`);
+    }
+    return await apply(file, live, read, render(read.data), before => before, options);
+  });
+}

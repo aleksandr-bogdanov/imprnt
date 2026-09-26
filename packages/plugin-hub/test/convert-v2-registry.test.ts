@@ -24,6 +24,12 @@ test("ROLL-05 ROLL-30 imported inventory reaches loadRegistry and actual wrapped
     expect(f.sources.map(s => readFileSync(s.file, "utf8"))).toEqual(sources)
     for (const file of [f.registryManifest.candidate, f.registryManifest.inventory]) expect(statSync(file).mode & 0o777).toBe(0o600)
     const registry = loadRegistry(f.registryManifest.candidate) as any
+    // The layout the registry editor works on: an entry it cannot find by its
+    // own header is an entry no adopt, retire or board press can touch.
+    const candidateText = readFileSync(f.registryManifest.candidate, "utf8")
+    expect(candidateText.match(/^\[\[agents\]\]$/gm), "one [[agents]] header per agent").toHaveLength(2)
+    expect(candidateText).toMatch(/^\[hub\]$/m)
+    expect(candidateText).toMatch(/^\[presets\.daily\]$/m)
     const inventory = JSON.parse(readFileSync(f.registryManifest.inventory, "utf8"))
     expect(inventory.agents.map((a: any) => a.id).sort()).toEqual(["p1-lair", "p2-lair"])
     expect(registry.data.hub.cutover_batch).toBe("synthetic-cutover")
