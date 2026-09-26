@@ -186,7 +186,10 @@ test(
       expect(first.origin + first.pathname).toBe(`https://sentry.io/api/0/organizations/${ORG}/issues/`);
       expect(first.searchParams.get("query")).toBe("is:unresolved");
       expect(first.searchParams.get("limit")).toBe("100");
-      expect(first.searchParams.get("statsPeriod")).toBe("24h");
+      // No window on the request: measured against the real endpoint, a
+      // window filters the set and makes `count` the count inside it, and the
+      // digest is built on every unresolved issue with its lifetime count.
+      expect(first.searchParams.has("statsPeriod")).toBe(false);
       expect(new URL(sentry.asked[1].url).searchParams.get("cursor")).toBe("page-1");
       for (const one of sentry.asked) expect(one.authorization).toBe(`Bearer ${TOKEN}`);
 
@@ -259,6 +262,16 @@ test(
       const except = (rows: typeof after) => rows.map((row) => ({ id: row.id, ...row.data, last_seen: undefined }));
       expect(except(after)).toEqual(except(before));
       for (const row of after) expect(row.data.last_seen).toBe(later.toISOString());
+
+      // The same day once more, with forty new issues, which is a digest long
+      // enough to split into parts: still one row, because the day's key
+      // decides for every part and not only the first.
+      const busy = [...morning, ...Array.from({ length: 40 }, (_, n) => issue({ id: `busy-${n}`, count: 20 + n, project: "whenful-web" }))];
+      const split = await sweep(staged, new Date(DAY0.getTime() + 7_200_000), fakeSentry([busy]));
+      expect(split.posted).toBe(false);
+      expect(split.digest!.length).toBeGreaterThan(2000);
+      expect(await staged.it.read.noticeRows()).toHaveLength(1);
+      expect((await stateRows(staged)).length).toBe(morning.length + 40);
 
       // The next day: 130 became 1300, which is a bucket up; 42 stayed; 7
       // resolved, so its row goes; a fresh 3-event issue is counted.
@@ -388,7 +401,7 @@ test(
 );
 
 test(
-  "an empty sweep posts nothing and still stamps success, and a stale stamp is what check reports once a day has passed",
+  "an empty sweep on an empty sheet posts nothing and still stamps success, an empty answer where the sheet holds rows is a failure that keeps the sheet, and a stale stamp is what check reports once a day has passed",
   async () => {
     const staged = await stage();
     try {
@@ -399,14 +412,71 @@ test(
       expect(await stateRows(staged)).toEqual([]);
       expect((await stampOf(staged))?.data).toMatchObject({ at: DAY0.toISOString(), machine: HERE });
 
+      // Never an empty market: once the sheet holds rows, a 2xx with zero
+      // issues is a query that matched nothing or an answer that is wrong.
+      // The rows stay, the stamp stays where it was, one failed line lands,
+      // and nothing is posted.
+      await sweep(staged, day(1), fakeSentry([[issue({ id: "42", count: 42 }), issue({ id: "5", count: 5 })]]));
+      const kept = { rows: await stateRows(staged), stamp: await stampOf(staged) };
+      let caught: unknown;
+      try {
+        await sweep(staged, day(2), fakeSentry([[]]));
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(WatchRefused);
+      expect((caught as WatchRefused).reason).toBe("operation failed");
+      expect((caught as WatchRefused).code).toBe("empty");
+      expect(await stateRows(staged)).toEqual(kept.rows);
+      expect(await stampOf(staged)).toEqual(kept.stamp);
+      // The one notice is the day before's digest, and the failure added none.
+      expect((await staged.it.read.noticeRows()).map((row) => row.notice_key)).toEqual([`sentry-digest:${ENTRY}:2026-09-27`]);
+      const failed = await staged.it.read.ledger({ stream: "machine", subject: ENTRY, kind: "failed" });
+      expect(failed.map((row) => (row.detail as { code: string }).code)).toEqual(["watch-empty"]);
+
       // The day on the clock schedule is what `job-stale` measures against:
       // fine at a day plus the grace, late one second past it.
       const stamps = [{ id: ENTRY, data: (await stampOf(staged))!.data }];
+      const stamped = Date.parse(String(stamps[0].data.at));
+      expect(stamped).toBe(day(1).getTime());
       const entries = [staged.entry];
-      expect(staleJobs({ entries, stamps, graceSeconds: 300, now: new Date(DAY0.getTime() + 86_700_000) })).toEqual([]);
-      const late = staleJobs({ entries, stamps, graceSeconds: 300, now: new Date(DAY0.getTime() + 86_701_000) });
+      expect(staleJobs({ entries, stamps, graceSeconds: 300, now: new Date(stamped + 86_700_000) })).toEqual([]);
+      const late = staleJobs({ entries, stamps, graceSeconds: 300, now: new Date(stamped + 86_701_000) });
       expect(late.map((one) => one.kind)).toEqual(["job-stale"]);
       expect(staleJobs({ entries, stamps: [], graceSeconds: 300, now: DAY0 }).map((one) => one.kind)).toEqual(["job-no-stamp"]);
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "a sweep cut at the page cap removes nothing from the sheet and says it was partial, and a whole sweep afterwards removes what resolved",
+  async () => {
+    const staged = await stage();
+    try {
+      // A whole sweep first: two issues on the sheet.
+      await sweep(staged, DAY0, fakeSentry([[issue({ id: "42", count: 42 }), issue({ id: "beyond", count: 30 })]]));
+      // Six pages of a hundred, the cap at five: `beyond` sits on the sixth
+      // and is never read, so it must not be taken as resolved.
+      const pages = Array.from({ length: 6 }, (_, page) =>
+        Array.from({ length: 100 }, (_, n) => issue({ id: page === 5 && n === 0 ? "beyond" : `p${page}-${n}`, count: 1 })));
+      pages[0][0] = issue({ id: "42", count: 42 });
+      const capped = fakeSentry(pages);
+      const partial = await sweep(staged, day(1), capped);
+      expect(capped.asked).toHaveLength(5);
+      expect(partial.counts).toMatchObject({ seen: 500, removed: 0, partial: true });
+      const rows = await stateRows(staged);
+      expect(rows.length).toBe(501);
+      expect(rows.find((row) => row.id === "beyond")!.data).toMatchObject({ first_seen: DAY0.toISOString(), last_seen: DAY0.toISOString() });
+      const swept = await staged.it.read.ledger({ stream: "machine", subject: ENTRY, kind: "watch.swept" });
+      expect(swept[swept.length - 1].detail).toMatchObject({ partial: true, removed: 0 });
+
+      // A whole sweep the next day, `beyond` really gone: its row goes now.
+      const whole = await sweep(staged, day(2), fakeSentry([[issue({ id: "42", count: 42 })]]));
+      expect(whole.counts).toMatchObject({ removed: 500, partial: false });
+      expect((await stateRows(staged)).map((row) => row.id)).toEqual(["42"]);
     } finally {
       await staged.stop();
     }
@@ -443,6 +513,23 @@ test("the digest is cut at thirty lines with the tail saying how many more, and 
   expect(said[1]).not.toContain("javascript:");
   expect(said[1]).not.toContain("<");
   expect(odd.next["0"]).toMatchObject({ events: 10 });
+
+  // Markdown and mentions inside a title are inert in the line: a ping does
+  // not fire, a masked link does not render, and a bold does not run on.
+  const loud = classify({
+    issues: [{ ...many[0], title: "@everyone see [x](https://e) and **this** `that` <@&1>", project: "web_app" }],
+    state: {}, settings, now: DAY0,
+  });
+  const shouted = renderDigest(loud, { now: DAY0, settings })!.split("\n")[1];
+  expect(shouted).toContain("@\u200beveryone");
+  expect(shouted).toContain("\\[x\\](https://e)");
+  expect(shouted).toContain("\\*\\*this\\*\\*");
+  expect(shouted).toContain("\\`that\\`");
+  expect(shouted).toContain("<@\u200b&1>");
+  expect(shouted).toContain("web\\_app:");
+  expect(shouted).not.toContain("@everyone");
+  expect(shouted).not.toContain("[x](");
+  expect(shouted.startsWith("**new** ")).toBe(true);
 
   // A day with only issues under the floor is a day with nothing to say.
   const quiet = classify({ issues: [{ ...many[0], events: 3 }], state: {}, settings, now: DAY0 });

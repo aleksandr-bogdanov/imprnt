@@ -356,7 +356,8 @@ credential = "sentry"
 org = "an-organisation-slug"
 # The issue search. Absent means unresolved issues.
 query = "is:unresolved"
-# An issue with fewer events than this is never shown, only counted.
+# An issue with fewer events than this is neither shown nor counted, only
+# written down as seen.
 min_events = 1
 # A NEW issue with at least this many events gets a line of its own. One
 # between min_events and this is counted in the digest's last sentence.

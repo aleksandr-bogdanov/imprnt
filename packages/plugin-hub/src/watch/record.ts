@@ -81,7 +81,7 @@ export interface SweepLanding {
     key: string;
   };
   /** The counts the diary line carries, never the text. */
-  counts: Record<string, number>;
+  counts: Record<string, number | boolean>;
   at: Date;
 }
 
@@ -92,8 +92,9 @@ export interface SweepLanding {
  * The notice goes through the security-definer function the door and the hub
  * already ask with, because the hub's role owns no insert on the outbox. Its
  * key is the day's, so a second sweep on the same day writes the state again
- * and posts nothing: the function's own conflict clause is what makes that
- * true, and the read beside it only says so in the diary.
+ * and posts nothing: the read of the day's key inside this transaction is
+ * what decides it, and the function's own conflict clause is the fence behind
+ * it.
  *
  * The stamp is written here and nowhere else, in the same transaction as the
  * notice, so it means "ran AND landed" the way the backup's does.
@@ -106,12 +107,18 @@ export async function landSweep(store: StoreLike, landing: SweepLanding): Promis
     for (const [id, data] of Object.entries(landing.rows)) await putRow(inside, landing.sheet, id, data);
     if (landing.digest !== null) {
       const { notice } = landing;
+      // The day's key decides for EVERY part. Each part carries a key of its
+      // own and the function's conflict clause is per row, so a longer digest
+      // later the same day would post its second part under a key the morning
+      // never used, half a message whose first half was never posted.
       const already = (await sql`select id from outbox where notice_key = ${notice.key}`) as unknown as unknown[];
       posted = already.length === 0;
-      for (const [index, part] of prepareReply(landing.digest, notice.platform, notice.language).entries()) {
-        const key = index === 0 ? notice.key : `${notice.key}:part:${index + 1}`;
-        await sql`select hub_door_notice(${notice.person}, ${notice.agent}, ${part}, ${key},
-          ${notice.route}::jsonb, ${index + 1})`;
+      if (posted) {
+        for (const [index, part] of prepareReply(landing.digest, notice.platform, notice.language).entries()) {
+          const key = index === 0 ? notice.key : `${notice.key}:part:${index + 1}`;
+          await sql`select hub_door_notice(${notice.person}, ${notice.agent}, ${part}, ${key},
+            ${notice.route}::jsonb, ${index + 1})`;
+        }
       }
     }
     // The hub's own stream, because this process opens the store as the hub's

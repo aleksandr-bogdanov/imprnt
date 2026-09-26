@@ -141,22 +141,30 @@ function reasonOf(status: number): string {
 }
 
 /**
- * Every unresolved issue the organisation has, up to `MAX_PAGES` pages.
+ * Every unresolved issue the organisation has, up to `MAX_PAGES` pages, and
+ * whether that was all of them.
  *
  * A non-2xx answer and a body that is not a list are both refusals: nothing is
  * posted and the state is as the last sweep left it, because an empty answer
  * from a refused key is not an empty organisation. The only page followed is
  * one on the same host the first request went to, so a `Link` header cannot
- * send the key anywhere else.
+ * send the key anywhere else. A sweep that stopped at the cap with a page
+ * left says so, because a partial list is not the set and an issue past the
+ * cut has not resolved.
  */
 export async function fetchIssues(args: {
   fetch: Fetch;
   org: string;
   query: string;
   token: string;
-}): Promise<SentryIssue[]> {
+}): Promise<{ issues: SentryIssue[]; complete: boolean }> {
   const first = new URL(`https://sentry.io/api/0/organizations/${encodeURIComponent(args.org)}/issues/`);
-  first.search = new URLSearchParams({ query: args.query, limit: "100", statsPeriod: "24h" }).toString();
+  // NO statsPeriod. MEASURED against the real endpoint: a window filters the
+  // result set to issues with an event inside it AND makes `count` the count
+  // inside it (24h answered 2 of 21 unresolved issues, each with count 1),
+  // while no window answers every unresolved issue with its lifetime count,
+  // which is what the buckets and the reminder are built on.
+  first.search = new URLSearchParams({ query: args.query, limit: "100" }).toString();
   const issues: SentryIssue[] = [];
   let url: string | null = first.toString();
   for (let page = 0; url !== null && page < MAX_PAGES; page += 1) {
@@ -185,7 +193,7 @@ export async function fetchIssues(args: {
     const next = nextPage(answer.headers.get("link"));
     url = next !== null && next.startsWith(`${first.protocol}//${first.host}/`) ? next : null;
   }
-  return issues;
+  return { issues, complete: url === null };
 }
 
 /**
@@ -201,13 +209,16 @@ export async function fetchIssues(args: {
  *
  * One line per issue per day. A change outranks a reminder, and the reminder
  * then waits for the next sweep. An issue the sheet holds and the sweep does
- * not has resolved and its row goes.
+ * not has resolved and its row goes, but only when the sweep was the whole
+ * set: a sweep cut at the page cap removes nothing, because an issue past the
+ * cut is still open.
  */
 export function classify(args: {
   issues: SentryIssue[];
   state: Record<string, IssueState>;
   settings: WatchSettings;
   now: Date;
+  complete?: boolean;
 }): Sweep {
   const at = args.now.toISOString();
   const reminderMs = args.settings.reminder_days * 86_400_000;
@@ -238,7 +249,7 @@ export function classify(args: {
     }
     sweep.next[issue.id] = row;
   }
-  sweep.removed = Object.keys(args.state).filter((id) => !seen.has(id));
+  sweep.removed = args.complete === false ? [] : Object.keys(args.state).filter((id) => !seen.has(id));
   return sweep;
 }
 
@@ -254,14 +265,30 @@ function plural(n: number, one: string): string {
   return `${n} ${one}${n === 1 ? "" : "s"}`;
 }
 
+/**
+ * A string from Sentry as inert chat text: every Discord markdown character
+ * escaped and every mention broken.
+ *
+ * A title is whatever the app threw, and an exception message can carry
+ * request input, so `**`, a masked link or `@everyone` inside one would be
+ * markup the chat honours and a ping the bot may fire. The backslash is
+ * Discord's own escape. A mention has no escape, so the `@` is followed by a
+ * zero-width space, which breaks `@everyone`, `@here` and `<@id>` alike and
+ * reads as the same characters.
+ */
+export function inert(text: string): string {
+  return text.replace(/[\\*_`~|[\]]/g, (one) => `\\${one}`).replace(/@/g, "@\u200b");
+}
+
 function lineOf(line: DigestLine): string {
-  // Closed again on the way into the line, whichever way the issue arrived:
-  // the cap is the line's own rule and not the reader's promise.
+  // Closed again on the way into the line, whichever way the issue arrived,
+  // and made inert for the chat: the cap and the escape are the line's own
+  // rule and not the reader's promise.
   const issue = {
     ...line.issue,
-    title: field(line.issue.title, TITLE_MAX),
-    project: field(line.issue.project, PROJECT_MAX),
-    shortId: field(line.issue.shortId, SHORT_ID_MAX),
+    title: inert(field(line.issue.title, TITLE_MAX)),
+    project: inert(field(line.issue.project, PROJECT_MAX)),
+    shortId: inert(field(line.issue.shortId, SHORT_ID_MAX)),
     permalink: link(line.issue.permalink),
   };
   const where = issue.project === "" ? "" : `${issue.project}: `;
@@ -353,7 +380,7 @@ export interface SentryWatchOptions {
 export interface SentryWatchResult {
   digest: string | null;
   posted: boolean;
-  counts: Record<string, number>;
+  counts: Record<string, number | boolean>;
 }
 
 /**
@@ -377,14 +404,23 @@ export async function runSentryWatch(entry: RunEntry, registry: Registry, option
     // The key and the fetch come BEFORE the sheet is read, so a refused key
     // costs one request and no statement.
     const token = tokenOf(registry, String(entry.credential));
-    const issues = await fetchIssues({ fetch: send, org: String(entry.org), query: settings.query, token });
+    const { issues, complete } = await fetchIssues({ fetch: send, org: String(entry.org), query: settings.query, token });
     const at = now();
     const state: Record<string, IssueState> = {};
     for (const row of await readSheet(store, sheetOf(entry.id))) state[row.id] = row.data as unknown as IssueState;
-    const sweep = classify({ issues, state, settings, now: at });
+    // Zero issues where the sheet holds some is not an empty organisation, it
+    // is a query that matched nothing or an answer that is wrong (SPEC 5:
+    // never an empty market). The sheet is kept, nothing is stamped, and the
+    // job is stale within a day. A sheet that is empty lands an empty sweep.
+    const held = Object.keys(state).length;
+    if (issues.length === 0 && held > 0) {
+      throw new WatchRefused("empty", "operation failed", `zero issues where the sheet held ${held}`);
+    }
+    const sweep = classify({ issues, state, settings, now: at, complete });
     const digest = renderDigest(sweep, { now: at, settings });
     const counts = {
       seen: issues.length,
+      partial: !complete,
       new: sweep.lines.filter((line) => line.kind === "new").length,
       changed: sweep.lines.filter((line) => line.kind === "grew" || line.kind === "fell").length,
       still_open: sweep.lines.filter((line) => line.kind === "still open").length,
