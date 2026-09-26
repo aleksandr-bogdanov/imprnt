@@ -244,6 +244,51 @@ test(`RUN-13 an unreachable recognizer yields one line per episode across forty 
   } finally { await runner?.stop(); await door?.stop(); await recognizer.stop(); await it.stop() }
 }, 180_000)
 
+test(`RUN-13 with two people on one recognizer, a person told "not answering" is not told it again until they read "works again", across the other person's success and a door restart${NEEDS_FFMPEG}`, async () => {
+  if (!FFMPEG) return
+  const recognizer = await fakeRecognizer()
+  recognizer.setAnswer({ text: "synthetic spoken codeword", audio_s: 1, decode_ms: 1 })
+  recognizer.setStatus(503)
+  const it = await rolloutStage(cluster, "telegram", {
+    people: [{ id: "p1", language: "en", transcribed_seconds: 600 }, { id: "p2", language: "ru", transcribed_seconds: 600 }],
+    voice: { port: recognizer.port, chunk_seconds: 0, retry_seconds: 1 },
+  })
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  const downLines = (chat: string) => it.edge.posts().filter(p => p.chat === chat && /not answering|не отвечает/.test(p.text))
+  try {
+    it.edge.file("voice", AUDIO)
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    // The first person's note fails: one line to them, and the episode opens.
+    it.edge.batch([note("1", P1)], "2")
+    await firstRow(it)
+    expect(await observe(() => downLines(P1.chat).length === 1, 30_000), "RUN-13 the first person is told once").toBe(true)
+    const attemptsBefore = async () => Number((await it.read.inbound()).find(r => r.person === "p1")!.media_attempts)
+    // The second person's note works: their success clears the recognizer's
+    // sheet while the first person's note is still failing on every retry.
+    recognizer.setStatus(200)
+    it.edge.batch([note("2", P2)], "3")
+    expect(await observe(async () => (await it.read.inbound()).some(r => r.person === "p2" && r.media_state === "done"), 30_000)).toBe(true)
+    expect(await observe(async () => (await it.read.sheet("voice_health")).find(r => r.id === "local")?.data.since === null, 20_000),
+      "RUN-13 the sheet's episode is cleared by the other person's success").toBe(true)
+    recognizer.setStatus(503)
+    const seen = await attemptsBefore()
+    expect(await observe(async () => await attemptsBefore() >= seen + 3, 30_000), "RUN-13 the first person's note keeps failing").toBe(true)
+    expect(downLines(P1.chat), "RUN-13 no second line while the first stands").toHaveLength(1)
+    // A door started again reads back what this person was last told, so it
+    // does not open a second episode for them either.
+    await door.stop()
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    const again = await attemptsBefore()
+    expect(await observe(async () => await attemptsBefore() >= again + 3, 30_000)).toBe(true)
+    expect(downLines(P1.chat), "RUN-13 one line across the restart too").toHaveLength(1)
+    expect(downLines(P2.chat), "RUN-13 the second person was never failed and hears nothing").toHaveLength(0)
+    // And when it works again for them, they read it once, which ends their episode.
+    recognizer.setStatus(200)
+    await observe(async () => (await it.read.noticeRows()).some(n => String(n.notice_key).startsWith("voice:back:") && n.person === "p1"), 30_000)
+    expect((await it.read.noticeRows()).filter(n => String(n.notice_key).startsWith("voice:back:") && n.person === "p1")).toHaveLength(1)
+  } finally { await door?.stop(); await recognizer.stop(); await it.stop() }
+}, 180_000)
+
 test(`RUN-13 a dialled recognizer whose key file is blank is the same episode${NEEDS_FFMPEG}`, async () => {
   // The converter runs BEFORE the key is read, so a box without one never
   // reaches the key at all and this is about the key.

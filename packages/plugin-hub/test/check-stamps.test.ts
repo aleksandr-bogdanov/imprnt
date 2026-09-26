@@ -218,6 +218,18 @@ test(
         kind: "triage",
         receivedAt: ago(9000).toISOString(),
       });
+      // A voice note still waiting for its words, past the acked threshold.
+      // Nothing can have accepted a message that has no text yet, so its
+      // lateness is the transcribing finding's alone and not a missing stamp.
+      await insertInbound(cluster, it.db, {
+        id: "s-transcribing",
+        body: "(voice note)",
+        receivedAt: ago(40).toISOString(),
+        // Not shown to anybody yet, which is what a note without words is, and
+        // the one state in which its transcription columns are still open.
+        logReady: false,
+      });
+      await it.read.sql("update inbound set media_state = 'pending' where id = $1", ["s-transcribing"]);
 
       const found = stamps(
         (await (runCheck as Function)({
@@ -231,6 +243,9 @@ test(
         })) as Finding[],
       );
       const bySubject = new Map(found.map((one) => [one.subject, one]));
+
+      // A note with no words yet is not late on a stamp the loop cannot give.
+      expect(bySubject.has("s-transcribing"), "a note still transcribing has no missing stamp").toBe(false);
 
       // 1. received, waiting for acked, measured from received_at.
       const acked = bySubject.get("s-acked")!;

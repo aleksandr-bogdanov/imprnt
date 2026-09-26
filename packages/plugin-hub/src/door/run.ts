@@ -229,6 +229,8 @@ interface Served {
   /** Notes this door wrote down that are waiting for their words. */
   voice: PendingVoiceRow[];
   voiced: Nudge;
+  /** Notes whose transcription attempt is running right now, by message id. */
+  inFlight: Set<string>;
 }
 
 /**
@@ -844,9 +846,15 @@ export async function runDoor(options: {
       // saying somebody was typing while the notice beside it said messages
       // were waiting, and the platform took one call every few seconds per
       // agent for as long as it lasted.
+      //
+      // AND A NOTE BEING TRANSCRIBED RIGHT NOW. Nobody has claimed it, because
+      // it has no words yet, and the door itself is the one working on it:
+      // the person sees typing from the moment their note is picked up, and
+      // not across the wait for a retry.
       open.filter(
         (row) =>
-          (row.state === "acked" || row.state === "started") && row.claimed_by !== null,
+          ((row.state === "acked" || row.state === "started") && row.claimed_by !== null) ||
+          own.inFlight.has(row.id),
       );
 
     const show = async (): Promise<void> => {
@@ -1197,8 +1205,11 @@ export async function runDoor(options: {
             if (at === -1) open.push(row);
             else open[at] = { ...open[at], media_state: row.media_state, media_done_at: row.media_done_at };
           }
-          retune();
         }
+        // On every pass, because the poke that woke this task may carry no row
+        // at all: a transcription attempt starting or ending changes what is
+        // typable and nothing else. It is memory only and acts on a flip.
+        retune();
         const due = nextDeadline();
         const bound =
           due === null
@@ -1609,12 +1620,24 @@ export async function runDoor(options: {
         return;
       }
       const endpoint = recognizerEndpoint(fresh, voice, options.door);
-      const outcome = await transcribeRow(store, {
-        row: { id: row.id, source: row.source }, voice, language,
-        endpoint: endpoint ?? "", attempts: state.attempts,
-        credentialFile: voice.credential === null ? null
-          : credentialFor(fresh, voice.credential)?.file ?? null,
-      });
+      // The person sees typing while their note is being worked on, and not
+      // while it waits for its next try: a chat saying somebody is typing for
+      // the hours a recognizer can be down would be the same lie the claim
+      // filter on the typing rule exists to prevent.
+      own.inFlight.add(row.id);
+      own.arrived.wake();
+      let outcome: Awaited<ReturnType<typeof transcribeRow>>;
+      try {
+        outcome = await transcribeRow(store, {
+          row: { id: row.id, source: row.source }, voice, language,
+          endpoint: endpoint ?? "", attempts: state.attempts,
+          credentialFile: voice.credential === null ? null
+            : credentialFor(fresh, voice.credential)?.file ?? null,
+        });
+      } finally {
+        own.inFlight.delete(row.id);
+        own.arrived.wake();
+      }
       if (outcome.state === "done" || outcome.failure === "content") {
         waiting.delete(row.id);
         // The words exist, so the row becomes an ordinary human message: one
@@ -1643,9 +1666,12 @@ export async function runDoor(options: {
       // recognizer's health sheet says it began, so a door started again in the
       // middle of one says nothing a second time. The person is the last part
       // of the key because the sentence is theirs, and a household with two
-      // people owes each of them one.
+      // people owes each of them one. A person already told "not answering"
+      // is not told again while they wait for "works again", whatever the
+      // sheet's episode is by now: another person's success may have cleared
+      // and reopened it in between.
       const since = (await readVoiceHealth(store)).get(voice.recognizer)?.since ?? null;
-      if (since !== null) {
+      if (since !== null && episode === null) {
         episode = since;
         await say(transcriberDown(language, voice.retry_seconds),
           `voice:down:${voice.recognizer}:${since}:${agent.person}`);
@@ -1675,7 +1701,19 @@ export async function runDoor(options: {
             id: string; person: string; agent: string; source: Record<string, unknown>;
             received_at: string | Date; media_retry_at: string | Date | null;
           }[];
-        episode = (await readVoiceHealth(store)).get(voiceFor(registry)?.recognizer ?? "")?.since ?? null;
+        // THE EPISODE IS THIS PERSON'S, read back from the last line they were
+        // told, never from the recognizer's sheet. The sheet is one row per
+        // recognizer, and with two people on one recognizer a success of one
+        // clears it while the other is still failing: a door that took the
+        // sheet's fresh episode would tell the second person "not answering"
+        // twice with no "works again" between, and one that took the sheet's
+        // standing episode after a restart would never tell a person who had
+        // not heard it yet.
+        const [told] = (await store.sql`select notice_key from outbox
+          where kind = 'notice' and agent = ${agent.id} and notice_key like 'voice:%'
+          order by id desc limit 1`) as unknown as { notice_key: string }[];
+        const last = /^voice:(down|back):[^:]+:(.+):[^:]+$/.exec(String(told?.notice_key ?? ""));
+        episode = last?.[1] === "down" ? last[2] : null;
         for (const row of rows) {
           const it: PendingVoiceRow = { id: String(row.id), person: String(row.person),
             agent: String(row.agent), source: row.source, receivedAt: new Date(row.received_at) };
@@ -1774,6 +1812,7 @@ export async function runDoor(options: {
       arrived: nudge(),
       voice: [],
       voiced: nudge(),
+      inFlight: new Set<string>(),
     };
     agent = it.agent;
     served.set(agent.id, it);

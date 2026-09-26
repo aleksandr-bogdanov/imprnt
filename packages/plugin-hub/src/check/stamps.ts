@@ -11,6 +11,8 @@ export interface StampRow {
   received_at: string;
   /** The FIRST `answered` event's own time, or null when there is none yet. */
   answered_at: string | null;
+  /** The door's transcription step on this row, or null for a message that arrived as text. */
+  media_state: string | null;
 }
 
 /**
@@ -47,7 +49,7 @@ export async function readStampRows(
 ): Promise<StampRow[]> {
   const mine = new Set(where.agents);
   const rows = (await store.sql`
-    select i.id, i.person, i.agent, i.state, i.received_at,
+    select i.id, i.person, i.agent, i.state, i.received_at, i.media_state,
            (select min(e.at) from ledger_event e
              where e.stream = 'inbound' and e.kind = 'answered' and e.subject = i.id)
              as answered_at
@@ -59,6 +61,7 @@ export async function readStampRows(
     agent: string;
     state: string;
     received_at: Date | string;
+    media_state: string | null;
     answered_at: Date | string | null;
   }[];
   return rows
@@ -70,6 +73,7 @@ export async function readStampRows(
       state: row.state,
       received_at: new Date(row.received_at).toISOString(),
       answered_at: row.answered_at === null ? null : new Date(row.answered_at).toISOString(),
+      media_state: row.media_state ?? null,
     }));
 }
 
@@ -97,6 +101,11 @@ export function stampFindings(args: {
   for (const row of args.rows) {
     const waiting = WAITS[row.state];
     if (!waiting) continue;
+    // A voice note still waiting for its own words has nothing the loop could
+    // accept yet, so its acked stamp is not missing: the door owes it a
+    // transcript, and that lateness is the transcribing finding's, reported
+    // once, against the door. Reported here too it was the same wait twice.
+    if (row.state === "received" && row.media_state === "pending") continue;
     const from =
       waiting.from === "answered"
         ? row.answered_at === null
