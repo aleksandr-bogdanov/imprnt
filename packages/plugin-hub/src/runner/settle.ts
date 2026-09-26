@@ -6,6 +6,7 @@ import { stamp } from "../records/stamps.ts";
 import { putRow } from "../records/statesheet.ts";
 import { appendChunks, appendNotice } from "../store/outbox.ts";
 import { clearProgress } from "./progress.ts";
+import { recordSeatAnswer } from "./council.ts";
 import type { Price } from "../registry/presets.ts";
 
 /**
@@ -102,12 +103,20 @@ export async function settleTurn(
         stream: "control", subject: turn.inboundId, kind: "dispatch.reported", actor: "runner",
         detail: { agent: turn.turn.agent, runner: turn.turn.runner },
       });
-      if (turn.source?.dispatch?.approved?.source === "watch") {
-        // A hunt reads its master's verdicts by id on the next tick. Nobody is
+      const approvedBy = turn.source?.dispatch?.approved?.source;
+      if (approvedBy === "watch" || approvedBy === "council") {
+        // A hunt reads its master's verdicts by id on the next tick, and a
+        // council reads a seat's answer out of its sheet row. Nobody is
         // waiting on this report as a turn, so it is recorded and never fed:
-        // the door still projects the line into the master's chat log, and
+        // the door still projects the line into the dispatcher's chat log, and
         // every feed path leaves an answered row alone.
         await stamp(inside, { messageId: `report:${turn.inboundId}`, kind: "answered", actor: "runner" });
+      }
+      const council = turn.source?.dispatch?.council;
+      if (approvedBy === "council" && council) {
+        // This seat's answer into the council, and the merge row when it was
+        // the last one, inside this same transaction.
+        await recordSeatAnswer(inside, { council, answer: turn.chunks.join("\n") });
       }
     } else {
       await appendChunks(inside, turn.inboundId, turn.chunks, turn.receipts);

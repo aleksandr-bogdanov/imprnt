@@ -1,6 +1,7 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { appendFileSync, closeSync, existsSync, fsyncSync, ftruncateSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import type { RowOrigin } from "./store/inbound.ts";
 
 /**
  * The chat log is the record. The door appends every message in both directions
@@ -15,11 +16,18 @@ export interface ChatLine {
   from: string;
   text: string;
   /**
-   * Set on a line a WATCHER wrote. The line is in the log because the person
-   * saw it, and it is left out of the tail a session is fed, because an agent
-   * with hands never reads watcher text (SPEC section 5).
+   * Set on a line a WATCHER wrote, or a COUNCIL caused. The line is in the
+   * log because the person saw it, and it is left out of the tail a session
+   * is fed: an agent with hands never reads watcher text (SPEC section 5),
+   * and the chat's agent reads the seats' answers only inside the merge row
+   * it answers as a turn, never as chat it remembers.
    */
-  origin?: "watcher";
+  origin?: RowOrigin;
+}
+
+/** The mark on a row's provenance or a notice's route, when it carries one. */
+export function lineOrigin(value: unknown): RowOrigin | undefined {
+  return value === "watcher" || value === "council" ? value : undefined;
 }
 
 /** What a spawned session is told the tail is, so it cannot read it as a human. */
@@ -103,8 +111,8 @@ export async function readTail(args: {
       try { line = JSON.parse(raw); } catch { continue; }
       if (!validLine(line)) continue;
       if (line.id !== undefined && args.exclude?.has(line.id)) continue;
-      // A watcher's line is the person's to read and never the model's.
-      if (line.origin === "watcher") continue;
+      // A watcher's or a council's line is the person's to read and never the model's.
+      if (line.origin !== undefined) continue;
       if (Date.parse(line.at) >= from) lines.push(line);
     }
   }
@@ -148,7 +156,7 @@ export function validLine(value: unknown): value is ChatLine {
     (line.direction === "in" || line.direction === "out") &&
     typeof line.from === "string" && typeof line.text === "string" &&
     (line.id === undefined || (typeof line.id === "string" && line.id !== "")) &&
-    (line.origin === undefined || line.origin === "watcher");
+    (line.origin === undefined || lineOrigin(line.origin) !== undefined);
 }
 
 /** A complete record that is not a chat line, by its file and 1-based line. */

@@ -3,7 +3,7 @@ import { historyHarvestFrom } from "../registry/entries.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
 import { classifyPlatformError, prepareReply } from "./reply.ts";
 import { requestRecovery } from "../hub/control.ts";
-import { appendChatLineOnce, type BadRecord } from "../chatlog.ts";
+import { appendChatLineOnce, lineOrigin, type BadRecord } from "../chatlog.ts";
 import { recordOperationFailure as recordDiagnostic } from "../diagnostics.ts";
 import { projectInbound } from "../chatlog/project.ts";
 import {
@@ -460,7 +460,7 @@ export async function runDoor(options: {
           from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
           // The same mark the delivery projection writes, so a watcher's line
           // projected at start is left out of the tail too.
-          ...(chunk.route?.origin === "watcher" ? { origin: "watcher" as const } : {}),
+          ...(lineOrigin(chunk.route?.origin) ? { origin: lineOrigin(chunk.route?.origin) } : {}),
         }, { skipBad });
         projected.add(chunk.id);
       }
@@ -692,7 +692,7 @@ export async function runDoor(options: {
             from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
             // A watcher's notice is marked in the log as it is on the row, so
             // the file tail leaves it out the way the store tail does.
-            ...(chunk.route?.origin === "watcher" ? { origin: "watcher" as const } : {}),
+            ...(lineOrigin(chunk.route?.origin) ? { origin: lineOrigin(chunk.route?.origin) } : {}),
           }, { skipBad });
           projected.add(chunk.id);
         }

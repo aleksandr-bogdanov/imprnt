@@ -7,6 +7,7 @@ import { stamp } from "../records/stamps.ts";
 import type { StoreLike } from "../store/connect.ts";
 import type { EligibleRow } from "../store/wake.ts";
 import { appendNotice } from "../store/outbox.ts";
+import { recordSeatAnswer } from "./council.ts";
 
 /** A job whose approval is missing or is not a digest at all. */
 export const NOT_APPROVED = "not approved";
@@ -89,6 +90,11 @@ export async function refuseJob(
         noticeKey: `job-refused:${refusal.row.id}`,
         route: { door: route.door, chat: route.chat }, platform, language,
       });
+    }
+    // A refused seat is a seat with no answer, recorded as such so the
+    // council closes without it rather than waiting for it for ever.
+    if (envelope?.approved?.source === "council" && envelope.council) {
+      await recordSeatAnswer(inside, { council: envelope.council, answer: null });
     }
     await tx`update inbound set claimed_by = null, claim_deadline = null
              where id = ${refusal.row.id}`;

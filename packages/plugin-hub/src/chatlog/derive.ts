@@ -1,4 +1,4 @@
-import { renderTailLines, validLine, type ChatLine } from "../chatlog.ts";
+import { lineOrigin, renderTailLines, validLine, type ChatLine } from "../chatlog.ts";
 import { CLOCK_STREAM } from "../door/clock.ts";
 import { clockLine, waitReasonLine, type Language } from "../door/lines.ts";
 import { isDemand, isRecoveryCommand, SLICE_MAX_DAYS, type SliceLine } from "../harvest/slice.ts";
@@ -106,9 +106,9 @@ export async function deriveLines(
         direction: "in",
         from: row.person,
         text,
-        // A watcher's row carries its origin in its provenance, the way a
-        // watcher's notice carries it on the route.
-        ...(source.origin === "watcher" ? { origin: "watcher" as const } : {}),
+        // A watcher's or a council's row carries its origin in its provenance,
+        // the way a watcher's notice carries it on the route.
+        ...(lineOrigin(source.origin) ? { origin: lineOrigin(source.origin) } : {}),
       } as ChatLine,
       order: 0,
     });
@@ -141,7 +141,7 @@ export async function deriveLines(
         text: row.body,
         // A watcher's notice carries its origin on the route, and the line
         // carries it the way the door's projection does.
-        ...(row.route?.origin === "watcher" ? { origin: "watcher" as const } : {}),
+        ...(lineOrigin(row.route?.origin) ? { origin: lineOrigin(row.route?.origin) } : {}),
       } as ChatLine,
       order: Number(row.id),
     });
@@ -232,10 +232,10 @@ export async function deriveTail(
     until: args.now.toISOString(),
   });
   // The same two rules the file reader applies: the runner names the lines of
-  // the messages it is about to hand the session as turns, and a watcher's
-  // line is the person's to read and never the model's.
+  // the messages it is about to hand the session as turns, and a watcher's or
+  // a council's line is the person's to read and never the model's.
   return renderTailLines(
-    lines.filter((line) => !args.exclude?.has(line.id) && line.origin !== "watcher"),
+    lines.filter((line) => !args.exclude?.has(line.id) && line.origin === undefined),
     args.tokens,
   );
 }
