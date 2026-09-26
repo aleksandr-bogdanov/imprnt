@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, symlin
 import { join } from "node:path"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
 import { migrationFixture, privateJson } from "./helpers/rollout-migration.ts"
-import { loopFixture, captureCli, digest } from "./helpers/rollout-loop.ts"
+import { loopFixture, captureCli, digest, appended } from "./helpers/rollout-loop.ts"
 import { stageHub, insertInbound } from "./helpers/hub-fixture.ts"
 import { runRunner } from "../src/runner/run.ts"
 import { claudeCode } from "../src/adapters/claude-code.ts"
@@ -45,7 +45,8 @@ test("L05 ordinary runner passes the complete selected recipe to the real adapte
     await insertInbound(cluster, it.db, { id: "ordinary-recipe", body: "synthetic ordinary work" })
     expect(await observe(() => existsSync(capture), 5000), "runner must spawn its real adapter").toBe(true)
     const accepts = (got: any) => {
-      expect(got.fragment, "L05 runner fragment bytes").toBe(readFileSync(f.files.fragment, "utf8"))
+      expect(appended(got.fragment).preamble, "L05 the code's own section opens the prompt").toBe(true)
+      expect(got.fragment.endsWith(readFileSync(f.files.fragment, "utf8")), "L05 runner fragment bytes close it").toBe(true)
       expect(got.settings, "L05 runner allow and deny lists").toEqual(JSON.parse(readFileSync(f.files.settings, "utf8")))
       expect(got.mcp, "L05 runner MCP").toEqual(JSON.parse(readFileSync(f.files.mcp, "utf8")))
       expect(got.argv).toContain("--dangerously-skip-permissions")
