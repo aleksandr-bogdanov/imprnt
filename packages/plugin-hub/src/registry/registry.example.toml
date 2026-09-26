@@ -336,8 +336,8 @@ memory_limit_mb = 128
 # with what it saw the day before, and writes ONE notice into one person's chat
 # through that person's agent's door. No model, no shell, nothing leaves the
 # house. `daily at HH:MM` is a clock time on the machine that runs it, rendered
-# as a calendar event on both service managers; `hourly` and `every 6h` work
-# too. A day on which nothing is new, changed or overdue posts nothing at all,
+# as a calendar event on both service managers, and `hourly` or `every 6h`
+# work too. A day on which nothing is new, changed or overdue posts nothing at all,
 # and the job still writes its success stamp, so `check` says `job-stale` only
 # when it stops running.
 [[run]]
