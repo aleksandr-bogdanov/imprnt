@@ -680,7 +680,10 @@ export async function runCheck(options: {
       roots: [
         ...listPeople(registry).map((person) => person.tree),
         String(readSetting(registry, "hub.state_dir") ?? ""),
-        ...opened.map((entry) => dirname(entry.file)),
+        // A credential's own directory, one level deep: a copy beside the
+        // file is what this root is for, and a login in a home directory
+        // must not turn check into a walk of the whole home.
+        ...opened.map((entry) => ({ path: dirname(entry.file), depth: 1 })),
       ],
       machine,
     })),

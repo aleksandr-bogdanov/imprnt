@@ -814,6 +814,14 @@ test(
       const outside = at("elsewhere", "out-of-every-root.json");
       writeFileSync(outside, secret, "utf8");
       symlinkSync(outside, at("p2", "a-link-out.json"));
+      // The credential's own directory is swept one level deep: a copy beside
+      // the file is found, one in a subdirectory of it is not, because a login
+      // in a home directory must not make check walk the whole home.
+      const besideTheFile = at("credentials", "beside.json");
+      writeFileSync(besideTheFile, secret, "utf8");
+      const underTheFile = at("credentials", "cache", "under.json");
+      mkdirSync(join(underTheFile, ".."), { recursive: true });
+      writeFileSync(underTheFile, secret, "utf8");
       const wholeDiskWould = join(tmpdir(), `hub-copy-${crypto.randomUUID()}.json`);
       writeFileSync(wholeDiskWould, secret, "utf8");
 
@@ -827,6 +835,8 @@ test(
         expect(paths).not.toContain(modules);
         expect(paths).not.toContain(outside);
         expect(paths).not.toContain(at("p2", "a-link-out.json"));
+        expect(paths).toContain(besideTheFile);
+        expect(paths).not.toContain(underTheFile);
         // THE ONE A FILESYSTEM CRAWL FAILS: a copy outside every root the
         // registry names is not this scan's business.
         expect(paths).not.toContain(wholeDiskWould);
@@ -846,7 +856,7 @@ test(
 
       // --- 6. the clear. Delete the copies and the findings go, from the list
       //     and from the sheet.
-      for (const file of [...planted, allowed, twin]) rmSync(file, { force: true });
+      for (const file of [...planted, allowed, twin, besideTheFile, underTheFile]) rmSync(file, { force: true });
       // The decoys stay where they are, so the empty answer is an answer about
       // secrets and not about the directory being empty.
       expect(existsSync(sameName) && existsSync(unrelated)).toBe(true);
