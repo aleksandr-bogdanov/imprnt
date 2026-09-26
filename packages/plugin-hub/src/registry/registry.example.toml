@@ -238,6 +238,27 @@ door = "door-telegram-triage"
 runner = "runner-pi"
 role = "triage"
 
+# A council seat. `role = "council"` marks an agent that answers the council
+# command: `/council <question>` in a chat puts the question to every seat of
+# that person in parallel, and the chat's agent writes ONE merged answer from
+# their reports, which is the only thing the chat sees. A seat takes those jobs
+# alone, so it carries no door and no chat (the loader refuses one that does),
+# and its preset is its own, so one seat may run a stronger model. Fewer than
+# two seats is no council. All of a person's seats form their council.
+[[agents]]
+id = "p1-seat-1"
+person = "p1"
+preset = "daily"
+runner = "runner-pi"
+role = "council"
+
+[[agents]]
+id = "p1-seat-2"
+person = "p1"
+preset = "daily"
+runner = "runner-pi"
+role = "council"
+
 # What a model cost per million tokens, from the day the price started. A turn is
 # priced from the newest row already in force when it ran, and from no other.
 [[rates]]

@@ -100,3 +100,30 @@ export async function refuseJob(
              where id = ${refusal.row.id}`;
   });
 }
+
+/**
+ * A council seat the runner gives up on: its turn failed again after the
+ * council's grace had run out, and trying it once more would hold the
+ * council open past the point the person was told it is late.
+ *
+ * Settled `answered` with no report, as a refusal is, and recorded into the
+ * council as a seat with no answer, so the merge lands with "no answer" in
+ * its place. Only a COUNCIL seat is ever given up on: an ordinary job keeps
+ * its recorded retry, because nobody but its dispatcher is waiting and the
+ * job clock already says it is late.
+ */
+export async function abandonJob(
+  store: StoreLike,
+  abandoned: { row: Pick<EligibleRow, "id" | "agent" | "source">; runner: string; cause: string },
+): Promise<void> {
+  const envelope = abandoned.row.source?.dispatch;
+  if (envelope?.approved?.source !== "council" || !envelope.council) return;
+  await stamp(store, { messageId: abandoned.row.id, kind: "answered", actor: "runner" });
+  await appendEntry(store, {
+    stream: "control", subject: abandoned.row.id, kind: "dispatch.abandoned", actor: "runner",
+    detail: { agent: abandoned.row.agent, runner: abandoned.runner, cause: abandoned.cause,
+      dispatcher: envelope.dispatcher, council: envelope.council.id },
+  });
+  await recordSeatAnswer(store, { council: envelope.council, answer: null });
+  await store.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${abandoned.row.id}`;
+}

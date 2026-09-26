@@ -3,6 +3,7 @@ import type { StampThresholds } from "../registry/entries.ts";
 import { TRANSCRIBED_DEFAULT_SECONDS } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import type { OpenTurnRow } from "../store/turns.ts";
+import { COUNCIL_SHEET, type CouncilRow } from "./council.ts";
 
 /** The door's own stream, and the one kind it holds. */
 export const CLOCK_STREAM = "clock";
@@ -144,4 +145,50 @@ export async function readSpokenClocks(
     stamp: string;
   }[];
   return new Set(rows.map((row) => `${row.subject}/${row.stamp}`));
+}
+
+/** The stamp key a council's one clock line is recorded under. */
+export const COUNCIL_STAMP = "council";
+
+/** One open council this door owes a clock line, as the sheet holds it. */
+export type OpenCouncil = CouncilRow & { id: string };
+
+/**
+ * The one clock a council arms: the household's job grace from the moment
+ * the question was typed. A council is N jobs and a merge, and the job clock
+ * would say each seat is late in turn, N lines about one wait. So the seats'
+ * rows are never open turns of the chat's agent, and the council has a clock
+ * of its own, said once. Pure, so the arithmetic is readable without a store.
+ */
+export function councilDeadline(row: Pick<CouncilRow, "at">, graceSeconds: number): number {
+  return new Date(row.at).getTime() + graceSeconds * 1000;
+}
+
+/**
+ * The councils this door still owes a line about: the open rows of this
+ * agent's, less the ones a door before it already said were late. One
+ * statement at connect and after a council is convened elsewhere.
+ */
+export async function readOpenCouncils(store: StoreLike, where: { agent: string }): Promise<OpenCouncil[]> {
+  const rows = (await store.sql`
+    select id, data from state_row
+    where sheet = ${COUNCIL_SHEET} and data ->> 'agent' = ${where.agent} and not (data ? 'late')
+    order by id`) as unknown as { id: string; data: CouncilRow }[];
+  return rows.map((row) => ({ id: row.id, ...row.data }));
+}
+
+/**
+ * Claim the one late line a council gets. The mark goes onto the sheet row
+ * itself, in one statement that only lands where no mark is, so a restarted
+ * door and a door racing the settle both learn from the answer whether the
+ * line is theirs to say. The row's own `answered` is untouched by it, which
+ * is why this is a jsonb concatenation and never a write of the whole row.
+ * Null when the council is gone (its merge landed) or was already said.
+ */
+export async function claimCouncilLate(store: StoreLike, council: { id: string; at: string }): Promise<CouncilRow | null> {
+  const won = (await store.sql`
+    update state_row set data = data || jsonb_build_object('late', ${council.at}::text), updated_at = now()
+    where sheet = ${COUNCIL_SHEET} and id = ${council.id} and not (data ? 'late')
+    returning data`) as unknown as { data: CouncilRow }[];
+  return won.length === 0 ? null : won[0].data;
 }

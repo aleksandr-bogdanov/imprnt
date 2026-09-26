@@ -51,6 +51,7 @@ import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { readWatchState, watchFindings } from "./watch.ts";
+import { councilFindings, readOpenCouncils } from "./council.ts";
 import { silentRunners } from "./silence.ts";
 import { admissionFindings } from "./admission.ts";
 import { readUnexplainedWaits, unexplainedFindings } from "./waits.ts";
@@ -670,6 +671,20 @@ export async function runCheck(options: {
         jobs: await readOpenJobs(options.store, { agents: mine.map((agent) => agent.id) }),
         thresholds: (person) => thresholdsFor(registry, person),
         runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        graceSeconds: setting(registry, "hub.job_grace_seconds", 300),
+        machine,
+        now,
+      }),
+    );
+    // --- every council past the grace with seats still open (criterion 2) --
+    //
+    //     One finding per council and not per seat, the way the door says it
+    //     is late once. The seats' own rows are jobs of the seats and never of
+    //     the dispatcher, so the finding above never reports them here.
+    findings.push(
+      ...councilFindings({
+        councils: await readOpenCouncils(options.store),
+        agents: new Set(mine.map((agent) => agent.id)),
         graceSeconds: setting(registry, "hub.job_grace_seconds", 300),
         machine,
         now,

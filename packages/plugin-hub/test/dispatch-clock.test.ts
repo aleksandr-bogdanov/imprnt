@@ -27,8 +27,11 @@ import { startCluster, until, type Cluster } from "./helpers/cluster.ts"
 import { rolloutStage, DISPATCH_TARGET } from "./helpers/rollout-stage.ts"
 import { message } from "./helpers/rollout-ingress.ts"
 import { observe } from "./helpers/rollout-runner.ts"
-import { DISPATCH_PHRASES } from "../src/door/lines.ts"
-import { clockDeadlines } from "../src/door/clock.ts"
+import { COUNCIL_PHRASES, councilLate, DISPATCH_PHRASES } from "../src/door/lines.ts"
+import { clockDeadlines, councilDeadline, COUNCIL_STAMP } from "../src/door/clock.ts"
+import { COUNCIL_SHEET } from "../src/door/council.ts"
+import { COUNCIL_SEATS } from "./helpers/rollout-stage.ts"
+import { chatLogLines } from "./helpers/hub-fixture.ts"
 import { projectInbound } from "../src/chatlog/project.ts"
 import { readOpenTurns } from "../src/store/turns.ts"
 import { loadRegistry } from "../src/registry/load.ts"
@@ -188,3 +191,50 @@ test("D-213 the door says nothing about a report whose job ran for an hour, whil
     await door?.stop(); await asRunner.close(); await store.close(); await it.stop()
   }
 }, 120_000)
+
+test("a council past the grace is said late ONCE, for the council and not per seat, and a restarted door says it no second time", async () => {
+  // The grace is two seconds, so the council's one clock runs out inside this
+  // check, and the seats are never settled, so it stays open throughout.
+  const it = await rolloutStage(cluster, "telegram", { council: true, hub: { job_grace_seconds: 2 } })
+  let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  try {
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    it.edge.batch([{ ...message("500", `${COUNCIL_PHRASES.en} weigh the synthetic council`), chat: LAIR_CHAT, sender_id: "p1", from: "p1" }], "501")
+    await until("the seats' jobs reach the queue", async () =>
+      (await it.read.inbound()).filter(r => r.kind === "job").length === COUNCIL_SEATS.length, 20_000)
+    const [council] = await it.read.sheet(COUNCIL_SHEET)
+    expect(council).toBeDefined()
+    expect(councilDeadline({ at: String(council.data.at) }, 2)).toBe(new Date(String(council.data.at)).getTime() + 2000)
+
+    const late = () => it.edge.posts().filter(p => p.chat === LAIR_CHAT && p.text.includes("council")).filter(p => !p.text.includes("started on"))
+    await until("the door says the council is late", () => late().length > 0, 20_000)
+    // ONE line, naming the council's count and none of the seats, and one
+    // diary row under the council's own id.
+    expect(late()).toHaveLength(1)
+    const seconds = Number(/(\d+) s so far/.exec(late()[0].text)?.[1])
+    expect(late()[0].text).toBe(councilLate("en", { answered: 0, seats: COUNCIL_SEATS.length, seconds }))
+    for (const seat of COUNCIL_SEATS) expect(late()[0].text).not.toContain(seat)
+    const spoken = await it.read.ledger({ stream: "clock", subject: council.id })
+    expect(spoken).toHaveLength(1)
+    expect(spoken[0].detail).toMatchObject({ stamp: COUNCIL_STAMP, person: "p1", agent: "p1-lair", id: `clock:${council.id}:${COUNCIL_STAMP}` })
+    // No seat's job was ever spoken about: a seat's row is the seat's and
+    // never an open turn of the chat's agent.
+    for (const job of (await it.read.inbound()).filter(r => r.kind === "job")) {
+      expect(await it.read.ledger({ stream: "clock", subject: job.id })).toEqual([])
+    }
+    const marked = (await it.read.sheet(COUNCIL_SHEET))[0]
+    expect(marked.data.late).toEqual(expect.any(String))
+    expect(marked.data.answered).toEqual({})
+    // Not a second time in this door's life, well past a second grace.
+    expect(await observe(() => late().length > 1, 3_000)).toBe(false)
+    // Not a second time from a door started again either: the mark is on the row.
+    await door.stop()
+    door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
+    expect(await observe(() => late().length > 1, 3_000)).toBe(false)
+    expect(await it.read.ledger({ stream: "clock", subject: council.id })).toHaveLength(1)
+    const lines = chatLogLines(it.stateDir, "p1", "p1-lair").filter(l => l.text === late()[0].text)
+    expect(lines).toHaveLength(1)
+    // And the ordinary still-waiting lines are absent: nothing here is a turn.
+    expect(it.edge.posts().filter(p => p.text.startsWith("[door] still waiting:"))).toEqual([])
+  } finally { await door?.stop(); await it.stop() }
+}, 90_000)

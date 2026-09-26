@@ -12,7 +12,7 @@ import { requestCouncil } from "../src/door/dispatch.ts"
 import { COUNCIL_SHEET, MERGE_INSTRUCTION, mergeIdOf } from "../src/door/council.ts"
 import { jobRefused } from "../src/door/lines.ts"
 import { loadRegistry } from "../src/registry/load.ts"
-import { NOT_APPROVED, refuseJob } from "../src/runner/job.ts"
+import { abandonJob, NOT_APPROVED, refuseJob } from "../src/runner/job.ts"
 import { settleTurn, type TurnRecord } from "../src/runner/settle.ts"
 import { openStore, storeUrlAs, type Store } from "../src/store/connect.ts"
 import { readEligible } from "../src/store/wake.ts"
@@ -89,7 +89,7 @@ test("three seats settle one at a time: each report is answered and never fed, t
     const merge = (await it.read.inbound()).find(r => r.id === mergeIdOf(council.id))!
     expect(merge).toMatchObject({ kind: "report", rank: 0, agent: "p1-lair", person: "p1", state: "received", log_ready: false })
     expect(new Date(merge.received_at).toISOString()).toBe(new Date(at).toISOString())
-    expect(merge.reported_at).not.toBeNull()
+    expect((merge as unknown as { reported_at: unknown }).reported_at).not.toBeNull()
     expect(merge.source).toEqual({ log_id: mergeIdOf(council.id), at: expect.any(String), door: "door-fake", chat: LAIR_CHAT,
       from: "council", text: merge.body, council: council.id, origin: "council" })
     expect(merge.body).toBe([
@@ -156,5 +156,32 @@ test("a refused seat leaves no answer and still completes the council, whose mer
       refusal: { cause: NOT_APPROVED }, registry: council.registry, runner: "runner-pi" })
     expect((await it.read.inbound()).filter(r => String(r.id).startsWith("merge:"))).toHaveLength(1)
     expect(await it.read.sheet(COUNCIL_SHEET)).toEqual([])
+  } finally { await runner.close(); await store.close(); await it.stop() }
+}, 60_000)
+
+test("a seat the runner gives up on is settled with no report and no answer, and the council completes around it", async () => {
+  const it = await rolloutStage(cluster, "telegram", { council: true })
+  const store = await superStore(cluster, it.db)
+  const runner = await openStore({ url: storeUrlAs(cluster.url(it.db), "hub_runner") })
+  try {
+    const council = await convene(it, store, "telegram:" + LAIR_CHAT + ":300")
+    await settleSeat(runner, council.jobs.find(j => j.agent === COUNCIL_SEATS[0])!, ANSWERS[COUNCIL_SEATS[0]])
+    await settleSeat(runner, council.jobs.find(j => j.agent === COUNCIL_SEATS[1])!, ANSWERS[COUNCIL_SEATS[1]])
+    const dying = council.jobs.find(j => j.agent === COUNCIL_SEATS[2])!
+    await runner.sql.begin(async tx => {
+      await abandonJob({ ...runner, sql: tx as unknown as Store["sql"] }, { row: { id: dying.id, agent: dying.agent, source: dying.source as never }, runner: "runner-pi", cause: "child exited" })
+    })
+    const rows = await it.read.inbound()
+    expect(rows.find(r => r.id === dying.id)!.state).toBe("answered")
+    expect(rows.find(r => r.id === `report:${dying.id}`)).toBeUndefined()
+    const merge = rows.find(r => r.id === mergeIdOf(council.id))!
+    expect(merge).toBeDefined()
+    expect(merge.body).toContain("Seat 3:\nno answer")
+    expect(await it.read.sheet(COUNCIL_SHEET)).toEqual([])
+    const abandoned = await it.read.ledger({ kind: "dispatch.abandoned" })
+    expect(abandoned).toHaveLength(1)
+    expect(abandoned[0]).toMatchObject({ subject: dying.id, actor: "runner" })
+    expect(abandoned[0].detail).toMatchObject({ agent: COUNCIL_SEATS[2], council: council.id, cause: "child exited" })
+    expect((await it.read.ledger({ kind: "council.merged" }))[0].detail).toMatchObject({ silent: [COUNCIL_SEATS[2]] })
   } finally { await runner.close(); await store.close(); await it.stop() }
 }, 60_000)
