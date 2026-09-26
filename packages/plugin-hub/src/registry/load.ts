@@ -247,6 +247,15 @@ export class UnknownSetting extends Error {
 export const RUN_KINDS = ["hub", "door", "runner", "sync", "board", "backup"] as const;
 
 /**
+ * What a runner admits when its entry says nothing: how many children at once,
+ * and how many megabytes they may hold between them. Read by the runner's
+ * admission, by the unit render that sizes the runner's cgroup around them, and
+ * by `check`, so the three never disagree about what an absent key means.
+ */
+export const DEFAULT_MAX_ACTIVE_CHILDREN = 4;
+export const DEFAULT_CHILD_MEMORY_BUDGET_MB = 2048;
+
+/**
  * The three commands an off-box copy runs, and the four placeholders they may
  * carry.
  *

@@ -321,6 +321,7 @@ test(
         restartDelaySeconds: RESTART_DELAY,
         giveUpAfter: GIVE_UP_AFTER,
         giveUpWindowSeconds: GIVE_UP_WINDOW,
+        home: "/home/of-the-service-account",
       };
       const linux = (systemd as Function)({ unitDir: it.unitDir }) as {
         flavour: string;
@@ -362,7 +363,20 @@ test(
       expect(systemdSeconds(unitValue(sections, "StartLimitIntervalSec"))).toBe(GIVE_UP_WINDOW);
       // THE VALUE, in bytes, not a substring of the line. `MemoryMax=321garbage`
       // and `MemoryMax=321K` are both caught here and neither was before.
-      expect(systemdBytes(unitValue(sections, "MemoryMax"))).toBe(MEMORY_MB * 1024 * 1024);
+      // A runner's cgroup holds its agent children, so its cap is its own
+      // limit plus the budget it hands them (the default here, because the
+      // entry names none). Every other kind is capped at its own limit alone.
+      expect(systemdBytes(unitValue(sections, "MemoryMax"))).toBe((MEMORY_MB + 2048) * 1024 * 1024);
+      const doorSections = unitSections(linux.render(entryOf("door-fake"), ctx)[0].text);
+      expect(systemdBytes(unitValue(doorSections, "MemoryMax"))).toBe(192 * 1024 * 1024);
+      // The PATH the manager starts the unit with, so a model CLI installed
+      // into the account's own `.local/bin` is found by name. The account's
+      // directories come first and the home is the manager's own specifier.
+      const path = unitValues(sections, "Environment").map((v) => v.trim().replace(/^"(.*)"$/, "$1"))
+        .find((v) => v.startsWith("PATH="));
+      expect(path).toBeDefined();
+      expect(path!.slice("PATH=".length).split(":").slice(0, 2)).toEqual(["%h/.local/bin", "%h/.bun/bin"]);
+      expect(path!).toContain(":/usr/bin:");
       // WantedBy earns its place only in [Install]: anywhere else and
       // `systemctl --user enable` has nothing to link, so the unit never comes
       // back after a reboot.
@@ -387,6 +401,10 @@ test(
         "runner-pi",
       ]);
       expect(job.KeepAlive).toBe(true);
+      // The same PATH on launchd, written against the literal home the context
+      // names, because a plist has no specifier for it.
+      const env = job.EnvironmentVariables as Record<string, string>;
+      expect(env.PATH.split(":").slice(0, 2)).toEqual(["/home/of-the-service-account/.local/bin", "/home/of-the-service-account/.bun/bin"]);
       // Measured: a KeepAlive job is back 0.33 s after a kill with
       // ThrottleInterval 1 and 9.14 s with the key absent, because launchd's
       // own default throttle is 10 s. Check 6 asserts the restart inside the

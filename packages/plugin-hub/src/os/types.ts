@@ -60,6 +60,12 @@ export interface RenderContext {
   giveUpAfter: number;
   giveUpWindowSeconds: number;
   /**
+   * The home directory the PATH a unit carries is written against, on the
+   * flavour whose unit file has no specifier for it. Absent means the home of
+   * the account rendering, which is the account the unit runs as.
+   */
+  home?: string;
+  /**
    * The whole command line this entry is started with, when it is not the bun
    * default.
    *
@@ -78,6 +84,21 @@ export interface RenderContext {
 export interface UnitFile {
   path: string;
   text: string;
+}
+
+/**
+ * The PATH every unit carries, so the runner finds a model CLI installed the
+ * usual way. A service manager starts a unit with a PATH of the system
+ * directories alone, and Claude Code's own installer puts its binary in the
+ * account's `.local/bin` on Linux, so the runner looked the CLI up by name,
+ * found nothing, and reported the login as an unsupported source, which sent
+ * an operator looking for a credential problem that was not there. Written
+ * against `home`, which is systemd's `%h` specifier or the literal directory
+ * for launchd, and the account's own directories go first so an install there
+ * wins over an older one the system carries.
+ */
+export function unitPath(home: string): string {
+  return [`${home}/.local/bin`, `${home}/.bun/bin`, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
 }
 
 export interface MemoryReading {

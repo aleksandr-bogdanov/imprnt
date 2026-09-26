@@ -2,9 +2,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RunEntry } from "../registry/load.ts";
+import { runnerLimitsOf } from "../registry/entries.ts";
 import { scheduleSeconds, wantedState } from "./diff.ts";
 import { SCAN_PREFIX, isOurs, timerName, unitName } from "./names.ts";
-import type { MemoryReading, OsSeam, RenderContext, UnitFile, UnitState } from "./types.ts";
+import { unitPath, type MemoryReading, type OsSeam, type RenderContext, type UnitFile, type UnitState } from "./types.ts";
 import { STARTED_WITH } from "../store/connect.ts";
 
 /**
@@ -218,12 +219,19 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
         // Every program the hub renders opens a store, and the store refuses a
         // process started without these, which only the start can supply.
         ...Object.entries(STARTED_WITH).map(([name, value]) => `Environment=${argument(`${name}=${value}`)}`),
+        // `%h` is the manager's own specifier for the account's home, so the
+        // file is the same bytes whichever account renders it.
+        `Environment=${argument(`PATH=${unitPath("%h")}`)}`,
         // Only a resident asks to be kept alive. A scheduled service is started
         // by its timer and an on-demand one by a person, so neither carries
         // Restart=always, or the transcriber is restarted forever.
         ...(wanted === "running" ? ["Restart=always"] : []),
         `RestartSec=${ctx.restartDelaySeconds}`,
-        `MemoryMax=${entry.memory_limit_mb}M`,
+        // A runner's agent children run inside the runner's own cgroup, so its
+        // cap is its own limit plus the budget it hands its children. Capped at
+        // its own limit alone, the children it admitted were squeezed into
+        // swap or killed, and the budget it enforced meant nothing.
+        `MemoryMax=${entry.memory_limit_mb + (entry.kind === "runner" ? runnerLimitsOf(entry).child_memory_budget_mb : 0)}M`,
         "",
         ...(wanted === "running" ? ["[Install]", "WantedBy=default.target", ""] : []),
       ].join("\n");
