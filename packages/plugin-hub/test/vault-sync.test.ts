@@ -525,6 +525,33 @@ test("the sync commits a note an agent wrote, then pulls and pushes it, and leav
   } finally { await f.stop() }
 })
 
+test("the sync commits a deletion made with git rm and leaves a checkout somebody staged by hand out of the commit", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    commitChange(r.path, "old.md", "a note that goes\n")
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    fixtureGit(r.path, "rm", "--quiet", "old.md")
+    writeFileSync(join(r.path, "new.md"), "a note that comes\n")
+    const scratch = join(r.path, "scratch-checkout")
+    mkdirSync(scratch)
+    fixtureGit(scratch, "init", "--quiet")
+    commitChange(scratch, "private.txt", "not the vault's\n")
+    try { fixtureGit(r.path, "add", "scratch-checkout") } catch { /* git warns about an embedded repository and stages it anyway */ }
+    for (let run = 1; run <= 2; run++) {
+      const done = await syncChild(f, git.env)
+      expect(done.code, `run ${run}: ${done.err}`).toBe(0)
+    }
+    const tree = fixtureGit(f.root, "--git-dir", r.remote, "ls-tree", "--name-only", "main")
+    expect(tree).toContain("new.md")
+    expect(tree).not.toContain("old.md")
+    expect(tree).not.toContain("scratch-checkout")
+    expect(fixtureGit(r.path, "diff", "--cached", "--name-only"), "the hand-staged checkout is still staged, untouched").toBe("scratch-checkout")
+  } finally { await f.stop() }
+})
+
 test("the sync refuses to commit over an unfinished merge or under a filter program the repository's config names", async () => {
   const f = await syncFixture(cluster)
   try {
@@ -560,8 +587,8 @@ test("the sync refuses to commit over an unfinished merge or under a filter prog
   } finally { await f.stop() }
 })
 
-test("three failed runs in a row reach the person in their chat, once per streak", async () => {
-  const f = await syncFixture(cluster, { chat: true })
+test("three failed runs in a row reach the person in their resident agent's chat, once per streak", async () => {
+  const f = await syncFixture(cluster, { chat: true, busy: true })
   try {
     const r = f.repos[0]
     commitChange(r.path)
@@ -580,7 +607,7 @@ test("three failed runs in a row reach the person in their chat, once per streak
     expect((await syncChild(f, git.env)).code).not.toBe(0)
     const said = await notices()
     expect(said).toHaveLength(1)
-    expect(said[0]).toMatchObject({ person: "p1", agent: "p1-lair" })
+    expect(said[0], "the notice goes to the resident agent's chat").toMatchObject({ person: "p1", agent: "p1-lair" })
     expect(String(said[0].body)).toContain(r.id)
     expect(String(said[0].body)).toContain("3 times in a row")
     expect(String(said[0].body)).toContain("push failed")

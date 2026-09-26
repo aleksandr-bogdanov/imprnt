@@ -5,7 +5,7 @@
 // agent that names no fragment, MCP servers or settings, which is the shape an
 // agent made from a chat has, starts with its person's.
 import { beforeAll, expect, test } from "bun:test"
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { claudeCode } from "../src/adapters/claude-code.ts"
 import { LOOP_PREAMBLE } from "../src/adapters/instructions.ts"
@@ -151,5 +151,45 @@ test("a harvest launch appends nothing", async () => {
     const harvest = await make(launchInput(f, "harvest"))
     expect(harvest.argv).not.toContain("--append-system-prompt-file")
     expect(harvest.env.IMPRNT_VAULT).toBeUndefined()
+  } finally { f.stop() }
+})
+
+test("an import can never reach what the box hides: another person's tree, a login, or a symlink into either", async () => {
+  const f = loopFixture()
+  try {
+    const root = withVault(f)
+    const make = await launchSeam()
+    const theirs = join(f.trees.person("p2").tree, "p2-private.md")
+    writeFileSync(theirs, "p2-private-sentinel\n")
+    const refused = async (local: string) => {
+      writeFileSync(join(root, "CLAUDE.local.md"), local)
+      await expect(make(launchInput(f)), local).rejects.toThrow(/instructions-forbidden/)
+    }
+    await refused(`@${theirs}\n`)
+    await refused(`@${f.login}\n`)
+    await refused(`@~/.claude/.credentials.json\n`)
+    symlinkSync(theirs, join(root, "plugins", "looks-local.md"))
+    await refused("@plugins/looks-local.md\n")
+    await refused("Read @plugins/looks-local.md first.\n")
+    // The vault's own instruction file, swapped for a link to a login, is refused the same way.
+    writeFileSync(join(root, "CLAUDE.local.md"), "nothing imported\n")
+    const contract = join(root, "CLAUDE.md")
+    require("node:fs").rmSync(contract)
+    symlinkSync(f.login, contract)
+    await expect(make(launchInput(f))).rejects.toThrow(/instructions-forbidden/)
+  } finally { f.stop() }
+})
+
+test("an @ inside a sentence imports a file that exists and leaves a mention of someone as text", async () => {
+  const f = loopFixture()
+  try {
+    const root = withVault(f)
+    writeFileSync(join(root, "plugins", "inline.md"), "p1-inline-rule\n")
+    writeFileSync(join(root, "CLAUDE.local.md"), "Read @plugins/inline.md before answering.\nAsk @someone, and see `@plugins/code-span.md`.\n")
+    writeFileSync(join(root, "plugins", "code-span.md"), "p1-code-span-rule\n")
+    const { got } = await launched(f)
+    const prompt = appended(got.fragment)
+    expect(prompt.after("Read @plugins/inline.md before answering.", "p1-inline-rule", "Ask @someone")).toBe(true)
+    expect(prompt.text).not.toContain("p1-code-span-rule")
   } finally { f.stop() }
 })

@@ -7,13 +7,19 @@ import { hubPath, type Cluster } from "./cluster.ts"
 import { loadRegistry } from "../../src/registry/load.ts"
 import { listRunEntries } from "../../src/registry/entries.ts"
 
-/** `chat` keeps p1's chat agent and its door, so a notice meant for p1 has somewhere to land. */
-export async function syncFixture(cluster: Cluster, options: { chat?: boolean } = {}) {
+/**
+ * `chat` keeps p1's chat agent and its door, so a notice meant for p1 has
+ * somewhere to land. `busy` puts an on-demand chat of p1's ahead of it in the
+ * file and makes the kept one resident, so where a notice lands is a choice.
+ */
+export async function syncFixture(cluster: Cluster, options: { chat?: boolean; busy?: boolean } = {}) {
   const machine = process.platform === "darwin" ? "mac" : "pi"
   const id = `sync-${crypto.randomUUID().slice(0, 8)}`
   const f = await stageHub(cluster, {
     machines: [{ id: machine, os: process.platform === "darwin" ? "macos" : "linux" }],
-    registry: base => ({ ...base, agents: options.chat ? base.agents : [], run: [
+    registry: base => ({ ...base, agents: !options.chat ? [] : !options.busy ? base.agents : [
+      { ...base.agents![0], id: "p1-busy", chat: "2222222222", mode: "on-demand" },
+      { ...base.agents![0], mode: "resident" }, ...base.agents!.slice(1)], run: [
       ...(options.chat ? [
         { id: base.agents![0].door!, kind: "door", machine, platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 },
         { id: base.agents![0].runner, kind: "runner", machine, schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 256 },

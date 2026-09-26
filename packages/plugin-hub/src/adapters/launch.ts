@@ -92,7 +92,12 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   const root = vaultRootOf(person, input.box.tree);
   // Read before the box is built, because every file it reads, imports
   // included, is a path the box has to let the launch reach.
-  const prompt = ordinary ? assemblePrompt({ files: instructionFiles(person, root), fragment, home: ambient }) : null;
+  // Nothing the box hides from the agent may reach it through its prompt:
+  // every secret, the login it runs on included, and every other person's
+  // tree and state.
+  const forbidden = [...(input.box.secretPaths ?? []), credential.file, ...input.box.otherTrees, ...(input.box.otherStateRoots ?? []),
+    ...(ambient ? [join(ambient, ".claude", ".credentials.json")] : [])];
+  const prompt = ordinary ? assemblePrompt({ files: instructionFiles(person, root), fragment, home: ambient, forbidden }) : null;
   // The box masks every credential file, and this launch keeps the one login its
   // loop runs on. Every other one, bot tokens and any other model login alike,
   // stays masked. The launched login's own directory is bound writable because

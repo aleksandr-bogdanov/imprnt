@@ -74,32 +74,50 @@ async function plantsFilter(path: string, code: string): Promise<boolean> {
  * set aside, and so is any other directory that is its own checkout, which
  * `add` would otherwise record as an embedded repository. Returns how many
  * files the commit took, zero when there was nothing to take.
+ *
+ * The commit names its paths, so it takes exactly what status listed and
+ * nothing else the index happens to hold: a set-aside checkout somebody staged
+ * by hand stays out. Only paths whose working copy differs from the index go
+ * through `add`. One already staged, a deletion made with `git rm` above all,
+ * is in neither the working tree nor the index any more, and naming it to
+ * `add` would fail the run, and every run after it.
  */
 async function commitPending(path: string, nested: string[], code: string): Promise<number> {
   // Every untracked file is listed on its own, so the only directory status
   // names whole is a checkout of its own, which is left out. The paths are
-  // handed to `add` literally and on stdin: an excluding pathspec that names an
+  // handed over literally and on stdin: an excluding pathspec that names an
   // ignored directory makes `add` fail outright, and a vault left for days can
   // hold more changed paths than one command line takes.
   const entries = (await git(path, ["status", "--porcelain", "-z", "--untracked-files=all", "--", ".", ...nested],
     code, { raw: true })).split("\0");
-  const paths: string[] = [];
+  const changed: string[] = [], toAdd: string[] = [];
   for (let n = 0; n < entries.length; n++) {
     const entry = entries[n];
     if (entry.length < 4) continue;
-    // A rename or copy already staged names its source in the next field.
-    if ("RC".includes(entry[0])) n++;
     const name = entry.slice(3);
-    if (name.endsWith("/") && existsSync(join(path, name, ".git"))) continue;
-    paths.push(name);
+    // Untracked, status names such a checkout with a trailing slash. Staged
+    // by hand, it is a gitlink with none. Either way it is not the vault's.
+    if (existsSync(join(path, name, ".git"))) continue;
+    changed.push(name);
+    // A rename or copy already staged names its source in the next field, and
+    // the commit has to take the source's removal too.
+    if ("RC".includes(entry[0])) changed.push(entries[++n]);
+    if (entry[0] === "?" || entry[1] !== " ") toAdd.push(name);
   }
-  if (paths.length === 0) return 0;
-  await git(path, ["--literal-pathspecs", "add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul"], code,
-    { input: paths.join("\0") });
-  const staged = (await git(path, ["diff", "--cached", "--name-only", "-z"], code)).split("\0").filter(Boolean).length;
+  if (changed.length === 0) return 0;
+  if (toAdd.length > 0) {
+    await git(path, ["--literal-pathspecs", "add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul"], code,
+      { input: toAdd.join("\0") });
+  }
+  // `diff` takes no pathspec file, so the whole index is listed and cut down to
+  // what status named here.
+  const listed = new Set(changed);
+  const staged = (await git(path, ["diff", "--cached", "--name-only", "-z"], code, { raw: true }))
+    .split("\0").filter(name => listed.has(name)).length;
   if (staged === 0) return 0;
-  await git(path, ["-c", "user.name=imprnt hub", "-c", "user.email=hub@localhost", "-c", "commit.gpgsign=false",
-    "commit", "--no-verify", "--quiet", "-m", `hub sync: ${staged} files`], code);
+  await git(path, ["--literal-pathspecs", "-c", "user.name=imprnt hub", "-c", "user.email=hub@localhost", "-c", "commit.gpgsign=false",
+    "commit", "--no-verify", "--quiet", "-m", `hub sync: ${staged} files`, "--pathspec-from-file=-", "--pathspec-file-nul"],
+    code, { input: changed.join("\0") });
   return staged;
 }
 
@@ -119,7 +137,11 @@ interface RepoResult {
  * `check` goes on reporting `sync-failed` for them.
  */
 async function noticeStuck(store: StoreLike, registry: Registry, entry: string, person: string, repo: RepoResult): Promise<void> {
-  const agent = listAgents(registry).find(one => one.person === person && one.chat !== undefined && one.door !== undefined);
+  // The person's resident agent is the chat they keep open, the lair for the
+  // owner and the main chat for anyone with one, so the notice lands where it
+  // is read. A person with none gets it in their first chat.
+  const chats = listAgents(registry).filter(one => one.person === person && one.chat !== undefined && one.door !== undefined);
+  const agent = chats.find(one => one.mode === "resident") ?? chats[0];
   const where = agent ? noticeRoute(registry, agent.id) : null;
   if (!agent || !where) return;
   const body = syncStuck(where.language, { target: repo.id, count: repo.failed_runs, cause: syncCause(where.language, repo.code!) });
