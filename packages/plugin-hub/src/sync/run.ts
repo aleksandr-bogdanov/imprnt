@@ -19,8 +19,15 @@ import { storeUrlFor } from "../store/secrets.ts";
  * behalf. A hook an agent planted in `.git/hooks` would otherwise run here,
  * unboxed, on the next fetch, rebase or push.
  */
-async function git(path: string, args: string[], code: string, options: { input?: string; raw?: boolean } = {}): Promise<string> {
-  const child = Bun.spawn(["git", "-C", path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args],
+async function git(path: string, args: string[], code: string,
+  options: { input?: string; raw?: boolean; config?: string[] } = {}): Promise<string> {
+  // The two transports that run a program named in a remote url are shut on
+  // the command line, which outranks anything the repository's config says.
+  // `config` is what the registry says for this repository, on the same
+  // command line and for the same reason: the owner's hand, not the file's.
+  const child = Bun.spawn(["git", "-C", path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+    "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never",
+    ...(options.config ?? []).flatMap(one => ["-c", one]), ...args],
     { env: process.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), stdout: "pipe", stderr: "ignore" });
   const [out, status] = await Promise.all([new Response(child.stdout).text(), child.exited]);
   // Git diagnostics can contain credential-bearing remote URLs.
@@ -51,19 +58,48 @@ function nestedIn(path: string, registry: Registry): string[] {
 }
 
 /**
- * A filter driver the repository's own config declares. Git runs its `clean`
- * program on every `add` and its `smudge` program on every checkout, so one an
- * agent wrote into `.git/config` would run here, unboxed, when the sync commits
- * or rebases. Only the repository's own scopes are asked: a filter the
- * household's account installed for itself, such as a large-file store, is
- * that account's own choice.
+ * Every configuration key that tells git to start a program, or to read
+ * configuration from somewhere else that could. A filter's `clean` runs on
+ * every `add` and its `smudge` on every checkout, `core.sshCommand` and the
+ * credential helper run on a fetch, a diff driver or a merge driver runs on a
+ * rebase, an `insteadOf` rewrites a remote into one the `ext` transport would
+ * run, and an `include` pulls in a file that can say any of it. The list is
+ * what git's own documentation names as a command, and a new key git grows is
+ * added here by name.
  */
-async function plantsFilter(path: string, code: string): Promise<boolean> {
+const PROGRAM_KEYS: RegExp[] = [
+  /^filter\..+\.(clean|smudge|process)$/i,
+  /^core\.(sshcommand|askpass|gitproxy|hookspath|fsmonitor|fsmonitorhookversion|alternaterefscommand|editor|pager|worktree)$/i,
+  /^credential\.(.+\.)?helper$/i,
+  /^gpg\.(.+\.)?program$/i,
+  /^diff\.external$/i,
+  /^diff\..+\.(command|textconv)$/i,
+  /^merge\..+\.driver$/i,
+  /^sequence\.editor$/i,
+  /^remote\..+\.(proxy|uploadpack|receivepack|vcs)$/i,
+  /^protocol\./i,
+  /^url\..+\.(insteadof|pushinsteadof)$/i,
+  /^include\.path$/i,
+  /^includeif\./i,
+  /^alias\./i,
+  /^submodule\..+\.update$/i,
+  /^uploadpack\./i,
+  /^receive\./i,
+];
+
+/**
+ * A key in the repository's own config that would start a program. Only the
+ * repository's own scopes are asked: a helper the household's account
+ * installed for itself, such as a large-file store, is that account's own
+ * choice. The answer names the key, so the refusal can say what to remove.
+ */
+async function plantsProgram(path: string, code: string): Promise<string | null> {
   const listed = await git(path, ["config", "--list", "--show-scope", "--name-only"], code);
-  return listed.split("\n").some(line => {
+  for (const line of listed.split("\n")) {
     const [scope, key = ""] = line.split("\t");
-    return (scope === "local" || scope === "worktree") && /^filter\..+\.(clean|smudge|process)$/i.test(key);
-  });
+    if ((scope === "local" || scope === "worktree") && PROGRAM_KEYS.some(pattern => pattern.test(key))) return key;
+  }
+  return null;
 }
 
 /**
@@ -189,11 +225,12 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           const [row] = await connection`select pg_try_advisory_lock(hashtextextended(${`sync:${declared.machine}:${identity}`}, 0)) as held`;
           locked = row.held;
           if (!locked) throw new Error(code);
-          // Before any command that reads the working tree: git runs a filter's
-          // program while it compares file contents, so a filter an agent wrote
-          // into the repository's config would run on the first such command.
+          // Before any command that reads the working tree or dials the remote:
+          // git runs a filter's program while it compares file contents and a
+          // helper's while it fetches, so a key an agent wrote into the
+          // repository's config would run on the first such command.
           code = "config";
-          if (await plantsFilter(path, code)) throw new Error(code);
+          if (await plantsProgram(path, code) !== null) throw new Error(code);
           code = "branch";
           if (await git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"], code) !== repo.branch) throw new Error(code);
           code = "remote";
@@ -208,11 +245,14 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           const nested = nestedIn(path, registry).map(one => `:(exclude,literal)${one}`);
           committed = await commitPending(path, nested, code);
           code = "fetch";
-          await git(path, ["fetch", "--", repo.remote, repo.branch], code);
+          // The registry's own ssh command for this repository, a deploy key
+          // above all, rides on the two calls that dial the remote.
+          const dial = repo.ssh_command === undefined ? [] : [`core.sshCommand=${repo.ssh_command}`];
+          await git(path, ["fetch", "--", repo.remote, repo.branch], code, { config: dial });
           code = "conflict";
           await git(path, ["-c", "rebase.autoStash=false", "rebase", "FETCH_HEAD"], code);
           code = "push";
-          await git(path, ["push", "--", repo.remote, `HEAD:refs/heads/${repo.branch}`], code);
+          await git(path, ["push", "--", repo.remote, `HEAD:refs/heads/${repo.branch}`], code, { config: dial });
         } finally {
           try {
             if (locked) await connection`select pg_advisory_unlock(hashtextextended(${`sync:${declared.machine}:${identity}`}, 0))`;

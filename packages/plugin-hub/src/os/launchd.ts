@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { RunEntry } from "../registry/load.ts";
 import { scheduleSeconds, wantedState } from "./diff.ts";
 import { SCAN_PREFIX, isOurs, unitName } from "./names.ts";
-import type { MemoryReading, OsSeam, RenderContext, UnitFile, UnitState } from "./types.ts";
+import { unitPath, type MemoryReading, type OsSeam, type RenderContext, type UnitFile, type UnitState } from "./types.ts";
 import { STARTED_WITH } from "../store/connect.ts";
 
 /**
@@ -151,6 +151,9 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
         "  <key>EnvironmentVariables</key>",
         "  <dict>",
         ...Object.entries(STARTED_WITH).flatMap(([name, value]) => [`    <key>${xml(name)}</key>`, `    <string>${xml(value)}</string>`]),
+        // A plist has no specifier for the home, so it is the literal directory
+        // of the account the job runs as.
+        "    <key>PATH</key>", `    <string>${xml(unitPath(ctx.home ?? homedir()))}</string>`,
         "  </dict>",
         // A resident comes back at login and is kept alive. Nothing else is.
         "  <key>RunAtLoad</key>",

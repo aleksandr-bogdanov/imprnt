@@ -53,7 +53,7 @@ import { openStore, type Store } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
-import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
+import { readOpenTurns, readOpenTurnsWithWait, type OpenTurnRow, type WaitSidecar } from "../store/turns.ts";
 import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
 import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
@@ -70,9 +70,11 @@ import {
   transcriberDown,
   voiceGaveUp,
   voicePending,
+  waitReasonLine,
   type Language,
 } from "./lines.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
+import { credentialKeyOf, waitFacts, waitReason } from "./reason.ts";
 
 /**
  * The one progress line this door posted for a message, while its turn is open.
@@ -227,6 +229,8 @@ interface Served {
   /** Notes this door wrote down that are waiting for their words. */
   voice: PendingVoiceRow[];
   voiced: Nudge;
+  /** Notes whose transcription attempt is running right now, by message id. */
+  inFlight: Set<string>;
 }
 
 /**
@@ -842,9 +846,15 @@ export async function runDoor(options: {
       // saying somebody was typing while the notice beside it said messages
       // were waiting, and the platform took one call every few seconds per
       // agent for as long as it lasted.
+      //
+      // AND A NOTE BEING TRANSCRIBED RIGHT NOW. Nobody has claimed it, because
+      // it has no words yet, and the door itself is the one working on it:
+      // the person sees typing from the moment their note is picked up, and
+      // not across the wait for a retry.
       open.filter(
         (row) =>
-          (row.state === "acked" || row.state === "started") && row.claimed_by !== null,
+          ((row.state === "acked" || row.state === "started") && row.claimed_by !== null) ||
+          own.inFlight.has(row.id),
       );
 
     const show = async (): Promise<void> => {
@@ -926,7 +936,7 @@ export async function runDoor(options: {
     };
 
     /** The clock line: the chat log first, then the diary, then the chat. */
-    const sayExpired = async (row: OpenTurnRow, stamp: string): Promise<void> => {
+    const sayExpired = async (row: OpenTurnRow, stamp: string, sidecar: WaitSidecar): Promise<void> => {
       const key = `${row.id}/${stamp}`;
       if (spoken.has(key)) {
         // The silent re-arm: the read happened, and that is the whole of it.
@@ -945,6 +955,15 @@ export async function runDoor(options: {
       const at = new Date().toISOString();
       spoken.add(key);
       spokenAt.set(key, Date.now());
+      // WHY, under the clock line, from the closed list. A note waiting for
+      // its own words is waiting on this door and needs no second sentence.
+      // The facts rode on the read the expiry already made, so nothing is
+      // read here.
+      let why: { id: string; kind: string; values: Record<string, string | number> } | null = null;
+      if (stamp !== "transcribed") {
+        const verdict = waitReason(waitFacts(sidecar, { registry: registryThisTick(), agent, row, stamp, open }));
+        why = { id: `${id}:why`, kind: verdict.kind, values: verdict.values };
+      }
       // L2's "before sending", the same order a reply chunk is written in, so
       // the next spawned session reads exactly what the person read.
       //
@@ -964,6 +983,13 @@ export async function runDoor(options: {
           text,
         },
       );
+      const reason = why === null ? null : waitReasonLine(language, why.kind, why.values);
+      if (why !== null && reason !== null) {
+        await appendChatLineOnce(
+          { stateDir, person: row.person, agent: row.agent },
+          { id: why.id, at, direction: "out", from: options.door, text: reason },
+        );
+      }
       await recordExpiry(store, {
         messageId: row.id,
         stamp,
@@ -972,9 +998,11 @@ export async function runDoor(options: {
         agent: row.agent,
         id,
         at,
+        ...(why === null ? {} : { why }),
       });
       try {
         await options.platform.post({ chat: agent.chat, text });
+        if (reason !== null) await options.platform.post({ chat: agent.chat, text: reason });
       } catch {
         // The platform refused the line. The row is in the diary either way,
         // and `check`'s stamp finding is the half a household still sees.
@@ -1177,8 +1205,11 @@ export async function runDoor(options: {
             if (at === -1) open.push(row);
             else open[at] = { ...open[at], media_state: row.media_state, media_done_at: row.media_done_at };
           }
-          retune();
         }
+        // On every pass, because the poke that woke this task may carry no row
+        // at all: a transcription attempt starting or ending changes what is
+        // typable and nothing else. It is memory only and acts on a flip.
+        retune();
         const due = nextDeadline();
         const bound =
           due === null
@@ -1221,10 +1252,15 @@ export async function runDoor(options: {
         // allowed on.
         const ripe = clocksOf(open).filter((clock) => clock.at <= Date.now());
         if (ripe.length === 0) continue;
-        open = heard(await readOpenTurns(store, { agent: agent.id }));
+        // The one read an expiry makes, with the facts the reason line needs
+        // riding on it.
+        const read = await readOpenTurnsWithWait(store, {
+          agent: agent.id, runner: agent.runner, credential: credentialKeyOf(registryThisTick(), agent),
+        });
+        open = heard(read.rows);
         for (const clock of clocksOf(open)) {
           if (clock.at > Date.now()) continue;
-          await sayExpired(clock.row, clock.stamp);
+          await sayExpired(clock.row, clock.stamp, read.sidecar);
         }
         retune();
       }
@@ -1523,6 +1559,9 @@ export async function runDoor(options: {
         recognizer: voice.recognizer, chunks: held?.chunks.length ?? null, audio_s: null,
         decode_ms: null, attempts: null, class: "infra", cause: "gave-up" });
       waiting.delete(row.id);
+      // The person read the give-up line, and with nothing of theirs left
+      // waiting their episode is over: a later outage is theirs to hear of.
+      if (waiting.size === 0) episode = null;
       await projectInbound(store, { stateDir, inboundId: row.id, skipBad });
     };
 
@@ -1536,6 +1575,7 @@ export async function runDoor(options: {
      */
     const finishUnnamed = async (row: PendingVoiceRow): Promise<void> => {
       waiting.delete(row.id);
+      if (waiting.size === 0) episode = null;
       const at = new Date();
       await markMediaFailed(store, { id: row.id, state: "failed", retryAt: null,
         failure: { class: "infra", cause: "recognizer-unnamed" }, at });
@@ -1584,12 +1624,24 @@ export async function runDoor(options: {
         return;
       }
       const endpoint = recognizerEndpoint(fresh, voice, options.door);
-      const outcome = await transcribeRow(store, {
-        row: { id: row.id, source: row.source }, voice, language,
-        endpoint: endpoint ?? "", attempts: state.attempts,
-        credentialFile: voice.credential === null ? null
-          : credentialFor(fresh, voice.credential)?.file ?? null,
-      });
+      // The person sees typing while their note is being worked on, and not
+      // while it waits for its next try: a chat saying somebody is typing for
+      // the hours a recognizer can be down would be the same lie the claim
+      // filter on the typing rule exists to prevent.
+      own.inFlight.add(row.id);
+      own.arrived.wake();
+      let outcome: Awaited<ReturnType<typeof transcribeRow>>;
+      try {
+        outcome = await transcribeRow(store, {
+          row: { id: row.id, source: row.source }, voice, language,
+          endpoint: endpoint ?? "", attempts: state.attempts,
+          credentialFile: voice.credential === null ? null
+            : credentialFor(fresh, voice.credential)?.file ?? null,
+        });
+      } finally {
+        own.inFlight.delete(row.id);
+        own.arrived.wake();
+      }
       if (outcome.state === "done" || outcome.failure === "content") {
         waiting.delete(row.id);
         // The words exist, so the row becomes an ordinary human message: one
@@ -1611,6 +1663,11 @@ export async function runDoor(options: {
             `voice:back:${voice.recognizer}:${episode}:${agent.person}`);
           episode = null;
         }
+        // A note that ended with no words says nothing about the recognizer,
+        // so no "works again" is said for it. With no note of theirs left
+        // waiting, this person's story is over and the episode is forgotten:
+        // held open, it would swallow every later outage they should hear of.
+        if (waiting.size === 0) episode = null;
         return;
       }
       arm(row, outcome.retryAt?.getTime() ?? Date.now() + voice.retry_seconds * 1000);
@@ -1618,9 +1675,12 @@ export async function runDoor(options: {
       // recognizer's health sheet says it began, so a door started again in the
       // middle of one says nothing a second time. The person is the last part
       // of the key because the sentence is theirs, and a household with two
-      // people owes each of them one.
+      // people owes each of them one. A person already told "not answering"
+      // is not told again while they wait for "works again", whatever the
+      // sheet's episode is by now: another person's success may have cleared
+      // and reopened it in between.
       const since = (await readVoiceHealth(store)).get(voice.recognizer)?.since ?? null;
-      if (since !== null) {
+      if (since !== null && episode === null) {
         episode = since;
         await say(transcriberDown(language, voice.retry_seconds),
           `voice:down:${voice.recognizer}:${since}:${agent.person}`);
@@ -1650,7 +1710,25 @@ export async function runDoor(options: {
             id: string; person: string; agent: string; source: Record<string, unknown>;
             received_at: string | Date; media_retry_at: string | Date | null;
           }[];
-        episode = (await readVoiceHealth(store)).get(voiceFor(registry)?.recognizer ?? "")?.since ?? null;
+        // THE EPISODE IS THIS PERSON'S, read back from the last line they were
+        // told, never from the recognizer's sheet. The sheet is one row per
+        // recognizer, and with two people on one recognizer a success of one
+        // clears it while the other is still failing: a door that took the
+        // sheet's fresh episode would tell the second person "not answering"
+        // twice with no "works again" between, and one that took the sheet's
+        // standing episode after a restart would never tell a person who had
+        // not heard it yet.
+        // The first part of the newest line, because a line cut for the
+        // platform carries its key on every part with a suffix after the person.
+        const [told] = (await store.sql`select notice_key from outbox
+          where kind = 'notice' and agent = ${agent.id} and notice_key like 'voice:%'
+            and notice_key not like '%:part:%'
+          order by id desc limit 1`) as unknown as { notice_key: string }[];
+        const last = /^voice:(down|back):[^:]+:(.+):[^:]+$/.exec(String(told?.notice_key ?? ""));
+        // Restored only while a note of theirs is still waiting: a note that
+        // gave up or ended without words left no "works again" behind, and
+        // its episode is over with it.
+        episode = last?.[1] === "down" && rows.length > 0 ? last[2] : null;
         for (const row of rows) {
           const it: PendingVoiceRow = { id: String(row.id), person: String(row.person),
             agent: String(row.agent), source: row.source, receivedAt: new Date(row.received_at) };
@@ -1749,6 +1827,7 @@ export async function runDoor(options: {
       arrived: nudge(),
       voice: [],
       voiced: nudge(),
+      inFlight: new Set<string>(),
     };
     agent = it.agent;
     served.set(agent.id, it);

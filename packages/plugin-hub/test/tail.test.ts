@@ -17,11 +17,11 @@
 // per-agent tail size, for the third.
 
 import { test, expect } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { seam, hubPath } from "./helpers/cluster.ts";
-import { AGENT, PERSON, plantChatLine, scratchDir } from "./helpers/hub-fixture.ts";
+import { AGENT, PERSON, chatLogFile, plantChatLine, scratchDir } from "./helpers/hub-fixture.ts";
 
 /**
  * A fixed `now`, chosen so that 30 hours ago, 23 hours ago and 10 minutes ago
@@ -91,6 +91,38 @@ test(
       } finally {
         await rm(edge, { recursive: true, force: true });
       }
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "a message still waiting for its answer is not in the tail: the runner names it by its line id and the file leaves it out, while an answered one stays",
+  async () => {
+    const { readTail } = await seam("src/chatlog.ts");
+    const stateDir = await scratchDir("hub-tail-open-");
+    try {
+      // Two lines with ids, the way the door writes an inbound message, and one
+      // without, the way an older log carries them.
+      const file = chatLogFile({ stateDir, person: PERSON, agent: AGENT, at: hoursBefore(1) });
+      mkdirSync(dirname(file), { recursive: true });
+      for (const [id, text] of [["answered-line", "marker-answered"], ["open-line", "marker-still-waiting"]]) {
+        appendFileSync(file, JSON.stringify({ id, at: hoursBefore(1).toISOString(), direction: "in", from: PERSON, text }) + "\n");
+      }
+      planted(stateDir, hoursBefore(0, -600_000), "marker-no-id");
+      const tail = (await (readTail as Function)({
+        stateDir, person: PERSON, agent: AGENT, now: NOW, hours: 24, tokens: 8000,
+        exclude: new Set(["open-line"]),
+      })) as string;
+      expect(tail).toContain("marker-answered");
+      expect(tail).toContain("marker-no-id");
+      expect(tail).not.toContain("marker-still-waiting");
+      // The control: with nothing named, the same line is in the tail.
+      const whole = (await (readTail as Function)({
+        stateDir, person: PERSON, agent: AGENT, now: NOW, hours: 24, tokens: 8000,
+      })) as string;
+      expect(whole).toContain("marker-still-waiting");
     } finally {
       await rm(stateDir, { recursive: true, force: true });
     }

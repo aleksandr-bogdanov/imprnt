@@ -200,6 +200,9 @@ id = "runner-pi"
 kind = "runner"
 machine = "pi"
 schedule = "always"
+# The runner's own. Its agent children run inside its unit, so the unit's cap
+# is this plus the children's budget (`child_memory_budget_mb`, 2048 when
+# absent), and this number only has to hold the runner process itself.
 memory_limit_mb = 512
 # The limit the runner enforces on its model child. It is not the runner's own.
 child_memory_limit_mb = 2048

@@ -71,11 +71,18 @@ const under = (path: string, roots: string[]) => roots.some(root => path === roo
  * opened once and the opened file is then checked again against a fresh
  * resolution, so a file swapped for a link between the check and the read is
  * refused rather than read.
+ *
+ * A trusted file is trusted by its NAME in the registry, and a link is not
+ * that file: the registry named a place the owner wrote, and an agent that
+ * can write the tree could point the name, or any directory above it, at
+ * somewhere else. So a trusted name whose path is not exactly what the file
+ * system resolves it to is judged like an import, by where it lands.
  */
 function readable(file: string, scope: Scope, from?: string): string {
   const said = from ? `${file} (imported by ${from})` : file;
+  const trusted = scope.trusted.has(file) && isItself(file);
   const allowed = (real: string) => {
-    if (under(real, scope.forbidden) || (!scope.trusted.has(file) && !under(real, scope.inside))) {
+    if (under(real, scope.forbidden) || (!trusted && !under(real, scope.inside))) {
       throw new Error(`instructions-forbidden: ${said} is a place this agent may not read`);
     }
   };
@@ -118,6 +125,32 @@ function importPath(target: string, file: string, home?: string): string {
 
 function isFile(path: string): boolean {
   try { return statSync(path).isFile(); } catch { return false; }
+}
+
+/** Whether the path resolves to itself, with no link in any of its components. */
+function isItself(path: string): boolean {
+  try { return realpathSync(path) === resolve(path); } catch { return false; }
+}
+
+/**
+ * A line with its code spans blanked, so an `@` inside one is not an import.
+ * A span opens on a run of backticks and closes on the next run of exactly
+ * the same length, and a run that never finds its match is text, which is
+ * how CommonMark reads it and what lets a shorter or longer run sit inside.
+ */
+function withoutCodeSpans(line: string): string {
+  const runs = [...line.matchAll(/`+/g)].map(run => ({ at: run.index, length: run[0].length }));
+  let out = "";
+  let from = 0;
+  for (let n = 0; n < runs.length; n += 1) {
+    const open = runs[n];
+    const close = runs.findIndex((run, m) => m > n && run.length === open.length);
+    if (close === -1) continue;
+    out += line.slice(from, open.at) + " ";
+    from = runs[close].at + runs[close].length;
+    n = close;
+  }
+  return out + line.slice(from);
 }
 
 /**
@@ -169,7 +202,7 @@ export function expandInstructions(file: string, options: { home?: string; seen:
     const whole = line.match(/^\s*@(\S+)\s*$/);
     if (whole) { include(importPath(whole[1], file, options.home)); continue; }
     out.push(line);
-    const prose = line.replace(/`[^`]*`/g, " ");
+    const prose = withoutCodeSpans(line);
     for (const found of prose.matchAll(/(?:^|[\s(\[{"'<])@([^\s`)\]}>"']+)/g)) {
       const target = found[1].replace(/[.,;:!?]+$/, "");
       if (target === "") continue;

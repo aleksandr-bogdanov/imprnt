@@ -92,6 +92,13 @@ export async function recordExpiry(
     id: string;
     /** That line's own time, the same ISO instant the file got. */
     at: string;
+    /**
+     * Why the message is waiting, when the door said so under the clock line:
+     * the reason from the closed list, the values its sentence took, and the
+     * id of that second line. Absent for a clock that has no reason line, the
+     * transcribing one.
+     */
+    why?: { id: string; kind: string; values: Record<string, string | number> };
   },
 ): Promise<void> {
   await appendEntry(store, {
@@ -110,6 +117,7 @@ export async function recordExpiry(
       agent: expiry.agent,
       id: expiry.id,
       at: expiry.at,
+      ...(expiry.why ? { why: expiry.why } : {}),
     },
   });
 }

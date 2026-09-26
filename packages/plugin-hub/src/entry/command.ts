@@ -7,6 +7,7 @@ import { readKernelView } from "../check/kernel.ts";
 import { thisOs } from "../os/index.ts";
 import { readStatus } from "../hub/status.ts";
 import { runInstall } from "../install/run.ts";
+import { relayoutRegistry } from "../registry/relayout.ts";
 import { requestRecovery } from "../hub/control.ts";
 import { readStampMetrics, renderMetrics } from "../metrics/stamps.ts";
 import { checkClean, cliUsage, operation, safeValue, status } from "../door/lines.ts";
@@ -14,10 +15,17 @@ import { checkClean, cliUsage, operation, safeValue, status } from "../door/line
 export async function command(args: string[]): Promise<number> {
   const [verb, registryFile, target, extra, ...rest] = args;
   const usage = () => { process.stderr.write(cliUsage("en") + "\n"); return 2; };
-  if (!registryFile || !["check", "status", "metrics", "install", "recover"].includes(verb) || rest.length) return usage();
-  if (verb !== "install" && extra || verb === "metrics" && target || verb === "recover" && !/^(agent|door|run):[^:]+$/.test(target ?? "")) return usage();
+  if (!registryFile || !["check", "status", "metrics", "install", "recover", "relayout"].includes(verb) || rest.length) return usage();
+  if (verb !== "install" && extra || ["metrics", "relayout"].includes(verb) && target || verb === "recover" && !/^(agent|door|run):[^:]+$/.test(target ?? "")) return usage();
   if (verb === "install" && (target && !["zone", "database", "services", "entry", "--dry"].includes(target) || ["zone", "database", "--dry"].includes(target) && extra || ["services", "entry"].includes(target) && !extra)) return usage();
   try {
+    if (verb === "relayout") {
+      // Before the load below: the whole point is a file the loader reads and
+      // the editor cannot, and the rewrite loads it itself under the lock.
+      const { changed } = await relayoutRegistry(registryFile);
+      process.stdout.write(operation("en", { operation: "relayout", target: registryFile, result: changed ? "done" : "unchanged" }) + "\n");
+      return 0;
+    }
     const registry = loadRegistry(registryFile);
     const machines = listMachines(registry);
     const machine = target ?? (machines.length === 1 ? machines[0].id : undefined);

@@ -28,13 +28,14 @@ import {
   agentsFor,
   chatStateFor,
   lifetimeFor,
-  runnerLimitsFor,
+  runnerAdmission,
   languageOf,
   listAgents,
   listRunEntries,
   noticeRoute,
 } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
+import { waitRecorder, type AgentWait } from "./waiting.ts";
 import {
   credentialOfPreset,
   getPreset,
@@ -108,6 +109,8 @@ interface Live {
   /** Resolves once this agent's loop is up, or has given up trying. */
   serving: Promise<void>;
   settle(): void;
+  /** What this agent is waiting on, written for the door to read, or cleared. */
+  noteWait(wait: AgentWait | null): Promise<void>;
 }
 
 /** The turn that is open right now. One message per turn, never two. */
@@ -445,17 +448,18 @@ export async function runRunner(options: {
     } finally { connection.release(); }
   };
   const admitChild = async (registry: Registry, own: Live, reserve = true): Promise<boolean> => {
-    const entry = listRunEntries(registry).find(one => one.id === options.runner);
-    const limits = entry ? runnerLimitsFor(registry, options.runner) : { max_active_children: 4, child_memory_budget_mb: 2048 };
-    const limitMb = entry?.child_memory_limit_mb ?? limits.child_memory_budget_mb;
-    // Reserve the smaller per-child ceiling where possible; a ceiling equal
-    // to the fleet budget shares that budget across its declared slots. The
-    // monitor also enforces actual aggregate use, including descendants.
-    const reserveMb = limitMb < limits.child_memory_budget_mb ? limitMb : limits.child_memory_budget_mb / limits.max_active_children;
     let recorded = false;
     while (!stopping && !own.leaving) {
-      if (reservations < limits.max_active_children && Math.max(reservations * reserveMb, measuredBytes / 1048576) + reserveMb <= limits.child_memory_budget_mb) {
+      // Read again on every pass, because a registry edit that raises the
+      // count or the budget is one of the things this wait is woken for.
+      const entry = listRunEntries(loadRegistry(options.registryFile)).find(one => one.id === options.runner);
+      const limits = runnerAdmission(entry ?? {});
+      const reserveMb = limits.reserve_mb;
+      const usedMb = Math.max(reservations * reserveMb, measuredBytes / 1048576);
+      const roomByCount = reservations < limits.max_active_children;
+      if (roomByCount && usedMb + reserveMb <= limits.child_memory_budget_mb) {
         if (reserve) reservations++;
+        if (recorded) await own.noteWait(null);
         return true;
       }
       own.settle();
@@ -465,11 +469,27 @@ export async function runRunner(options: {
           detail: { cause: "admission", children: reservations, reserved_mb: reservations * reserveMb, peak_bytes: peakBytes } });
         continue;
       }
+      // What blocks, for the door's line. A count that is full names who
+      // holds the slots: every agent with a child reserved and every resident
+      // whose harvest has one of its own. A budget that is full with slots to
+      // spare is a different sentence, with the numbers.
+      await own.noteWait(roomByCount
+        ? { kind: "memory", budget_mb: limits.child_memory_budget_mb, used_mb: Math.round(usedMb), reserve_mb: reserveMb }
+        : { kind: "slots", count: limits.max_active_children, holders: [...new Set([
+            ...[...live.values()].filter(other => other.reserved && other !== own).map(other => other.agent.id),
+            ...[...harvestSessions.values()].map(owner => owner.agent.id),
+          ])] });
+      // Woken by a child starting or being released, by the tick seeing a
+      // changed limit or a fallen aggregate reading, and by the tick itself
+      // as the bound: the re-check above is in memory and reads no table, so
+      // the bound costs the store nothing and a runner whose slots are all
+      // held by residents still asks again within a tick.
       let wake!: () => void;
       const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
-      try { await Promise.race([available, stopped, own.left]); }
+      try { await Promise.race([available, stopped, own.left, Bun.sleep(setting(registry, "hub.tick_seconds") * 1000)]); }
       finally { capacity.delete(wake); }
     }
+    if (recorded) await own.noteWait(null);
     return false;
   };
   const failedSession = (session: AdapterSession): Promise<never> => session.exited
@@ -875,9 +895,19 @@ export async function runRunner(options: {
         hours: setting(registry, "hub.tail_hours"),
         tokens: setting(registry, "hub.tail_tokens"),
       };
+      // A message still waiting for its answer is not in the tail. The door
+      // wrote it down the moment it landed, and this session is about to be
+      // handed it as a turn of its own, so inside the tail it would be the same
+      // message twice: the loop is told not to answer the tail, and a loop
+      // that reads a task there still runs it.
+      const waiting = new Set<string>(((await store.sql`
+        select source ->> 'log_id' as log_id from inbound
+        where agent = ${agent.id} and source is not null
+          and state not in ('answered', 'delivered')`) as unknown as { log_id: string | null }[])
+        .map(row => row.log_id).filter((id): id is string => typeof id === "string" && id !== ""));
       const tail = chatStateFor(registry, agent.id) === "store"
-        ? await deriveTail(store, { registry, ...where })
-        : await readTail({ stateDir, ...where });
+        ? await deriveTail(store, { registry, ...where, exclude: waiting })
+        : await readTail({ stateDir, ...where, exclude: waiting });
       if (tail !== "") await oneTurn({ id: agent.id, text: tail }, { preset, tail: true, registry });
     };
 
@@ -913,7 +943,9 @@ export async function runRunner(options: {
       if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping) {
         if (!await admitChild(initial, own)) return;
         own.reserved = true;
+        await own.noteWait({ kind: "starting" });
         await spawn(getPreset(initial, agent.preset), initial);
+        await own.noteWait(null);
       }
       // An agent whose log had no tail to feed is served the moment its session
       // is up, and this is where that one settles.
@@ -1059,12 +1091,14 @@ export async function runRunner(options: {
           // The harvest can start while this read is in flight. Its capacity
           // signal must not be lost before this task subscribes to it.
           if (capacityVersion !== observedCapacity) continue;
+          await own.noteWait({ kind: "harvest" });
           let wake!: () => void;
           const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
           try { await Promise.race([available, stopped, own.left, Bun.sleep(setting(registry, "hub.tick_seconds") * 1000)]); }
           finally { capacity.delete(wake); }
           continue;
         }
+        await own.noteWait(null);
         if (next && !own.reserved) {
           if (!await admitChild(registry, own)) break;
           own.reserved = true;
@@ -1147,7 +1181,11 @@ export async function runRunner(options: {
         // A session carries the preset it was started with, so a changed one is
         // a new child, and so is one whose child the memory watch killed. The
         // runner process itself never restarts for either.
-        if (!own.session || presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
+        if (!own.session || presetId(preset) !== startedWith || own.killed) {
+          await own.noteWait({ kind: "starting" });
+          await spawn(preset, registry);
+          await own.noteWait(null);
+        }
         await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source, kind: row.kind });
         claimed = null;
         claimedReturn = null;
@@ -1201,6 +1239,7 @@ export async function runRunner(options: {
       turn = null;
       await writes;
       if (claimed && own.leaving) await clearProgress(store, claimed);
+      await own.noteWait(null);
       own.settle();
       if (waiter) await waiter.close();
       if (own.session) { readings.delete(own.session); await own.session.close().catch(() => {}); }
@@ -1233,6 +1272,7 @@ export async function runRunner(options: {
       done: Promise.resolve(),
       serving,
       settle,
+      noteWait: waitRecorder(store, agent.id),
     };
     live.set(agent.id, it);
     it.done = runAgent(agent, it);
@@ -1264,6 +1304,7 @@ export async function runRunner(options: {
     const own = listRunEntries(registry).find((entry) => entry.id === options.runner);
     const limitMb = own?.child_memory_limit_mb;
     if (!limitMb || limitMb <= 0) return;
+    const before = measuredBytes;
     measuredBytes = 0;
     for (const it of [...live.values(), ...[...harvestSessions].map(([session, owner]) => ({ ...owner, session, killed: false }))]) {
       const session = it.session;
@@ -1319,6 +1360,8 @@ export async function runRunner(options: {
         // outcome by another route.
       }
     }
+    // A reading that fell is room an agent may have been waiting for.
+    if (measuredBytes < before) capacityChanged();
   };
 
   for (const agent of agentsFor(first, { runner: options.runner })) {
@@ -1330,6 +1373,7 @@ export async function runRunner(options: {
   await Promise.all([...live.values()].map((it) => it.serving));
 
   const recovering = new Set<string>();
+  let seenLimits = JSON.stringify(runnerAdmission(listRunEntries(first).find(one => one.id === options.runner) ?? {}));
   const supervise = (async () => {
     while (!stopping) {
       await Promise.race([Bun.sleep(setting(first, "hub.tick_seconds") * 1000), stopped]);
@@ -1347,6 +1391,14 @@ export async function runRunner(options: {
         for (const agent of wanted) if (!live.has(agent.id) && !recovering.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
         for (const id of [...live.keys()]) {
           if (!wanted.some((agent) => agent.id === id)) await drop(id);
+        }
+        // A registry edit that changes what this runner admits takes effect
+        // within a tick, the way every routine edit does: the agents waiting
+        // on admission are woken to read the new numbers.
+        const limits = JSON.stringify(runnerAdmission(listRunEntries(registry).find(one => one.id === options.runner) ?? {}));
+        if (limits !== seenLimits) {
+          seenLimits = limits;
+          capacityChanged();
         }
         await watchChildren(registry);
       } catch {

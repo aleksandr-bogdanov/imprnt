@@ -50,6 +50,8 @@ import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { silentRunners } from "./silence.ts";
+import { admissionFindings } from "./admission.ts";
+import { readUnexplainedWaits, unexplainedFindings } from "./waits.ts";
 import { readZoneState, zoneFindings } from "./zone.ts";
 import { backupFindings, readBackupState } from "./backup.ts";
 
@@ -526,6 +528,9 @@ export async function runCheck(options: {
     );
   }
 
+  // --- a runner whose numbers admit fewer agents than its count says --------
+  findings.push(...admissionFindings({ entries, machine }));
+
   // --- every human row past its person's own threshold (criterion 1) ------
   //
   // THE MACHINE IS THE AGENT'S RUNNER'S, so two machines running `check` do not
@@ -539,6 +544,12 @@ export async function runCheck(options: {
         runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
         machine,
         now,
+      }),
+      // A wait the door could not explain from the closed list of reasons.
+      ...unexplainedFindings({
+        waits: await readUnexplainedWaits(options.store, { agents: mine.map((agent) => agent.id) }),
+        runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        machine,
       }),
     );
 
@@ -669,7 +680,10 @@ export async function runCheck(options: {
       roots: [
         ...listPeople(registry).map((person) => person.tree),
         String(readSetting(registry, "hub.state_dir") ?? ""),
-        ...opened.map((entry) => dirname(entry.file)),
+        // A credential's own directory, one level deep: a copy beside the
+        // file is what this root is for, and a login in a home directory
+        // must not turn check into a walk of the whole home.
+        ...opened.map((entry) => ({ path: dirname(entry.file), depth: 1 })),
       ],
       machine,
     })),

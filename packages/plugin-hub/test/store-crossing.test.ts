@@ -404,7 +404,7 @@ test(
         const job = parsePlistDict(plist);
         const apple = await plutilJson(plist);
         if (apple !== null) expect(canonical(job)).toEqual(canonical(apple));
-        expect(job.EnvironmentVariables, `${entry.kind}'s launchd job`).toEqual({ [SWITCH]: "1" });
+        expect((job.EnvironmentVariables as Record<string, string>)[SWITCH], `${entry.kind}'s launchd job`).toBe("1");
       }
 
       // The launcher. A `bun` fronted on PATH records what it was started

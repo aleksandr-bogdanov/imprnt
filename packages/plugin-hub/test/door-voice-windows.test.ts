@@ -13,12 +13,15 @@
 // projected at the commit, so there is no pending row to hold a window open and
 // no failed row either.
 //
-// WHAT THIS DELIBERATELY DOES NOT ASSERT. The typing rule is the shipped one: a
-// turn is typable once the loop has ACCEPTED the message and a runner holds it,
-// and a row nobody has claimed shows no typing at all. A note waiting for its
-// words is such a row, so no typing is shown for it, and the sentence a person
-// would otherwise read about the loop not having accepted their message is the
-// one this check asserts absent.
+// THE TYPING RULE FOR A NOTE. A turn is typable once the loop has ACCEPTED the
+// message and a runner holds it, and a row nobody has claimed shows no typing,
+// with one addition: while the door itself is working on a note, the person
+// sees typing, because the door is the one holding it then. Across the WAIT
+// for a retry nothing is typed, or a chat would say somebody is typing for the
+// hours a recognizer can be down. So the first window binds typing to the
+// attempt: whatever was shown while it ran, nothing more is shown while the
+// note waits. The sentence a person would otherwise read about the loop not
+// having accepted their message is asserted absent as before.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readFileSync, writeFileSync } from "node:fs"
 import { backendPid, startCluster, statementWatch, untilIssued, until, type Cluster } from "./helpers/cluster.ts"
@@ -119,6 +122,9 @@ test("RUN-13 a note left waiting for its words issues nothing across a typing in
     await until("the cursor has moved",
       async () => (await it.read.sheet("door_cursor")).length > 0, 30_000)
     await Bun.sleep(1000)
+    // Typing shown so far belongs to the attempt that just ran, and the count
+    // is taken here so the window below can bind that nothing is added to it.
+    const shownForTheAttempt = typings.length
 
     // The window. The step learns its row from the commit and waits on that
     // row's own retry on a cancellable timer, so there is no per-tick query of
@@ -133,9 +139,9 @@ test("RUN-13 a note left waiting for its words issues nothing across a typing in
       )
     }
     expect((await it.read.inbound())[0].media_state, "RUN-13 and it really was still waiting").toBe("pending")
-    // The shipped typing rule, unchanged: a row nobody has accepted and nobody
-    // holds shows no typing, and no waiting line goes out about it either.
-    expect(typings, "RUN-13 no typing for a row no runner holds").toEqual([])
+    // A note waiting for its retry is a row nobody holds, the door included:
+    // nothing is typed across the wait, and no waiting line goes out either.
+    expect(typings.length, "RUN-13 no typing while the note waits for its next try").toBe(shownForTheAttempt)
     expect(it.edge.posts().map(p => p.text), "RUN-13 and no acked line")
       .not.toContain(clockLine("en", "acked", 1))
     await proveCounter(it.db, [readerPid])

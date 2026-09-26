@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  DEFAULT_CHILD_MEMORY_BUDGET_MB,
   DEFAULT_LANGUAGE,
+  DEFAULT_MAX_ACTIVE_CHILDREN,
   HARVEST_DEFAULTS,
   loaded,
   readSetting,
@@ -383,7 +385,35 @@ export function senderAllowed(registry: unknown, personId: string, door: string,
 export function runnerLimitsFor(registry: unknown, runnerId: string) {
   const entry = loaded(registry, "runnerLimitsFor").run.find(one => one.id === runnerId && one.kind === "runner");
   if (!entry) throw new TypeError(`unknown runner: ${runnerId}`);
-  return { max_active_children: entry.max_active_children ?? 4, child_memory_budget_mb: entry.child_memory_budget_mb ?? 2048 };
+  return runnerLimitsOf(entry);
+}
+
+/** The same two limits, read off one entry, for a caller that already holds it. */
+export function runnerLimitsOf(entry: Pick<RunEntry, "max_active_children" | "child_memory_budget_mb">) {
+  return {
+    max_active_children: entry.max_active_children ?? DEFAULT_MAX_ACTIVE_CHILDREN,
+    child_memory_budget_mb: entry.child_memory_budget_mb ?? DEFAULT_CHILD_MEMORY_BUDGET_MB,
+  };
+}
+
+/**
+ * How many children a runner really lets in at once, and what each one
+ * reserves.
+ *
+ * A child reserves its own `child_memory_limit_mb` whenever that is under the
+ * budget, and an equal share of the budget otherwise, which is the admission's
+ * own arithmetic. So a 2048 MB limit inside a 3072 MB budget admits ONE child
+ * however many `max_active_children` says, and raising the budget past the
+ * limit can lower the concurrency, which nobody would guess from the file.
+ * This is the number `check` reports when it is smaller than the declared
+ * count.
+ */
+export function runnerAdmission(entry: Pick<RunEntry, "max_active_children" | "child_memory_budget_mb" | "child_memory_limit_mb">) {
+  const limits = runnerLimitsOf(entry);
+  const limitMb = entry.child_memory_limit_mb ?? limits.child_memory_budget_mb;
+  const reserveMb = limitMb < limits.child_memory_budget_mb ? limitMb : limits.child_memory_budget_mb / limits.max_active_children;
+  const admits = Math.min(limits.max_active_children, Math.max(1, Math.floor(limits.child_memory_budget_mb / reserveMb)));
+  return { ...limits, child_memory_limit_mb: limitMb, reserve_mb: reserveMb, admits };
 }
 
 /** Every repository the file declares, whichever sync entry lists it. */

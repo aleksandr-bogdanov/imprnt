@@ -247,8 +247,8 @@ export async function credentialFindings(args: {
 }
 
 /** Every file under one root, bounded, with no symlink followed. */
-function filesUnder(root: string, out: string[], depth: number): void {
-  if (depth > SCAN_MAX_DEPTH) return;
+function filesUnder(root: string, out: string[], depth: number, maxDepth: number): void {
+  if (depth > maxDepth) return;
   let listed: string[];
   try {
     listed = readdirSync(root);
@@ -268,7 +268,7 @@ function filesUnder(root: string, out: string[], depth: number): void {
     if (about.isSymbolicLink()) continue;
     if (about.isDirectory()) {
       if (SKIP_DIRECTORIES.has(name)) continue;
-      filesUnder(here, out, depth + 1);
+      filesUnder(here, out, depth + 1, maxDepth);
       continue;
     }
     if (!about.isFile()) continue;
@@ -288,13 +288,18 @@ function filesUnder(root: string, out: string[], depth: number): void {
  * with it. Never a walk of the disk, which is what makes this a check a
  * household runs rather than one it dreads.
  *
+ * A root may carry its own depth. A credential's directory is swept one level
+ * deep: a copy beside the file is what that root exists to find, and a login
+ * kept in a home directory would otherwise have the whole home walked four
+ * levels down on every check.
+ *
  * THE SECRET IS HELD IN MEMORY AND REACHES NOTHING. The finding carries the
  * PATH and the credential id, never the secret and never a hash of it.
  */
 export async function copyFindings(args: {
   entries: CredentialEntry[];
   prober: CredentialProber;
-  roots: string[];
+  roots: (string | { path: string; depth: number })[];
   machine: string;
 }): Promise<Finding[]> {
   const held: { entry: CredentialEntry; secrets: string[] }[] = [];
@@ -309,7 +314,9 @@ export async function copyFindings(args: {
   const declared = new Set(args.entries.map((entry) => entry.file));
   const candidates: string[] = [];
   const seenRoot = new Set<string>();
-  for (const root of args.roots) {
+  for (const one of args.roots) {
+    const root = typeof one === "string" ? one : one.path;
+    const depth = typeof one === "string" ? SCAN_MAX_DEPTH : one.depth;
     if (root === "" || seenRoot.has(root)) continue;
     seenRoot.add(root);
     try {
@@ -317,7 +324,7 @@ export async function copyFindings(args: {
     } catch {
       continue;
     }
-    filesUnder(root, candidates, 1);
+    filesUnder(root, candidates, 1, depth);
   }
 
   const out: Finding[] = [];

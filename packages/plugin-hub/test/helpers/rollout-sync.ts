@@ -41,7 +41,7 @@ export async function syncFixture(cluster: Cluster, options: { chat?: boolean; b
     let base = readFileSync(f.registryFile, "utf8").replace(`id = "${id}"\n`, `id = "${id}"\nrepositories = ["p1-vault", "p2-vault", "shared"]\n`)
     base += repos.slice(0, 2).map(r => `\n[[people]]\nid = "${r.person}"\ntree = ${JSON.stringify(r.path)}\n`).join("")
     const registry = () => {
-      writeFileSync(f.registryFile, base + repos.map(r => `\n[[repositories]]\nid = "${r.id}"\nperson = "${r.person}"\npath = ${JSON.stringify(r.path)}\nremote = "${r.remoteName}"\nbranch = "${r.branch}"\nrequired = ${r.required}\n`).join(""))
+      writeFileSync(f.registryFile, base + repos.map(r => `\n[[repositories]]\nid = "${r.id}"\nperson = "${r.person}"\npath = ${JSON.stringify(r.path)}\nremote = "${r.remoteName}"\nbranch = "${r.branch}"\nrequired = ${r.required}\n${(r as { sshCommand?: string }).sshCommand === undefined ? "" : `ssh_command = ${JSON.stringify((r as { sshCommand?: string }).sshCommand)}\n`}`).join(""))
       return loadRegistry(f.registryFile)
     }
     registry()
