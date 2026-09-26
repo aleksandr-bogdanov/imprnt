@@ -6,34 +6,27 @@ export interface Migration {
   sql: string;
 }
 
-const MIGRATIONS: Migration[] = [{
-  version: 1,
-  sql: readFileSync(new URL("./migrations/001-rollout.sql", import.meta.url), "utf8"),
-}, {
-  version: 2,
-  sql: readFileSync(new URL("./migrations/002-door-health.sql", import.meta.url), "utf8"),
-}, {
-  version: 3,
-  sql: readFileSync(new URL("./migrations/003-control.sql", import.meta.url), "utf8"),
-}, {
-  version: 4,
-  sql: readFileSync(new URL("./migrations/004-voice.sql", import.meta.url), "utf8"),
-}, {
-  version: 5,
-  sql: readFileSync(new URL("./migrations/005-dispatch.sql", import.meta.url), "utf8"),
-}, {
-  version: 6,
-  sql: readFileSync(new URL("./migrations/006-agent-lifecycle.sql", import.meta.url), "utf8"),
-}, {
-  version: 7,
-  sql: readFileSync(new URL("./migrations/007-media.sql", import.meta.url), "utf8"),
-}, {
-  version: 8,
-  sql: readFileSync(new URL("./migrations/008-watch.sql", import.meta.url), "utf8"),
-}, {
-  version: 9,
-  sql: readFileSync(new URL("./migrations/009-watch-origin.sql", import.meta.url), "utf8"),
-}];
+/**
+ * Every migration, in order, by file. The installer applies them with psql and
+ * the store applies them in-process; both read THIS list, so a step cannot land
+ * in one and not the other.
+ */
+export const MIGRATION_FILES: readonly (readonly [number, string])[] = [
+  [1, "001-rollout.sql"],
+  [2, "002-door-health.sql"],
+  [3, "003-control.sql"],
+  [4, "004-voice.sql"],
+  [5, "005-dispatch.sql"],
+  [6, "006-agent-lifecycle.sql"],
+  [7, "007-media.sql"],
+  [8, "008-watch.sql"],
+  [9, "009-watch-origin.sql"],
+];
+
+const MIGRATIONS: Migration[] = MIGRATION_FILES.map(([version, file]) => ({
+  version,
+  sql: readFileSync(new URL(`./migrations/${file}`, import.meta.url), "utf8"),
+}));
 
 /** DDL and its version commit together. A failed step can be retried unchanged. */
 export async function migrate(store: StoreLike, steps: Migration[] = MIGRATIONS): Promise<void> {

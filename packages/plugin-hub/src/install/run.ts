@@ -8,6 +8,7 @@ import { thisOs } from "../os/index.ts";
 import { wantedState } from "../os/diff.ts";
 import type { OsSeam } from "../os/types.ts";
 import { programForKind, transcriberArgv } from "../hub/program.ts";
+import { MIGRATION_FILES } from "../store/migrate.ts";
 import { openStore } from "../store/connect.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { standardFor } from "./standard.ts";
@@ -167,10 +168,7 @@ export async function runInstall(options: { registryFile: string; stage?: string
       feed(database, readFileSync(join(import.meta.dir, "../schema.sql"), "utf8"), ["--single-transaction"]);
     } else {
       ask(database, ["-c", "create table if not exists schema_version (version integer primary key)"]);
-      // The same ordered list `src/store/migrate.ts` carries. A step that lands
-      // in one of them and not the other leaves an upgraded box a version
-      // behind a fresh one.
-      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"], [5, "005-dispatch.sql"], [6, "006-agent-lifecycle.sql"], [7, "007-media.sql"]] as const) {
+      for (const [version, file] of MIGRATION_FILES) {
         if (ask(database, ["-c", `select 1 from schema_version where version = ${version}`])) continue;
         ask(database, ["-c", `begin; ${readFileSync(join(import.meta.dir, "../store/migrations", file), "utf8")} insert into schema_version values (${version}); commit;`]);
       }
