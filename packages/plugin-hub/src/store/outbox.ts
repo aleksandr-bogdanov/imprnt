@@ -10,7 +10,14 @@ import type { StoreLike } from "./connect.ts";
  * household-wide cause and hangs on nothing, so it carries its own person and
  * agent and its `inbound_id` is null.
  */
-export interface ReplyRoute { door: string; chat: string }
+/**
+ * Where a chunk is delivered, pinned on the row. `origin` marks a notice a
+ * WATCHER wrote: it is delivered to the chat and projected into the log like
+ * any other, and both model tails leave it out, because an agent with hands
+ * never reads watcher text (SPEC section 5). It rides on the route because
+ * the route is the one column a notice already carries and pins.
+ */
+export interface ReplyRoute { door: string; chat: string; origin?: "watcher" }
 
 export interface PendingChunk {
   written_at: Date;

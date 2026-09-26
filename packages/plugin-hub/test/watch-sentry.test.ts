@@ -17,8 +17,11 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hubPath, startCluster, type Cluster } from "./helpers/cluster.ts";
-import { CHAT, stageHub, type StagedHub } from "./helpers/hub-fixture.ts";
+import { hubPath, startCluster, until, type Cluster } from "./helpers/cluster.ts";
+import { CHAT, chatLogLines, stageHub, superStore, type StagedHub } from "./helpers/hub-fixture.ts";
+import { runDoor } from "../src/door/run.ts";
+import { readTail } from "../src/chatlog.ts";
+import { deriveTail } from "../src/chatlog/derive.ts";
 import type { RunSpec } from "./helpers/registry.ts";
 import { loadRegistry, type Registry, type RunEntry } from "../src/registry/load.ts";
 import { listRunEntries } from "../src/registry/entries.ts";
@@ -128,6 +131,7 @@ async function stage(options: { token?: string | null } = {}): Promise<Staged> {
   const tokenFile = join(dir, "sentry.token");
   if (options.token !== null) writeFileSync(tokenFile, `${options.token ?? TOKEN}\n`, { mode: 0o600 });
   const it = await stageHub(cluster, {
+    hub: { tick_seconds: 1 },
     machines: [{ id: HERE, os: HERE_OS }],
     people: [{ id: "p1", tree: join(dir, "p1") }],
     credentials: [{ id: "sentry", kind: "api-key", file: tokenFile, owner: "p1" }],
@@ -210,7 +214,8 @@ test(
       expect(notices).toHaveLength(1);
       expect(notices[0]).toMatchObject({ kind: "notice", person: "p1", agent: "p1-lair", notice_key: `sentry-digest:${ENTRY}:2026-09-26`, body: result.digest });
       const [route] = await staged.it.read.sql("select route from outbox where kind = 'notice'");
-      expect(route.route).toEqual({ door: "door-fake", chat: CHAT });
+      // Pinned as a watcher's, so both model tails leave the line out.
+      expect(route.route).toEqual({ door: "door-fake", chat: CHAT, origin: "watcher" });
 
       // The state: one row per issue the sweep held, the counted and the
       // ignored included, so tomorrow they are seen.
@@ -355,6 +360,12 @@ test(
         [{ status: 500, body: "" }, "operation failed"],
         [{ status: 200, body: "this is not json" }, "operation failed"],
         [{ status: 200, body: '{"detail":"not a list"}' }, "operation failed"],
+        // A count that is not a whole number is not a zero: read as one it
+        // would say the 42-event issue fell to nothing and write that down.
+        [{ status: 200, body: JSON.stringify([{ ...issue({ id: "42" }), count: "broken" }]) }, "operation failed"],
+        [{ status: 200, body: JSON.stringify([{ ...issue({ id: "42" }), count: undefined }]) }, "operation failed"],
+        [{ status: 200, body: JSON.stringify([{ ...issue({ id: "42" }), count: "4.5" }]) }, "operation failed"],
+        [{ status: 200, body: JSON.stringify([{ ...issue({ id: "42" }), count: -1 }]) }, "operation failed"],
       ] as [{ status: number; body: string }, string][]) {
         let caught: unknown;
         try {
@@ -371,7 +382,32 @@ test(
       expect(await stampOf(staged)).toEqual(before.stamp);
       // Each failure is one diary line naming the step, and none names the key.
       const failed = await staged.it.read.ledger({ stream: "machine", subject: ENTRY, kind: "failed" });
-      expect(failed.map((row) => (row.detail as { code: string }).code)).toEqual(["watch-fetch", "watch-fetch", "watch-fetch", "watch-parse", "watch-parse"]);
+      expect(failed.map((row) => (row.detail as { code: string }).code)).toEqual([
+        "watch-fetch", "watch-fetch", "watch-fetch", "watch-parse", "watch-parse", "watch-parse", "watch-parse", "watch-parse", "watch-parse",
+      ]);
+
+      // A continuation advertised on another host is never followed and never
+      // read as the end of the set: the sweep refuses, and the sheet and the
+      // stamp stand. One request was made and the key went nowhere else.
+      const elsewhere = fakeSentry([[issue({ id: "42", count: 42 })]]);
+      const away = async (input: string | URL | Request, init?: RequestInit) => {
+        const answer = await elsewhere.fetch(input, init);
+        return new Response(await answer.text(), { status: 200, headers: {
+          "content-type": "application/json",
+          link: '<https://elsewhere.example/api/0/organizations/x/issues/?cursor=1>; rel="next"; results="true"; cursor="0:1:0"',
+        } });
+      };
+      let refused: unknown;
+      try {
+        await sweep(staged, day(1), { fetch: away as typeof fetch, asked: elsewhere.asked });
+      } catch (error) {
+        refused = error;
+      }
+      expect(refused).toBeInstanceOf(WatchRefused);
+      expect((refused as WatchRefused).reason).toBe("operation failed");
+      expect(elsewhere.asked).toHaveLength(1);
+      expect(await stateRows(staged)).toEqual(before.rows);
+      expect(await stampOf(staged)).toEqual(before.stamp);
       expect(await everything(staged)).not.toContain(TOKEN);
 
       // The PROGRAM, as the service manager runs it, against a key file that
@@ -478,6 +514,71 @@ test(
       expect(whole.counts).toMatchObject({ removed: 500, partial: false });
       expect((await stateRows(staged)).map((row) => row.id)).toEqual(["42"]);
     } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "the door delivers the digest and writes it into the chat log, and neither tail a session is fed carries a word of it",
+  async () => {
+    const staged = await stage();
+    const { it, registry } = staged;
+    let door: { stop(): Promise<void> } | null = null;
+    let store: Awaited<ReturnType<typeof superStore>> | null = null;
+    try {
+      const result = await sweep(staged, DAY0, fakeSentry([[issue({ id: "42", count: 42, userCount: 3 })]]));
+      expect(result.posted).toBe(true);
+      const digest = result.digest!;
+      // The row carries its origin on the pinned route.
+      const [row] = await it.read.sql("select route from outbox where kind = 'notice'");
+      expect(row.route).toEqual({ door: "door-fake", chat: CHAT, origin: "watcher" });
+
+      door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.fake.platform });
+      await until("the door posted the digest", async () => it.fake.posts().some((post) => post.text === digest), 30_000);
+      await until(
+        "the door wrote the digest into the chat log",
+        async () => chatLogLines(it.stateDir, "p1", "p1-lair").some((line) => line.text === digest),
+        30_000,
+      );
+      // In the file, marked as a watcher's, so the board's chats page shows it
+      // and the person can read it back.
+      const logged = chatLogLines(it.stateDir, "p1", "p1-lair").find((line) => line.text === digest) as { origin?: string; from: string };
+      expect(logged.origin).toBe("watcher");
+      expect(logged.from).toBe("door-fake");
+
+      // Neither tail. The file tail is what this machine's runner feeds, the
+      // derived tail is what a runner on another machine feeds, and the model
+      // is handed neither the title nor the header.
+      store = await superStore(cluster, it.db);
+      const now = new Date();
+      const where = { person: "p1", agent: "p1-lair", now, hours: 24, tokens: 8000 };
+      const fileTail = await readTail({ stateDir: it.stateDir, ...where });
+      const storeTail = await deriveTail(store, { registry, ...where });
+      for (const tail of [fileTail, storeTail]) {
+        expect(tail).not.toContain("Sentry,");
+        expect(tail).not.toContain("TypeError");
+        expect(tail).not.toContain("42 events");
+      }
+      // And the control: a line that is not a watcher's is in both.
+      await it.read.sql(
+        `insert into outbox (kind, person, agent, notice_key, seq_in_reply, body, route)
+         values ('notice', 'p1', 'p1-lair', 'ordinary-one', 1, 'an ordinary machinery line', $1::jsonb)`,
+        [{ door: "door-fake", chat: CHAT }],
+      );
+      await until(
+        "the ordinary line reached the log",
+        async () => chatLogLines(it.stateDir, "p1", "p1-lair").some((line) => line.text === "an ordinary machinery line"),
+        30_000,
+      );
+      const later = new Date();
+      expect(await readTail({ stateDir: it.stateDir, ...where, now: later })).toContain("an ordinary machinery line");
+      expect(await deriveTail(store, { registry, ...where, now: later })).toContain("an ordinary machinery line");
+      expect(await readTail({ stateDir: it.stateDir, ...where, now: later })).not.toContain("Sentry,");
+    } finally {
+      await door?.stop();
+      await store?.close();
       await staged.stop();
     }
   },

@@ -97,16 +97,26 @@ export function bucketOf(events: number): number {
 /**
  * One issue out of Sentry's answer, or null for a record with no id.
  *
- * `count` is a STRING in Sentry's API and is parsed as one. Every field is
- * optional but the id: the digest says less about an issue the answer said
- * less about, rather than refusing the whole sweep over one record.
+ * `count` is a STRING in Sentry's API and is parsed as one, and it is the
+ * one field the comparison stands on, so a count that is missing or not a
+ * whole number refuses the sweep: read as zero it would say a 42-event issue
+ * fell to nothing and write that down. Every other field is display, and the
+ * digest says less about an issue the answer said less about.
  */
+function countOf(raw: unknown, id: string): number {
+  const text = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw.trim() : "";
+  if (!/^\d+$/.test(text) || !Number.isSafeInteger(Number(text))) {
+    throw new WatchRefused("parse", "operation failed", `the count of issue ${id} is not a whole number`);
+  }
+  return Number(text);
+}
+
 function issueOf(raw: unknown): SentryIssue | null {
   if (raw === null || typeof raw !== "object") return null;
   const it = raw as Record<string, unknown>;
   const id = field(it.id, 64);
   if (id === "") return null;
-  const events = Number.parseInt(field(it.count, 20), 10);
+  const events = countOf(it.count, id);
   const users = Number(it.userCount);
   const project = it.project !== null && typeof it.project === "object" ? (it.project as Record<string, unknown>).slug : "";
   return {
@@ -116,7 +126,7 @@ function issueOf(raw: unknown): SentryIssue | null {
     culprit: field(it.culprit, CULPRIT_MAX),
     permalink: link(it.permalink),
     project: field(project, PROJECT_MAX),
-    events: Number.isFinite(events) && events >= 0 ? events : 0,
+    events,
     users: Number.isFinite(users) && users >= 0 ? Math.floor(users) : 0,
     firstSeen: field(it.firstSeen, 40),
     lastSeen: field(it.lastSeen, 40),
@@ -191,7 +201,13 @@ export async function fetchIssues(args: {
       if (issue !== null) issues.push(issue);
     }
     const next = nextPage(answer.headers.get("link"));
-    url = next !== null && next.startsWith(`${first.protocol}//${first.host}/`) ? next : null;
+    // A continuation that is not on the host the first request went to is
+    // never followed, and never read as no continuation either: the sweep
+    // would then be a partial set taken for the whole.
+    if (next !== null && !next.startsWith(`${first.protocol}//${first.host}/`)) {
+      throw new WatchRefused("fetch", "operation failed", "the next page is not on the host that was asked");
+    }
+    url = next;
   }
   return { issues, complete: url === null };
 }
@@ -438,7 +454,8 @@ export async function runSentryWatch(entry: RunEntry, registry: Registry, option
       notice: {
         person: String(entry.person),
         agent: String(entry.agent),
-        route: where.route,
+        // Marked as a watcher's, so both model tails leave the line out.
+        route: { ...where.route, origin: "watcher" },
         platform: where.platform,
         language: where.language,
         key: digestKey(entry.id, at),

@@ -14,6 +14,12 @@ export interface ChatLine {
   direction: "in" | "out";
   from: string;
   text: string;
+  /**
+   * Set on a line a WATCHER wrote. The line is in the log because the person
+   * saw it, and it is left out of the tail a session is fed, because an agent
+   * with hands never reads watcher text (SPEC section 5).
+   */
+  origin?: "watcher";
 }
 
 /** What a spawned session is told the tail is, so it cannot read it as a human. */
@@ -97,6 +103,8 @@ export async function readTail(args: {
       try { line = JSON.parse(raw); } catch { continue; }
       if (!validLine(line)) continue;
       if (line.id !== undefined && args.exclude?.has(line.id)) continue;
+      // A watcher's line is the person's to read and never the model's.
+      if (line.origin === "watcher") continue;
       if (Date.parse(line.at) >= from) lines.push(line);
     }
   }
@@ -139,7 +147,8 @@ export function validLine(value: unknown): value is ChatLine {
   return typeof line.at === "string" && Number.isFinite(Date.parse(line.at)) &&
     (line.direction === "in" || line.direction === "out") &&
     typeof line.from === "string" && typeof line.text === "string" &&
-    (line.id === undefined || (typeof line.id === "string" && line.id !== ""));
+    (line.id === undefined || (typeof line.id === "string" && line.id !== "")) &&
+    (line.origin === undefined || line.origin === "watcher");
 }
 
 /** A complete record that is not a chat line, by its file and 1-based line. */

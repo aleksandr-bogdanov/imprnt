@@ -123,7 +123,7 @@ export async function deriveLines(
     kind: string;
     body: string;
     written_at: string | Date;
-    route: { door?: string } | null;
+    route: { door?: string; origin?: string } | null;
     agent: string;
   }[];
   for (const row of answered) {
@@ -136,6 +136,9 @@ export async function deriveLines(
         // the row at delivery. Before that it is the one the agent declares.
         from: row.kind === "notice" ? (row.route?.door ?? door) : String(row.agent),
         text: row.body,
+        // A watcher's notice carries its origin on the route, and the line
+        // carries it the way the door's projection does.
+        ...(row.route?.origin === "watcher" ? { origin: "watcher" as const } : {}),
       } as ChatLine,
       order: Number(row.id),
     });
@@ -225,9 +228,13 @@ export async function deriveTail(
     from: new Date(args.now.getTime() - args.hours * 3_600_000).toISOString(),
     until: args.now.toISOString(),
   });
-  // The same rule the file reader applies, with the same set: the runner
-  // names the lines of the messages it is about to hand the session as turns.
-  return renderTailLines(lines.filter((line) => !args.exclude?.has(line.id)), args.tokens);
+  // The same two rules the file reader applies: the runner names the lines of
+  // the messages it is about to hand the session as turns, and a watcher's
+  // line is the person's to read and never the model's.
+  return renderTailLines(
+    lines.filter((line) => !args.exclude?.has(line.id) && line.origin !== "watcher"),
+    args.tokens,
+  );
 }
 
 /**
