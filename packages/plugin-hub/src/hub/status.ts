@@ -6,7 +6,7 @@ import type { OsSeam } from "../os/types.ts";
 
 export async function readStatus(options: { registryFile: string; machine: string; os?: OsSeam }) {
   const os = options.os ?? thisOs();
-  return await Promise.all(runEntriesFor(loadRegistry(options.registryFile), options.machine).map(async entry => {
+  return await Promise.all(runEntriesFor(loadRegistry(options.registryFile, { machine: options.machine }), options.machine).map(async entry => {
     const state = await os.show(entry.id);
     const wanted = wantedState(entry);
     // WITH NO RECORD AT ALL, a stopped entry reads stopped and not missing.

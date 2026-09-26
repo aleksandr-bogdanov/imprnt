@@ -619,8 +619,8 @@ export function checkClean(language: Language, values: LineValues = {}): string 
 
 export function cliUsage(language: Language, values: LineValues = {}): string {
   const sentence = interpolate(language, language === "ru"
-    ? "использование: imprnt hub <команда> <реестр> [цель]"
-    : "usage: imprnt hub <verb> <registry> [target]", values);
+    ? "использование: imprnt hub <команда> <реестр> [цель] [машина]"
+    : "usage: imprnt hub <verb> <registry> [target] [machine]", values);
   return sentence;
 }
 

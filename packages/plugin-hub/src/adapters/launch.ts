@@ -14,12 +14,33 @@ export function credentialSource(registry: unknown, preset: string): CredentialE
   return { ...entry };
 }
 
+/**
+ * Whether this credential is one the loop can be handed at all: a login FILE,
+ * on every machine. On a Mac that file is a login made for the runner itself
+ * with `claude auth login` under the storage directory the launch names, never
+ * the owner's keychain item and never a copy of one: a refresh token is single
+ * use, and a copy that refreshes revokes the login it was copied from.
+ */
 export function validateCredentialSource(entry: CredentialEntry): void {
   if (entry.kind !== "claude-login" || !isAbsolute(entry.file) || basename(entry.file) !== ".credentials.json") {
     throw new Error("credential-source-unsupported");
   }
   accessSync(entry.file, constants.R_OK);
   if (!statSync(entry.file).isFile()) throw new Error("credential-source-unreadable");
+}
+
+/**
+ * The command that makes a runner's own login file on a Mac, once. MEASURED
+ * on the owner's Mac: with `CLAUDE_SECURESTORAGE_CONFIG_DIR` set the CLI keeps
+ * its login in `.credentials.json` under that directory, reading it and
+ * removing it on logout, and with `CLAUDE_CONFIG_DIR` set beside it the
+ * owner's own keychain item is neither read nor written. The config directory
+ * sits inside the login directory, so the launch's box reaches both through
+ * the one directory it already binds.
+ */
+export function loginCommand(file: string): string {
+  const dir = dirname(file);
+  return `CLAUDE_CONFIG_DIR=${join(dir, "config")} CLAUDE_SECURESTORAGE_CONFIG_DIR=${dir} claude auth login`;
 }
 
 export interface LoopLaunchInput {

@@ -6,6 +6,12 @@
 tick_seconds = 5
 store_url = "postgres://127.0.0.1:5432/hub"
 state_dir = "/var/lib/imprnt-hub"
+# Whose copy of this file is the one. A machine that reaches the store by a
+# route of its own reads a copy, every hub writes the digest of its copy to the
+# store, a copy that differs from this machine's serves nothing until it is
+# copied again, and `check` says `registry-stale`. Required as soon as any
+# [[machines]] entry names a store_url of its own.
+store_machine = "pi"
 # Each store role's password, written by `imprnt install` and readable by the
 # account the hub runs as and by no agent's box. `secrets` under state_dir when
 # this line is absent.
@@ -63,9 +69,21 @@ url = "git@example.invalid:household/shared-notes.git"
 id = "pi"
 os = "linux"
 
+# A machine that is not the hub's keeps its state and its role passwords on its
+# own disk and reaches the one store over the tailnet, so its entry may carry
+# its own state_dir, secrets_dir (`secrets` under its state_dir when absent),
+# store_url and imprnt (the command that files a note there, a bare word
+# resolving through the unit's PATH). A process on that machine reads them in
+# place of the [hub] table's. THE ADDRESS BELOW IS AN EXAMPLE: it is the hub
+# machine's tailnet address, and the url carries no user and no password,
+# because a process supplies its own role and reads that role's password file
+# from secrets_dir.
 [[machines]]
 id = "mac"
 os = "macos"
+state_dir = "/Users/owner/.imprnt-hub"
+store_url = "postgres://100.64.0.1:5432/hub"
+imprnt = "imprnt"
 
 # A person, and the tree that is the boundary. Each agent's box reaches its own
 # person's tree and nothing else. The shared zone is a checkout inside that
@@ -94,6 +112,14 @@ vault = "/var/lib/imprnt-hub/p1/vault-project"
 harvest_quiet_minutes = 30
 harvest_min_messages = 1
 harvest_report = true
+# Where this person's tree and vault are on a machine that is not the hub's,
+# keyed by machine id. An agent whose runner is on that machine is boxed in the
+# tree there and files into the vault there. A placement names a tree, and it
+# names a vault whenever the entry does; it may also name the person's
+# filing_rules, instructions, mcp and settings there. Those four are checked
+# readable only on a machine one of the person's agents runs on. A person who
+# says nothing about a machine keeps the paths above on it.
+on = { mac = { tree = "/Users/owner/vault-project", vault = "/Users/owner/vault-project" } }
 
 [[people]]
 id = "p2"
@@ -116,6 +142,13 @@ id = "household-claude"
 kind = "claude-login"
 file = "/var/lib/imprnt-hub/credentials/.credentials.json"
 owner = "household"
+# Where this credential's file is on a machine that is not the hub's. A model
+# login there is a login FILE made for that machine's runner, once, with the
+# CLI pointed at the file's directory (`check` prints the command while the
+# file is missing). It is never the owner's own login and never a copy of one:
+# a refresh token is single use, and a copy that refreshes revokes the login it
+# was copied from.
+on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json" } }
 
 [[credentials]]
 id = "telegram-bot"
@@ -207,6 +240,35 @@ memory_limit_mb = 512
 # The limit the runner enforces on its model child. It is not the runner's own.
 child_memory_limit_mb = 2048
 
+# The other machine's runner and hub. A runner is one per machine, started by
+# that machine's service manager, reconnecting to the one store forever, and
+# claiming the rows of the agents bound to it. The hub beside it is what
+# installs and watches that machine's units. Neither is a door.
+[[run]]
+id = "runner-mac"
+kind = "runner"
+machine = "mac"
+schedule = "always"
+memory_limit_mb = 512
+child_memory_limit_mb = 2048
+
+[[run]]
+id = "hub-mac"
+kind = "hub"
+machine = "mac"
+schedule = "always"
+memory_limit_mb = 128
+
+# The other machine's sync, over the checkouts placed there, so a note the
+# runner there files reaches the remote and the hub machine's agents.
+[[run]]
+id = "vault-sync-mac"
+kind = "sync"
+machine = "mac"
+repositories = ["p1-vault"]
+schedule = "every 15m"
+memory_limit_mb = 128
+
 [[run]]
 id = "vault-sync"
 machine = "pi"
@@ -269,6 +331,10 @@ path = "/var/lib/imprnt-hub/p1/vault-project"
 remote = "origin"
 branch = "main"
 required = true
+# Where this checkout is on a machine that is not the hub's (and, when it
+# differs, the remote name it wears there), so a sync entry on that machine
+# keeps the vault checkout there in step with the same remote.
+on = { mac = { path = "/Users/owner/vault-project" } }
 
 # One checkout of the shared zone per person, inside that person's own vault at
 # the path the mount implies. `zone = true` is what the loader checks that path

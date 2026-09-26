@@ -1,7 +1,7 @@
 import { finding, cliUsage } from "../door/lines.ts";
 import { BackupRefused, runBackup } from "../backup/run.ts";
 import { listRunEntries } from "../registry/entries.ts";
-import { loadRegistry } from "../registry/load.ts";
+import { entryMachine, loadRegistry } from "../registry/load.ts";
 
 const [file, id, extra] = process.argv.slice(2);
 if (!file || !id || extra) {
@@ -9,7 +9,7 @@ if (!file || !id || extra) {
   process.exit(2);
 }
 try {
-  const registry = loadRegistry(file);
+  const registry = loadRegistry(file, { machine: entryMachine(file, id) });
   const entry = listRunEntries(registry).find(one => one.id === id && one.kind === "backup");
   if (!entry) throw new Error("backup-entry-unknown");
   await runBackup(entry, registry);

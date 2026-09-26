@@ -16,6 +16,7 @@ import { requestDispatch, parseDispatch } from "./dispatch.ts";
 import { parseAgentCommand, requestAgentLifecycle, type ResolvedRef } from "./agentctl.ts";
 import { agentAccepted, agentRefused, agentUsage, controlUsage, dispatchAccepted, dispatchRefused, dispatchUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
 import { saveMedia, type SavedMedia } from "./media.ts";
+import { storeMedia } from "../store/media.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
 
 /** One row the door wrote down that is waiting for a voice note's own words. */
@@ -198,8 +199,11 @@ export async function acceptBatch(options: {
         source, log_ready: false,
       });
       // One transaction, so a row is never committed without the state that
-      // says somebody still owes it its words.
+      // says somebody still owes it its words, and never without the bytes
+      // of what was attached, which a runner on another machine reads from
+      // the store because the file is on this one.
       if (written && transcribing) await markMediaPending(inside, { id });
+      if (written && saved.length) await storeMedia(inside, { inboundId: id, saved });
       return written;
     });
     // A ROW WAITING FOR ITS TEXT IS NOT PROJECTED. Projecting it would put a

@@ -34,7 +34,9 @@ import {
   listRunEntries,
   noticeRoute,
 } from "../registry/entries.ts";
-import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
+import { entryMachine, loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
+import { registryStanding } from "../hub/digest.ts";
+import { materializeMedia, rewriteMediaPaths } from "../store/media.ts";
 import { waitRecorder, type AgentWait } from "./waiting.ts";
 import {
   credentialOfPreset,
@@ -396,7 +398,15 @@ export async function runRunner(options: {
   registryFile: string;
   adapters: Record<string, Adapter>;
 }): Promise<RunnerHandle> {
-  const first = loadRegistry(options.registryFile);
+  // The file is read FOR THIS RUNNER'S MACHINE, every time it is read. Its
+  // entry says which machine that is, and the view the loader hands back
+  // carries that machine's own state directory, secrets and store address, and
+  // each person's tree and vault there, so a runner on a spoke keeps its
+  // session state on its own disk and files into the vault checkout that is
+  // there, with nothing below this line knowing the difference.
+  const machine = entryMachine(options.registryFile, options.runner);
+  const load = () => loadRegistry(options.registryFile, { machine });
+  const first = load();
   // The memory reader for this platform. Nothing else of the seam is used here:
   // a model child is a child of its runner with no unit of its own (D7).
   const os = thisOs();
@@ -422,6 +432,13 @@ export async function runRunner(options: {
     const due = Date.parse(String(row.data.retry_at));
     if (Number.isFinite(due)) retries.set(row.id, due);
   }
+  /**
+   * Whether this runner's copy of the registry is behind the store machine's.
+   * A stale spoke keeps the sessions it has and claims nothing new, because the
+   * agents it would claim for are the ones the file it cannot see has moved.
+   * Measured against the store machine's own digest on every tick.
+   */
+  let stale = false;
   let reservations = 0;
   let measuredBytes = 0;
   let peakBytes = 0;
@@ -452,7 +469,7 @@ export async function runRunner(options: {
     while (!stopping && !own.leaving) {
       // Read again on every pass, because a registry edit that raises the
       // count or the budget is one of the things this wait is woken for.
-      const entry = listRunEntries(loadRegistry(options.registryFile)).find(one => one.id === options.runner);
+      const entry = listRunEntries(load()).find(one => one.id === options.runner);
       const limits = runnerAdmission(entry ?? {});
       const reserveMb = limits.reserve_mb;
       const usedMb = Math.max(reservations * reserveMb, measuredBytes / 1048576);
@@ -900,14 +917,23 @@ export async function runRunner(options: {
       // handed it as a turn of its own, so inside the tail it would be the same
       // message twice: the loop is told not to answer the tail, and a loop
       // that reads a task there still runs it.
-      const waiting = new Set<string>(((await store.sql`
-        select source ->> 'log_id' as log_id from inbound
-        where agent = ${agent.id} and source is not null
-          and state not in ('answered', 'delivered')`) as unknown as { log_id: string | null }[])
-        .map(row => row.log_id).filter((id): id is string => typeof id === "string" && id !== ""));
-      const tail = chatStateFor(registry, agent.id) === "store"
-        ? await deriveTail(store, { registry, ...where, exclude: waiting })
-        : await readTail({ stateDir, ...where, exclude: waiting });
+      //
+      // ONE SNAPSHOT FOR BOTH READS. The waiting set and the store's own lines
+      // are two statements, and a message the door commits between them, with
+      // a platform time before the cutoff, would sit in the tail unexcluded and
+      // then be claimed and fed again as a turn. Under repeatable read the
+      // second statement sees exactly the rows the first did.
+      const tail = await store.sql.begin("isolation level repeatable read read only", async (tx) => {
+        const inside = { ...store, sql: tx as unknown as Store["sql"] };
+        const waiting = new Set<string>(((await inside.sql`
+          select source ->> 'log_id' as log_id from inbound
+          where agent = ${agent.id} and source is not null
+            and state not in ('answered', 'delivered')`) as unknown as { log_id: string | null }[])
+          .map(row => row.log_id).filter((id): id is string => typeof id === "string" && id !== ""));
+        return chatStateFor(registry, agent.id) === "store"
+          ? await deriveTail(inside, { registry, ...where, exclude: waiting, stateDir })
+          : await readTail({ stateDir, ...where, exclude: waiting });
+      });
       if (tail !== "") await oneTurn({ id: agent.id, text: tail }, { preset, tail: true, registry });
     };
 
@@ -918,7 +944,7 @@ export async function runRunner(options: {
       // already exists. Opened after the read, that notification is emitted to
       // nobody and the row waits for the tick.
       waiter = await openWorkWaiter(store, { agent: agent.id });
-      const initial = loadRegistry(options.registryFile);
+      const initial = load();
       preflight(initial, agent);
       // THE HOLD AFTER A RESTART. The hold outlives the process that opened it:
       // the rows keep the window's reset as their `retry_at`, and only the way
@@ -942,6 +968,11 @@ export async function runRunner(options: {
       }
       if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping) {
         if (!await admitChild(initial, own)) return;
+        // A copy that fell behind during the admission wait spawns nothing:
+        // the reservation goes back and the supervisor serves this agent
+        // again once the copy is current.
+        await measureRegistry();
+        if (stale) { releaseCapacity(); return; }
         own.reserved = true;
         await own.noteWait({ kind: "starting" });
         await spawn(getPreset(initial, agent.preset), initial);
@@ -968,7 +999,7 @@ export async function runRunner(options: {
       while (!stopping && !own.leaving) {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
-        const registry = loadRegistry(options.registryFile);
+        const registry = load();
         agent = listAgents(registry).find(one => one.id === agent.id) ?? agent;
         const lifetime = lifetimeFor(registry, agent.id);
         if (own.session && (lifetime.sleeping || lifetime.mode === "on-demand" && Date.now() - lastWork >= lifetime.idle_seconds * 1000)) {
@@ -977,7 +1008,7 @@ export async function runRunner(options: {
           own.session = null;
           if (own.reserved) { own.reserved = false; releaseCapacity(); }
         }
-        if (lifetime.sleeping) {
+        if (lifetime.sleeping || stale) {
           await Promise.race([Bun.sleep(setting(registry, "hub.tick_seconds") * 1000), stopped, own.left]);
           continue;
         }
@@ -1105,6 +1136,18 @@ export async function runRunner(options: {
         }
         const extra = next?.kind === "harvest" && own.session !== null;
         if (extra && !await admitChild(registry, own)) break;
+        // MEASURED AGAIN HERE, after the admission wait and right before the
+        // claim, because a copy that fell behind while this loop waited for
+        // capacity is a copy that must claim nothing. What it holds is given
+        // back: a harvest's extra child, and a reservation with no session
+        // behind it. The row it did not claim waits for a current copy.
+        await measureRegistry();
+        if (stale) {
+          if (extra) releaseCapacity();
+          if (!own.session && own.reserved) { own.reserved = false; releaseCapacity(); }
+          await sleep();
+          continue;
+        }
         const row = await claimNext(store, {
           runner: options.runner,
           agent: agent.id,
@@ -1186,14 +1229,23 @@ export async function runRunner(options: {
           await spawn(preset, registry);
           await own.noteWait(null);
         }
-        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source, kind: row.kind });
+        // What the person attached is a file on the door's machine. Served
+        // from here, on another machine, the bytes come out of the store into
+        // this machine's own inbox first, and the body names them there.
+        let text = row.body;
+        const attached = Array.isArray(row.source?.media) ? row.source!.media! : [];
+        if (attached.length > 0 && chatStateFor(registry, agent.id) === "store") {
+          const local = await materializeMedia(store, { stateDir, person: agent.person, inboundId: row.id, media: attached });
+          text = rewriteMediaPaths(text, local);
+        }
+        await oneTurn({ id: row.id, text }, { preset, tail: false, registry, source: row.source, kind: row.kind });
         claimed = null;
         claimedReturn = null;
         lastWork = Date.now();
       }
     } catch (error) {
       if (stopping || own.leaving) return;
-      const registry = loadRegistry(options.registryFile);
+      const registry = load();
       const taskRetrySeconds = Number(readSetting(registry, "runner.task_retry_seconds") ?? 30);
       const retryAt = new Date(Date.now() + taskRetrySeconds * 1000).toISOString();
       retries.set(agent.id, Date.parse(retryAt));
@@ -1364,8 +1416,22 @@ export async function runRunner(options: {
     if (measuredBytes < before) capacityChanged();
   };
 
+  /**
+   * The copy of the registry this runner reads, measured against the store
+   * machine's on every tick. One diary line on each change, so a spoke that
+   * went quiet says why, and none at all while nothing changes.
+   */
+  const measureRegistry = async (): Promise<void> => {
+    // The registry as it is NOW, because the authority is a setting in it.
+    const standing = await registryStanding(store, { registry: load(), machine, file: options.registryFile });
+    if (standing.stale === stale) return;
+    stale = standing.stale;
+    await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: stale ? "registry.stale" : "registry.current", actor: "runner",
+      detail: { machine, file: options.registryFile, ...(stale ? { reason: standing.reason } : {}) } });
+  };
+  await measureRegistry();
   for (const agent of agentsFor(first, { runner: options.runner })) {
-    if (Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
+    if (!stale && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
   }
   // Ready means SERVING, so a caller that is handed this runner is handed one
   // whose agents are up and fed rather than one that is still starting, and its
@@ -1380,15 +1446,16 @@ export async function runRunner(options: {
       if (stopping) break;
       let registry: Registry;
       try {
-        registry = loadRegistry(options.registryFile);
+        registry = load();
       } catch {
         // A file half written by an editor is one this tick cannot read. The
         // next tick reads the finished one and nothing is dropped meanwhile.
         continue;
       }
       try {
+        await measureRegistry();
         const wanted = agentsFor(registry, { runner: options.runner });
-        for (const agent of wanted) if (!live.has(agent.id) && !recovering.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
+        for (const agent of wanted) if (!stale && !live.has(agent.id) && !recovering.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
         for (const id of [...live.keys()]) {
           if (!wanted.some((agent) => agent.id === id)) await drop(id);
         }
@@ -1410,7 +1477,7 @@ export async function runRunner(options: {
   const recovered = new Set<string>();
   const recoverAgent = async (request: { id: string; agent: string }) => {
     if (recovered.has(request.id)) return;
-    const registry = loadRegistry(options.registryFile);
+    const registry = load();
     const agent = agentsFor(registry, { runner: options.runner }).find(one => one.id === request.agent);
     if (!agent) throw new Error("unknown-agent");
     recovering.add(agent.id);
@@ -1420,14 +1487,18 @@ export async function runRunner(options: {
         where agent = ${agent.id} and (claimed_by = ${options.runner} or claimed_by is null)
           and state not in ('answered', 'delivered')`;
       retries.delete(agent.id);
-      serve(agent);
+      // The session is gone and the claims are released, which is the whole
+      // of what was asked. A copy that is behind starts nothing in its place:
+      // the supervisor serves the agent again once the copy is current.
+      await measureRegistry();
+      if (!stale) serve(agent);
       recovered.add(request.id);
     } finally { recovering.delete(agent.id); }
   };
   const controls = await watchControls(store, "runner", data => data.target_kind === "agent" &&
-    agentsFor(loadRegistry(options.registryFile), { runner: options.runner }).some(a => a.id === data.target_id),
+    agentsFor(load(), { runner: options.runner }).some(a => a.id === data.target_id),
     async data => { await recoverAgent({ id: String(data.id), agent: String(data.target_id) }); },
-    { registry: () => loadRegistry(options.registryFile) });
+    { registry: () => load() });
   return {
     runner: options.runner,
     recoverAgent,

@@ -7,14 +7,16 @@
 // Usage: bun run src/entry/hub.ts <registryFile> <entry id>
 
 import { listRunEntries } from "../registry/entries.ts";
-import { loadRegistry } from "../registry/load.ts";
+import { entryMachine, loadRegistry } from "../registry/load.ts";
 import { runHub } from "../hub/run.ts";
 import { hold, usage } from "./hold.ts";
 
 const [registryFile, id] = process.argv.slice(2);
 if (!registryFile || !id) usage("hub");
 
-const entry = listRunEntries(loadRegistry(registryFile)).find((one) => one.id === id);
+// Read for this hub's own machine from the first read, so a copy of the file
+// on a spoke is never checked against paths only the hub machine has.
+const entry = listRunEntries(loadRegistry(registryFile, { machine: entryMachine(registryFile, id) })).find((one) => one.id === id);
 if (!entry) {
   process.stderr.write(`${registryFile} has no [[run]] entry ${id}\n`);
   process.exit(2);

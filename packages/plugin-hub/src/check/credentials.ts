@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import type { CredentialEntry } from "../registry/load.ts";
+import { loginCommand } from "../adapters/launch.ts";
 import { findingId, type Finding } from "./finding.ts";
 
 /**
@@ -223,12 +224,18 @@ export async function credentialFindings(args: {
   entries: CredentialEntry[];
   prober: CredentialProber;
   machine: string;
+  /** What the machine runs, from its `[[machines]]` entry, so the fix names the Mac's own login step. */
+  os?: string;
 }): Promise<Finding[]> {
   const out: Finding[] = [];
   for (const entry of args.entries) {
     const health = await args.prober.open(entry);
     if (health.ok) continue;
     const kind = FINDING_FOR[health.kind];
+    // On a Mac the model login is a file made for the runner, once, by the
+    // owner, with the CLI pointed at that file's directory. Until that has
+    // happened the file is not there, and the fix is the command.
+    const macLogin = args.os === "macos" && entry.kind === "claude-login";
     out.push({
       id: findingId(args.machine, kind, entry.id),
       kind,
@@ -236,11 +243,13 @@ export async function credentialFindings(args: {
       machine: args.machine,
       says: `${entry.id} is a ${entry.kind} credential at ${entry.file} and it is ${health.kind}: ${health.says}`,
       fix:
-        health.kind === "unreadable"
-          ? `check that ${entry.file} exists and is readable by the hub's user`
-          : health.kind === "refused"
-            ? `issue a new token for ${entry.id} and write it into ${entry.file}`
-            : `log in again on the machine that owns ${entry.file}, then run check`,
+        macLogin
+          ? `log the runner in on ${args.machine} once, which makes ${entry.file}: ${loginCommand(entry.file)}`
+          : health.kind === "unreadable"
+            ? `check that ${entry.file} exists and is readable by the hub's user`
+            : health.kind === "refused"
+              ? `issue a new token for ${entry.id} and write it into ${entry.file}`
+              : `log in again on the machine that owns ${entry.file}, then run check`,
     });
   }
   return out;

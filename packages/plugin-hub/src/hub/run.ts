@@ -17,6 +17,7 @@ import { readRequests, refuseRestart, type RestartRequest } from "./restart.ts";
 import { mayReach, RUN_RECOVERY_KINDS, watchControls } from "./control.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { programForKind, transcriberArgv } from "./program.ts";
+import { recordRegistryDigest } from "./digest.ts";
 
 /**
  * The hub: one process per machine, ours, unsandboxed, and the only thing that
@@ -60,7 +61,11 @@ export async function runHub(options: {
   registryFile: string;
   os?: OsSeam;
 }): Promise<HubHandle> {
-  const first = loadRegistry(options.registryFile);
+  // Read for this hub's machine, every time: the units it renders carry that
+  // machine's state directory, and the store it opens is the one that machine
+  // reaches, which on a spoke is the hub machine's over the tailnet.
+  const load = () => loadRegistry(options.registryFile, { machine: options.machine });
+  const first = load();
   // A hub that acted for a machine whose declared os is not the one it is
   // running on would write systemd unit files onto a Mac, so it refuses loudly
   // instead, which catches a mis-set machine id at the first tick rather than
@@ -165,7 +170,7 @@ export async function runHub(options: {
   const act = async (): Promise<void> => {
     let registry: unknown;
     try {
-      registry = loadRegistry(options.registryFile);
+      registry = load();
     } catch {
       // A file half written by an editor is a file this tick cannot read. The
       // next tick reads the finished one, and nothing is installed from half a
@@ -173,6 +178,10 @@ export async function runHub(options: {
       return;
     }
     const entries = runEntriesFor(registry, options.machine);
+    // What this machine's copy of the registry is, for the spoke runners that
+    // measure their own copy against the store machine's before they claim.
+    try { await recordRegistryDigest(store, options.machine, options.registryFile); }
+    catch (error) { await recordOperationFailure(store, { operation: "digest", target: options.machine, error }); }
     // The explicit asks come first, before the reconcile's own work, so a
     // request lands within one tick of being written rather than behind
     // whatever the registry happened to change in the same pass.
@@ -326,11 +335,11 @@ export async function runHub(options: {
    */
   const restartedAt = new Map<string, number>();
   const targets = (data: Record<string, unknown>, kinds: readonly string[]): boolean =>
-    runEntriesFor(loadRegistry(options.registryFile), options.machine)
+    runEntriesFor(load(), options.machine)
       .some(e => e.id === data.target_id && kinds.includes(e.kind));
   /** A lifecycle row belongs to the hub of the machine that runs its door. */
   const ownDoor = (data: Record<string, unknown>): boolean =>
-    runEntriesFor(loadRegistry(options.registryFile), options.machine)
+    runEntriesFor(load(), options.machine)
       .some(e => e.id === data.door && e.kind === "door");
 
   /**
@@ -346,7 +355,7 @@ export async function runHub(options: {
    * would still leave a planted row unanswered.
    */
   const applyLifecycle = async (data: Record<string, unknown>): Promise<void> => {
-    const registry = loadRegistry(options.registryFile);
+    const registry = load();
     const id = String(data.target_id);
     const said = (data.arguments ?? {}) as Record<string, unknown>;
     // The two verbs produce a chat and the name it was resolved from, and
@@ -421,7 +430,7 @@ export async function runHub(options: {
       // door and a runner hold may insert a control row straight into the
       // store, which never passes through `requestRecovery`, and the hub is
       // what would perform the restart.
-      const named = runEntriesFor(loadRegistry(options.registryFile), options.machine).find(one => one.id === id);
+      const named = runEntriesFor(load(), options.machine).find(one => one.id === id);
       if (!mayReach(data.source, data.target_kind, named?.kind ?? "")) throw new Error("recovery-not-authorized");
       // The same answer the asking side gives, asked again for the same reason:
       // the file may have stopped this piece since the row was written, and a
@@ -436,7 +445,7 @@ export async function runHub(options: {
       // operator at the terminal is a person who typed it, and nothing about a
       // failed restart makes their second ask a loop.
       const bounded = data.target_kind === "run" && (targets(data, ["transcriber"]) || data.source === "board");
-      const seconds = setting(loadRegistry(options.registryFile), "hub.outage_retry_seconds", 300);
+      const seconds = setting(load(), "hub.outage_retry_seconds", 300);
       const last = restartedAt.get(id);
       if (bounded && last !== undefined && Date.now() - last < seconds * 1000) {
         throw new Error(`${id} was restarted less than ${seconds} s ago, which is this household's retry interval`);
@@ -448,7 +457,7 @@ export async function runHub(options: {
     // A lifecycle outcome is said in the chat it was asked in, and an adopt is
     // said in the adopted chat too. A door or recognizer restart asked for on
     // the command line pins no route, so it tells no chat, exactly as today.
-    { registry: () => loadRegistry(options.registryFile) });
+    { registry: () => load() });
 
   const tick = setting(first, "hub.tick_seconds", 5) * 1000;
   const loop = (async () => {

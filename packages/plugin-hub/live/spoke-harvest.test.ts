@@ -1,52 +1,67 @@
-// LIVE. A real harvester, on a machine whose agent's door is elsewhere, reads a
+// LIVE. An agent whose runner sits on another machine files notes from its own
+// chat: a real harvester, on a machine whose agent's door is elsewhere, reads a
 // slice that exists ONLY as store rows and files what came back into a real
-// vault through the real `imprnt`. (SPEC §4, L19)
+// vault through the real `imprnt`, in the vault checkout that machine has,
+// with the login that machine keeps. (SPEC §1, §4, L7, L19)
 //
 // WHY IT IS HERE RATHER THAN IN THE AUTOMATED SET. Everything a shim can close
-// about a spoke harvest is closed by `test/spoke-harvest.test.ts`: the derived
-// slice equals the file's line for line, the watermark lands at the last
-// harvested line's own time, and the staging directory is this machine's own.
-// What no shim can close is that a real model turn, fed a slice nothing on this
-// machine has a file for, produces something a real CLI can file into a real
-// vault. That is this file, and it lives outside bun's test root so no
-// automated run reaches it. `bun run test:live` is what runs it.
+// about a spoke harvest is closed by `test/spoke-harvest.test.ts` and
+// `test/spoke-state.test.ts`: the derived slice equals the file's line for
+// line, the watermark lands at the last harvested line's own time, the staging
+// directory and the vault are the spoke's own. What no shim can close is that
+// a real model turn, fed a slice nothing on this machine has a file for,
+// produces something a real CLI can file into a real vault. That is this file,
+// and it lives outside bun's test root so no automated run reaches it.
+// `bun run test:live` is what runs it.
 //
-// IT TAKES ITS VAULT AND ITS COMMAND AS ARGUMENTS AND REFUSES TO RUN WITHOUT
-// THEM. `HUB_LIVE_VAULT` is the vault PROJECT ROOT, the directory holding
-// `vault/` and `raw/`, and `HUB_LIVE_IMPRNT` is the command `hub.imprnt` names.
-// Both are checked before the test is named, the reason is printed, and the
-// test is not run. A check that quietly passed with neither would prove
-// nothing and would look like evidence.
+// IT MAKES ITS OWN SCRATCH VAULT with the real `imprnt init`, under a
+// temporary directory it removes at the end, so it needs no vault of anybody's
+// and never writes into one. What it needs is the real `claude` on PATH and a
+// login FILE made for a runner on this machine, the one the operator makes once
+// with `claude auth login` pointed at the runner's own login directory (on a
+// Linux box the account's own login file stands in). Never the owner's keychain
+// item and never a copy of one: a refresh token is single use, and a copy that
+// refreshes revokes the login it was copied from. Both are checked before the
+// test is named, the reason is printed, and a box without them skips by name
+// rather than passing.
 //
-// THE VAULT IT IS POINTED AT IS A SCRATCH CLONE. This check WRITES A NOTE INTO
-// IT through a real filing, and the note's path is recorded before anything is
-// removed so a run that fell over says what it left behind. Never point it at a
-// vault anybody relies on.
+// THE SPOKE SHAPE IS THE REAL ONE. The hub machine's paths in the registry are
+// paths this box does not have, and the person's tree, vault and login on the
+// spoke are this box's, under `on.<machine>`, so a build that quietly kept the
+// hub machine's paths files nothing and fails here.
 //
 // WHAT THE MODEL WROTE IS ASSERTED NOWHERE. A harvester's judgement is the
 // model's, and a check that bound its words would fail for a model release.
-// What is asserted is the machinery: a note landed, the watermark moved to the
-// last line the harvester was shown, and the turn carries the harvester's
-// preset and the loop's own token counts. The measured numbers are PRINTED,
-// because those are what a first real week is supposed to produce.
+// What is asserted is the machinery: a note landed in the spoke's vault, the
+// watermark moved to the last line the harvester was shown, and the turn
+// carries the harvester's preset and the loop's own token counts. The measured
+// numbers are PRINTED, because those are what a first real week is supposed
+// to produce.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { seam, startCluster, until, type Cluster } from "../test/helpers/cluster.ts";
+import { announceGate, claudeGate, gateSuffix } from "../test/helpers/claude-gate.ts";
+import { writeImprntShim } from "../test/helpers/imprnt-shim.ts";
+import { scratchVault, type ScratchVault } from "../test/helpers/scratch-vault.ts";
 import {
   AGENT,
   CHAT,
   DOOR,
   PERSON,
   RUNNER2,
+  SPOKE_MACHINE,
   chatLogFile,
   insertInbound,
+  scratchDir,
   spokeStage,
   stageHub,
   type StagedHub,
 } from "../test/helpers/hub-fixture.ts";
-import type { PresetSpec } from "../test/helpers/registry.ts";
+import type { CredentialSpec, PresetSpec } from "../test/helpers/registry.ts";
+import { loginCommand } from "../src/adapters/launch.ts";
 import { encodeHarvestBody, harvestRowId } from "../src/harvest/row.ts";
 import type { SliceLine } from "../src/harvest/slice.ts";
 
@@ -57,19 +72,34 @@ const ANSWER_MS = 300_000;
 /** The cheap real model, named here and nowhere else in this file. */
 const MODEL = "claude-haiku-4-5-20251001";
 
-const vaultRoot = process.env.HUB_LIVE_VAULT ?? "";
-const imprnt = process.env.HUB_LIVE_IMPRNT ?? "";
+/** Paths the hub machine has and this box does not. */
+const HUB_ONLY = join("/nowhere-on-this-machine", crypto.randomUUID());
 
-function why(): string {
-  if (vaultRoot === "") return "HUB_LIVE_VAULT names no vault project root, and this check writes a note into one";
-  if (imprnt === "") return "HUB_LIVE_IMPRNT names no imprnt command, and this check files through a real one";
-  if (!existsSync(join(vaultRoot, "vault"))) return `${vaultRoot} holds no vault directory`;
-  if (!existsSync(join(vaultRoot, "raw"))) return `${vaultRoot} holds no raw directory`;
-  if (!existsSync(imprnt)) return `${imprnt} is not there`;
-  return "";
+const CLAUDE = claudeGate();
+announceGate(CLAUDE, "the live spoke harvest");
+
+/**
+ * The login file the spoke's runner will run on: the runner's own login under
+ * the account's hub state directory, made once by the operator, and on a Linux
+ * box the account's own login file when there is no runner login. Asked once,
+ * at module load, so the reason goes into the test name.
+ */
+function loginSource(): { ok: true; file: string } | { ok: false; reason: string } {
+  const own = join(homedir(), ".imprnt-hub", "login", ".credentials.json");
+  const candidates = process.platform === "darwin" ? [own] : [own, join(homedir(), ".claude", ".credentials.json")];
+  for (const file of candidates) {
+    if (!existsSync(file)) continue;
+    try {
+      if (typeof JSON.parse(readFileSync(file, "utf8")).claudeAiOauth === "object") return { ok: true, file };
+    } catch {
+      // Not a login: the next candidate, or the reason below.
+    }
+  }
+  return { ok: false, reason: `no runner login at ${own}: make one once with ${loginCommand(own)}` };
 }
 
-const reason = why();
+const LOGIN = loginSource();
+const reason = !CLAUDE.ok ? CLAUDE.reason : !LOGIN.ok ? LOGIN.reason : "";
 if (reason !== "") process.stderr.write(`SKIP: the live spoke harvest: ${reason}\n`);
 
 let cluster: Cluster;
@@ -98,7 +128,7 @@ function notesOnDisk(vaultDir: string): string[] {
 }
 
 test.skipIf(reason !== "")(
-  `LIVE a real harvester on a spoke files into a real vault from a slice that exists only in the store${reason === "" ? "" : ` [skipped: ${reason}]`}`,
+  `LIVE an agent whose runner sits on another machine files notes from its own chat: a real harvester on the spoke files into the spoke's own vault from a slice that exists only in the store${gateSuffix(CLAUDE)}${LOGIN.ok ? "" : ` [skipped: ${LOGIN.reason}]`}`,
   async () => {
     const { ADAPTERS } = await seam("src/adapters/index.ts");
     expect(Object.keys(ADAPTERS as object)).toContain("claude-code");
@@ -108,55 +138,78 @@ test.skipIf(reason !== "")(
     const { deriveSlice } = await seam("src/chatlog/derive.ts");
     expect(typeof deriveSlice).toBe("function");
 
-    const vaultDir = join(vaultRoot, "vault");
-    const before = notesOnDisk(vaultDir);
+    // THE REAL PATH: macOS hands out scratch directories under a symlink, and
+    // a sandbox profile matches the path the kernel resolved.
+    const dir = realpathSync(await scratchDir("hub-live-spoke-"));
+    // The spoke's own state directory, where its sessions, its harvest staging
+    // and its copy of the login go.
+    const spokeState = join(dir, "spoke-state");
+    mkdirSync(spokeState, { mode: 0o700 });
+    let vault: ScratchVault | null = null;
     let filed: string[] = [];
     let it: StagedHub | null = null;
     let runner: { stop(): Promise<void> } | null = null;
     try {
+      vault = await scratchVault(dir);
+      const shim = writeImprntShim(dir);
+      const vaultDir = vault.vaultDir;
+      const before = notesOnDisk(vaultDir);
+
       const preset: PresetSpec = {
         adapter: "claude-code",
         model: MODEL,
         provider: "anthropic",
         effort: "medium",
         paid: "plan",
+        credential: "household-claude",
       };
-      // The spoke placement composes rather than being copied: its own registry
-      // step moves the agent onto the machine that has no door, and the
-      // harvester's preset is added on top of whatever it produced. `stageHub`
-      // writes one preset of its own and knows nothing about a harvester's, so
-      // this is where that table gains its second entry.
+      // One credential for the household, at the hub machine's path on the
+      // entry and at this machine's under its placement: the runner's own
+      // login file here.
+      const credential: CredentialSpec = {
+        id: "household-claude",
+        kind: "claude-login",
+        file: join(HUB_ONLY, "credentials", ".credentials.json"),
+        owner: "household",
+        on: { [SPOKE_MACHINE]: { file: LOGIN.ok ? LOGIN.file : "" } },
+      };
       const placement = spokeStage().registry!;
       it = await stageHub(cluster, {
         ...spokeStage(),
+        machines: spokeStage().machines!.map((one) => (one.id === SPOKE_MACHINE ? { ...one, state_dir: spokeState } : one)),
         hub: { tick_seconds: 2 },
-        imprnt,
-        // The person's vault has to lie inside their tree, so the tree is the
-        // directory the vault project was cloned into.
+        imprnt: shim,
+        preset: { credential: "household-claude" },
+        credentials: [credential],
+        // The person's tree and vault on the hub machine are paths this box
+        // does not have. On the spoke they are the scratch directory and the
+        // vault the real `imprnt init` scaffolded under it.
         people: [
           {
             id: PERSON,
             language: "en",
-            tree: dirname(vaultRoot),
-            vault: vaultRoot,
+            tree: HUB_ONLY,
+            vault: join(HUB_ONLY, "vault-project"),
             harvester: "harvest",
             harvest_quiet_minutes: 600,
             harvest_min_messages: 99,
             harvest_report: false,
+            on: { [SPOKE_MACHINE]: { tree: dir, vault: vault.root } },
           },
         ],
         registry: (base) => {
           const placed = placement(base);
-          return { ...placed, presets: { ...(placed.presets ?? {}), harvest: preset } };
+          return { ...placed, presets: { daily: { ...preset, effort: "low" }, harvest: preset } };
         },
       });
 
       // --- 1. THE SLICE CAME FROM THE STORE. Every line below is a row and
-      //     nothing on this machine has a file for any of them.
-      const chatDir = dirname(
-        chatLogFile({ stateDir: it.stateDir, person: PERSON, agent: AGENT, at: new Date() }),
+      //     nothing on this machine has a file for any of them, on either
+      //     state directory.
+      const chatDirs = [it.stateDir, spokeState].map((state) =>
+        dirname(chatLogFile({ stateDir: state, person: PERSON, agent: AGENT, at: new Date() })),
       );
-      expect(existsSync(chatDir), "a chat log directory exists before the run").toBe(false);
+      for (const chatDir of chatDirs) expect(existsSync(chatDir), "a chat log directory exists before the run").toBe(false);
 
       const now = Date.now();
       const ago = (minutes: number) => new Date(now - minutes * 60_000);
@@ -229,15 +282,15 @@ test.skipIf(reason !== "")(
         async () =>
           `inbound=${JSON.stringify(await it!.read.inbound())} refusals=${JSON.stringify(
             await it!.read.ledger({ stream: "refusal" }),
-          )}`,
+          )} health=${JSON.stringify(await it!.read.sheet("agent_health"))}`,
       );
 
       // Still no file for any of it, during and after.
-      expect(existsSync(chatDir), "a chat log directory appeared during the run").toBe(false);
+      for (const chatDir of chatDirs) expect(existsSync(chatDir), "a chat log directory appeared during the run").toBe(false);
 
-      // --- 2. A NOTE LANDED IN THE REAL VAULT. The path is printed rather than
-      //     asserted: where a note goes is the vault's contract and not this
-      //     check's, and the folder and the slug are the model's call.
+      // --- 2. A NOTE LANDED IN THE SPOKE'S VAULT. The path is printed rather
+      //     than asserted: where a note goes is the vault's contract and not
+      //     this check's, and the folder and the slug are the model's call.
       const after = notesOnDisk(vaultDir);
       filed = after.filter((one) => !before.includes(one));
       process.stderr.write(
@@ -252,6 +305,10 @@ test.skipIf(reason !== "")(
         process.stderr.write(`[live-spoke-harvest] ${one} is ${size} bytes\n`);
         expect(size).toBeGreaterThan(0);
       }
+      // The work was staged on the spoke's own state directory and nowhere on
+      // the hub machine's.
+      expect(existsSync(join(spokeState, PERSON, "harvest"))).toBe(true);
+      expect(existsSync(join(it.stateDir, PERSON))).toBe(false);
 
       // --- 3. THE WATERMARK IS THE LAST HARVESTED LINE'S OWN TIME, which is
       //     the property that stops a slice being harvested twice and is the
@@ -275,10 +332,11 @@ test.skipIf(reason !== "")(
       expect(await it.read.ledger({ stream: "refusal" })).toEqual([]);
     } finally {
       await runner?.stop();
-      // --- 5. Everything this run put in the vault comes out again, with the
-      //     paths already printed above so a failed run says what it left.
-      for (const one of filed) rmSync(join(vaultRoot, "vault", one), { force: true });
       await it?.stop();
+      // --- 5. Everything this run made goes. The login file is the runner's
+      //     own, outside this directory, and is left exactly where it was.
+      await vault?.remove();
+      rmSync(dir, { recursive: true, force: true });
     }
   },
   LIVE,

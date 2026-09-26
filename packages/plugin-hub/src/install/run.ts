@@ -170,7 +170,7 @@ export async function runInstall(options: { registryFile: string; stage?: string
       // The same ordered list `src/store/migrate.ts` carries. A step that lands
       // in one of them and not the other leaves an upgraded box a version
       // behind a fresh one.
-      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"], [5, "005-dispatch.sql"], [6, "006-agent-lifecycle.sql"]] as const) {
+      for (const [version, file] of [[1, "001-rollout.sql"], [2, "002-door-health.sql"], [3, "003-control.sql"], [4, "004-voice.sql"], [5, "005-dispatch.sql"], [6, "006-agent-lifecycle.sql"], [7, "007-media.sql"]] as const) {
         if (ask(database, ["-c", `select 1 from schema_version where version = ${version}`])) continue;
         ask(database, ["-c", `begin; ${readFileSync(join(import.meta.dir, "../store/migrations", file), "utf8")} insert into schema_version values (${version}); commit;`]);
       }
@@ -208,7 +208,11 @@ export async function runInstall(options: { registryFile: string; stage?: string
   const selected = entries.filter(e => e.machine === target.machine);
   const hubs = selected.filter(e => e.kind === "hub" && wantedState(e) === "running");
   if (hubs.length !== 1) throw new Error("one-resident-hub-required");
-  const store = await openStore({ url: storeUrlFor(registry, "hub_hub") });
+  // From here the file is read FOR THE TARGET'S MACHINE: the store this stage
+  // probes is the one that machine reaches, with the password that machine
+  // holds, and the units it writes carry that machine's own state directory.
+  const placed = loadRegistry(options.registryFile, { machine: target.machine });
+  const store = await openStore({ url: storeUrlFor(placed, "hub_hub") });
   try {
     // The columns a voice note and a chat read from the store both need, asked
     // for in one probe so a box whose migration did not land says so here,
@@ -232,11 +236,11 @@ export async function runInstall(options: { registryFile: string; stage?: string
       machine: target.machine, execPath: process.execPath, entryScript: programForKind(entry.kind),
       // The same function the hub's own tick calls, so a unit installed by hand
       // and a unit the hub writes cannot differ.
-      argv: entry.kind === "transcriber" ? transcriberArgv(registry, entry) : undefined,
-      registryFile: options.registryFile, stateDir: String(readSetting(registry, "hub.state_dir")),
-      restartDelaySeconds: Number(readSetting(registry, "hub.restart_delay_seconds") ?? 1),
-      giveUpAfter: Number(readSetting(registry, "hub.give_up_after") ?? 5),
-      giveUpWindowSeconds: Number(readSetting(registry, "hub.give_up_window_seconds") ?? 300),
+      argv: entry.kind === "transcriber" ? transcriberArgv(placed, entry) : undefined,
+      registryFile: options.registryFile, stateDir: String(readSetting(placed, "hub.state_dir")),
+      restartDelaySeconds: Number(readSetting(placed, "hub.restart_delay_seconds") ?? 1),
+      giveUpAfter: Number(readSetting(placed, "hub.give_up_after") ?? 5),
+      giveUpWindowSeconds: Number(readSetting(placed, "hub.give_up_window_seconds") ?? 300),
     }) }));
     for (const { entry, files } of rendered) {
       let operation = "install";

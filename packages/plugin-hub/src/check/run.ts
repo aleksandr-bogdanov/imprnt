@@ -31,7 +31,8 @@ import {
   voiceFor,
 } from "../registry/entries.ts";
 import { credentialOfPreset } from "../registry/presets.ts";
-import { loadRegistry, readSetting, type CredentialEntry } from "../registry/load.ts";
+import { loadRegistry, readSetting, registryDigest, type CredentialEntry } from "../registry/load.ts";
+import { readRegistryDigests, storeMachineOf } from "../hub/digest.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { overLimit, readPeaks, residentIds } from "../hub/peak.ts";
 import {
@@ -230,7 +231,11 @@ export async function runCheck(options: {
 }): Promise<Finding[]> {
   const machine = options.machine;
   const now = options.now ?? new Date();
-  const registry = loadRegistry(options.registryFile);
+  // Read for the machine being checked: its own state directory is where the
+  // chat logs and session state are looked for, its credentials are the files
+  // and keychain items it holds, and its people's trees are the roots the copy
+  // scan sweeps.
+  const registry = loadRegistry(options.registryFile, { machine });
   const entries = runEntriesFor(registry, machine);
   const findings: Finding[] = [];
 
@@ -499,6 +504,81 @@ export async function runCheck(options: {
     });
   }
 
+  // --- every machine runs the ONE registry ---------------------------------
+  //
+  // A spoke reads a copy of the file, and a copy that fell behind is two
+  // machines disagreeing about who serves whom. Every hub writes the digest of
+  // the file it runs on, and this compares each machine's against the store
+  // machine's: the machine being checked by the file being read here, every
+  // other by the row its hub wrote. The store machine's own row is the
+  // reference and is never reported.
+  //
+  // THE STORE MACHINE'S VIEW REPORTS FOR EVERY MACHINE THAT SERVES AGENTS,
+  // because no check may ever run there: a copy that is behind, and a machine
+  // whose hub has not said what it runs for longer than the job grace, are
+  // both machines whose runners claim nothing, and the overdue chats of their
+  // agents are swept below as if they were this machine's own.
+  const reference = storeMachineOf(registry);
+  /** Machines whose registry cannot be trusted right now. */
+  const flagged = new Set<string>();
+  if (reference !== null) {
+    const digests = await readRegistryDigests(options.store);
+    const grace = setting(registry, "hub.job_grace_seconds", 300) * 1000;
+    const here = registryDigest(options.registryFile);
+    const theirs = digests.find((row) => row.machine === reference);
+    const referenceSha = machine === reference ? here : theirs?.sha256 ?? "";
+    const serving = new Set(
+      listRunEntries(registry)
+        .filter((entry) => entry.kind === "runner" && listAgents(registry).some((agent) => agent.runner === entry.id))
+        .map((entry) => entry.machine),
+    );
+    const stale = (one: string, where: string) => findings.push({
+      id: findingId(machine, "registry-stale", one),
+      kind: "registry-stale",
+      subject: one,
+      machine,
+      says: `the registry on ${one} is not the one ${reference} runs, so ${one}'s runner claims nothing new until it is: an agent moved between the two would be served by both or by neither`,
+      fix: `copy the registry from ${reference} to ${one} again, over the file ${one}'s units were started with${where}`,
+    });
+    if (referenceSha === "") {
+      // A spoke whose authority has not spoken: nothing can be measured, so
+      // this machine's runner claims nothing, and that is said here.
+      findings.push({
+        id: findingId(machine, "registry-unseen", reference),
+        kind: "registry-unseen",
+        subject: reference,
+        machine,
+        says: `the hub on ${reference} has not written what registry it runs, so no copy can be measured against it and ${machine}'s runner claims nothing`,
+        fix: `start the hub on ${reference}, then run check again`,
+      });
+      flagged.add(machine);
+    } else if (machine !== reference) {
+      if (here !== referenceSha) { stale(machine, ` (${options.registryFile})`); flagged.add(machine); }
+    } else {
+      for (const one of listMachines(registry)) {
+        if (one.id === reference || !serving.has(one.id)) continue;
+        const row = digests.find((found) => found.machine === one.id);
+        const age = row ? now.getTime() - Date.parse(row.at) : Number.POSITIVE_INFINITY;
+        if (!row || !(age <= grace)) {
+          findings.push({
+            id: findingId(machine, "registry-unseen", one.id),
+            kind: "registry-unseen",
+            subject: one.id,
+            machine,
+            says: row
+              ? `the hub on ${one.id} last said what registry it runs at ${row.at}, longer ago than the ${grace / 1000} s grace, so whether ${one.id} runs this registry is unknown and its runner may be claiming from an old copy`
+              : `no hub on ${one.id} has said what registry it runs, so whether ${one.id} runs this registry is unknown and its runner may be claiming from an old copy`,
+            fix: `check the hub on ${one.id}: imprnt hub status <registry> ${one.id} there, and copy the registry from ${reference} to ${one.id} again`,
+          });
+          flagged.add(one.id);
+        } else if (row.sha256 !== referenceSha) {
+          stale(one.id, "");
+          flagged.add(one.id);
+        }
+      }
+    }
+  }
+
   // --- what the kernel could add (criterion 8) ----------------------------
   findings.push(...kernelFindings(options.kernel ?? null, machine));
 
@@ -536,23 +616,33 @@ export async function runCheck(options: {
   // THE MACHINE IS THE AGENT'S RUNNER'S, so two machines running `check` do not
   // both report one row. The set is the one `agent-unboxed` already computed.
   const mine = listAgents(registry).filter((agent) => ownRunners.has(agent.runner));
-  if (mine.length > 0) {
+  // AND THE AGENTS OF EVERY FLAGGED MACHINE, from the store machine's view: a
+  // runner on a copy that is behind, or on a machine whose hub is silent,
+  // claims nothing, so the chats it owes are overdue with no check there to
+  // say so. The store machine says it for them.
+  const machineOfRunner = new Map(listRunEntries(registry).map((entry) => [entry.id, entry.machine]));
+  const watched = [
+    ...mine,
+    ...listAgents(registry).filter((agent) => !ownRunners.has(agent.runner) && flagged.has(machineOfRunner.get(agent.runner) ?? "")),
+  ];
+  if (watched.length > 0) {
     findings.push(
       ...stampFindings({
-        rows: await readStampRows(options.store, { agents: mine.map((agent) => agent.id) }),
+        rows: await readStampRows(options.store, { agents: watched.map((agent) => agent.id) }),
         thresholds: (person) => thresholdsFor(registry, person),
-        runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        runnerOf: (agent) => watched.find((one) => one.id === agent)?.runner ?? "",
         machine,
         now,
       }),
       // A wait the door could not explain from the closed list of reasons.
       ...unexplainedFindings({
-        waits: await readUnexplainedWaits(options.store, { agents: mine.map((agent) => agent.id) }),
-        runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        waits: await readUnexplainedWaits(options.store, { agents: watched.map((agent) => agent.id) }),
+        runnerOf: (agent) => watched.find((one) => one.id === agent)?.runner ?? "",
         machine,
       }),
     );
-
+  }
+  if (mine.length > 0) {
     // --- every dispatched job past its person's own threshold (criterion 2) -
     //
     //     The same finding code as a scheduled job that stopped landing, and
@@ -649,7 +739,29 @@ export async function runCheck(options: {
   //     died, thirteen turns failed over 31 hours, and `check` was green
   //     throughout because it never opened the file.
   const prober = options.credentials ?? realProber();
-  const declared = listCredentials(registry);
+  // ON A MACHINE THAT IS NOT THE HUB'S, only the credentials that are on it: the
+  // ones placed there and the ones its own agents and harvesters run on. A bot
+  // token lives on the hub machine alone, and opening it here at the hub
+  // machine's path would report every Mac check unreadable for a file the Mac
+  // was never meant to have.
+  const credentialsHere = new Set<string>();
+  for (const agent of mine) {
+    const own = credentialOfPreset(registry, agent.preset);
+    if (own) credentialsHere.add(own);
+    const harvest = harvestFor(registry, agent.person);
+    const harvester = harvest ? credentialOfPreset(registry, harvest.harvester) : null;
+    if (harvester) credentialsHere.add(harvester);
+  }
+  const spoken = voiceFor(registry);
+  if (spoken?.credential && transcriberFor(registry, machine)) credentialsHere.add(spoken.credential);
+  // The file as written is the store machine's, so a check there opens every
+  // credential the file names, exactly as before. A file in which no machine
+  // names a route of its own to the store has one route, and every machine on
+  // it is the file's own.
+  const elsewhere = reference !== null && registry.machine !== null && registry.machine !== reference;
+  const declared = listCredentials(registry).filter(
+    (one) => !elsewhere || registry.placed.credentials.includes(one.id) || credentialsHere.has(one.id),
+  );
   const doors: CredentialEntry[] = [];
   for (const entry of entries) {
     if (entry.kind !== "door") continue;
@@ -667,7 +779,7 @@ export async function runCheck(options: {
   }
   const opened = [...declared, ...doors];
   findings.push(
-    ...(await credentialFindings({ entries: opened, prober, machine })),
+    ...(await credentialFindings({ entries: opened, prober, machine, os: listMachines(registry).find((one) => one.id === machine)?.os })),
   );
 
   // --- a copy anywhere inside the roots the registry names (criterion 2) ---
