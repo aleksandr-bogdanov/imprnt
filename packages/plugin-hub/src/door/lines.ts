@@ -693,7 +693,8 @@ export function syncCause(language: Language, code: string): string {
     path: ["repository path is missing or invalid", "путь репозитория отсутствует или неверен"],
     person: ["repository is outside the person's tree", "репозиторий вне дерева человека"],
     locked: ["repository is already being synchronized", "репозиторий уже синхронизируется"],
-    dirty: ["repository has uncommitted changes", "в репозитории есть несохранённые изменения"],
+    config: ["repository config names a filter program, which the sync will not run", "в настройках репозитория указана программа-фильтр, синхронизация её не запустит"],
+    commit: ["committing the uncommitted changes failed", "не удалось сохранить несохранённые изменения"],
     branch: ["repository is on the wrong branch", "в репозитории выбрана другая ветка"],
     remote: ["configured remote is absent", "указанный удалённый репозиторий отсутствует"],
     fetch: ["fetch failed", "не удалось получить изменения"],
@@ -712,6 +713,19 @@ export function acceptRepair(language: Language, values: LineValues = {}): strin
   return interpolate(language, language === "ru"
     ? "устраните указанную причину в {target}: дверь повторяет ту же партию каждый тик, перезапуск не поможет."
     : "repair the reported cause for {target}: the door replays the same batch every tick, and restarting it changes nothing.", values);
+}
+
+/**
+ * What a person reads when their vault has not synced for several runs in a
+ * row. It names the repository and the last cause, because the fix is usually
+ * one they can make, and says what is at stake: notes written since stay on
+ * this machine only.
+ */
+export function syncStuck(language: Language, values: LineValues = {}): string {
+  const sentence = interpolate(language, language === "ru"
+    ? "синхронизация {target} не проходит, неудачных запусков подряд: {count}. Причина: {cause}. Новые заметки остаются только на этой машине, пока причина не устранена."
+    : "syncing {target} has failed {count} times in a row: {cause}. New notes stay on this machine only until that is fixed.", values);
+  return says(language, sentence);
 }
 
 export function syncRepair(language: Language, values: LineValues = {}): string {

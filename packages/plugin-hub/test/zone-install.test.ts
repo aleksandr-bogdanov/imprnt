@@ -320,7 +320,7 @@ test("ROLL-27 a household that declares no zone is a no-op with a named result, 
   }
 }, SLOW);
 
-test("ROLL-27 the zone checkout never stalls the vault's own sync, and its own sync refuses a dirty tree (SPEC §6, ROLL-31)", async () => {
+test("ROLL-27 the zone checkout never stalls the vault's own sync, and its own sync commits what was written into it (SPEC §6, ROLL-31)", async () => {
   const { runSync } = await seam("src/sync/run.ts");
   expect(typeof runSync).toBe("function");
   // THE CONTROL on this whole test: the household is provisioned BY HAND, with
@@ -344,16 +344,17 @@ test("ROLL-27 the zone checkout never stalls the vault's own sync, and its own s
     // declared nested checkout aside, so its own sync is untouched by it.
     const p1 = it.stage.person("p1");
     writeFileSync(join(p1.zonePath, "a-shared-note.md"), "# a note somebody is still writing\n", "utf8");
-    // The entry as a whole fails, because a required repository failed. What
-    // matters is WHICH one, which is what the sheet row below says.
-    await expect(sync(p1.syncEntry)).rejects.toThrow("sync-failed");
+    await sync(p1.syncEntry);
     const after = (await it.read.sheet("sync")).find((one) => one.id === p1.syncEntry)!;
-    const results = after.data.repositories as { id: string; status: string; code?: string }[];
+    const results = after.data.repositories as { id: string; status: string; committed?: number }[];
+    // The vault's own commit takes nothing of the zone, and the zone's own
+    // entry commits the note into the zone and pushes it.
     expect(results.find((one) => one.id === p1.vaultRepository)!.status).toBe("success");
-    // And the ZONE's own sync refuses with the shipped code, because the note
-    // is not committed and the sync never commits for anybody.
-    expect(results.find((one) => one.id === p1.zoneRepository)!.status).toBe("failed");
-    expect(results.find((one) => one.id === p1.zoneRepository)!.code).toBe("dirty");
+    expect(results.find((one) => one.id === p1.vaultRepository)!.committed).toBeUndefined();
+    expect(results.find((one) => one.id === p1.zoneRepository)!.status).toBe("success");
+    expect(results.find((one) => one.id === p1.zoneRepository)!.committed).toBe(1);
+    expect(fixtureGit(it.dir, "--git-dir", it.stage.remote, "show", `${it.stage.branch}:a-shared-note.md`))
+      .toBe("# a note somebody is still writing");
   } finally {
     await it.close();
   }
