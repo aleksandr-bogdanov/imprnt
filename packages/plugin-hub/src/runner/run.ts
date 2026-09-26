@@ -28,7 +28,7 @@ import {
   agentsFor,
   chatStateFor,
   lifetimeFor,
-  runnerLimitsFor,
+  runnerAdmission,
   languageOf,
   listAgents,
   listRunEntries,
@@ -445,15 +445,13 @@ export async function runRunner(options: {
     } finally { connection.release(); }
   };
   const admitChild = async (registry: Registry, own: Live, reserve = true): Promise<boolean> => {
-    const entry = listRunEntries(registry).find(one => one.id === options.runner);
-    const limits = entry ? runnerLimitsFor(registry, options.runner) : { max_active_children: 4, child_memory_budget_mb: 2048 };
-    const limitMb = entry?.child_memory_limit_mb ?? limits.child_memory_budget_mb;
-    // Reserve the smaller per-child ceiling where possible; a ceiling equal
-    // to the fleet budget shares that budget across its declared slots. The
-    // monitor also enforces actual aggregate use, including descendants.
-    const reserveMb = limitMb < limits.child_memory_budget_mb ? limitMb : limits.child_memory_budget_mb / limits.max_active_children;
     let recorded = false;
     while (!stopping && !own.leaving) {
+      // Read again on every pass, because a registry edit that raises the
+      // count or the budget is one of the things this wait is woken for.
+      const entry = listRunEntries(loadRegistry(options.registryFile)).find(one => one.id === options.runner);
+      const limits = runnerAdmission(entry ?? {});
+      const reserveMb = limits.reserve_mb;
       if (reservations < limits.max_active_children && Math.max(reservations * reserveMb, measuredBytes / 1048576) + reserveMb <= limits.child_memory_budget_mb) {
         if (reserve) reservations++;
         return true;
@@ -465,9 +463,14 @@ export async function runRunner(options: {
           detail: { cause: "admission", children: reservations, reserved_mb: reservations * reserveMb, peak_bytes: peakBytes } });
         continue;
       }
+      // Woken by a child starting or being released, by the tick seeing a
+      // changed limit or a fallen aggregate reading, and by the tick itself
+      // as the bound: the re-check above is in memory and reads no table, so
+      // the bound costs the store nothing and a runner whose slots are all
+      // held by residents still asks again within a tick.
       let wake!: () => void;
       const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
-      try { await Promise.race([available, stopped, own.left]); }
+      try { await Promise.race([available, stopped, own.left, Bun.sleep(setting(registry, "hub.tick_seconds") * 1000)]); }
       finally { capacity.delete(wake); }
     }
     return false;
@@ -1264,6 +1267,7 @@ export async function runRunner(options: {
     const own = listRunEntries(registry).find((entry) => entry.id === options.runner);
     const limitMb = own?.child_memory_limit_mb;
     if (!limitMb || limitMb <= 0) return;
+    const before = measuredBytes;
     measuredBytes = 0;
     for (const it of [...live.values(), ...[...harvestSessions].map(([session, owner]) => ({ ...owner, session, killed: false }))]) {
       const session = it.session;
@@ -1319,6 +1323,8 @@ export async function runRunner(options: {
         // outcome by another route.
       }
     }
+    // A reading that fell is room an agent may have been waiting for.
+    if (measuredBytes < before) capacityChanged();
   };
 
   for (const agent of agentsFor(first, { runner: options.runner })) {
@@ -1330,6 +1336,7 @@ export async function runRunner(options: {
   await Promise.all([...live.values()].map((it) => it.serving));
 
   const recovering = new Set<string>();
+  let seenLimits = JSON.stringify(runnerAdmission(listRunEntries(first).find(one => one.id === options.runner) ?? {}));
   const supervise = (async () => {
     while (!stopping) {
       await Promise.race([Bun.sleep(setting(first, "hub.tick_seconds") * 1000), stopped]);
@@ -1347,6 +1354,14 @@ export async function runRunner(options: {
         for (const agent of wanted) if (!live.has(agent.id) && !recovering.has(agent.id) && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
         for (const id of [...live.keys()]) {
           if (!wanted.some((agent) => agent.id === id)) await drop(id);
+        }
+        // A registry edit that changes what this runner admits takes effect
+        // within a tick, the way every routine edit does: the agents waiting
+        // on admission are woken to read the new numbers.
+        const limits = JSON.stringify(runnerAdmission(listRunEntries(registry).find(one => one.id === options.runner) ?? {}));
+        if (limits !== seenLimits) {
+          seenLimits = limits;
+          capacityChanged();
         }
         await watchChildren(registry);
       } catch {
