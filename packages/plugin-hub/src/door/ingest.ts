@@ -5,16 +5,17 @@ import { projectInbound } from "../chatlog/project.ts";
 import { encodeHarvestBody } from "../harvest/row.ts";
 import { readWatermark } from "../harvest/sheet.ts";
 import { isDemand, isRecoveryCommand, readSlice } from "../harvest/slice.ts";
-import { languageOf, senderAllowed, voiceFor } from "../registry/entries.ts";
+import { councilSeatsOf, languageOf, senderAllowed, voiceFor } from "../registry/entries.ts";
 import { readSetting, type ChatAgent, type Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markMediaPending } from "../voice/records.ts";
 import { writeCursor } from "./cursor.ts";
 import { recordDeniedSender } from "./denied.ts";
-import { requestDispatch, parseDispatch } from "./dispatch.ts";
+import { parseCouncil, requestCouncil, requestDispatch, parseDispatch } from "./dispatch.ts";
+import type { CouncilRow } from "./council.ts";
 import { parseAgentCommand, requestAgentLifecycle, type ResolvedRef } from "./agentctl.ts";
-import { agentAccepted, agentRefused, agentUsage, controlUsage, dispatchAccepted, dispatchRefused, dispatchUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
+import { agentAccepted, agentRefused, agentUsage, controlUsage, councilRefused, councilRequested, councilUsage, dispatchAccepted, dispatchRefused, dispatchUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
 import { saveMedia, type SavedMedia } from "./media.ts";
 import { storeMedia } from "../store/media.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
@@ -35,6 +36,8 @@ export async function acceptBatch(options: {
   received?(id: string, mediaState: string | null): void;
   /** A row the transcription step now owes its words, handed over with no query. */
   pending?(row: PendingVoiceRow): void;
+  /** A council this door just convened, handed to the clock with no query. */
+  council?(row: CouncilRow & { id: string }): void;
   /** The door skips a bad complete chat log record and reports it. */
   skipBad?(bad: BadRecord): void | Promise<void>;
   /**
@@ -109,6 +112,41 @@ export async function acceptBatch(options: {
       // chat lines are already idempotent by the platform message id, so a
       // platform that redelivers a batch would otherwise say the same sentence
       // twice about a job it created once.
+      const fresh = await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id: id + ":notice", at: message.at, direction: "out", from: door, text,
+      }, skipBad);
+      if (fresh) {
+        try { await platform.post({ chat: agent.chat, text }); }
+        catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
+      }
+      continue;
+    }
+    const council = parseCouncil(message.text);
+    if (council !== null) {
+      const base = inboundId(platform.name, message.chat, message.platform_message_id);
+      const id = `council:${base}`;
+      await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id, at: message.at, direction: "in", from: agent.person, text: message.text,
+      }, skipBad);
+      let text = councilUsage(language);
+      // Fewer than two seats is no council, and the usage line says what a
+      // council is made of: the thing missing is a registry entry, so it is
+      // said to the person who can add one rather than refused by one name.
+      if (council !== "usage" && councilSeatsOf(registry, agent.person).length >= 2) {
+        try {
+          const made = await requestCouncil(store, { base, registry, person: agent.person,
+            door, chat: agent.chat, agent: agent.id, sender_id: sender, from: message.from,
+            question: council.question, at: message.at });
+          text = councilRequested(language, { count: made.seats.length, question: council.question });
+          options.council?.({ id: made.id, person: agent.person, agent: agent.id, door, chat: agent.chat,
+            task: council.question, seats: made.seats, at: message.at, answered: {} });
+        } catch (error) {
+          if ((error as Error).name !== "CouncilRefused") throw error;
+          text = councilRefused(language, { cause: "access denied" });
+        }
+      }
+      // POSTED ONLY WHEN THE LINE IS NEW, for the reason the dispatch block
+      // above says.
       const fresh = await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
         id: id + ":notice", at: message.at, direction: "out", from: door, text,
       }, skipBad);
