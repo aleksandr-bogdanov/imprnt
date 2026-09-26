@@ -14,6 +14,7 @@ The registry is the whole configuration: a hand-edited TOML file that lists ever
 - The store: the Postgres database `hub.store_url` names. Every role's password sits in `hub.secrets_dir` (`<hub.state_dir>/secrets` when unset), written by the database install, readable by the hub's account and by no agent's box.
 - Chat logs: `<hub.state_dir>/<person>/chatlog/<agent>/<date>.jsonl`, one line per message in both directions, written by the door before anything is sent.
 - Each person's tree: `[[people]].tree`, with the vault under `[[people]].vault`. An agent's box reaches its own person's tree and nothing else.
+- Another machine's paths: a `[[machines]]` entry carries its own `state_dir`, `secrets_dir` and `store_url` (the hub machine's tailnet address), a person's tree and vault there sit under `[[people]].on.<machine>`, and a credential's file there under `[[credentials]].on.<machine>`, with `keychain` naming the Claude Code login item on a Mac. A runner, a hub, `check`, `status` and `install services` read the file for their own machine. The procedure for a runner on the owner's Mac is in `docs/operations.md`.
 - Service logs: `journalctl --user --unit imprnt-hub-<entry>.service --no-pager` on Linux, `<hub.state_dir>/service-log/<entry>.{out,err}.log` on macOS.
 - The spec and the operations notes: `packages/plugin-hub/docs/SPEC.md` and `packages/plugin-hub/docs/operations.md`.
 

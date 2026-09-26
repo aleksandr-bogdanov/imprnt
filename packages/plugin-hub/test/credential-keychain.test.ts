@@ -159,7 +159,8 @@ test.skipIf(!onMac)(
       keep(first);
       validateCredentialSource(credential, { keychain });
 
-      const one = await makeLoopLaunch({ ...launchInput(f), credential, keychain });
+      const input = () => ({ ...launchInput(f), purpose: "ordinary" as const, credential, keychain });
+      const one = await makeLoopLaunch(input());
       expect(readFileSync(file, "utf8")).toBe(first);
       expect(statSync(file).mode & 0o777).toBe(0o600);
       expect(statSync(dirname(file)).mode & 0o777).toBe(0o700);
@@ -173,14 +174,14 @@ test.skipIf(!onMac)(
       // carries the renewed one with nobody copying anything.
       const second = loginText("second");
       keep(second);
-      await makeLoopLaunch({ ...launchInput(f), credential, keychain });
+      await makeLoopLaunch(input());
       expect(readFileSync(file, "utf8")).toBe(second);
       expect(statSync(file).mode & 0o777).toBe(0o600);
 
       // The item gone is a login that cannot be handed to anything, said by
       // name, and the stale file is not read in its place.
       security(["delete-generic-password", "-s", SERVICE, keychain]);
-      await expect(makeLoopLaunch({ ...launchInput(f), credential, keychain })).rejects.toThrow(/credential-source-unreadable/);
+      await expect(makeLoopLaunch(input())).rejects.toThrow(/credential-source-unreadable/);
       expect(() => validateCredentialSource(credential, { keychain })).toThrow(/credential-source-unreadable/);
     } finally {
       f.stop();

@@ -63,9 +63,18 @@ url = "git@example.invalid:household/shared-notes.git"
 id = "pi"
 os = "linux"
 
+# A machine that is not the hub's keeps its state and its role passwords on its
+# own disk and reaches the one store over the tailnet, so its entry may carry
+# its own state_dir, secrets_dir (`secrets` under its state_dir when absent)
+# and store_url. A process on that machine reads them in place of the [hub]
+# table's. THE ADDRESS BELOW IS AN EXAMPLE: it is the hub machine's tailnet
+# address, and the url carries no user and no password, because a process
+# supplies its own role and reads that role's password file from secrets_dir.
 [[machines]]
 id = "mac"
 os = "macos"
+state_dir = "/Users/owner/.imprnt-hub"
+store_url = "postgres://100.64.0.1:5432/hub"
 
 # A person, and the tree that is the boundary. Each agent's box reaches its own
 # person's tree and nothing else. The shared zone is a checkout inside that
@@ -94,6 +103,12 @@ vault = "/var/lib/imprnt-hub/p1/vault-project"
 harvest_quiet_minutes = 30
 harvest_min_messages = 1
 harvest_report = true
+# Where this person's tree and vault are on a machine that is not the hub's,
+# keyed by machine id. An agent whose runner is on that machine is boxed in the
+# tree there and files into the vault there. A placement names a tree, and it
+# names a vault whenever the entry does. A person who says nothing about a
+# machine keeps the paths above on it.
+on = { mac = { tree = "/Users/owner/vault-project", vault = "/Users/owner/vault-project" } }
 
 [[people]]
 id = "p2"
@@ -116,6 +131,12 @@ id = "household-claude"
 kind = "claude-login"
 file = "/var/lib/imprnt-hub/credentials/.credentials.json"
 owner = "household"
+# Where the same login is on a machine that is not the hub's. On a Mac, Claude
+# Code keeps its login in the keychain item named here, so `check` opens that
+# item, the copy scan takes its tokens from it, and a launch copies it into
+# `file` (mode 600, remade for every session) because the boxed loop reads a
+# file and never the keychain. `keychain` is allowed on a macOS machine only.
+on = { mac = { file = "/Users/owner/.imprnt-hub/login/.credentials.json", keychain = "Claude Code-credentials" } }
 
 [[credentials]]
 id = "telegram-bot"
@@ -206,6 +227,25 @@ schedule = "always"
 memory_limit_mb = 512
 # The limit the runner enforces on its model child. It is not the runner's own.
 child_memory_limit_mb = 2048
+
+# The other machine's runner and hub. A runner is one per machine, started by
+# that machine's service manager, reconnecting to the one store forever, and
+# claiming the rows of the agents bound to it. The hub beside it is what
+# installs and watches that machine's units. Neither is a door.
+[[run]]
+id = "runner-mac"
+kind = "runner"
+machine = "mac"
+schedule = "always"
+memory_limit_mb = 512
+child_memory_limit_mb = 2048
+
+[[run]]
+id = "hub-mac"
+kind = "hub"
+machine = "mac"
+schedule = "always"
+memory_limit_mb = 128
 
 [[run]]
 id = "vault-sync"
