@@ -59,6 +59,8 @@ import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
 import { lookUpAdopt, parseAgentCommand, type ResolvedRef } from "./agentctl.ts";
 import { claimCouncilLate, clockDeadlines, COUNCIL_STAMP, councilDeadline, readOpenCouncils, readSpokenClocks, recordExpiry, type OpenCouncil } from "./clock.ts";
+import { openSeatsOf, seatJobId } from "./council.ts";
+import { recordSeatAnswer } from "../runner/council.ts";
 import { CURSOR_SHEET, cursorId, readCursor, writeCursor } from "./cursor.ts";
 import {
   clockLine,
@@ -1045,20 +1047,36 @@ export async function runDoor(options: {
     const sayCouncilLate = async (council: OpenCouncil): Promise<void> => {
       councils = councils.filter((one) => one.id !== council.id);
       const at = new Date().toISOString();
-      const standing = await claimCouncilLate(store, { id: council.id, at });
-      if (standing === null) return;
-      const seconds = Math.max(1, Math.round((Date.now() - new Date(standing.at).getTime()) / 1000));
-      const answered = Object.keys(standing.answered ?? {}).length;
-      const text = councilLate(language, { answered, seats: standing.seats.length, seconds });
       const id = `clock:${council.id}:${COUNCIL_STAMP}`;
+      // ONE transaction: the claim, the seats nobody claimed given up on, and
+      // the diary row. The grace has run out, so a seat no runner has taken
+      // is a seat no runner is going to take in time, and the merge lands
+      // with "no answer" for it rather than never. A seat some runner holds
+      // is left to that runner. What the line reports is the count as the
+      // row stood at the claim, which is what the person has been waiting on.
+      const said = await store.sql.begin(async (tx) => {
+        const inside = { ...store, sql: tx as unknown as Store["sql"] };
+        const standing = await claimCouncilLate(inside, { id: council.id, at });
+        if (standing === null) return null;
+        const seconds = Math.max(1, Math.round((Date.now() - new Date(standing.at).getTime()) / 1000));
+        const answered = Object.keys(standing.answered ?? {}).length;
+        for (const seat of openSeatsOf(standing)) {
+          const [gone] = (await tx`select hub_council_abandon(${seatJobId(council.id, seat)}, ${"unclaimed past the grace"}) as closed`) as
+            unknown as { closed: boolean }[];
+          if (gone?.closed) await recordSeatAnswer(inside, { council: { id: council.id, seat }, answer: null }, { actor: "door" });
+        }
+        await recordExpiry(inside, {
+          messageId: council.id, stamp: COUNCIL_STAMP, seconds,
+          person: standing.person, agent: standing.agent, id, at,
+        });
+        return { standing, seconds, answered };
+      });
+      if (said === null) return;
+      const text = councilLate(language, { answered: said.answered, seats: said.standing.seats.length, seconds: said.seconds });
       await appendChatLineOnce(
-        { stateDir, person: standing.person, agent: standing.agent },
+        { stateDir, person: said.standing.person, agent: said.standing.agent },
         { id, at, direction: "out", from: options.door, text },
       );
-      await recordExpiry(store, {
-        messageId: council.id, stamp: COUNCIL_STAMP, seconds,
-        person: standing.person, agent: standing.agent, id, at,
-      });
       try {
         await options.platform.post({ chat: agent.chat, text });
       } catch {

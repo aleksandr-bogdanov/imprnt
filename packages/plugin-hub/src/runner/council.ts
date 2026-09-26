@@ -1,6 +1,6 @@
 import { COUNCIL_SHEET, mergeBody, openSeatsOf, type CouncilRow } from "../door/council.ts";
 import { appendEntry } from "../records/diary.ts";
-import { putRow, removeRow } from "../records/statesheet.ts";
+import { removeRow } from "../records/statesheet.ts";
 import type { StoreLike } from "../store/connect.ts";
 
 /**
@@ -24,17 +24,28 @@ import type { StoreLike } from "../store/connect.ts";
 export async function recordSeatAnswer(
   store: StoreLike,
   seat: { council: { id: string; seat: string }; answer: string | null },
+  /**
+   * Who writes the merge's diary line: the runner at a seat's settle, the
+   * door when it gives up the unclaimed seats of a council past the grace.
+   */
+  by: { actor: "runner" | "door" } = { actor: "runner" },
 ): Promise<void> {
   const id = seat.council.id;
   await store.sql`select pg_advisory_xact_lock(hashtext(${id}))`;
-  const found = (await store.sql`select data from state_row where sheet = ${COUNCIL_SHEET} and id = ${id}`) as unknown as
+  // Locked for update, so the door's late mark, written by one statement
+  // outside any lock, either lands before this read or waits for this
+  // transaction: it is never read past and then written over.
+  const found = (await store.sql`select data from state_row where sheet = ${COUNCIL_SHEET} and id = ${id} for update`) as unknown as
     { data: CouncilRow }[];
   if (found.length === 0) return;
   const row = found[0].data;
   if (Object.hasOwn(row.answered ?? {}, seat.council.seat)) return;
   const next: CouncilRow = { ...row, answered: { ...(row.answered ?? {}), [seat.council.seat]: seat.answer } };
   if (openSeatsOf(next).length > 0) {
-    await putRow(store, COUNCIL_SHEET, id, next as unknown as Record<string, unknown>);
+    // `answered` alone, by concatenation, so no other key of the row is
+    // rewritten from this transaction's read.
+    await store.sql`update state_row set data = data || jsonb_build_object('answered', ${next.answered}::jsonb), updated_at = now()
+                    where sheet = ${COUNCIL_SHEET} and id = ${id}`;
     return;
   }
   // The last seat. The merge row goes through the function the door owns,
@@ -44,7 +55,7 @@ export async function recordSeatAnswer(
     ${{ door: row.door, chat: row.chat }}::jsonb, ${row.at}::timestamptz)`;
   await removeRow(store, COUNCIL_SHEET, id);
   await appendEntry(store, {
-    stream: "control", subject: id, kind: "council.merged", actor: "runner",
+    stream: "control", subject: id, kind: "council.merged", actor: by.actor,
     detail: {
       agent: row.agent, seats: row.seats,
       answered: row.seats.filter((one) => typeof next.answered[one] === "string"),

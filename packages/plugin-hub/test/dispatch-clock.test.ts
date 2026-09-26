@@ -29,7 +29,9 @@ import { message } from "./helpers/rollout-ingress.ts"
 import { observe } from "./helpers/rollout-runner.ts"
 import { COUNCIL_PHRASES, councilLate, DISPATCH_PHRASES } from "../src/door/lines.ts"
 import { clockDeadlines, councilDeadline, COUNCIL_STAMP } from "../src/door/clock.ts"
-import { COUNCIL_SHEET } from "../src/door/council.ts"
+import { COUNCIL_SHEET, mergeIdOf } from "../src/door/council.ts"
+import { settleTurn } from "../src/runner/settle.ts"
+import { openStore, storeUrlAs } from "../src/store/connect.ts"
 import { COUNCIL_SEATS } from "./helpers/rollout-stage.ts"
 import { chatLogLines } from "./helpers/hub-fixture.ts"
 import { projectInbound } from "../src/chatlog/project.ts"
@@ -192,19 +194,24 @@ test("D-213 the door says nothing about a report whose job ran for an hour, whil
   }
 }, 120_000)
 
-test("a council past the grace is said late ONCE, for the council and not per seat, and a restarted door says it no second time", async () => {
-  // The grace is two seconds, so the council's one clock runs out inside this
-  // check, and the seats are never settled, so it stays open throughout.
-  const it = await rolloutStage(cluster, "telegram", { council: true, hub: { job_grace_seconds: 2 } })
+test("a council past the grace is said late ONCE, its unclaimed seats are given up on, a claimed seat is left to its runner, and a restarted door says it no second time", async () => {
+  // The grace is four seconds, so the council's one clock runs out inside this
+  // check. One seat is claimed by a runner before the grace and never settled
+  // until the end, so the council stays open past the late line.
+  const it = await rolloutStage(cluster, "telegram", { council: true, hub: { job_grace_seconds: 4 } })
   let door: Awaited<ReturnType<typeof runDoor>> | undefined
+  const runner = await openStore({ url: storeUrlAs(cluster.url(it.db), "hub_runner") })
   try {
     door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
     it.edge.batch([{ ...message("500", `${COUNCIL_PHRASES.en} weigh the synthetic council`), chat: LAIR_CHAT, sender_id: "p1", from: "p1" }], "501")
     await until("the seats' jobs reach the queue", async () =>
       (await it.read.inbound()).filter(r => r.kind === "job").length === COUNCIL_SEATS.length, 20_000)
+    const jobs = (await it.read.inbound()).filter(r => r.kind === "job")
+    const held = jobs.find(j => j.agent === COUNCIL_SEATS[2])!
+    await it.read.sql("update inbound set claimed_by = 'runner-pi', claim_deadline = now() + interval '1 hour' where id = $1", [held.id])
     const [council] = await it.read.sheet(COUNCIL_SHEET)
     expect(council).toBeDefined()
-    expect(councilDeadline({ at: String(council.data.at) }, 2)).toBe(new Date(String(council.data.at)).getTime() + 2000)
+    expect(councilDeadline({ at: String(council.data.at) }, 4)).toBe(new Date(String(council.data.at)).getTime() + 4000)
 
     const late = () => it.edge.posts().filter(p => p.chat === LAIR_CHAT && p.text.includes("council")).filter(p => !p.text.includes("started on"))
     await until("the door says the council is late", () => late().length > 0, 20_000)
@@ -219,22 +226,50 @@ test("a council past the grace is said late ONCE, for the council and not per se
     expect(spoken[0].detail).toMatchObject({ stamp: COUNCIL_STAMP, person: "p1", agent: "p1-lair", id: `clock:${council.id}:${COUNCIL_STAMP}` })
     // No seat's job was ever spoken about: a seat's row is the seat's and
     // never an open turn of the chat's agent.
-    for (const job of (await it.read.inbound()).filter(r => r.kind === "job")) {
-      expect(await it.read.ledger({ stream: "clock", subject: job.id })).toEqual([])
+    for (const job of jobs) expect(await it.read.ledger({ stream: "clock", subject: job.id })).toEqual([])
+
+    // The two seats nobody claimed are given up on in the same transaction,
+    // by the door through the runner-owned function; the held one is left.
+    const rows = await it.read.inbound()
+    for (const seat of COUNCIL_SEATS.slice(0, 2)) {
+      const job = rows.find(r => r.agent === seat && r.kind === "job")!
+      expect(job.state).toBe("answered")
+      expect(rows.find(r => r.id === `report:${job.id}`)).toBeUndefined()
+      const abandoned = await it.read.ledger({ subject: job.id, kind: "dispatch.abandoned" })
+      expect(abandoned).toHaveLength(1)
+      expect(abandoned[0].actor).toBe("runner")
+      expect(abandoned[0].detail).toMatchObject({ agent: seat, council: council.id, cause: "unclaimed past the grace", by: "door", dispatcher: "p1-lair" })
     }
+    expect(rows.find(r => r.id === held.id)!.state).toBe("received")
+    expect(rows.find(r => r.id === held.id)!.claimed_by).toBe("runner-pi")
+    expect(rows.filter(r => String(r.id).startsWith("merge:"))).toEqual([])
     const marked = (await it.read.sheet(COUNCIL_SHEET))[0]
     expect(marked.data.late).toEqual(expect.any(String))
-    expect(marked.data.answered).toEqual({})
+    expect(marked.data.answered).toEqual({ [COUNCIL_SEATS[0]]: null, [COUNCIL_SEATS[1]]: null })
+    // No "stopped, will retry" line about any seat reached the chat.
+    expect((await it.read.noticeRows()).filter(one => String(one.notice_key).startsWith("agent-retry:"))).toEqual([])
     // Not a second time in this door's life, well past a second grace.
-    expect(await observe(() => late().length > 1, 3_000)).toBe(false)
+    expect(await observe(() => late().length > 1, 5_000)).toBe(false)
     // Not a second time from a door started again either: the mark is on the row.
     await door.stop()
     door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
-    expect(await observe(() => late().length > 1, 3_000)).toBe(false)
+    expect(await observe(() => late().length > 1, 5_000)).toBe(false)
     expect(await it.read.ledger({ stream: "clock", subject: council.id })).toHaveLength(1)
-    const lines = chatLogLines(it.stateDir, "p1", "p1-lair").filter(l => l.text === late()[0].text)
-    expect(lines).toHaveLength(1)
+    expect(chatLogLines(it.stateDir, "p1", "p1-lair").filter(l => l.text === late()[0].text)).toHaveLength(1)
     // And the ordinary still-waiting lines are absent: nothing here is a turn.
     expect(it.edge.posts().filter(p => p.text.startsWith("[door] still waiting:"))).toEqual([])
-  } finally { await door?.stop(); await it.stop() }
+
+    // The held seat's runner settles it at last: the merge lands with the
+    // two given-up seats as "no answer", and the row goes.
+    await settleTurn(runner, { inboundId: held.id, kind: "job", person: "p1", source: held.source as never, chunks: ["the held seat's answer"],
+      turn: { agent: COUNCIL_SEATS[2], runner: "runner-pi", preset: "daily", preset_id: "p", preset_settings: {}, input_tokens: 1, cached_input_tokens: 0,
+        output_tokens: 1, price: null, plan_usage: null, raw_usage: {}, session_id: null, lacks: [], tail: false } })
+    const merge = (await it.read.inbound()).find(r => r.id === mergeIdOf(council.id))!
+    expect(merge).toBeDefined()
+    expect(merge.body).toContain("Seat 1:\nno answer")
+    expect(merge.body).toContain("Seat 2:\nno answer")
+    expect(merge.body).toContain("Seat 3:\nthe held seat's answer")
+    expect(await it.read.sheet(COUNCIL_SHEET)).toEqual([])
+    expect(await it.read.ledger({ kind: "council.merged" })).toHaveLength(1)
+  } finally { await door?.stop(); await runner.close(); await it.stop() }
 }, 90_000)

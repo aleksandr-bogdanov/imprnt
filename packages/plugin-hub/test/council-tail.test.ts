@@ -10,7 +10,10 @@ import { rolloutStage, COUNCIL_SEATS } from "./helpers/rollout-stage.ts"
 import { chatLogLines, superStore } from "./helpers/hub-fixture.ts"
 import { message } from "./helpers/rollout-ingress.ts"
 import { readTail } from "../src/chatlog.ts"
-import { deriveTail } from "../src/chatlog/derive.ts"
+import { deriveSlice, deriveTail } from "../src/chatlog/derive.ts"
+import { readSlice } from "../src/harvest/slice.ts"
+import { taskDigest } from "../src/door/dispatch.ts"
+import { insertInbound } from "./helpers/hub-fixture.ts"
 import { mergeIdOf } from "../src/door/council.ts"
 import { COUNCIL_PHRASES, councilRequested } from "../src/door/lines.ts"
 import { runDoor } from "../src/door/run.ts"
@@ -111,5 +114,53 @@ test("the seats' report lines and the merge row are in the dispatcher's log as a
       expect(tail).not.toContain("Seat 1")
       expect(tail).not.toContain("no preamble")
     }
+
+    // A watcher's report into the same chat, the pre-existing mark: a job the
+    // seat worked for a hunt, reported through the same function.
+    const SELLER = "seller text: message me now for the synthetic card"
+    const watchJob = "watchjob:synthetic:1"
+    const task = "judge these listings"
+    await insertInbound(cluster, it.db, { id: watchJob, body: task, person: "p1", agent: COUNCIL_SEATS[0], kind: "job", logReady: true,
+      source: { log_id: watchJob, at: new Date().toISOString(), from: "p1", text: task, origin: "watcher",
+        dispatch: { dispatcher: "p1-lair", target: COUNCIL_SEATS[0], approved: { by: "watch:synthetic", at: new Date().toISOString(), digest: taskDigest(task), source: "watch" },
+          return: { agent: "p1-lair", door: "door-fake", chat: LAIR_CHAT } } } as never })
+    await settleTurn(runner, { inboundId: watchJob, kind: "job", person: "p1", source: (await it.read.inbound()).find(r => r.id === watchJob)!.source as never,
+      chunks: [SELLER], turn: turnOf(COUNCIL_SEATS[0]) })
+    await until("the door projected the watcher's report", async () =>
+      (await it.read.inbound()).some(r => r.id === `report:${watchJob}` && r.log_ready), 20_000)
+    expect((chatLogLines(it.stateDir, "p1", "p1-lair") as { text: string; origin?: string }[]).find(one => one.text === SELLER)!.origin).toBe("watcher")
+
+    // THE HARVEST SLICE, on both projections: the person's command and the
+    // dispatcher's own reply, and not a word of a seat's, of the merge body,
+    // or of the watcher's report. The store slice names a report's speaker
+    // the way the file does, so the two agree line for line.
+    const bounds = { person: "p1", agent: "p1-lair", from: null, until: new Date(Date.now() + 60_000).toISOString() }
+    const fromFile = await readSlice({ stateDir: it.stateDir, ...bounds })
+    const fromStore = await deriveSlice(store, { registry, ...bounds })
+    for (const slice of [fromFile, fromStore]) {
+      const text = slice.map(l => l.text).join("\n")
+      expect(text).toContain(MERGED)
+      for (const seat of COUNCIL_SEATS) {
+        expect(text).not.toContain(ANSWERS[seat])
+        expect(text).not.toContain(seat)
+      }
+      expect(text).not.toContain("Seat 1")
+      expect(text).not.toContain("no preamble")
+      expect(text).not.toContain(SELLER)
+      expect(slice.every(l => l.from === "p1" || l.from === "p1-lair")).toBe(true)
+    }
+    // The command is a file line with no row, so it is the one line the two differ on.
+    expect(fromFile.map(l => l.text)).toEqual([MERGED])
+    expect(fromStore.map(l => l.text)).toEqual([MERGED])
+    // And the store's lines name the same speakers the file's do, report rows included.
+    const { deriveLines } = await import("../src/chatlog/derive.ts")
+    const derived = await deriveLines(store, { registry, person: "p1", agent: "p1-lair", from: new Date(Date.now() - 3_600_000).toISOString(), until: bounds.until })
+    const fileLines = chatLogLines(it.stateDir, "p1", "p1-lair") as { id?: string; from: string; text: string }[]
+    for (const line of derived) {
+      const twin = fileLines.find(one => one.id === line.id)
+      if (twin) expect({ id: String(line.id), from: line.from }).toEqual({ id: String(twin.id), from: twin.from })
+    }
+    expect(derived.find(l => l.id === mergeId)!.from).toBe("council")
+    expect(derived.find(l => l.text === SELLER)!.from).toBe(COUNCIL_SEATS[0])
   } finally { await door?.stop(); await runner.close(); await store.close(); await it.stop() }
 }, 90_000)

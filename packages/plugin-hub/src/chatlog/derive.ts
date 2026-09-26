@@ -81,13 +81,14 @@ export async function deriveLines(
   // and the line the person really saw, the door's own "still transcribing",
   // arrives beside it.
   const said = (await store.sql`
-    select id, person, source from inbound
+    select id, person, kind, source from inbound
     where agent = ${args.agent} and source is not null and log_ready
       and received_at >= ${wideFrom}::timestamptz
       and received_at <= ${wideUntil}::timestamptz`) as unknown as {
     id: string;
     person: string;
-    source: { log_id?: string; at?: string; text?: string; media?: unknown[]; origin?: string } | null;
+    kind: string;
+    source: { log_id?: string; at?: string; from?: string; text?: string; media?: unknown[]; origin?: string } | null;
   }[];
   for (const row of said) {
     // Every kind of row, because a harvest demand's committed row is a line in
@@ -104,7 +105,12 @@ export async function deriveLines(
         id: source.log_id,
         at: source.at,
         direction: "in",
-        from: row.person,
+        // A REPORT is the one row whose author is not the row's person: the
+        // agent that worked the job wrote it, and the runner's report put that
+        // agent's id in `source.from`. The same rule the file projection
+        // applies, so the two projections name one speaker, and a harvest
+        // slice, which keeps a line by its speaker, drops it on both.
+        from: row.kind === "report" && typeof source.from === "string" ? source.from : row.person,
         text,
         // A watcher's or a council's row carries its origin in its provenance,
         // the way a watcher's notice carries it on the route.
@@ -272,7 +278,11 @@ export async function deriveSlice(
     .filter((line) => {
       const at = Date.parse(line.at);
       if (!(at > fromMs || (args.includeFrom && at === fromMs)) || at > untilMs) return false;
+      // A watcher's or a council's line is the person's to read and never a
+      // model's, and a harvest is a model reading: the same rule both tails
+      // apply, on the store side of the slice.
       return (
+        line.origin === undefined &&
         (line.from === args.person || line.from === args.agent) &&
         !isDemand(line.text) &&
         !isRecoveryCommand(line.text)

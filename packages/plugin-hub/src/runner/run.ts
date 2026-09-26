@@ -1270,7 +1270,13 @@ export async function runRunner(options: {
           const convened = Date.parse(String(claimedSeat.source?.dispatch?.approved?.at ?? ""));
           if (Number.isFinite(convened) && Date.now() > convened + grace) {
             await abandonJob(inside, { row: claimedSeat, runner: options.runner, cause });
+            // Settled, so nothing below may say it stopped and will be tried
+            // again: that line would be false, and it would carry the seat's
+            // id into the chat that asked the question.
             claimedSeat = null;
+            claimed = null;
+            claimedReturn = null;
+            claimedHuman = false;
           }
         }
         await tx`update inbound set claimed_by = null, claim_deadline = null, retry_at = ${retryAt}::timestamptz

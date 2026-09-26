@@ -10,6 +10,7 @@ import { rolloutStage, COUNCIL_SEATS } from "./helpers/rollout-stage.ts"
 import { superStore } from "./helpers/hub-fixture.ts"
 import { requestCouncil } from "../src/door/dispatch.ts"
 import { COUNCIL_SHEET, MERGE_INSTRUCTION, mergeIdOf } from "../src/door/council.ts"
+import { claimCouncilLate } from "../src/door/clock.ts"
 import { jobRefused } from "../src/door/lines.ts"
 import { loadRegistry } from "../src/registry/load.ts"
 import { abandonJob, NOT_APPROVED, refuseJob } from "../src/runner/job.ts"
@@ -183,5 +184,34 @@ test("a seat the runner gives up on is settled with no report and no answer, and
     expect(abandoned[0]).toMatchObject({ subject: dying.id, actor: "runner" })
     expect(abandoned[0].detail).toMatchObject({ agent: COUNCIL_SEATS[2], council: council.id, cause: "child exited" })
     expect((await it.read.ledger({ kind: "council.merged" }))[0].detail).toMatchObject({ silent: [COUNCIL_SEATS[2]] })
+    // Nothing was said to the chat about the seat stopping or being retried.
+    expect((await it.read.noticeRows()).filter(one => String(one.notice_key).startsWith("agent-retry:"))).toEqual([])
   } finally { await runner.close(); await store.close(); await it.stop() }
+}, 60_000)
+
+test("the door's late mark on the sheet row survives a seat's settle, and the last seat's settle removes the marked row", async () => {
+  const it = await rolloutStage(cluster, "telegram", { council: true })
+  const store = await superStore(cluster, it.db)
+  const runner = await openStore({ url: storeUrlAs(cluster.url(it.db), "hub_runner") })
+  const door = await openStore({ url: storeUrlAs(cluster.url(it.db), "hub_door") })
+  try {
+    const council = await convene(it, store, "telegram:" + LAIR_CHAT + ":400")
+    // The door marks the council late while every seat is open, as the door role.
+    const at = new Date().toISOString()
+    expect(await claimCouncilLate(door, { id: council.id, at })).toMatchObject({ answered: {} })
+    expect(await claimCouncilLate(door, { id: council.id, at })).toBeNull()
+    // A seat settles: its answer lands beside the mark, and the mark stands.
+    await settleSeat(runner, council.jobs.find(j => j.agent === COUNCIL_SEATS[0])!, ANSWERS[COUNCIL_SEATS[0]])
+    let [row] = await it.read.sheet(COUNCIL_SHEET)
+    expect(row.data.late).toBe(at)
+    expect(row.data.answered).toEqual({ [COUNCIL_SEATS[0]]: ANSWERS[COUNCIL_SEATS[0]] })
+    await settleSeat(runner, council.jobs.find(j => j.agent === COUNCIL_SEATS[1])!, ANSWERS[COUNCIL_SEATS[1]])
+    ;[row] = await it.read.sheet(COUNCIL_SHEET)
+    expect(row.data.late).toBe(at)
+    expect(Object.keys(row.data.answered as object).sort()).toEqual(COUNCIL_SEATS.slice(0, 2).sort())
+    // The last seat: the merge lands and the marked row is gone.
+    await settleSeat(runner, council.jobs.find(j => j.agent === COUNCIL_SEATS[2])!, ANSWERS[COUNCIL_SEATS[2]])
+    expect(await it.read.sheet(COUNCIL_SHEET)).toEqual([])
+    expect((await it.read.inbound()).filter(r => r.id === mergeIdOf(council.id))).toHaveLength(1)
+  } finally { await door.close(); await runner.close(); await store.close(); await it.stop() }
 }, 60_000)
