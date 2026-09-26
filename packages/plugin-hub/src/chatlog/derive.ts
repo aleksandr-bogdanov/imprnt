@@ -184,6 +184,8 @@ export async function deriveTail(
     now: Date;
     hours: number;
     tokens: number;
+    /** The lines of messages still waiting for their answer, which the runner names. */
+    exclude?: ReadonlySet<string>;
   },
 ): Promise<string> {
   const lines = await deriveLines(store, {
@@ -191,7 +193,9 @@ export async function deriveTail(
     from: new Date(args.now.getTime() - args.hours * 3_600_000).toISOString(),
     until: args.now.toISOString(),
   });
-  return renderTailLines(lines, args.tokens);
+  // The same rule the file reader applies, with the same set: the runner
+  // names the lines of the messages it is about to hand the session as turns.
+  return renderTailLines(lines.filter((line) => !args.exclude?.has(line.id)), args.tokens);
 }
 
 /**

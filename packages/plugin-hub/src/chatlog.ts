@@ -61,6 +61,14 @@ export async function appendChatLine(
  * `tokens`, oldest first, under the preamble. The budget counts the preamble,
  * and a line is kept or dropped whole, because half a message is a message
  * nobody sent. Empty when the log holds nothing in the window.
+ *
+ * `exclude` names the lines of messages still waiting for their answer. The
+ * door writes a message down the moment it lands, so a session spawned while
+ * one is waiting would otherwise be handed that message twice: once inside
+ * the tail, and again as the turn that answers it. The preamble tells the
+ * loop not to answer the tail, and a loop that reads a task there still acts
+ * on it. The runner reads the set off the store, which knows which rows are
+ * open, and the file knows nothing about them.
  */
 export async function readTail(args: {
   stateDir: string;
@@ -69,6 +77,7 @@ export async function readTail(args: {
   now: Date;
   hours: number;
   tokens: number;
+  exclude?: ReadonlySet<string>;
 }): Promise<string> {
   const from = args.now.getTime() - args.hours * 3_600_000;
   const lines: ChatLine[] = [];
@@ -87,6 +96,7 @@ export async function readTail(args: {
       let line: unknown;
       try { line = JSON.parse(raw); } catch { continue; }
       if (!validLine(line)) continue;
+      if (line.id !== undefined && args.exclude?.has(line.id)) continue;
       if (Date.parse(line.at) >= from) lines.push(line);
     }
   }

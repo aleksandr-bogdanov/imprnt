@@ -878,9 +878,19 @@ export async function runRunner(options: {
         hours: setting(registry, "hub.tail_hours"),
         tokens: setting(registry, "hub.tail_tokens"),
       };
+      // A message still waiting for its answer is not in the tail. The door
+      // wrote it down the moment it landed, and this session is about to be
+      // handed it as a turn of its own, so inside the tail it would be the same
+      // message twice: the loop is told not to answer the tail, and a loop
+      // that reads a task there still runs it.
+      const waiting = new Set<string>(((await store.sql`
+        select source ->> 'log_id' as log_id from inbound
+        where agent = ${agent.id} and source is not null
+          and state not in ('answered', 'delivered')`) as unknown as { log_id: string | null }[])
+        .map(row => row.log_id).filter((id): id is string => typeof id === "string" && id !== ""));
       const tail = chatStateFor(registry, agent.id) === "store"
-        ? await deriveTail(store, { registry, ...where })
-        : await readTail({ stateDir, ...where });
+        ? await deriveTail(store, { registry, ...where, exclude: waiting })
+        : await readTail({ stateDir, ...where, exclude: waiting });
       if (tail !== "") await oneTurn({ id: agent.id, text: tail }, { preset, tail: true, registry });
     };
 

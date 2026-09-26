@@ -14,8 +14,8 @@
 // is what says the placement rule chose a reader rather than replacing one.
 
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { seam, startCluster, type Cluster } from "./helpers/cluster.ts";
 import { fakeProber } from "./helpers/prober.ts";
 import { controlledAdapter, observe } from "./helpers/rollout-runner.ts";
@@ -28,6 +28,7 @@ import {
   RUNNER,
   RUNNER2,
   SPOKE_MACHINE,
+  chatLogFile,
   insertInbound,
   plantChatLine,
   spokeStage,
@@ -37,6 +38,7 @@ import {
 } from "./helpers/hub-fixture.ts";
 import { proveRolloutRunner } from "../live/prove-rollout-runner.ts";
 import { TAIL_PREAMBLE } from "../src/chatlog.ts";
+import { deriveTail } from "../src/chatlog/derive.ts";
 import { encodeHarvestBody, harvestRowId } from "../src/harvest/row.ts";
 import { loadRegistry } from "../src/registry/load.ts";
 import { runRunner } from "../src/runner/run.ts";
@@ -83,22 +85,30 @@ test(
     let runner: Awaited<ReturnType<typeof runRunner>> | undefined;
     try {
       const now = Date.now();
-      await insertInbound(cluster, it.db, planted("older", "sapphire-otter", new Date(now - 600_000)));
+      await insertInbound(cluster, it.db, planted("older", "sapphire-otter", new Date(now - 900_000)));
+      await insertInbound(cluster, it.db, planted("middle", "copper-kettle", new Date(now - 600_000)));
       await insertInbound(cluster, it.db, planted("newer", "brass-lantern", new Date(now - 300_000)));
+      // Two of the three were answered. The third still waits, so the runner
+      // hands it to the session as a turn and not inside the tail as well.
+      for (const id of ["older", "middle"]) {
+        await it.read.sql("insert into ledger_event (stream, subject, kind, actor) values ('inbound', $1, 'answered', 'runner')", [id]);
+      }
       runner = await runRunner({
         runner: RUNNER2,
         registryFile: it.registryFile,
         adapters: { [it.adapterName]: edge.adapter },
       });
       expect(
-        await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length > 0),
-        "the spoke's runner started a session and fed it something",
+        await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length > 1),
+        "the spoke's runner started a session, fed it the tail and then the waiting message",
       ).toBe(true);
       const first = edge.sessions[0].fed[0].text;
       expect(first.startsWith(TAIL_PREAMBLE), `first fed message: ${first}`).toBe(true);
       expect(first).toContain("sapphire-otter");
-      expect(first).toContain("brass-lantern");
-      expect(first.indexOf("sapphire-otter")).toBeLessThan(first.indexOf("brass-lantern"));
+      expect(first).toContain("copper-kettle");
+      expect(first.indexOf("sapphire-otter")).toBeLessThan(first.indexOf("copper-kettle"));
+      expect(first, "the waiting message is not in the tail").not.toContain("brass-lantern");
+      expect(edge.sessions[0].fed[1]).toMatchObject({ id: "newer", text: "brass-lantern" });
       // Read off the filesystem, after the feed: there is no chat log on this
       // machine and there never was one.
       expect(existsSync(join(it.stateDir, PERSON, "chatlog"))).toBe(false);
@@ -141,6 +151,54 @@ test(
   },
   SLOW,
 );
+
+test("the store reader leaves out the lines the runner names, the way the file reader does, and nothing on its own", async () => {
+  const it = await stageSpoke(cluster);
+  try {
+    const now = Date.now();
+    await insertInbound(cluster, it.db, planted("answered-row", "sapphire-otter", new Date(now - 600_000)));
+    await insertInbound(cluster, it.db, planted("open-row", "brass-lantern", new Date(now - 300_000)));
+    const store = await superStore(cluster, it.db);
+    try {
+      const where = { registry: loadRegistry(it.registryFile), person: PERSON, agent: AGENT, now: new Date(), hours: 24, tokens: 8000 };
+      const cut = await deriveTail(store, { ...where, exclude: new Set(["open-row"]) });
+      expect(cut).toContain("sapphire-otter");
+      expect(cut).not.toContain("brass-lantern");
+      // The control: the two readers stay one reader, and only the set the
+      // runner hands them decides what is left out.
+      const whole = await deriveTail(store, where);
+      expect(whole).toContain("brass-lantern");
+    } finally { await store.close(); }
+  } finally { await it.stop(); }
+}, SLOW);
+
+test("a session spawned while a message waits is handed that message once, as its turn, and not inside the tail as well", async () => {
+  const it = await stageHub(cluster);
+  const edge = controlledAdapter(it.adapterName);
+  let runner: Awaited<ReturnType<typeof runRunner>> | undefined;
+  try {
+    // The door's own record of the message, written the moment it landed, and
+    // the row it wrote beside it, still waiting for its answer.
+    const at = new Date(Date.now() - 60_000);
+    const file = chatLogFile({ stateDir: it.stateDir, person: PERSON, agent: AGENT, at });
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, JSON.stringify({ id: "earlier-line", at: new Date(at.getTime() - 60_000).toISOString(), direction: "in", from: PERSON, text: "copper-kettle" }) + "\n");
+    appendFileSync(file, JSON.stringify({ id: "open-line", at: at.toISOString(), direction: "in", from: PERSON, text: "brass-lantern" }) + "\n");
+    await insertInbound(cluster, it.db, { ...planted("open-line", "brass-lantern", at), id: "open-row" });
+    runner = await runRunner({ runner: RUNNER, registryFile: it.registryFile, adapters: { [it.adapterName]: edge.adapter } });
+    expect(await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length >= 2)).toBe(true);
+    const [tail, turn] = edge.sessions[0].fed;
+    expect(tail.text.startsWith(TAIL_PREAMBLE)).toBe(true);
+    expect(tail.text).toContain("copper-kettle");
+    expect(tail.text, "the waiting message is not in the tail").not.toContain("brass-lantern");
+    expect(turn.id).toBe("open-row");
+    expect(turn.text).toBe("brass-lantern");
+  } finally {
+    await runner?.stop();
+    await edge.stop();
+    await it.stop();
+  }
+}, SLOW);
 
 test("the reader is chosen by the registry and by nothing else", async () => {
   const { chatStateFor } = await seam("src/registry/entries.ts");
