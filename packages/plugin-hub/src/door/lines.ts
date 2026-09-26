@@ -865,20 +865,29 @@ export function boardBindFailed(language: Language, values: LineValues = {}): st
 }
 
 /**
- * The one word on a card. It is `check`'s answer and never the page's opinion:
+ * The sentence on a card. It is `check`'s answer and never the page's opinion:
  * the question a card asks is whether the `check` sheet holds a finding whose
- * subject is this thing.
+ * subject is this thing, and a broken card says that finding's own words.
+ *
+ * A SENTENCE AND NOT A WORD. "ok", "waiting" and "broken" told a person that
+ * something was the matter and not what, so the broken card carries the
+ * finding's `says`, the waiting card the count it is answering, and the idle
+ * card the one word that needs no more. The Russian count is never glued to a
+ * noun, which is the lesson the catch-up line taught.
  */
 export function cardOk(language: Language, values: LineValues = {}): string {
-  return interpolate(language, language === "ru" ? "в порядке" : "ok", values);
+  return interpolate(language, language === "ru" ? "свободен" : "idle", values);
 }
 
 export function cardWaiting(language: Language, values: LineValues = {}): string {
-  return interpolate(language, language === "ru" ? "ожидание" : "waiting", values);
+  const count = Number(values.count ?? 0);
+  return interpolate(language, language === "ru"
+    ? "отвечает, сообщений в работе: {count}"
+    : `answering {count} ${count === 1 ? "message" : "messages"}`, values);
 }
 
 export function cardBroken(language: Language, values: LineValues = {}): string {
-  return interpolate(language, language === "ru" ? "сломано" : "broken", values);
+  return interpolate(language, "{says}", values);
 }
 
 export function actRequested(language: Language, values: LineValues = {}): string {

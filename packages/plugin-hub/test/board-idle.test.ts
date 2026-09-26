@@ -44,7 +44,7 @@ import { programForKind } from "../src/hub/program.ts";
 const SLOW = 120_000;
 const HERE = process.platform === "darwin" ? "mac" : "pi";
 const HERE_OS = process.platform === "darwin" ? "macos" : "linux";
-const PAGES = ["/", "/people", "/findings", "/metrics"] as const;
+const PAGES = ["/", "/people", "/chats", "/usage", "/findings", "/metrics"] as const;
 
 /** The shipped idle window and its bound, both `test/wait-idle.test.ts`'s own. */
 const WINDOW_MS = 3_000;

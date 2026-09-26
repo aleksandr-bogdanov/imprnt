@@ -15,9 +15,9 @@
 // | enabledNotBoolean   | {id} has enabled {value}, and whether the hub keeps it running is a true or a false.             | {id} указывает enabled {value}, а держать ли его запущенным - это true или false. |
 // | artifactsNotBoolean | {id} has artifacts {value}, and whether the board serves this person's artifacts is a true or a false. | {id} указывает artifacts {value}, а показывать ли артефакты этого человека - это true или false. |
 // | boardBindFailed     | board: cannot listen on {bind}:{port}: {cause}.                                                  | доска: не удаётся слушать {bind}:{port}: {cause}. |
-// | cardOk              | ok                                                                                               | в порядке |
-// | cardWaiting         | waiting                                                                                          | ожидание |
-// | cardBroken          | broken                                                                                           | сломано |
+// | cardOk              | idle                                                                                             | свободен |
+// | cardWaiting         | answering {count} message(s)                                                                     | отвечает, сообщений в работе: {count} |
+// | cardBroken          | {says} (the finding's own sentence)                                                              | {says} |
 // | actRequested        | restart requested for {target}.                                                                  | запрошен перезапуск {target}. |
 // | actRefused          | restart refused for {target}: {cause}.                                                           | перезапуск {target} отклонён: {cause}. |
 // | editApplied         | {field} set to {value} for {target}.                                                             | {field} для {target} установлено в {value}. |
@@ -219,9 +219,25 @@ test("the two refusals for a piece that cannot be stopped from the file are pinn
 });
 
 test("D-253 the nine page strings and the one finding line are pinned whole in both languages", () => {
-  pinned(cardOk, {}, "ok", "в порядке");
-  pinned(cardWaiting, {}, "waiting", "ожидание");
-  pinned(cardBroken, {}, "broken", "сломано");
+  // A card carries a sentence and not a word: idle says so in one, waiting
+  // says how many it is answering, and broken says the finding's own words.
+  pinned(cardOk, {}, "idle", "свободен");
+  pinned(cardWaiting, { count: 1 }, "answering 1 message", "отвечает, сообщений в работе: 1", ["1"]);
+  pinned(cardWaiting, { count: 3 }, "answering 3 messages", "отвечает, сообщений в работе: 3", ["3"]);
+  pinned(
+    cardBroken,
+    { says: "p1-lair is retrying: task failed" },
+    "p1-lair is retrying: task failed",
+    "p1-lair is retrying: task failed",
+    ["p1-lair is retrying: task failed"],
+  );
+  // The words the cards used to carry are not on any card any more.
+  for (const language of ["en", "ru"] as Language[]) {
+    for (const word of ["ok", "waiting", "broken", "owed", "в порядке", "ожидание", "сломано"]) {
+      expect(cardOk(language)).not.toBe(word);
+      expect(cardWaiting(language, { count: 2 })).not.toContain(word);
+    }
+  }
   pinned(
     actRequested,
     { target: "runner-pi" },
@@ -277,8 +293,8 @@ test("D-253 no operator or page sentence carries the machinery marker, and a mar
     [artifactsNotBoolean, { id: "p1", value: "no" }],
     [boardBindFailed, { bind: "127.0.0.1", port: 8794, cause: "denied" }],
     [cardOk, {}],
-    [cardWaiting, {}],
-    [cardBroken, {}],
+    [cardWaiting, { count: 2 }],
+    [cardBroken, { says: "a finding's own words" }],
     [actRequested, { target: "runner-pi" }],
     [actRefused, { target: "runner-pi", cause: "denied" }],
     [editApplied, { field: "enabled", value: "false", target: "runner-pi" }],
