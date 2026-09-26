@@ -458,6 +458,9 @@ export async function runDoor(options: {
         await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
           id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
           from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
+          // The same mark the delivery projection writes, so a watcher's line
+          // projected at start is left out of the tail too.
+          ...(chunk.route?.origin === "watcher" ? { origin: "watcher" as const } : {}),
         }, { skipBad });
         projected.add(chunk.id);
       }
@@ -687,6 +690,9 @@ export async function runDoor(options: {
           await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
             id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
             from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
+            // A watcher's notice is marked in the log as it is on the row, so
+            // the file tail leaves it out the way the store tail does.
+            ...(chunk.route?.origin === "watcher" ? { origin: "watcher" as const } : {}),
           }, { skipBad });
           projected.add(chunk.id);
         }

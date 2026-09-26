@@ -468,3 +468,125 @@ test(
   },
   30_000,
 );
+
+// ---------------------------------------------------------------------------
+// A clock time. `daily at HH:MM` is the one schedule that says WHEN rather
+// than how often, and each manager has a calendar shape of its own for it:
+// systemd an `OnCalendar` event that `Persistent` runs late when the box was
+// off, launchd a `StartCalendarInterval` with an hour and a minute. Everything
+// else about the entry stays what a scheduled entry renders.
+// ---------------------------------------------------------------------------
+
+function stageWatch(): { dir: string; registryFile: string; unitDir: string } {
+  const dir = mkdtempSync(join(tmpdir(), "hub-render-watch-"));
+  const spec: RegistrySpec = {
+    hub: {
+      store_url: "postgres://127.0.0.1:5432/hub",
+      state_dir: dir,
+      restart_delay_seconds: RESTART_DELAY,
+      give_up_after: GIVE_UP_AFTER,
+      give_up_window_seconds: GIVE_UP_WINDOW,
+    },
+    machines: [{ id: "pi", os: "linux" }],
+    people: [{ id: "p1", tree: join(dir, "p1") }],
+    credentials: [{ id: "sentry", kind: "api-key", file: "/dev/null", owner: "p1" }],
+    presets: { daily: { adapter: "scripted", model: "a-model-name", provider: "a-provider", effort: "medium", paid: "plan" } },
+    agents: [{ id: "p1-lair", person: "p1", preset: "daily", chat: "0000000000", door: "door-fake", runner: "runner-pi" }],
+    run: [
+      { id: "door-fake", kind: "door", machine: "pi", platform: "fake", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 },
+      { id: "runner-pi", kind: "runner", machine: "pi", schedule: "always", memory_limit_mb: MEMORY_MB, child_memory_limit_mb: 512 },
+      {
+        id: "sentry-digest", kind: "watch", source: "sentry", machine: "pi", schedule: "daily at 07:05",
+        person: "p1", agent: "p1-lair", credential: "sentry", org: "example-org", memory_limit_mb: 128,
+      },
+    ],
+  };
+  return { dir, registryFile: writeRegistry(dir, spec), unitDir: join(dir, "units") };
+}
+
+test("a watch scheduled daily at a clock time renders a calendar event on systemd and a calendar interval on launchd, and is a scheduled entry everywhere else", async () => {
+  const { systemd } = await seam("src/os/systemd.ts");
+  const { launchd } = await seam("src/os/launchd.ts");
+  const { wantedState, scheduleSeconds, dailyAt } = await seam("src/os/diff.ts");
+  const { unitName, timerName } = await seam("src/os/names.ts");
+  const it = stageWatch();
+  try {
+    const entries = listRunEntries(loadRegistry(it.registryFile));
+    const watch = entries.find((e) => e.id === "sentry-digest")!;
+    expect(watch.kind).toBe("watch");
+
+    // The shape, read by the two functions everything else leans on: the
+    // stale-job check wants a day, the wanted state is scheduled, and the
+    // hour and the minute come back typed.
+    expect((dailyAt as Function)("daily at 07:05")).toEqual({ hour: 7, minute: 5 });
+    expect((dailyAt as Function)("Daily at 7:05")).toEqual({ hour: 7, minute: 5 });
+    expect((dailyAt as Function)("daily at 24:00")).toBeNull();
+    expect((dailyAt as Function)("daily at 07:60")).toBeNull();
+    expect((dailyAt as Function)("daily")).toBeNull();
+    expect((dailyAt as Function)("every 15m")).toBeNull();
+    expect((scheduleSeconds as Function)("daily at 07:05")).toBe(86400);
+    expect((wantedState as Function)(watch)).toBe("scheduled");
+
+    const ctx = {
+      machine: "pi",
+      execPath: "/opt/homebrew/bin/bun",
+      entryScript: hubPath("src/entry/watch.ts"),
+      registryFile: it.registryFile,
+      restartDelaySeconds: RESTART_DELAY,
+      giveUpAfter: GIVE_UP_AFTER,
+      giveUpWindowSeconds: GIVE_UP_WINDOW,
+      home: "/home/of-the-service-account",
+    };
+    const linux = (systemd as Function)({ unitDir: it.unitDir }) as {
+      render(entry: unknown, ctx: unknown): { path: string; text: string }[];
+    };
+    const mac = (launchd as Function)({ unitDir: it.unitDir }) as {
+      render(entry: unknown, ctx: unknown): { path: string; text: string }[];
+    };
+
+    // systemd: the service and its timer, the timer a calendar event and not
+    // an interval pair, run late when the box slept through it.
+    const files = linux.render(watch, ctx);
+    expect(files.length).toBe(2);
+    const timer = files.find((f) => f.path.endsWith(".timer"))!;
+    const service = files.find((f) => f.path.endsWith(".service"))!;
+    expect(timer.path.endsWith((timerName as Function)("sentry-digest"))).toBe(true);
+    const timerSections = unitSections(timer.text);
+    expect(unitValue(timerSections, "OnCalendar").trim()).toBe("*-*-* 07:05:00");
+    expect(unitValue(timerSections, "Persistent").trim()).toBe("true");
+    expect(unitValues(timerSections, "OnActiveSec")).toEqual([]);
+    expect(unitValues(timerSections, "OnUnitActiveSec")).toEqual([]);
+    expect(unitValue(timerSections, "Unit").trim()).toBe(`${(unitName as Function)("sentry-digest")}.service`);
+    expect((timerSections.get("Install") ?? []).map(([k, v]) => `${k}=${v.trim()}`)).toContain("WantedBy=timers.target");
+    const serviceSections = unitSections(service.text);
+    expect(unitValues(serviceSections, "Restart").map((v) => v.trim())).not.toContain("always");
+    expect(execArgv(unitValue(serviceSections, "ExecStart"))).toEqual([
+      ctx.execPath, "run", ctx.entryScript, ctx.registryFile, "sentry-digest",
+    ]);
+    expect(systemdBytes(unitValue(serviceSections, "MemoryMax"))).toBe(128 * 1024 * 1024);
+
+    // launchd: one plist, a typed calendar interval, no repeating interval and
+    // nothing keeping it alive.
+    const plists = mac.render(watch, ctx);
+    expect(plists.length).toBe(1);
+    const job = await plistOf(plists[0].text);
+    expect(job.StartCalendarInterval).toEqual({ Hour: 7, Minute: 5 });
+    expect(job.StartInterval).toBeUndefined();
+    expect(job.KeepAlive ?? false).toBe(false);
+    expect(job.RunAtLoad).toBe(false);
+    expect(job.ProgramArguments).toEqual([ctx.execPath, "run", ctx.entryScript, ctx.registryFile, "sentry-digest"]);
+
+    // The control: an interval schedule on the same entry still renders the
+    // pair it always did, on both.
+    const hourly = { ...watch, schedule: "every 6h" };
+    const pair = unitSections(linux.render(hourly, ctx).find((f) => f.path.endsWith(".timer"))!.text);
+    expect(systemdSeconds(unitValue(pair, "OnUnitActiveSec"))).toBe(21600);
+    expect(unitValues(pair, "OnCalendar")).toEqual([]);
+    expect(unitValues(pair, "Persistent")).toEqual([]);
+    const interval = await plistOf(mac.render(hourly, ctx)[0].text);
+    expect(interval.StartInterval).toBe(21600);
+    expect(interval.StartCalendarInterval).toBeUndefined();
+  } finally {
+    rmSync(it.dir, { recursive: true, force: true });
+  }
+});

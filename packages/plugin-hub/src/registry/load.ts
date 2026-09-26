@@ -257,7 +257,27 @@ export class UnknownSetting extends Error {
  * carry only while the household names a recognizer that runs here, so the
  * condition below adds it for such a file and for no other.
  */
-export const RUN_KINDS = ["hub", "door", "runner", "sync", "board", "backup"] as const;
+export const RUN_KINDS = ["hub", "door", "runner", "sync", "board", "backup", "watch"] as const;
+
+/**
+ * What a `kind = "watch"` entry may fetch from, and what it counts by when the
+ * file says nothing.
+ *
+ * ONE SOURCE. A watch is a program with no hands: it fetches one site, compares
+ * with what it saw last time and writes one notice the door delivers, and each
+ * site is its own reader. A source this list does not name is refused by line,
+ * because a file naming a reader that does not exist would run a timer that
+ * exits every morning. The defaults are chosen, not measured: one event is the
+ * floor under which an issue is not even counted, ten is where a new issue is
+ * worth a line, and a week is when an open one is worth a second look.
+ */
+export const WATCH_SOURCES = ["sentry"] as const;
+export const WATCH_DEFAULTS = {
+  query: "is:unresolved",
+  min_events: 1,
+  notify_events: 10,
+  reminder_days: 7,
+} as const;
 
 /**
  * What a runner admits when its entry says nothing: how many children at once,
@@ -370,6 +390,24 @@ export interface RunEntry {
   upload_argv?: string[];
   readback_argv?: string[];
   destination?: string;
+  /**
+   * A watch's own: where it reads (`source`, one of `WATCH_SOURCES`), whose
+   * chat the digest lands in (`person` and that person's `agent`, which
+   * carries a door and a chat), the `api-key` credential it reads with, the
+   * organisation it asks about, the query it asks, and the three counts the
+   * digest is cut by. The three are filled from `WATCH_DEFAULTS` by the reader
+   * when the file says nothing, and the loader refuses a value that is not a
+   * whole number above zero.
+   */
+  source?: string;
+  person?: string;
+  agent?: string;
+  credential?: string;
+  org?: string;
+  query?: string;
+  min_events?: number;
+  notify_events?: number;
+  reminder_days?: number;
   /**
    * Whether the hub keeps this entry running. Absent means it does.
    *
@@ -1506,6 +1544,45 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       }
     }
 
+    // A watch's own rules. The five names are strings the reader needs before
+    // it can fetch anything, and whether the agent and the credential they
+    // name exist is asked further down, once both tables are parsed. The
+    // source is a closed list because each one is its own reader.
+    if (entry.kind === "watch") {
+      if (scheduleSeconds(String(entry.schedule)) === null) {
+        refuse(`${at}.schedule`, here,
+          `${id} is a watch with schedule ${describe(entry.schedule)}, and a watch runs on a cadence such as ` +
+            `daily at 07:00 or every 6h: one that never stops, or that nobody starts, is not a morning digest`);
+      }
+      for (const field of ["source", "person", "agent", "credential", "org"] as const) {
+        const value = entry[field];
+        if (value === undefined || value === null) {
+          refuse(`${at}.${field}`, here, `${id} is a watch with no ${field}, and a watch is a source, a person, an agent, a credential and an org`);
+        }
+        if (typeof value !== "string" || value.trim() === "") {
+          refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here,
+            `${id} has ${field} ${describe(value)}, and it must be a nonempty string`);
+        }
+      }
+      if (!(WATCH_SOURCES as readonly string[]).includes(entry.source as string)) {
+        refuse(`${at}.source`, lines.get(`${at}.source`) ?? here,
+          `unsupported-watch-source: ${entry.source}. The one source this hub reads is ${WATCH_SOURCES.join(", ")}`);
+      }
+      const query = entry.query;
+      if (query !== undefined && query !== null && (typeof query !== "string" || query.trim() === "")) {
+        refuse(`${at}.query`, lines.get(`${at}.query`) ?? here,
+          `${id} has query ${describe(query)}, and it must be a nonempty string`);
+      }
+      for (const field of ["min_events", "notify_events", "reminder_days"] as const) {
+        const value = entry[field];
+        if (value === undefined || value === null) continue;
+        if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+          refuse(`${at}.${field}`, lines.get(`${at}.${field}`) ?? here,
+            `${id} has ${field} ${describe(value)}, and it must be a whole number above zero`);
+        }
+      }
+    }
+
     entries.push({
       id,
       kind: entry.kind as string,
@@ -1519,14 +1596,17 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       // it has no rule about. A board is reached at an address and a port, the
       // recognizer at a port on loopback plus the two knobs that say how long
       // it holds its model, a door names the server a channel name is
-      // resolved against and the preset it adopts agents with, and a backup
-      // carries its three commands and where they send the copy. Carrying any of
-      // them onto another kind's row would put a field on it that nothing reads
-      // and that a reader would have to explain.
+      // resolved against and the preset it adopts agents with, a backup
+      // carries its three commands and where they send the copy, and a watch
+      // carries where it reads, whose chat it writes into and the counts it
+      // cuts its digest by. Carrying any of them onto another kind's row would
+      // put a field on it that nothing reads and that a reader would have to
+      // explain.
       ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
         : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"]
         : entry.kind === "door" ? ["guild", "default_preset"]
-        : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS] : [])
+        : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS]
+        : entry.kind === "watch" ? ["source", "person", "agent", "credential", "org", "query", "min_events", "notify_events", "reminder_days"] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
@@ -2207,6 +2287,45 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         `so ${extra.agent.id} (chat ${extra.agent.chat}) cannot: Telegram confirms updates for the whole bot, ` +
         `so one Telegram door serves one agent in one chat. Give ${extra.agent.id} its own bot and door`,
     );
+  });
+
+  // Whose chat a watch writes into, and what it reads with, checked once both
+  // tables are parsed. The agent has to be this person's and has to answer in
+  // a chat, because a digest is a notice on that agent's door and chat, and an
+  // agent that takes jobs alone has nowhere for one to land. The credential
+  // has to be a key, because the reader sends it as a bearer token and a login
+  // file or a bot token is not one.
+  entries.forEach((entry, nth) => {
+    if (entry.kind !== "watch") return;
+    const where = `run[${nth}]`;
+    const here = lines.get(`${where}.id`) ?? 0;
+    if (knownPerson.size > 0 && !knownPerson.has(entry.person as string)) {
+      refuse(`${where}.person`, lines.get(`${where}.person`) ?? here,
+        `${entry.id} writes to the person ${entry.person}, which this file does not declare`);
+    }
+    const agent = agents.find((one) => one.id === entry.agent);
+    const atAgent = lines.get(`${where}.agent`) ?? here;
+    if (!agent) {
+      refuse(`${where}.agent`, atAgent, `${entry.id} writes into the chat of ${entry.agent}, which is not an agent of this file`);
+    }
+    if (agent!.person !== entry.person) {
+      refuse(`${where}.agent`, atAgent,
+        `${entry.id} writes into the chat of ${entry.agent}, which is ${agent!.person}'s agent and not ${entry.person}'s`);
+    }
+    if (agent!.door === undefined || agent!.chat === undefined) {
+      refuse(`${where}.agent`, atAgent,
+        `${entry.id} writes into the chat of ${entry.agent}, which names no door and no chat, so a digest has nowhere to land`);
+    }
+    const credential = credentials.find((one) => one.id === entry.credential);
+    const atCredential = lines.get(`${where}.credential`) ?? here;
+    if (!credential) {
+      refuse(`${where}.credential`, atCredential,
+        `${entry.id} reads with ${entry.credential}, which no [[credentials]] entry declares`);
+    }
+    if (credential!.kind !== "api-key") {
+      refuse(`${where}.credential`, atCredential,
+        `${entry.id} reads with ${entry.credential}, which is a ${credential!.kind}, and a watch sends its key as a bearer token, so it must be an api-key`);
+    }
   });
 
   const rates: RateEntry[] = [];

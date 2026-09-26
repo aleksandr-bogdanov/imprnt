@@ -18,17 +18,19 @@ import { readStatus } from "../hub/status.ts";
 import { readStampMetrics } from "../metrics/stamps.ts";
 import { readSheet } from "../records/statesheet.ts";
 import { lifetimeFor, listAgents, listMachines, listPeople, listRunEntries, voiceFor } from "../registry/entries.ts";
-import { loadRegistry, NEVER_STOPPED, type RunEntry } from "../registry/load.ts";
+import { loadRegistry, NEVER_STOPPED, readSetting, type RunEntry } from "../registry/load.ts";
 import type { OsSeam } from "../os/types.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readOpenTurns } from "../store/turns.ts";
 import { readVoiceHealth } from "../voice/health.ts";
 import { isLocalAddress, sameAddress } from "../net/address.ts";
 import { serveArtifact } from "./artifacts.ts";
-import { findingsPage, machinesPage, metricsPage, peoplePage, type CheckRow, type ControlRow } from "./pages.ts";
+import { readChatNewest, readChatPage, type ChatNewest } from "./chats.ts";
+import { chatPage, chatsPage, findingsPage, machinesPage, metricsPage, peoplePage, usagePage, type CheckRow, type ControlRow } from "./pages.ts";
+import { readUsage, readWindows } from "./usage.ts";
 
 /**
- * The board as a program: one `Bun.serve` on one specific address, four pages
+ * The board as a program: one `Bun.serve` on one specific address, six pages
  * assembled from the readers the command line already calls, and acts that are
  * the one recovery verb or an edit to the registry file.
  *
@@ -40,10 +42,15 @@ import { findingsPage, machinesPage, metricsPage, peoplePage, type CheckRow, typ
  * statements and the processor time.
  *
  * THE BOARD HOLDS NO STATE OF ITS OWN. It opens no file for writing anywhere,
- * samples nothing and keeps no index. Every page is a read of the one store and
- * the OS seam, which is what makes it acceptable for a reader nobody
- * identified: there is nothing here for an agent's box to mask and nothing an
- * agent could read through it.
+ * samples nothing and keeps no index. Every page is a read of the one store,
+ * the OS seam or the chat log files on this machine, which is what makes it
+ * acceptable for a reader nobody identified: there is nothing here for an
+ * agent's box to mask and nothing an agent could read through it.
+ *
+ * THE CHATS PAGE IS THE ONE PAGE THAT SHOWS WHAT WAS SAID, by the owner's
+ * ruling, and it reads the door's own files on this machine and issues no
+ * statement at all. A machine whose door is elsewhere has no such files and
+ * says so.
  *
  * IT NEVER CALLS AN ACTING VERB ON THE SEAM. It holds a seam at all for the
  * reading verbs the machines page needs, and restart goes through the shipped
@@ -262,6 +269,45 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
   const findingsOf = async (notice: string | null): Promise<Response> =>
     html(findingsPage({ findings: await findings(), notice }));
 
+  /** The state directory the door on this machine writes its logs under. */
+  const stateDirOf = (registry: unknown): string => String(readSetting(registry, "hub.state_dir") ?? "");
+
+  const chats = async (): Promise<Response> => {
+    // This machine's view, so a spoke reads its own state directory.
+    const registry = loadRegistry(registryFile, { machine });
+    const people = listPeople(registry);
+    const agents = listAgents(registry);
+    const stateDir = stateDirOf(registry);
+    const newest: Record<string, ChatNewest | null> = {};
+    for (const agent of agents) {
+      newest[agent.id] = stateDir === "" ? null : readChatNewest({ stateDir, person: agent.person, agent: agent.id });
+    }
+    return html(chatsPage({ people, agents, newest }));
+  };
+
+  /** One agent's chat, or the 404 for a person or an agent the file does not declare. */
+  const chat = async (parts: string[], before: string | null): Promise<Response> => {
+    let person: string;
+    let agent: string;
+    try {
+      person = decodeURIComponent(parts[1]);
+      agent = decodeURIComponent(parts[2]);
+    } catch {
+      return missing();
+    }
+    const registry = loadRegistry(registryFile, { machine });
+    if (!listPeople(registry).some((one) => one.id === person)) return missing();
+    if (!listAgents(registry).some((one) => one.id === agent && one.person === person)) return missing();
+    const stateDir = stateDirOf(registry);
+    const read = stateDir === ""
+      ? { days: [], older: null, exists: false }
+      : readChatPage({ stateDir, person, agent, before });
+    return html(chatPage({ person, agent, chat: read, before }));
+  };
+
+  const usage = async (notice: string | null): Promise<Response> =>
+    html(usagePage({ rows: await readUsage(store, { now: now() }), windows: await readWindows(store), notice }));
+
   const metrics = async (notice: string | null): Promise<Response> => {
     // A household that names no recognizer reads no sheet and sees no voice
     // block, which is a different answer from a recognizer that has never
@@ -438,6 +484,10 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       if (path === "/people") return await people(notice);
       if (path === "/findings") return await findingsOf(notice);
       if (path === "/metrics") return await metrics(notice);
+      if (path === "/usage") return await usage(notice);
+      if (path === "/chats") return await chats();
+      const parts = path.split("/").filter((one) => one !== "");
+      if (parts.length === 3 && parts[0] === "chats") return await chat(parts, url.searchParams.get("before"));
       return missing();
     }
     if (request.method === "POST") {

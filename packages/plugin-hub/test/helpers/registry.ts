@@ -95,6 +95,19 @@ export interface RunSpec {
   default_preset?: string;
   /** The declared repository ids a `kind = "sync"` entry keeps in step. */
   repositories?: string[];
+  /**
+   * A watch's own: where it reads, whose chat it writes into (`person` above
+   * and this agent), the key it reads with, the organisation and the query it
+   * asks, and the three counts its digest is cut by.
+   */
+  source?: string;
+  agent?: string;
+  credential?: string;
+  org?: string;
+  query?: string;
+  min_events?: number;
+  notify_events?: number;
+  reminder_days?: number;
 }
 
 /**
@@ -493,6 +506,14 @@ function renderRegistry(spec: RegistrySpec): string {
       upload_argv: entry.upload_argv,
       readback_argv: entry.readback_argv,
       repositories: entry.repositories,
+      source: entry.source,
+      agent: entry.agent,
+      credential: entry.credential,
+      org: entry.org,
+      query: entry.query,
+      min_events: entry.min_events,
+      notify_events: entry.notify_events,
+      reminder_days: entry.reminder_days,
     });
     lines.push("");
   }

@@ -267,7 +267,7 @@ test(
     // board's own origin.
     const staged = await stage();
     try {
-      for (const path of ["/", "/people", "/findings", "/metrics"]) {
+      for (const path of ["/", "/people", "/chats", "/usage", "/findings", "/metrics"]) {
         const answer = await staged.board.get(path);
         expect(answer.status, path).toBe(200);
         expect(answer.headers.get("x-frame-options"), path).toBe("DENY");
@@ -303,7 +303,7 @@ test(
       // A READ IS LEFT ALONE. Every page is a read of the store and the seam,
       // there is nothing on one an agent could not already see, and a rule that
       // refused reads would refuse the household's own box its own status.
-      for (const path of ["/", "/people", "/findings", "/metrics"]) {
+      for (const path of ["/", "/people", "/chats", "/usage", "/findings", "/metrics"]) {
         expect((await board.get(path)).status, path).toBe(200);
       }
     } finally {

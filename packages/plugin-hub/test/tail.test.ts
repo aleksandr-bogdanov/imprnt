@@ -17,7 +17,7 @@
 // per-agent tail size, for the third.
 
 import { test, expect } from "bun:test";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { seam, hubPath } from "./helpers/cluster.ts";
@@ -96,6 +96,29 @@ test(
     }
   },
 );
+
+test("a line a watcher wrote is in the file and not in the tail, while the lines beside it are", async () => {
+  const { readTail } = await seam("src/chatlog.ts");
+  const stateDir = await scratchDir("hub-tail-watcher-");
+  try {
+    planted(stateDir, hoursBefore(2), "marker-before");
+    const file = chatLogFile({ stateDir, person: PERSON, agent: AGENT, at: hoursBefore(1) });
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, JSON.stringify({
+      id: "outbox:9", at: hoursBefore(1).toISOString(), direction: "out", from: "door-fake",
+      text: "Sentry, Saturday 26 September: 1 new.", origin: "watcher",
+    }) + "\n");
+    planted(stateDir, hoursBefore(0, -600_000), "marker-after");
+    const tail = (await (readTail as Function)({ stateDir, person: PERSON, agent: AGENT, now: NOW, hours: 24, tokens: 8000 })) as string;
+    expect(tail).toContain("marker-before");
+    expect(tail).toContain("marker-after");
+    expect(tail).not.toContain("Sentry,");
+    // The line is still in the file, because the person saw it.
+    expect(readFileSync(file, "utf8")).toContain("Sentry, Saturday");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
 
 test(
   "a message still waiting for its answer is not in the tail: the runner names it by its line id and the file leaves it out, while an answered one stays",
