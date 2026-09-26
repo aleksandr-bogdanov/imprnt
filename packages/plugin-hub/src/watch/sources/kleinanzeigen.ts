@@ -120,7 +120,9 @@ export function parseSearchHtml(html: string): SearchRow[] {
     }
     const shipping = /Versand möglich|Versand moeglich/i.test(block) && !/Nur Abholung|kein\w* Versand/i.test(block);
     const commercial = /badge-hint-pro/i.test(openTag + block) || /href="\/pro\//.test(block) || />PRO<\/div>/.test(block);
-    out.push({ id, title: decodeEntities(title).trim(), price, description, location, date, url: href ? HOST + href : "", shipping, commercial });
+    // Only a path joins the host: anything else glued onto it could name
+    // another host, and a listing with no link is better than one elsewhere.
+    out.push({ id, title: decodeEntities(title).trim(), price, description, location, date, url: href.startsWith("/") ? HOST + href : "", shipping, commercial });
   }
   return out;
 }

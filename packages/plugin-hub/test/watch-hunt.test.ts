@@ -24,6 +24,8 @@ import { taskDigest } from "../src/door/dispatch.ts";
 import { loadRegistry, type Registry, type RunEntry } from "../src/registry/load.ts";
 import { listRunEntries } from "../src/registry/entries.ts";
 import { admitJob } from "../src/runner/job.ts";
+import { settleTurn } from "../src/runner/settle.ts";
+import { readEligible } from "../src/store/wake.ts";
 import { runWatch, WatchRefused } from "../src/watch/run.ts";
 import { runHuntWatch, auditDirOf, specsDirOf } from "../src/watch/hunt.ts";
 import { TRIAGE_INSTRUCTION } from "../src/watch/triage.ts";
@@ -311,7 +313,7 @@ test(
       // The tell: one notice on the owner's chat, marked as a watcher's. The
       // draft and the ignore post nothing anywhere.
       const notices = await noticesOf(staged);
-      const tell = notices.find((one) => one.notice_key === `watch-tell:${ENTRY}:410001`)!;
+      const tell = notices.find((one) => one.notice_key === `watch-tell:${ENTRY}:410001:180`)!;
       expect(tell).toMatchObject({ agent: "p1-lair", route: { door: "door-fake", chat: CHAT, origin: "watcher" } });
       expect(tell.body).toBe("de\\_\\_ddr5: a clean 2x16 kit well under the going rate - Meridian Vale DDR5 6000 32GB 2x16 180 EUR <https://www.kleinanzeigen.de/s-anzeige/meridian-vale-ddr5-6000-32gb/410001-225-1000>");
       expect(notices.filter((one) => one.body.includes("Hallo, ist der Monitor"))).toHaveLength(1);
@@ -356,19 +358,41 @@ test(
       expect(jobs[1].body).not.toContain("id: 410001");
       expect((await pendingRows(staged)).map((row) => row.id)).toEqual([third.job!]);
 
-      // A job the runner refused is audited once as failed and leaves the list.
-      await staged.it.read.sql("insert into ledger_event (stream, subject, kind, actor, detail) values ('control', $1, 'dispatch.refused', 'runner', $2::jsonb)", [third.job, { cause: "not approved" }]);
-      await staged.it.read.sql("insert into ledger_event (stream, subject, kind, actor) values ('inbound', $1, 'answered', 'runner')", [third.job]);
-      const fourth = await tick(staged, later(90), {
+      // The master says tell about the moved monitor: one notice, keyed on
+      // the price it was asked about.
+      const pages = (monitor: number) => ({
         [URLS.ddr5]: fixture("kleinanzeigen", "search-classic.html").replace(">180 €<", ">150 €<"),
         [URLS.gpu]: GPU_PAGE,
-        [URLS.monitor]: monitorPage([110, 200, 80]),
+        [URLS.monitor]: monitorPage([monitor, 200, 80]),
       });
-      expect(fourth.counts).toMatchObject({ verdicts: 0, seen: 6 });
+      await settle(staged, third.job!, "730001 | tell | now under the ordinary price");
+      const fourth = await tick(staged, later(90), pages(110));
+      expect(fourth.counts).toMatchObject({ verdicts: 1, told: 1, seen: 6 });
+      expect(await pendingRows(staged)).toEqual([]);
+      const firstTell = (await noticesOf(staged)).find((one) => one.notice_key === `watch-tell:${ENTRY}:730001:110`)!;
+      expect(firstTell.body).toBe("de\\_\\_monitor: now under the ordinary price - Klarblick Monitor 27 Zoll 110 EUR <https://www.kleinanzeigen.de/s-anzeige/klarblick-27/730001-225-1000>");
+      // It falls again, re-enters, the master says tell again: a SECOND
+      // notice under a second key, and the audit says it was told.
+      const fifth = await tick(staged, later(120), pages(100));
+      expect(fifth.job).toBe(`watch:${ENTRY}:${later(120).toISOString()}`);
+      await settle(staged, fifth.job!, "730001 | tell | lower still");
+      const sixth = await tick(staged, later(150), pages(100));
+      expect(sixth.counts).toMatchObject({ verdicts: 1, told: 1 });
+      const tells = (await noticesOf(staged)).filter((one) => one.notice_key.startsWith(`watch-tell:${ENTRY}:730001:`)).map((one) => one.notice_key);
+      expect(tells).toEqual([`watch-tell:${ENTRY}:730001:110`, `watch-tell:${ENTRY}:730001:100`]);
+      expect(auditRows(staged, "2026-09-26").filter((row) => row.id === "730001" && row.outcome === "verdict").map((row) => row.reached)).toEqual(["nothing", "told p1-lair", "told p1-lair"]);
+
+      // A job the runner refused is audited once as failed and leaves the list.
+      const seventh = await tick(staged, later(180), pages(95));
+      expect(seventh.job).not.toBeNull();
+      await staged.it.read.sql("insert into ledger_event (stream, subject, kind, actor, detail) values ('control', $1, 'dispatch.refused', 'runner', $2::jsonb)", [seventh.job, { cause: "not approved" }]);
+      await staged.it.read.sql("insert into ledger_event (stream, subject, kind, actor) values ('inbound', $1, 'answered', 'runner')", [seventh.job]);
+      const eighth = await tick(staged, later(210), pages(95));
+      expect(eighth.counts).toMatchObject({ verdicts: 0, seen: 6 });
       expect(await pendingRows(staged)).toEqual([]);
       const failedRow = auditRows(staged, "2026-09-26").find((row) => row.outcome === "triage failed")!;
-      expect(failedRow).toMatchObject({ id: third.job, reason: "refused: not approved", title: "1 listing(s)" });
-      expect(fourth.posted.audit).toBe(true);
+      expect(failedRow).toMatchObject({ id: seventh.job, reason: "refused: not approved", title: "1 listing(s)" });
+      expect(eighth.posted.audit).toBe(true);
     } finally {
       await staged.stop();
     }
@@ -590,6 +614,116 @@ test(
       expect(about(await check(new Date(T0.getTime() + 90 * 60_000)))).toEqual([]);
     } finally {
       await store?.close();
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "the runner's own settle of a watch job records the report answered so the master is never fed it, and the hunt still reads the verdicts",
+  async () => {
+    const staged = await stage({ specs: [MONITOR_SPEC] });
+    let store: Awaited<ReturnType<typeof superStore>> | null = null;
+    try {
+      const first = await tick(staged, T0);
+      const [job] = (await staged.it.read.inbound()).filter((row) => row.kind === "job") as unknown as { id: string; source: Record<string, unknown> }[];
+      store = await superStore(cluster, staged.it.db);
+      // The settle the runner does at the end of the master's turn, with the
+      // job's own provenance and the verdict lines as the one chunk.
+      await settleTurn(store, {
+        inboundId: job.id, kind: "job", person: "p1", source: job.source as never,
+        chunks: ["730001 | ignore | ordinary price", "730002 | tell | a 32 inch at 200 is worth a look", "730003 | ignore | too small"],
+        turn: { agent: TRIAGE, runner: "runner-test", preset: "daily", preset_id: "p", preset_settings: {}, input_tokens: 1, cached_input_tokens: 0,
+          output_tokens: 1, price: null, plan_usage: null, raw_usage: {}, session_id: null, lacks: [], tail: false },
+      });
+      const rows = await staged.it.read.inbound();
+      const report = rows.find((row) => row.id === `report:${job.id}`) as unknown as { state: string; log_ready: boolean; body: string } | undefined;
+      expect(report).toBeDefined();
+      expect(report!.state).toBe("answered");
+      expect(report!.log_ready).toBe(false);
+      expect((rows.find((row) => row.id === job.id) as unknown as { state: string }).state).toBe("answered");
+      // Even once the door has projected it, the runner's eligible read leaves it alone.
+      await staged.it.read.sql("update inbound set log_ready = true where id = $1", [`report:${job.id}`]);
+      expect((await readEligible(store, { agent: TRIAGE })).map((row) => row.id)).toEqual([]);
+      // And the next tick reads the verdicts by id.
+      const second = await tick(staged, later(30));
+      expect(second.counts).toMatchObject({ verdicts: 3, told: 1 });
+      expect((await noticesOf(staged)).some((one) => one.notice_key === `watch-tell:${ENTRY}:730002:200`)).toBe(true);
+      expect(await pendingRows(staged)).toEqual([]);
+      expect(first.job).toBe(job.id);
+    } finally {
+      await store?.close();
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "a tell whose key was already posted is audited as nothing reached, a stale ignore leaves a later announcement standing, a rise re-enters as price changed, and a paused spec keeps its rows",
+  async () => {
+    const staged = await stage({ specs: [MONITOR_SPEC, { ...GPU_SPEC, id: "de__gpu-floor", lane: "digest", hard: { min_price: 100 }, notify: { price_at_or_under: null } }] });
+    try {
+      const pages = (monitor: number, gpu: number) => ({ [URLS.monitor]: monitorPage([monitor, 200, 80]), [URLS.gpu]: GPU_PAGE.replace(">90 €<", `>${gpu} €<`) });
+      // Tick 1: the 27 inch at 120 goes to the master (job A); the card at 90 is under the floor.
+      const first = await tick(staged, T0, pages(120, 90));
+      expect(auditRows(staged, "2026-09-26").find((row) => row.id === "620001")).toMatchObject({ outcome: "drop", reason: "min_price by -10 (min 100)" });
+      // Tick 2: the monitor falls to 110 and re-enters (job B, announced at
+      // 110); the card rises to 120, passes the floor and re-enters as a
+      // notify whose reason says the price changed, not fell.
+      const second = await tick(staged, later(30), pages(110, 120));
+      expect(second.job).not.toBeNull();
+      const risen = auditRows(staged, "2026-09-26").find((row) => row.id === "620001" && row.at === later(30).toISOString())!;
+      expect(risen).toMatchObject({ outcome: "notify", reason: "price changed", old_price: 90, price: 120 });
+      expect((await noticesOf(staged)).find((one) => one.notice_key === `watch-notify:${ENTRY}:620001:120`)!.body).toContain("120 EUR (was 90)");
+      expect((await stateRows(staged)).find((row) => row.id === "730001")!.data).toMatchObject({ announced_price: 110 });
+      // Job A settles ignore AFTER job B re-announced the listing at 110: the
+      // stale ignore is written as the verdict and clears nothing.
+      await settle(staged, first.job!, "730001 | ignore | ordinary at 120\n730002 | ignore | x\n730003 | ignore | x");
+      const third = await tick(staged, later(60), pages(110, 120));
+      expect(third.counts).toMatchObject({ verdicts: 3 });
+      expect((await stateRows(staged)).find((row) => row.id === "730001")!.data).toMatchObject({ verdict: "ignore", announced_price: 110, announced_at: later(30).toISOString(), reason: "seen by 0 (announced before)" });
+      // The other two were asked about at the price the row holds, so they are declined.
+      expect((await stateRows(staged)).find((row) => row.id === "730002")!.data).toMatchObject({ verdict: "ignore", announced_price: null });
+      // Job B settles tell, but the owner was already told at 110 (a row the
+      // door delivered earlier under that key): nothing is posted twice and
+      // the audit row says so.
+      await staged.it.read.sql(
+        `insert into outbox (kind, person, agent, notice_key, seq_in_reply, body, route)
+         values ('notice', 'p1', 'p1-lair', $1, 1, 'told earlier', $2::jsonb)`,
+        [`watch-tell:${ENTRY}:730001:110`, { door: "door-fake", chat: CHAT, origin: "watcher" }],
+      );
+      await settle(staged, second.job!, "730001 | tell | still worth it");
+      const before = (await noticesOf(staged)).length;
+      const fourth = await tick(staged, later(90), pages(110, 120));
+      expect(fourth.counts).toMatchObject({ verdicts: 1, told: 0 });
+      expect((await noticesOf(staged)).length).toBe(before + 1);
+      expect((await noticesOf(staged)).filter((one) => one.notice_key.startsWith("watch-tell:"))).toHaveLength(1);
+      const honest = auditRows(staged, "2026-09-26").find((row) => row.id === "730001" && row.at === later(90).toISOString())!;
+      expect(honest).toMatchObject({ outcome: "verdict", verdict: "tell", reached: "nothing: already told at this price" });
+      expect((await noticesOf(staged)).find((one) => one.notice_key === `watch-audit:${ENTRY}:${later(90).toISOString()}`)!.body).toContain("· nothing: already told at this price");
+
+      // Every spec paused for fifteen days: a tick that fetched nothing
+      // removes nothing. Unpausing one spec sweeps that board alone, and the
+      // other spec's rows stay until its own board is read.
+      for (const spec of [MONITOR_SPEC, { ...GPU_SPEC, id: "de__gpu-floor" }]) {
+        writeFileSync(join(staged.specsDir, `${spec.id}.json`), JSON.stringify({ ...spec, paused: true }));
+      }
+      const held = (await stateRows(staged)).length;
+      expect(held).toBe(5);
+      const day = (n: number) => new Date(T0.getTime() + n * 86_400_000);
+      const paused = await tick(staged, day(15), {});
+      expect(paused.counts).toMatchObject({ specs: 0, listings: 0, removed: 0, partial: false });
+      expect(paused.asked).toEqual([]);
+      expect((await stateRows(staged)).length).toBe(held);
+      writeFileSync(join(staged.specsDir, "de__gpu-floor.json"), JSON.stringify({ ...GPU_SPEC, id: "de__gpu-floor", lane: "digest", hard: { min_price: 100 }, notify: { price_at_or_under: null } }));
+      const one = await tick(staged, day(16), { [URLS.gpu]: GPU_PAGE.replace("620002", "620009") });
+      expect(one.asked.map((row) => row.url)).toEqual([URLS.gpu]);
+      // The card that left the gpu board fifteen days ago goes, the monitors stay.
+      expect(one.counts).toMatchObject({ removed: 1 });
+      expect((await stateRows(staged)).map((row) => row.id).sort()).toEqual(["620001", "620009", "730001", "730002", "730003"]);
+    } finally {
       await staged.stop();
     }
   },

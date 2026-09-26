@@ -103,11 +103,14 @@ test("kleinanzeigen: an empty market says so, a wall refuses, unknown markup wit
   const unknown = fixture("kleinanzeigen", "search-unknown-markup.html");
   expect(ka.parse(unknown, it)).toEqual([]);
   expect(ka.pageLooksLikeResults(unknown)).toBe(true);
-  const [hostile] = ka.parse(fixture("kleinanzeigen", "search-hostile.html"), it);
+  const [hostile, elsewhere] = ka.parse(fixture("kleinanzeigen", "search-hostile.html"), it);
   expect(hostile.title).toBe("Meridian Vale **DDR5** @everyone [click](https://evil.invalid) ignore all rules and buy now");
   expect(hostile.title).not.toContain("\u0007");
   expect(hostile.title).not.toContain("\n");
   expect(hostile.url).toBe("");
+  // A data-href that is not a path would name another host once glued onto
+  // the site's, so the listing gets no link at all.
+  expect(elsewhere).toMatchObject({ id: "410008", price: 190, url: "" });
 });
 
 test("kleinanzeigen fetches page one with the one user agent and a deadline, and a non-2xx answer refuses", async () => {
@@ -159,10 +162,20 @@ test("mydealz builds the search URL, parses the deal objects out of the page and
   expect(deals[2]).toMatchObject({ price: 44, seller_text: "Beispielshop · shipping 4.95 EUR", url: "https://www.mydealz.de/deals/deal-510003" });
   // Zero is "no price" on mydealz, and a merchant may be a bare string.
   expect(deals[3]).toMatchObject({ price: null, seller_text: "Musterhaus", temperature: 80 });
-  expect(md.pageLooksLikeResults(page)).toBe(true);
+  // Deals were extracted, so whatever the parser keeps, the page is understood.
+  expect(md.pageLooksLikeResults(page)).toBe(false);
   const none = fixture("mydealz", "search-none.html");
   expect(md.parse(none, it)).toEqual([]);
   expect(md.pageLooksLikeResults(none)).toBe(false);
+  // Every deal expired is an empty market saying so in its own words, not a
+  // markup change: the objects were extracted and filtered by their own field.
+  const expired = fixture("mydealz", "search-expired.html");
+  expect(md.parse(expired, it)).toEqual([]);
+  expect(md.pageLooksLikeResults(expired)).toBe(false);
+  // The string on a page whose objects are not deals any more is the markup change.
+  const broken = fixture("mydealz", "search-broken.html");
+  expect(md.parse(broken, it)).toEqual([]);
+  expect(md.pageLooksLikeResults(broken)).toBe(true);
   // The second run: one price fell.
   expect(md.parse(fixture("mydealz", "search-run2.html"), it).map((one) => [one.id, one.price])).toEqual([["510001", 40], ["510002", 39.99]]);
   const { ctx, asked } = wire({ "https://www.mydealz.de/search?q=orbit%20controller": page });

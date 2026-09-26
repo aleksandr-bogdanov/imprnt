@@ -126,9 +126,12 @@ function bare(url: string): string {
   return url === "" ? "" : ` <${url}>`;
 }
 
-function reasonOf(verdict: Verdict): string {
+function reasonOf(verdict: Verdict, listing: Listing): string {
   if (verdict.bin === "drop") return `${verdict.rule}${verdict.margin === undefined ? "" : ` by ${verdict.margin > 0 ? "+" : ""}${verdict.margin}`}${verdict.value ? ` (${verdict.value})` : ""}`;
-  if (verdict.bin === "notify") return verdict.entry === "price-changed" ? "price fell" : "hit";
+  // A declined listing re-enters on any change, a rise included, so the word
+  // says which way the price went.
+  const fell = verdict.from != null && listing.price != null && listing.price < verdict.from;
+  if (verdict.bin === "notify") return verdict.entry === "price-changed" ? (fell ? "price fell" : "price changed") : "hit";
   return verdict.reason === "price changed" ? `price changed${verdict.rule ? `, ${verdict.rule}${verdict.margin === undefined ? "" : ` by +${verdict.margin}`}` : ""}` : `no-target${verdict.rule ? ` (${verdict.rule}${verdict.margin === undefined ? "" : ` by +${verdict.margin}`})` : ""}`;
 }
 
@@ -149,6 +152,8 @@ const snapshotOf = (listing: Listing, spec: WatchSpec): Snapshot => ({
 interface Notice {
   target: NoticeTarget;
   body: string;
+  /** The audit row that says this notice reached the person, corrected when the key was already there. */
+  row?: AuditRow;
 }
 
 /**
@@ -199,27 +204,35 @@ async function readVerdicts(store: StoreLike, args: {
         const next: ListingState = { ...held, verdict: answer.verdict };
         delete next.draft;
         if (answer.verdict === "draft") next.draft = answer.text;
-        // Declined at its numbers: it re-enters only on a price change.
-        if (answer.verdict === "ignore" || answer.verdict === "unreadable") { next.announced_at = null; next.announced_price = null; }
+        // Declined at its numbers: it re-enters only on a price change. Only
+        // when this job's price is the row's announcement: a later job may
+        // have re-announced the listing at a new price, and that stands.
+        if ((answer.verdict === "ignore" || answer.verdict === "unreadable") && held.announced_price === listing.price) {
+          next.announced_at = null;
+          next.announced_price = null;
+        }
         args.state[listing.id] = next;
       }
-      let reached = "nothing";
+      const row: AuditRow = {
+        ...base, watch: listing.spec, id: listing.id, title: listing.title, price: listing.price, currency: listing.currency, url: listing.url,
+        outcome: "verdict", reason: answer.verdict === "draft" ? "draft" : answer.text, verdict: answer.verdict,
+        ...(answer.verdict === "draft" ? { draft: answer.text } : {}), reached: "nothing",
+      };
       if (answer.verdict === "tell") {
         const owner = args.owners.get(listing.owner);
         if (owner) {
+          // Keyed on the price the master was asked about, the way a notify
+          // is, so a tell after a re-entry is a second notice and not a no-op.
           notices.push({
-            target: { ...owner, key: `watch-tell:${args.entry.id}:${listing.id}` },
+            target: { ...owner, key: `watch-tell:${args.entry.id}:${listing.id}:${listing.price ?? "np"}` },
             body: `${inert(listing.spec)}: ${inert(answer.text)} - ${inert(listing.title)} ${priceText(listing.price, listing.currency)}${bare(listing.url)}`,
+            row,
           });
-          reached = `told ${listing.owner}`;
+          row.reached = `told ${listing.owner}`;
           told += 1;
-        } else reached = `nothing: ${listing.owner} is no longer an agent with a chat`;
+        } else row.reached = `nothing: ${listing.owner} is no longer an agent with a chat`;
       }
-      rows.push({
-        ...base, watch: listing.spec, id: listing.id, title: listing.title, price: listing.price, currency: listing.currency, url: listing.url,
-        outcome: "verdict", reason: answer.verdict === "draft" ? "draft" : answer.text, verdict: answer.verdict,
-        ...(answer.verdict === "draft" ? { draft: answer.text } : {}), reached,
-      });
+      rows.push(row);
     }
   }
   return { rows, notices, done, told, verdicts };
@@ -331,7 +344,7 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
         const row: ListingState = {
           spec: spec.id, first_seen: prior?.first_seen ?? atIso, last_seen: atIso, price: listing.price,
           announced_price: prior?.announced_price ?? null, announced_at: prior?.announced_at ?? null,
-          outcome: verdict.bin, reason: reasonOf(verdict),
+          outcome: verdict.bin, reason: reasonOf(verdict, listing),
           ...(prior?.verdict === undefined ? {} : { verdict: prior.verdict }),
           ...(prior?.draft === undefined ? {} : { draft: prior.draft }),
         };
@@ -362,14 +375,14 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
             }
           } else if (triageWhere !== null) {
             counts.triage += 1;
-            triage.push({ listing, spec, from, reason: reasonOf(verdict) });
+            triage.push({ listing, spec, from, reason: reasonOf(verdict, listing) });
             reached = `triage ${entry.triage}`;
           } else if (owner) {
             // No master named: the look goes to the owner, zero model turns.
             counts.looked += 1;
             notices.push({
               target: { ...owner, key: `watch-look:${entry.id}:${listing.id}:${listing.price ?? "np"}` },
-              body: `${inert(spec.id)}: look - ${inert(listing.title)} - ${priceText(listing.price, currency)}${from == null ? "" : ` (was ${from})`}${bare(listing.url)} (${inert(reasonOf(verdict))})`,
+              body: `${inert(spec.id)}: look - ${inert(listing.title)} - ${priceText(listing.price, currency)}${from == null ? "" : ` (was ${from})`}${bare(listing.url)} (${inert(reasonOf(verdict, listing))})`,
             });
             reached = `look ${spec.owner}`;
           }
@@ -377,15 +390,18 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
         writes[listing.id] = row;
         rows.push({
           ...base, watch: spec.id, id: listing.id, title: listing.title, price: listing.price, currency,
-          ...(from === undefined ? {} : { old_price: from }), url: listing.url, outcome: verdict.bin, reason: reasonOf(verdict), ...(repeat ? { repeat: true } : {}), reached,
+          ...(from === undefined ? {} : { old_price: from }), url: listing.url, outcome: verdict.bin, reason: reasonOf(verdict, listing), ...(repeat ? { repeat: true } : {}), reached,
         });
       }
     }
 
-    // Gone: absent from a COMPLETE sweep for two weeks. A partial sweep, or a
-    // spec that failed, cannot say what is gone, so it removes nothing.
+    // Gone: absent from a COMPLETE sweep of its own spec's board for two
+    // weeks. A partial sweep, or a spec that failed, cannot say what is gone,
+    // and neither can a tick that did not fetch the spec (paused, refused,
+    // or gone from the folder): those rows stay until their board is read.
+    const swept = new Set(results.map(({ spec }) => spec.id));
     const removed = !complete ? [] : Object.entries(state)
-      .filter(([id, row]) => !seen.has(id) && at.getTime() - Date.parse(row.last_seen) >= GONE_AFTER_DAYS * 86_400_000)
+      .filter(([id, row]) => swept.has(row.spec) && !seen.has(id) && at.getTime() - Date.parse(row.last_seen) >= GONE_AFTER_DAYS * 86_400_000)
       .map(([id]) => id);
 
     // The triage batch: ONE job row for the master, shaped the way the door
@@ -412,16 +428,23 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
     const chatRows = rows.filter((row) => !(row.outcome === "drop" && (row.repeat === true || row.reason.startsWith("seen"))));
     const header = `${source.source} ${atIso.slice(0, 16).replace("T", " ")}: ${counts.listings} listing${counts.listings === 1 ? "" : "s"}, ${counts.notified} notified, ${counts.triage + counts.looked} to triage, ${counts.dropped} dropped` +
       `${settled.verdicts > 0 ? `, ${settled.verdicts} verdict${settled.verdicts === 1 ? "" : "s"}` : ""}${loaded.refused.length > 0 ? `, ${loaded.refused.length} spec${loaded.refused.length === 1 ? "" : "s"} refused` : ""}${failed.length > 0 ? `, ${failed.length} spec${failed.length === 1 ? "" : "s"} failed` : ""}`;
-    const auditBody = chatRows.length === 0 ? null : [header, ...chatRows.map(auditLine)].join("\n");
 
     let postedAudit = false;
     let postedNotices = 0;
+    let told = settled.told;
     await store.sql.begin(async (sql) => {
       const inside = { sql, url: store.url } as StoreLike;
       const tx = sql as unknown as StoreLike["sql"];
       for (const id of removed) await removeRow(inside, sheetOf(entry.id), id);
       for (const [id, data] of Object.entries(writes)) await putRow(inside, sheetOf(entry.id), id, data as unknown as Record<string, unknown>);
-      for (const notice of notices) if (await postNotice(tx, notice.target, notice.body)) postedNotices += 1;
+      for (const notice of notices) {
+        if (await postNotice(tx, notice.target, notice.body)) { postedNotices += 1; continue; }
+        // The key was already there, so nothing reached the person now, and
+        // the audit row says so rather than what was meant.
+        if (notice.row !== undefined) { notice.row.reached = "nothing: already told at this price"; told -= 1; }
+      }
+      // Composed here, after the notices, so every line says what was posted.
+      const auditBody = chatRows.length === 0 ? null : [header, ...chatRows.map(auditLine)].join("\n");
       if (auditBody !== null) postedAudit = await postNotice(tx, target(auditWhere, String(entry.audit), `watch-audit:${entry.id}:${atIso}`), auditBody);
       if (job !== null) {
         // The master has a chat, so its row is written unprojected with its
@@ -443,7 +466,7 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
         stream: "machine", subject: entry.id, kind: "watch.swept", actor: "hub",
         detail: {
           watch: entry.id, source: source.source, specs: loaded.ok.length, refused: loaded.refused.length, failed: failed.length, paused: loaded.paused.length,
-          ...counts, verdicts: settled.verdicts, told: settled.told, removed: removed.length, partial: !complete,
+          ...counts, verdicts: settled.verdicts, told, removed: removed.length, partial: !complete,
           job: job !== null, posted: postedAudit, notices: postedNotices, at: atIso,
         },
       });
@@ -458,7 +481,7 @@ export async function runHuntWatch(entry: RunEntry, registry: Registry, options:
     return {
       rows,
       posted: { audit: postedAudit, notices: postedNotices },
-      counts: { specs: loaded.ok.length, refused: loaded.refused.length, failed: failed.length, ...counts, verdicts: settled.verdicts, told: settled.told, removed: removed.length, partial: !complete },
+      counts: { specs: loaded.ok.length, refused: loaded.refused.length, failed: failed.length, ...counts, verdicts: settled.verdicts, told, removed: removed.length, partial: !complete },
       job: job?.id ?? null,
     };
   } catch (error) {

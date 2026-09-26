@@ -84,8 +84,13 @@ const merchantName = (m: unknown): string =>
 const dealUrl = (d: Record<string, unknown>): string =>
   d.titleSlug ? `${BASE}/deals/${String(d.titleSlug)}-${String(d.threadId)}` : `${BASE}/deals/${String(d.threadId)}`;
 
+/**
+ * Deal objects on the page and none extracted is a markup change. A page whose
+ * every extracted deal is expired parses to nothing and is an empty market
+ * saying so in its own words, so it is not this.
+ */
 export function pageLooksLikeResults(raw: unknown): boolean {
-  return typeof raw === "string" && raw.includes('"threadId"');
+  return typeof raw === "string" && raw.includes('"threadId"') && extractDeals(raw).length === 0;
 }
 
 export function parse(raw: unknown, spec: WatchSpec): Listing[] {
