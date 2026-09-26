@@ -230,7 +230,11 @@ export async function runCheck(options: {
 }): Promise<Finding[]> {
   const machine = options.machine;
   const now = options.now ?? new Date();
-  const registry = loadRegistry(options.registryFile);
+  // Read for the machine being checked: its own state directory is where the
+  // chat logs and session state are looked for, its credentials are the files
+  // and keychain items it holds, and its people's trees are the roots the copy
+  // scan sweeps.
+  const registry = loadRegistry(options.registryFile, { machine });
   const entries = runEntriesFor(registry, machine);
   const findings: Finding[] = [];
 

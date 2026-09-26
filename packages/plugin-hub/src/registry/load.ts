@@ -383,10 +383,46 @@ export interface RecognizerEntry {
   chunk_seconds: number;
 }
 
-/** A machine the household has. `os` is in the file, never process.platform. */
+/**
+ * A machine the household has. `os` is in the file, never process.platform.
+ *
+ * The three optional paths are this machine's own where they differ from the
+ * `[hub]` table's: a spoke keeps its state and its role passwords on its own
+ * disk and reaches the one store over the tailnet rather than on loopback. A
+ * process loaded for this machine (`loadRegistry(file, { machine })`) reads
+ * them through `readSetting` as if the `[hub]` table said so, so nothing below
+ * the loader knows a machine can differ. Spread only where the file carries
+ * them.
+ */
 export interface MachineEntry {
   id: string;
   os: string;
+  state_dir?: string;
+  secrets_dir?: string;
+  store_url?: string;
+}
+
+/** The `[hub]` keys a `[[machines]]` entry may carry its own value for. */
+export const MACHINE_SETTINGS = ["state_dir", "secrets_dir", "store_url"] as const;
+
+/**
+ * A person's tree and vault on one machine, from `[[people]].on.<machine>`.
+ *
+ * A vault checkout does not sit at the same path on every machine, so a person
+ * whose agents run on a spoke says here where their tree and vault are there.
+ * The loader replaces the entry's `tree` and `vault` with these when it loads
+ * the file for that machine, and every reader below it sees one person with one
+ * tree, as it always did.
+ */
+export interface PersonPlacement {
+  tree: string;
+  vault?: string;
+}
+
+/** A credential's file and source on one machine, from `[[credentials]].on.<machine>`. */
+export interface CredentialPlacement {
+  file: string;
+  keychain?: string;
 }
 
 /**
@@ -466,6 +502,16 @@ export interface CredentialEntry {
   kind: string;
   file: string;
   owner: string;
+  /**
+   * The macOS keychain item this login is kept in, by service name, for a
+   * `claude-login` on a Mac. Claude Code keeps its login there rather than in
+   * `~/.claude/.credentials.json`, which on a Mac holds only MCP entries. The
+   * hub reads the item for `check` and copies it into `file` for every launch,
+   * because the loop runs in a box with a config directory of its own and the
+   * CLI keys its keychain item by that directory. Absent means `file` is the
+   * login itself, which is what every Linux box has.
+   */
+  keychain?: string;
 }
 
 const MACHINE_OS = ["linux", "macos"];
@@ -669,6 +715,13 @@ export class Registry {
     readonly repositories: RepositoryEntry[] = [],
     readonly recognizers: Record<string, RecognizerEntry> = {},
     readonly zone: ZoneEntry | null = null,
+    /**
+     * The machine this registry was loaded FOR, or null for the file as
+     * written. A view for a machine carries that machine's own state, secrets
+     * and store settings in `data.hub`, its people's trees and vaults there,
+     * and its credentials' files there. Every other field is the file's.
+     */
+    readonly machine: string | null = null,
   ) {
     this.file = file;
     this.data = data;
@@ -770,7 +823,23 @@ function settingKey(key: string): string {
   return String(key).trim().replace(/^-+/, "").split("=")[0].trim();
 }
 
-export function loadRegistry(file: string): Registry {
+/**
+ * Which machine a registry is loaded for.
+ *
+ * A process that knows which machine it runs on (a runner and a hub by their
+ * own entry, `check`, `status` and `install` by their argument) loads the file
+ * for that machine, and the paths that differ per machine come back resolved:
+ * `hub.state_dir`, `hub.secrets_dir` and `hub.store_url` from the machine's own
+ * entry, every person's `tree` and `vault` from their `on.<machine>` table, and
+ * every credential's `file` and `keychain` from theirs. Nothing below the loader
+ * asks which machine it is on. An empty or absent machine loads the file as
+ * written, which is the hub machine's view.
+ */
+export interface RegistryView {
+  machine?: string;
+}
+
+export function loadRegistry(file: string, view: RegistryView = {}): Registry {
   let text: string;
   try {
     text = readFileSync(file, "utf8");
@@ -868,9 +937,75 @@ export function loadRegistry(file: string): Registry {
         `${id} runs ${describe(os)}, and the two this hub knows are ${MACHINE_OS.join(" and ")}`,
       );
     }
-    machines.push({ id, os });
+    // This machine's own paths, each refused by key and line when it is there
+    // and wrong. A relative directory is a different directory in every
+    // working directory a unit starts in, and a store url carrying a user or a
+    // password is a role decided by the file rather than by the process, which
+    // is what `hub.store_url` already forbids.
+    const own: Partial<Record<(typeof MACHINE_SETTINGS)[number], string>> = {};
+    for (const key of MACHINE_SETTINGS) {
+      const value = entry[key];
+      if (value === undefined || value === null) continue;
+      const atKey = lines.get(`${at}.${key}`) ?? here;
+      if (typeof value !== "string" || value === "") {
+        refuse(`${at}.${key}`, atKey, `${id} has ${key} ${describe(value)}, and it is a nonempty string`);
+      }
+      if (key === "store_url") {
+        let url: URL;
+        try {
+          url = new URL(value as string);
+        } catch {
+          return refuse(`${at}.${key}`, atKey, `${id} has store_url ${describe(value)}, which is not a url`);
+        }
+        if (url.username !== "" || url.password !== "") {
+          refuse(`${at}.${key}`, atKey,
+            `${id} has a store_url carrying a user or a password, and a process supplies its own role and reads its own password file`);
+        }
+      } else if (!isAbsolute(value as string)) {
+        refuse(`${at}.${key}`, atKey,
+          `${id} has ${key} ${describe(value)}, and it must be an absolute path: a relative one is a different directory in every directory a unit starts in`);
+      }
+      own[key] = value as string;
+    }
+    machines.push({ id, os, ...own });
   });
   const declared = new Set(machines.map((machine) => machine.id));
+  const osOf = (machine: string) => machines.find((one) => one.id === machine)?.os ?? "";
+  /**
+   * One `on` table, read the same way on a person and on a credential: a
+   * table keyed by a declared machine id, each value a table of exactly the
+   * keys the caller names. Anything else is refused by key and line, because
+   * a placement that loaded and applied to no machine would be a spoke that
+   * silently kept the hub machine's paths.
+   */
+  const placements = <T>(entry: Record<string, unknown>, where: string, here: number, id: unknown,
+    keys: readonly string[], read: (table: Record<string, unknown>, machine: string, atTable: number) => T,
+  ): Record<string, T> => {
+    const on = entry.on;
+    const out: Record<string, T> = {};
+    if (on === undefined || on === null) return out;
+    const atOn = lines.get(`${where}.on`) ?? here;
+    if (typeof on !== "object" || Array.isArray(on)) {
+      refuse(`${where}.on`, atOn, `${id} has on ${describe(on)}, and it is a table keyed by machine id`);
+    }
+    for (const [machine, table] of Object.entries(on as Record<string, unknown>)) {
+      if (!declared.has(machine)) {
+        refuse(`${where}.on.${machine}`, atOn,
+          `${id} says where it is on ${describe(machine)}, which no [[machines]] entry declares`);
+      }
+      if (table === null || typeof table !== "object" || Array.isArray(table)) {
+        refuse(`${where}.on.${machine}`, atOn, `${id} on ${machine} is ${describe(table)}, and it is a table of ${keys.join(" and ")}`);
+      }
+      for (const key of Object.keys(table as Record<string, unknown>)) {
+        if (!keys.includes(key)) {
+          refuse(`${where}.on.${machine}.${key}`, atOn,
+            `${id} on ${machine} carries ${key}, and the keys a placement may carry are ${keys.join(" and ")}`);
+        }
+      }
+      out[machine] = read(table as Record<string, unknown>, machine, atOn);
+    }
+    return out;
+  };
   // The backward compatibility rule: `machine` becomes required, by name, only
   // once the file declares two or more. Below that there is nothing to be
   // ambiguous about, and every entry belongs to the one machine that asks.
@@ -1465,6 +1600,8 @@ export function loadRegistry(file: string): Registry {
   // one id is the same refusal a duplicate [[run]] id already carries.
   const people: PersonEntry[] = [];
   const peopleAt = new Map<string, number>();
+  /** Where each person's tree and vault are on each machine that says so. */
+  const peopleOn = new Map<string, Record<string, PersonPlacement>>();
   ((parsed.people ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
     const where = `people[${nth}]`;
     const here = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
@@ -1617,6 +1754,38 @@ export function loadRegistry(file: string): Registry {
         artifactsNotBoolean("en", { id, value: describeBare(shows) }),
       );
     }
+    // Where this person is on a machine that is not the hub's: the same two
+    // rules the entry's own tree and vault get, applied per machine. A
+    // placement names a tree, because it is the box's fence there, and it
+    // names a vault whenever the entry does, because a harvest on that machine
+    // files into it and an agent there is told where its vault is.
+    peopleOn.set(id as string, placements<PersonPlacement>(entry, where, here, id, ["tree", "vault"],
+      (table, machine, atOn) => {
+        const there = table.tree;
+        if (typeof there !== "string" || there === "" || !isAbsolute(there)) {
+          refuse(`${where}.on.${machine}.tree`, atOn,
+            `${id} on ${machine} has tree ${describe(there)}, and it must be an absolute path: it is the box's fence on that machine`);
+        }
+        const kept = table.vault;
+        if (kept === undefined || kept === null) {
+          if (namesVault) {
+            refuse(`${where}.on.${machine}.vault`, atOn,
+              `${id} names a vault and says none on ${machine}, and an agent on that machine files into a vault that is there`);
+          }
+          return { tree: there as string };
+        }
+        if (typeof kept !== "string" || kept === "" || !isAbsolute(kept)) {
+          refuse(`${where}.on.${machine}.vault`, atOn,
+            `${id} on ${machine} has vault ${describe(kept)}, and it must be an absolute path`);
+        }
+        const inside = resolve(kept as string);
+        const fence = resolve(there as string);
+        if (inside !== fence && !inside.startsWith(fence + sep)) {
+          refuse(`${where}.on.${machine}.vault`, atOn,
+            `${id} on ${machine} has vault ${describe(kept)}, which is outside their tree ${there} there, and the box fences that tree`);
+        }
+        return { tree: there as string, vault: kept as string };
+      }));
     if (entry.filing_rules !== undefined) readable(entry.filing_rules, `${where}.filing_rules`);
     for (const key of ["mcp", "settings"]) {
       if (entry[key] !== undefined) readable(entry[key], `${where}.${key}`);
@@ -1676,6 +1845,8 @@ export function loadRegistry(file: string): Registry {
   // being an entry, so a file that declares no credentials still loads.
   const credentials: CredentialEntry[] = [];
   const credentialAt = new Map<string, number>();
+  /** Where each credential is on each machine that says so. */
+  const credentialsOn = new Map<string, Record<string, CredentialPlacement>>();
   ((parsed.credentials ?? []) as Record<string, unknown>[]).forEach((entry, nth) => {
     const where = `credentials[${nth}]`;
     const here = lines.get(`${where}.id`) ?? lines.get(where) ?? 0;
@@ -1727,11 +1898,49 @@ export function loadRegistry(file: string): Registry {
       );
     }
 
+    // A keychain item is a source only a `claude-login` has, and only a Mac
+    // keeps one. On the entry itself it stands for every machine without a
+    // placement, so a Linux machine left to it would be a runner reading a
+    // keychain its box does not have: refused here, by the machine's name.
+    const keychainOf = (value: unknown, key: string, atKey: number, machine: string | null): string | undefined => {
+      if (value === undefined || value === null) return undefined;
+      if (typeof value !== "string" || value === "") {
+        refuse(key, atKey, `${id} has keychain ${describe(value)}, and it is the service name of one keychain item`);
+      }
+      if (kind !== "claude-login") {
+        refuse(key, atKey, `${id} is a ${kind} credential and names a keychain item, and only a claude-login is kept in the keychain`);
+      }
+      if (machine !== null && osOf(machine) !== "macos") {
+        refuse(key, atKey, `${id} names a keychain item on ${machine}, which runs ${osOf(machine)}, and only macOS has a keychain`);
+      }
+      return value as string;
+    };
+    const keychain = keychainOf(entry.keychain, `${where}.keychain`, lines.get(`${where}.keychain`) ?? here, null);
+    const on = placements<CredentialPlacement>(entry, where, here, id, ["file", "keychain"],
+      (table, machine, atOn) => {
+        const there = table.file;
+        if (typeof there !== "string" || there === "" || !isAbsolute(there)) {
+          refuse(`${where}.on.${machine}.file`, atOn,
+            `${id} on ${machine} has file ${describe(there)}, and it must be an absolute path`);
+        }
+        const item = keychainOf(table.keychain, `${where}.on.${machine}.keychain`, atOn, machine);
+        return { file: there as string, ...(item === undefined ? {} : { keychain: item }) };
+      });
+    if (keychain !== undefined) {
+      const linux = machines.find((one) => one.os !== "macos" && on[one.id] === undefined);
+      if (linux) {
+        refuse(`${where}.keychain`, lines.get(`${where}.keychain`) ?? here,
+          `${id} names a keychain item and ${linux.id} runs ${linux.os}, which has no keychain: say where ${id} is on ${linux.id} under on.${linux.id}`);
+      }
+    }
+    credentialsOn.set(id as string, on);
+
     credentials.push({
       id: id as string,
       kind: kind as string,
       file: at as string,
       owner: owner as string,
+      ...(keychain === undefined ? {} : { keychain }),
     });
   });
 
@@ -2048,20 +2257,43 @@ export function loadRegistry(file: string): Registry {
     }
   });
 
-  return new Registry(
-    file,
-    parsed,
-    entries,
-    presets,
-    agents,
-    rates,
-    machines,
-    people,
-    credentials,
-    repositories,
-    recognizers,
-    zone,
-  );
+  // The file as written is the hub machine's view. For any other machine the
+  // three per-machine settings, every person's placement and every
+  // credential's placement replace what the file says at the top, so nothing
+  // below the loader ever asks which machine it is on. The rest of the file is
+  // the same object either way.
+  const machine = view.machine === undefined || view.machine === "" ? null : view.machine;
+  if (machine === null) {
+    return new Registry(file, parsed, entries, presets, agents, rates, machines, people, credentials, repositories, recognizers, zone);
+  }
+  const own = machines.find((one) => one.id === machine);
+  if (!own && declared.size > 0) {
+    throw new RegistryRefused(file, lines.get("machines[0]") ?? 0, "machines",
+      `this process is for the machine ${describe(machine)}, which no [[machines]] entry declares`);
+  }
+  const hub = { ...((parsed.hub ?? {}) as Record<string, unknown>) };
+  for (const key of MACHINE_SETTINGS) {
+    const value = own?.[key];
+    if (value !== undefined) hub[key] = value;
+  }
+  // A machine that names a state directory of its own keeps its secrets under
+  // it too, unless it names those as well: the hub machine's secrets directory
+  // is a path on the hub machine's disk.
+  if (own?.state_dir !== undefined && own.secrets_dir === undefined) delete hub.secrets_dir;
+  const placedPeople = people.map((person) => {
+    const there = peopleOn.get(person.id)?.[machine];
+    if (!there) return person;
+    const { vault: _vault, ...rest } = person;
+    return { ...rest, tree: there.tree, ...(there.vault === undefined ? {} : { vault: there.vault }) };
+  });
+  const placedCredentials = credentials.map((credential) => {
+    const there = credentialsOn.get(credential.id)?.[machine];
+    if (!there) return credential;
+    const { keychain: _keychain, ...rest } = credential;
+    return { ...rest, file: there.file, ...(there.keychain === undefined ? {} : { keychain: there.keychain }) };
+  });
+  return new Registry(file, { ...parsed, hub }, entries, presets, agents, rates, machines, placedPeople, placedCredentials,
+    repositories, recognizers, zone, machine);
 }
 
 export function readSetting(registry: unknown, key: string): unknown {

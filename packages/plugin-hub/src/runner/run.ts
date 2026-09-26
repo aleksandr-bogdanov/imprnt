@@ -396,7 +396,15 @@ export async function runRunner(options: {
   registryFile: string;
   adapters: Record<string, Adapter>;
 }): Promise<RunnerHandle> {
-  const first = loadRegistry(options.registryFile);
+  // The file is read FOR THIS RUNNER'S MACHINE, every time it is read. Its
+  // entry says which machine that is, and the view the loader hands back
+  // carries that machine's own state directory, secrets and store address, and
+  // each person's tree and vault there, so a runner on a spoke keeps its
+  // session state on its own disk and files into the vault checkout that is
+  // there, with nothing below this line knowing the difference.
+  const machine = listRunEntries(loadRegistry(options.registryFile)).find((one) => one.id === options.runner)?.machine ?? "";
+  const load = () => loadRegistry(options.registryFile, { machine });
+  const first = load();
   // The memory reader for this platform. Nothing else of the seam is used here:
   // a model child is a child of its runner with no unit of its own (D7).
   const os = thisOs();
@@ -452,7 +460,7 @@ export async function runRunner(options: {
     while (!stopping && !own.leaving) {
       // Read again on every pass, because a registry edit that raises the
       // count or the budget is one of the things this wait is woken for.
-      const entry = listRunEntries(loadRegistry(options.registryFile)).find(one => one.id === options.runner);
+      const entry = listRunEntries(load()).find(one => one.id === options.runner);
       const limits = runnerAdmission(entry ?? {});
       const reserveMb = limits.reserve_mb;
       const usedMb = Math.max(reservations * reserveMb, measuredBytes / 1048576);
@@ -918,7 +926,7 @@ export async function runRunner(options: {
       // already exists. Opened after the read, that notification is emitted to
       // nobody and the row waits for the tick.
       waiter = await openWorkWaiter(store, { agent: agent.id });
-      const initial = loadRegistry(options.registryFile);
+      const initial = load();
       preflight(initial, agent);
       // THE HOLD AFTER A RESTART. The hold outlives the process that opened it:
       // the rows keep the window's reset as their `retry_at`, and only the way
@@ -968,7 +976,7 @@ export async function runRunner(options: {
       while (!stopping && !own.leaving) {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
-        const registry = loadRegistry(options.registryFile);
+        const registry = load();
         agent = listAgents(registry).find(one => one.id === agent.id) ?? agent;
         const lifetime = lifetimeFor(registry, agent.id);
         if (own.session && (lifetime.sleeping || lifetime.mode === "on-demand" && Date.now() - lastWork >= lifetime.idle_seconds * 1000)) {
@@ -1193,7 +1201,7 @@ export async function runRunner(options: {
       }
     } catch (error) {
       if (stopping || own.leaving) return;
-      const registry = loadRegistry(options.registryFile);
+      const registry = load();
       const taskRetrySeconds = Number(readSetting(registry, "runner.task_retry_seconds") ?? 30);
       const retryAt = new Date(Date.now() + taskRetrySeconds * 1000).toISOString();
       retries.set(agent.id, Date.parse(retryAt));
@@ -1380,7 +1388,7 @@ export async function runRunner(options: {
       if (stopping) break;
       let registry: Registry;
       try {
-        registry = loadRegistry(options.registryFile);
+        registry = load();
       } catch {
         // A file half written by an editor is one this tick cannot read. The
         // next tick reads the finished one and nothing is dropped meanwhile.
@@ -1410,7 +1418,7 @@ export async function runRunner(options: {
   const recovered = new Set<string>();
   const recoverAgent = async (request: { id: string; agent: string }) => {
     if (recovered.has(request.id)) return;
-    const registry = loadRegistry(options.registryFile);
+    const registry = load();
     const agent = agentsFor(registry, { runner: options.runner }).find(one => one.id === request.agent);
     if (!agent) throw new Error("unknown-agent");
     recovering.add(agent.id);
@@ -1425,9 +1433,9 @@ export async function runRunner(options: {
     } finally { recovering.delete(agent.id); }
   };
   const controls = await watchControls(store, "runner", data => data.target_kind === "agent" &&
-    agentsFor(loadRegistry(options.registryFile), { runner: options.runner }).some(a => a.id === data.target_id),
+    agentsFor(load(), { runner: options.runner }).some(a => a.id === data.target_id),
     async data => { await recoverAgent({ id: String(data.id), agent: String(data.target_id) }); },
-    { registry: () => loadRegistry(options.registryFile) });
+    { registry: () => load() });
   return {
     runner: options.runner,
     recoverAgent,

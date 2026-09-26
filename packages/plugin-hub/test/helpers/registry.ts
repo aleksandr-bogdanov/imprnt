@@ -116,8 +116,15 @@ export interface RecognizerSpec {
 export interface MachineSpec {
   id: string;
   os?: string;
+  /** This machine's own paths, where they differ from the `[hub]` table's. */
+  state_dir?: string;
+  secrets_dir?: string;
+  store_url?: string;
   [key: string]: string | number | undefined;
 }
+
+/** Where a person or a credential is on one machine, keyed by machine id. */
+export type PlacementSpec = Record<string, Record<string, string | undefined>>;
 
 /** A person and the tree that is their boundary. */
 export interface PersonSpec {
@@ -147,7 +154,9 @@ export interface PersonSpec {
   harvest_quiet_minutes?: number;
   harvest_min_messages?: number;
   harvest_report?: boolean;
-  [key: string]: string | number | boolean | undefined;
+  /** This person's tree and vault on a machine that is not the hub's. */
+  on?: PlacementSpec;
+  [key: string]: string | number | boolean | PlacementSpec | undefined;
 }
 
 /**
@@ -159,7 +168,11 @@ export interface CredentialSpec {
   kind?: string;
   file?: string;
   owner?: string;
-  [key: string]: string | number | undefined;
+  /** The macOS keychain item a claude-login is kept in, by service name. */
+  keychain?: string;
+  /** This credential's file and source on a machine that is not the hub's. */
+  on?: PlacementSpec;
+  [key: string]: string | number | PlacementSpec | undefined;
 }
 
 /**
@@ -243,16 +256,25 @@ const HUB_DEFAULTS: Record<string, string | number> = {
  * reason: an argv left to `String` renders as one comma-joined string, which is
  * the wrong shape and one the loader reads as a single argument.
  */
-function value(v: string | number | boolean | string[]): string {
+function value(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map((one) => JSON.stringify(one)).join(", ")}]`;
   if (typeof v === "boolean") return v ? "true" : "false";
+  // A plain object renders as an INLINE table, on the entry's own line, which
+  // is the one shape a per-machine placement (`on = { mac = { ... } }`) takes
+  // in a file the line editor can still find entries in.
+  if (v !== null && typeof v === "object") {
+    const pairs = Object.entries(v as Record<string, unknown>)
+      .filter(([, one]) => one !== undefined)
+      .map(([key, one]) => `${key} = ${value(one)}`);
+    return `{ ${pairs.join(", ")} }`;
+  }
   return typeof v === "number" ? String(v) : JSON.stringify(v);
 }
 
 function table(lines: string[], entries: Record<string, unknown>): void {
   for (const [key, raw] of Object.entries(entries)) {
     if (raw === undefined) continue;
-    lines.push(`${key} = ${value(raw as string | number | boolean | string[])}`);
+    lines.push(`${key} = ${value(raw)}`);
   }
 }
 
