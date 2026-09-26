@@ -97,7 +97,10 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   // tree and state.
   const forbidden = [...(input.box.secretPaths ?? []), credential.file, ...input.box.otherTrees, ...(input.box.otherStateRoots ?? []),
     ...(ambient ? [join(ambient, ".claude", ".credentials.json")] : [])];
-  const prompt = ordinary ? assemblePrompt({ files: instructionFiles(person, root), fragment, home: ambient, forbidden }) : null;
+  // Imports reach only inside the person's vault. Files the registry itself
+  // names are the owner's hand and may sit anywhere not forbidden.
+  const prompt = ordinary ? assemblePrompt({ files: instructionFiles(person, root), fragment, home: ambient, forbidden,
+    inside: [root], trusted: person?.instructions ?? [] }) : null;
   // The box masks every credential file, and this launch keeps the one login its
   // loop runs on. Every other one, bot tokens and any other model login alike,
   // stays masked. The launched login's own directory is bound writable because

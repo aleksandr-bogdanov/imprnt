@@ -552,6 +552,30 @@ test("the sync commits a deletion made with git rm and leaves a checkout somebod
   } finally { await f.stop() }
 })
 
+test("the sync commits a link to a checkout as the link, and a file staged then deleted does not break the commit", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    const elsewhere = join(f.root, "elsewhere-checkout")
+    mkdirSync(elsewhere)
+    fixtureGit(elsewhere, "init", "--quiet")
+    symlinkSync(elsewhere, join(r.path, "linked"))
+    writeFileSync(join(r.path, "gone.md"), "staged, then deleted\n")
+    fixtureGit(r.path, "add", "gone.md")
+    rmSync(join(r.path, "gone.md"))
+    writeFileSync(join(r.path, "kept.md"), "a note that stays\n")
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    const done = await syncChild(f, git.env)
+    expect(done.code, done.err).toBe(0)
+    const tree = fixtureGit(f.root, "--git-dir", r.remote, "ls-tree", "--name-only", "main")
+    expect(tree).toContain("kept.md")
+    expect(tree).toContain("linked")
+    expect(tree).not.toContain("gone.md")
+    expect(fixtureGit(r.path, "status", "--porcelain"), "nothing is left behind").toBe("")
+  } finally { await f.stop() }
+})
+
 test("the sync refuses to commit over an unfinished merge or under a filter program the repository's config names", async () => {
   const f = await syncFixture(cluster)
   try {
@@ -582,6 +606,14 @@ test("the sync refuses to commit over an unfinished merge or under a filter prog
     expect(await code()).toBe("conflict")
     expect(fixtureGit(r.path, "rev-parse", "HEAD")).toBe(before)
     expect(readFileSync(join(r.path, "base.txt"), "utf8")).toContain("<<<<<<<")
+    // A filter planted while a merge is stopped is still refused as a filter, before any
+    // command that reads the working tree could run it.
+    fixtureGit(r.path, "config", "filter.planted.clean", `sh -c 'echo ran > ${marker}; cat'`)
+    writeFileSync(join(r.path, ".gitattributes"), "*.txt filter=planted\n")
+    expect(await code()).toBe("config")
+    expect(() => readFileSync(marker)).toThrow()
+    fixtureGit(r.path, "config", "--unset", "filter.planted.clean")
+    rmSync(join(r.path, ".gitattributes"))
     fixtureGit(r.path, "merge", "--abort")
     expect(await code()).toBeUndefined()
   } finally { await f.stop() }

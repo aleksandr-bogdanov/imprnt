@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { listPeople } from "../registry/entries.ts";
 import type { PersonEntry } from "../registry/load.ts";
@@ -52,29 +52,54 @@ export function instructionFiles(person: PersonEntry | undefined, root: string):
 }
 
 /**
- * Read one instruction file, after proving the agent may read it. The runner
- * reads these files outside the box and copies them into the agent's prompt,
- * so a file the box hides from the agent (a credential, a token, the hub's
- * secrets, another person's tree or state) must never be read here either.
- * An agent can write its own vault's instruction files, so without this an
- * import line would be a way around every mask. The check is on the resolved
- * path, so a symlink into a hidden place is refused like the place itself.
+ * Where instruction text may come from. The runner reads these files outside
+ * the box and copies them into the agent's prompt, and an agent can write its
+ * own vault's instruction files, so a reach wider than the vault would be a
+ * way around every mask the box sets. So an import may only name a file
+ * inside `inside`, the person's own vault, and never one in `forbidden` (a
+ * secret, a login, another person's tree or state), even when that sits
+ * inside the vault. `trusted` are the files the registry names by hand, which
+ * no agent can move, and they may live anywhere that is not forbidden.
  */
-function readable(file: string, forbidden: string[], from?: string): string {
+interface Scope { inside: string[]; forbidden: string[]; trusted: Set<string> }
+
+const under = (path: string, roots: string[]) => roots.some(root => path === root || path.startsWith(`${root}/`));
+
+/**
+ * Read one instruction file after proving the agent may read it. The check is
+ * on the resolved path, so a symlink is judged by where it lands. The file is
+ * opened once and the opened file is then checked again against a fresh
+ * resolution, so a file swapped for a link between the check and the read is
+ * refused rather than read.
+ */
+function readable(file: string, scope: Scope, from?: string): string {
   const said = from ? `${file} (imported by ${from})` : file;
+  const allowed = (real: string) => {
+    if (under(real, scope.forbidden) || (!scope.trusted.has(file) && !under(real, scope.inside))) {
+      throw new Error(`instructions-forbidden: ${said} is a place this agent may not read`);
+    }
+  };
   let real: string;
+  try { real = realpathSync(file); } catch { throw new Error(`instructions-unreadable: ${said}`); }
+  allowed(real);
+  let fd: number;
+  try { fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { throw new Error(`instructions-unreadable: ${said}`); }
   try {
-    real = realpathSync(file);
-    if (!statSync(real).isFile()) throw new Error();
-    accessSync(real, constants.R_OK);
-  } catch { throw new Error(`instructions-unreadable: ${said}`); }
-  if (forbidden.some(path => real === path || real.startsWith(`${path}/`))) {
-    throw new Error(`instructions-forbidden: ${said} is a place this agent may not read`);
-  }
-  try { return readFileSync(real, "utf8"); } catch { throw new Error(`instructions-unreadable: ${said}`); }
+    const opened = fstatSync(fd);
+    if (!opened.isFile()) throw new Error(`instructions-unreadable: ${said}`);
+    let now: string;
+    try { now = realpathSync(file); } catch { throw new Error(`instructions-changed: ${said} moved while it was being read`); }
+    allowed(now);
+    const current = statSync(now);
+    if (current.dev !== opened.dev || current.ino !== opened.ino) throw new Error(`instructions-changed: ${said} moved while it was being read`);
+    // Linux names the object behind the descriptor, which settles it even if
+    // a directory above the file was swapped and swapped back.
+    if (process.platform === "linux") allowed(readlinkSync(`/proc/self/fd/${fd}`));
+    return readFileSync(fd, "utf8");
+  } finally { closeSync(fd); }
 }
 
-/** Every hidden path as the file system names it, so a symlinked parent cannot slip past the prefix test. */
+/** Every path as the file system names it, so a symlinked parent cannot slip past the prefix test. */
 function canonical(paths: string[]): string[] {
   return [...new Set(paths.filter(path => path !== "").flatMap(path => {
     const plain = resolve(path);
@@ -96,6 +121,19 @@ function isFile(path: string): boolean {
 }
 
 /**
+ * A code fence opens on three or more backticks or tildes and closes only on
+ * the same character, at least as many times, with nothing after it. A
+ * three-backtick example inside a four-tilde block is text, not the end.
+ */
+function fence(line: string, open: { char: string; length: number } | null) {
+  const found = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+  if (!found) return open;
+  const [run, rest] = [found[1], found[2]];
+  if (!open) return { char: run[0], length: run.length };
+  return run[0] === open.char && run.length >= open.length && rest.trim() === "" ? null : open;
+}
+
+/**
  * One instruction file with its `@path` imports expanded the way Claude Code
  * expands them, relative paths against the importing file's directory and `~`
  * against `home`, a file already included anywhere in this prompt included
@@ -104,19 +142,19 @@ function isFile(path: string): boolean {
  * A line that is only `@<path>` is replaced by that file's content, and one
  * that cannot be read is refused rather than dropped: a rule that silently
  * goes missing is the exact failure this assembly exists to prevent. An `@`
- * inside a sentence is also an import when it names a file that exists, and
- * the file's content follows the line. One that names no file is left as
- * text, because a sentence can mention `@someone` and that is not an import,
- * which is also how Claude Code treats it. A chain deeper than `IMPORT_DEPTH`
- * is refused. Every file read is recorded in `reads`, because the box has to
- * let the CLI's launch reach it.
+ * inside a sentence, after a space or an opening bracket or quote, is also an
+ * import when it names a file that exists, and the file's content follows the
+ * line. One that names no file is left as text, because a sentence can
+ * mention `@someone` and that is not an import, which is also how Claude Code
+ * treats it. A chain deeper than `IMPORT_DEPTH` is refused. Every file read is
+ * recorded in `reads`, because the box has to let the CLI's launch reach it.
  */
-export function expandInstructions(file: string, options: { home?: string; seen: Set<string>; reads: string[]; forbidden: string[] },
+export function expandInstructions(file: string, options: { home?: string; seen: Set<string>; reads: string[]; scope: Scope },
   depth = 0, from?: string): string {
-  const text = readable(file, options.forbidden, from);
+  const text = readable(file, options.scope, from);
   options.seen.add(realpathSync(file));
   options.reads.push(file);
-  let fenced = false;
+  let open: { char: string; length: number } | null = null;
   const out: string[] = [];
   const include = (path: string) => {
     if (depth + 1 > IMPORT_DEPTH) throw new Error(`instructions-import-too-deep: ${path} (imported by ${file})`);
@@ -125,14 +163,15 @@ export function expandInstructions(file: string, options: { home?: string; seen:
     if (!again) out.push(expandInstructions(path, options, depth + 1, file).replace(/\n$/, ""));
   };
   for (const line of text.split("\n")) {
-    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; out.push(line); continue; }
-    if (fenced) { out.push(line); continue; }
+    const was = open;
+    open = fence(line, open);
+    if (was || open) { out.push(line); continue; }
     const whole = line.match(/^\s*@(\S+)\s*$/);
     if (whole) { include(importPath(whole[1], file, options.home)); continue; }
     out.push(line);
     const prose = line.replace(/`[^`]*`/g, " ");
-    for (const found of prose.matchAll(/(?:^|\s)@([^\s`]+)/g)) {
-      const target = found[1].replace(/[.,;:!?)\]"']+$/, "");
+    for (const found of prose.matchAll(/(?:^|[\s(\[{"'<])@([^\s`)\]}>"']+)/g)) {
+      const target = found[1].replace(/[.,;:!?]+$/, "");
       if (target === "") continue;
       let path: string;
       try { path = importPath(target, file, options.home); } catch { continue; }
@@ -148,19 +187,21 @@ export function expandInstructions(file: string, options: { home?: string; seen:
  * agent's own fragment. The fragment is read as it is, because the converter
  * already refuses an import inside one.
  */
-export function assemblePrompt(input: { files: string[]; fragment?: string; home?: string; forbidden?: string[] }) {
+export function assemblePrompt(input: { files: string[]; fragment?: string; home?: string; inside: string[];
+  forbidden?: string[]; trusted?: string[] }) {
   const reads: string[] = [];
   const seen = new Set<string>();
-  const forbidden = canonical(input.forbidden ?? []);
+  const scope: Scope = { inside: canonical(input.inside), forbidden: canonical(input.forbidden ?? []),
+    trusted: new Set([...(input.trusted ?? []), ...(input.fragment ? [input.fragment] : [])]) };
   const parts = [LOOP_PREAMBLE.trimEnd()];
   for (const file of input.files) {
     let real: string | null = null;
     try { real = realpathSync(file); } catch { /* readable() below names it */ }
     if (real && seen.has(real)) continue;
-    parts.push(expandInstructions(file, { home: input.home, seen, reads, forbidden }).trimEnd());
+    parts.push(expandInstructions(file, { home: input.home, seen, reads, scope }).trimEnd());
   }
   if (input.fragment) {
-    parts.push(readable(input.fragment, forbidden).trimEnd());
+    parts.push(readable(input.fragment, scope).trimEnd());
     reads.push(input.fragment);
   }
   return { text: parts.join("\n\n") + "\n", reads };

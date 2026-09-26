@@ -92,18 +92,19 @@ test("an agent shaped like one made from a chat gets its person's MCP servers, s
   } finally { f.stop() }
 })
 
-test("imports resolve the way Claude Code resolves them: relative, from HOME, once each, never inside a code fence", async () => {
+test("imports resolve the way Claude Code resolves them: relative, absolute, once each, never inside a code fence", async () => {
   const f = loopFixture()
   try {
     const root = withVault(f)
-    writeFileSync(join(f.home, "home-rule.md"), "p1-home-rule\n")
+    writeFileSync(join(root, "absolute-rule.md"), "p1-absolute-rule\n")
     writeFileSync(join(root, "plugins", "rules.md"), "p1-imported-rule\n@nested/deeper.md\n@../CLAUDE.md\n")
     mkdirSync(join(root, "plugins", "nested"))
     writeFileSync(join(root, "plugins", "nested", "deeper.md"), "p1-nested-rule\n")
-    writeFileSync(join(root, "CLAUDE.local.md"), "@plugins/rules.md\n@~/home-rule.md\n@plugins/rules.md\n```\n@plugins/fenced.md\n```\n")
+    writeFileSync(join(root, "CLAUDE.local.md"), `@plugins/rules.md\n@${join(root, "absolute-rule.md")}\n@plugins/rules.md\n\`\`\`\n@plugins/fenced.md\n\`\`\`\n~~~~\n\`\`\`\n@plugins/inside-longer-fence.md\n~~~~\n`)
     const { got } = await launched(f)
     const prompt = appended(got.fragment)
-    expect(prompt.after("p1-vault-contract-rule", "p1-imported-rule", "p1-nested-rule", "p1-home-rule")).toBe(true)
+    expect(prompt.after("p1-vault-contract-rule", "p1-imported-rule", "p1-nested-rule", "p1-absolute-rule")).toBe(true)
+    expect(prompt.text, "a three-backtick line inside a four-tilde block does not close it").toContain("@plugins/inside-longer-fence.md")
     for (const once of ["p1-vault-contract-rule", "p1-imported-rule", "p1-nested-rule"]) {
       expect(prompt.text.split(once).length - 1, `${once} is included once`).toBe(1)
     }
@@ -168,6 +169,10 @@ test("an import can never reach what the box hides: another person's tree, a log
     await refused(`@${theirs}\n`)
     await refused(`@${f.login}\n`)
     await refused(`@~/.claude/.credentials.json\n`)
+    // Anything outside the person's vault, a key in HOME above all, is refused whatever it is.
+    writeFileSync(join(f.home, "id_ed25519"), "synthetic-private-key\n")
+    await refused(`@~/id_ed25519\n`)
+    await refused(`Keep (@~/id_ed25519) close.\n`)
     symlinkSync(theirs, join(root, "plugins", "looks-local.md"))
     await refused("@plugins/looks-local.md\n")
     await refused("Read @plugins/looks-local.md first.\n")
@@ -185,11 +190,13 @@ test("an @ inside a sentence imports a file that exists and leaves a mention of 
   try {
     const root = withVault(f)
     writeFileSync(join(root, "plugins", "inline.md"), "p1-inline-rule\n")
-    writeFileSync(join(root, "CLAUDE.local.md"), "Read @plugins/inline.md before answering.\nAsk @someone, and see `@plugins/code-span.md`.\n")
+    writeFileSync(join(root, "CLAUDE.local.md"), "Read @plugins/inline.md before answering.\nAsk @someone, and see `@plugins/code-span.md`.\nAlso (@plugins/bracketed.md).\n")
+    writeFileSync(join(root, "plugins", "bracketed.md"), "p1-bracketed-rule\n")
     writeFileSync(join(root, "plugins", "code-span.md"), "p1-code-span-rule\n")
     const { got } = await launched(f)
     const prompt = appended(got.fragment)
     expect(prompt.after("Read @plugins/inline.md before answering.", "p1-inline-rule", "Ask @someone")).toBe(true)
     expect(prompt.text).not.toContain("p1-code-span-rule")
+    expect(prompt.after("Also (@plugins/bracketed.md).", "p1-bracketed-rule")).toBe(true)
   } finally { f.stop() }
 })

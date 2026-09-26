@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { recordJobSuccess } from "../check/schedule.ts";
 import { syncCause, syncStuck } from "../door/lines.ts";
@@ -67,6 +67,16 @@ async function plantsFilter(path: string, code: string): Promise<boolean> {
 }
 
 /**
+ * A directory that is its own checkout, which the vault's commit leaves out.
+ * Judged without following a symlink: a link the vault holds is the vault's
+ * own file even when it points at a checkout, and git records the link.
+ */
+function isCheckout(root: string, name: string): boolean {
+  const entry = join(root, name.replace(/\/+$/, ""));
+  try { return lstatSync(entry).isDirectory() && existsSync(join(entry, ".git")); } catch { return false; }
+}
+
+/**
  * Commit whatever the repository holds uncommitted, so the pull and push that
  * follow move it. Agents file notes into a vault and never commit them, and a
  * sync that refused an uncommitted tree left that vault standing still in both
@@ -95,13 +105,12 @@ async function commitPending(path: string, nested: string[], code: string): Prom
     const entry = entries[n];
     if (entry.length < 4) continue;
     const name = entry.slice(3);
-    // Untracked, status names such a checkout with a trailing slash. Staged
-    // by hand, it is a gitlink with none. Either way it is not the vault's.
-    if (existsSync(join(path, name, ".git"))) continue;
+    // A rename or copy names its source in the next field, which is always
+    // consumed here, so the source is never read as a record of its own.
+    const source = "RC".includes(entry[0]) ? entries[++n] : undefined;
+    if (isCheckout(path, name) || (source !== undefined && isCheckout(path, source))) continue;
     changed.push(name);
-    // A rename or copy already staged names its source in the next field, and
-    // the commit has to take the source's removal too.
-    if ("RC".includes(entry[0])) changed.push(entries[++n]);
+    if (source !== undefined) changed.push(source);
     if (entry[0] === "?" || entry[1] !== " ") toAdd.push(name);
   }
   if (changed.length === 0) return 0;
@@ -109,16 +118,19 @@ async function commitPending(path: string, nested: string[], code: string): Prom
     await git(path, ["--literal-pathspecs", "add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul"], code,
       { input: toAdd.join("\0") });
   }
-  // `diff` takes no pathspec file, so the whole index is listed and cut down to
-  // what status named here.
+  // What the commit takes is re-read after `add`: a file staged and then
+  // deleted is gone from the index now, and naming it would fail the commit.
+  // `diff` takes no pathspec file, so the whole index is listed, without
+  // rename pairing so both halves of a rename show, and cut down to what
+  // status named here.
   const listed = new Set(changed);
-  const staged = (await git(path, ["diff", "--cached", "--name-only", "-z"], code, { raw: true }))
-    .split("\0").filter(name => listed.has(name)).length;
-  if (staged === 0) return 0;
+  const paths = (await git(path, ["diff", "--cached", "--no-renames", "--name-only", "-z"], code, { raw: true }))
+    .split("\0").filter(name => listed.has(name));
+  if (paths.length === 0) return 0;
   await git(path, ["--literal-pathspecs", "-c", "user.name=imprnt hub", "-c", "user.email=hub@localhost", "-c", "commit.gpgsign=false",
-    "commit", "--no-verify", "--quiet", "-m", `hub sync: ${staged} files`, "--pathspec-from-file=-", "--pathspec-file-nul"],
-    code, { input: changed.join("\0") });
-  return staged;
+    "commit", "--no-verify", "--quiet", "-m", `hub sync: ${paths.length} files`, "--pathspec-from-file=-", "--pathspec-file-nul"],
+    code, { input: paths.join("\0") });
+  return paths.length;
 }
 
 /** How many failed runs in a row reach the person, not only the journal. */
@@ -177,6 +189,11 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           const [row] = await connection`select pg_try_advisory_lock(hashtextextended(${`sync:${declared.machine}:${identity}`}, 0)) as held`;
           locked = row.held;
           if (!locked) throw new Error(code);
+          // Before any command that reads the working tree: git runs a filter's
+          // program while it compares file contents, so a filter an agent wrote
+          // into the repository's config would run on the first such command.
+          code = "config";
+          if (await plantsFilter(path, code)) throw new Error(code);
           code = "branch";
           if (await git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"], code) !== repo.branch) throw new Error(code);
           code = "remote";
@@ -187,8 +204,6 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           const gitDir = await git(path, ["rev-parse", "--absolute-git-dir"], code);
           if (["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"].some(one => existsSync(join(gitDir, one))) ||
               await git(path, ["diff", "--name-only", "--diff-filter=U"], code)) throw new Error(code);
-          code = "config";
-          if (await plantsFilter(path, code)) throw new Error(code);
           code = "commit";
           const nested = nestedIn(path, registry).map(one => `:(exclude,literal)${one}`);
           committed = await commitPending(path, nested, code);
