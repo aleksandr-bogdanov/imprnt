@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { backupStagingFor, listAgents, listCredentials, listPeople, listRepositories, listRunEntries, personOf } from "../registry/entries.ts";
 import { readSetting } from "../registry/load.ts";
+import { localRemotePath } from "../registry/remote.ts";
 import { secretsDirOf } from "../store/secrets.ts";
 import type { BoxContext, BoxedCommand } from "./types.ts";
 
@@ -164,6 +165,22 @@ function secretPathsOf(registry: unknown): string[] {
   ].filter((path) => path !== ""))];
 }
 
+/**
+ * The directories on this box that hold the git copies of other people's
+ * repositories, less any this person's own repositories share.
+ */
+export function otherPeoplesRemotes(registry: unknown, person: string): string[] {
+  const repositories = listRepositories(registry).filter((repo) => repo.path !== "");
+  const remoteOf = (repo: { path: string; remote: string }): string | null => {
+    try { return localRemotePath(repo.path, repo.remote); } catch { return null; }
+  };
+  const mine = new Set(repositories.filter((repo) => repo.person === person).map(remoteOf));
+  return [...new Set(repositories
+    .filter((repo) => repo.person !== person)
+    .map(remoteOf)
+    .filter((path): path is string => path !== null && !mine.has(path)))];
+}
+
 /** Everything the box needs about one agent, read off the registry and nothing else. */
 export function boxContextFor(registry: unknown, agentId: string): BoxContext {
   const agent = listAgents(registry).find((one) => one.id === agentId);
@@ -179,10 +196,20 @@ export function boxContextFor(registry: unknown, agentId: string): BoxContext {
     // Every OTHER declared person, and never the agent's own: a box that masked
     // its own tree is a box the agent cannot work in, and one that forgot
     // another person is the leak this exists to close.
-    otherTrees: listPeople(registry)
-      .filter((one) => one.id !== agent.person)
-      .map((one) => one.tree)
-      .filter((tree) => tree !== ""),
+    //
+    // AND THE GIT COPY OF EVERY REPOSITORY ANOTHER PERSON DECLARES. The
+    // ordinary layout keeps a vault's bare repository outside the person's
+    // tree, and a box that hid the tree alone left the other person's whole
+    // history one read away through their origin. A remote this person's own
+    // repositories also point at, the household's shared zone above all, is
+    // theirs to reach and is not hidden.
+    otherTrees: [...new Set([
+      ...listPeople(registry)
+        .filter((one) => one.id !== agent.person)
+        .map((one) => one.tree)
+        .filter((tree) => tree !== ""),
+      ...otherPeoplesRemotes(registry, agent.person),
+    ])],
     // This person's declared repositories are working copies the agent edits, so
     // they stay writable under the read-only host. One under the person's tree is
     // already covered by the tree's own write bind, so this only adds any that

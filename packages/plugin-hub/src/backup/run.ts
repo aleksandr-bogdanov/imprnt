@@ -24,7 +24,8 @@ import {
   listRepositories,
   listRunEntries,
 } from "../registry/entries.ts";
-import { BACKUP_PLACEHOLDERS, readSetting, type Registry, type RunEntry } from "../registry/load.ts";
+import { BACKUP_PLACEHOLDERS, readSetting, type Registry, type RepositoryEntry, type RunEntry } from "../registry/load.ts";
+import { localRemotePath, remoteUrlOf } from "../registry/remote.ts";
 import { openStore, type StoreLike } from "../store/connect.ts";
 import { secretsDirOf, storeUrlFor } from "../store/secrets.ts";
 import { buildManifest, MANIFEST_FILE, renderManifest, sameBytes, sha256 } from "./manifest.ts";
@@ -92,6 +93,28 @@ export interface BackupResult {
   dump_sha256: string;
   /** Whether the dump changed since the last copy and was committed. */
   committed: boolean;
+  /** The declared repositories left out because their remote is off the box. */
+  left_out?: string[];
+}
+
+/**
+ * Which declared repositories the copy takes, and which it leaves out.
+ *
+ * A repository whose remote is on another host is already kept somewhere
+ * else, and sending its whole history off the box every day was most of a
+ * copy for nothing. One whose remote is on this box, or whose checkout names
+ * no remote this can read, is the household's only copy and goes.
+ */
+export function repositoriesToCopy(registry: Registry): { copied: RepositoryEntry[]; leftOut: RepositoryEntry[] } {
+  const copied: RepositoryEntry[] = [];
+  const leftOut: RepositoryEntry[] = [];
+  for (const repo of listRepositories(registry)) {
+    let url: string | null = null;
+    let local: string | null = null;
+    try { url = remoteUrlOf(repo.path, repo.remote); local = localRemotePath(repo.path, repo.remote); } catch { url = null; }
+    (url !== null && local === null ? leftOut : copied).push(repo);
+  }
+  return { copied, leftOut };
 }
 
 /**
@@ -285,11 +308,12 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
       ...NEVER_COPIED.flatMap((one) => one.paths(registry, stateDir)),
       staging,
     ].filter((path) => path !== "").map((path) => real(path) ?? path);
+    const repositories = repositoriesToCopy(registry);
     const trees: { path: string; required: boolean }[] = [
       // Working trees whole, repositories included, so uncommitted and
       // unpushed work is in the copy. A zone checkout sits inside its vault.
       ...listPeople(registry).filter((person) => person.vault).map((person) => ({ path: person.vault!, required: true })),
-      ...listRepositories(registry).map((repo) => ({ path: repo.path, required: true })),
+      ...repositories.copied.map((repo) => ({ path: repo.path, required: true })),
       ...listPeople(registry).flatMap((person) => [
         { path: join(stateDir, person.id, "chatlog"), required: false },
         { path: join(stateDir, person.id, "inbox"), required: false },
@@ -350,6 +374,7 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
       files: files.length,
       bytes: files.reduce((sum, one) => sum + one.size, 0),
       dump_sha256: sha256(dump),
+      ...(repositories.leftOut.length === 0 ? {} : { left_out: repositories.leftOut.map((repo) => repo.id) }),
     };
     try {
       await store.sql.begin(async (sql) => {
