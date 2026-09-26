@@ -156,6 +156,14 @@ kind = "telegram"
 file = "/etc/imprnt-hub/telegram.token"
 owner = "household"
 
+# A key a watch reads with. `check` opens the file and reports it blank or
+# unreadable, and dials nothing with it.
+[[credentials]]
+id = "sentry"
+kind = "api-key"
+file = "/var/lib/imprnt-hub/secrets/sentry.token"
+owner = "p1"
+
 # A preset is a bundle of settings. Its id is derived from these five, so a
 # changed setting is a different preset and an id is never typed here.
 # The window thresholds are settings here and never numbers in code: at
@@ -322,6 +330,40 @@ id = "hub-pi"
 kind = "hub"
 machine = "pi"
 schedule = "always"
+memory_limit_mb = 128
+
+# A watch: a program with no hands. Once a day it fetches one source, compares
+# with what it saw the day before, and writes ONE notice into one person's chat
+# through that person's agent's door. No model, no shell, nothing leaves the
+# house. `daily at HH:MM` is a clock time on the machine that runs it, rendered
+# as a calendar event on both service managers; `hourly` and `every 6h` work
+# too. A day on which nothing is new, changed or overdue posts nothing at all,
+# and the job still writes its success stamp, so `check` says `job-stale` only
+# when it stops running.
+[[run]]
+id = "sentry-digest"
+kind = "watch"
+# The one source this hub reads. Anything else is refused by line.
+source = "sentry"
+machine = "pi"
+schedule = "daily at 07:00"
+# Whose chat the digest lands in: this person, through this agent's door and
+# chat. The agent must be this person's and must answer in a chat.
+person = "p1"
+agent = "p1-lair"
+# A [[credentials]] entry of kind api-key, sent as a bearer token.
+credential = "sentry"
+org = "an-organisation-slug"
+# The issue search. Absent means unresolved issues.
+query = "is:unresolved"
+# An issue with fewer events than this is never shown, only counted.
+min_events = 1
+# A NEW issue with at least this many events gets a line of its own. One
+# between min_events and this is counted in the digest's last sentence.
+notify_events = 10
+# An issue still open this many days after the watch first saw it gets one
+# reminder line, once.
+reminder_days = 7
 memory_limit_mb = 128
 
 [[repositories]]

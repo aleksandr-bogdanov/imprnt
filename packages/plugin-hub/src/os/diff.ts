@@ -14,11 +14,33 @@ import type { OsSeam, UnitState, WantedState, WantedUnit } from "./types.ts";
  * makes "never stopped by a robot" structural rather than promised.
  */
 
+/**
+ * The one clock-time shape, `daily at HH:MM`, as the hour and the minute, or
+ * null for every other schedule.
+ *
+ * A cadence says how often and a clock time says when. Both renderers read
+ * this: systemd carries it as a calendar event and launchd as a calendar
+ * interval, while every other schedule stays the interval pair it always was.
+ * The time is the machine's own local time, which is what a person means by
+ * "seven in the morning" and what both managers read a calendar spec in.
+ */
+export function dailyAt(schedule: string): { hour: number; minute: number } | null {
+  const found = /^daily\s+at\s+(\d{1,2}):(\d{2})$/.exec(String(schedule).trim().toLowerCase());
+  if (!found) return null;
+  const hour = Number(found[1]);
+  const minute = Number(found[2]);
+  if (hour > 23 || minute > 59) return null;
+  return { hour, minute };
+}
+
 /** The cadence a scheduled entry asks for, in seconds, or null. */
 export function scheduleSeconds(schedule: string): number | null {
   const text = String(schedule).trim().toLowerCase();
   if (text === "hourly") return 3600;
   if (text === "daily") return 86400;
+  // A job that runs at a clock time once a day runs every day, so its stale
+  // window is a day, and the stamp check needs nothing more than that.
+  if (dailyAt(text) !== null) return 86400;
   const every = /^every\s+(\d+)\s*(s|m|h|d|sec|secs|min|mins|hour|hours|day|days)?$/.exec(text);
   if (!every) return null;
   const size =

@@ -31,6 +31,8 @@ Every command takes the registry file. `imprnt hub` reaches them through the cor
 
 In a chat, an authorised sender can type `/recover <agent>`, `/dispatch <agent> <task>` and `/agent adopt|retire ...`. The board, reachable on the tailnet only, shows the same state and may edit the registry.
 
+A `[[run]]` entry of `kind = "watch"` is a program with no hands: on its schedule (`daily at 07:00` is a clock time on its machine, rendered as a calendar event on both service managers) it fetches one source with an `api-key` credential, compares with the `watch:<entry>` state sheet from the sweep before, and writes one notice into one person's chat through that person's agent's door. The one source is `source = "sentry"`: new issues at or over `notify_events`, issues whose event count moved a power of ten, and issues still open `reminder_days` after the watch first saw them, one line each, capped at thirty lines. A morning with nothing to say posts nothing and still writes its success stamp, so `job-stale` fires only when the sweep stops landing. A refused key or a bad answer exits 1 with `watch-failed: <entry>: <cause>` and leaves the sheet as it was. No model reads what it fetched.
+
 ## Rules that always hold
 
 - Never rewrite the registry by parsing and serialising it: comments are the only notes anybody has. Edit lines, or use the hub's own editor, which changes one line and proves the file still says what was asked.

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, chmodSync, closeSync, openSync, readdirSync, rmS
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RunEntry } from "../registry/load.ts";
-import { scheduleSeconds, wantedState } from "./diff.ts";
+import { dailyAt, scheduleSeconds, wantedState } from "./diff.ts";
 import { SCAN_PREFIX, isOurs, unitName } from "./names.ts";
 import { unitPath, type MemoryReading, type OsSeam, type RenderContext, type UnitFile, type UnitState } from "./types.ts";
 import { STARTED_WITH } from "../store/connect.ts";
@@ -135,6 +135,7 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
       // with no argv supplied is byte for byte what it always was.
       const argv = ctx.argv ?? [ctx.execPath, "run", ctx.entryScript, ctx.registryFile, entry.id];
       const every = wanted === "scheduled" ? scheduleSeconds(entry.schedule) : null;
+      const clock = every === null ? null : dailyAt(entry.schedule);
       const body = [
         ...(ctx.stateDir ? [
           "  <key>StandardOutPath</key>", `  <string>${xml(join(ctx.stateDir, "service-log", `${entry.id}.out.log`))}</string>`,
@@ -164,7 +165,19 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
         `  <integer>${ctx.restartDelaySeconds}</integer>`,
         ...(every === null
           ? []
-          : ["  <key>StartInterval</key>", `  <integer>${every}</integer>`]),
+          : clock === null
+            ? ["  <key>StartInterval</key>", `  <integer>${every}</integer>`]
+            : [
+                // A clock time is a calendar interval. launchd runs a missed
+                // one at the next wake on its own, so nothing here says so.
+                "  <key>StartCalendarInterval</key>",
+                "  <dict>",
+                "    <key>Hour</key>",
+                `    <integer>${clock.hour}</integer>`,
+                "    <key>Minute</key>",
+                `    <integer>${clock.minute}</integer>`,
+                "  </dict>",
+              ]),
       ];
       return [{ path: fileOf(label), text: plist(body) }];
     },

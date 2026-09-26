@@ -152,3 +152,222 @@ test("RUN-08 the control: the same file with the value corrected loads and the v
 
   await rm(dirname(file), { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// A watch entry. The same rule, line by line: what it reads with has to be a
+// declared key, whose chat it writes into has to be that person's agent with a
+// door and a chat, the source is a closed list, and each count is a whole
+// number above zero. Every refusal names the key and the line it sits on.
+// ---------------------------------------------------------------------------
+
+/** A household with one watch, each line replaceable by the check that needs it changed. */
+function watchFixture(over: Record<string, string | null> = {}): string[] {
+  const line = (key: string, fallback: string): string[] => {
+    const said = Object.hasOwn(over, key) ? over[key] : fallback;
+    return said === null ? [] : [said];
+  };
+  return [
+    "[hub]",
+    "tick_seconds = 5",
+    'store_url = "postgres://127.0.0.1:5432/hub"',
+    'state_dir = "/var/lib/imprnt-hub"',
+    "",
+    "[[machines]]",
+    'id = "pi"',
+    'os = "linux"',
+    "",
+    "[[people]]",
+    'id = "p1"',
+    'tree = "/var/lib/imprnt-hub/p1"',
+    "",
+    "[[people]]",
+    'id = "p2"',
+    'tree = "/var/lib/imprnt-hub/p2"',
+    "",
+    "[[credentials]]",
+    'id = "sentry"',
+    ...line("credential.kind", 'kind = "api-key"'),
+    'file = "/var/lib/imprnt-hub/secrets/sentry.token"',
+    'owner = "p1"',
+    "",
+    "[presets.daily]",
+    'adapter = "scripted"',
+    'model = "m"',
+    'provider = "p"',
+    'effort = "medium"',
+    'paid = "key"',
+    "",
+    "[[agents]]",
+    'id = "p1-lair"',
+    'person = "p1"',
+    'preset = "daily"',
+    'chat = "1000000001"',
+    'door = "door-fake"',
+    'runner = "runner-pi"',
+    "",
+    "[[agents]]",
+    'id = "p2-lair"',
+    'person = "p2"',
+    'preset = "daily"',
+    'chat = "2000000001"',
+    'door = "door-fake"',
+    'runner = "runner-pi"',
+    "",
+    "# takes jobs alone",
+    "[[agents]]",
+    'id = "p1-batch"',
+    'person = "p1"',
+    'preset = "daily"',
+    'runner = "runner-pi"',
+    "",
+    "[[run]]",
+    'id = "door-fake"',
+    'kind = "door"',
+    'machine = "pi"',
+    'platform = "fake"',
+    'person = "p1"',
+    'token_file = "/dev/null"',
+    'schedule = "always"',
+    "memory_limit_mb = 192",
+    "",
+    "[[run]]",
+    'id = "runner-pi"',
+    'kind = "runner"',
+    'machine = "pi"',
+    'schedule = "always"',
+    "memory_limit_mb = 512",
+    "child_memory_limit_mb = 2048",
+    "",
+    "[[run]]",
+    'id = "sentry-digest"',
+    'kind = "watch"',
+    ...line("source", 'source = "sentry"'),
+    'machine = "pi"',
+    ...line("schedule", 'schedule = "daily at 07:00"'),
+    ...line("person", 'person = "p1"'),
+    ...line("agent", 'agent = "p1-lair"'),
+    ...line("credential", 'credential = "sentry"'),
+    ...line("org", 'org = "example-org"'),
+    ...line("query", 'query = "is:unresolved"'),
+    ...line("min_events", "min_events = 1"),
+    ...line("notify_events", "notify_events = 10"),
+    ...line("reminder_days", "reminder_days = 7"),
+    "memory_limit_mb = 128",
+  ];
+}
+
+async function watchRefusal(lines: string[]): Promise<{ key: string; line: number; reason: string; file: string }> {
+  const { loadRegistry, RegistryRefused } = await seam("src/registry/load.ts");
+  const file = await scratch(lines);
+  try {
+    (loadRegistry as Function)(file);
+  } catch (error) {
+    expect(error).toBeInstanceOf(RegistryRefused as Function);
+    const it = error as { key: string; line: number; reason: string };
+    await rm(dirname(file), { recursive: true, force: true });
+    return { key: it.key, line: it.line, reason: it.reason, file };
+  }
+  await rm(dirname(file), { recursive: true, force: true });
+  throw new Error("the watch fixture loaded, and a refusal was expected");
+}
+
+test("a watch entry loads with its fields on the row and the defaults left to the reader", async () => {
+  const { loadRegistry } = await seam("src/registry/load.ts");
+  const { listRunEntries } = await seam("src/registry/entries.ts");
+  const lines = watchFixture({ query: null, min_events: null, notify_events: null, reminder_days: null });
+  const file = await scratch(lines);
+  const entries = (listRunEntries as Function)((loadRegistry as Function)(file)) as Record<string, unknown>[];
+  const watch = entries.find((one) => one.id === "sentry-digest")!;
+  expect(watch).toMatchObject({
+    kind: "watch", source: "sentry", machine: "pi", schedule: "daily at 07:00",
+    person: "p1", agent: "p1-lair", credential: "sentry", org: "example-org", memory_limit_mb: 128,
+  });
+  // Absent means the reader's default, never a value the loader invented.
+  for (const key of ["query", "min_events", "notify_events", "reminder_days"]) expect(watch).not.toHaveProperty(key);
+  // And a file that says them carries them by value.
+  const said = await scratch(watchFixture({ min_events: "min_events = 3", notify_events: "notify_events = 25", reminder_days: "reminder_days = 14" }));
+  const full = ((listRunEntries as Function)((loadRegistry as Function)(said)) as Record<string, unknown>[])
+    .find((one) => one.id === "sentry-digest")!;
+  expect(full).toMatchObject({ query: "is:unresolved", min_events: 3, notify_events: 25, reminder_days: 14 });
+  // The door's own row carries none of a watch's fields.
+  expect(entries.find((one) => one.id === "door-fake")).not.toHaveProperty("source");
+  await rm(dirname(file), { recursive: true, force: true });
+  await rm(dirname(said), { recursive: true, force: true });
+});
+
+test("a watch with a source this hub does not read is refused by key and by line", async () => {
+  const lines = watchFixture({ source: 'source = "github"' });
+  const refused = await watchRefusal(lines);
+  expect(refused.key).toBe("run[2].source");
+  expect(refused.line).toBe(lineOf(lines, 'source = "github"'));
+  expect(refused.reason).toContain("unsupported-watch-source: github");
+});
+
+test("a watch with no source, person, agent, credential or org is refused naming the key on the entry's own line", async () => {
+  for (const key of ["source", "person", "agent", "credential", "org"]) {
+    const lines = watchFixture({ [key]: null });
+    const refused = await watchRefusal(lines);
+    expect(refused.key, key).toBe(`run[2].${key}`);
+    expect(refused.line, key).toBe(lineOf(lines, 'id = "sentry-digest"'));
+    expect(refused.reason).toContain(`no ${key}`);
+  }
+});
+
+test("a watch whose agent is another person's, or takes jobs alone, or is not an agent at all, is refused on the agent line", async () => {
+  for (const [agent, said] of [
+    ['agent = "p2-lair"', "p2's agent and not p1's"],
+    ['agent = "p1-batch"', "names no door and no chat"],
+    ['agent = "nobody"', "is not an agent of this file"],
+  ]) {
+    const lines = watchFixture({ agent });
+    const refused = await watchRefusal(lines);
+    expect(refused.key, agent).toBe("run[2].agent");
+    expect(refused.line, agent).toBe(lineOf(lines, agent));
+    expect(refused.reason, agent).toContain(said);
+  }
+});
+
+test("a watch whose person the file does not declare is refused on the person line", async () => {
+  const lines = watchFixture({ person: 'person = "p3"' });
+  const refused = await watchRefusal(lines);
+  expect(refused.key).toBe("run[2].person");
+  expect(refused.line).toBe(lineOf(lines, 'person = "p3"'));
+});
+
+test("a watch reading with a credential that is not declared, or is not a key, is refused on the credential line", async () => {
+  {
+    const lines = watchFixture({ credential: 'credential = "nothing"' });
+    const refused = await watchRefusal(lines);
+    expect(refused.key).toBe("run[2].credential");
+    expect(refused.line).toBe(lineOf(lines, 'credential = "nothing"'));
+    expect(refused.reason).toContain("no [[credentials]] entry declares");
+  }
+  {
+    const lines = watchFixture({ "credential.kind": 'kind = "telegram"' });
+    const refused = await watchRefusal(lines);
+    expect(refused.key).toBe("run[2].credential");
+    expect(refused.line).toBe(lineOf(lines, 'credential = "sentry"'));
+    expect(refused.reason).toContain("must be an api-key");
+  }
+});
+
+test("a watch count that is not a whole number above zero, and a schedule that is not a cadence, are refused by key and by line", async () => {
+  for (const [key, raw] of [
+    ["min_events", "min_events = 0"],
+    ["notify_events", 'notify_events = "ten"'],
+    ["reminder_days", "reminder_days = 1.5"],
+    ["query", 'query = ""'],
+  ]) {
+    const lines = watchFixture({ [key]: raw });
+    const refused = await watchRefusal(lines);
+    expect(refused.key, raw).toBe(`run[2].${key}`);
+    expect(refused.line, raw).toBe(lineOf(lines, raw));
+  }
+  const lines = watchFixture({ schedule: 'schedule = "always"' });
+  const refused = await watchRefusal(lines);
+  expect(refused.key).toBe("run[2].schedule");
+  // The watch's own line, which is the LAST `always` in the fixture: the door
+  // and the runner carry the same words above it.
+  expect(refused.line).toBe(lines.lastIndexOf('schedule = "always"') + 1);
+  expect(refused.reason).toContain("cadence");
+});

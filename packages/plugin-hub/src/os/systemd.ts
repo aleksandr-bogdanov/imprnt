@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RunEntry } from "../registry/load.ts";
 import { runnerLimitsOf } from "../registry/entries.ts";
-import { scheduleSeconds, wantedState } from "./diff.ts";
+import { dailyAt, scheduleSeconds, wantedState } from "./diff.ts";
 import { SCAN_PREFIX, isOurs, timerName, unitName } from "./names.ts";
 import { unitPath, type MemoryReading, type OsSeam, type RenderContext, type UnitFile, type UnitState } from "./types.ts";
 import { STARTED_WITH } from "../store/connect.ts";
@@ -245,6 +245,7 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
       // a key inside the one plist the render already drops.
       const every = wanted === "scheduled" || wanted === "stopped" ? scheduleSeconds(entry.schedule) : null;
       if (every !== null) {
+        const clock = dailyAt(entry.schedule);
         files.push({
           path: join(unitDir, timer(entry.id)),
           text: [
@@ -259,9 +260,19 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
             "CollectMode=inactive-or-failed",
             "",
             "[Timer]",
-            // A fresh service has no last activation to anchor its cadence.
-            `OnActiveSec=${every}`,
-            `OnUnitActiveSec=${every}`,
+            ...(clock === null
+              ? [
+                  // A fresh service has no last activation to anchor its cadence.
+                  `OnActiveSec=${every}`,
+                  `OnUnitActiveSec=${every}`,
+                ]
+              : [
+                  // A clock time is a calendar event, and `Persistent` is what
+                  // runs a morning job the box slept through: without it a
+                  // machine that was off at seven waits for the next seven.
+                  `OnCalendar=*-*-* ${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")}:00`,
+                  "Persistent=true",
+                ]),
             "AccuracySec=1s",
             `Unit=${name}.service`,
             "",

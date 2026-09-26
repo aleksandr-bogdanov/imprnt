@@ -5,8 +5,8 @@ import { VOICE_DEFAULTS, type RunEntry } from "../registry/load.ts";
 /**
  * Every supported service has its own entry point.
  *
- * Six of them are this package's own TypeScript, started by the interpreter
- * that renders the unit. The seventh is the local recognizer's reference
+ * Seven of them are this package's own TypeScript, started by the interpreter
+ * that renders the unit. The eighth is the local recognizer's reference
  * server, which is Python, and it is the ONE program here that is not a bun
  * entry point. Nothing downstream branches on that: the interpreter and the whole
  * command line arrive at the renderer as a value.
@@ -19,6 +19,7 @@ export function programForKind(kind: string): string {
     case "sync": return fileURLToPath(new URL("../entry/sync.ts", import.meta.url));
     case "board": return fileURLToPath(new URL("../entry/board.ts", import.meta.url));
     case "backup": return fileURLToPath(new URL("../entry/backup.ts", import.meta.url));
+    case "watch": return fileURLToPath(new URL("../entry/watch.ts", import.meta.url));
     case "transcriber": return fileURLToPath(new URL("../../tools/transcribe-server.py", import.meta.url));
     default: throw new Error(`unsupported-run-kind: ${kind}`);
   }
