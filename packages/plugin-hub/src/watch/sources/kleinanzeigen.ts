@@ -16,7 +16,7 @@ import {
  *
  * TWO MARKUPS. The classic one (`<article class="aditem">`, `aditem-main--*`
  * blocks, an `<h2>` title, a `badge-hint-pro` marker) and the Astro one the
- * site serves since 2026-09-01 (`<article ... data-adid data-href>`, an
+ * site serves now (`<article ... data-adid data-href>`, an
  * ld+json block per ad, location and date as the two spans of the top row,
  * `<h3><a>title</a></h3>`, the current price as the `font-strong` paragraph
  * with the old price struck through beside it, a `PRO` badge or a `/pro/`
