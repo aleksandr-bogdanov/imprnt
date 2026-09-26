@@ -27,6 +27,8 @@ import { admitJob } from "../src/runner/job.ts";
 import { runWatch, WatchRefused } from "../src/watch/run.ts";
 import { runHuntWatch, auditDirOf, specsDirOf } from "../src/watch/hunt.ts";
 import { TRIAGE_INSTRUCTION } from "../src/watch/triage.ts";
+import { runCheck, type Finding } from "../src/check/run.ts";
+import { fakeProber } from "./helpers/prober.ts";
 
 const SLOW = 120_000;
 const HERE = process.platform === "darwin" ? "mac" : "pi";
@@ -538,6 +540,55 @@ test(
       }
     } finally {
       await door?.stop();
+      await store?.close();
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "check reports a refused spec file with its problems as the fix, and a triage job the master has not answered past the interval plus the grace",
+  async () => {
+    const staged = await stage({ specs: [DDR5_SPEC], hub: { job_grace_seconds: 60 } });
+    let store: Awaited<ReturnType<typeof superStore>> | null = null;
+    try {
+      store = await superStore(cluster, staged.it.db);
+      const check = async (now: Date) => (await runCheck({
+        machine: HERE, registryFile: staged.it.registryFile, store: store!, os: null, kernel: null, credentials: fakeProber({}), now,
+      })) as Finding[];
+      const about = (found: Finding[]) => found.filter((one) => one.kind.startsWith("watch-"));
+
+      // The controls: a sound folder and no pending job is no finding.
+      expect(about(await check(T0))).toEqual([]);
+
+      writeFileSync(join(staged.specsDir, "de__broken.json"), JSON.stringify({ ...GPU_SPEC, id: "de__broken", lane: "tripwire", notify: undefined, hard: { colour: "red" } }));
+      const refused = about(await check(T0));
+      expect(refused).toHaveLength(1);
+      expect(refused[0]).toMatchObject({
+        id: `${HERE}/watch-spec-refused:${ENTRY}/de__broken.json`, kind: "watch-spec-refused", subject: `${ENTRY}/de__broken.json`, machine: HERE,
+        fix: "hard.colour is not a rule: the closed set is max_price, min_price, radius_km, exclude, seller_kind, min_temperature, wanted_ad, rental_ad. A constraint that is not one of these is judgment, and judgment is a soft rule; a tripwire spec needs a notify block: the tripwire lane may only notify, and with nothing to notify on it could only ever triage",
+      });
+      expect(refused[0].says).toContain("de__broken.json");
+      expect(refused[0].says).toContain("(and 1 more)");
+      rmSync(join(staged.specsDir, "de__broken.json"));
+      expect(about(await check(T0))).toEqual([]);
+
+      // A job handed to the master at T0: fine at the interval plus the
+      // grace, overdue one second past it, and cleared once the verdict is read.
+      const first = await tick(staged, T0);
+      expect(first.job).not.toBeNull();
+      expect(about(await check(later(30)))).toEqual([]);
+      expect(about(await check(new Date(T0.getTime() + 31 * 60_000)))).toEqual([]);
+      const overdue = about(await check(new Date(T0.getTime() + 31 * 60_000 + 1000)));
+      expect(overdue).toHaveLength(1);
+      expect(overdue[0]).toMatchObject({ kind: "watch-triage-overdue", subject: first.job!, machine: HERE, fix: `read the runner log for ${TRIAGE}` });
+      expect(overdue[0].says).toContain(`${ENTRY} handed ${first.job} to ${TRIAGE}`);
+      expect(overdue[0].says).toContain("past its 1800 second interval plus the 60 second grace");
+      await settle(staged, first.job!, "410001 | ignore | ordinary price");
+      await tick(staged, later(60));
+      expect(about(await check(new Date(T0.getTime() + 90 * 60_000)))).toEqual([]);
+    } finally {
       await store?.close();
       await staged.stop();
     }

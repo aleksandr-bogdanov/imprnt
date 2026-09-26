@@ -156,6 +156,14 @@ kind = "telegram"
 file = "/etc/imprnt-hub/telegram.token"
 owner = "household"
 
+# The triage master's own bot. A Telegram door serves one agent in one chat,
+# so the master a hunt hands seller text to has a door of its own.
+[[credentials]]
+id = "telegram-triage-bot"
+kind = "telegram"
+file = "/etc/imprnt-hub/telegram-triage.token"
+owner = "household"
+
 # A key a watch reads with. `check` opens the file and reports it blank or
 # unreadable, and dials nothing with it.
 [[credentials]]
@@ -216,6 +224,20 @@ chat = "0000000000"
 door = "door-telegram"
 runner = "runner-pi"
 
+# The triage master a hunt hands seller text to. `role = "triage"` is the one
+# role an agent may carry: its runner launches it with no tools, no MCP server
+# and no instructions beyond the fixed triage text, so nothing it reads can
+# become a hand. Its chat is the hunt's audit channel, so a person can ask it
+# there why it ignored something. It must have a door and a chat.
+[[agents]]
+id = "p1-triage"
+person = "p1"
+preset = "daily"
+chat = "0000000001"
+door = "door-telegram-triage"
+runner = "runner-pi"
+role = "triage"
+
 # What a model cost per million tokens, from the day the price started. A turn is
 # priced from the newest row already in force when it ran, and from no other.
 [[rates]]
@@ -233,6 +255,18 @@ machine = "pi"
 platform = "telegram"
 person = "p1"
 token_file = "/etc/imprnt-hub/telegram.token"
+schedule = "always"
+memory_limit_mb = 192
+
+# The triage master's door: its own bot, because Telegram confirms updates for
+# the whole bot and so one Telegram door serves one agent in one chat.
+[[run]]
+id = "door-telegram-triage"
+kind = "door"
+machine = "pi"
+platform = "telegram"
+person = "p1"
+token_file = "/etc/imprnt-hub/telegram-triage.token"
 schedule = "always"
 memory_limit_mb = 192
 
@@ -343,7 +377,10 @@ memory_limit_mb = 128
 [[run]]
 id = "sentry-digest"
 kind = "watch"
-# The one source this hub reads. Anything else is refused by line.
+# One of sentry, kleinanzeigen, mydealz, vstdeals. Anything else is refused by
+# line. The sentry digest carries the keys below. A hunt (the other three)
+# carries the keys of the entry after this one, and a key of the other source
+# is refused by line.
 source = "sentry"
 machine = "pi"
 schedule = "daily at 07:00"
@@ -366,6 +403,39 @@ notify_events = 10
 # reminder line, once.
 reminder_days = 7
 memory_limit_mb = 128
+
+# A hunt: one source's spec files, every tick, in code. Each spec is one JSON
+# file a person edits (a query, a closed typed `hard` set, a closed `notify`
+# set, a lane, an owner agent). Every tick fetches, drops what was seen with no
+# change, drops what fails a hard rule with the rule's name, and the rest are
+# hits: a notify hit is one notice into the owner's chat with zero model turns,
+# a triage hit goes to the master below in one job row, and its verdicts are
+# read back the next tick. Every listing of every tick is one audit row in the
+# audit chat and in a file. Nothing here reads a login and nothing is ever sent
+# to a seller. One entry per source. `every 30m` is a cadence, and
+# `daily at HH:MM` works too.
+[[run]]
+id = "watch-kleinanzeigen"
+kind = "watch"
+source = "kleinanzeigen"
+machine = "pi"
+schedule = "every 30m"
+person = "p1"
+# The folder of spec files for THIS source, absolute. Absent means
+# <state_dir for this machine>/<person>/watch/specs/<source>. The audit file
+# lands beside it at <specs>/../../audit/<source>/<YYYY-MM-DD>.jsonl.
+specs = "/var/lib/imprnt-hub/p1/watch/specs/kleinanzeigen"
+# The agent whose chat is the audit channel: this person's, with a door and a
+# chat. One notice per tick with every row the tick had to say.
+audit = "p1-triage"
+# OPTIONAL: the triage master, this person's agent with role = "triage". Absent
+# means a triage hit is told to the spec's owner as a look line, zero model turns.
+triage = "p1-triage"
+# OPTIONAL: "tripwire" or "digest" runs the specs of that lane alone, so two
+# entries can run one source's lanes on two cadences. Absent runs every unpaused
+# spec of the source.
+lane = "digest"
+memory_limit_mb = 192
 
 [[repositories]]
 id = "p1-vault"

@@ -50,6 +50,7 @@ import { readVoiceState, transcribingFindings, voiceFindings } from "./voice.ts"
 import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
+import { readWatchState, watchFindings } from "./watch.ts";
 import { silentRunners } from "./silence.ts";
 import { admissionFindings } from "./admission.ts";
 import { readUnexplainedWaits, unexplainedFindings } from "./waits.ts";
@@ -393,6 +394,21 @@ export async function runCheck(options: {
       entries,
       stamps: await readJobStamps(options.store),
       graceSeconds: setting(registry, "hub.job_grace_seconds", 300),
+      now,
+    }),
+  );
+
+  // --- every hunt's refused spec files and overdue triage jobs (criterion 2)
+  //
+  //     The spec files are on THIS machine's disk, under the person's state,
+  //     which is why the finding is asked here and not on the store machine
+  //     alone; the pending jobs are the entry's own sheet.
+  findings.push(
+    ...watchFindings({
+      entries,
+      state: await readWatchState(options.store, { registry, entries }),
+      graceSeconds: setting(registry, "hub.job_grace_seconds", 300),
+      machine,
       now,
     }),
   );
