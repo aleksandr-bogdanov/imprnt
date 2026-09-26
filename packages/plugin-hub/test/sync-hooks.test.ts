@@ -20,7 +20,8 @@ let cluster: Cluster
 beforeAll(async () => { cluster = await startCluster() })
 afterAll(async () => { await cluster?.stop() })
 
-const HOOKS = ["pre-rebase", "post-rewrite", "pre-push", "reference-transaction", "post-checkout", "post-merge"]
+const HOOKS = ["pre-rebase", "post-rewrite", "pre-push", "reference-transaction", "post-checkout", "post-merge",
+  "pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"]
 
 /** Every hook the sync's operations could reach, each noting its own name in `marker`. */
 function plantHooks(repository: string, marker: string): void {
@@ -56,17 +57,26 @@ test("a hook an agent planted in a synced repository does not run when the sync 
     plantHooks(planted.path, plantedMarker)
     plantHooks(control.path, controlMarker)
 
-    // The control: the sync's own three operations with plain git fire the hooks.
+    // Each repository also holds a note an agent wrote and never committed, so
+    // the sync commits before it moves anything.
+    for (const repo of [planted, control]) writeFileSync(join(repo.path, "agent-note.md"), "an uncommitted note\n")
+
+    // The control: the sync's own operations with plain git fire the hooks.
+    plainGit(control.path, env, "add", "--all")
+    plainGit(control.path, env, "commit", "-m", "hub sync: 1 files")
     plainGit(control.path, env, "fetch", "--", "origin", "main")
     plainGit(control.path, env, "-c", "rebase.autoStash=false", "rebase", "FETCH_HEAD")
     plainGit(control.path, env, "push", "--", "origin", "HEAD:refs/heads/main")
     const fired = readFileSync(controlMarker, "utf8").trim().split("\n")
-    for (const hook of ["pre-rebase", "post-rewrite", "pre-push"]) expect(fired, `${hook} fires under plain git`).toContain(hook)
+    for (const hook of ["pre-commit", "commit-msg", "post-commit", "pre-rebase", "post-rewrite", "pre-push"]) {
+      expect(fired, `${hook} fires under plain git`).toContain(hook)
+    }
 
     const run = await syncChild(f, env)
     expect(run.code, run.err).toBe(0)
     // The sync did its work in the planted repository...
     expect(fixtureGit(f.root, "--git-dir", planted.remote, "show", "main:local.txt")).toBe("synthetic local change")
+    expect(fixtureGit(f.root, "--git-dir", planted.remote, "show", "main:agent-note.md")).toBe("an uncommitted note")
     expect(fixtureGit(f.root, "--git-dir", planted.remote, "rev-parse", "main")).toBe(fixtureGit(planted.path, "rev-parse", "HEAD"))
     // ...and none of the hooks planted there ran.
     expect(existsSync(plantedMarker) ? readFileSync(plantedMarker, "utf8") : "").toBe("")

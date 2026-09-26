@@ -17,7 +17,7 @@ import { listRunEntries } from "../src/registry/entries.ts"
 import { runDoor } from "../src/door/run.ts"
 import { runRunner } from "../src/runner/run.ts"
 import { runHub } from "../src/hub/run.ts"
-import { launchSeam, launchInput, captureCli, ending } from "./helpers/rollout-loop.ts"
+import { launchSeam, launchInput, captureCli, ending, appended } from "./helpers/rollout-loop.ts"
 import { claudeCode } from "../src/adapters/claude-code.ts"
 import { boxGate } from "./helpers/box-gate.ts"
 import { clockGate, clockSuffix, announceClock } from "./helpers/clock-gate.ts"
@@ -146,7 +146,8 @@ for (const osName of ["linux", "macos"] as const) {
         const got=JSON.parse(readFileSync(capture,"utf8"))
         const source=f.sources.find(s=>s.person===person.id)!
         if(purpose === "ordinary") {
-          expect(got.fragment).toBe(readFileSync(source.rendered,"utf8"))
+          expect(appended(got.fragment).preamble).toBe(true)
+          expect(got.fragment.endsWith(readFileSync(source.rendered,"utf8"))).toBe(true)
           expect(got.mcp).toEqual({mcpServers:source.mcp??{}})
           expect(got.argv).toContain("--dangerously-skip-permissions")
           for(const tool of source.tools) expect(got.argv.join(" ")).toContain(tool)

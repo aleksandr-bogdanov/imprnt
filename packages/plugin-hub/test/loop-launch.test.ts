@@ -2,7 +2,7 @@ import { beforeAll, expect, test } from "bun:test"
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from "node:fs"
 import { join } from "node:path"
 import { claudeCode } from "../src/adapters/claude-code.ts"
-import { loopFixture, launchInput, launchSeam, captureCli, ending } from "./helpers/rollout-loop.ts"
+import { loopFixture, launchInput, launchSeam, captureCli, ending, appended } from "./helpers/rollout-loop.ts"
 beforeAll(async () => { await import("../live/prove-rollout-loop.ts") })
 
 for (const purpose of ["ordinary", "harvest"]) test(`ROLL-06 ROLL-30 ${purpose} actual child receives explicit launch configuration`, async () => {
@@ -21,7 +21,12 @@ for (const purpose of ["ordinary", "harvest"]) test(`ROLL-06 ROLL-30 ${purpose} 
     const accepts = (value: any) => {
       expect(value.argv).toContain("--strict-mcp-config")
       expect(value.settings).toEqual(purpose === "ordinary" ? JSON.parse(readFileSync(f.files.settings, "utf8")) : {})
-      expect(value.fragment).toBe(purpose === "ordinary" ? readFileSync(f.files.fragment, "utf8") : null)
+      if (purpose === "ordinary") {
+        // The code's own section first and the agent's fragment last.
+        const prompt = appended(value.fragment)
+        expect(prompt.preamble).toBe(true)
+        expect(prompt.text.endsWith(readFileSync(f.files.fragment, "utf8"))).toBe(true)
+      } else expect(value.fragment).toBeNull()
       const n = value.argv.indexOf("--tools")
       expect(n).toBeGreaterThan(-1)
       const tail = value.argv.slice(n + 1)
@@ -59,7 +64,9 @@ test("ROLL-06 absent sources and empty tools remain explicit in child argv", asy
       try {
         await ending(session)
         const got = JSON.parse(readFileSync(capture, "utf8"))
-        expect(got.fragment).toBeNull()
+        // No fragment of its own: only the code's section and its person's instructions.
+        expect(appended(got.fragment).preamble).toBe(true)
+        expect(got.fragment).not.toContain(readFileSync(f.files.fragment, "utf8"))
         expect(got.settings).toEqual({})
         expect(got.mcp).toEqual({ mcpServers: {} })
         expect(got.argv).toContain("--strict-mcp-config")

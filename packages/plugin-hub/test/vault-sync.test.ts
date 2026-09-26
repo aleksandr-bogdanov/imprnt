@@ -144,7 +144,7 @@ test("ROLL-07 ordered fetch rebase push preserves divergent commits and rejects 
   } finally { await f.stop() }
 })
 
-for (const refusal of ["dirty", "wrong branch", "absent remote", "conflict", "fetch", "push", "absent path", "wrong person"] as const) {
+for (const refusal of ["wrong branch", "absent remote", "conflict", "fetch", "push", "absent path", "wrong person"] as const) {
   test(`ROLL-07 ${refusal} names the repository cause preserves work and succeeds after repair`, async () => {
     const f = await syncFixture(cluster)
     try {
@@ -153,7 +153,6 @@ for (const refusal of ["dirty", "wrong branch", "absent remote", "conflict", "fe
       commitChange(r.path)
       const remoteHead = fixtureGit(f.root, "--git-dir", r.remote, "rev-parse", "main")
       const oldPath = r.path
-      if (refusal === "dirty") writeFileSync(join(r.path, "base.txt"), "uncommitted owner change\n")
       if (refusal === "wrong branch") fixtureGit(r.path, "switch", "-c", "other")
       if (refusal === "absent remote") fixtureGit(r.path, "remote", "remove", "origin")
       if (refusal === "conflict") {
@@ -175,7 +174,7 @@ for (const refusal of ["dirty", "wrong branch", "absent remote", "conflict", "fe
       const evidence = JSON.stringify(result!.data)
       expect(evidence).toContain(r.id)
       // Cause spelling is not pinned. Require the concrete failed operation or input.
-      const cause = { dirty: /dirty|uncommitted/i, "wrong branch": /branch/i, "absent remote": /remote/i,
+      const cause = { "wrong branch": /branch/i, "absent remote": /remote/i,
         conflict: /conflict/i, fetch: /fetch/i, push: /push/i, "absent path": /path|missing|exist/i, "wrong person": /person|owner|tree/i }[refusal]
       expect(evidence).toMatch(cause)
       // Even a stopped conflict must retain the original commit and its bytes.
@@ -192,7 +191,6 @@ for (const refusal of ["dirty", "wrong branch", "absent remote", "conflict", "fe
       }
       expect(fixtureGit(oldPath, "stash", "list")).toBe("")
       // Repair only the refused input, then use the same production path.
-      if (refusal === "dirty") { fixtureGit(oldPath, "add", "base.txt"); fixtureGit(oldPath, "commit", "-m", "synthetic owner decision") }
       if (refusal === "wrong branch") fixtureGit(oldPath, "switch", "main")
       if (refusal === "absent remote") fixtureGit(oldPath, "remote", "add", "origin", r.remote)
       if (refusal === "conflict") {
@@ -462,26 +460,195 @@ test("ROLL-31 a declared repository checked out inside a vault is synced on its 
     expect(fixtureGit(f.root, "--git-dir", mount.remote, "rev-parse", "master")).toBe(mountHead)
     expect(fixtureGit(mount.path, "symbolic-ref", "--short", "HEAD")).toBe("master")
     expect(fixtureGit(vault.path, "symbolic-ref", "--short", "HEAD")).toBe("main")
-    // A real uncommitted change in the vault is still refused, next to the mount.
+    // A real uncommitted change in the vault is committed and pushed, and the
+    // mount beside it is never recorded in the vault's commit.
     writeFileSync(join(vault.path, "draft.md"), "uncommitted owner draft\n")
     commitChange(vault.path, "after.txt")
-    expect((await syncChild(f, git.env, own)).code).not.toBe(0)
-    expect(await outcome(own)).toEqual({ "p1-vault": "dirty" })
-    expect(fixtureGit(f.root, "--git-dir", vault.remote, "rev-parse", "main")).toBe(vaultHead)
-    rmSync(join(vault.path, "draft.md"))
-    // A declared path that is not its own checkout hides nothing under it.
+    expect((await syncChild(f, git.env, own)).code).toBe(0)
+    expect(await outcome(own)).toEqual({ "p1-vault": "success" })
+    expect(fixtureGit(f.root, "--git-dir", vault.remote, "show", "main:draft.md")).toBe("uncommitted owner draft")
+    expect(fixtureGit(f.root, "--git-dir", vault.remote, "ls-tree", "--name-only", "main")).not.toContain("shared")
+    // A declared path that is not its own checkout hides nothing under it: its
+    // loose file is the vault's own work and goes with the vault.
     const plain = join(vault.path, "notes")
     mkdirSync(plain)
     writeFileSync(join(plain, "loose.md"), "uncommitted loose note\n")
     f.repos.push({ ...mount, id: "p1-notes", path: plain, branch: "main" })
     f.registry()
-    expect((await syncChild(f, git.env, own)).code).not.toBe(0)
-    expect(await outcome(own)).toEqual({ "p1-vault": "dirty" })
-    rmSync(plain, { recursive: true })
-    // The mount's own uncommitted change is still refused by the mount's own entry.
+    expect((await syncChild(f, git.env, own)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", vault.remote, "show", "main:notes/loose.md")).toBe("uncommitted loose note")
+    f.repos.pop()
+    f.registry()
+    // The mount's own uncommitted change is committed by the mount's own entry, into the mount.
     writeFileSync(join(mount.path, "base.txt"), "uncommitted nested change\n")
-    expect((await syncChild(f, git.env)).code).not.toBe(0)
-    expect(await outcome(f.id)).toEqual({ "p1-vault": "success", "p2-vault": "success", shared: "dirty" })
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(await outcome(f.id)).toEqual({ "p1-vault": "success", "p2-vault": "success", shared: "success" })
+    expect(fixtureGit(f.root, "--git-dir", mount.remote, "show", "master:base.txt")).toBe("uncommitted nested change")
     expect(fixtureGit(f.root, "--git-dir", vault.remote, "show", "main:after.txt")).toBe("synthetic local change")
+  } finally { await f.stop() }
+})
+
+// Agents file notes and never commit them. The sync commits what a person's
+// repository holds before it pulls and pushes, so a filed note leaves the
+// machine on the next run instead of stopping the vault in both directions.
+test("the sync commits a note an agent wrote, then pulls and pushes it, and leaves an embedded checkout out", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    commitChange(r.peer, "peer.txt", "synthetic remote change\n")
+    fixtureGit(r.peer, "push", "origin", "main")
+    mkdirSync(join(r.path, "vault", "people"), { recursive: true })
+    writeFileSync(join(r.path, "vault", "people", "p9.md"), "# a note an agent filed\n")
+    writeFileSync(join(r.path, "base.txt"), "an edit an agent made\n")
+    // A checkout nobody declared, not excluded: `add` would record it as an embedded repository.
+    const scratch = join(r.path, "scratch-checkout")
+    mkdirSync(scratch)
+    fixtureGit(scratch, "init", "--quiet")
+    writeFileSync(join(scratch, "private.txt"), "not the vault's\n")
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    const run = await syncChild(f, git.env)
+    expect(run.code, run.err).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:vault/people/p9.md")).toBe("# a note an agent filed")
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:base.txt")).toBe("an edit an agent made")
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "log", "-1", "--format=%s", "main")).toBe("hub sync: 2 files")
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "rev-parse", "main")).toBe(fixtureGit(r.path, "rev-parse", "HEAD"))
+    expect(readFileSync(join(r.path, "peer.txt"), "utf8"), "the remote change came back down").toBe("synthetic remote change\n")
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "ls-tree", "--name-only", "main")).not.toContain("scratch-checkout")
+    const row = (await f.read.sheet("sync")).find(one => one.id === f.id)!
+    const repos = row.data.repositories as { id: string; status: string; committed?: number }[]
+    expect(repos.find(one => one.id === r.id)).toMatchObject({ status: "success", committed: 2 })
+    // A second run with nothing new makes no empty commit.
+    const head = fixtureGit(r.path, "rev-parse", "HEAD")
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(fixtureGit(r.path, "rev-parse", "HEAD")).toBe(head)
+  } finally { await f.stop() }
+})
+
+test("the sync commits a deletion made with git rm and leaves a checkout somebody staged by hand out of the commit", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    commitChange(r.path, "old.md", "a note that goes\n")
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    fixtureGit(r.path, "rm", "--quiet", "old.md")
+    writeFileSync(join(r.path, "new.md"), "a note that comes\n")
+    const scratch = join(r.path, "scratch-checkout")
+    mkdirSync(scratch)
+    fixtureGit(scratch, "init", "--quiet")
+    commitChange(scratch, "private.txt", "not the vault's\n")
+    try { fixtureGit(r.path, "add", "scratch-checkout") } catch { /* git warns about an embedded repository and stages it anyway */ }
+    for (let run = 1; run <= 2; run++) {
+      const done = await syncChild(f, git.env)
+      expect(done.code, `run ${run}: ${done.err}`).toBe(0)
+    }
+    const tree = fixtureGit(f.root, "--git-dir", r.remote, "ls-tree", "--name-only", "main")
+    expect(tree).toContain("new.md")
+    expect(tree).not.toContain("old.md")
+    expect(tree).not.toContain("scratch-checkout")
+    expect(fixtureGit(r.path, "diff", "--cached", "--name-only"), "the hand-staged checkout is still staged, untouched").toBe("scratch-checkout")
+  } finally { await f.stop() }
+})
+
+test("the sync commits a link to a checkout as the link, and a file staged then deleted does not break the commit", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    const elsewhere = join(f.root, "elsewhere-checkout")
+    mkdirSync(elsewhere)
+    fixtureGit(elsewhere, "init", "--quiet")
+    symlinkSync(elsewhere, join(r.path, "linked"))
+    writeFileSync(join(r.path, "gone.md"), "staged, then deleted\n")
+    fixtureGit(r.path, "add", "gone.md")
+    rmSync(join(r.path, "gone.md"))
+    writeFileSync(join(r.path, "kept.md"), "a note that stays\n")
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    const done = await syncChild(f, git.env)
+    expect(done.code, done.err).toBe(0)
+    const tree = fixtureGit(f.root, "--git-dir", r.remote, "ls-tree", "--name-only", "main")
+    expect(tree).toContain("kept.md")
+    expect(tree).toContain("linked")
+    expect(tree).not.toContain("gone.md")
+    expect(fixtureGit(r.path, "status", "--porcelain"), "nothing is left behind").toBe("")
+  } finally { await f.stop() }
+})
+
+test("the sync refuses to commit over an unfinished merge or under a filter program the repository's config names", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    const code = async () => {
+      await syncChild(f, git.env)
+      const row = (await f.read.sheet("sync")).find(one => one.id === f.id)!
+      return (row.data.repositories as { id: string; code?: string }[]).find(one => one.id === r.id)!.code
+    }
+    const marker = join(f.root, "filter-ran")
+    fixtureGit(r.path, "config", "filter.planted.clean", `sh -c 'echo ran > ${marker}; cat'`)
+    writeFileSync(join(r.path, ".gitattributes"), "*.md filter=planted\n")
+    writeFileSync(join(r.path, "note.md"), "a note\n")
+    expect(await code()).toBe("config")
+    expect(() => readFileSync(marker)).toThrow()
+    fixtureGit(r.path, "config", "--unset", "filter.planted.clean")
+    rmSync(join(r.path, ".gitattributes"))
+    rmSync(join(r.path, "note.md"))
+    // A merge stopped on a conflict: the markers must never be committed as the resolution.
+    commitChange(r.path, "base.txt", "local side\n")
+    fixtureGit(r.path, "switch", "--quiet", "-c", "other", "HEAD~1")
+    commitChange(r.path, "base.txt", "other side\n")
+    fixtureGit(r.path, "switch", "--quiet", "main")
+    try { fixtureGit(r.path, "merge", "other") } catch { /* stops on the conflict, which is the point */ }
+    const before = fixtureGit(r.path, "rev-parse", "HEAD")
+    expect(await code()).toBe("conflict")
+    expect(fixtureGit(r.path, "rev-parse", "HEAD")).toBe(before)
+    expect(readFileSync(join(r.path, "base.txt"), "utf8")).toContain("<<<<<<<")
+    // A filter planted while a merge is stopped is still refused as a filter, before any
+    // command that reads the working tree could run it.
+    fixtureGit(r.path, "config", "filter.planted.clean", `sh -c 'echo ran > ${marker}; cat'`)
+    writeFileSync(join(r.path, ".gitattributes"), "*.txt filter=planted\n")
+    expect(await code()).toBe("config")
+    expect(() => readFileSync(marker)).toThrow()
+    fixtureGit(r.path, "config", "--unset", "filter.planted.clean")
+    rmSync(join(r.path, ".gitattributes"))
+    fixtureGit(r.path, "merge", "--abort")
+    expect(await code()).toBeUndefined()
+  } finally { await f.stop() }
+})
+
+test("three failed runs in a row reach the person in their resident agent's chat, once per streak", async () => {
+  const f = await syncFixture(cluster, { chat: true, busy: true })
+  try {
+    const r = f.repos[0]
+    commitChange(r.path)
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    git.control({ fail: "push", path: realpathSync(r.path) })
+    const notices = async () => await f.read.sql(
+      "select person, agent, body, notice_key from outbox where kind = 'notice' and notice_key like 'sync-stuck:%' order by id")
+    const row = async () => ((await f.read.sheet("sync")).find(one => one.id === f.id)!.data.repositories as
+      { id: string; failed_runs?: number }[]).find(one => one.id === r.id)!
+    for (let run = 1; run <= 2; run++) {
+      expect((await syncChild(f, git.env)).code).not.toBe(0)
+      expect(await notices(), `run ${run} stays in the journal`).toEqual([])
+    }
+    expect((await row()).failed_runs).toBe(2)
+    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    const said = await notices()
+    expect(said).toHaveLength(1)
+    expect(said[0], "the notice goes to the resident agent's chat").toMatchObject({ person: "p1", agent: "p1-lair" })
+    expect(String(said[0].body)).toContain(r.id)
+    expect(String(said[0].body)).toContain("3 times in a row")
+    expect(String(said[0].body)).toContain("push failed")
+    // A fourth failure is the same streak, and says nothing new.
+    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    expect(await notices()).toHaveLength(1)
+    expect((await row()).failed_runs).toBe(4)
+    git.control({})
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect((await row()).failed_runs).toBeUndefined()
   } finally { await f.stop() }
 })

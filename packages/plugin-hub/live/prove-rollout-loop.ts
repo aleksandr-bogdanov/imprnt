@@ -24,7 +24,7 @@ try {
     assert.equal(boxGate().ok, true)
     const box = nativeWrap(input.box)
     try {
-      const child = Bun.spawnSync(box.wrap(["/bin/cat", join(f.trees.person("p1").tree, "CLAUDE.md")]), { stdout: "pipe", stderr: "pipe", timeout: 5000 })
+      const child = Bun.spawnSync(box.wrap(["/bin/cat", join(f.trees.person("p1").tree, "project", "CLAUDE.md")]), { stdout: "pipe", stderr: "pipe", timeout: 5000 })
       assert.equal(child.exitCode, 0)
       assert.match(child.stdout.toString(), /ambient-project-instruction-sentinel/)
     } finally { box.stop() }

@@ -7,7 +7,7 @@ import { claudeCode } from "../src/adapters/claude-code.ts"
 import { seam, startCluster } from "./helpers/cluster.ts"
 import { serviceFixture } from "./helpers/rollout-service.ts"
 import { migrationFixture, privateJson, digest } from "./helpers/rollout-migration.ts"
-import { launchInput, launchSeam, captureCli, ending } from "./helpers/rollout-loop.ts"
+import { launchInput, launchSeam, captureCli, ending, appended } from "./helpers/rollout-loop.ts"
 import { proveMigrationFixtures } from "../live/prove-rollout-migration.ts"
 beforeAll(proveMigrationFixtures)
 
@@ -63,7 +63,10 @@ test("ROLL-05 ROLL-30 imported inventory reaches loadRegistry and actual wrapped
       try { await ending(session) } finally { await session.close() }
       const got = JSON.parse(readFileSync(capture, "utf8"))
       const accepts = (value: any) => {
-        expect(digest(value.fragment ?? "")).toBe(digest(readFileSync(source.rendered, "utf8")))
+        // The converted fragment closes the appended prompt, after the code's own section.
+        const prompt = appended(value.fragment)
+        expect(prompt.preamble).toBe(true)
+        expect(digest(prompt.text.slice(-readFileSync(source.rendered, "utf8").length))).toBe(digest(readFileSync(source.rendered, "utf8")))
         const at = value.argv.indexOf("--tools")
         expect(at).toBeGreaterThan(-1)
         const tail = value.argv.slice(at + 1)
