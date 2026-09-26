@@ -82,7 +82,10 @@ export const DISPATCH_TARGET_DOOR2 = "door-fake-2"
 /**
  * The seats a council check needs: three for the first person and two for the
  * second, every one `role = "council"` with no door and no chat, on the hub's
- * own runner. Absent unless a check asks, so no shipped check sees a seat.
+ * own runner, spawned on demand the way the example registry declares a seat:
+ * a resident seat holds one of the runner's four child slots while it waits
+ * for a question, and five of them would starve the chat agents. Absent unless
+ * a check asks, so no shipped check sees a seat.
  */
 export const COUNCIL_SEATS = ["p1-seat-1", "p1-seat-2", "p1-seat-3"]
 export const COUNCIL_SEATS_RU = ["p2-seat-1", "p2-seat-2"]
@@ -92,8 +95,8 @@ function councilSpec(spec: RegistrySpec): RegistrySpec {
     ...spec,
     agents: [
       ...(spec.agents ?? []),
-      ...COUNCIL_SEATS.map(id => ({ id, person: "p1", preset: "daily", runner: "runner-pi", role: "council" })),
-      ...COUNCIL_SEATS_RU.map(id => ({ id, person: "p2", preset: "daily", runner: "runner-pi", role: "council" })),
+      ...COUNCIL_SEATS.map(id => ({ id, person: "p1", preset: "daily", runner: "runner-pi", role: "council", mode: "on-demand" })),
+      ...COUNCIL_SEATS_RU.map(id => ({ id, person: "p2", preset: "daily", runner: "runner-pi", role: "council", mode: "on-demand" })),
     ],
   }
 }

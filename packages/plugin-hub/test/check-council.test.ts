@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { startCluster, type Cluster } from "./helpers/cluster.ts";
-import { stageHub, superStore } from "./helpers/hub-fixture.ts";
+import { insertInbound, stageHub, superStore } from "./helpers/hub-fixture.ts";
 import type { RunSpec } from "./helpers/registry.ts";
 import { fakeProber } from "./helpers/prober.ts";
 import { appendRow, putRow, removeRow } from "../src/records/statesheet.ts";
@@ -29,18 +29,18 @@ function council(over: Partial<CouncilRow> = {}): CouncilRow {
 
 test("the finding is pure arithmetic over the sheet: one per open council past the grace, none for a council of another machine's agent, none once every seat is in", () => {
   const args = { agents: new Set(["p1-lair"]), graceSeconds: 300, machine: HERE };
-  const open = { id: "council:telegram:1000000001:1", ...council() };
+  const open = { id: "council:telegram:1000000001:1", ...council(), claims: { "p1-seat-1": null, "p1-seat-2": "runner-mac", "p1-seat-3": null } };
   expect(councilFindings({ ...args, councils: [open], now: later(300) })).toEqual([]);
   const found = councilFindings({ ...args, councils: [open], now: later(301) });
   expect(found).toHaveLength(1);
   expect(found[0]).toEqual({
     id: `${HERE}/council-overdue:${open.id}`, kind: "council-overdue", subject: open.id, machine: HERE,
     says: `${open.id} was convened for p1-lair 301 seconds ago and 3 of its 3 seats have not answered, which is 1 seconds past the 300 second grace`,
-    fix: "read the runner log for p1-seat-1, p1-seat-2, p1-seat-3",
+    fix: "read the runner log for p1-seat-1 (unclaimed), p1-seat-2 (claimed by runner-mac), p1-seat-3 (unclaimed)",
   });
   // Two seats in, one open: the fix names the one. A dead seat (null) counts as in.
   const two = { ...open, answered: { "p1-seat-1": "yes", "p1-seat-3": null } };
-  expect(councilFindings({ ...args, councils: [two], now: later(1000) })[0].fix).toBe("read the runner log for p1-seat-2");
+  expect(councilFindings({ ...args, councils: [two], now: later(1000) })[0].fix).toBe("read the runner log for p1-seat-2 (claimed by runner-mac)");
   // Every seat in: nothing, even though the row has not been removed yet.
   const all = { ...open, answered: { "p1-seat-1": "yes", "p1-seat-2": "no", "p1-seat-3": null } };
   expect(councilFindings({ ...args, councils: [all], now: later(1000) })).toEqual([]);
@@ -70,10 +70,15 @@ test("check reports council-overdue against the real sheet and clears it when th
     expect(await check(later(60))).toEqual([]);
     const found = await check(later(61));
     expect(found).toHaveLength(1);
-    expect(found[0]).toMatchObject({ kind: "council-overdue", subject: id, machine: HERE, fix: `read the runner log for ${SEATS.join(", ")}` });
+    expect(found[0]).toMatchObject({ kind: "council-overdue", subject: id, machine: HERE,
+      fix: `read the runner log for ${SEATS.map((seat) => `${seat} (unclaimed)`).join(", ")}` });
+    // The third seat's job is on the queue and a runner holds it: the fix says who.
+    await insertInbound(cluster, it.db, { id: `${id}:p1-seat-3`, body: "weigh it", person: "p1", agent: "p1-seat-3", kind: "job", logReady: true });
+    await store.sql`update inbound set claimed_by = 'runner-test', claim_deadline = now() + interval '1 hour' where id = ${`${id}:p1-seat-3`}`;
+    expect((await check(later(61)))[0].fix).toBe("read the runner log for p1-seat-1 (unclaimed), p1-seat-2 (unclaimed), p1-seat-3 (claimed by runner-test)");
     // Two seats land: the fix narrows to the one still open.
     await putRow(store, COUNCIL_SHEET, id, council({ answered: { "p1-seat-1": "yes", "p1-seat-2": null } }) as unknown as Record<string, unknown>);
-    expect((await check(later(61)))[0].fix).toBe("read the runner log for p1-seat-3");
+    expect((await check(later(61)))[0].fix).toBe("read the runner log for p1-seat-3 (claimed by runner-test)");
     // The merge landed, the row is gone, the finding clears.
     await removeRow(store, COUNCIL_SHEET, id);
     expect(await check(later(1000))).toEqual([]);

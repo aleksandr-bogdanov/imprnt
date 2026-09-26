@@ -194,10 +194,11 @@ test("D-213 the door says nothing about a report whose job ran for an hour, whil
   }
 }, 120_000)
 
-test("a council past the grace is said late ONCE, its unclaimed seats are given up on, a claimed seat is left to its runner, and a restarted door says it no second time", async () => {
+test("a council past the grace is said late ONCE, its unclaimed seat is given up on, a claimed seat is left to its runner whatever its lease says, and a restarted door says it no second time", async () => {
   // The grace is four seconds, so the council's one clock runs out inside this
-  // check. One seat is claimed by a runner before the grace and never settled
-  // until the end, so the council stays open past the late line.
+  // check. Two seats are claimed by a runner before the grace, one on a live
+  // lease and one on a lease that has run out, and neither is settled until
+  // the end, so the council stays open past the late line.
   const it = await rolloutStage(cluster, "telegram", { council: true, hub: { job_grace_seconds: 4 } })
   let door: Awaited<ReturnType<typeof runDoor>> | undefined
   const runner = await openStore({ url: storeUrlAs(cluster.url(it.db), "hub_runner") })
@@ -208,7 +209,11 @@ test("a council past the grace is said late ONCE, its unclaimed seats are given 
       (await it.read.inbound()).filter(r => r.kind === "job").length === COUNCIL_SEATS.length, 20_000)
     const jobs = (await it.read.inbound()).filter(r => r.kind === "job")
     const held = jobs.find(j => j.agent === COUNCIL_SEATS[2])!
+    const lapsed = jobs.find(j => j.agent === COUNCIL_SEATS[1])!
     await it.read.sql("update inbound set claimed_by = 'runner-pi', claim_deadline = now() + interval '1 hour' where id = $1", [held.id])
+    // A lease that ran out is not a turn that stopped: the deadline is fixed
+    // at the claim and a long turn outlives it.
+    await it.read.sql("update inbound set claimed_by = 'runner-pi', claim_deadline = now() - interval '1 minute' where id = $1", [lapsed.id])
     const [council] = await it.read.sheet(COUNCIL_SHEET)
     expect(council).toBeDefined()
     expect(councilDeadline({ at: String(council.data.at) }, 4)).toBe(new Date(String(council.data.at)).getTime() + 4000)
@@ -228,24 +233,28 @@ test("a council past the grace is said late ONCE, its unclaimed seats are given 
     // never an open turn of the chat's agent.
     for (const job of jobs) expect(await it.read.ledger({ stream: "clock", subject: job.id })).toEqual([])
 
-    // The two seats nobody claimed are given up on in the same transaction,
-    // by the door through the runner-owned function; the held one is left.
+    // The one seat nobody claimed is given up on in the same transaction, by
+    // the door through the runner-owned function; both held ones are left,
+    // the lapsed lease included.
     const rows = await it.read.inbound()
-    for (const seat of COUNCIL_SEATS.slice(0, 2)) {
-      const job = rows.find(r => r.agent === seat && r.kind === "job")!
+    {
+      const job = rows.find(r => r.agent === COUNCIL_SEATS[0] && r.kind === "job")!
       expect(job.state).toBe("answered")
       expect(rows.find(r => r.id === `report:${job.id}`)).toBeUndefined()
       const abandoned = await it.read.ledger({ subject: job.id, kind: "dispatch.abandoned" })
       expect(abandoned).toHaveLength(1)
       expect(abandoned[0].actor).toBe("runner")
-      expect(abandoned[0].detail).toMatchObject({ agent: seat, council: council.id, cause: "unclaimed past the grace", by: "door", dispatcher: "p1-lair" })
+      expect(abandoned[0].detail).toMatchObject({ agent: COUNCIL_SEATS[0], council: council.id, cause: "unclaimed past the grace", by: "door", dispatcher: "p1-lair" })
     }
-    expect(rows.find(r => r.id === held.id)!.state).toBe("received")
-    expect(rows.find(r => r.id === held.id)!.claimed_by).toBe("runner-pi")
+    for (const job of [held, lapsed]) {
+      expect(rows.find(r => r.id === job.id)!.state).toBe("received")
+      expect(rows.find(r => r.id === job.id)!.claimed_by).toBe("runner-pi")
+      expect(await it.read.ledger({ subject: job.id, kind: "dispatch.abandoned" })).toEqual([])
+    }
     expect(rows.filter(r => String(r.id).startsWith("merge:"))).toEqual([])
     const marked = (await it.read.sheet(COUNCIL_SHEET))[0]
     expect(marked.data.late).toEqual(expect.any(String))
-    expect(marked.data.answered).toEqual({ [COUNCIL_SEATS[0]]: null, [COUNCIL_SEATS[1]]: null })
+    expect(marked.data.answered).toEqual({ [COUNCIL_SEATS[0]]: null })
     // No "stopped, will retry" line about any seat reached the chat.
     expect((await it.read.noticeRows()).filter(one => String(one.notice_key).startsWith("agent-retry:"))).toEqual([])
     // Not a second time in this door's life, well past a second grace.
@@ -259,15 +268,17 @@ test("a council past the grace is said late ONCE, its unclaimed seats are given 
     // And the ordinary still-waiting lines are absent: nothing here is a turn.
     expect(it.edge.posts().filter(p => p.text.startsWith("[door] still waiting:"))).toEqual([])
 
-    // The held seat's runner settles it at last: the merge lands with the
-    // two given-up seats as "no answer", and the row goes.
-    await settleTurn(runner, { inboundId: held.id, kind: "job", person: "p1", source: held.source as never, chunks: ["the held seat's answer"],
-      turn: { agent: COUNCIL_SEATS[2], runner: "runner-pi", preset: "daily", preset_id: "p", preset_settings: {}, input_tokens: 1, cached_input_tokens: 0,
-        output_tokens: 1, price: null, plan_usage: null, raw_usage: {}, session_id: null, lacks: [], tail: false } })
+    // The held seats' runner settles them at last: the merge lands with the
+    // given-up seat as "no answer", and the row goes.
+    const record = (agent: string) => ({ agent, runner: "runner-pi", preset: "daily", preset_id: "p", preset_settings: {}, input_tokens: 1, cached_input_tokens: 0,
+      output_tokens: 1, price: null, plan_usage: null, raw_usage: {}, session_id: null, lacks: [], tail: false })
+    await settleTurn(runner, { inboundId: lapsed.id, kind: "job", person: "p1", source: lapsed.source as never, chunks: ["the lapsed seat's answer"], turn: record(COUNCIL_SEATS[1]) })
+    expect((await it.read.inbound()).filter(r => String(r.id).startsWith("merge:"))).toEqual([])
+    await settleTurn(runner, { inboundId: held.id, kind: "job", person: "p1", source: held.source as never, chunks: ["the held seat's answer"], turn: record(COUNCIL_SEATS[2]) })
     const merge = (await it.read.inbound()).find(r => r.id === mergeIdOf(council.id))!
     expect(merge).toBeDefined()
     expect(merge.body).toContain("Seat 1:\nno answer")
-    expect(merge.body).toContain("Seat 2:\nno answer")
+    expect(merge.body).toContain("Seat 2:\nthe lapsed seat's answer")
     expect(merge.body).toContain("Seat 3:\nthe held seat's answer")
     expect(await it.read.sheet(COUNCIL_SHEET)).toEqual([])
     expect(await it.read.ledger({ kind: "council.merged" })).toHaveLength(1)

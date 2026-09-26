@@ -6,7 +6,7 @@
 
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"
-import { rolloutStage, COUNCIL_SEATS } from "./helpers/rollout-stage.ts"
+import { rolloutStage, COUNCIL_SEATS, COUNCIL_SEATS_RU } from "./helpers/rollout-stage.ts"
 import { superStore } from "./helpers/hub-fixture.ts"
 import { requestCouncil } from "../src/door/dispatch.ts"
 import { COUNCIL_SHEET, MERGE_INSTRUCTION, mergeIdOf } from "../src/door/council.ts"
@@ -16,6 +16,8 @@ import { loadRegistry } from "../src/registry/load.ts"
 import { abandonJob, NOT_APPROVED, refuseJob } from "../src/runner/job.ts"
 import { settleTurn, type TurnRecord } from "../src/runner/settle.ts"
 import { openStore, storeUrlAs, type Store } from "../src/store/connect.ts"
+import { runRunner } from "../src/runner/run.ts"
+import { until } from "./helpers/cluster.ts"
 import { readEligible } from "../src/store/wake.ts"
 
 let cluster: Cluster
@@ -23,6 +25,7 @@ beforeAll(async () => { cluster = await startCluster() })
 afterAll(async () => { await cluster?.stop() })
 
 const LAIR_CHAT = "1000000001"
+const RU_CHAT = "0000000000"
 const QUESTION = "should the synthetic ledger be weighed twice"
 const ANSWERS: Record<string, string> = {
   "p1-seat-1": "Weigh it twice. The first reading drifts.",
@@ -215,3 +218,50 @@ test("the door's late mark on the sheet row survives a seat's settle, and the la
     expect((await it.read.inbound()).filter(r => r.id === mergeIdOf(council.id))).toHaveLength(1)
   } finally { await door.close(); await runner.close(); await store.close(); await it.stop() }
 }, 60_000)
+
+test("a seat whose loop keeps refusing is given up on by its runner once the grace has run out, with no retry line, and the council completes", async () => {
+  // The scripted loop refuses every turn. The grace is one second and the
+  // refusal retry is one second, so the second refusal of each seat falls
+  // past the grace and is the one that gives the seat up. No door runs, so
+  // the door's own give-up cannot be what closes a seat here. The council is
+  // the second person's two seats, because the one runner admits four
+  // children and the two resident chat agents already hold two of them.
+  const it = await rolloutStage(cluster, "telegram", { council: true, hub: { job_grace_seconds: 1, outage_retry_seconds: 1 }, adapter: { refusals: 1000 } })
+  const store = await superStore(cluster, it.db)
+  let runner: Awaited<ReturnType<typeof runRunner>> | undefined
+  try {
+    const registry = loadRegistry(it.registryFile)
+    const made = await requestCouncil(store, { base: "telegram:" + RU_CHAT + ":500", registry, person: "p2", door: "door-fake", chat: RU_CHAT,
+      agent: "p2-lair", sender_id: "p2", question: QUESTION, at: new Date().toISOString() })
+    const council = { ...made, jobs: (await it.read.inbound()).filter(r => r.kind === "job" && String(r.id).startsWith(made.id + ":")) }
+    expect(council.jobs.map(j => j.agent).sort()).toEqual([...COUNCIL_SEATS_RU].sort())
+    runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: it.scripted.adapter } })
+    await until("every seat is given up on and the merge lands", async () =>
+      (await it.read.inbound()).some(r => r.id === mergeIdOf(council.id)), 60_000,
+      async () => JSON.stringify({ rows: await it.read.sql("select id, state, claimed_by, retry_at, now() as now from inbound where kind = 'job'"),
+        refusals: (await it.read.ledger({ stream: "refusal" })).map(e => [e.subject, e.kind, e.detail]),
+        health: await it.read.sheet("agent_health") }))
+    const rows = await it.read.inbound()
+    for (const job of council.jobs) {
+      expect(rows.find(r => r.id === job.id)!.state).toBe("answered")
+      expect(rows.find(r => r.id === `report:${job.id}`)).toBeUndefined()
+      const abandoned = await it.read.ledger({ subject: job.id, kind: "dispatch.abandoned" })
+      expect(abandoned).toHaveLength(1)
+      expect(abandoned[0]).toMatchObject({ actor: "runner" })
+      expect(abandoned[0].detail).toMatchObject({ agent: job.agent, runner: "runner-pi", cause: "login", council: council.id })
+      // Each seat was refused at least once and written down as refused, and
+      // the give-up came after a refusal past the grace.
+      const refused = await it.read.ledger({ stream: "refusal", subject: job.id })
+      expect(refused.length).toBeGreaterThanOrEqual(1)
+      expect(refused.at(-1)!.detail).toMatchObject({ retry_at: null })
+    }
+    const merge = rows.find(r => r.id === mergeIdOf(council.id))!
+    expect(merge.agent).toBe("p2-lair")
+    for (const n of [1, 2]) expect(merge.body).toContain(`Seat ${n}:\nno answer`)
+    expect(merge.body).not.toContain("Seat 3")
+    expect(await it.read.sheet(COUNCIL_SHEET)).toEqual([])
+    expect((await it.read.ledger({ kind: "council.merged" }))).toHaveLength(1)
+    // Nothing told the chat a seat stopped or will be retried.
+    expect((await it.read.noticeRows()).filter(one => String(one.notice_key).startsWith("agent-retry:"))).toEqual([])
+  } finally { await runner?.stop(); await store.close(); await it.stop() }
+}, 90_000)

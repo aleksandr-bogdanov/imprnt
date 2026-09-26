@@ -588,3 +588,24 @@ test("a council seat that names a door or a chat is refused by key and by line, 
   expect(refused.line).toBe(lineOf(lines, 'role = "chair"'));
   expect(refused.reason).toContain('"council"');
 });
+
+test("a council seat whose runner is not a declared runner entry is refused on its runner line", async () => {
+  for (const [raw, said] of [
+    ['runner = "runner-nowhere"', "runner-nowhere"],
+    ['runner = "door-fake"', "door-fake"],
+  ] as const) {
+    const lines = councilFixture().map((one, at, all) => one === 'runner = "runner-pi"' && all[at - 3] === 'id = "p1-seat-2"' ? raw : one);
+    expect(lines).toContain(raw);
+    const refused = await watchRefusal(lines);
+    expect(refused.key, raw).toBe("agents[4].runner");
+    expect(refused.line, raw).toBe(lineOf(lines, raw));
+    expect(refused.reason, raw).toContain(`names the runner "${said}", which is not a [[run]] entry of kind "runner"`);
+  }
+  // The ordinary agent beside it is held to no such rule here, so the
+  // refusal is the seat's own and not the file's.
+  const lines = councilFixture();
+  const { loadRegistry } = await seam("src/registry/load.ts");
+  const file = await scratch(lines);
+  expect(() => (loadRegistry as Function)(file)).not.toThrow();
+  await rm(dirname(file), { recursive: true, force: true });
+});

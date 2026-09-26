@@ -2286,6 +2286,14 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         refuse(`${where}.${key}`, lines.get(`${where}.${key}`) ?? here,
           `${entry.id} is a council seat and names a ${key}, and a seat carries no door and no chat: it answers council jobs alone, and its answers reach a chat only through the merge`);
       }
+      // A seat counts toward the council the moment it is in the file, and
+      // a seat no runner serves is a council that never finishes: its job
+      // sits unclaimed until the door gives it up. So the runner it names
+      // has to be one this file declares.
+      if (!entries.some((one) => one.kind === "runner" && one.id === entry.runner)) {
+        refuse(`${where}.runner`, lines.get(`${where}.runner`) ?? here,
+          `${entry.id} is a council seat and names the runner ${describe(entry.runner)}, which is not a [[run]] entry of kind "runner" in this file: a seat nobody serves holds every council open`);
+      }
     }
     // A chat and the door that carries it come as a pair. With neither, the
     // agent exists only to take jobs and its empty tail is what the file says.

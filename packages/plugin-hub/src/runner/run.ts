@@ -764,6 +764,34 @@ export async function runRunner(options: {
           end.refused.cause === "window" && reading?.resets_at
             ? reading.resets_at
             : new Date(Date.now() + every * 1000).toISOString();
+        // A council seat refused again after the council's grace has run out
+        // is given up on here, the way a seat whose child died is given up
+        // on in the catch below: a refused seat retried for ever holds the
+        // merge back for ever, and the door leaves a claimed seat to this
+        // runner. The refusal is still written down for what it was, and a
+        // credential-scoped one still opens the household's outage, because
+        // that is a fact about the login and not about this seat.
+        const envelope = about.kind === "job" && about.source?.dispatch?.approved?.source === "council" ? about.source.dispatch : null;
+        const convened = Date.parse(String(envelope?.approved?.at ?? ""));
+        const grace = Number(readSetting(about.registry, "hub.job_grace_seconds") ?? 300) * 1000;
+        if (envelope?.council && Number.isFinite(convened) && Date.now() > convened + grace) {
+          const kind = scope.scope === "local" ? "refused.local" : "refused.outage";
+          await store.sql.begin(async (tx) => {
+            const inside = { ...store, sql: tx as unknown as Store["sql"] };
+            await appendEntry(inside, {
+              stream: "refusal", subject: message.id, kind, actor: "runner",
+              detail: { agent: agent.id, runner: options.runner, cause: end.refused!.cause, said: end.refused!.said, retry_at: null },
+            });
+            await abandonJob(inside, { row: { id: message.id, agent: agent.id, source: about.source }, runner: options.runner, cause: end.refused!.cause });
+          });
+          if (scope.scope === "credential") {
+            const standing = await openOutage(store, {
+              credential, cause: end.refused.cause, said: end.refused.said, runner: options.runner, retryAt,
+            });
+            await sayOutage(about.registry, credential, standing);
+          }
+          return;
+        }
         await refuseTurn(store, {
           inboundId: message.id,
           runner: options.runner,

@@ -797,7 +797,10 @@ create policy ledger_event_control_council_result on ledger_event
 -- through a function owned by the runner's role, whose stamp and diary line
 -- these are, granted to the door. Only an UNCLAIMED, unanswered job is
 -- closed: a seat some runner holds is working, and its own runner settles
--- or gives it up. True when the seat was closed here.
+-- or gives it up. A lease that has run out is not evidence the turn stopped,
+-- because the claim's deadline is fixed when the row is claimed and a long
+-- turn outlives it, so a claimed seat is left alone whatever its deadline
+-- says. True when the seat was closed here.
 create function hub_council_abandon(job_id text, cause text)
 returns boolean language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
@@ -807,7 +810,7 @@ begin
   if not found or job.kind <> 'job' or job.state in ('answered', 'delivered') then
     return false;
   end if;
-  if job.claimed_by is not null and (job.claim_deadline is null or job.claim_deadline > now()) then
+  if job.claimed_by is not null then
     return false;
   end if;
   insert into public.ledger_event (stream, subject, kind, actor)
