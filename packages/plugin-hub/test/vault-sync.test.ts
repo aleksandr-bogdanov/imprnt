@@ -596,6 +596,26 @@ test("the sync refuses to commit over an unfinished merge or under a filter prog
     fixtureGit(r.path, "config", "--unset", "filter.planted.clean")
     rmSync(join(r.path, ".gitattributes"))
     rmSync(join(r.path, "note.md"))
+    // Every other key that starts a program is refused the same way: the ssh
+    // command a fetch would run, a credential helper, a diff driver a rebase
+    // would call, a remote rewritten into a transport that runs a command, and
+    // an include that could say any of them from another file.
+    for (const [key, value] of [
+      ["core.sshCommand", `sh -c 'echo ran > ${marker}'`],
+      ["credential.helper", `!sh -c 'echo ran > ${marker}'`],
+      ["diff.planted.textconv", `sh -c 'echo ran > ${marker}'`],
+      ["url.ext::sh -c 'echo ran > x'.insteadOf", "git@example.invalid:"],
+      ["include.path", join(f.root, "elsewhere.gitconfig")],
+    ]) {
+      fixtureGit(r.path, "config", key, value)
+      expect(await code(), `${key} is a program`).toBe("config")
+      expect(() => readFileSync(marker), `${key} never ran`).toThrow()
+      fixtureGit(r.path, "config", "--unset", key)
+    }
+    // And a key that starts nothing is left alone.
+    fixtureGit(r.path, "config", "pull.rebase", "true")
+    expect(await code()).toBeUndefined()
+    fixtureGit(r.path, "config", "--unset", "pull.rebase")
     // A merge stopped on a conflict: the markers must never be committed as the resolution.
     commitChange(r.path, "base.txt", "local side\n")
     fixtureGit(r.path, "switch", "--quiet", "-c", "other", "HEAD~1")

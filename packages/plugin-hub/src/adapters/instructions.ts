@@ -1,4 +1,4 @@
-import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { listPeople } from "../registry/entries.ts";
 import type { PersonEntry } from "../registry/load.ts";
@@ -71,11 +71,18 @@ const under = (path: string, roots: string[]) => roots.some(root => path === roo
  * opened once and the opened file is then checked again against a fresh
  * resolution, so a file swapped for a link between the check and the read is
  * refused rather than read.
+ *
+ * A trusted file is trusted by its NAME in the registry, and a link is not
+ * that file: the registry named a place the owner wrote, and an agent that
+ * can write the directory the name sits in could point the name anywhere. So
+ * a trusted name that turns out to be a symbolic link is judged like an
+ * import, by where it lands.
  */
 function readable(file: string, scope: Scope, from?: string): string {
   const said = from ? `${file} (imported by ${from})` : file;
+  const trusted = scope.trusted.has(file) && !isLink(file);
   const allowed = (real: string) => {
-    if (under(real, scope.forbidden) || (!scope.trusted.has(file) && !under(real, scope.inside))) {
+    if (under(real, scope.forbidden) || (!trusted && !under(real, scope.inside))) {
       throw new Error(`instructions-forbidden: ${said} is a place this agent may not read`);
     }
   };
@@ -118,6 +125,19 @@ function importPath(target: string, file: string, home?: string): string {
 
 function isFile(path: string): boolean {
   try { return statSync(path).isFile(); } catch { return false; }
+}
+
+function isLink(path: string): boolean {
+  try { return lstatSync(path).isSymbolicLink(); } catch { return false; }
+}
+
+/**
+ * A line with its code spans blanked, so an `@` inside one is not an import.
+ * A span opens on a run of backticks and closes on a run of the same length,
+ * which is what lets a single backtick sit inside a double-backtick span.
+ */
+function withoutCodeSpans(line: string): string {
+  return line.replace(/(`+)(?:(?!\1)[^`]|(?!\1)`+)*?\1(?!`)/g, " ");
 }
 
 /**
@@ -169,7 +189,7 @@ export function expandInstructions(file: string, options: { home?: string; seen:
     const whole = line.match(/^\s*@(\S+)\s*$/);
     if (whole) { include(importPath(whole[1], file, options.home)); continue; }
     out.push(line);
-    const prose = line.replace(/`[^`]*`/g, " ");
+    const prose = withoutCodeSpans(line);
     for (const found of prose.matchAll(/(?:^|[\s(\[{"'<])@([^\s`)\]}>"']+)/g)) {
       const target = found[1].replace(/[.,;:!?]+$/, "");
       if (target === "") continue;

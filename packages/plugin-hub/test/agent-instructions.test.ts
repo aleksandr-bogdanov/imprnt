@@ -182,6 +182,23 @@ test("an import can never reach what the box hides: another person's tree, a log
     require("node:fs").rmSync(contract)
     symlinkSync(f.login, contract)
     await expect(make(launchInput(f))).rejects.toThrow(/instructions-forbidden/)
+    // A file the registry names by hand may sit anywhere the box does not
+    // hide, because the owner wrote it. A LINK under that name is not that
+    // file: an agent that can write the directory could point the name at a
+    // login, so a declared name that is a link is judged by where it lands.
+    require("node:fs").rmSync(contract)
+    writeFileSync(contract, "p1-vault-contract-rule\n")
+    const declared = join(f.dir, "declared-by-hand.md")
+    writeFileSync(declared, "p1-declared-rule\n")
+    f.write(f.field("p1", "instructions", JSON.stringify([declared]), f.text))
+    expect((await make(launchInput(f))).argv, "a declared file outside the vault is the owner's hand").toContain("--append-system-prompt-file")
+    const inside = join(root, "declared-inside.md")
+    writeFileSync(inside, "p1-declared-inside-rule\n")
+    f.write(f.field("p1", "instructions", JSON.stringify([inside]), f.text))
+    expect((await make(launchInput(f))).argv).toContain("--append-system-prompt-file")
+    require("node:fs").rmSync(inside)
+    symlinkSync(f.login, inside)
+    await expect(make(launchInput(f)), "the declared name swapped for a link to a login").rejects.toThrow(/instructions-forbidden/)
   } finally { f.stop() }
 })
 
@@ -190,13 +207,17 @@ test("an @ inside a sentence imports a file that exists and leaves a mention of 
   try {
     const root = withVault(f)
     writeFileSync(join(root, "plugins", "inline.md"), "p1-inline-rule\n")
-    writeFileSync(join(root, "CLAUDE.local.md"), "Read @plugins/inline.md before answering.\nAsk @someone, and see `@plugins/code-span.md`.\nAlso (@plugins/bracketed.md).\n")
+    writeFileSync(join(root, "CLAUDE.local.md"), "Read @plugins/inline.md before answering.\nAsk @someone, and see `@plugins/code-span.md`.\nAlso (@plugins/bracketed.md).\nA span may hold a backtick: `` `@plugins/double-span.md` `` is code too, and @plugins/after-span.md is not.\n")
     writeFileSync(join(root, "plugins", "bracketed.md"), "p1-bracketed-rule\n")
     writeFileSync(join(root, "plugins", "code-span.md"), "p1-code-span-rule\n")
+    writeFileSync(join(root, "plugins", "double-span.md"), "p1-double-span-rule\n")
+    writeFileSync(join(root, "plugins", "after-span.md"), "p1-after-span-rule\n")
     const { got } = await launched(f)
     const prompt = appended(got.fragment)
     expect(prompt.after("Read @plugins/inline.md before answering.", "p1-inline-rule", "Ask @someone")).toBe(true)
     expect(prompt.text).not.toContain("p1-code-span-rule")
+    expect(prompt.text, "a double-backtick span is code, the way Claude Code reads it").not.toContain("p1-double-span-rule")
+    expect(prompt.text, "and the prose after it is still prose").toContain("p1-after-span-rule")
     expect(prompt.after("Also (@plugins/bracketed.md).", "p1-bracketed-rule")).toBe(true)
   } finally { f.stop() }
 })
