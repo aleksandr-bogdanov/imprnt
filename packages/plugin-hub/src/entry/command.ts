@@ -33,9 +33,11 @@ export async function command(args: string[]): Promise<number> {
     const named = verb === "recover" ? extra : verb === "install" ? undefined : target;
     const machine = named ?? (machines.length === 1 ? machines[0].id : undefined);
     if (["check", "status"].includes(verb) && (!machine || !machines.some(m => m.id === machine))) return usage();
-    // A file with two machines has two routes to the store, and the command
-    // has to be told which one it is on.
-    if (["metrics", "recover"].includes(verb) && machines.length >= 2 && (!machine || !machines.some(m => m.id === machine))) return usage();
+    // A file in which some machine reaches the store by a route of its own
+    // has two routes, and a command that opens the store has to be told which
+    // one it is on. A file with one route reads as it always did.
+    const routesDiffer = machines.some(m => m.store_url !== undefined);
+    if (["metrics", "recover"].includes(verb) && routesDiffer && (!machine || !machines.some(m => m.id === machine))) return usage();
     // Read FOR THIS MACHINE: its own state directory, its own secrets and its
     // own route to the store, so a command on a spoke reaches the store the
     // spoke reaches rather than dialling the hub machine's loopback.

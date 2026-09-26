@@ -24,6 +24,9 @@ const MIGRATIONS: Migration[] = [{
 }, {
   version: 6,
   sql: readFileSync(new URL("./migrations/006-agent-lifecycle.sql", import.meta.url), "utf8"),
+}, {
+  version: 7,
+  sql: readFileSync(new URL("./migrations/007-media.sql", import.meta.url), "utf8"),
 }];
 
 /** DDL and its version commit together. A failed step can be retried unchanged. */

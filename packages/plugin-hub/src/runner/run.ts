@@ -35,7 +35,8 @@ import {
   noticeRoute,
 } from "../registry/entries.ts";
 import { entryMachine, loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
-import { registryStale } from "../hub/digest.ts";
+import { registryStanding } from "../hub/digest.ts";
+import { materializeMedia, rewriteMediaPaths } from "../store/media.ts";
 import { waitRecorder, type AgentWait } from "./waiting.ts";
 import {
   credentialOfPreset,
@@ -916,14 +917,23 @@ export async function runRunner(options: {
       // handed it as a turn of its own, so inside the tail it would be the same
       // message twice: the loop is told not to answer the tail, and a loop
       // that reads a task there still runs it.
-      const waiting = new Set<string>(((await store.sql`
-        select source ->> 'log_id' as log_id from inbound
-        where agent = ${agent.id} and source is not null
-          and state not in ('answered', 'delivered')`) as unknown as { log_id: string | null }[])
-        .map(row => row.log_id).filter((id): id is string => typeof id === "string" && id !== ""));
-      const tail = chatStateFor(registry, agent.id) === "store"
-        ? await deriveTail(store, { registry, ...where, exclude: waiting })
-        : await readTail({ stateDir, ...where, exclude: waiting });
+      //
+      // ONE SNAPSHOT FOR BOTH READS. The waiting set and the store's own lines
+      // are two statements, and a message the door commits between them, with
+      // a platform time before the cutoff, would sit in the tail unexcluded and
+      // then be claimed and fed again as a turn. Under repeatable read the
+      // second statement sees exactly the rows the first did.
+      const tail = await store.sql.begin("isolation level repeatable read read only", async (tx) => {
+        const inside = { ...store, sql: tx as unknown as Store["sql"] };
+        const waiting = new Set<string>(((await inside.sql`
+          select source ->> 'log_id' as log_id from inbound
+          where agent = ${agent.id} and source is not null
+            and state not in ('answered', 'delivered')`) as unknown as { log_id: string | null }[])
+          .map(row => row.log_id).filter((id): id is string => typeof id === "string" && id !== ""));
+        return chatStateFor(registry, agent.id) === "store"
+          ? await deriveTail(inside, { registry, ...where, exclude: waiting, stateDir })
+          : await readTail({ stateDir, ...where, exclude: waiting });
+      });
       if (tail !== "") await oneTurn({ id: agent.id, text: tail }, { preset, tail: true, registry });
     };
 
@@ -958,6 +968,11 @@ export async function runRunner(options: {
       }
       if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping) {
         if (!await admitChild(initial, own)) return;
+        // A copy that fell behind during the admission wait spawns nothing:
+        // the reservation goes back and the supervisor serves this agent
+        // again once the copy is current.
+        await measureRegistry();
+        if (stale) { releaseCapacity(); return; }
         own.reserved = true;
         await own.noteWait({ kind: "starting" });
         await spawn(getPreset(initial, agent.preset), initial);
@@ -1121,6 +1136,18 @@ export async function runRunner(options: {
         }
         const extra = next?.kind === "harvest" && own.session !== null;
         if (extra && !await admitChild(registry, own)) break;
+        // MEASURED AGAIN HERE, after the admission wait and right before the
+        // claim, because a copy that fell behind while this loop waited for
+        // capacity is a copy that must claim nothing. What it holds is given
+        // back: a harvest's extra child, and a reservation with no session
+        // behind it. The row it did not claim waits for a current copy.
+        await measureRegistry();
+        if (stale) {
+          if (extra) releaseCapacity();
+          if (!own.session && own.reserved) { own.reserved = false; releaseCapacity(); }
+          await sleep();
+          continue;
+        }
         const row = await claimNext(store, {
           runner: options.runner,
           agent: agent.id,
@@ -1202,7 +1229,16 @@ export async function runRunner(options: {
           await spawn(preset, registry);
           await own.noteWait(null);
         }
-        await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source, kind: row.kind });
+        // What the person attached is a file on the door's machine. Served
+        // from here, on another machine, the bytes come out of the store into
+        // this machine's own inbox first, and the body names them there.
+        let text = row.body;
+        const attached = Array.isArray(row.source?.media) ? row.source!.media! : [];
+        if (attached.length > 0 && chatStateFor(registry, agent.id) === "store") {
+          const local = await materializeMedia(store, { stateDir, person: agent.person, inboundId: row.id, media: attached });
+          text = rewriteMediaPaths(text, local);
+        }
+        await oneTurn({ id: row.id, text }, { preset, tail: false, registry, source: row.source, kind: row.kind });
         claimed = null;
         claimedReturn = null;
         lastWork = Date.now();
@@ -1386,11 +1422,12 @@ export async function runRunner(options: {
    * went quiet says why, and none at all while nothing changes.
    */
   const measureRegistry = async (): Promise<void> => {
-    const now = await registryStale(store, { registry: first, machine, file: options.registryFile });
-    if (now === stale) return;
-    stale = now;
-    await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: now ? "registry.stale" : "registry.current", actor: "runner",
-      detail: { machine, file: options.registryFile } });
+    // The registry as it is NOW, because the authority is a setting in it.
+    const standing = await registryStanding(store, { registry: load(), machine, file: options.registryFile });
+    if (standing.stale === stale) return;
+    stale = standing.stale;
+    await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: stale ? "registry.stale" : "registry.current", actor: "runner",
+      detail: { machine, file: options.registryFile, ...(stale ? { reason: standing.reason } : {}) } });
   };
   await measureRegistry();
   for (const agent of agentsFor(first, { runner: options.runner })) {
@@ -1450,7 +1487,11 @@ export async function runRunner(options: {
         where agent = ${agent.id} and (claimed_by = ${options.runner} or claimed_by is null)
           and state not in ('answered', 'delivered')`;
       retries.delete(agent.id);
-      serve(agent);
+      // The session is gone and the claims are released, which is the whole
+      // of what was asked. A copy that is behind starts nothing in its place:
+      // the supervisor serves the agent again once the copy is current.
+      await measureRegistry();
+      if (!stale) serve(agent);
       recovered.add(request.id);
     } finally { recovering.delete(agent.id); }
   };

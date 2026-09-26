@@ -1,6 +1,6 @@
 import { putRow, readSheet } from "../records/statesheet.ts";
 import { listMachines } from "../registry/entries.ts";
-import { registryDigest } from "../registry/load.ts";
+import { readSetting, registryDigest } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 
 /**
@@ -17,18 +17,15 @@ import type { StoreLike } from "../store/connect.ts";
 export const REGISTRY_SHEET = "registry";
 
 /**
- * The machine the store is on, whose copy of the registry is the one every
- * other copy is measured against: the one declared machine that reaches the
- * store with no `store_url` of its own. Null when the file declares fewer than
- * two machines, where there is one copy and nothing to compare, and when more
- * than one machine reaches the store on the file's own address, which no
- * household with a spoke has.
+ * The machine whose copy of the registry is the one every other copy is
+ * measured against: `hub.store_machine`, which the loader requires as soon as
+ * any machine reaches the store by a route of its own. Null when the file
+ * names none, which the loader allows only for a file with one route to the
+ * store, where there is one copy and nothing to compare.
  */
 export function storeMachineOf(registry: unknown): string | null {
-  const machines = listMachines(registry);
-  if (machines.length < 2) return null;
-  const local = machines.filter((one) => one.store_url === undefined);
-  return local.length === 1 ? local[0].id : null;
+  const named = readSetting(registry, "hub.store_machine");
+  return typeof named === "string" && named !== "" && listMachines(registry).some((one) => one.id === named) ? named : null;
 }
 
 /** What this machine's hub says the registry is, written on its tick. */
@@ -50,15 +47,29 @@ export async function readRegistryDigests(store: StoreLike): Promise<RegistryDig
   }));
 }
 
+export interface RegistryStanding {
+  /** Whether this machine must claim nothing until its copy is the store machine's. */
+  stale: boolean;
+  /** Why, in one sentence, for the diary and the finding. Empty when current. */
+  reason: string;
+}
+
 /**
- * Whether the copy at `file`, on `machine`, is behind the store machine's.
- * False whenever there is nothing to compare: one machine, the store machine
- * itself, or a store machine whose hub has not written its row yet.
+ * Whether the copy at `file`, on `machine`, may serve: only once it is the
+ * store machine's copy, byte for byte. The store machine itself and a file
+ * with one route to the store are always current. A store machine whose hub
+ * has not written its row yet is NOT agreement: nothing says what the copy is
+ * measured against, so the spoke waits and says why.
  */
-export async function registryStale(store: StoreLike, args: { registry: unknown; machine: string; file: string }): Promise<boolean> {
+export async function registryStanding(store: StoreLike, args: { registry: unknown; machine: string; file: string }): Promise<RegistryStanding> {
   const reference = storeMachineOf(args.registry);
-  if (reference === null || reference === args.machine) return false;
+  if (reference === null || reference === args.machine) return { stale: false, reason: "" };
   const theirs = (await readRegistryDigests(store)).find((row) => row.machine === reference);
-  if (!theirs || theirs.sha256 === "") return false;
-  return theirs.sha256 !== registryDigest(args.file);
+  if (!theirs || theirs.sha256 === "") {
+    return { stale: true, reason: `the hub on ${reference} has not written what registry it runs, so this copy cannot be measured against it` };
+  }
+  if (theirs.sha256 !== registryDigest(args.file)) {
+    return { stale: true, reason: `this copy of the registry is not the one ${reference} runs` };
+  }
+  return { stale: false, reason: "" };
 }

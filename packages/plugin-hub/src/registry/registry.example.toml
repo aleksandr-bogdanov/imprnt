@@ -6,6 +6,12 @@
 tick_seconds = 5
 store_url = "postgres://127.0.0.1:5432/hub"
 state_dir = "/var/lib/imprnt-hub"
+# Whose copy of this file is the one. A machine that reaches the store by a
+# route of its own reads a copy, every hub writes the digest of its copy to the
+# store, a copy that differs from this machine's serves nothing until it is
+# copied again, and `check` says `registry-stale`. Required as soon as any
+# [[machines]] entry names a store_url of its own.
+store_machine = "pi"
 # Each store role's password, written by `imprnt install` and readable by the
 # account the hub runs as and by no agent's box. `secrets` under state_dir when
 # this line is absent.

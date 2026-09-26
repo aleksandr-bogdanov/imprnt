@@ -41,6 +41,7 @@ function goodLines(): string[] {
     'store_url = "postgres://127.0.0.1:5432/hub"',
     'state_dir = "/var/lib/imprnt-hub"',
     'secrets_dir = "/var/lib/imprnt-hub/secrets"',
+    'store_machine = "pi"',
     "",
     "[[machines]]",
     'id = "pi"',
@@ -246,7 +247,7 @@ test("a view for a machine the file does not declare is refused by name", () => 
   expect(refusal.key).toBe("machines");
   // A file that declares no machines has nothing to check a view against, and
   // a runner on it asks for the one machine there is.
-  const lines = goodLines().filter((line) => !line.startsWith("[[machines]]") && !/^(id = "(pi|mac)"|os = "(linux|macos)"|state_dir = "\/Users|store_url = "postgres:\/\/100)/.test(line))
+  const lines = goodLines().filter((line) => !line.startsWith("[[machines]]") && !/^(id = "(pi|mac)"|os = "(linux|macos)"|state_dir = "\/Users|store_url = "postgres:\/\/100|store_machine = )/.test(line))
     .filter((line) => !line.startsWith("machine = ") && !line.startsWith("on = "));
   expect(() => loadRegistry(write(lines), { machine: "anything" })).not.toThrow();
 });

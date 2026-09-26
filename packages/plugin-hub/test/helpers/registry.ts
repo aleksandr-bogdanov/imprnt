@@ -365,7 +365,14 @@ function renderRegistry(spec: RegistrySpec): string {
   const lines: string[] = ["# a scratch registry written by a check", ""];
 
   lines.push("[hub]");
-  table(lines, { ...HUB_DEFAULTS, ...(spec.hub ?? {}) });
+  // A machine reaching the store by its own route makes the file a set of
+  // copies, and the loader then requires the machine whose copy is the one.
+  // A spec that names none gets the first machine, which is the hub's in
+  // every two-machine stage, so a spec written before the field existed
+  // renders the file it always did unless it routes a machine on its own.
+  const routed = (spec.machines ?? []).some((one) => one.store_url !== undefined);
+  const authority = routed && spec.hub?.store_machine === undefined ? { store_machine: spec.machines![0].id } : {};
+  table(lines, { ...HUB_DEFAULTS, ...authority, ...(spec.hub ?? {}) });
   lines.push("");
 
   if (spec.store) {

@@ -124,7 +124,9 @@ test(
     // The spoke's own route to the store, which is what makes the hub machine
     // the file's own machine, where every credential is opened.
     const text = readFileSync(it.registryFile, "utf8");
-    writeFileSync(it.registryFile, text.replace('id = "mac"\nos = "macos"', `id = "mac"\nos = "macos"\nstore_url = ${JSON.stringify(it.storeUrl)}`));
+    writeFileSync(it.registryFile, text
+      .replace("[hub]\n", `[hub]\nstore_machine = ${JSON.stringify(DOOR_MACHINE)}\n`)
+      .replace('id = "mac"\nos = "macos"', `id = "mac"\nos = "macos"\nstore_url = ${JSON.stringify(it.storeUrl)}`));
     const store = await superStore(cluster, it.db);
     try {
       // A copy of the SPOKE's login, planted where only the spoke's roots

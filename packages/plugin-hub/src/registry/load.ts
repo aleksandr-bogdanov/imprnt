@@ -137,6 +137,18 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "the command the runner spawns to file a harvested note",
     required: false,
   },
+  // Whose copy of this file is the one. A machine that reaches the store by a
+  // route of its own reads a COPY of the file, and every copy is measured
+  // against the copy on this machine, whose hub writes its digest to the
+  // store. Required as soon as any machine names a `store_url` of its own,
+  // because a household with two routes and no authority would have nothing
+  // to measure a stale copy against.
+  {
+    key: "hub.store_machine",
+    type: "string",
+    what: "the machine whose copy of the registry every other machine's copy is measured against",
+    required: false,
+  },
   // The household's recognizer and the three knobs the door's transcription
   // step reads. Every one of them is read ONLY when `voice.recognizer` names a
   // table this file defines, which is what keeps a setting nothing reads out of
@@ -443,6 +455,8 @@ export interface CredentialPlacement {
 export interface RepositoryPlacement {
   path: string;
   remote?: string;
+  /** The ssh command there, or the empty string for the account's own ssh. */
+  ssh_command?: string;
 }
 
 /**
@@ -1043,6 +1057,20 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
   // once the file declares two or more. Below that there is nothing to be
   // ambiguous about, and every entry belongs to the one machine that asks.
   const namesAMachine = machines.length >= 2;
+  // The authority, checked against the machines the file declares. A file in
+  // which some machine reaches the store by its own route has copies, and a
+  // copy nobody can measure is a copy that serves the wrong agents in silence.
+  const authority = valueAt(parsed, "hub.store_machine");
+  const atAuthority = lines.get("hub.store_machine") ?? lines.get("hub") ?? 0;
+  if (authority !== undefined && authority !== null && !declared.has(authority as string)) {
+    refuse("hub.store_machine", atAuthority,
+      `hub.store_machine is ${describe(authority)}, which no [[machines]] entry declares`);
+  }
+  const routed = machines.find((one) => one.store_url !== undefined);
+  if (routed && (authority === undefined || authority === null)) {
+    refuse("hub.store_machine", atAuthority,
+      `${routed.id} reaches the store by a route of its own, so it reads a copy of this file, and hub.store_machine has to say which machine's copy is the one every copy is measured against`);
+  }
 
   // The recognizers come before the entries, because whether `transcriber` is a
   // kind this file may carry at all turns on which provider the household
@@ -2078,8 +2106,17 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         `${entry.id} names the person ${entry.person}, which this file does not declare`,
       );
     }
+    // An agent's own files are read by its launch, on the machine its runner
+    // is on, so they are checked readable on that machine's view and on the
+    // file as written when it declares fewer than two machines. Elsewhere the
+    // path is only required to be one.
+    const launchesHere = viewed === null
+      ? machines.length < 2
+      : entries.find((one) => one.id === entry.runner)?.machine === viewed;
     for (const key of ["fragment", "settings", "mcp"]) {
-      if (entry[key] !== undefined) readable(entry[key], `${where}.${key}`);
+      if (entry[key] === undefined) continue;
+      if (launchesHere) readable(entry[key], `${where}.${key}`);
+      else if (typeof entry[key] !== "string" || !isAbsolute(entry[key] as string)) refuse(`${where}.${key}`, 0, `${where}.${key} must be an absolute readable file`);
     }
     if (entry.tools !== undefined) {
       strings(entry.tools, `${where}.tools`);
@@ -2215,7 +2252,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       refuse(`${where}.ssh_command`, 0, "ssh_command is the command the sync runs ssh as, a nonempty string");
     // Where this checkout is on a machine that is not the hub's, so a sync
     // there keeps the vault checkout there in step with its remote.
-    repositoriesOn.set(entry.id as string, placements<RepositoryPlacement>(entry, where, lines.get(where) ?? 0, entry.id, ["path", "remote"],
+    repositoriesOn.set(entry.id as string, placements<RepositoryPlacement>(entry, where, lines.get(where) ?? 0, entry.id, ["path", "remote", "ssh_command"],
       (table, machine, atOn) => {
         const there = table.path;
         if (typeof there !== "string" || there === "" || !isAbsolute(there)) {
@@ -2225,7 +2262,15 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         if (remote !== undefined && remote !== null && (typeof remote !== "string" || remote.trim() === "")) {
           refuse(`${where}.on.${machine}.remote`, atOn, `${entry.id} on ${machine} has remote ${describe(remote)}, and it is a git remote name`);
         }
-        return { path: there as string, ...(typeof remote === "string" ? { remote } : {}) };
+        // The ssh command this checkout dials with THERE. A deploy key is a
+        // path on one machine's disk, so the entry's own never follows the
+        // checkout onto another machine: a placement names its own, and an
+        // empty string says the account's own ssh does the dialling.
+        const ssh = table.ssh_command;
+        if (ssh !== undefined && ssh !== null && typeof ssh !== "string") {
+          refuse(`${where}.on.${machine}.ssh_command`, atOn, `${entry.id} on ${machine} has ssh_command ${describe(ssh)}, and it is the command the sync runs ssh as there, or an empty string for none`);
+        }
+        return { path: there as string, ...(typeof remote === "string" ? { remote } : {}), ...(typeof ssh === "string" ? { ssh_command: ssh } : {}) };
       }));
     const { on: _on, ...kept } = entry;
     repositories.push(kept as unknown as RepositoryEntry);
@@ -2378,7 +2423,12 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     const there = repositoriesOn.get(repository.id)?.[machine];
     if (!there) return repository;
     placed.repositories.push(repository.id);
-    return { ...repository, path: there.path, ...(there.remote === undefined ? {} : { remote: there.remote }) };
+    // The entry's own ssh command is a path on the hub machine's disk and never
+    // follows the checkout: a placement that names none dials with the
+    // account's own ssh there.
+    const { ssh_command: _ssh, ...rest } = repository;
+    return { ...rest, path: there.path, ...(there.remote === undefined ? {} : { remote: there.remote }),
+      ...(there.ssh_command === undefined || there.ssh_command === "" ? {} : { ssh_command: there.ssh_command }) };
   });
   return new Registry(file, { ...parsed, hub }, entries, presets, agents, rates, machines, placedPeople, placedCredentials,
     placedRepositories, recognizers, zone, machine, placed);

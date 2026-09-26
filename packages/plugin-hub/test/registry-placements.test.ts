@@ -42,6 +42,7 @@ function lines(extra: { p1?: string[]; p2?: string[]; mac?: string[]; repo?: str
     'store_url = "postgres://127.0.0.1:5432/hub"',
     'state_dir = "/var/lib/imprnt-hub"',
     'imprnt = "/usr/local/bin/imprnt"',
+    'store_machine = "pi"',
     ...(extra.hub ?? []),
     "",
     "[[machines]]",
@@ -238,7 +239,7 @@ test("a person's files are checked readable where their agents run, and a placem
   // A single-machine file is the one machine there is, so its files are
   // checked as written.
   const single = write(lines({ p2: [`filing_rules = ${JSON.stringify(missing)}`] })
-    .filter((line) => !/^(\[\[machines\]\]|id = "(pi|mac)"|os = "(linux|macos)"|state_dir = "\/Users|store_url = "postgres:\/\/100|machine = )/.test(line))
+    .filter((line) => !/^(\[\[machines\]\]|id = "(pi|mac)"|os = "(linux|macos)"|state_dir = "\/Users|store_url = "postgres:\/\/100|store_machine = |machine = )/.test(line))
     .filter((line) => !line.startsWith("[[run]]") || true));
   expect(refusalOf(single).key).toBe("people[1].filing_rules");
 });

@@ -4,6 +4,7 @@ import { clockLine, waitReasonLine, type Language } from "../door/lines.ts";
 import { isDemand, isRecoveryCommand, SLICE_MAX_DAYS, type SliceLine } from "../harvest/slice.ts";
 import { languageOf, listAgents } from "../registry/entries.ts";
 import type { StoreLike } from "../store/connect.ts";
+import { mediaPathMap, rewriteMediaPaths } from "../store/media.ts";
 
 /**
  * One chat, read out of the store instead of out of the file its door wrote.
@@ -55,6 +56,8 @@ export async function deriveLines(
     from: string;
     /** ISO, inclusive. */
     until: string;
+    /** This machine's state directory, when an attachment's path is to be this machine's. */
+    stateDir?: string;
   },
 ): Promise<DerivedLine[]> {
   const fromMs = Date.parse(args.from);
@@ -84,20 +87,25 @@ export async function deriveLines(
       and received_at <= ${wideUntil}::timestamptz`) as unknown as {
     id: string;
     person: string;
-    source: { log_id?: string; at?: string; text?: string } | null;
+    source: { log_id?: string; at?: string; text?: string; media?: unknown[] } | null;
   }[];
   for (const row of said) {
     // Every kind of row, because a harvest demand's committed row is a line in
     // the file too and carries the id its own pre-line used: one row, one line.
     const source = row.source;
     if (!source) continue;
+    // An attachment's path is the door's. Read for another machine, the line
+    // names where that machine's runner puts the same bytes.
+    const text = args.stateDir !== undefined && Array.isArray(source.media) && typeof source.text === "string"
+      ? rewriteMediaPaths(source.text, mediaPathMap(args.stateDir, row.person, row.id, source.media))
+      : source.text;
     candidates.push({
       line: {
         id: source.log_id,
         at: source.at,
         direction: "in",
         from: row.person,
-        text: source.text,
+        text,
       } as ChatLine,
       order: 0,
     });
@@ -203,6 +211,13 @@ export async function deriveTail(
     tokens: number;
     /** The lines of messages still waiting for their answer, which the runner names. */
     exclude?: ReadonlySet<string>;
+    /**
+     * This machine's state directory. A line that names an attachment names
+     * the door's file on the door's machine, and here that path is rewritten
+     * to where this machine's runner puts the same bytes when it feeds the
+     * row, so a session reading its tail never sees a path from another disk.
+     */
+    stateDir?: string;
   },
 ): Promise<string> {
   const lines = await deriveLines(store, {

@@ -38,7 +38,7 @@ import {
   superStore,
 } from "./helpers/hub-fixture.ts";
 import { loginCommand } from "../src/adapters/launch.ts";
-import { REGISTRY_SHEET, recordRegistryDigest, registryStale, storeMachineOf } from "../src/hub/digest.ts";
+import { REGISTRY_SHEET, recordRegistryDigest, registryStanding, storeMachineOf } from "../src/hub/digest.ts";
 import { loadRegistry, registryDigest } from "../src/registry/load.ts";
 import { runHub } from "../src/hub/run.ts";
 import { runRunner } from "../src/runner/run.ts";
@@ -89,7 +89,9 @@ test(
     // The spoke's own route to the store, which is what makes the hub machine
     // the file's own machine, where every credential is opened.
     const text = readFileSync(it.registryFile, "utf8");
-    writeFileSync(it.registryFile, text.replace('id = "mac"\nos = "macos"', `id = "mac"\nos = "macos"\nstore_url = ${JSON.stringify(it.storeUrl)}`));
+    writeFileSync(it.registryFile, text
+      .replace("[hub]\n", `[hub]\nstore_machine = ${JSON.stringify(DOOR_MACHINE)}\n`)
+      .replace('id = "mac"\nos = "macos"', `id = "mac"\nos = "macos"\nstore_url = ${JSON.stringify(it.storeUrl)}`));
     expect(storeMachineOf(loadRegistry(it.registryFile))).toBe(DOOR_MACHINE);
     const store = await superStore(cluster, it.db);
     try {
@@ -138,6 +140,7 @@ test(
     const here = process.platform === "darwin" ? "macos" : "linux";
     const text = readFileSync(it.registryFile, "utf8");
     writeFileSync(it.registryFile, text
+      .replace("[hub]\n", `[hub]\nstore_machine = ${JSON.stringify(DOOR_MACHINE)}\n`)
       .replace('id = "pi"\nos = "linux"', `id = "pi"\nos = "${here}"`)
       .replace('id = "mac"\nos = "macos"', `id = "mac"\nos = "macos"\nstate_dir = ${JSON.stringify(spoke.stateDir)}\nstore_url = ${JSON.stringify(it.storeUrl)}`));
     expect(storeMachineOf(loadRegistry(it.registryFile))).toBe(DOOR_MACHINE);
@@ -152,6 +155,21 @@ test(
     let piHub: Awaited<ReturnType<typeof runHub>> | undefined;
     let runner: Awaited<ReturnType<typeof runRunner>> | undefined;
     try {
+      // --- before the store machine's hub has said anything, nothing can be
+      //     measured, and that is never agreement: a spoke on a copy that is
+      //     byte for byte the file is still told to wait, and both checks say
+      //     why. The store machine's check reports the spoke unseen, because
+      //     no hub there has written a row either.
+      const ask = async (machine: string, file: string) =>
+        ((await (runCheck as Function)({ machine, registryFile: file, store, os: null, kernel: null, now: new Date() })) as
+          { kind: string; subject: string; says: string; fix: string }[]).filter((one) => one.kind.startsWith("registry-"));
+      const fresh = join(spoke.stateDir, "registry-fresh.toml");
+      writeFileSync(fresh, readFileSync(it.registryFile, "utf8"));
+      expect((await registryStanding(store, { registry: loadRegistry(fresh, { machine: SPOKE_MACHINE }), machine: SPOKE_MACHINE, file: fresh })))
+        .toMatchObject({ stale: true });
+      expect((await ask(SPOKE_MACHINE, fresh)).map((one) => [one.kind, one.subject])).toEqual([["registry-unseen", DOOR_MACHINE]]);
+      expect((await ask(DOOR_MACHINE, it.registryFile)).map((one) => [one.kind, one.subject])).toEqual([["registry-unseen", SPOKE_MACHINE]]);
+
       // --- the hub machine's hub writes its digest, one row for its machine
       piHub = await runHub({ registryFile: it.registryFile, machine: DOOR_MACHINE, os: probe.os });
       await until("the hub wrote its digest", async () => (await it.read.sheet(REGISTRY_SHEET)).some((row) => row.id === DOOR_MACHINE), 20_000);
@@ -161,8 +179,8 @@ test(
       // row and never the reference's.
       await recordRegistryDigest(store, SPOKE_MACHINE, copy);
       expect((await it.read.sheet(REGISTRY_SHEET)).map((one) => one.id).sort()).toEqual([DOOR_MACHINE, SPOKE_MACHINE].sort());
-      expect(await registryStale(store, { registry: loadRegistry(copy, { machine: SPOKE_MACHINE }), machine: SPOKE_MACHINE, file: copy })).toBe(true);
-      expect(await registryStale(store, { registry: loadRegistry(it.registryFile), machine: DOOR_MACHINE, file: it.registryFile })).toBe(false);
+      expect((await registryStanding(store, { registry: loadRegistry(copy, { machine: SPOKE_MACHINE }), machine: SPOKE_MACHINE, file: copy })).stale).toBe(true);
+      expect((await registryStanding(store, { registry: loadRegistry(it.registryFile), machine: DOOR_MACHINE, file: it.registryFile })).stale).toBe(false);
 
       // --- the spoke's runner, on the differing copy, claims nothing
       await insertInbound(cluster, it.db, { id: "drift-1", body: "a message while the copy is behind" });
@@ -173,13 +191,20 @@ test(
       expect((await it.read.inbound()).find((one) => one.id === "drift-1")?.claimed_by ?? null).toBeNull();
 
       // --- check names the machine, from either side
-      const ask = async (machine: string, file: string) =>
-        ((await (runCheck as Function)({ machine, registryFile: file, store, os: null, kernel: null, now: new Date() })) as
-          { kind: string; subject: string; says: string; fix: string }[]).filter((one) => one.kind === "registry-stale");
       const onSpoke = await ask(SPOKE_MACHINE, copy);
-      expect(onSpoke.map((one) => one.subject)).toEqual([SPOKE_MACHINE]);
+      expect(onSpoke.map((one) => [one.kind, one.subject])).toEqual([["registry-stale", SPOKE_MACHINE]]);
       expect(onSpoke[0].fix).toContain(copy);
-      expect((await ask(DOOR_MACHINE, it.registryFile)).map((one) => one.subject)).toEqual([SPOKE_MACHINE]);
+      expect((await ask(DOOR_MACHINE, it.registryFile)).map((one) => [one.kind, one.subject])).toEqual([["registry-stale", SPOKE_MACHINE]]);
+      // The store machine's view sweeps the stale spoke's chats as its own:
+      // the unanswered message on the spoke is overdue there, reported by the
+      // one machine whose check runs, once its person's clock has run out.
+      const overdue = (await (runCheck as Function)({ machine: DOOR_MACHINE, registryFile: it.registryFile, store, os: null, kernel: null, now: new Date(Date.now() + 3_600_000) })) as
+        { kind: string; subject: string }[];
+      expect(overdue.some((one) => one.subject === "drift-1")).toBe(true);
+      // And a hub row older than the grace is a machine nobody has heard from.
+      await store.sql`update state_row set data = data || '{"at": "2000-01-01T00:00:00.000Z"}'::jsonb where sheet = ${REGISTRY_SHEET} and id = ${SPOKE_MACHINE}`;
+      expect((await ask(DOOR_MACHINE, it.registryFile)).map((one) => [one.kind, one.subject])).toEqual([["registry-unseen", SPOKE_MACHINE]]);
+      await recordRegistryDigest(store, SPOKE_MACHINE, copy);
 
       // --- the copy is refreshed, and the runner claims within a tick
       writeFileSync(copy, readFileSync(it.registryFile, "utf8"));
