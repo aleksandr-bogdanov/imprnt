@@ -376,6 +376,16 @@ export function filingRulesFor(registry: unknown, personId: string): string | nu
   return person?.filing_rules ?? (person?.vault ? join(person.vault, "CLAUDE.md") : null);
 }
 
+/**
+ * The council of one person: every agent of theirs carrying `role =
+ * "council"`, in file order. Fewer than two is no council at all, which the
+ * door answers with the usage line rather than a refusal, because what is
+ * missing is a registry entry.
+ */
+export function councilSeatsOf(registry: unknown, personId: string): AgentEntry[] {
+  return listAgents(registry).filter((agent) => agent.person === personId && agent.role === "council");
+}
+
 export function senderAllowed(registry: unknown, personId: string, door: string, sender: string): boolean {
   const person = loaded(registry, "senderAllowed").people.find(one => one.id === personId);
   const senders = person?.allowed_senders;

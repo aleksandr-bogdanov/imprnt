@@ -507,5 +507,84 @@ test("a relative specs folder, a lane that is not one of the two, a stopped sche
   const refused = await watchRefusal(lines);
   expect(refused.key).toBe("agents[3].role");
   expect(refused.line).toBe(lineOf(lines, 'role = "boss"'));
-  expect(refused.reason).toContain('the one role an agent may carry is "triage"');
+  expect(refused.reason).toContain('the two roles an agent may carry are "triage"');
+});
+
+// ---------------------------------------------------------------------------
+// A council seat: `role = "council"` on an agent with no door and no chat.
+// The seats of one person are that person's council; a seat that names a chat
+// is refused on that line, because its answers reach a chat only through the
+// merge.
+// ---------------------------------------------------------------------------
+
+/** The watch household above plus two council seats: the role line replaceable, extra lines plantable on the first seat. */
+function councilFixture(over: { role?: string | null; extra?: string[]; seats?: 1 | 2 } = {}): string[] {
+  const role = over.role === undefined ? 'role = "council"' : over.role;
+  return [
+    ...watchFixture(),
+    "",
+    "[[agents]]",
+    'id = "p1-seat-1"',
+    'person = "p1"',
+    'preset = "daily"',
+    'runner = "runner-pi"',
+    ...(role === null ? [] : [role]),
+    ...(over.extra ?? []),
+    ...((over.seats ?? 2) === 2 ? [
+      "",
+      "[[agents]]",
+      'id = "p1-seat-2"',
+      'person = "p1"',
+      'preset = "daily"',
+      'runner = "runner-pi"',
+      'role = "council"',
+    ] : []),
+  ];
+}
+
+test("a council seat loads with its role and no chat, and the seats of a person are read as that person's council", async () => {
+  const { loadRegistry } = await seam("src/registry/load.ts");
+  const { councilSeatsOf, listAgents } = await seam("src/registry/entries.ts");
+  const file = await scratch(councilFixture());
+  const registry = (loadRegistry as Function)(file);
+  const seats = (councilSeatsOf as Function)(registry, "p1") as Record<string, unknown>[];
+  expect(seats.map((one) => one.id)).toEqual(["p1-seat-1", "p1-seat-2"]);
+  for (const seat of seats) {
+    expect(seat.role).toBe("council");
+    expect(seat).not.toHaveProperty("chat");
+    expect(seat).not.toHaveProperty("door");
+  }
+  expect((councilSeatsOf as Function)(registry, "p2")).toEqual([]);
+  expect(((listAgents as Function)(registry) as Record<string, unknown>[]).find((one) => one.id === "p1-lair")).not.toHaveProperty("role");
+  // One seat alone still loads: fewer than two is no council, which is the
+  // door's answer and not the loader's.
+  const lone = await scratch(councilFixture({ seats: 1 }));
+  expect(((councilSeatsOf as Function)((loadRegistry as Function)(lone), "p1") as Record<string, unknown>[]).map((one) => one.id)).toEqual(["p1-seat-1"]);
+  await rm(dirname(lone), { recursive: true, force: true });
+  await rm(dirname(file), { recursive: true, force: true });
+});
+
+test("a council seat that names a door or a chat is refused by key and by line, and the role rule names both roles", async () => {
+  // A chat alone: the seat's own rule fires on the chat line, ahead of the
+  // pair rule that would otherwise ask for the missing door.
+  {
+    const lines = councilFixture({ extra: ['chat = "1000000009"'] });
+    const refused = await watchRefusal(lines);
+    expect(refused.key).toBe("agents[3].chat");
+    expect(refused.line).toBe(lineOf(lines, 'chat = "1000000009"'));
+    expect(refused.reason).toContain("is a council seat and names a chat");
+  }
+  // Both, which the pair rule would accept: the seat rule refuses on the door line.
+  {
+    const lines = councilFixture({ extra: ['door = "door-fake"', 'chat = "1000000009"'] });
+    const refused = await watchRefusal(lines);
+    expect(refused.key).toBe("agents[3].door");
+    expect(refused.line).toBe(lines.lastIndexOf('door = "door-fake"') + 1);
+    expect(refused.reason).toContain("is a council seat and names a door");
+  }
+  const lines = councilFixture({ role: 'role = "chair"' });
+  const refused = await watchRefusal(lines);
+  expect(refused.key).toBe("agents[3].role");
+  expect(refused.line).toBe(lineOf(lines, 'role = "chair"'));
+  expect(refused.reason).toContain('"council"');
 });

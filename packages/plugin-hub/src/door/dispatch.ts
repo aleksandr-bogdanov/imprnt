@@ -3,8 +3,8 @@ import type { Registry } from "../registry/load.ts";
 import { appendEntry } from "../records/diary.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { enqueueInbound, type JobSource } from "../store/inbound.ts";
-import { DISPATCH_PHRASES } from "./lines.ts";
-import { isDispatchCommand } from "../harvest/slice.ts";
+import { COUNCIL_PHRASES, DISPATCH_PHRASES } from "./lines.ts";
+import { isCouncilCommand, isDispatchCommand } from "../harvest/slice.ts";
 
 /**
  * Every way a dispatch can be refused at the door carries ONE name, so an
@@ -49,6 +49,26 @@ export function parseDispatch(text: string): { target: string; task: string } | 
   const parts = /^\s+(\S+)\s+([\s\S]*)$/.exec(rest);
   if (!parts || parts[2] === "") return "usage";
   return { target: parts[1], task: parts[2] };
+}
+
+/**
+ * A council command, read by the rule `parseDispatch` reads a dispatch by.
+ *
+ * `null` is not a council command at all. `"usage"` is the verb with no
+ * question after it. Otherwise THE QUESTION IS EVERYTHING AFTER THE VERB, byte
+ * for byte, less the run of whitespace that separates it from the verb: the
+ * question is what every seat is asked and what the merge repeats, and a
+ * reformatted one is a different question from the one that was typed.
+ */
+export function parseCouncil(text: string): { question: string } | "usage" | null {
+  const said = String(text ?? "");
+  if (!isCouncilCommand(said)) return null;
+  const verb = Object.values(COUNCIL_PHRASES)
+    .find((phrase) => said.slice(0, phrase.length).toLowerCase() === phrase.toLowerCase());
+  if (verb === undefined) return null;
+  const parts = /^\s+([\s\S]*)$/.exec(said.slice(verb.length));
+  if (!parts || parts[1] === "") return "usage";
+  return { question: parts[1] };
 }
 
 export interface DispatchRequest {

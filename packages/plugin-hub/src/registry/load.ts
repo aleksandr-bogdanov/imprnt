@@ -765,10 +765,13 @@ export interface AgentEntry {
   /**
    * `"triage"` marks the master a hunt hands seller text to. Its runner
    * launches it with no tools, no MCP server and no instructions beyond the
-   * fixed triage text, so what it reads can never become a hand. Absent is an
+   * fixed triage text, so what it reads can never become a hand. `"council"`
+   * marks a seat: all of a person's council seats answer one question in
+   * parallel when the person types the council command, and a seat carries no
+   * door and no chat because it exists to take those jobs alone. Absent is an
    * ordinary agent.
    */
-  role?: "triage";
+  role?: "triage" | "council";
   id: string;
   person: string;
   preset: string;
@@ -2269,9 +2272,20 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     if (entry.sleeping !== undefined && typeof entry.sleeping !== "boolean")
       refuse(`${where}.sleeping`, here, "sleeping must be boolean");
     if (entry.idle_seconds !== undefined) positive(entry.idle_seconds, `${where}.idle_seconds`);
-    if (entry.role !== undefined && entry.role !== "triage") {
+    if (entry.role !== undefined && entry.role !== "triage" && entry.role !== "council") {
       refuse(`${where}.role`, lines.get(`${where}.role`) ?? here,
-        `${entry.id} has role ${describe(entry.role)}, and the one role an agent may carry is "triage": the master a hunt hands seller text to, launched with no tools`);
+        `${entry.id} has role ${describe(entry.role)}, and the two roles an agent may carry are "triage", the master a hunt hands seller text to, and "council", a seat that answers the council command`);
+    }
+    // A seat takes council jobs and nothing else. One with a chat would be
+    // fed the merged question's chat as well, and its answer would be posted
+    // there beside the merge, which is the argument the council exists to keep
+    // out of the chat.
+    if (entry.role === "council") {
+      for (const key of ["door", "chat"] as const) {
+        if (entry[key] === undefined) continue;
+        refuse(`${where}.${key}`, lines.get(`${where}.${key}`) ?? here,
+          `${entry.id} is a council seat and names a ${key}, and a seat carries no door and no chat: it answers council jobs alone, and its answers reach a chat only through the merge`);
+      }
     }
     // A chat and the door that carries it come as a pair. With neither, the
     // agent exists only to take jobs and its empty tail is what the file says.
