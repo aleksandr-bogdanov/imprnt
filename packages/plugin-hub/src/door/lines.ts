@@ -61,6 +61,53 @@ export function clockLine(language: Language, stamp: string, seconds: number): s
 }
 
 /**
+ * Every reason a message can be waiting, as the runner and the store know it.
+ * A closed list, and the line beside a clock line picks one of them, so a
+ * person reads why and not only which step is late. What matches none of them
+ * is `unknown`, which carries the raw state and is a `check` finding, so a
+ * new kind of silence cannot hide behind a vague sentence.
+ */
+export const WAIT_REASONS = [
+  "previous", "slots", "starting", "harvest", "retry", "login", "window", "off", "runner-down", "working", "unknown",
+] as const;
+export type WaitReason = (typeof WAIT_REASONS)[number];
+
+const WAIT: Record<Language, Record<WaitReason, string>> = {
+  en: {
+    previous: "still answering your previous message in this chat.",
+    slots: "all {count} agent slots are busy: {holders}.",
+    starting: "starting the agent from cold, up to a minute.",
+    harvest: "a background summary of the chat is going first.",
+    retry: "the last attempt failed: {cause}. Next try in {seconds} s.",
+    login: "the model login was refused. Someone needs to sign in again.",
+    window: "the plan's usage window is used up. It resumes {date}.",
+    off: "this agent is switched off on the board.",
+    "runner-down": "the runner {runner} is down, or the machine that runs this agent is offline.",
+    working: "the model is working on it: accepted, the answer is not ready.",
+    unknown: "no known reason. Raw state: {state}.",
+  },
+  ru: {
+    previous: "ещё отвечаю на ваше предыдущее сообщение в этом чате.",
+    slots: "все слоты агентов заняты ({count}): {holders}.",
+    starting: "запускаю агента с нуля, это занимает до минуты.",
+    harvest: "сначала идёт фоновая сводка чата.",
+    retry: "последняя попытка не удалась: {cause}. Следующая через {seconds} с.",
+    login: "вход в модель отклонён, нужно войти заново.",
+    window: "лимит тарифа исчерпан, продолжу {date}.",
+    off: "этот агент выключен на панели.",
+    "runner-down": "раннер {runner} не работает, или машина этого агента выключена.",
+    working: "модель работает: сообщение принято, ответ ещё не готов.",
+    unknown: "причина неизвестна. Состояние: {state}.",
+  },
+};
+
+/** Why the message is waiting, as the line under a clock line. */
+export function waitReasonLine(language: Language, reason: string, values: LineValues = {}): string {
+  const known = (WAIT_REASONS as readonly string[]).includes(reason) ? (reason as WaitReason) : "unknown";
+  return says(language, interpolate(language, WAIT[language][known], values));
+}
+
+/**
  * The tail of the three outage sentences is common and the opening names the
  * cause outright. ONE WHOLE SENTENCE PER CAUSE, not one template with a cause
  * slot: a slot produced "the model credential stopped working (the loop refused

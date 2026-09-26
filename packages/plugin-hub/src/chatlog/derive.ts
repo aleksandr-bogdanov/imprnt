@@ -1,6 +1,6 @@
 import { renderTailLines, validLine, type ChatLine } from "../chatlog.ts";
 import { CLOCK_STREAM } from "../door/clock.ts";
-import { clockLine, type Language } from "../door/lines.ts";
+import { clockLine, waitReasonLine, type Language } from "../door/lines.ts";
 import { isDemand, isRecoveryCommand, SLICE_MAX_DAYS, type SliceLine } from "../harvest/slice.ts";
 import { languageOf, listAgents } from "../registry/entries.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -139,7 +139,10 @@ export async function deriveLines(
     where e.stream = ${CLOCK_STREAM} and e.kind = 'expired' and i.agent = ${args.agent}
       and e.at >= ${wideFrom}::timestamptz
       and e.at <= ${wideUntil}::timestamptz`) as unknown as {
-    detail: { id?: string; at?: string; stamp?: string; seconds?: number } | null;
+    detail: {
+      id?: string; at?: string; stamp?: string; seconds?: number;
+      why?: { id?: string; kind?: string; values?: Record<string, string | number> };
+    } | null;
   }[];
   for (const row of clocks) {
     const detail = row.detail;
@@ -158,6 +161,20 @@ export async function deriveLines(
       },
       order: 0,
     });
+    // The reason line the door said under it, rendered from the same row and
+    // ordered after the clock line it belongs to.
+    if (detail.why?.id && detail.why.kind) {
+      candidates.push({
+        line: {
+          id: detail.why.id,
+          at: detail.at,
+          direction: "out",
+          from: door,
+          text: waitReasonLine(language, detail.why.kind, detail.why.values ?? {}),
+        },
+        order: 1,
+      });
+    }
   }
 
   // ONE DAMAGED ROW COSTS ONLY ITSELF, which is the rule the file walk already

@@ -86,3 +86,66 @@ export async function readOpenTurns(
       and state in ('received', 'acked', 'started')
     order by received_at, id`) as unknown as OpenTurnRow[];
 }
+
+/**
+ * What the door needs beside the open rows to say WHY a clock ran out: the
+ * wait its runner wrote down, the agent's retry after a failed turn, the
+ * household's outage on the agent's credential, and whether the runner is
+ * connected at all, which the server's own view of its clients answers with
+ * no heartbeat written. Every one of them is a row keyed by an id the door
+ * already holds, and nothing here is interpreted: that is `waitReason`'s job.
+ */
+export interface WaitSidecar {
+  wait: Record<string, unknown> | null;
+  health: Record<string, unknown> | null;
+  outage: Record<string, unknown> | null;
+  runnerLive: boolean;
+}
+
+/**
+ * The same read as above, carrying the sidecar in the same statement.
+ *
+ * ONE statement on purpose. A clock running out is allowed its own read and
+ * nothing that looks like a tick, and the door's wait is measured in
+ * statements, so the facts ride as scalar subqueries on the read the expiry
+ * already makes rather than as reads of their own. The sidecar is the same on
+ * every row and is taken off the first, or read once more with no rows when
+ * the table holds none, so a caller with nothing open still learns whether
+ * its runner is there.
+ */
+export async function readOpenTurnsWithWait(
+  store: StoreLike,
+  where: { agent: string; runner: string; credential: string | null },
+): Promise<{ rows: OpenTurnRow[]; sidecar: WaitSidecar }> {
+  const rows = (await store.sql`
+    with facts as (
+      select (select data from state_row where sheet = 'agent_wait' and id = ${where.agent}) as wait,
+             (select data from state_row where sheet = 'agent_health' and id = ${where.agent}) as health,
+             (select data from state_row where sheet = 'outage' and id = ${where.credential ?? ""}) as outage,
+             exists (select 1 from pg_stat_activity
+                      where datname = current_database() and application_name = ${where.runner}) as runner_live
+    )
+    select i.id, i.person, i.agent, i.received_at, i.state, i.claimed_by,
+           i.media_state, i.media_done_at, i.reported_at,
+           f.wait, f.health, f.outage, f.runner_live
+    from facts f
+    left join inbound i on i.agent = ${where.agent}
+      and i.kind in ('human', 'report')
+      and i.state in ('received', 'acked', 'started')
+    order by i.received_at, i.id`) as unknown as (OpenTurnRow & {
+    wait: Record<string, unknown> | null; health: Record<string, unknown> | null;
+    outage: Record<string, unknown> | null; runner_live: boolean;
+  })[];
+  const first = rows[0];
+  const sidecar: WaitSidecar = {
+    wait: first?.wait ?? null,
+    health: first?.health ?? null,
+    outage: where.credential === null ? null : first?.outage ?? null,
+    runnerLive: Boolean(first?.runner_live),
+  };
+  // The left join yields one row of facts with no message when nothing is open.
+  return {
+    rows: rows.filter(row => row.id !== null).map(({ wait: _w, health: _h, outage: _o, runner_live: _l, ...row }) => row as OpenTurnRow),
+    sidecar,
+  };
+}

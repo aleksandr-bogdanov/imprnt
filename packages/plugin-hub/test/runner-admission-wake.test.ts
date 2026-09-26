@@ -47,9 +47,15 @@ test("a resident waiting for a slot is admitted within a tick of the registry ra
     // message stays unanswered across several ticks.
     await Bun.sleep(3000)
     expect((await it.read.outbox()).some(r => r.inbound_id === "to-the-waiting-one"), "no room, no answer").toBe(false)
+    // And what it is waiting on is written down for the door: the slots, and
+    // who holds them.
+    const noted = (await it.read.sheet("agent_wait")).find(r => r.id === waiting)
+    expect(noted?.data).toMatchObject({ kind: "slots", count: 1, holders: [served] })
 
     setCount(2)
     await until("the edit let the waiting agent in and its message was answered",
       async () => (await it.read.outbox()).some(r => r.inbound_id === "to-the-waiting-one"), 15_000)
+    await until("and the wait it wrote down is gone",
+      async () => !(await it.read.sheet("agent_wait")).some(r => r.id === waiting), 15_000)
   } finally { await runner?.stop(); await it.stop() }
 }, 90_000)

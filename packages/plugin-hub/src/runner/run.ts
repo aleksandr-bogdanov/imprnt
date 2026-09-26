@@ -35,6 +35,7 @@ import {
   noticeRoute,
 } from "../registry/entries.ts";
 import { loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
+import { waitRecorder, type AgentWait } from "./waiting.ts";
 import {
   credentialOfPreset,
   getPreset,
@@ -108,6 +109,8 @@ interface Live {
   /** Resolves once this agent's loop is up, or has given up trying. */
   serving: Promise<void>;
   settle(): void;
+  /** What this agent is waiting on, written for the door to read, or cleared. */
+  noteWait(wait: AgentWait | null): Promise<void>;
 }
 
 /** The turn that is open right now. One message per turn, never two. */
@@ -454,6 +457,7 @@ export async function runRunner(options: {
       const reserveMb = limits.reserve_mb;
       if (reservations < limits.max_active_children && Math.max(reservations * reserveMb, measuredBytes / 1048576) + reserveMb <= limits.child_memory_budget_mb) {
         if (reserve) reservations++;
+        if (recorded) await own.noteWait(null);
         return true;
       }
       own.settle();
@@ -463,6 +467,12 @@ export async function runRunner(options: {
           detail: { cause: "admission", children: reservations, reserved_mb: reservations * reserveMb, peak_bytes: peakBytes } });
         continue;
       }
+      // Who holds the slots, for the door's line: every agent with a child
+      // reserved and every resident whose harvest has one of its own.
+      await own.noteWait({ kind: "slots", count: limits.max_active_children, holders: [...new Set([
+        ...[...live.values()].filter(other => other.reserved && other !== own).map(other => other.agent.id),
+        ...[...harvestSessions.values()].map(owner => owner.agent.id),
+      ])] });
       // Woken by a child starting or being released, by the tick seeing a
       // changed limit or a fallen aggregate reading, and by the tick itself
       // as the bound: the re-check above is in memory and reads no table, so
@@ -473,6 +483,7 @@ export async function runRunner(options: {
       try { await Promise.race([available, stopped, own.left, Bun.sleep(setting(registry, "hub.tick_seconds") * 1000)]); }
       finally { capacity.delete(wake); }
     }
+    if (recorded) await own.noteWait(null);
     return false;
   };
   const failedSession = (session: AdapterSession): Promise<never> => session.exited
@@ -926,7 +937,9 @@ export async function runRunner(options: {
       if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping) {
         if (!await admitChild(initial, own)) return;
         own.reserved = true;
+        await own.noteWait({ kind: "starting" });
         await spawn(getPreset(initial, agent.preset), initial);
+        await own.noteWait(null);
       }
       // An agent whose log had no tail to feed is served the moment its session
       // is up, and this is where that one settles.
@@ -1072,12 +1085,14 @@ export async function runRunner(options: {
           // The harvest can start while this read is in flight. Its capacity
           // signal must not be lost before this task subscribes to it.
           if (capacityVersion !== observedCapacity) continue;
+          await own.noteWait({ kind: "harvest" });
           let wake!: () => void;
           const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
           try { await Promise.race([available, stopped, own.left, Bun.sleep(setting(registry, "hub.tick_seconds") * 1000)]); }
           finally { capacity.delete(wake); }
           continue;
         }
+        await own.noteWait(null);
         if (next && !own.reserved) {
           if (!await admitChild(registry, own)) break;
           own.reserved = true;
@@ -1160,7 +1175,11 @@ export async function runRunner(options: {
         // A session carries the preset it was started with, so a changed one is
         // a new child, and so is one whose child the memory watch killed. The
         // runner process itself never restarts for either.
-        if (!own.session || presetId(preset) !== startedWith || own.killed) await spawn(preset, registry);
+        if (!own.session || presetId(preset) !== startedWith || own.killed) {
+          await own.noteWait({ kind: "starting" });
+          await spawn(preset, registry);
+          await own.noteWait(null);
+        }
         await oneTurn({ id: row.id, text: row.body }, { preset, tail: false, registry, source: row.source, kind: row.kind });
         claimed = null;
         claimedReturn = null;
@@ -1214,6 +1233,7 @@ export async function runRunner(options: {
       turn = null;
       await writes;
       if (claimed && own.leaving) await clearProgress(store, claimed);
+      await own.noteWait(null);
       own.settle();
       if (waiter) await waiter.close();
       if (own.session) { readings.delete(own.session); await own.session.close().catch(() => {}); }
@@ -1246,6 +1266,7 @@ export async function runRunner(options: {
       done: Promise.resolve(),
       serving,
       settle,
+      noteWait: waitRecorder(store, agent.id),
     };
     live.set(agent.id, it);
     it.done = runAgent(agent, it);

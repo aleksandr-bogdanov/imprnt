@@ -53,7 +53,7 @@ import { openStore, type Store } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
-import { readOpenTurns, type OpenTurnRow } from "../store/turns.ts";
+import { readOpenTurns, readOpenTurnsWithWait, type OpenTurnRow, type WaitSidecar } from "../store/turns.ts";
 import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
 import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
@@ -70,9 +70,11 @@ import {
   transcriberDown,
   voiceGaveUp,
   voicePending,
+  waitReasonLine,
   type Language,
 } from "./lines.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
+import { credentialKeyOf, waitFacts, waitReason } from "./reason.ts";
 
 /**
  * The one progress line this door posted for a message, while its turn is open.
@@ -926,7 +928,7 @@ export async function runDoor(options: {
     };
 
     /** The clock line: the chat log first, then the diary, then the chat. */
-    const sayExpired = async (row: OpenTurnRow, stamp: string): Promise<void> => {
+    const sayExpired = async (row: OpenTurnRow, stamp: string, sidecar: WaitSidecar): Promise<void> => {
       const key = `${row.id}/${stamp}`;
       if (spoken.has(key)) {
         // The silent re-arm: the read happened, and that is the whole of it.
@@ -945,6 +947,15 @@ export async function runDoor(options: {
       const at = new Date().toISOString();
       spoken.add(key);
       spokenAt.set(key, Date.now());
+      // WHY, under the clock line, from the closed list. A note waiting for
+      // its own words is waiting on this door and needs no second sentence.
+      // The facts rode on the read the expiry already made, so nothing is
+      // read here.
+      let why: { id: string; kind: string; values: Record<string, string | number> } | null = null;
+      if (stamp !== "transcribed") {
+        const verdict = waitReason(waitFacts(sidecar, { registry: registryThisTick(), agent, row, stamp, open }));
+        why = { id: `${id}:why`, kind: verdict.kind, values: verdict.values };
+      }
       // L2's "before sending", the same order a reply chunk is written in, so
       // the next spawned session reads exactly what the person read.
       //
@@ -964,6 +975,13 @@ export async function runDoor(options: {
           text,
         },
       );
+      const reason = why === null ? null : waitReasonLine(language, why.kind, why.values);
+      if (why !== null && reason !== null) {
+        await appendChatLineOnce(
+          { stateDir, person: row.person, agent: row.agent },
+          { id: why.id, at, direction: "out", from: options.door, text: reason },
+        );
+      }
       await recordExpiry(store, {
         messageId: row.id,
         stamp,
@@ -972,9 +990,11 @@ export async function runDoor(options: {
         agent: row.agent,
         id,
         at,
+        ...(why === null ? {} : { why }),
       });
       try {
         await options.platform.post({ chat: agent.chat, text });
+        if (reason !== null) await options.platform.post({ chat: agent.chat, text: reason });
       } catch {
         // The platform refused the line. The row is in the diary either way,
         // and `check`'s stamp finding is the half a household still sees.
@@ -1221,10 +1241,15 @@ export async function runDoor(options: {
         // allowed on.
         const ripe = clocksOf(open).filter((clock) => clock.at <= Date.now());
         if (ripe.length === 0) continue;
-        open = heard(await readOpenTurns(store, { agent: agent.id }));
+        // The one read an expiry makes, with the facts the reason line needs
+        // riding on it.
+        const read = await readOpenTurnsWithWait(store, {
+          agent: agent.id, runner: agent.runner, credential: credentialKeyOf(registryThisTick(), agent),
+        });
+        open = heard(read.rows);
         for (const clock of clocksOf(open)) {
           if (clock.at > Date.now()) continue;
-          await sayExpired(clock.row, clock.stamp);
+          await sayExpired(clock.row, clock.stamp, read.sidecar);
         }
         retune();
       }

@@ -51,6 +51,7 @@ import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { silentRunners } from "./silence.ts";
 import { admissionFindings } from "./admission.ts";
+import { readUnexplainedWaits, unexplainedFindings } from "./waits.ts";
 import { readZoneState, zoneFindings } from "./zone.ts";
 import { backupFindings, readBackupState } from "./backup.ts";
 
@@ -543,6 +544,12 @@ export async function runCheck(options: {
         runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
         machine,
         now,
+      }),
+      // A wait the door could not explain from the closed list of reasons.
+      ...unexplainedFindings({
+        waits: await readUnexplainedWaits(options.store, { agents: mine.map((agent) => agent.id) }),
+        runnerOf: (agent) => mine.find((one) => one.id === agent)?.runner ?? "",
+        machine,
       }),
     );
 

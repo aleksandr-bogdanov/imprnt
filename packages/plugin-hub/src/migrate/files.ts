@@ -82,7 +82,7 @@ export function toml(value: Record<string, unknown>): string {
       const plain = Object.fromEntries(Object.entries(item).filter(([, v]) => v !== undefined && !isTable(v)));
       const named = Object.entries(item).filter(([, v]) => isTable(v));
       if (Object.keys(plain).length > 0 || named.length === 0) blocks.push([`[${key(name)}]`, ...keyLines(plain)]);
-      for (const [sub, table] of named) blocks.push([`[${key(name)}.${key(sub)}]`, ...keyLines(table)]);
+      for (const [sub, table] of named) blocks.push([`[${key(name)}.${key(sub)}]`, ...keyLines(table as Record<string, unknown>)]);
     }
   }
   return blocks.map(block => block.join("\n")).join("\n\n") + "\n";
