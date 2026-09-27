@@ -172,7 +172,7 @@ export function councilDeadline(row: Pick<CouncilRow, "at">, graceSeconds: numbe
 export async function readOpenCouncils(store: StoreLike, where: { agent: string }): Promise<OpenCouncil[]> {
   const rows = (await store.sql`
     select id, data from state_row
-    where sheet = ${COUNCIL_SHEET} and data ->> 'agent' = ${where.agent} and not (data ? 'late')
+    where sheet = ${COUNCIL_SHEET} and data ->> 'agent' = ${where.agent} and not jsonb_exists(data, 'late')
     order by id`) as unknown as { id: string; data: CouncilRow }[];
   return rows.map((row) => ({ id: row.id, ...row.data }));
 }
@@ -188,7 +188,7 @@ export async function readOpenCouncils(store: StoreLike, where: { agent: string 
 export async function claimCouncilLate(store: StoreLike, council: { id: string; at: string }): Promise<CouncilRow | null> {
   const won = (await store.sql`
     update state_row set data = data || jsonb_build_object('late', ${council.at}::text), updated_at = now()
-    where sheet = ${COUNCIL_SHEET} and id = ${council.id} and not (data ? 'late')
+    where sheet = ${COUNCIL_SHEET} and id = ${council.id} and not jsonb_exists(data, 'late')
     returning data`) as unknown as { data: CouncilRow }[];
   return won.length === 0 ? null : won[0].data;
 }
