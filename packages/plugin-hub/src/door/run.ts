@@ -326,6 +326,9 @@ async function awaitHandoff(store: Store, options: {
   }
 }
 
+/** The door's agents take turns through their connect reads. See the note at the reads. */
+let connectGate: Promise<void> = Promise.resolve();
+
 export async function runDoor(options: {
   door: string;
   registryFile: string;
@@ -1227,7 +1230,14 @@ export async function runDoor(options: {
       // ONE read at connect, which is where a restarted door picks up every
       // turn that opened while it was down and re-arms every clock it owed,
       // and one read of what the door before it had already said.
-      try {
+      //
+      // ONE AGENT AT A TIME. A door serving many agents runs this block for
+      // all of them the moment it starts, and the SQL client was measured on
+      // the Pi binding one statement's parameters to another's prepared
+      // statement under that burst, which left a pooled connection inside an
+      // aborted transaction and stopped every delivery routed through it.
+      // Taking turns costs a few hundred milliseconds at start and nothing after.
+      const turn = connectGate.then(async () => {
         open = heard(await readOpenTurns(store, { agent: agent.id }));
         for (const key of await readSpokenClocks(store, { agent: agent.id })) {
           spoken.add(key);
@@ -1267,6 +1277,10 @@ export async function runDoor(options: {
             finished,
           });
         }
+      });
+      connectGate = turn.catch(() => {});
+      try {
+        await turn;
       } finally {
         own.attended();
       }
