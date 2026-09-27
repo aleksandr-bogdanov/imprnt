@@ -58,7 +58,7 @@ import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
 import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
 import { lookUpAdopt, parseAgentCommand, type ResolvedRef } from "./agentctl.ts";
-import { claimCouncilLate, clockDeadlines, COUNCIL_STAMP, councilDeadline, readOpenCouncils, readSpokenClocks, recordExpiry, type OpenCouncil } from "./clock.ts";
+import { claimCouncilLate, clockDeadlines, COUNCIL_STAMP, councilDeadline, readSpokenClocks, recordExpiry, type OpenCouncil } from "./clock.ts";
 import { openSeatsOf, seatJobId } from "./council.ts";
 import { recordSeatAnswer } from "../runner/council.ts";
 import { CURSOR_SHEET, cursorId, readCursor, writeCursor } from "./cursor.ts";
@@ -1233,9 +1233,12 @@ export async function runDoor(options: {
           spoken.add(key);
           spokenAt.set(key, Date.now());
         }
-        // The councils a door before this one convened and had not yet said
-        // were late, the same way it picks up the turns it owed.
-        councils = await readOpenCouncils(store, { agent: agent.id });
+        // A council convened before this door started is not re-armed here: a
+        // door serving many agents runs this connect for each of them at once,
+        // and the SQL client was measured mixing a statement of this read with
+        // another's on the Pi, which aborted a pooled connection and stopped
+        // every delivery behind it. `check` reports such a council overdue.
+        councils = [];
         // The progress lines a door before this one posted. One that belongs to
         // a turn still open is INHERITED, and one whose turn has ended is swept:
         // the door that posted it died before it could edit its totals, so
