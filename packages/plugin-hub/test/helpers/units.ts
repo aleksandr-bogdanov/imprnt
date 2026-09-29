@@ -31,9 +31,9 @@
 // `~/Library/LaunchAgents` is never written to by a check.
 import { livePid } from "./manager.ts";
 
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, renameSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export const RENDER_PREFIX = "imprnt-hub-";
 export const WATCH_PREFIX = "imprnt-";
@@ -58,6 +58,8 @@ export interface UnitFixture {
   mine(): string[];
   /** Where this fixture's unit files live. On linux the manager's search path. */
   unitDir(): string;
+  /** Exact fixture ownership, atomically refreshed for subprocesses. */
+  ownershipFile(): string;
   /** Every unit the manager has under the WATCH prefix, as it reports them. */
   listWatched(): Promise<string[]>;
   /** Those of them this fixture did not create. Its count must not move. */
@@ -103,9 +105,16 @@ export function unitFixture(): UnitFixture {
   const isDarwin = process.platform === "darwin";
   const uid = process.getuid?.() ?? -1;
 
-  const dir = isDarwin
-    ? mkdtempSync(join(tmpdir(), "hub-units-"))
-    : join(homedir(), ".config", "systemd", "user");
+  const root = mkdtempSync(join(tmpdir(), "hub-units-"));
+  const dir = isDarwin ? root : join(homedir(), ".config", "systemd", "user");
+  const ownershipFile = join(root, "ownership.json");
+  const publishOwnership = () => {
+    mkdirSync(root, { recursive: true });
+    const pending = `${ownershipFile}.pending`;
+    writeFileSync(pending, JSON.stringify({ unitDir: resolve(dir), names: created }), { mode: 0o600 });
+    renameSync(pending, ownershipFile);
+  };
+  publishOwnership();
   if (!isDarwin) mkdirSync(dir, { recursive: true });
 
   const isMine = (name: string): boolean =>
@@ -265,11 +274,13 @@ export function unitFixture(): UnitFixture {
     entryId(base) {
       const id = `${base}-${hex()}`;
       created.push(`${RENDER_PREFIX}${id}`);
+      publishOwnership();
       return id;
     },
     async plantStray(options = {}) {
       const base = `${WATCH_PREFIX}stray-${hex()}`;
       created.push(base);
+      publishOwnership();
       const program = options.program ?? [
         "/bin/sh",
         "-c",
@@ -296,9 +307,11 @@ export function unitFixture(): UnitFixture {
     },
     track(unitBase) {
       created.push(unitBase);
+      publishOwnership();
     },
     mine: () => [...created],
     unitDir: () => dir,
+    ownershipFile: () => ownershipFile,
     listWatched,
     async foreignWatched() {
       return (await listWatched()).filter((name) => !isMine(name));
@@ -319,9 +332,8 @@ export function unitFixture(): UnitFixture {
       }
       created.length = 0;
       created.push(...left);
-      if (isDarwin && dir.startsWith(tmpdir()) && failures.length === 0) {
-        rmSync(dir, { recursive: true, force: true });
-      }
+      publishOwnership();
+      if (failures.length === 0) rmSync(root, { recursive: true, force: true });
       if (failures.length) {
         throw new Error(`the unit fixture could not remove: ${failures.join("; ")}`);
       }

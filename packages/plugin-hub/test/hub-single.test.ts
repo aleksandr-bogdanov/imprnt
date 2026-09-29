@@ -64,9 +64,10 @@ async function startSecondHub(
   registryFile: string,
   machine: string,
   unitDir: string,
+  ownershipFile: string,
 ): Promise<{ code: number; said: Record<string, unknown> | null; out: string }> {
   const proc = Bun.spawn(
-    [process.execPath, "run", hubPath("test/helpers/hub-subprocess.ts"), registryFile, machine, unitDir],
+    [process.execPath, "run", hubPath("test/helpers/hub-subprocess.ts"), registryFile, machine, unitDir, ownershipFile],
     { cwd: hubPath("."), stdout: "pipe", stderr: "pipe", stdin: "ignore" },
   );
   const finished = await Promise.race([
@@ -124,7 +125,7 @@ test.skipIf(!gate.ok)(
     });
     let first: ReadyProcess | null = null;
     try {
-      first = await startHub(it.registryFile, machine.id, fixture.unitDir());
+      first = await startHub(it.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
       expect(pidAlive(first.pid)).toBe(true);
       // Past its first tick, and its tick is what installs the entry, so the
       // one that is running is really running AND has really done its work.
@@ -140,7 +141,7 @@ test.skipIf(!gate.ok)(
 
       const before = await it.read.ledger({ stream: "refusal" });
 
-      const second = await startSecondHub(it.registryFile, machine.id, fixture.unitDir());
+      const second = await startSecondHub(it.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
       // --- IT LEFT, and it left loudly. `code` is -1 here only when it was
       //     still running after ten seconds, which is a hub that never
       //     refused at all.
@@ -196,7 +197,7 @@ test.skipIf(!gate.ok)(
           )) as { n: number }[])[0].n === 0,
         20_000,
       );
-      const replacement = await startHub(it.registryFile, machine.id, fixture.unitDir());
+      const replacement = await startHub(it.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
       try {
         expect(pidAlive(replacement.pid)).toBe(true);
       } finally {
@@ -244,8 +245,8 @@ test.skipIf(!gate.ok)(
 
       // BOTH IN FLIGHT AT ONCE. Neither is awaited until both have been asked
       // for, so nothing in the test orders them.
-      const one = startHub(it.registryFile, machine.id, fixture.unitDir());
-      const two = startHub(it.registryFile, machine.id, fixture.unitDir());
+      const one = startHub(it.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
+      const two = startHub(it.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
       const settled = await Promise.allSettled([one, two]);
 
       const up = settled.filter((r) => r.status === "fulfilled");

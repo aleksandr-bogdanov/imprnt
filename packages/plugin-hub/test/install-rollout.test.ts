@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
 import { serviceFixture, serviceOs } from "./helpers/rollout-service.ts"
 import { loadRegistry, readSetting } from "../src/registry/load.ts"
+import { MIGRATION_FILES } from "../src/store/migrate.ts"
 let cluster: Cluster
 beforeAll(async () => { cluster = await startCluster() })
 afterAll(async () => { await cluster?.stop() })
@@ -48,6 +49,12 @@ test("ROLL-05 database stage migrates an existing previous schema and preserves 
     const { runInstall } = await seam("src/install/run.ts")
     const probe = serviceOs(f.dir, "systemd", Object.values(f.ids))
     for (let n = 0; n < 2; n++) await (runInstall as Function)({ registryFile: f.registryFile, stage: "database", os: probe.os })
+    const versions = (await db`select version from schema_version order by version`).map((row: any) => Number(row.version))
+    expect(versions).toEqual(MIGRATION_FILES.map(([version]) => version))
+    expect(versions).toEqual(Array.from({ length: MIGRATION_FILES.length }, (_, i) => i + 1))
+    // D-210: exercise the installer's dispatch registration instead of matching
+    // a historical spelling of its migration list in the TypeScript source.
+    expect((await db`select to_regprocedure('hub_report(text,text)')::text as report`)[0].report).toBe("hub_report(text,text)")
     const rows = await db`select id,body,log_ready,source from inbound`
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ id: "pending", body: "synthetic pending", log_ready: true, source: null })

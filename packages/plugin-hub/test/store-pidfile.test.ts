@@ -248,7 +248,7 @@ test.skipIf(!gate.ok)(
       const mine = residentBytes(holder.pid);
       expect(mine).toBeGreaterThan(0);
 
-      hub = await startHub(it.registryFile, machine.id, fixture.unitDir());
+      hub = await startHub(it.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
       await until(
         "the hub wrote a postgres peak for the pid the registry pointed at",
         async () => {
@@ -302,7 +302,7 @@ test.skipIf(!gate.ok)(
     const quietStore = await superStore(cluster, quiet.db);
     let second: ReadyProcess | null = null;
     try {
-      second = await startHub(quiet.registryFile, machine.id, fixture.unitDir());
+      second = await startHub(quiet.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
       // Several ticks, so "nothing was written" is a claim about a hub that had
       // every chance to write.
       await Bun.sleep(TICK * 5000);

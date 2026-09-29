@@ -93,7 +93,7 @@ test.skipIf(!gate.ok)(
 
     let hub: ReadyProcess | null = null;
     try {
-      hub = await startHub(it.registryFile, machine.id, fixture.unitDir());
+      hub = await startHub(it.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
       const hubPid = hub.pid;
       expect(pidAlive(hubPid)).toBe(true);
 

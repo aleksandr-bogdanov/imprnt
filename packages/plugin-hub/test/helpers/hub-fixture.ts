@@ -634,12 +634,14 @@ export function hubReader(
 export async function startHub(
   registryFile: string,
   machine: string,
-  unitDir?: string,
+  unitDir: string,
+  ownershipFile: string,
 ): Promise<ReadyProcess> {
   return await startReadySubprocess("test/helpers/hub-subprocess.ts", [
     registryFile,
     machine,
-    ...(unitDir ? [unitDir] : []),
+    unitDir,
+    ownershipFile,
   ]);
 }
 

@@ -379,7 +379,7 @@ test.skipIf(!gate.ok)(
     let runner: ReadyProcess | null = null;
     try {
       plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" });
-      hub = await startHub(it.registryFile, machine.id, fixture.unitDir());
+      hub = await startHub(it.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
       door = await startReadySubprocess("test/helpers/door-subprocess.ts", [
         it.registryFile,
         DOOR,
