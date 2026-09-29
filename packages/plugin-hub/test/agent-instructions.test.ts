@@ -7,7 +7,7 @@
 import { beforeAll, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { claudeCode } from "../src/adapters/claude-code.ts"
+import { claudeCode, VALIDATED_ORDINARY_PROFILES } from "../src/adapters/claude-code.ts"
 import { LOOP_PREAMBLE } from "../src/adapters/instructions.ts"
 import { loadRegistry } from "../src/registry/load.ts"
 import { loopFixture, launchInput, launchSeam, captureCli, ending, appended } from "./helpers/rollout-loop.ts"
@@ -27,7 +27,8 @@ function withVault(f: ReturnType<typeof loopFixture>, extra = "") {
 
 /** Launch through the real adapter start and the real box, and return what the fake CLI saw. */
 async function launched(f: ReturnType<typeof loopFixture>, change: (input: any) => void = () => {}) {
-  const make = await launchSeam(), input = launchInput(f)
+  // An agent that names no tools (one made from a chat) is launched with the profile a build validated.
+  const make = await launchSeam(), input = { ...launchInput(f), toolProfile: VALIDATED_ORDINARY_PROFILES["2.1.285"] }
   change(input)
   const launch = await make(input)
   const capture = join(input.sessionDir, "capture.json")

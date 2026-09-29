@@ -36,6 +36,7 @@ import { PERSON, PERSON2, stageHub, superStore } from "./helpers/hub-fixture.ts"
 import { plantTrees } from "./helpers/trees.ts";
 import { writeRegistry, type RegistrySpec } from "./helpers/registry.ts";
 import { loadRegistry } from "../src/registry/load.ts";
+import { VALIDATED_ORDINARY_PROFILES } from "../src/adapters/claude-code.ts";
 
 const SLOW = 90_000;
 const PROBE = ["/bin/sh", "-c", "echo the command the loop would have run"];
@@ -243,6 +244,8 @@ test(
       const launch = async () =>
         (await (makeLoopLaunch as Function)({
           registry, agent, preset: registry.presets.daily, purpose: "ordinary",
+          // The agent names no tools, so the launch gets the profile a build validated, as production gives it.
+          toolProfile: VALIDATED_ORDINARY_PROFILES["2.1.285"],
           credential: { id: "household-claude", kind: "claude-login", file: login, owner: "household" },
           sessionDir, box,
         })) as { cwd: string; wrap(argv: string[]): string[] };
