@@ -12,17 +12,14 @@
 // not the platform it is running on, so a check declares its `[[machines]]`
 // entry through `thisMachine()`.
 //
-// THE UNIT DIRECTORY IS OPTIONAL AND IS A CHECK'S SAFETY RAIL, not a behaviour.
-// `runHub` takes `os?: OsSeam` in the pinned contract, so a check hands it a
-// seam pointed at the directory `test/helpers/units.ts` will clean up. Without
-// it a check on a Mac would write plists into the owner's own
-// `~/Library/LaunchAgents` and leave them there. On linux the fixture's
-// directory IS the manager's search path, so nothing changes.
-//
-// Usage: bun run test/helpers/hub-subprocess.ts <registryFile> <machine> [unitDir]
+// Unit directory AND exact fixture ownership are required. The manager is
+// shared with live services, including on Linux where unitDir is shared too.
+// Usage: bun run test/helpers/hub-subprocess.ts <registryFile> <machine> <unitDir> <ownershipFile>
 
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { OsSeam } from "../../src/os/types.ts";
+import { ownedOs } from "./owned-os.ts";
 
 const hub = dirname(dirname(import.meta.dir));
 const hubModule = join(hub, "src/hub/run.ts");
@@ -32,9 +29,9 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-const [registryFile, machine, unitDir] = process.argv.slice(2);
-if (!registryFile || !machine) {
-  fail("usage: hub-subprocess.ts <registryFile> <machine> [unitDir]");
+const [registryFile, machine, unitDir, ownershipFile] = process.argv.slice(2);
+if (!registryFile || !machine || !unitDir || !ownershipFile) {
+  fail("usage: hub-subprocess.ts <registryFile> <machine> <unitDir> <ownershipFile>");
 }
 
 // The seam-missing path, spelled out, so a check that starts a hub before
@@ -64,7 +61,7 @@ if (typeof runHub !== "function") {
 }
 
 let os: unknown;
-if (unitDir) {
+try {
   const osModule = join(hub, "src/os/index.ts");
   if (!existsSync(osModule)) {
     fail(`seam module missing: src/os/index.ts (expected at ${osModule})`);
@@ -72,12 +69,14 @@ if (unitDir) {
   const osMod = (await import(osModule)) as Record<string, unknown>;
   const thisOs = osMod.thisOs as ((options?: unknown) => unknown) | undefined;
   if (typeof thisOs !== "function") fail("src/os/index.ts does not export thisOs");
-  os = thisOs({ unitDir });
+  os = ownedOs(thisOs({ unitDir }) as OsSeam, unitDir, ownershipFile);
+} catch (error) {
+  fail(`fixture OS refused: ${(error as Error).message}`);
 }
 
 let handle: { stop(): Promise<void> };
 try {
-  handle = await runHub(os ? { machine, registryFile, os } : { machine, registryFile });
+  handle = await runHub({ machine, registryFile, os });
 } catch (err) {
   fail(`runHub refused to start: ${(err as Error).message}`);
 }

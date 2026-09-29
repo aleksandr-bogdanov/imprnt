@@ -53,8 +53,8 @@ function cstring(bytes: Uint8Array, from: number): [string, number] {
   return [decoder.decode(bytes.subarray(from, end)), end + 1];
 }
 
-function startup(user: string, database: string): Uint8Array {
-  const body = encoder.encode(`user\0${user}\0database\0${database}\0\0`);
+function startup(user: string, database: string, application: string): Uint8Array {
+  const body = encoder.encode(`user\0${user}\0database\0${database}\0application_name\0${application}\0\0`);
   const message = new Uint8Array(8 + body.length);
   const head = new DataView(message.buffer);
   head.setInt32(0, message.length);
@@ -113,6 +113,7 @@ function errorText(body: Uint8Array): string {
 function place(url: string) {
   const parsed = new URL(url);
   return {
+    application: parsed.searchParams.get("application_name") || "imprnt-hub-listen",
     hostname: parsed.hostname || "127.0.0.1",
     port: Number(parsed.port || "5432"),
     user: decodeURIComponent(parsed.username),
@@ -246,7 +247,7 @@ export async function listenForWork(options: {
 
   try {
     const ready = reply();
-    socket.write(startup(where.user, where.database));
+    socket.write(startup(where.user, where.database, where.application));
     await ready;
 
     const listening = reply();

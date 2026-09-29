@@ -15,6 +15,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInstall } from "../src/install/run.ts";
+import { MIGRATION_FILES } from "../src/store/migrate.ts";
 import { pgBin, startCluster, type Cluster } from "./helpers/cluster.ts";
 import { writeRegistry } from "./helpers/registry.ts";
 
@@ -51,7 +52,7 @@ test("SPEC §6 a fresh install hands the administrator SQL and names no file it 
     expect(await runInstall({ registryFile, stage: "database" })).toEqual({ stage: "database", result: "done" });
     const sql = cluster.connect(database);
     expect((await sql`select to_regclass('public.ledger_event') as ledger`)[0].ledger).toBe("ledger_event");
-    expect((await sql`select max(version) as version from schema_version`)[0].version).toBe(6);
+    expect((await sql`select max(version) as version from schema_version`)[0].version).toBe(MIGRATION_FILES.at(-1)![0]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -85,8 +85,8 @@ const templates: [string, string, string][] = [
   ],
   [
     "cliUsage",
-    "usage: imprnt hub <verb> <registry> [target]",
-    "использование: imprnt hub <команда> <реестр> [цель]"
+    "usage: imprnt hub <verb> <registry> [target] [machine]",
+    "использование: imprnt hub <команда> <реестр> [цель] [машина]"
   ],
   [
     "conversionDone",

@@ -300,3 +300,37 @@ test("a cold agent waiting on a resident harvest answers its person when the win
     await it.stop();
   }
 }, 120_000);
+
+test("a resident stuck starting cannot make a cold worker yield to its harvest forever", async () => {
+  const it = await stage({ resident: KEY, cold: KEY }, OPEN);
+  let release!: () => void;
+  const stuck = new Promise<void>(resolve => { release = resolve; });
+  let starts = 0;
+  const adapter = {
+    ...it.scripted.adapter,
+    async start(where: Parameters<typeof it.scripted.adapter.start>[0]) {
+      if (++starts === 1) await stuck;
+      return it.scripted.adapter.start(where);
+    },
+  };
+  let runner: Runner | undefined;
+  let opening: Promise<Runner> | undefined;
+  try {
+    const harvest = await plantHarvest(it);
+    opening = runRunner({ runner: RUNNER, registryFile: it.registryFile, adapters: { [it.adapterName]: adapter } });
+    await until("the resident is starting", () => starts === 1, 10000);
+    await insertInbound(cluster, it.db, { id: "cold-behind-start", agent: COLD, body: "fixture work" });
+    await until("the cold worker yielded", async () =>
+      (await it.read.sql("select 1 from state_row where sheet = 'agent_wait' and id = $1 and data ->> 'kind' = 'harvest'", [COLD])).length > 0,
+      10000);
+    expect(await rowOf(it, "cold-behind-start")).toMatchObject({ state: "received", claimed_by: null });
+    await until("the cold worker answered despite stalled resident startup", () => answered(it, "cold-behind-start"), 10000);
+    expect(await rowOf(it, harvest)).toMatchObject({ state: "received", claimed_by: null });
+    expect(starts).toBe(2);
+  } finally {
+    release();
+    runner = await opening;
+    await runner?.stop();
+    await it.stop();
+  }
+}, 30000);

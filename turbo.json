@@ -42,7 +42,10 @@
         "bunfig.toml",
         "hub.mjs"
       ],
-      "outputs": []
+      "outputs": [],
+      "passThroughEnv": [
+        "TMPDIR"
+      ]
     }
   }
 }

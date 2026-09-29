@@ -338,7 +338,7 @@ test.skipIf(!gate.ok)(
     const sheet = hubReader(cluster, it.db, String(MEMORY_PEAK_SHEET));
     let hub: ReadyProcess | null = null;
     try {
-      hub = await startHub(it.registryFile, machine.id, fixture.unitDir());
+      hub = await startHub(it.registryFile, machine.id, fixture.unitDir(), fixture.ownershipFile());
 
       await until(
         "the hub started the resident, with a live pid in the manager's own record",

@@ -26,6 +26,7 @@
 // do not exist and the clock knows nothing about media.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { MIGRATION_FILES } from "../src/store/migrate.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -299,12 +300,12 @@ test(
     const versions = (await f.sql`select version from schema_version order by version`) as unknown as {
       version: number;
     }[];
-    expect(versions.map((one) => Number(one.version))).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(versions.map((one) => Number(one.version))).toEqual(MIGRATION_FILES.map(([version]) => version));
     await migrate(f.store());
     const again = (await f.sql`select version from schema_version order by version`) as unknown as {
       version: number;
     }[];
-    expect(again.map((one) => Number(one.version))).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(again.map((one) => Number(one.version))).toEqual(MIGRATION_FILES.map(([version]) => version));
 
     // A row that predates the columns keeps what it had, so nothing that was
     // already shown to somebody is reopened by the upgrade.

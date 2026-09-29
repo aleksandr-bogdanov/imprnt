@@ -17,6 +17,7 @@ import { message } from "./helpers/rollout-ingress.ts"
 import { observe } from "./helpers/rollout-runner.ts"
 import { runDoor } from "../src/door/run.ts"
 import { runHub } from "../src/hub/run.ts"
+import { MIGRATION_FILES } from "../src/store/migrate.ts"
 import { runRunner } from "../src/runner/run.ts"
 import { agentRefused, agentUsage, AGENT_PHRASES, ADOPT_PHRASES } from "../src/door/lines.ts"
 import { appendChatLine, readTail } from "../src/chatlog.ts"
@@ -323,12 +324,10 @@ test("D-221 an adopt into a chat another agent of this door already answers in i
   } finally { await hub?.stop(); await door?.stop(); await it.stop() }
 }, 60_000)
 
-test("D-221 the step that lets the hub say an outcome is in both ordered lists, and an upgraded store grants what a fresh one grants", async () => {
+test("D-221 the step that lets the hub say an outcome is registered, and an upgraded store grants what a fresh one grants", async () => {
   const file = "006-agent-lifecycle.sql"
-  expect(readFileSync(hubPath("src/store/migrate.ts"), "utf8")).toContain(`./migrations/${file}`)
-  // The installer's own list is the one place a check cannot reach by running,
-  // so it is bound by reading, as the dispatch step's is.
-  expect(readFileSync(hubPath("src/install/run.ts"), "utf8")).toContain(`[6, "${file}"]`)
+  expect(MIGRATION_FILES).toContainEqual([6, file])
+  // The real installer grant is checked in install-rollout.test.ts.
   const { migrate } = await seam("src/store/migrate.ts") as { migrate: (store: unknown, steps?: { version: number; sql: string }[]) => Promise<void> }
   const granted = async (sql: any) => (await sql`select has_function_privilege('hub_hub',
     'hub_door_notice(text, text, text, text, jsonb, integer)', 'execute') as yes`)[0].yes

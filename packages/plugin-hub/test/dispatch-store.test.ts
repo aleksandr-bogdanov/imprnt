@@ -10,11 +10,12 @@
 // guard in TypeScript, because a second process opens its own connection.
 
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { readFileSync, existsSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { startCluster, seam, hubPath, until, type Cluster } from "./helpers/cluster.ts"
 import { rolloutDatabase } from "./helpers/rollout-fixtures.ts"
 import type { StoreLike } from "../src/store/connect.ts"
+import { MIGRATION_FILES } from "../src/store/migrate.ts"
 
 let cluster: Cluster
 beforeAll(async () => { cluster = await startCluster() })
@@ -65,7 +66,8 @@ test("D-210 the dispatch migration is ordered, idempotent, and the version set i
   const versions = (await f.sql`select version from schema_version order by version`).map((r: any) => Number(r.version))
   // The WHOLE sorted set, which is the assertion that catches a skipped number:
   // a gap breaks the ordered list every later step is applied against.
-  expect(versions).toEqual([1, 2, 3, 4, VERSION, 6])
+  expect(versions).toEqual(MIGRATION_FILES.map(([version]) => version))
+  expect(versions).toEqual(Array.from({ length: MIGRATION_FILES.length }, (_, i) => i + 1))
   expect((await f.sql`select count(*)::int as n from schema_version where version = ${VERSION}`)[0].n).toBe(1)
 })
 
@@ -100,16 +102,11 @@ test("D-210 a fresh install and an upgraded store carry the same dispatch object
   expect(b.trigger).toEqual(a.trigger)
 })
 
-test("D-210 the migration file is named in the ordered list and in the installer's own list", async () => {
-  // The installer's list is the one place a check cannot reach by running, so
-  // it is bound by reading: an upgraded box whose migration never ran would
-  // otherwise be left behind a fresh one with nothing saying so.
+test("D-210 the dispatch file is registered in the shared migration list", async () => {
+  // Both consumers use this list. install-rollout.test.ts exercises the real
+  // database-stage installer against a previous schema and checks its result.
   expect(existsSync(hubPath(join("src/store/migrations", FILE)))).toBe(true)
-  const ordered = readFileSync(hubPath("src/store/migrate.ts"), "utf8")
-  expect(ordered).toContain(`version: ${VERSION}`)
-  expect(ordered).toContain(`./migrations/${FILE}`)
-  const installer = readFileSync(hubPath("src/install/run.ts"), "utf8")
-  expect(installer).toContain(`[${VERSION}, "${FILE}"]`)
+  expect(MIGRATION_FILES).toContainEqual([VERSION, FILE])
 })
 
 for (const [kind, rank] of [["human", 0], ["report", 0], ["triage", 1], ["room", 1],

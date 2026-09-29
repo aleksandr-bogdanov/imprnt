@@ -532,6 +532,7 @@ export async function runRunner(options: {
   const runAgent = async (agent: AgentEntry, own: Live): Promise<void> => {
     let startedWith = "";
     let lastWork = Date.now();
+    let harvestYield: { row: string; until: number } | null = null;
     let claimed: string | null = null;
     /** Whether that claim is a person's message rather than a harvest. */
     let claimedHuman = false;
@@ -1138,7 +1139,8 @@ export async function runRunner(options: {
         } finally { connection.release(); }
         // Capacity belongs to this selected row. A later arrival must go
         // through selection and reservation before it can start a child.
-        if (!next) { await sleep(); continue; }
+        if (!next) { harvestYield = null; await sleep(); continue; }
+        if (harvestYield?.row !== next.id) harvestYield = null;
         // Give an already waiting resident harvest its extra child before a
         // cold session. A harvest counts as waiting only when its own agent's
         // window lets it run, which `residentHarvest` already decided, and a
@@ -1146,11 +1148,16 @@ export async function runRunner(options: {
         //
         // Capacity release is the normal wake: the harvest starting its child
         // is what lets this loop go. The tick is the bound for a harvest that
-        // stops being claimable while this loop waits on it. A window that
+        // stops being claimable while this loop waits on it. The separate deadline
+        // limits the total yield even if the resident never starts. A window that
         // crosses its pause during the resident's turn arrives with no
         // notification and starts no child, so without the bound this loop
         // would wait on a capacity change that never comes.
-        if (next && next.kind !== "harvest" && next.harvest_waiting && !own.session) {
+        if (next.kind !== "harvest" && next.harvest_waiting && !own.session &&
+            (harvestYield === null || Date.now() < harvestYield.until)) {
+          // One bounded courtesy per selected row, not a fresh wait every tick.
+          // A resident stuck starting must not starve unrelated cold work.
+          harvestYield ??= { row: next.id, until: Date.now() + 3 * setting(registry, "hub.tick_seconds") * 1000 };
           // The harvest can start while this read is in flight. Its capacity
           // signal must not be lost before this task subscribes to it.
           if (capacityVersion !== observedCapacity) continue;

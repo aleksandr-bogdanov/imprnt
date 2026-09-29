@@ -9,8 +9,7 @@
 // approved what.
 
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
-import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
+import { startCluster, seam, type Cluster } from "./helpers/cluster.ts"
 import { rolloutStage, DISPATCH_TARGET, DISPATCH_TARGET_CHAT, DISPATCH_TARGET_DOOR2, DISPATCH_TARGET_RU, DISPATCH_JOB_ONLY } from "./helpers/rollout-stage.ts"
 import { chatLogLines } from "./helpers/hub-fixture.ts"
 import { observe } from "./helpers/rollout-runner.ts"
@@ -199,14 +198,13 @@ test("D-211 an agent's own text creates nothing, and an ordinary sentence is an 
 
 test("D-211 there is no dispatch verb on the command line", async () => {
   // A report with nowhere to go is a design of its own and it is not built, so
-  // the absence is asserted against the shipped verb list rather than assumed.
+  // both command shapes must refuse without accepting or queuing work.
   const { command } = await seam("src/entry/command.ts") as { command: (args: string[]) => Promise<number> }
   const it = await rolloutStage(cluster, "telegram", { dispatch: true })
   try {
     expect(await command(["dispatch", DISPATCH_TARGET, CODEWORD])).toBe(2)
     expect(await command(["dispatch", it.registryFile, DISPATCH_TARGET, CODEWORD])).toBe(2)
-    const verbs = readFileSync(hubPath("src/entry/command.ts"), "utf8")
-    expect(verbs).toContain(`["check", "status", "metrics", "install", "recover"].includes(verb)`)
-    expect(verbs).not.toContain('"dispatch"')
+    expect((await it.read.inbound()).filter(row => row.kind === "job")).toEqual([])
+    expect((await it.read.ledger()).filter(row => row.kind === "dispatch.requested")).toEqual([])
   } finally { await it.stop() }
 }, 60_000)
