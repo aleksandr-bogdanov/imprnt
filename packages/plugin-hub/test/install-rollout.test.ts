@@ -55,6 +55,8 @@ test("ROLL-05 database stage migrates an existing previous schema and preserves 
     // D-210: exercise the installer's dispatch registration instead of matching
     // a historical spelling of its migration list in the TypeScript source.
     expect((await db`select to_regprocedure('hub_report(text,text)')::text as report`)[0].report).toBe("hub_report(text,text)")
+    expect((await db`select has_function_privilege('hub_hub',
+      'hub_door_notice(text,text,text,text,jsonb,integer)', 'execute') as granted`)[0].granted).toBe(true)
     const rows = await db`select id,body,log_ready,source from inbound`
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ id: "pending", body: "synthetic pending", log_ready: true, source: null })

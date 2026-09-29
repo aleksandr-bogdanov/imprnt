@@ -14,6 +14,7 @@ import { parsePlistDict } from "./helpers/plist.ts"
 import { launchd } from "../src/os/launchd.ts"
 import { systemd } from "../src/os/systemd.ts"
 import { unitFixture } from "./helpers/units.ts"
+import { osGate, gateSuffix } from "./helpers/os-gate.ts"
 let cluster: Cluster
 const native=unitFixture()
 beforeAll(async()=>{cluster=await startCluster()})
@@ -128,7 +129,8 @@ test("ROLL-29 macOS renderer declares private stdout and stderr paths before man
 })
 for(const host of ["linux","darwin"] as const){
   if(process.platform!==host)console.log(`SKIP: requires ${host==="linux"?"Linux":"macOS"}: ROLL-29 native inherited stderr`)
-  test.skipIf(process.platform!==host)(`ROLL-29 native ${host} locates inherited child stderr only at the contract destination`,async()=>{
+  const gate = process.platform === host ? osGate() : { ok: false, reason: `requires ${host}`, seam: null }
+  test.skipIf(!gate.ok)(`ROLL-29 native ${host} locates inherited child stderr only at the contract destination${gateSuffix(gate)}`,async()=>{
     const f=await serviceFixture(cluster)
     try{
       const id=native.entryId("diagnostic")

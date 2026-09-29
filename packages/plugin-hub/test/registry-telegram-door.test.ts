@@ -36,8 +36,11 @@ for (const [shape, text, refused] of [
   test(`IMP-160 D-173 ${shape} is ${refused ? "refused by name" : "loaded"}`, () => {
     const file = write(text)
     if (!refused) {
-      // The shipped example carries the hunt's triage master beside the lair.
-      expect(loadRegistry(file).agents.map(agent => agent.id).sort()).toEqual(["p1-lair", "p1-study", "p1-triage"])
+      // Chatless council seats coexist with the agents served by these doors.
+      const registry = loadRegistry(file)
+      expect(registry.agents.map(agent => agent.id).sort()).toEqual(["p1-lair", "p1-seat-1", "p1-seat-2", "p1-study", "p1-triage"])
+      expect(registry.agents.filter(agent => agent.chat && agent.door).map(agent => agent.id).sort())
+        .toEqual(["p1-lair", "p1-study", "p1-triage"])
       return
     }
     let error: unknown

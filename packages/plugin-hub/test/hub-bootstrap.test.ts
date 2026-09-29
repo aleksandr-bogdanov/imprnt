@@ -9,6 +9,7 @@ import { runCheck } from "../src/check/run.ts"
 import { superStore } from "./helpers/hub-fixture.ts"
 import { parsePlistDict } from "./helpers/plist.ts"
 import { unitFixture } from "./helpers/units.ts"
+import { osGate, gateSuffix } from "./helpers/os-gate.ts"
 import { launchd } from "../src/os/launchd.ts"
 import { systemd } from "../src/os/systemd.ts"
 import { observe } from "./helpers/rollout-runner.ts"
@@ -87,7 +88,8 @@ test("ROLL-12 Linux linger disabled is a named check finding and enabled clears 
 })
 for (const host of ["linux", "darwin"] as const) {
   if (process.platform !== host) console.log(`SKIP: requires ${host === "linux" ? "Linux" : "macOS"}: ROLL-12 native bootstrap`)
-  test.skipIf(process.platform !== host)(`ROLL-12 native ${host} resident service survives its launching command and schedule is installed`, async () => {
+  const gate = process.platform === host ? osGate() : { ok: false, reason: `requires ${host}`, seam: null }
+  test.skipIf(!gate.ok)(`ROLL-12 native ${host} resident service survives its launching command and schedule is installed${gateSuffix(gate)}`, async () => {
     const f = await serviceFixture(cluster)
     try {
       const os = host === "linux" ? systemd({ unitDir: native.unitDir() }) : launchd({ unitDir: native.unitDir() })

@@ -282,7 +282,8 @@ test.skip("D-188 the six protected windows are unchanged, byte for byte, and so 
   }
 });
 
-test("D-200 the check that says a household with no recognizer kept today's path passes untouched", () => {
+// Historical scope evidence for the merged voice phase; door-media still runs its behavioral assertions.
+test.skip("D-200 the check that says a household with no recognizer kept today's path passes untouched [historical voice-phase scope proof; phase merged]", () => {
   expect(digest(NO_COMPONENT), `${NO_COMPONENT} was edited`).toBe(NO_COMPONENT_DIGEST);
 });
 
