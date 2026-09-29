@@ -15,7 +15,9 @@ import { recordDeniedSender } from "./denied.ts";
 import { parseCouncil, requestCouncil, requestDispatch, parseDispatch } from "./dispatch.ts";
 import type { CouncilRow } from "./council.ts";
 import { parseAgentCommand, requestAgentLifecycle, type ResolvedRef } from "./agentctl.ts";
-import { agentAccepted, agentRefused, agentUsage, controlUsage, councilRefused, councilRequested, councilUsage, dispatchAccepted, dispatchRefused, dispatchUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
+import { agentAccepted, agentRefused, agentUsage, controlUsage, councilRefused, councilRequested, councilUsage, dispatchAccepted, dispatchRefused, dispatchUsage, holdChoiceLine, holdUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
+import { parseHoldChoice, requestHoldChoice } from "./recovery.ts";
+import { holdContextOf } from "../recovery/holds.ts";
 import { saveMedia, type SavedMedia } from "./media.ts";
 import { storeMedia } from "../store/media.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
@@ -70,7 +72,25 @@ export async function acceptBatch(options: {
       }, skipBad);
       const target = message.text.trim().split(/\s+/);
       let text = controlUsage(language);
-      if (target.length === 2) {
+      // A choice about an interrupted attempt is a different command with the
+      // same verb: it names the attempt and its recovery revision. It is
+      // recorded here, by the door, and never reaches the runner, which is what
+      // lets it be accepted when the agent it is about cannot run.
+      const choice = parseHoldChoice(message.text);
+      if (choice === "usage") text = holdUsage(language);
+      else if (choice !== null) {
+        try {
+          const outcome = await requestHoldChoice(store, { registry, person: agent.person, door, chat: agent.chat, sender_id: sender,
+            message: id, at: message.at, agent: choice.agent, attempt: choice.attempt, revision: choice.revision, choice: choice.choice });
+          // A choice made while the conversation cannot yet take a turn is recorded all the same, and the
+          // answer says what it is waiting for: what the runner measured, or that it is pending verification.
+          const context = await holdContextOf(store, choice.attempt);
+          text = holdChoiceLine(language, { outcome, attempt: choice.attempt, agent: choice.agent, context: context.state, cause: context.cause });
+        } catch (error) {
+          if ((error as Error).name !== "HoldChoiceRefused") throw error;
+          text = recoveryRefused(language, { target: choice.agent, cause: "access denied" });
+        }
+      } else if (target.length === 2) {
         try {
           await requestRecovery(store, { id, registry, source: "chat", actor: sender, sender_id: sender,
             person: agent.person, door, chat: agent.chat, agent: agent.id, target_kind: "agent", target_id: target[1] });

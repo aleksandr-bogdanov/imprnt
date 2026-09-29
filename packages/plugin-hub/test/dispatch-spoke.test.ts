@@ -50,7 +50,7 @@ import {
 import { message } from "./helpers/rollout-ingress.ts"
 import { controlledAdapter, editAgent, observe } from "./helpers/rollout-runner.ts"
 import { insertInbound, plantChatLine, superStore } from "./helpers/hub-fixture.ts"
-import { DISPATCH_PHRASES, agentRetry } from "../src/door/lines.ts"
+import { DISPATCH_PHRASES } from "../src/door/lines.ts"
 import { projectInbound } from "../src/chatlog/project.ts"
 import { loadRegistry, RegistryRefused } from "../src/registry/load.ts"
 import { listAgents } from "../src/registry/entries.ts"
@@ -314,8 +314,9 @@ test("D-214 a spoke killed between the turn's end and the settle, started again,
     await lock.release(); lock = null
     await waitForBackendsGone(cluster, it.db, [blocked], 30_000)
 
-    // The settle left nothing, and the claim still standing is what tells the
-    // restart this row is its own to redo.
+    // The settle left nothing. The turn's result had been journaled before it
+    // began, so the restart settles the report from it instead of feeding the
+    // job again.
     expect((await it.read.inbound()).filter(r => r.kind === "report")).toEqual([])
     expect(await it.read.ledger({ subject: job.id, kind: "answered" })).toEqual([])
     expect(await it.read.ledger({ subject: job.id, kind: "dispatch.reported" })).toEqual([])
@@ -324,7 +325,7 @@ test("D-214 a spoke killed between the turn's end and the settle, started again,
     it.scripted.holdTurnEnd(false)
     spoke = await startReadySubprocess("test/helpers/runner-subprocess.ts",
       [it.registryFile, DISPATCH_RUNNER2, it.adapterUrl, it.adapterName])
-    await until("the redo reports", async () =>
+    await until("the restart reports", async () =>
       (await it.read.ledger({ subject: job.id, kind: "dispatch.reported" })).length > 0, 60_000)
     // Read again after the runner has had every chance to write a second one.
     await until("the claim is released", async () =>
@@ -337,7 +338,7 @@ test("D-214 a spoke killed between the turn's end and the settle, started again,
   }
 }, 180_000)
 
-test("D-214 a child that dies while working a job tells the dispatcher's chat, in the shipped sentence", async () => {
+test("D-214 a child that dies while working a job holds the job and tells the dispatcher's chat which attempt and which command decides it", async () => {
   const it = await rolloutStage(cluster, "telegram", { dispatch: true })
   const edge = controlledAdapter(it.adapterName)
   let door: Awaited<ReturnType<typeof runDoor>> | undefined
@@ -350,14 +351,23 @@ test("D-214 a child that dies while working a job tells the dispatcher's chat, i
     await until("the job is being worked", () => edge.sessions.some(one => one.fed.some(fed => fed.id === job.id)), 30_000)
     edge.sessions.find(one => one.fed.some(fed => fed.id === job.id))!.fail()
 
+    // The job reached the engine before the child died, so nothing retries it: it
+    // is held, and the dispatcher's chat is told, on the route the job pinned,
+    // which attempt it is and the command that decides it.
+    await until("the attempt is interrupted", async () =>
+      (await it.read.sql("select id from execution where inbound_id = $1 and state = 'interrupted'", [job.id])).length === 1, 30_000)
+    const [attempt] = await it.read.sql("select id from execution where inbound_id = $1", [job.id]) as { id: string }[]
     await until("the notice is written", async () =>
-      (await it.read.noticeRows()).some(row => row.notice_key === `agent-retry:${job.id}`), 30_000)
-    const health = (await it.read.sheet("agent_health")).find(row => row.id === DISPATCH_JOB_ONLY)!
-    expect(health.data.status).toBe("retry")
-    const notices = (await it.read.noticeRows()).filter(row => String(row.notice_key).startsWith("agent-retry"))
+      (await it.read.noticeRows()).some(row => row.notice_key === `hold:${attempt.id}:1`), 30_000)
+    const notices = (await it.read.noticeRows()).filter(row => String(row.notice_key).startsWith("hold:"))
     expect(notices).toHaveLength(1)
-    expect(notices[0].body).toBe(agentRetry("en", { agent: DISPATCH_JOB_ONLY, cause: "child exited", seconds: 1 }))
-    const [routed] = await it.read.sql("select route from outbox where notice_key = $1", [`agent-retry:${job.id}`])
+    expect(notices[0].body).toContain(`/recover ${DISPATCH_JOB_ONLY} ${attempt.id} 1 continue`)
+    expect((await it.read.noticeRows()).filter(row => String(row.notice_key).startsWith("agent-retry"))).toEqual([])
+    const [routed] = await it.read.sql("select route from outbox where notice_key = $1", [`hold:${attempt.id}:1`])
     expect(routed.route).toEqual({ door: "door-fake", chat: LAIR_CHAT })
+    // Not fed again, and not answered: the input is the owner's to decide.
+    await Bun.sleep(2500)
+    expect(edge.sessions.flatMap(one => one.fed).filter(fed => fed.id === job.id)).toHaveLength(1)
+    expect(await it.read.ledger({ subject: job.id, kind: "answered" })).toEqual([])
   } finally { await spoke?.stop(); await edge.stop(); await door?.stop(); await it.stop() }
 }, 120_000)

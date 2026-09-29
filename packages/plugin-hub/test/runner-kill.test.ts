@@ -22,15 +22,14 @@
 // hits the outbox uniqueness constraint. Either way the assertions below say
 // so, and a one-transaction settle passes both.
 //
-// WHAT MUST BE EXACTLY ONCE, and what may honestly repeat. A redo after
-// the kill re-feeds the message, so a second `acked` and a second `started`
-// event are appended, and that is honest: the loop genuinely accepted the
-// message twice and a diary records what happened. What the settle transaction
+// WHAT MUST BE EXACTLY ONCE. The turn had ended and its result was journaled
+// before the settle began, so the restart settles the reply from that journal
+// and does NOT feed the message to the loop again: a message that reached the
+// engine is never fed twice by machinery (IMP-227). What the settle transaction
 // owns must be exactly once, and that is the reply, the answered stamp, the
-// turn record and the delivery. So `acked` is asserted at least once, which is
-// a loose bound with a reason, and the four things the transaction owns are
-// asserted exactly once each. The loose bound cannot be gamed by a runner that
-// never redoes anything, because such a runner produces no reply at all.
+// turn record and the delivery. `acked` is asserted at least once because the
+// first attempt's is the only one there is, and the assertions on the four
+// things the transaction owns are what fail a runner that never settles at all.
 //
 // Red reason: import missing, src/runner/run.ts.
 
@@ -156,9 +155,9 @@ test(
       expect(afterKill.length).toBe(1);
       expect(afterKill[0].claimed_by).toBe(RUNNER);
 
-      // The restart, under the SAME runner id: a runner treats rows
-      // claimed by its own id as its own to redo, because it was not running
-      // them, so no lease has to expire and no test-only switch is needed.
+      // The restart, under the SAME runner id: the attempt the dead process
+      // owned is reconciled before anything is claimed, and its journaled
+      // result is settled, so no lease has to expire and nothing is fed again.
       it.scripted.holdTurnEnd(false);
       runner = await startReadySubprocess("test/helpers/runner-subprocess.ts", [
         it.registryFile,
@@ -208,10 +207,11 @@ test(
       expect(it.fake.posts().length).toBe(1);
       expect(it.fake.posts()[0].text).toBe(scriptedReply(MESSAGE));
 
-      // The honest repeat, with its reason above. At least one, because the
-      // loop accepted the message before the kill and again on the redo.
+      // The loop accepted the message once, before the kill, and was not
+      // handed it again: the message was fed exactly one time in all.
       const acked = await it.read.ledger({ stream: "inbound", kind: "acked" });
       expect(acked.length).toBeGreaterThanOrEqual(1);
+      expect(it.scripted.fed().filter((f) => f.text === MESSAGE).length).toBe(1);
 
       // And the claim was cleared by the settle, so the row is nobody's now.
       const settled = await it.read.inbound();

@@ -48,7 +48,8 @@ function launch(f: LoopFixture, bin: string, input: Record<string, unknown> = {}
 }
 
 test("IMP-162 a login probe that hangs once is asked again and the launch goes ahead", async () => {
-  const f = loopFixture(), cli = scriptedClaude("first")
+  // An installed build the tool control was measured on: a launch on any other is refused by name, which is not what this is about.
+  const f = loopFixture(), cli = scriptedClaude("first", "2.1.285")
   try {
     const got = await launch(f, cli.bin).then(value => value as { credentialId?: string }, (error: Error) => error)
     expect(got instanceof Error ? got.message : "launched").toBe("launched")
@@ -71,7 +72,7 @@ test("IMP-162 a login probe that hangs every time refuses the launch as a timeou
 }, 60_000)
 
 test("IMP-162 a launch probes nothing once the login and binary have settled, and probes again after any change to either", async () => {
-  const f = loopFixture(), cli = scriptedClaude()
+  const f = loopFixture(), cli = scriptedClaude("never", "2.1.285")
   // How many calls one launch made to the binary.
   const probes = async () => {
     const before = cli.calls().length

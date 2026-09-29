@@ -58,6 +58,72 @@ export interface LoopLaunchInput {
    */
   purpose: "ordinary" | "harvest" | "triage";
   box: BoxContext;
+  /**
+   * The hub's own tool server for this launch, which the runner has bound to
+   * the conversation being launched. Merged into the effective MCP
+   * configuration beside the person's servers and never in place of them; an
+   * ordinary launch only.
+   */
+  hubMcp?: HubMcpServer;
+  /**
+   * The ordinary tools an agent that names none is launched with: the validated
+   * profile of the installed build, as an explicit list. Absent, an ordinary
+   * launch of an agent with no tool list is refused by name.
+   */
+  toolProfile?: readonly string[];
+  /**
+   * The builtin tools the installed build's tool control was observed with. When it
+   * is given, an ordinary launch whose builtins (configured or from the profile) are
+   * not all inside it is refused by name, with the build's version in the message.
+   * Absent means the caller is not asking a build (a direct seam, a probe).
+   */
+  validatedBuiltins?: readonly string[];
+  /** The installed build's version, for the message of a refusal. */
+  buildVersion?: string;
+}
+
+/** How to start the hub's tool facade, and what its box has to let it reach. */
+export interface HubMcpServer {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  /** Paths the facade's process reads: its own program and the interpreter. */
+  reads: string[];
+  /** Paths it writes: the socket it talks to the runner through. */
+  writes: string[];
+}
+
+/**
+ * The engine's own delegation, team, workflow, background and scheduling tools.
+ * Hub sessions delegate through the hub's tools and nothing else, so these are
+ * left out of the tool list (which is always an explicit list, never the CLI's
+ * "default") and denied by name besides, which is two independent statements of
+ * one rule: a configuration that lists one is refused, and the deny holds if a
+ * list ever lets one in. The set is what was observed on 2.1.284: the first five
+ * are the ones the deny reached there, the rest are the ones its default set still
+ * carried, and the last four (ExitWorktree, PushNotification, ReportFindings,
+ * DesignSync) are the further non-ordinary native routes the 2.1.285 probes denied
+ * and looked for. A name the installed CLI does not know is harmless in a deny list,
+ * and one it adds later is a change here plus a new observation of the effective set.
+ * It does NOT stop a shell from calling a model API or a tool from choosing to
+ * act on its own, and nothing here claims it does.
+ */
+export const NATIVE_DELEGATION_TOOLS: readonly string[] = [
+  "Agent", "Task", "TeamCreate", "TeamDelete", "SendMessage",
+  "Workflow", "ListAgents", "TaskStop", "RemoteTrigger",
+  "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "Monitor", "EnterWorktree",
+  "ExitWorktree", "PushNotification", "ReportFindings", "DesignSync",
+];
+
+/** Flags the native session and the delegation deny need. Asked of `--help`, never assumed. */
+const NATIVE_FLAGS = ["--session-id", "--resume", "--disallowedTools"];
+
+/** A fallback or advisor route is not something a hub launch may carry, so one appearing is refused, not dropped. */
+function refuseRouting(argv: string[], env: Record<string, string | undefined>): void {
+  if (argv.some(arg => /^--(fallback|advisor)/i.test(arg)) ||
+      Object.keys(env).some(key => /fallback|advisor/i.test(key))) {
+    throw new Error("fallback-route-refused");
+  }
 }
 
 /** Prepare the wrapper before any model child can start. */
@@ -114,6 +180,29 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
     throw new Error("invalid-mcp-configuration");
   }
   const mcpFile = ordinary ? input.agent.mcp ?? person?.mcp : undefined;
+  if (input.hubMcp && (!ordinary || (mcp.mcpServers as Record<string, unknown>).hub !== undefined)) {
+    throw new Error("invalid-mcp-configuration");
+  }
+  const named = (tool: string) => tool.split("(")[0].trim();
+  if (ordinary && [...(input.agent.tools ?? []), ...(input.toolProfile ?? [])].some(tool => NATIVE_DELEGATION_TOOLS.includes(named(tool)))) {
+    throw new Error("native-delegation-configured");
+  }
+  // THE TOOL LIST IS ALWAYS AN EXPLICIT ONE. An agent's own list is passed exactly
+  // as configured; one that names none is given the installed build's validated
+  // ordinary profile; and with neither, the launch is refused by name rather than
+  // handed the CLI's default set, which nobody has shown to be free of delegation.
+  const ordinaryTools = input.agent.tools ?? (input.toolProfile ? [...input.toolProfile] : undefined);
+  if (ordinary && ordinaryTools === undefined) throw new Error("ordinary-tool-profile-unvalidated");
+  // A build's tool control was observed for a set of builtins, and an agent that asks
+  // for one outside it is refused, by name, rather than launched under a claim that
+  // the effective tool set is known. A configured MCP tool (`mcp__...`) is not a
+  // builtin and is not asked about here: the person's servers are passed as they are.
+  if (ordinary && input.validatedBuiltins) {
+    const outside = [...new Set(ordinaryTools!.map(named).filter(name => name !== "" && !name.startsWith("mcp__") && !input.validatedBuiltins!.includes(name)))];
+    if (outside.length > 0) {
+      throw new Error(`tool-profile-unvalidated: ${outside.join(", ")} not validated on claude ${input.buildVersion ?? "this build"}`);
+    }
+  }
   const fragment = ordinary ? input.agent.fragment : undefined;
   if (fragment) accessSync(fragment, constants.R_OK);
   const ambient = process.env.HOME;
@@ -135,8 +224,9 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   // the model CLI rotates its token in place there, so it is added to the box's
   // write paths rather than left to the read-only host.
   const same = (a: string, b: string) => a === b || existsSync(a) && existsSync(b) && realpathSync(a) === realpathSync(b);
-  const writePaths = [...(input.box.writePaths ?? []), dirname(credential.file)];
+  const writePaths = [...(input.box.writePaths ?? []), dirname(credential.file), ...(input.hubMcp?.writes ?? [])];
   const reads = [dirname(credential.file), credential.file, ...(prompt?.reads ?? []), ...(mcpFile ? [mcpFile] : []),
+    ...(input.hubMcp?.reads ?? []),
     ...(ambient ? [join(ambient, ".claude", "settings.json"), join(ambient, ".claude", "CLAUDE.md")] : [])];
   // Every other credential file is masked. On Linux a single-file mask is a bind
   // over one directory entry, and the kernel lifts it if the host later replaces
@@ -180,13 +270,24 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   if (ordinary && existsSync(vault)) env.IMPRNT_VAULT = vault;
   // The triage master's empty list is explicit in the argv, the way an
   // agent's own empty list is: `--tools ""` and `--allowedTools ""`.
-  const tools = ordinary ? input.agent.tools : input.purpose === "triage" ? [] : ["Read", "Glob", "Grep"];
+  const tools = ordinary ? ordinaryTools! : input.purpose === "triage" ? [] : ["Read", "Glob", "Grep"];
+  // The person's servers stay exactly as configured and the hub's is added
+  // beside them, in a file of its own in the session directory when there is
+  // one to add, so the person's file is never rewritten.
+  let mcpConfig = mcpFile ?? JSON.stringify(mcp);
+  if (input.hubMcp) {
+    const merged = join(boxed.cwd, "mcp.json");
+    writeFileSync(merged, JSON.stringify({ ...mcp, mcpServers: { ...(mcp.mcpServers as Record<string, unknown>),
+      hub: { command: input.hubMcp.command, args: input.hubMcp.args, env: input.hubMcp.env } } }), { mode: 0o600 });
+    mcpConfig = merged;
+  }
   const argv = ["claude", "--print", "--input-format", "stream-json", "--output-format", "stream-json",
     "--verbose", "--replay-user-messages", "--include-partial-messages",
     "--model", input.preset.model, "--effort", input.preset.effort,
     "--setting-sources", "", "--settings", JSON.stringify(settings),
-    "--strict-mcp-config", "--mcp-config", mcpFile ?? JSON.stringify(mcp),
-    "--tools", tools === undefined ? "default" : tools.join(","), "--disable-slash-commands"];
+    "--strict-mcp-config", "--mcp-config", mcpConfig,
+    "--tools", tools.join(","), "--disable-slash-commands",
+    "--disallowedTools", NATIVE_DELEGATION_TOOLS.join(",")];
   if (prompt) {
     // Written into the session's own directory, which the box already lets
     // the loop read, and never into a tree an agent could rewrite.
@@ -196,6 +297,7 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   }
   if (ordinary) argv.push("--dangerously-skip-permissions");
   else argv.push("--allowedTools", input.purpose === "triage" ? "" : "Read,Glob,Grep");
+  refuseRouting(argv, env);
   return { ...boxed, argv, env, credentialId: credential.id };
 }
 
@@ -302,7 +404,7 @@ export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PRO
     const launch = await makeLoopLaunch({ registry: null,
       preset: { adapter: "claude-code", model: "synthetic", provider: "synthetic", effort: "medium", paid: "plan" },
       credential: { id: "probe", owner: "probe", kind: "claude-login", file: source },
-      agent: { id: "probe", person: "probe", preset: "probe", runner: "probe", door: "probe", chat: "probe" },
+      agent: { id: "probe", person: "probe", preset: "probe", runner: "probe", door: "probe", chat: "probe", tools: [] },
       sessionDir: join(root, "session"), purpose: "ordinary",
       box: { agent: "probe", person: "probe", tree: root, otherTrees: [], writePaths },
     });
@@ -339,8 +441,12 @@ export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PRO
         replacement.loggedIn !== true || replacement.subscriptionType !== "pro" || missing.loggedIn !== false) {
       throw new Error("credential-source-unsupported");
     }
+    // Asked of the same help text and reported apart from the required ones:
+    // a CLI without them still runs, it just has no stable session and no
+    // delegation deny, and each of those refuses on its own by name.
+    const native = NATIVE_FLAGS.filter(flag => help.stdout.toString().includes(flag));
     return { version: version.stdout.toString().match(/\d+(?:\.\d+)+/)?.[0] ?? "unreported",
-      credential_source: true, replacement: true, no_fallback: true, flags };
+      credential_source: true, replacement: true, no_fallback: true, flags, native };
   } catch (error) {
     if ((error as Error)?.name === "LoopProbeTimeout") throw error;
     throw new Error("credential-source-unsupported");

@@ -140,9 +140,19 @@ async function stageOutage(options: { refusals: number; declare?: boolean }): Pr
       ),
     }),
   });
+  // A refused turn was handed to the engine, so its input is HELD (design §4) with the exit proof of the
+  // loop it was fed to. The scripted loop has no process of its own (`exitProof`), and it says it can
+  // resume an interrupted conversation, so the rows behind a held one are fed in their turn on the
+  // recorded interval and are refused and held in theirs.
+  const loopOptions = {
+    name: it.adapterName,
+    refusals: options.refusals,
+    exitProof: true,
+    capabilities: { stableSession: true, safeResume: true, delegationDisabled: true },
+  };
   const loops: Record<string, ReturnType<typeof createScriptedAdapter>> = {
-    [RUNNER_PI]: createScriptedAdapter({ name: it.adapterName, refusals: options.refusals }),
-    [RUNNER_MAC]: createScriptedAdapter({ name: it.adapterName, refusals: options.refusals }),
+    [RUNNER_PI]: createScriptedAdapter(loopOptions),
+    [RUNNER_MAC]: createScriptedAdapter(loopOptions),
   };
   for (const loop of Object.values(loops)) {
     loop.setUsage({ input_tokens: null, cached_input_tokens: null, output_tokens: null,
@@ -230,9 +240,13 @@ test(
       const ids = new Set(MESSAGES.map((m) => m.id));
       expect(chunks.filter((row) => ids.has(String(row.inbound_id)))).toEqual([]);
 
-      // --- 2. exactly one notice per person, with ONE `since` between them,
-      //     and each body in that person's own language, in full.
-      const notices = await it.read.noticeRows();
+      // --- 2. exactly one OUTAGE notice per person, with ONE `since` between
+      //     them, and each body in that person's own language, in full. (An
+      //     input the engine was handed and refused is also held, and its owner
+      //     told so, which is a notice of its own: `hold:`, one per attempt.)
+      const outageNoticesOf = async () =>
+        (await it.read.noticeRows()).filter((row) => String(row.notice_key).startsWith("outage:"));
+      const notices = await outageNoticesOf();
       expect(notices.length).toBe(2);
       const byPerson = new Map(notices.map((row) => [row.person, row]));
       expect([...byPerson.keys()].sort()).toEqual([PERSON, PERSON2]);
@@ -256,35 +270,35 @@ test(
       expect(byPerson.get(PERSON)?.agent).toBe(AGENT);
       expect(byPerson.get(PERSON2)?.agent).toBe(AGENT2);
 
-      // --- 3. the rows WAIT. Nothing was handed to a human as could not
-      //     answer, nothing is claimed, and every one carries a retry.
+      // --- 3. the rows are HELD, and none is handed to a human as could not
+      //     answer. Each was fed once, refused, and ended as a terminal attempt
+      //     with the exit proof of its loop; nothing is claimed.
       const waiting = await it.read.inbound();
       expect(waiting.length).toBe(MESSAGES.length);
       for (const row of waiting) {
         // The measured wire replays the user line, so a refused row is
-        // `acked` when it is released and every retry re-stamps it. Never
-        // `started` and never `answered`, which is the whole of "the rows
-        // wait": nothing was handed to a human as could not answer.
+        // `acked`. Never `started` and never `answered`: nothing was handed
+        // to a human as could not answer.
         expect(["received", "acked"]).toContain(row.state);
-        // A CLAIM MAY BE IN FLIGHT AT THE MOMENT OF THIS READ. The retry here
-        // is two seconds, so a row is picked up, refused and released over and
-        // over while the check reads. What is bound is that no claim belongs
-        // to anybody but the two runners of this household, and the row above
-        // that never reached `started`.
         expect([null, RUNNER_PI, RUNNER_MAC]).toContain(row.claimed_by);
       }
-      // Every row carries a retry, so the release is on a recorded deadline
-      // and not on a tick. A row whose retry has just come due reads as past,
-      // which is why this asks for the column rather than for the future.
-      const retries = (await it.read.sql(
-        "select id, retry_at from inbound where retry_at is not null",
-      )) as Record<string, unknown>[];
-      expect(retries.length).toBe(MESSAGES.length);
+      const attempts = (await it.read.sql(
+        "select inbound_id, state from execution order by inbound_id",
+      )) as { inbound_id: string; state: string }[];
+      expect(attempts.map((row) => [row.inbound_id, row.state])).toEqual(
+        [...ids].sort().map((id) => [id, "interrupted"]),
+      );
+      const holds = (await it.read.sql(
+        "select inbound_id, cause, state, revision from replay_hold order by inbound_id",
+      )) as { inbound_id: string; cause: string; state: string; revision: number }[];
+      expect(holds.map((row) => [row.inbound_id, row.cause, row.state, row.revision])).toEqual(
+        [...ids].sort().map((id) => [id, "interrupted", "held", 1]),
+      );
 
       // --- 4. the diary says why, once per message. The household can see
       //     every refused turn and no PERSON saw any of them.
       const refused = await it.read.ledger({ stream: "refusal", kind: "refused.outage" });
-      expect(refused.length).toBeGreaterThanOrEqual(MESSAGES.length);
+      expect(refused.length).toBe(MESSAGES.length);
       expect(new Set(refused.map((row) => row.subject))).toEqual(new Set(ids));
       for (const row of refused) {
         expect(row.actor).toBe("runner");
@@ -302,15 +316,13 @@ test(
       expect(String(sheet[0].data.said).length).toBeGreaterThan(0);
       expect([RUNNER_PI, RUNNER_MAC]).toContain(String(sheet[0].data.reported_by));
 
-      // --- 6. THE RETRY, and it is asserted BEFORE anything is restarted (the
-      //     THE FINDING: with the restart first, a runner that only
-      //     revisits refused rows when it starts up passes this).
-      //
-      //     EVERY row is retried, not one. A runner that kept one row on its
-      //     clock and abandoned the other five would satisfy a single-row
-      //     assertion and leave four people waiting forever, and nothing else
-      //     in this check would notice: an abandoned row writes no chunk.
-      const secondRefusals = async (): Promise<Map<string, number[]>> => {
+      // --- 6. NOTHING THAT WAS FED IS FED AGAIN, and it is asserted BEFORE
+      //     anything is restarted. This used to be the retry of every refused
+      //     row on its own clock (L10 rule 3); a row the engine was handed is
+      //     now held (design §4), so past the retry interval, twice over, no
+      //     message has a second refusal, a second attempt or a second feed.
+      await Bun.sleep(RETRY_SECONDS * 2000 + 1000);
+      const refusalsAt = async (): Promise<Map<string, number[]>> => {
         const rows = await it.read.ledger({ stream: "refusal", kind: "refused.outage" });
         const byMessage = new Map<string, number[]>();
         for (const row of rows) {
@@ -319,55 +331,56 @@ test(
         }
         return byMessage;
       };
-      await until(
-        "every one of the messages was refused a second time, on its own clock",
-        async () =>
-          [...(await secondRefusals()).values()].filter((at) => at.length >= 2).length ===
-          MESSAGES.length,
-        45_000,
-        async () =>
-          JSON.stringify(
-            [...(await secondRefusals()).entries()].map(([id, at]) => [id, at.length]),
-          ),
+      expect([...(await refusalsAt()).values()].map((at) => at.length), "every message was refused exactly once").toEqual(
+        MESSAGES.map(() => 1),
       );
+      expect(
+        Object.values(staged.loops).flatMap((loop) => loop.fed().map((one) => one.id)).sort(),
+        "and fed exactly once",
+      ).toEqual(MESSAGES.map((message) => message.id).sort());
+      expect(
+        ((await it.read.sql("select inbound_id from execution")) as unknown[]).length,
+        "one attempt per message",
+      ).toBe(MESSAGES.length);
 
-      // THE INTERVAL HAS A FLOOR AS WELL AS A CEILING. Without the floor, a
-      // runner that spun on the row as fast as it could satisfies "not on the
-      // tick" while burning a credential that is already refusing it, which is
-      // the opposite of the fixed interval L10 rule 3 asks for. The floor is
+      // WHAT WAS NEVER FED STILL WAITS ON THE FIXED INTERVAL, both ends. The
+      // agent with three messages had its first refused; the other two were not
+      // handed to the engine, so they were not held: they waited out
+      // `hub.outage_retry_seconds` and were tried in their turn, one interval
+      // apart, and not one straight after the other into an engine that had
+      // just refused (each of them would have been a held input). The floor is
       // the interval less a second of slack, because a deadline wakes a moment
-      // past itself and two runners share one clock.
-      const gaps = [...(await secondRefusals()).entries()].map(([id, at]) => {
-        const ordered = [...at].sort((a, b) => a - b);
-        return { id, gap: ordered[1] - ordered[0] };
-      });
-      expect(gaps.length).toBe(MESSAGES.length);
-      // THE INTERVAL IS THE INTERVAL, both ends (a
-      // ceiling of "under the tick" accepted a twenty second retry for a two
-      // second setting, which is a household waiting ten times as long as its
-      // own file says). The band is the setting less a second, because a
-      // deadline wakes a moment past itself and two runners share one clock,
-      // to the setting plus three, which covers a turn that was mid-flight
-      // when the retry came due.
+      // past itself and two runners share one clock, and the ceiling the
+      // interval plus three, which covers a turn that was mid-flight when the
+      // wait came due.
+      const at = await refusalsAt();
       const floorMs = RETRY_SECONDS * 1000 - 1000;
       const ceilingMs = RETRY_SECONDS * 1000 + 3000;
-      for (const { id, gap } of gaps) {
-        if (gap < floorMs || gap > ceilingMs) {
-          throw new Error(
-            `${id} was refused again after ${gap} ms, and hub.outage_retry_seconds is ${RETRY_SECONDS}: the retry has to land between ${floorMs} and ${ceilingMs} ms, so this is not the fixed interval the file asks for`,
-          );
+      for (const agentMessages of [[ "out-1", "out-2", "out-3" ], [ "out-4", "out-5" ]]) {
+        const times = agentMessages.map((id) => at.get(id)![0]).sort((a, b) => a - b);
+        for (let n = 1; n < times.length; n++) {
+          const gap = times[n] - times[n - 1];
+          if (gap < floorMs || gap > ceilingMs) {
+            throw new Error(
+              `${agentMessages[n]} was tried ${gap} ms after the one before it, and hub.outage_retry_seconds is ${RETRY_SECONDS}: it has to wait between ${floorMs} and ${ceilingMs} ms, so this is not the fixed interval the file asks for`,
+            );
+          }
         }
       }
 
       // --- 7. A RESTART WRITES NOTHING MORE. That is the case v2's own
       //     UNIQUE(reply_key, seq) was for, and the one a flag in memory fails.
+      //     The outage notices stay two, the hold notices stay one per attempt,
+      //     and nothing held is fed on the way up.
       await pi!.stop();
       pi = null;
       const before = (await it.read.noticeRows()).length;
       pi = await startRunner(staged, RUNNER_PI);
       await Bun.sleep(RETRY_SECONDS * 1000 + 1500);
       expect((await it.read.noticeRows()).length).toBe(before);
-      expect((await it.read.noticeRows()).length).toBe(2);
+      expect((await outageNoticesOf()).length).toBe(2);
+      expect((await it.read.noticeRows()).filter((row) => String(row.notice_key).startsWith("hold:")).length).toBe(MESSAGES.length);
+      expect(Object.values(staged.loops).flatMap((loop) => loop.fed()).length, "nothing held was fed on the way up").toBe(MESSAGES.length);
     } finally {
       if (pi) await pi.stop();
       if (mac) await mac.stop();
@@ -392,7 +405,8 @@ test(
         async () => JSON.stringify(await bare.it.read.inbound()),
       );
 
-      const notices = await bare.it.read.noticeRows();
+      // The outage notices are the household's, one per person; each held input has a notice of its own (`hold:`).
+      const notices = (await bare.it.read.noticeRows()).filter((row) => !String(row.notice_key).startsWith("hold:"));
       expect(notices.length).toBe(2);
       for (const row of notices) {
         expect(String(row.notice_key).startsWith("outage:preset:daily:")).toBe(true);
@@ -443,7 +457,7 @@ test(
 );
 
 test(
-  "RUN-18 one 'it works again' line per person carries the count that was waiting, every held row is answered, and the sheet is empty rather than carrying a fixed flag (SPEC §6, L10 rule 3, L17)",
+  "RUN-18 one 'it works again' line per person carries the count that was waiting, no held row is answered or fed again by it, a fresh message is answered, and the sheet is empty rather than carrying a fixed flag (SPEC §6, L10 rule 3, L17, design §4)",
   async () => {
     // The module the catch-up lives in, read first so this check is red on the
     // missing seam rather than inside a reader of a column the schema has not
@@ -468,31 +482,43 @@ test(
         async () => JSON.stringify(await it.read.inbound()),
       );
 
-      const outage = await it.read.noticeRows();
+      const outage = (await it.read.noticeRows()).filter((row) => String(row.notice_key).startsWith("outage:"));
       expect(outage.length).toBe(2);
       const since = String(outage[0].notice_key).split(":").slice(2, -1).join(":");
 
-      // --- the loop works again. Both runners find out by trying, which is
-      //     the retry L10 rule 3 names.
+      // --- the loop works again. The rows the engine was handed and refused are
+      //     HELD (design §4), so nothing retries them: it is found out by the
+      //     next message a person sends, which is a fresh input.
       for (const loop of Object.values(staged.loops)) {
         loop.setUsage({ input_tokens: 12, cached_input_tokens: 3, output_tokens: 7,
           plan_usage: null, raw: { evidence: { kind: "authenticated-response", status: 200, credential: CREDENTIAL } } });
       }
       staged.loops[RUNNER_PI].setRefusal(null);
       staged.loops[RUNNER_MAC].setRefusal(null);
+      await Bun.sleep(RETRY_SECONDS * 1000 + 1000);
+      expect(
+        (await it.read.ledger({ stream: "inbound", kind: "answered" })).length,
+        "the loop working again answers nothing that was held",
+      ).toBe(0);
+      expect(await it.read.outageSheet(), "and nothing has yet shown that it works").toHaveLength(1);
 
+      await insertInbound(cluster, it.db, {
+        id: "out-7",
+        body: "one more thing p1 asked",
+        person: PERSON,
+        agent: AGENT,
+      });
       await until(
-        "every held row was answered",
-        async () =>
-          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >=
-          MESSAGES.length,
+        "the fresh message was answered",
+        async () => (await it.read.outbox()).some((row) => row.inbound_id === "out-7"),
         45_000,
         async () => JSON.stringify(await it.read.inbound()),
       );
       await Bun.sleep(1500);
 
       // --- 1 and 2. one catch-up per person, carrying the count that was
-      //     waiting for that credential's agents at the moment it cleared.
+      //     waiting for that credential's agents at the moment it cleared. A
+      //     held input is not "waiting": nothing will answer it by itself.
       const all = await it.read.noticeRows();
       const catchUps = all.filter((row) => String(row.notice_key).startsWith("outage-over:"));
       expect(catchUps.length).toBe(2);
@@ -507,49 +533,48 @@ test(
       // asserted in full because `Сообщений в очереди: {count}` is written the
       // way it is to be correct for every count, which a reader would see at
       // once if it were not.
-      expect(byPerson.get(PERSON)?.body).toBe(catchUp("en", 4));
-      expect(byPerson.get(PERSON2)?.body).toBe(catchUp("ru", 2));
+      expect(byPerson.get(PERSON)?.body).toBe(catchUp("en", 1));
+      expect(byPerson.get(PERSON2)?.body).toBe(catchUp("ru", 0));
 
-      // --- 3. the rows are answered, once each, with their own reply.
+      // --- 3. the fresh message is answered once, by a loop that was handed the
+      //     recovery context with it; no held row has a reply or a second feed.
       const chunks = await it.read.outbox();
       for (const message of MESSAGES) {
-        const its = chunks.filter((row) => row.inbound_id === message.id);
-        expect(its.length).toBe(1);
-        expect(its[0].body).toBe(scriptedReply(message.body));
+        expect(chunks.filter((row) => row.inbound_id === message.id), `${message.id} stays held`).toEqual([]);
       }
+      const fresh = chunks.filter((row) => row.inbound_id === "out-7");
+      expect(fresh.length).toBe(1);
+      expect(String(fresh[0].body)).toStartWith("reply to [Hub recovery context]");
+      expect(String(fresh[0].body)).toEndWith("one more thing p1 asked");
+      expect(
+        Object.values(staged.loops).flatMap((loop) => loop.fed().map((one) => one.id)).sort(),
+      ).toEqual([...MESSAGES.map((message) => message.id), "out-7"].sort());
+      expect(((await it.read.sql("select inbound_id from execution")) as unknown[]).length).toBe(MESSAGES.length + 1);
 
       // --- 4. the sheet is EMPTY. A thing that is gone leaves no line behind
       //     (L17), and a "fixed" flag underneath is what that entry forbids.
       expect(await it.read.outageSheet()).toEqual([]);
 
       // --- 5. the order a person reads: it stopped, then it works again, then
-      //     the answers.
-      for (const [person, agent] of [
-        [PERSON, AGENT],
-        [PERSON2, AGENT2],
-      ] as [string, string][]) {
+      //     the answer to the message that showed it.
+      for (const person of [PERSON, PERSON2]) {
         const stopped = all.find(
           (row) => row.person === person && String(row.notice_key).startsWith("outage:"),
         )!;
-        const back = byPerson.get(person)!;
-        const firstReply = chunks
-          .filter((row) => MESSAGES.some((m) => m.id === row.inbound_id && m.agent === agent))
-          .map((row) => row.id)
-          .sort((a, b) => a - b)[0];
-        expect(back.id).toBeGreaterThan(stopped.id);
-        expect(firstReply).toBeGreaterThan(back.id);
+        expect(byPerson.get(person)!.id).toBeGreaterThan(stopped.id);
       }
+      expect(fresh[0].id).toBeGreaterThan(byPerson.get(PERSON)!.id);
 
       // --- 6. a second success writes no second catch-up.
       await insertInbound(cluster, it.db, {
-        id: "out-7",
-        body: "one more thing p1 asked",
+        id: "out-8",
+        body: "and another thing p1 asked",
         person: PERSON,
         agent: AGENT,
       });
       await until(
         "the extra message was answered",
-        async () => (await it.read.outbox()).some((row) => row.inbound_id === "out-7"),
+        async () => (await it.read.outbox()).some((row) => row.inbound_id === "out-8"),
         45_000,
       );
       expect(

@@ -65,7 +65,7 @@ RUN curl -fsSL https://bun.sh/install | bash -s -- "bun-v${BUN_VERSION}"
 
 # The refusal checks probe a real model binary, so the image carries the same
 # version the workflow installs rather than a stub.
-ARG MODEL_CLI_VERSION=2.1.275
+ARG MODEL_CLI_VERSION=2.1.285
 RUN curl -fsSL https://claude.ai/install.sh -o /tmp/model-install.sh \
  && bash /tmp/model-install.sh "$MODEL_CLI_VERSION" \
  && rm -f /tmp/model-install.sh \

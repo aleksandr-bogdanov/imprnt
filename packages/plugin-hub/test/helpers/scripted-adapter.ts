@@ -29,9 +29,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   Adapter,
+  AdapterCapabilities,
   AdapterProgress,
   AdapterSession,
   AdapterUsage,
+  ExitEvidence,
   TurnEnd,
 } from "../../src/adapters/types.ts";
 import type { Preset } from "../../src/registry/presets.ts";
@@ -97,6 +99,8 @@ export interface FedMessage {
 
 export interface StartRecord {
   sessionId: string | null;
+  /** The native session the runner asked for, or null when it asked for none. */
+  session: { id: string; resume: boolean } | null;
   preset: Preset | null;
   at: number;
   /** Whether the runner handed this start a boxing hook. */
@@ -197,6 +201,23 @@ export interface ScriptedOptions {
    * streams `reply to <text>` as it works, and only the answer changes.
    */
   answer?: (fed: { id: string; text: string }) => string;
+  /**
+   * What this loop says it can do. UNSET, the adapter says nothing, which is
+   * what every shipped adapter fixture does and what the runner reads as
+   * "nothing that has to be proved": no session id is asked for and no
+   * interrupted conversation is resumed.
+   */
+  capabilities?: AdapterCapabilities;
+  /**
+   * With this, a session can say what became of its processes: it has none of its
+   * own, so once the runner closes it nothing of it is left, and the evidence it
+   * gives is confirmed. UNSET, a session gives no evidence and an attempt the
+   * runner ends without a result is `unknown`, which is what every shipped
+   * fixture gets and what keeps them as they were. A check that needs a refused
+   * turn to leave a terminal, held attempt (the input is held with real exit proof)
+   * and the agent free for its next row asks for this.
+   */
+  exitProof?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -653,6 +674,14 @@ export function createScriptedAdapter(
       get lacks() {
         return lacks;
       },
+      ...(options.exitProof
+        ? {
+            async exitEvidence(): Promise<ExitEvidence> {
+              return { confirmed: true, leader: "exited", descendants: "none", pids: [], survivors: [], basis: "process-group",
+                via: "the scripted loop has no process of its own and the session was closed" };
+            },
+          }
+        : {}),
       async feed(message: { id: string; text: string }): Promise<void> {
         fedLog.push({
           id: message.id,
@@ -689,15 +718,18 @@ export function createScriptedAdapter(
 
   const adapter: Adapter = {
     name,
+    ...(options.capabilities ? { capabilities: async () => ({ ...options.capabilities! }) } : {}),
     async start(where: {
       preset: Preset;
       sessionId: string | null;
+      session?: { id: string; resume: boolean };
       cwd?: string;
       /** The runner's boxing hook, applied to this loop's argv. */
       wrap?: (argv: string[]) => string[];
     }): Promise<AdapterSession> {
       startLog.push({
         sessionId: where.sessionId,
+        session: where.session ? { ...where.session } : null,
         preset: where.preset ?? null,
         at: Date.now(),
         wrapped: typeof where.wrap === "function",
@@ -707,7 +739,7 @@ export function createScriptedAdapter(
       });
       opened += 1;
       return openOne(
-        where.sessionId ?? options.sessionId ?? `scripted-session-${opened}`,
+        where.session?.id ?? where.sessionId ?? options.sessionId ?? `scripted-session-${opened}`,
         where.wrap,
         opened,
       );

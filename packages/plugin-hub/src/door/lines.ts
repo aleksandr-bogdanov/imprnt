@@ -459,6 +459,122 @@ export function agentRetry(language: Language, values: LineValues = {}): string 
   return says(language, sentence);
 }
 
+/**
+ * An attempt reached the engine and did not finish, and its input is held. The
+ * one line that tells a person what is known, what is not, and the exact
+ * command that decides it. The revision is in the command because a choice made
+ * about older knowledge is void.
+ */
+const HOLD_CAUSE: Record<Language, Record<string, string>> = {
+  en: {
+    interrupted: "the attempt is over and did not finish",
+    "ownership-unknown": "it is not known whether the attempt is still running, so nothing else will start",
+    stopped: "the attempt was stopped on request",
+  },
+  ru: {
+    interrupted: "попытка завершилась, не закончив работу",
+    "ownership-unknown": "неизвестно, работает ли попытка до сих пор, поэтому ничего другого не запускается",
+    stopped: "попытка остановлена по запросу",
+  },
+};
+
+export function holdNotice(language: Language, values: LineValues = {}): string {
+  const verb = language === "ru" ? "/восстановить" : "/recover";
+  const cause = HOLD_CAUSE[language][String(values.cause)] ?? String(values.cause);
+  const sentence = interpolate(language, language === "ru"
+    ? "{agent}: работа прервана, её входные данные удержаны: {why}. {effects} Ничего не будет запущено повторно, пока вы не решите. "
+      + `Напишите ${verb} {agent} {attempt} {revision} continue, чтобы продолжить, или ${verb} {agent} {attempt} {revision} keep-held, чтобы оставить как есть.`
+    : "{agent}: a piece of work was interrupted and its input is held: {why}. {effects} Nothing will be run again until you choose. "
+      + `Reply ${verb} {agent} {attempt} {revision} continue to continue it, or ${verb} {agent} {attempt} {revision} keep-held to leave it as it is.`,
+    { ...values, why: cause });
+  return says(language, sentence);
+}
+
+/**
+ * Why a held conversation cannot take a turn, per cause, in the words every door
+ * surface uses (the notice, and the answer to a choice made while it is so).
+ */
+const CONTEXT_WHY: Record<Language, Record<string, string>> = {
+  en: {
+    "safe-resume-unvalidated": "this engine build has not been shown to resume an interrupted session without replaying unfinished work",
+    "no-native-session-recorded": "no engine session was recorded for the interrupted attempt",
+    "native-state-uncertain": "the engine never acknowledged this conversation's session, so it cannot be trusted to resume",
+  },
+  ru: {
+    "safe-resume-unvalidated": "для этой сборки движка не подтверждено, что прерванная сессия возобновляется без повтора незавершённой работы",
+    "no-native-session-recorded": "для прерванной попытки не записана сессия движка",
+    "native-state-uncertain": "движок так и не подтвердил сессию этого разговора, поэтому возобновлять её нельзя",
+  },
+};
+
+/**
+ * The conversation of a held attempt cannot take ANY turn until its native context
+ * can be resumed: a new message and an owner's continuation alike wait, and nothing
+ * is rebuilt in its place. Said once per attempt, revision and cause, and it tells
+ * the owner that a choice is still recorded meanwhile.
+ */
+export function contextNotice(language: Language, values: LineValues = {}): string {
+  const verb = language === "ru" ? "/восстановить" : "/recover";
+  const why = CONTEXT_WHY[language][String(values.cause)] ?? String(values.cause);
+  const sentence = interpolate(language, language === "ru"
+    ? "{agent}: разговор ждёт нативный контекст ({why}). Пока его нет, ни новое сообщение, ни продолжение прерванной работы {attempt} не запускаются, и контекст не пересобирается. "
+      + `Ваше решение (${verb} {agent} {attempt} {revision} continue или keep-held) записывается и не теряется: продолжение начнётся само, когда контекст станет доступен.`
+    : "{agent}: the conversation is waiting for native context ({why}). Until it is available neither a new message nor a continuation of {attempt} starts, and nothing is rebuilt in its place. "
+      + `Your choice (${verb} {agent} {attempt} {revision} continue or keep-held) is still recorded and is not lost: an authorized continuation starts by itself once the context is available.`,
+    { ...values, why });
+  return says(language, sentence);
+}
+
+/**
+ * What a choice made while the native context is not usable is waiting for, said
+ * in the answer to it. `context` is the runner's measurement: absent or `pending`
+ * is "pending verification" and never "ready".
+ */
+function contextClause(language: Language, context: unknown, cause: unknown): string {
+  if (context === "unavailable") return CONTEXT_WHY[language][String(cause)] ?? String(cause);
+  return language === "ru" ? "доступность контекста ещё проверяется" : "availability of the context is pending verification";
+}
+
+/** What became of a recovery choice, said in the chat it was typed in. */
+export function holdChoiceLine(language: Language, values: LineValues = {}): string {
+  let outcome = String(values.outcome);
+  const waiting = (outcome === "continuing" || outcome === "continue_pending") && values.context !== "ready";
+  if (waiting) outcome = `${outcome}:context`;
+  const en: Record<string, string> = {
+    keep_held: "recorded: {attempt} stays held and nothing is authorized.",
+    continue_pending: "recorded: {attempt} will continue once the old attempt is shown to be over. Nothing new starts until then.",
+    "continue_pending:context": "recorded: {attempt} will continue once the old attempt is shown to be over and the native context is available ({clause}). Nothing new starts until then.",
+    continuing: "recorded: a continuation of {attempt} is queued behind the current turn.",
+    "continuing:context": "recorded: a continuation of {attempt} is authorized and waiting for native context ({clause}). No executor has started, and nothing is rebuilt in its place.",
+    "stale-revision": "not applied: what is known about {attempt} changed since that notice. Use the latest one.",
+    "unknown-attempt": "not applied: no held attempt {attempt} for {agent}.",
+    closed: "not applied: {attempt} is already being continued or is closed.",
+    "invalid-choice": "not applied: the choice is continue or keep-held.",
+  };
+  const ru: Record<string, string> = {
+    keep_held: "записано: {attempt} остаётся удержанной, ничего не разрешено.",
+    continue_pending: "записано: {attempt} продолжится, когда будет подтверждено, что прежняя попытка закончилась. До тех пор ничего нового не запускается.",
+    "continue_pending:context": "записано: {attempt} продолжится, когда будет подтверждено, что прежняя попытка закончилась, и нативный контекст станет доступен ({clause}). До тех пор ничего нового не запускается.",
+    continuing: "записано: продолжение {attempt} поставлено в очередь после текущего хода.",
+    "continuing:context": "записано: продолжение {attempt} разрешено и ждёт нативный контекст ({clause}). Ничего не запущено, и контекст не пересобирается.",
+    "stale-revision": "не применено: с того сообщения о {attempt} что-то изменилось. Используйте последнее.",
+    "unknown-attempt": "не применено: у {agent} нет удержанной попытки {attempt}.",
+    closed: "не применено: {attempt} уже продолжается или закрыта.",
+    "invalid-choice": "не применено: выбор — continue или keep-held.",
+  };
+  const table = language === "ru" ? ru : en;
+  return says(language, interpolate(language, table[outcome] ?? table["unknown-attempt"],
+    { ...values, clause: contextClause(language, values.context, values.cause) }));
+}
+
+export function holdUsage(language: Language, values: LineValues = {}): string {
+  const verb = language === "ru" ? "/восстановить" : "/recover";
+  const sentence = interpolate(language, language === "ru"
+    ? `${verb} {agent} — перезапуск; ${verb} {agent} {attempt} {revision} continue|keep-held — решение по прерванной работе.`
+    : `${verb} {agent} restarts it; ${verb} {agent} {attempt} {revision} continue|keep-held decides an interrupted piece of work.`, values);
+  return says(language, sentence);
+}
+
 export function recoveryAccepted(language: Language, values: LineValues = {}): string {
   const sentence = interpolate(language, language === "ru"
     ? "запрошено восстановление {target}."

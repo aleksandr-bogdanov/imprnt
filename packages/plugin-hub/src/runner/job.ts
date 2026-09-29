@@ -15,7 +15,11 @@ export const NOT_APPROVED = "not approved";
 export const COMMAND_ALTERED = "command altered";
 
 export interface JobRefusal {
-  cause: typeof NOT_APPROVED | typeof COMMAND_ALTERED;
+  /**
+   * The two approval causes, and the two a conversation can refuse a job for:
+   * a follow-up that is not this worker's, and one the engine cannot resume.
+   */
+  cause: typeof NOT_APPROVED | typeof COMMAND_ALTERED | "conversation unavailable" | "conversation elsewhere" | "resume unsupported";
 }
 
 /** A return route with every part a report needs, which the door always pins. */
@@ -111,13 +115,25 @@ export async function refuseJob(
  * its place. Only a COUNCIL seat is ever given up on: an ordinary job keeps
  * its recorded retry, because nobody but its dispatcher is waiting and the
  * job clock already says it is late.
+ *
+ * A SEAT THAT IS HELD, OR WHOSE ATTEMPT IS NOT SETTLED, IS NOT GIVEN UP ON. Its
+ * input reached the engine and was interrupted (or may still be running), so it is
+ * the owner's to decide: closing the council over it would merge a partial council
+ * and stamp `answered` a seat the model never answered. Returns whether the seat
+ * was abandoned; false leaves everything exactly as it was. The store's own
+ * `hub_council_abandon` refuses the same seats, for the door's caller.
  */
 export async function abandonJob(
   store: StoreLike,
   abandoned: { row: Pick<EligibleRow, "id" | "agent" | "source">; runner: string; cause: string },
-): Promise<void> {
+): Promise<boolean> {
   const envelope = abandoned.row.source?.dispatch;
-  if (envelope?.approved?.source !== "council" || !envelope.council) return;
+  if (envelope?.approved?.source !== "council" || !envelope.council) return false;
+  const [open] = (await store.sql`select hub_row_held(${abandoned.row.id}) as held, exists (
+      select 1 from execution e where e.inbound_id = ${abandoned.row.id}
+        and e.state in ('claimed', 'feed_intent', 'received', 'running', 'unknown', 'stop_requested', 'stop_unknown')) as unresolved`) as unknown as
+    { held: boolean; unresolved: boolean }[];
+  if (open.held || open.unresolved) return false;
   await stamp(store, { messageId: abandoned.row.id, kind: "answered", actor: "runner" });
   await appendEntry(store, {
     stream: "control", subject: abandoned.row.id, kind: "dispatch.abandoned", actor: "runner",
@@ -126,4 +142,5 @@ export async function abandonJob(
   });
   await recordSeatAnswer(store, { council: envelope.council, answer: null });
   await store.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${abandoned.row.id}`;
+  return true;
 }

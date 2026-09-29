@@ -67,10 +67,18 @@ test("ROLL-06 absent sources and empty tools remain explicit in child argv", asy
   const f = loopFixture()
   try {
     const make = await launchSeam()
-    for (const tools of [undefined, []]) {
+    // CONTRACT CHANGE (IMP-227 review, native tool profile): an agent that names NO tools used to be
+    // launched with the CLI's own `--tools default`. That set still carries delegation, workflow and
+    // scheduling tools nobody has shown to be absent, so it is no longer handed over: the launch is
+    // an explicit list or it is refused by name, until a full ordinary profile is validated for the build.
+    const nameless = launchInput(f)
+    nameless.agent = { ...nameless.agent, fragment: undefined, settings: undefined, mcp: undefined, tools: undefined }
+    await expect(make(nameless)).rejects.toThrow("ordinary-tool-profile-unvalidated")
+    // With a profile validated for the build, absent sources stay absent and the list is explicit.
+    for (const tools of [["Read", "Glob", "Grep"], []]) {
       const input = launchInput(f)
-      input.agent = { ...input.agent, fragment: undefined, settings: undefined, mcp: undefined, tools }
-      const launch = await make(input)
+      input.agent = { ...input.agent, fragment: undefined, settings: undefined, mcp: undefined, tools: undefined }
+      const launch = await make(tools.length ? { ...input, toolProfile: tools } : { ...input, agent: { ...input.agent, tools } })
       const capture = join(input.sessionDir, "defaults.json")
       const session = await claudeCode.start({ ...launch, preset: input.preset, sessionId: null, wrap: argv => launch.wrap(captureCli(capture, f)(argv)) })
       try {
@@ -82,8 +90,8 @@ test("ROLL-06 absent sources and empty tools remain explicit in child argv", asy
         expect(got.settings).toEqual({})
         expect(got.mcp).toEqual({ mcpServers: {} })
         expect(got.argv).toContain("--strict-mcp-config")
-        if (tools) expect(got.argv[got.argv.indexOf("--tools") + 1]).toBe("")
-        else expect(got.argv[got.argv.indexOf("--tools") + 1]).toBe("default")
+        expect(got.argv[got.argv.indexOf("--tools") + 1]).toBe(tools.join(","))
+        expect(got.argv).not.toContain("default")
       } finally { await session.close() }
     }
   } finally { f.stop() }

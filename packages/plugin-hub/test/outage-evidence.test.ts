@@ -46,9 +46,14 @@ test("ROLL-25 cause other remains local with zero notices to the other person", 
     if (defective) { expect(() => zeroOther(notices)).toThrow(); continue }
     zeroOther(notices)
     expect(await it.read.outageSheet()).toEqual([])
-    expect((await it.read.sheet("agent_health")).some(r => r.id === "p1-lair" && typeof r.data.retry_at === "string")).toBe(true)
+    // The local refusal is terminal for the input the engine was handed: it is held for its owner (design §4)
+    // and carries no retry, so the agent is not on a retry and nothing feeds it again when the loop heals.
+    expect(await observe(async () => (await it.read.sql("select 1 from replay_hold where inbound_id = 'local-refusal'")).length === 1)).toBe(true)
+    expect((await it.read.sheet("agent_health")).some(r => r.id === "p1-lair")).toBe(false)
     target.loop.setRefusal(null)
-    expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "local-refusal"), 5000)).toBe(true)
+    await Bun.sleep(3500)
+    expect((await it.read.outbox()).some(r => r.inbound_id === "local-refusal"), "a held input is not retried").toBe(false)
+    expect(edge.sessions.flatMap(r => r.fed).filter(m => m.id === "local-refusal")).toHaveLength(1)
   } finally { await runner?.stop(); await edge.stop(); await it.stop() }
   }
 })
@@ -88,7 +93,9 @@ test("ROLL-25 shared episodes deduplicate and only same-source valid evidence cl
     ],
     registry: base => ({ ...base, presets: { ...base.presets, separate: { ...base.presets!.daily, model: "synthetic-separate", credential: "other-login" } }, agents: base.agents!.map(a => ({ ...a, runner: "runner-pi" })) }),
   })
-  const edge = controlledAdapter(it.adapterName)
+  // A refused input is held, so the next message of the same agent is a fresh turn on a resumed conversation:
+  // the loop says it can resume, which is what lets the valid recovery below happen at all.
+  const edge = controlledAdapter(it.adapterName, false, { capabilities: { stableSession: true, safeResume: true, delegationDisabled: true } })
   let mode: "healthy" | "login" | "window" | "unrelated" | "valid" = "healthy"
   let episodeCause: "login" | "window" = "login"
   const configure = (row: typeof edge.sessions[number]) => {

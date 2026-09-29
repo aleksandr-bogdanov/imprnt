@@ -1,12 +1,79 @@
-import type {
-  Adapter,
-  AdapterProgress,
-  AdapterSession,
-  AdapterUsage,
-  TurnEnd,
-  TurnRefusal,
-  WindowReading,
+import { alive, groupAlive, groupOf, groupPresence, observeTree, presence } from "../os/tree.ts";
+import {
+  FeedNotWritten,
+  type Adapter,
+  type AdapterCapabilities,
+  type AdapterProgress,
+  type AdapterSession,
+  type AdapterUsage,
+  type ExitEvidence,
+  type TurnEnd,
+  type TurnRefusal,
+  type WindowReading,
 } from "./types.ts";
+
+/**
+ * The installed builds whose resume of an interrupted session has been
+ * validated to replay no unfinished tool call and to continue nothing on its
+ * own. A build is here only for what was actually run against the real CLI, and
+ * a build that is not here has `safeResume` false: a fresh turn after an
+ * interruption is not started on it.
+ *
+ * 2.1.285, measured twice (Sonnet 5.5, Hub's exact stream-json input, replay and
+ * partial flags): the CLI was killed with SIGKILL after one MCP tool call had made
+ * one fsynced effect and its `tool_use` was durable with NO `tool_result`. The same
+ * session id resumed with a NEW question kept the marker it had been given, made no
+ * tool call of its own and the effect count stayed 1 → 1: the CLI wrote an
+ * interrupted-tool error for the unfinished call and did not run it again. That is
+ * the whole of the observation. It is NOT evidence about a shell command, a tool
+ * that detached, another tool profile, another machine, a person's box, or the Pi;
+ * the model chose to stay quiet when asked not to continue, and nothing here
+ * prevents a resumed model from choosing to act.
+ */
+export const VALIDATED_SAFE_RESUME: readonly string[] = ["2.1.285"];
+
+/**
+ * The installed builds on which an explicit `--tools` list was OBSERVED to be the
+ * whole of the effective tool set, with the native delegation, team, workflow and
+ * scheduling tools absent, and what that list was (`VALIDATED_BUILTIN_TOOLS`).
+ * 2.1.284: the restricted Read, Glob and Grep list. 2.1.285: the nine ordinary
+ * tools with one MCP server beside them (see there). Neither is evidence about any
+ * other list, and `delegationDisabled` says only what this says. A build that is
+ * not here is refused for an ordinary launch by name (`native-tool-control-unvalidated`).
+ */
+export const VALIDATED_TOOL_CONTROL: readonly string[] = ["2.1.284", "2.1.285"];
+
+/**
+ * The BUILTIN tools each validated build was observed to expose exactly, when
+ * they were asked for by an explicit list. An agent's configured builtins must lie
+ * inside its build's set, or the launch is refused by name
+ * (`tool-profile-unvalidated`): a builtin nobody observed on that build is not
+ * launched under a claim that the effective tool set is known. MCP tools are not
+ * builtins: a person's configured servers are passed exactly as configured. A tool
+ * named with a specifier (`Bash(git:*)`) counts by its name.
+ *
+ * 2.1.284 (root's restricted probe): Read, Glob, Grep, and nothing wider.
+ * 2.1.285 (the measured probes, `--tools` the nine, one stdio MCP server): all nine
+ * exposed, the MCP server connected, and none of the denied names present; nothing
+ * unrequested appeared.
+ */
+export const VALIDATED_BUILTIN_TOOLS: Readonly<Record<string, readonly string[]>> = {
+  "2.1.284": ["Read", "Glob", "Grep"],
+  "2.1.285": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch"],
+};
+
+/**
+ * The ordinary working tools an agent that names none is launched with, per
+ * build, as an explicit list and never as the CLI's own default (which still
+ * carries Workflow, background and scheduling tools). Only a profile somebody read
+ * back from the real CLI is here: 2.1.285's nine. A build with none has an agent
+ * with no tool list of its own refused by name (`ordinary-tool-profile-unvalidated`);
+ * agents that DO name their tools are launched with exactly those, if the build
+ * validated them (`VALIDATED_BUILTIN_TOOLS`).
+ */
+export const VALIDATED_ORDINARY_PROFILES: Readonly<Record<string, readonly string[]>> = {
+  "2.1.285": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch"],
+};
 
 /**
  * The first loop, driven headless over its stream-json protocol.
@@ -105,7 +172,11 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
   if (args.includes("--dangerously-skip-permissions") && !options.wrap) {
     throw new Error("box-required");
   }
-  if (options.sessionId) args.push("--resume", options.sessionId);
+  // The session is the conversation's own, chosen by the hub. Launched under
+  // that id the first time and resumed under it after, and never `--continue`,
+  // which resumes whatever was newest in the directory.
+  if (options.session) args.push(options.session.resume ? "--resume" : "--session-id", options.session.id);
+  else if (options.sessionId) args.push("--resume", options.sessionId);
 
   // Whatever the runner handed over, applied to this loop's own
   // argv. This file names no tool and imports nothing from `src/box/`: what
@@ -118,13 +189,22 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
     stderr: "inherit",
     cwd: options.cwd,
     env: options.env,
+    // ASKED FOR, NEVER ASSUMED: a child that leads a process group of its own can
+    // be stopped and looked for as a group, tools reparented to init included.
+    // Whether the runtime honoured it is read back from the process table below,
+    // and a child that turned out to share the runner's group is treated as one.
+    ...({ detached: true } as object),
   });
+  const ownGroup: number | null = (() => {
+    if (!child.pid || child.pid === process.pid) return null;
+    return groupOf(child.pid) === child.pid ? child.pid : null;
+  })();
 
   const receipts: ((messageId: string) => void)[] = [];
   const progress: ((event: AdapterProgress) => void)[] = [];
   const ends: ((end: TurnEnd) => void)[] = [];
 
-  let sessionId = options.sessionId;
+  let sessionId = options.session?.id ?? options.sessionId;
   let pending: Pending | null = null;
   // The plan windows arrive once per process rather than once per turn, so the
   // newest the loop has reported is what every turn of this session records.
@@ -139,6 +219,50 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
   // other route to the same cause.
   let seen: TurnRefusal | null = null;
   let closed = false;
+  // What the engine itself said its session is, as early as it says it. Kept
+  // apart from `sessionId`, which starts as the id the hub asked for: comparing
+  // a request with itself would verify nothing.
+  let reported: string | null = null;
+  // Every process ever seen under the loop. A leader that has exited says nothing
+  // about its tools, so what is judged afterwards is everything that was ever
+  // observed under it, and never only the tree as it stands now: a tool that
+  // detached after it was seen is still a process this record names.
+  const seenTree = new Set<number>();
+  // Whether a read of the process table failed while the tree was observed. Such a
+  // read is not an empty tree, and it is said.
+  let incomplete = false;
+  const gone = () => child.exitCode !== null || child.signalCode !== null;
+  const snapshot = (): number[] | null => {
+    if (!child.pid) return null;
+    if (gone()) return [];
+    const under = observeTree(child.pid);
+    if (!under.complete) incomplete = true;
+    const tree = [child.pid, ...under.pids];
+    for (const one of tree) seenTree.add(one);
+    return tree;
+  };
+  const evidence = (via: string): ExitEvidence => {
+    const pids = [...seenTree];
+    const looked = pids.map(one => [one, presence(one)] as const);
+    const survivors = looked.filter(([, said]) => said === "present").map(([one]) => one);
+    // A lookup that failed is neither present nor gone.
+    const unknown = looked.filter(([, said]) => said === "unknown").map(([one]) => one);
+    const leader = child.pid === undefined ? "unknown" : gone() ? "exited" : "alive";
+    // THE GROUP IS THE ONLY WITNESS FOR WHAT WAS NEVER SEEN. Once the leader is gone,
+    // anything still in its group is a survivor whether or not it was ever seen, and a
+    // group the system says is empty, with every process recorded under it gone, is a
+    // bounded claim about the processes this child managed. It says nothing about a
+    // process that left the group (its own session, its own group) before anyone
+    // recorded it, and it says nothing about an effect outside the process table. A
+    // child that shares the runner's group, or a group that could not be looked up, has
+    // no such witness, and what was observed of the tree alone is never "none".
+    const inGroup = ownGroup === null ? null : groupPresence(ownGroup);
+    const others = survivors.some(one => one !== child.pid) || (gone() && inGroup === "present");
+    const verified = inGroup === "absent" && unknown.length === 0;
+    const descendants = others ? "survivors" : verified ? "none" : "unverified";
+    return { confirmed: leader === "exited" && descendants === "none" && !survivors.includes(child.pid!), leader, descendants, pids, survivors,
+      unknown, partial: incomplete, basis: inGroup === "absent" ? "process-group" : "observed-tree", group: ownGroup, via };
+  };
   let terminal!: (cause: unknown) => void;
   const exited = new Promise<unknown>(resolve => { terminal = resolve; });
   void child.exited.then(code => terminal({ cause: "child-exited", code }));
@@ -206,6 +330,10 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
     if (typeof message?.model === "string" && message.model !== "") {
       resolved.add(message.model);
       if (!event.parent_tool_use_id) primary = message.model;
+    }
+    if (event.type === "system" && event.subtype === "init" && typeof event.session_id === "string") {
+      reported = event.session_id;
+      return;
     }
     if (event.type === "rate_limit_event") {
       const info = event.rate_limit_info as Record<string, unknown> | undefined;
@@ -283,7 +411,8 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
       return;
     }
     if (event.type === "result") {
-      const reported = (event.usage ?? {}) as Record<string, unknown>;
+      const usageReported = (event.usage ?? {}) as Record<string, unknown>;
+      if (typeof event.session_id === "string") reported = event.session_id;
       sessionId = (event.session_id as string) ?? sessionId;
       const modelUsage = event.modelUsage;
       if (modelUsage && typeof modelUsage === "object" && !Array.isArray(modelUsage)) {
@@ -292,13 +421,13 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
       const usage: AdapterUsage = {
         resolved_model_ids: [...resolved].sort(),
         primary_model_id: primary,
-        input_tokens: numberOrNull(reported.input_tokens),
-        cached_input_tokens: numberOrNull(reported.cache_read_input_tokens),
-        output_tokens: numberOrNull(reported.output_tokens),
+        input_tokens: numberOrNull(usageReported.input_tokens),
+        cached_input_tokens: numberOrNull(usageReported.cache_read_input_tokens),
+        output_tokens: numberOrNull(usageReported.output_tokens),
         plan_usage: planUsage,
         window,
         raw: {
-          ...reported,
+          ...usageReported,
           evidence: seen?.cause === "login" ? { kind: "authenticated-response", status: 401, credential: options.credentialId }
             : event.is_error !== true ? { kind: "authenticated-response", status: 200, credential: options.credentialId }
             : window ? { kind: "plan-window", utilization: window.utilization, credential: options.credentialId } : null,
@@ -358,13 +487,73 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
     get sessionId() {
       return sessionId;
     },
+    get reportedSessionId() {
+      return reported;
+    },
     // The child the runner's memory watch reads and, over its limit,
     // kills. It is this process's own child, with no unit of its own (D7).
     get pid() {
       return child.pid ?? null;
     },
     lacks: [],
+    processes: () => snapshot(),
+    partial: () => incomplete,
+    group: () => ownGroup,
+    async exitEvidence() {
+      // A leader still running is not waited for: it is not gone. One that is
+      // exiting is given a moment, because the reader learns of an exit a beat
+      // before the process table does.
+      if (!gone()) await Promise.race([child.exited, Bun.sleep(200)]);
+      return evidence(ownGroup === null
+        ? "the process tree observed under the loop (no process group of its own, so what was never observed is not covered)"
+        : "the loop's process group and every process recorded under it, looked up again (a process that left the group before it was recorded is not covered)");
+    },
+    async interrupt({ graceMs }) {
+      // The tree is read while the leader is alive, because once it is gone its
+      // tools are reparented and nothing names them any more.
+      snapshot();
+      closed = true;
+      try { child.stdin.end(); } catch { /* the pipe went with the child */ }
+      const tools = [...seenTree].filter(one => one !== child.pid).reverse();
+      const signal = (pids: number[], name: NodeJS.Signals) => {
+        for (const one of pids) { try { process.kill(one, name); } catch { /* it left first */ } }
+      };
+      // The loop's own group, and only that one: it is signalled by the negative of
+      // a group id this adapter checked it leads, never by a number it was handed.
+      const signalGroup = (name: NodeJS.Signals) => {
+        if (ownGroup === null) return;
+        try { process.kill(-ownGroup, name); } catch { /* the group is empty */ }
+      };
+      const settled = async (limitMs: number) => {
+        const empty = () => gone() && [...seenTree].every(one => !alive(one)) && (ownGroup === null || !groupAlive(ownGroup));
+        const until = Date.now() + limitMs;
+        while (Date.now() < until) {
+          if (empty()) return true;
+          await Bun.sleep(25);
+        }
+        return empty();
+      };
+      // Tools first, then the loop: the loop is what would report the tools
+      // exiting, and a loop ended first leaves them running unobserved. The group
+      // follows, for what was reparented out of sight.
+      signal(tools, "SIGTERM");
+      if (child.pid) signal([child.pid], "SIGTERM");
+      signalGroup("SIGTERM");
+      if (!await settled(graceMs)) {
+        signal(tools, "SIGKILL");
+        if (child.pid) signal([child.pid], "SIGKILL");
+        signalGroup("SIGKILL");
+        await settled(2000);
+      }
+      return evidence(ownGroup === null
+        ? "terminate, then kill after the grace, judged on the observed process tree"
+        : "terminate, then kill after the grace, judged on the process group and the observed process tree");
+    },
     async feed(message) {
+      // THE ONLY REJECTION THAT SAYS NOTHING WAS WRITTEN: nothing has been touched yet, and the
+      // session is closed or its process is already gone. Once the write below has begun, any
+      // failure of it or of the flush is uncertain and is thrown as it is.
+      if (closed || gone()) throw new FeedNotWritten(closed ? "session-closed" : "child-exited");
       pending = { id: message.id, text: message.text };
       child.stdin.write(
         JSON.stringify({
@@ -389,5 +578,42 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
 
 export const claudeCode: Adapter = {
   name: "claude-code",
+  // Read off what the installed CLI says about itself and off the list of builds
+  // somebody validated, and never assumed from documentation: a flag the help
+  // does not name is a capability the launch does not have.
+  async capabilities(context) {
+    const launch = await import("./launch.ts");
+    const found = await launch.loopCapabilitiesFor(launch.credentialSource(context.registry, context.preset), context.probe);
+    const stableSession = found.native.includes("--session-id") && found.native.includes("--resume");
+    return {
+      stableSession,
+      // A flag in the help text is not an effective tool set. This is true only
+      // for a build whose effective tools were read back by running it.
+      delegationDisabled: found.native.includes("--disallowedTools") && VALIDATED_TOOL_CONTROL.includes(found.version),
+      safeResume: stableSession && VALIDATED_SAFE_RESUME.includes(found.version),
+      version: found.version,
+    } satisfies AdapterCapabilities;
+  },
+  async prepareLaunch(input, probe) {
+    const launch = await import("./launch.ts");
+    // Probed once per binary and login, and the login is checked every time.
+    const found = await launch.loopCapabilitiesFor(input.credential ?? launch.credentialSource(input.registry, input.agent.preset), probe);
+    // No native delegation is not a setting an old CLI can be asked for: a build
+    // that cannot deny a tool is a build this launch will not start.
+    if (!found.native.includes("--disallowedTools")) throw new Error("native-delegation-unsupported");
+    // A build whose effective tool set nobody read back is not one an ordinary
+    // agent is launched on: it is refused by name and its version, and nothing is
+    // substituted. Triage and harvest launch a fixed restricted list of their own.
+    if (input.purpose === "ordinary" && !(VALIDATED_TOOL_CONTROL.includes(found.version) && VALIDATED_BUILTIN_TOOLS[found.version])) {
+      throw new Error(`native-tool-control-unvalidated: claude ${found.version}`);
+    }
+    // An agent that names no tools gets this build's validated ordinary profile
+    // as an explicit list, and where there is none it is refused by name in
+    // `makeLoopLaunch`: the CLI's own "default" is never handed over. Configured
+    // builtins outside what the build was observed with are refused there too.
+    const profile = VALIDATED_ORDINARY_PROFILES[found.version];
+    const builtins = VALIDATED_BUILTIN_TOOLS[found.version];
+    return await launch.makeLoopLaunch({ ...input, ...(profile ? { toolProfile: profile } : {}), ...(builtins ? { validatedBuiltins: builtins, buildVersion: found.version } : {}) });
+  },
   start: open,
 };
