@@ -17,6 +17,9 @@ export async function unattemptedReplyFindings(args: {
       from outbox o join inbound i on i.id = o.inbound_id
      where o.kind = 'reply' and o.delivery_state = 'pending' and o.delivered_at is null
        and o.attempts = 0 and i.state = 'answered'
+       and not exists (select 1 from outbox earlier
+         where earlier.inbound_id = o.inbound_id and earlier.seq_in_reply < o.seq_in_reply
+           and earlier.delivered_at is null)
      group by i.id, i.person, i.agent, coalesce(o.route ->> 'door', i.source ->> 'door')`;
   const findings: Finding[] = [];
   for (const row of rows) {

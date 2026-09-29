@@ -50,8 +50,17 @@ test("settled replies with no delivery attempt use the delivered clock, identify
     expect(await unattemptedReplyFindings(args)).toHaveLength(1);
     expect(await unattemptedReplyFindings({ ...args, doors: new Set(["other-door"]) })).toHaveLength(0);
     expect(await unattemptedReplyFindings({ ...args, deliveredSeconds: () => 120 })).toHaveLength(0);
-    await store.sql`update outbox set attempts = 1 where inbound_id = 'undelivered'`;
+    // Later chunks cannot be attempted while their predecessor is retrying
+    // or has failed permanently. Neither case is a stalled first send.
+    await store.sql`update outbox set attempts = 1, retry_at = ${new Date(+now + 30000)}
+      where inbound_id = 'undelivered' and seq_in_reply = 1`;
     expect(await unattemptedReplyFindings(args)).toHaveLength(0);
+    await store.sql`update outbox set delivery_state = 'failed'
+      where inbound_id = 'undelivered' and seq_in_reply = 1`;
+    expect(await unattemptedReplyFindings(args)).toHaveLength(0);
+    await store.sql`update outbox set delivery_state = 'delivered', delivered_at = now()
+      where inbound_id = 'undelivered' and seq_in_reply = 1`;
+    expect(await unattemptedReplyFindings(args)).toHaveLength(1);
     await store.sql`update outbox set attempts = 0, delivery_state = 'delivered', delivered_at = now() where inbound_id = 'undelivered'`;
     expect(await unattemptedReplyFindings(args)).toHaveLength(0);
     // Half-written replies during a turn are deliberately not deliverable.

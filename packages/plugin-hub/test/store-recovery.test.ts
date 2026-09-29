@@ -1,13 +1,34 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { SQL } from "bun";
-import { startCluster, until, type Cluster } from "./helpers/cluster.ts";
+import { pgBin, startCluster, until, type Cluster } from "./helpers/cluster.ts";
 import { openStore, storeUrlAs } from "../src/store/connect.ts";
 import { managedSQL } from "../src/store/managed.ts";
 import { listenForWork } from "../src/store/listen.ts";
+import { openOutboxWaiter, OUTBOX_CHANNEL } from "../src/store/wake.ts";
 
 let cluster: Cluster;
 beforeAll(async () => { cluster = await startCluster(); });
 afterAll(async () => { await cluster?.stop(); });
+
+async function bounded<T>(label: string, work: PromiseLike<T>, ms = 5000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+async function controlServer(action: "stop" | "start"): Promise<void> {
+  const process = Bun.spawn([pgBin("pg_ctl"), "-D", cluster.dataDir, "-l", cluster.logFile,
+    "-m", "immediate", "-w", "-t", "10", action], { stdout: "pipe", stderr: "pipe" });
+  try {
+    const [code, stdout, stderr] = await bounded(`pg_ctl ${action}`, Promise.all([
+      process.exited, new Response(process.stdout).text(), new Response(process.stderr).text(),
+    ]), 15000);
+    if (code !== 0) throw new Error(`pg_ctl ${action}: ${stderr || stdout}`);
+  } finally { if (process.exitCode === null) process.kill(); }
+}
 
 test("a poisoned reserved backend is reset, the failed write is not replayed, and later work succeeds", async () => {
   const db = await cluster.createDatabase();
@@ -137,3 +158,83 @@ test("a failed rollback closes that reservation without replay and pool shutdown
     await observer.close();
   }
 }, 10000);
+
+test("the same store and persistent waiter recover from a PostgreSQL restart without replay", async () => {
+  const db = await cluster.createDatabase();
+  const name = "restart-fixture";
+  const store = await openStore({ url: storeUrlAs(cluster.url(db), cluster.superuser, name) });
+  const waiter = await openOutboxWaiter(store, { person: "restart-person" });
+  let transactions = 0;
+  try {
+    await store.sql`create table restart_probe (id int primary key)`;
+    await store.sql`insert into restart_probe values (1)`;
+    const first = await Promise.all([store.sql.reserve(), store.sql.reserve()]);
+    let oldPids: number[];
+    try {
+      for (const connection of first) await connection`select 1`;
+      const rows = await first[0]`select pid from pg_stat_activity
+        where datname = ${db} and application_name = ${name}` as { pid: number }[];
+      oldPids = rows.map(row => row.pid);
+      expect(oldPids).toHaveLength(3);
+    } finally { first.forEach(connection => connection.release()); }
+
+    let inserted!: () => void;
+    const ready = new Promise<void>(resolve => { inserted = resolve; });
+    // The interrupted callback must fail once, with its uncommitted write
+    // rolled back. Recovery may never run this callback a second time.
+    const interrupted = store.sql.begin(async tx => {
+      transactions++;
+      await tx`insert into restart_probe values (2)`;
+      inserted();
+      await tx`select pg_sleep(30)`;
+    }).then(() => ({ failed: false }), error => ({ failed: true, error }));
+    await bounded("transaction entered", ready);
+    const lost = waiter.wait(10000);
+    await controlServer("stop");
+    expect((await bounded("interrupted transaction", interrupted)).failed).toBe(true);
+    expect(await bounded("waiter notices disconnect", lost)).toBe("notified");
+    await controlServer("start");
+
+    // Retry only this read in the test while old sockets finish closing. The
+    // store and waiter are the original objects, with no caller recreation.
+    await until("same store reads after restart", async () => {
+      try { return (await store.sql`select 7 as answer`)[0].answer === 7; }
+      catch { return false; }
+    }, 5000);
+    expect(await bounded("waiter reconnects", waiter.wait(1000))).toBe("notified");
+    const replacements = await bounded("replacement pool reservations",
+      Promise.all([store.sql.reserve(), store.sql.reserve()]));
+    try {
+      for (const connection of replacements) {
+        const [row] = await connection`select pg_backend_pid() as pid, current_setting('application_name') as name`;
+        expect(oldPids).not.toContain(row.pid);
+        expect(row.name).toBe(name);
+      }
+      // Exactly two pool backends and the reconnected LISTEN backend: every
+      // replacement belonging to this database carries the process identity.
+      const backends = await replacements[0]`select pid, application_name as name
+        from pg_stat_activity where datname = ${db}` as { pid: number; name: string }[];
+      expect(backends).toHaveLength(3);
+      for (const row of backends) {
+        expect(oldPids).not.toContain(row.pid);
+        expect(row.name).toBe(name);
+      }
+    } finally { replacements.forEach(connection => connection.release()); }
+
+    // A reconnect wake alone is insufficient: a fresh notification must reach
+    // the re-established LISTEN and wake a newly armed wait.
+    expect(await waiter.wait(30)).toBe("timeout");
+    const notified = waiter.wait(5000);
+    await store.sql`select pg_notify(${OUTBOX_CHANNEL}, 'restart-person')`;
+    expect(await bounded("notification after restart", notified)).toBe("notified");
+    expect(transactions).toBe(1);
+    expect(Array.from(await store.sql`select id from restart_probe order by id`)).toEqual([{ id: 1 }]);
+    await store.sql`insert into restart_probe values (3)`;
+    expect(Array.from(await store.sql`select id from restart_probe order by id`)).toEqual([{ id: 1 }, { id: 3 }]);
+    const closing = waiter.wait(10000);
+    await bounded("waiter close", waiter.close());
+    expect(await bounded("wait settles on close", closing)).toBe("timeout");
+  } finally {
+    await bounded("restart fixture clients close", Promise.all([waiter.close(), store.close()]), 7000);
+  }
+}, 45000);
