@@ -54,7 +54,8 @@ import { readWatchState, watchFindings } from "./watch.ts";
 import { councilFindings, readOpenCouncils } from "./council.ts";
 import { silentRunners } from "./silence.ts";
 import { admissionFindings } from "./admission.ts";
-import { readUnexplainedWaits, unexplainedFindings } from "./waits.ts";
+import { unattemptedReplyFindings } from "./delivery.ts";
+import { readUnexplainedWaits, unexplainedFindings, startingFindings } from "./waits.ts";
 import { readZoneState, zoneFindings } from "./zone.ts";
 import { backupFindings, readBackupState } from "./backup.ts";
 
@@ -642,8 +643,20 @@ export async function runCheck(options: {
     ...mine,
     ...listAgents(registry).filter((agent) => !ownRunners.has(agent.runner) && flagged.has(machineOfRunner.get(agent.runner) ?? "")),
   ];
+  findings.push(...await unattemptedReplyFindings({
+    store: options.store,
+    doors: new Set(entries.filter(entry => entry.kind === "door").map(entry => entry.id)),
+    doorOf: agent => listAgents(registry).find(one => one.id === agent)?.door ?? "",
+    deliveredSeconds: person => thresholdsFor(registry, person).delivered_seconds,
+    machine, now,
+  }));
   if (watched.length > 0) {
     findings.push(
+      ...await startingFindings({
+        store: options.store, agents: watched,
+        startedSeconds: person => thresholdsFor(registry, person).started_seconds,
+        machine, now,
+      }),
       ...stampFindings({
         rows: await readStampRows(options.store, { agents: watched.map((agent) => agent.id) }),
         thresholds: (person) => thresholdsFor(registry, person),

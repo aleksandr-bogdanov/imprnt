@@ -62,3 +62,30 @@ export function unexplainedFindings(args: { waits: UnexplainedWait[]; runnerOf: 
       `${wait.stamp} stamp, and add what it was doing to the list of reasons`,
   }));
 }
+
+/** A resident can be stuck before it has any inbound row to carry a clock. */
+export async function startingFindings(args: {
+  store: StoreLike;
+  agents: { id: string; person: string; runner: string }[];
+  startedSeconds: (person: string) => number;
+  machine: string;
+  now: Date;
+}): Promise<Finding[]> {
+  const rows = await args.store.sql`select id, data ->> 'at' as at from state_row
+    where sheet = 'agent_wait' and data ->> 'kind' = 'starting'`;
+  const findings: Finding[] = [];
+  for (const row of rows) {
+    const agent = args.agents.find(agent => agent.id === row.id);
+    if (!agent) continue;
+    const seconds = Math.floor((args.now.getTime() - Date.parse(row.at)) / 1000);
+    const allowed = args.startedSeconds(agent.person);
+    if (!Number.isFinite(seconds) || seconds < allowed) continue;
+    findings.push({
+      id: findingId(args.machine, "agent-starting", agent.id),
+      kind: "agent-starting", subject: agent.id, machine: args.machine,
+      says: `${agent.id} has been starting for ${seconds} s, past its ${allowed} s started clock`,
+      fix: `read the journal of imprnt-hub-${agent.runner} and inspect ${agent.id}'s startup before choosing recovery`,
+    });
+  }
+  return findings;
+}

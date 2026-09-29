@@ -12,7 +12,7 @@ export async function recordRefusal(
   subject: string,
   detail: Record<string, unknown>,
 ): Promise<void> {
-  const sql = new SQL(store.url, { max: 1 });
+  const sql = new SQL(store.url, { max: 1, connection: { application_name: new URL(store.url).searchParams.get("application_name") || "imprnt-hub-refusal" } });
   try {
     await sql`insert into ledger_event (stream, subject, kind, actor, detail)
               values ('refusal', ${subject}, ${kind}, 'hub', ${detail})`;

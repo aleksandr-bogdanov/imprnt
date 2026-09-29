@@ -353,7 +353,7 @@ export async function runDoor(options: {
   const stateDir = String(readSetting(registry, "hub.state_dir"));
   const timeoutMs = Number(readSetting(registry, "hub.tick_seconds")) * 1000;
   const store: Store = await openStore({
-    url: storeUrlFor(registry, "hub_door"),
+    url: storeUrlFor(registry, "hub_door", options.door),
   });
 
   const batch = (registry.data.hub as { cutover_batch?: string }).cutover_batch;
@@ -517,7 +517,7 @@ export async function runDoor(options: {
   // transaction. Ingress therefore owns a pool that posting and clocks never
   // use, as well as serializing batches from the chats this door serves.
   let ingress: Store;
-  try { ingress = await openStore({ url: store.url }); }
+  try { ingress = await openStore({ url: store.url, max: 1 }); }
   catch (error) { await store.close(); throw error; }
   let accepting: Promise<void> = Promise.resolve();
   const read = async (agent: ChatAgent, own: Served, activate = false): Promise<void> => {
