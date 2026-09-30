@@ -121,9 +121,11 @@ test(
       const healthy = [
         unitState({ name: `${name("door-fake")}.service`, running: true }),
         unitState({ name: `${name("runner-pi")}.service`, running: true }),
-        // A scheduled entry's timer is loaded and its service is not running,
-        // which is the wanted state and not a finding.
-        unitState({ name: `${name("watch-bikes")}.timer`, running: true }),
+        // A scheduled entry's timer is ARMED, which systemd reports as
+        // `ActiveState=active` with `SubState=waiting`, so it is active and not
+        // running, and its service is not running, which is the wanted state
+        // and not a finding.
+        unitState({ name: `${name("watch-bikes")}.timer`, running: false, state: "active" }),
         unitState({ name: `${name("watch-bikes")}.service`, running: false }),
         // An on demand entry is loaded and not running, on purpose.
         unitState({ name: `${name("transcriber")}.service`, running: false }),
@@ -143,7 +145,7 @@ test(
         wanted,
         found: [
           unitState({ name: `${name("door-fake")}.service`, loaded: true, running: false, pid: null }),
-          unitState({ name: `${name("watch-bikes")}.timer`, running: true }),
+          unitState({ name: `${name("watch-bikes")}.timer`, running: false, state: "active" }),
           unitState({ name: `${name("watch-bikes")}.service`, running: false }),
           unitState({ name: `${name("transcriber")}.service`, running: false }),
         ],

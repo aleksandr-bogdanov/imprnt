@@ -34,7 +34,7 @@ import { loadRegistry, RegistryRefused } from "../src/registry/load.ts";
 import { systemd } from "../src/os/systemd.ts";
 import { launchd } from "../src/os/launchd.ts";
 import { unitName } from "../src/os/names.ts";
-import { resetCommand, startCommand, stopCommand } from "../src/os/diff.ts";
+import { resetCommand, stopCommand } from "../src/os/diff.ts";
 import type { OsSeam, UnitState } from "../src/os/types.ts";
 
 const SLOW = 120_000;
@@ -184,6 +184,20 @@ const BOARD = (port: number): RunSpec => ({
 
 const CREDENTIALS = { open: async () => ({ ok: true }), secrets: async () => [] };
 
+/**
+ * The two fixes a missing unit can earn, spelled out and not built by the
+ * functions under test. A launchd job the domain does not carry is loaded from
+ * its plist, because `kickstart` cannot reach it. A job that is loaded and not
+ * running is kickstarted, and systemd starts the service in every case.
+ */
+const UID = process.getuid?.() ?? -1;
+const kickstartFix = (id: string) =>
+  FLAVOUR === "launchd" ? `launchctl kickstart gui/${UID}/${unitName(id)}` : `systemctl --user start ${unitName(id)}.service`;
+const unloadedFix = (id: string) =>
+  FLAVOUR === "launchd"
+    ? `launchctl bootstrap gui/${UID} "$HOME/Library/LaunchAgents/${unitName(id)}.plist"`
+    : kickstartFix(id);
+
 async function stage(run: RunSpec[]) {
   return await stageHub(cluster, {
     hub: { tick_seconds: 1 },
@@ -220,13 +234,14 @@ test(
         found.filter((one) => one.kind === kind).map((one) => one.subject);
 
       // 1. With no unit for it, it is missing, and the fix is the command a
-      //    person pastes to start it.
+      //    person pastes to bring it up: a job the manager does not carry at all
+      //    is loaded on launchd, and started on systemd.
       for (const id of [DOOR.id, RUNNER.id, HUB.id]) os.plant(id);
       let found = await ask();
       expect(about(found, "unit-missing")).toContain("board");
       const missing = found.find((one) => one.kind === "unit-missing" && one.subject === "board")!;
       expect(missing.machine).toBe(MACHINE);
-      expect(missing.fix).toBe(startCommand(os.os.flavour, "board"));
+      expect(missing.fix).toBe(unloadedFix("board"));
       // And the door beside it is not missing, so this is the diff and not a
       // rule about the word "board".
       expect(about(found, "unit-missing")).not.toContain(DOOR.id);
@@ -276,6 +291,76 @@ test(
       expect(about(found, "job-no-stamp")).not.toContain("board");
       expect(about(found, "job-stale")).not.toContain("board");
       expect((await it.read.sheet("job_success")).map((row) => row.id)).not.toContain("board");
+    } finally {
+      await store.close();
+      await it.stop();
+    }
+  },
+  SLOW,
+);
+
+/** An on-demand tool: declared, loaded and not running, on purpose. */
+const TOOL: RunSpec = {
+  id: "tool-manual",
+  kind: "runner",
+  machine: MACHINE,
+  schedule: "on demand",
+  memory_limit_mb: 128,
+  child_memory_limit_mb: 512,
+};
+
+test(
+  "a missing unit's fix loads a launchd job the domain does not carry and kickstarts one that is loaded and not running, and systemd starts the service throughout",
+  async () => {
+    const it = await stage([DOOR, RUNNER, HUB, TOOL]);
+    const store = await superStore(cluster, it.db);
+    const os = plantedOs(ownDir("hub-check-board-fix-"));
+    try {
+      const { runCheck } = await seam("src/check/run.ts");
+      const check = runCheck as Check;
+      const fixes = async () =>
+        new Map(
+          (
+            await check({
+              machine: MACHINE,
+              registryFile: it.registryFile,
+              store,
+              os: os.os,
+              kernel: null,
+              credentials: CREDENTIALS,
+              now: new Date(),
+            })
+          )
+            .filter((one) => one.kind === "unit-missing")
+            .map((one) => [one.subject, one.fix] as const),
+        );
+      const down = { running: false, pid: null, runs: null, ran: false, state: FLAVOUR === "launchd" ? null : "inactive" };
+      for (const id of [DOOR.id, HUB.id]) os.plant(id);
+
+      // 1. Nothing observed for the resident or the on-demand tool: not loaded.
+      let fix = await fixes();
+      expect(fix.get(RUNNER.id)).toBe(unloadedFix(RUNNER.id));
+      expect(fix.get(TOOL.id)).toBe(unloadedFix(TOOL.id));
+
+      // 2. A unit that exists and is not loaded reads the same as one that is
+      //    absent, for the resident and for the tool.
+      os.plant(RUNNER.id, { ...down, loaded: false });
+      os.plant(TOOL.id, { ...down, loaded: false });
+      fix = await fixes();
+      expect(fix.get(RUNNER.id)).toBe(unloadedFix(RUNNER.id));
+      expect(fix.get(TOOL.id)).toBe(unloadedFix(TOOL.id));
+
+      // 3. The resident loaded and not running keeps `kickstart`, which is the
+      //    verb that can reach a job the manager carries. The tool loaded and
+      //    not running is what it was declared to be and earns nothing.
+      os.plant(RUNNER.id, { ...down, loaded: true, state: FLAVOUR === "launchd" ? "not running" : "inactive" });
+      os.plant(TOOL.id, { ...down, loaded: true, state: FLAVOUR === "launchd" ? "not running" : "inactive" });
+      fix = await fixes();
+      expect(fix.get(RUNNER.id)).toBe(kickstartFix(RUNNER.id));
+      expect(fix.has(TOOL.id)).toBe(false);
+
+      // Text only: the check acted on nothing.
+      expect(os.calls).toEqual([]);
     } finally {
       await store.close();
       await it.stop();

@@ -48,6 +48,18 @@ export interface UnitState {
    * which keeps no such field and never gives up.
    */
   result: string | null;
+  /**
+   * The unit that carries this entry's cadence, on a manager that keeps one
+   * apart from the program: systemd's `.timer` beside its `.service`. Set ONLY
+   * on what `show` returns for an entry, and only when the timer's file exists;
+   * `list` reports a timer as a unit of its own and never sets this.
+   *
+   * It is a second unit and not a second opinion about the first: a service
+   * that is inactive tells nothing about whether anything will start it. launchd
+   * has no such unit, because the cadence is a key inside the one job, so it is
+   * never set there and that job's own `loaded` is the whole answer.
+   */
+  timer?: UnitState | null;
 }
 
 export interface RenderContext {
@@ -131,6 +143,25 @@ export interface OsSeam {
   start(entryId: string): Promise<void>;
   stop(entryId: string): Promise<void>;
   restart(entryId: string): Promise<void>;
+  /**
+   * Make the manager carry a unit the registry declares and the manager has not
+   * got in the state its file asks for. Returns whether it changed anything, and
+   * throws when it cannot, so a file that is missing, unreadable or not a unit is
+   * an error and never a quiet success.
+   *
+   * It is not `start`, and it never dispatches or restarts a scheduled SERVICE.
+   * It restores what the file declares, and that may itself run the program:
+   * loading a resident plist with `RunAtLoad` launches it, and arming a timer
+   * restores its cadence, so an overdue interval or a `Persistent` calendar
+   * timer may catch up promptly. The guarantee is only that repair asks for no
+   * explicit start or restart of the service and leaves one already running
+   * alone. The two managers need different work for the same promise: launchd's
+   * is loading a job that was booted out, and systemd's is arming a timer that
+   * was stopped while its files stayed as they were. Optional, like `unitFiles`,
+   * so a seam assembled by hand may leave it out and the hub then has nothing to
+   * load with.
+   */
+  load?(entryId: string, wanted: WantedState): Promise<boolean>;
   list(): Promise<UnitState[]>;                              // everything under SCAN_PREFIX
   /**
    * Every unit FILE in this seam's unit directory under the RENDER

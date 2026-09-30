@@ -3,6 +3,7 @@ import type { LoopProbeOptions, LoopProbeTimeout } from "../adapters/launch.ts";
 import { acceptRepair, finding as findingLine, syncRepair, unitNotStopped } from "../door/lines.ts";
 import { basename, dirname } from "node:path";
 import {
+  armCommand,
   diffUnits,
   removeFileCommand,
   resetCommand,
@@ -251,13 +252,27 @@ export async function runCheck(options: {
     const difference = diffUnits({ wanted, found });
 
     for (const one of difference.missing) {
+      // Read off the units already observed, with no probe of its own. On launchd
+      // a job the domain does not carry is one `kickstart` cannot reach, so the
+      // fix that can work is to load its plist. Nothing observed for the entry, or
+      // only a unit that exists and is not loaded, is that job.
+      const unloaded = !found.some((unit) => entryIdOf(unit.name) === one.id && unit.loaded === true);
       findings.push({
         id: findingId(machine, "unit-missing", one.id),
         kind: "unit-missing",
         subject: one.id,
         machine,
-        says: `${one.id} is on the registry's list and the service manager is not ${one.state === "running" ? "running" : "carrying"} it`,
-        fix: startCommand(os.flavour, one.id),
+        says: one.state === "scheduled"
+          ? `${one.id} is on the registry's list and the service manager has not armed its schedule`
+          : `${one.id} is on the registry's list and the service manager is not ${one.state === "running" ? "running" : "carrying"} it`,
+        // A scheduled entry is not started: `start` dispatches its service this
+        // instant and arms nothing, so its fix is the one that arms the cadence.
+        // A launchd job that is not loaded, resident or on demand, is bootstrapped
+        // and never kickstarted. A job that is loaded and not running keeps
+        // `kickstart`, and so does everything on systemd.
+        fix: one.state === "scheduled" || (os.flavour === "launchd" && unloaded)
+          ? armCommand(os.flavour, one.id)
+          : startCommand(os.flavour, one.id),
       });
     }
     // The mirror of `unit-missing`, beside it so a reader sees the pair: the

@@ -1,5 +1,5 @@
 import type { RunEntry } from "../registry/load.ts";
-import { entryIdOf, isOurs, isWatched, unitName } from "./names.ts";
+import { entryIdOf, isOurs, isWatched, timerName, unitName } from "./names.ts";
 import type { OsSeam, UnitState, WantedState, WantedUnit } from "./types.ts";
 
 /**
@@ -108,6 +108,32 @@ function unitsFor(found: UnitState[], entryId: string): UnitState[] {
   return found.filter((unit) => entryIdOf(unit.name) === entryId);
 }
 
+/**
+ * Whether the manager has an entry's SCHEDULE armed, read off the units it
+ * reported for that entry.
+ *
+ * THE TWO MANAGERS KEEP A CADENCE IN DIFFERENT PLACES, so this asks each about
+ * its own. On systemd it is the `.timer`, and a timer that is merely loaded is
+ * not armed: a stopped one is `loaded inactive dead` with no next run, and the
+ * service beside it is loaded and inactive whether or not anything will ever
+ * start it. Only the timer's own `ActiveState` of `active` says it is waiting
+ * for its next elapse. On launchd the cadence is a key inside the one job, so a
+ * job in the domain carries it whether or not it is running at this moment,
+ * which is what a job between two runs looks like.
+ *
+ * A systemd `.service` is never the answer, whatever it says: it is what the
+ * timer starts, and counting it is how a stopped timer read as scheduled.
+ */
+export function armed(units: UnitState[]): boolean {
+  return units
+    .flatMap((unit) => (unit.timer ? [unit, unit.timer] : [unit]))
+    .some((unit) => {
+      if (unit.loaded !== true) return false;
+      if (unit.name.endsWith(".timer")) return unit.state === "active";
+      return !unit.name.endsWith(".service");
+    });
+}
+
 function satisfied(state: WantedState, units: UnitState[]): boolean {
   // A piece the household asked to be down is never MISSING, whether the
   // manager carries a unit for it or carries none: missing means the registry
@@ -119,7 +145,7 @@ function satisfied(state: WantedState, units: UnitState[]): boolean {
   if (state === "stopped") return true;
   if (units.length === 0) return false;
   if (state === "running") return units.some((unit) => unit.running === true);
-  if (state === "scheduled") return units.some((unit) => unit.loaded === true);
+  if (state === "scheduled") return armed(units);
   return units.some((unit) => unit.loaded === true);
 }
 
@@ -187,6 +213,28 @@ export function startCommand(flavour: string, entryId: string): string {
     return `launchctl kickstart gui/${uid}/${unitName(entryId)}`;
   }
   return `systemctl --user start ${unitName(entryId)}.service`;
+}
+
+/**
+ * The command a human pastes to ARM a scheduled entry's cadence the manager
+ * does not have armed, or, on launchd, to LOAD any declared job the domain does
+ * not carry.
+ *
+ * It is not `startCommand`: on systemd that starts the SERVICE this instant and
+ * leaves the timer as stopped as it was, and on launchd `kickstart` cannot load
+ * a job that was booted out. It restores the declared state and does not
+ * dispatch the service, though that state may itself run the program: a resident
+ * plist with `RunAtLoad` comes up, and an overdue or persistent cadence may
+ * catch up. The launchd one names the default agents directory, which is where
+ * the hub writes when it is not pointed elsewhere. The whole string is the
+ * contract, and nothing here or anywhere else runs it (L13).
+ */
+export function armCommand(flavour: string, entryId: string): string {
+  if (flavour === "launchd") {
+    const uid = process.getuid?.() ?? -1;
+    return `launchctl bootstrap gui/${uid} "$HOME/Library/LaunchAgents/${unitName(entryId)}.plist"`;
+  }
+  return `systemctl --user enable --now ${timerName(entryId)}`;
 }
 
 /**

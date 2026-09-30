@@ -5,7 +5,7 @@ import type { RunEntry } from "../registry/load.ts";
 import { runnerLimitsOf } from "../registry/entries.ts";
 import { dailyAt, scheduleSeconds, wantedState } from "./diff.ts";
 import { SCAN_PREFIX, isOurs, timerName, unitName } from "./names.ts";
-import { unitPath, type MemoryReading, type OsSeam, type RenderContext, type UnitFile, type UnitState } from "./types.ts";
+import { unitPath, type MemoryReading, type OsSeam, type RenderContext, type UnitFile, type UnitState, type WantedState } from "./types.ts";
 import { STARTED_WITH } from "../store/connect.ts";
 
 /**
@@ -345,8 +345,42 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
       await ask(["--user", "reset-failed", timer(entryId), service(entryId)]);
     },
 
+    async load(entryId: string, wanted: WantedState): Promise<boolean> {
+      // Only a cadence needs arming. A resident is `start`'s, and an on-demand
+      // service is loaded by being read, so there is nothing here to load for
+      // either and saying so is not a success at anything.
+      if (wanted !== "scheduled") return false;
+      const name = timer(entryId);
+      const file = join(unitDir, name);
+      let text: string;
+      try {
+        text = readFileSync(file, "utf8");
+      } catch (error) {
+        throw new Error(`load: ${entryId}: cannot read ${file}: ${(error as Error).message}`);
+      }
+      // A timer rendered without [Install] is one the file stopped, and arming
+      // it would start the piece the household asked to have down.
+      if (!pinned(text)) throw new Error(`load: ${entryId}: ${name} carries no [Install] section, so it is not a schedule the registry wants armed`);
+      const isArmed = async () => {
+        const said = (await show([name])).get(name);
+        return said?.loaded === true && said.state === "active";
+      };
+      if (await isArmed()) return false;
+      // `--now` starts the TIMER and only the timer: nothing here asks for the
+      // service to start or restart, and one already running is left alone. Arming
+      // restores the declared cadence, so an interval timer whose last run is
+      // overdue, or a `Persistent=` calendar timer that missed an elapse, may run
+      // the service once, promptly, as its own catch-up.
+      // `enable` is repeated on purpose: it is what re-pins a timer that was
+      // disabled, and it does nothing to one that is already enabled.
+      await perform(["--user", "enable", "--now", name]);
+      if (!(await isArmed())) throw new Error(`load: ${entryId}: enable --now ${name} succeeded and the timer is still not active`);
+      return true;
+    },
+
     async start(entryId: string): Promise<void> {
-      // The program runs NOW. Enabling a cadence is install's job.
+      // The service is started explicitly, NOW. Arming a cadence is install's
+      // job at install and `load`'s afterwards.
       await perform(["--user", "start", service(entryId)]);
     },
 
@@ -401,12 +435,19 @@ export function systemd(options: { unitDir?: string; bin?: string } = {}): OsSea
 
     async show(entryId: string): Promise<UnitState | null> {
       const name = service(entryId);
-      const found = (await show([name])).get(name);
-      if (found && found.loaded) return found;
+      // The timer is asked about in the same call when its file exists, because
+      // whether the service will ever run again is the timer's to say.
+      const cadence = timer(entryId);
+      const hasTimer = existsSync(join(unitDir, cadence));
+      const read = await show(hasTimer ? [name, cadence] : [name]);
+      const found = read.get(name);
+      const carried = hasTimer ? (read.get(cadence) ?? null) : null;
+      const withTimer = (unit: UnitState): UnitState => (carried ? { ...unit, timer: carried } : unit);
+      if (found && found.loaded) return withTimer(found);
       // A file this hub wrote that the manager has not loaded is still a unit
       // that exists, and saying so is what tells a stopped one from a removed
       // one. A file that is gone as well is nothing at all.
-      if (existsSync(join(unitDir, name))) return found ?? unreadUnit(name);
+      if (existsSync(join(unitDir, name))) return withTimer(found ?? unreadUnit(name));
       return null;
     },
 

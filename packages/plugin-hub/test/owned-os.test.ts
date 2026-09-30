@@ -67,6 +67,8 @@ for (const flavour of ["launchd", "systemd"] as const) {
         for (const verb of ["start", "stop", "restart", "remove", "show"] as const) {
           await expect(f.os[verb](id)).rejects.toThrow("fixture refused foreign unit");
         }
+        // Loading a unit is as much the manager's business as starting one.
+        await expect(f.os.load!(id, "scheduled")).rejects.toThrow("fixture refused foreign unit");
         expect(() => f.os.render({ id } as RunEntry, {} as RenderContext)).toThrow("fixture refused foreign unit");
       }
       // Validate the whole batch before any owned prefix of it can be installed.

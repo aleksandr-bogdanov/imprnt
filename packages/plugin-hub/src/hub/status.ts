@@ -1,6 +1,6 @@
 import { loadRegistry } from "../registry/load.ts";
 import { runEntriesFor } from "../registry/entries.ts";
-import { wantedState } from "../os/diff.ts";
+import { armed, wantedState } from "../os/diff.ts";
 import { thisOs } from "../os/index.ts";
 import type { OsSeam } from "../os/types.ts";
 
@@ -13,7 +13,7 @@ export async function readStatus(options: { registryFile: string; machine: strin
     // `missing` is the word a finding uses, and a piece the household asked to
     // be down is not missing.
     const seen = !state ? (wanted === "stopped" ? "stopped" : "missing")
-      : state.running ? "running" : state.loaded && wanted === "scheduled" ? "scheduled" : "stopped";
+      : state.running ? "running" : armed([state]) && wanted === "scheduled" ? "scheduled" : "stopped";
     return { id: entry.id, wanted, seen, pid: state?.pid ?? null };
   }));
 }
