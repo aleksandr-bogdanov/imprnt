@@ -23,7 +23,7 @@ import { observe } from "./helpers/rollout-runner.ts"
 import { lineDiff } from "./helpers/registry-fixture.ts"
 import { runHub } from "../src/hub/run.ts"
 import { runRunner } from "../src/runner/run.ts"
-import { appendChatLine, readTail } from "../src/chatlog.ts"
+import { BACKGROUND_CLOSE, appendChatLine, readTail } from "../src/chatlog.ts"
 
 let cluster: Cluster
 beforeAll(async () => { cluster = await startCluster() })
@@ -212,7 +212,12 @@ test("D-220 a door whose entry names no preset refuses an adopt and leaves the f
 }, 120_000)
 
 test("D-220 a repair after a deleted channel keeps the id, the history, the watermark and the pending work", async () => {
-  const it = await rolloutStage(cluster, "discord", household())
+  // The first real feed carries the chat history before the input, and that history may quote the
+  // owed notice. So the loop answers with a fixed line and never echoes what it was fed: a post on
+  // the new chat that names the old notice can then only be the notice itself being delivered.
+  const reply = "scripted answer after the repair"
+  const oldNotice = "an answer owed on the old channel"
+  const it = await rolloutStage(cluster, "discord", { ...household(), adapter: { answer: () => reply } })
   const platform = await servePlatform({ ...it.fake, platform: it.edge.platform })
   const children: ReadyProcess[] = []
   let hub: Awaited<ReturnType<typeof runHub>> | undefined
@@ -240,7 +245,7 @@ test("D-220 a repair after a deleted channel keeps the id, the history, the wate
     // An answer owed on the channel that has just been deleted, pinned to that
     // route the way the trigger pins every route before delivery.
     await store.sql`insert into outbox (kind, inbound_id, seq_in_reply, body, person, agent, notice_key, route)
-      values ('notice', null, 1, 'an answer owed on the old channel', 'p1', 'p1-lair', 'planted-owed',
+      values ('notice', null, 1, ${oldNotice}, 'p1', 'p1-lair', 'planted-owed',
               ${{ door: "door-fake", chat: LAIR }}::jsonb)`
     // Something was said in the new chat before it was bound, and it is history.
     it.edge.batch([{ ...message("25", "said before the binding"), chat: AGAIN }], "26")
@@ -268,15 +273,22 @@ test("D-220 a repair after a deleted channel keeps the id, the history, the wate
     expect(await observe(async () => (await it.read.sheet("door_cursor")).some(row => row.id === `door-fake/${AGAIN}`), 10000),
       "the door activates the new chat").toBe(true)
     runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: it.scripted.adapter } })
-    expect(await observe(() => it.edge.posts().some(post => post.chat === AGAIN && post.text.includes("answer me after the repair")), 20000),
+    expect(await observe(() => it.edge.posts().some(post => post.chat === AGAIN && post.text === reply), 20000),
       "work owed before the repair is answered on the new chat").toBe(true)
+    expect(it.edge.posts().filter(post => post.chat === AGAIN && post.text === reply), "answered once").toHaveLength(1)
+    // What the engine was really handed: the pending input, untouched and last, after the
+    // surviving history.
+    const fed = it.scripted.fed().filter(one => one.text.includes("answer me after the repair"))
+    expect(fed, "the pending input is fed exactly once").toHaveLength(1)
+    expect(fed[0].text.endsWith(`${BACKGROUND_CLOSE}\n\nanswer me after the repair`), "the pending input follows the history, intact").toBe(true)
+    expect(fed[0].text, "the history survived the repair into the feed").toContain("a line from before the repair")
 
     // THE OWED REPLY IS NOT RE-ROUTED. Its route is pinned by the trigger, and
     // the honest state of a reply owed on a deleted channel is the delivery
     // finding, after which the person asks again.
     const owed = (await store.sql`select route, delivery_state from outbox where notice_key = 'planted-owed'`)[0]
     expect(owed.route).toEqual({ door: "door-fake", chat: LAIR })
-    expect(it.edge.posts().some(post => post.chat === AGAIN && post.text.includes("an answer owed on the old channel"))).toBe(false)
+    expect(it.edge.posts().some(post => post.chat === AGAIN && post.text.includes(oldNotice)), "the pinned notice is not delivered on the new chat").toBe(false)
     expect(await observe(async () =>
       (await store.sql`select delivery_state from outbox where notice_key = 'planted-owed'`)[0].delivery_state === "failed", 15000),
       "an answer owed on a deleted channel becomes a delivery finding").toBe(true)
