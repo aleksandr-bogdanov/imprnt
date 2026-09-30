@@ -6,10 +6,10 @@ import type { StoreLike } from "./connect.ts";
  * status line, a preview part and whatever comes after them ask here, and the door
  * (`door/effects.ts`) is the one process that sends. Nothing here talks to a platform.
  *
- * WHICH PATHS USE THIS LEDGER TODAY: none of the shipped ones. Ordinary replies keep
- * their outbox and the progress line keeps its `door_progress` row until a consumer
- * moves onto this deliberately; the frozen previews of `confirmations.ts` are the
- * first, and the only, thing that is built on it in this step.
+ * WHICH PATHS USE THIS LEDGER TODAY: the frozen previews of `confirmations.ts`, and the
+ * status card of an ordinary turn (`door/run.ts`, one key per input). Ordinary replies keep
+ * their outbox. The `door_progress` sheet is no longer the card's identity: it is only the
+ * door's note that a card's last content is still owed, and the reason the card showed.
  */
 export type EffectState = "not_sent" | "in_flight" | "confirmed" | "unknown" | "failed" | "missing";
 

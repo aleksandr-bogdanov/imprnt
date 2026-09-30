@@ -50,6 +50,7 @@ import {
 import { getPreset } from "../registry/presets.ts";
 import { TURN_PROGRESS_SHEET, type ProgressRow } from "../runner/progress.ts";
 import { openStore, type Store } from "../store/connect.ts";
+import { isSettled, readEffect, renderEffect, wantEffect, type EffectRow } from "../store/effects.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { enqueueInbound, inboundId } from "../store/inbound.ts";
 import { markDelivered, readPendingChunks } from "../store/outbox.ts";
@@ -66,14 +67,15 @@ import {
   clockLine,
   councilLate,
   finding,
-  progressLine,
-  progressTotals,
   safeValue,
+  statusCard,
   transcriberBack,
   transcriberDown,
   voiceGaveUp,
   voicePending,
   waitReasonLine,
+  waitReasonText,
+  type CardState,
   type Language,
 } from "./lines.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
@@ -82,20 +84,72 @@ import type { ApprovalHooks } from "./confirm.ts";
 import { startEffects, type EffectsTask } from "./effects-task.ts";
 
 /**
- * The one progress line this door posted for a message, while its turn is open.
+ * What a card remembers of the last clock that ran out on its message: the
+ * state the row was in, when, and the reason the door found from the closed list.
+ */
+interface CardWait {
+  state: string;
+  at: number;
+  kind: string;
+  values: Record<string, string | number>;
+}
+
+/**
+ * The ONE status card this door keeps for a message, while its turn is open.
  *
- * It is shared between `attend`, which posts it and edits it as the work goes,
- * and `post`, which waits for its totals before it puts the reply underneath.
- * That wait is what makes L6's "ending with the totals" an ordering rather than
- * a hope: both tasks are woken by the same settling commit, and without it the
- * reply and the last edit race.
+ * It is a single platform message, and this task never talks to the platform
+ * about it: every content it should read is ASKED for in the message-effect
+ * ledger (`store/effects.ts`), on disk before anything is sent, under one key per
+ * input. The door's effects task (`effects-task.ts`) creates the message, edits
+ * it to the newest content, looks for it after a lost answer and backs off, and
+ * this file has no retry of its own. A clock that runs out, a turn that starts,
+ * and the tool calls that follow all land on it, so a person never reads a second
+ * line about the same message.
+ *
+ * It is shared between `attend`, which asks for its contents as the work goes,
+ * and `post`, which waits a bounded time for the last one to go out before it
+ * puts the reply underneath. That wait is what makes L6's "ending with the
+ * totals" an ordering rather than a hope, and it is bounded so an answer never
+ * waits on a status edit that will not go out.
  */
 interface ProgressLine {
-  platformId: string | null;
+  /** The card's key in the ledger. One per input, so a restart and a replay mean the same message. */
+  key: string;
+  /**
+   * The chat the card is in, and it never changes. It is set when the card is made, or read back
+   * from the tracking row when it is inherited, and it is what the row and every request for this
+   * card carry. The agent's own chat is an ordinary edit and may move while the input is open:
+   * the card stays where it was posted, and the next input follows the new one. Empty only for an
+   * inherited row that names none, which is a card of unknown identity and is left alone.
+   */
+  chat: string;
+  /**
+   * The message id of a card an earlier build posted with no ledger row, or null.
+   * Such a card is never edited, replaced or adopted here: there is no reviewed
+   * way to put a message the ledger did not make into it, and a new card would be
+   * a second message about the same input.
+   */
+  legacy: string | null;
   actions: number;
   lastAction: string;
+  /** When the door began counting this wait, in milliseconds. */
   startedAt: number;
-  /** Resolves once the totals are on the line. */
+  /**
+   * The last moment the LOOP was seen doing anything, from the runner's sheet,
+   * and what that was. Moves only when the runner reports a newer moment.
+   */
+  activityAt: number | null;
+  activity: string;
+  wait: CardWait | null;
+  /** The content last handed to the ledger, marker included, so a card that reads as it did costs nothing. */
+  wanted: string;
+  /** Whether this input's tracking row is on the sheet with the reason the card shows. */
+  tracked: boolean;
+  /** The ledger refused this key for another message's identity; nothing more is asked for it. */
+  blocked: boolean;
+  /** The turn left the open set and its last content is on disk; nothing else changes the card. */
+  closing: boolean;
+  /** Resolves once the last content has gone out, or is known not to be going out soon. */
   totals: Promise<void>;
   finished(): void;
 }
@@ -107,20 +161,24 @@ interface ProgressLine {
  */
 const ACCEPT_FAILED = "accept-failed";
 
-/** How long `post` waits for those totals before it goes ahead anyway. */
+/**
+ * How long `post` waits for those totals before it goes ahead anyway, for ONE reply chunk and
+ * one card. It is not a bound on a door's start or on a whole multi-part answer, and it does not
+ * bound a store statement or a platform call: only the wait for the card's last content is capped.
+ */
 const TOTALS_WAIT_MS = 5000;
 
 /**
- * Which platform message the progress line of an open turn IS.
+ * The door's tracking of the inputs that have a status card: one row per message
+ * id, written before the card's first content is asked for and removed only once
+ * its LAST content is on disk in the ledger.
  *
- * The door's own sheet, one row per message id, written when the line is posted
- * and removed when the totals land on it. Without it the id lived only in the
- * memory of the process that posted it, so a door started again mid-turn found
- * the runner's `turn_progress` row still there, thought a line was owed, and
- * posted a SECOND one: the first was left frozen in the chat at whatever second
- * count it had, never edited to its totals, and the person read two lines about
- * one turn. The clock half of the same restart already worked, because a `clock`
- * ledger row is what a restarted door reads to know it has already spoken.
+ * It is not the card's identity (that is the ledger key, one per input) and it is
+ * not evidence that anything was delivered. It says two things a restarted door
+ * needs: that this input's card is still owed its final content (so a turn that
+ * ended while the door was down is finished, and one that is still open is edited
+ * on), and the reason the card was last showing. A row of an earlier build carries
+ * a `post_id` and no `key`: that is a message the ledger never made.
  */
 const PROGRESS_SHEET = "door_progress";
 
@@ -131,10 +189,16 @@ const PROGRESS_SHEET = "door_progress";
 const PROJECT_CHANNEL = "hub_project";
 
 interface ProgressOnDisk {
-  post_id: string;
+  /** The card's ledger key. Absent on a row an earlier build wrote. */
+  key?: string;
+  /** Only on a row an earlier build wrote: the message it posted by hand. */
+  post_id?: string;
   chat: string;
   agent: string;
+  /** When the door began counting this wait. */
   started_at: string;
+  /** Optional: the reason a restarted door keeps showing until the row moves. */
+  wait?: CardWait;
 }
 
 /**
@@ -226,8 +290,15 @@ interface Served {
   /** Resolves once `post` has made its first pass over the replies waiting. */
   posting: Promise<void>;
   posted(): void;
-  /** The progress line of each open turn, by message id. */
+  /** The status card of each open turn, by message id. */
   progress: Map<string, ProgressLine>;
+  /**
+   * The reply sender met a hold notice for this agent: an attempt was cut short and
+   * its input is now held. Set by `post`, which the settling commit already woke,
+   * and read by `attend` on its next turn round, so a card that says "in progress"
+   * moves to "held" at that commit and not at some later read. Memory only.
+   */
+  holdSeen: boolean;
   /** Rows this door wrote down itself, handed to `attend` with no read. */
   arrivals: OpenTurnRow[];
   arrived: Nudge;
@@ -702,9 +773,20 @@ export async function runDoor(options: {
 
   const post = async (agent: ChatAgent, own: Served): Promise<void> => {
     let retryAt: number | null = null;
+    /** The hold notices whose arrival `attend` was already told of, by outbox row. */
+    const heldTold = new Set<string>();
     const deliver = async (): Promise<void> => {
       retryAt = null;
       const pending = await readPendingChunks(store, { agent: agent.id });
+      // A hold is committed together with its notice, and this pass is woken by that
+      // commit, so seeing the notice is the moment the store began to say "held". It is
+      // the one wake an interrupted attempt has, and it costs `attend` one read, once.
+      for (const chunk of pending) {
+        if (chunk.kind !== "notice" || !String(chunk.notice_key ?? "").startsWith("hold:") || heldTold.has(String(chunk.id))) continue;
+        heldTold.add(String(chunk.id));
+        own.holdSeen = true;
+        own.arrived.wake();
+      }
       const blocked = new Set<string>();
       const posted = new Set<string>();
       for (const chunk of pending) {
@@ -732,7 +814,15 @@ export async function runDoor(options: {
         }
         if (chunk.kind === "reply" && chunk.inbound_id !== null) {
           const line = own.progress.get(chunk.inbound_id);
-          if (line) await Promise.race([line.totals, Bun.sleep(TOTALS_WAIT_MS)]);
+          // With no effects task yet (the first pass of a start runs before it does) nothing could
+          // deliver the card's last content, so waiting would only spend the allowance. The allowance
+          // is a bound on this one wait, for this one chunk: not on the start, and not on a whole answer.
+          if (line && effects !== null) {
+            await Promise.race([line.totals, Bun.sleep(TOTALS_WAIT_MS)]);
+            // A stop or a person change ends the wait too, by resolving the totals: that is no
+            // evidence anything went out, and the reply now belongs to whoever serves next.
+            if (stopping || own.leaving) return;
+          }
         }
         const fresh = registryThisTick();
         const seconds = Number(readSetting(fresh, "door.delivery_retry_seconds"));
@@ -992,12 +1082,195 @@ export async function runDoor(options: {
       return new Date(row.media_done_at).getTime();
     };
 
-    /** The clock line: the chat log first, then the diary, then the chat. */
+    /**
+     * When the wait on this row is counted from, for the card. The same base the
+     * clocks use, and for a report the moment it landed rather than the job's
+     * own arrival, which is what the person is waiting from.
+     */
+    const sinceOf = (row: OpenTurnRow): number => {
+      const received = new Date(row.received_at).getTime();
+      if (row.media_state === "pending") return received;
+      const from = row.reported_at ?? row.media_done_at ?? null;
+      return from === null ? received : new Date(from).getTime();
+    };
+
+    /** What the card says a row is doing, from the row as the store last showed it. */
+    const stateOf = (row: OpenTurnRow): CardState => {
+      // A hold is the owner's to decide, whatever the claim column says. Once
+      // the continuation has been claimed again it is running like any turn.
+      if (row.claimed_by === null && row.hold_cause) {
+        return row.hold_state === "continue_pending" || row.hold_state === "continuing" ? "continuing" : "held";
+      }
+      if (row.state === "received") return "queued";
+      if (row.claimed_by === null) return "idle";
+      return row.state === "started" ? "working" : "accepted";
+    };
+
+    /**
+     * A card's text at `now`. `row` is null for the last content, after the turn
+     * left, and `now` is then the moment the turn ended when that is known.
+     */
+    const cardOf = (row: OpenTurnRow | null, line: ProgressLine, state: CardState, now = Date.now()): string => {
+      // A reason belongs to the state the row was in when the clock found it,
+      // and to the time before the loop was next seen doing anything.
+      const wait = row !== null && line.wait !== null && line.wait.state === row.state &&
+        (line.activityAt === null || line.activityAt <= line.wait.at) ? line.wait : null;
+      return statusCard(language, {
+        state,
+        elapsed: Math.max(0, Math.round((now - line.startedAt) / 1000)),
+        quiet: line.activityAt === null ? null : Math.max(0, Math.round((now - line.activityAt) / 1000)),
+        actions: line.actions,
+        tool: line.lastAction,
+        event: line.activity,
+        // "accepted, nothing recorded" is what the state and the age already say.
+        why: wait === null || wait.kind === "working" ? null : waitReasonText(language, wait.kind, wait.values),
+        hold: row?.hold_cause ?? null,
+        spoilers: options.platform.spoilers === true,
+      });
+    };
+
+    /** Takes what the runner's sheet says the loop was seen doing. Only ever forward. */
+    const absorb = (line: ProgressLine, said: ProgressRow): void => {
+      line.actions = Math.max(line.actions, Number(said.actions ?? 0));
+      if (String(said.last_action ?? "") !== "") line.lastAction = String(said.last_action);
+      const at = Date.parse(String(said.activity_at ?? ""));
+      if (!Number.isNaN(at) && (line.activityAt === null || at > line.activityAt)) {
+        line.activityAt = at;
+        line.activity = String(said.activity ?? "");
+      }
+    };
+
+    /** The ledger key of an input's card: door and message, so nothing else can mean this message. */
+    const cardKey = (id: string): string => `turn-card:${options.door}:${id}`;
+
+    const newLine = (id: string, base: number, chat: string, seed: { said?: ProgressRow; wait?: CardWait | null; legacy?: string | null } = {}): ProgressLine => {
+      let finished: () => void = () => {};
+      const totals = new Promise<void>((resolve) => {
+        finished = () => resolve();
+      });
+      const line: ProgressLine = {
+        key: cardKey(id),
+        chat,
+        legacy: seed.legacy ?? null,
+        actions: 0,
+        lastAction: "",
+        startedAt: Number.isNaN(base) ? Date.now() : base,
+        activityAt: null,
+        activity: "",
+        wait: seed.wait ?? null,
+        wanted: "",
+        tracked: false,
+        blocked: false,
+        closing: false,
+        totals,
+        finished,
+      };
+      if (seed.said) absorb(line, seed.said);
+      return line;
+    };
+
+    /**
+     * The tracking row, written BEFORE the first content is asked for, so a message
+     * that has a card in the ledger always has a row saying its final content is
+     * still owed. It is rewritten when the reason the card shows moves.
+     */
+    const track = async (id: string, line: ProgressLine): Promise<boolean> => {
+      try {
+        await putRow(store, PROGRESS_SHEET, id, {
+          key: line.key,
+          chat: line.chat,
+          agent: agent.id,
+          started_at: new Date(line.startedAt).toISOString(),
+          ...(line.wait === null ? {} : { wait: line.wait }),
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    /**
+     * Asks the ledger for `text` as the card's content, and says whether it is on
+     * disk. THAT IS ALL THIS DOOR DOES ABOUT A CARD: the effects task creates the
+     * message, edits it, looks for it after a lost answer and waits out a limit. A
+     * failed create is not repeated from here, because a 503 or a timeout does not
+     * prove the message was never made, and an edit whose outcome is unknown holds
+     * every newer one back in the ledger, this one included. Nothing is asked twice
+     * for the same content, and a content the ledger already holds costs nothing.
+     */
+    const ask = async (id: string, line: ProgressLine, text: string): Promise<boolean> => {
+      if (line.legacy !== null || line.blocked) return false;
+      let content: string;
+      try {
+        content = renderEffect(line.key, text, options.platform.name).content;
+      } catch {
+        // Too long for the platform, which a card never is; nothing is cut and nothing is asked.
+        return false;
+      }
+      if (content === line.wanted && line.tracked) return true;
+      if (!line.tracked) {
+        line.tracked = await track(id, line);
+        if (!line.tracked) return false;
+      }
+      if (content === line.wanted) return true;
+      try {
+        await wantEffect(store, { key: line.key, door: options.door, chat: line.chat, owner: `turn:${id}`, text, platform: options.platform.name });
+      } catch (error) {
+        // The key already belongs to a message of another chat or owner. It is another message,
+        // and is not merged: this input simply has no card from here on.
+        if (String((error as Error)?.message ?? error).includes("effect-identity-conflict")) line.blocked = true;
+        return false;
+      }
+      line.wanted = content;
+      // The commit announces itself to the effects task on the listener, and that is the only wake a
+      // card needs. With no listener the announcement is lost, so the task is told in memory instead:
+      // never both, because a second pass for one row is two statements nobody owes.
+      if (projection === null) effects?.wake();
+      return true;
+    };
+
+    /** What the card should read now, asked for. Nothing here waits on the platform. */
+    const paint = async (row: OpenTurnRow, line: ProgressLine, state: CardState): Promise<void> => {
+      if (line.closing) return;
+      await ask(row.id, line, cardOf(row, line, state));
+    };
+
+    /** A clock ran out: its reason goes onto the card, which is made if there is none yet. */
+    const carryWait = async (row: OpenTurnRow, wait: CardWait): Promise<void> => {
+      let line = own.progress.get(row.id);
+      const made = line === undefined;
+      if (line === undefined) {
+        line = newLine(row.id, sinceOf(row), agent.chat, { said: sheet.get(row.id), wait });
+        own.progress.set(row.id, line);
+      }
+      if (line.legacy !== null || line.closing) return;
+      const moved = made || line.wait === null || line.wait.kind !== wait.kind || line.wait.state !== wait.state ||
+        JSON.stringify(line.wait.values) !== JSON.stringify(wait.values);
+      line.wait = wait;
+      // The row carries the reason, so a moved reason is written again before the content.
+      if (moved) line.tracked = false;
+      await paint(row, line, stateOf(row));
+    };
+
+    /**
+     * The clock's record: the chat log first, then the diary, then the chat.
+     *
+     * The chat LINE a clock used to post is now the card. What the chat log and
+     * the diary hold is unchanged, so the expiry's evidence is exactly what it was.
+     * A note still waiting for its words keeps its own line: it is the door's own
+     * work and no card exists for it yet.
+     */
     const sayExpired = async (row: OpenTurnRow, stamp: string, sidecar: WaitSidecar): Promise<void> => {
       const key = `${row.id}/${stamp}`;
       if (spoken.has(key)) {
-        // The silent re-arm: the read happened, and that is the whole of it.
+        // The silent re-arm: the read happened, and that is the whole of the
+        // record. It carried fresh facts, so a card that exists is brought up to
+        // date on them, with no chat line of any kind.
         spokenAt.set(key, Date.now());
+        if (stamp !== "transcribed" && own.progress.has(row.id)) {
+          const verdict = waitReason(waitFacts(sidecar, { registry: registryThisTick(), agent, row, stamp, open }));
+          await carryWait(row, { state: row.state, at: Date.now(), kind: verdict.kind, values: verdict.values });
+        }
         return;
       }
       const seconds = Math.max(
@@ -1058,8 +1331,8 @@ export async function runDoor(options: {
         ...(why === null ? {} : { why }),
       });
       try {
-        await options.platform.post({ chat: agent.chat, text });
-        if (reason !== null) await options.platform.post({ chat: agent.chat, text: reason });
+        if (why === null) await options.platform.post({ chat: agent.chat, text });
+        else await carryWait(row, { state: row.state, at: Date.now(), kind: why.kind, values: why.values });
       } catch {
         // The platform refused the line. The row is in the diary either way,
         // and `check`'s stamp finding is the half a household still sees.
@@ -1136,106 +1409,147 @@ export async function runDoor(options: {
       return (Number.isNaN(startedAt) ? Date.now() : startedAt) + timeoutMs;
     };
 
-    /** The progress line: one message, posted once and edited as it goes. */
+    /**
+     * The status card: one message per input, asked for once and edited as it goes.
+     * It is made here for a turn that has outlived one tick, and by `carryWait`
+     * for a clock that ran out first; a turn that answers at once has neither.
+     */
     const carryProgress = async (byId: Map<string, ProgressRow>): Promise<void> => {
       for (const row of open) {
-        if (row.state !== "started") continue;
         const said = byId.get(row.id);
-        if (!said) continue;
-        const startedAt = Date.parse(String(said.started_at));
-        const seconds = Math.max(
-          0,
-          Math.round((Date.now() - (Number.isNaN(startedAt) ? Date.now() : startedAt)) / 1000),
-        );
         let line = own.progress.get(row.id);
         if (!line) {
+          if (row.state !== "started" || !said) continue;
           const due = lineDueAt(row);
           if (due === null || due > Date.now()) continue;
-          let finished: () => void = () => {};
-          const totals = new Promise<void>((resolve) => {
-            finished = () => resolve();
-          });
-          line = {
-            platformId: null,
-            // The counts a person watches only ever go up, whatever order two
-            // reads of one sheet come back in.
-            actions: Number(said.actions ?? 0),
-            lastAction: String(said.last_action ?? ""),
-            startedAt: Number.isNaN(startedAt) ? Date.now() : startedAt,
-            totals,
-            finished,
-          };
+          line = newLine(row.id, sinceOf(row), agent.chat, { said });
           own.progress.set(row.id, line);
-          try {
-            const made = await options.platform.post({
-              chat: agent.chat,
-              text: progressLine(language, {
-                lastAction: line.lastAction,
-                actions: line.actions,
-                seconds,
-              }),
-            });
-            line.platformId = made.id;
-            // Written down before anything else can happen to this door, so a
-            // door started again mid-turn edits this message rather than
-            // posting a second one beside it.
-            if (made.id !== null) {
-              await putRow(store, PROGRESS_SHEET, row.id, {
-                post_id: made.id,
-                chat: agent.chat,
-                agent: agent.id,
-                started_at: new Date(line.startedAt).toISOString(),
-              });
-            }
-          } catch {
-            // Nothing else waits on the line, and the reply still goes.
-          }
-          continue;
+        } else if (said) {
+          // The counts a person watches only ever go up, and so does the moment
+          // the loop was last seen, whatever order two reads of one sheet come back in.
+          absorb(line, said);
         }
-        line.actions = Math.max(line.actions, Number(said.actions ?? 0));
-        if (String(said.last_action ?? "") !== "") line.lastAction = String(said.last_action);
-        if (line.platformId === null) continue;
-        try {
-          await options.platform.edit({
-            chat: agent.chat,
-            id: line.platformId,
-            text: progressLine(language, {
-              lastAction: line.lastAction,
-              actions: line.actions,
-              seconds,
-            }),
-          });
-        } catch {
-          // An edit the platform refused. The totals edit is the one that has
-          // to land, and it is tried on its own.
-        }
+        await paint(row, line, stateOf(row));
       }
     };
 
-    /** The last edit of all: L6's "ending with the totals". */
-    const finishProgress = async (): Promise<void> => {
-      const still = new Set(open.map((row) => row.id));
-      for (const [id, line] of [...own.progress.entries()]) {
-        if (still.has(id)) continue;
-        own.progress.delete(id);
-        const seconds = Math.max(0, Math.round((Date.now() - line.startedAt) / 1000));
-        if (line.platformId !== null) {
-          try {
-            await options.platform.edit({
-              chat: agent.chat,
-              id: line.platformId,
-              text: progressTotals(language, { actions: line.actions, seconds }),
-            });
-          } catch {
-            // Said as loudly as the platform allows, and the reply follows.
-          }
-        }
-        // The turn is over, so the row is gone: a thing that is gone leaves no
-        // line behind (L17), and the next door has nothing stale to inherit.
-        await removeRow(store, PROGRESS_SHEET, id).catch(() => {});
-        line.finished();
-      }
+    /**
+     * Whether the ledger still has a request for this card that is on its way. A
+     * card that is settled, or whose newest content cannot go out for a reason the
+     * ledger has recorded (a refusal, a message that is gone, an outcome unknown), is
+     * not: waiting for it would be waiting for nothing.
+     */
+    const goingOut = (row: EffectRow): boolean => {
+      if (isSettled(row)) return false;
+      if (row.state === "failed" || row.state === "missing" || row.state === "unknown") return false;
+      if (row.edit_state === "unknown") return false;
+      return !(row.failure?.permanent === true && Number(row.failure.revision ?? 0) >= row.wanted_revision);
     };
+
+    /** The waits still running after a card's last content was asked for, so a stopping door ends them. */
+    const settling = new Set<Promise<void>>();
+
+    /**
+     * Resolves `line.totals`, which the reply waits on, once the card's last content has gone
+     * out or is known not to be going out soon. BOUNDED by the reply's own allowance and by
+     * the door stopping, and it asks the ledger a few times with growing gaps: the card is
+     * the effects task's to deliver, and an answer is never held for a status edit.
+     */
+    const settleTotals = (id: string, line: ProgressLine): void => {
+      const run = (async () => {
+        const began = Date.now();
+        try {
+          for (let gap = 150; Date.now() - began < TOTALS_WAIT_MS && !stopping && !own.leaving; gap = Math.min(gap * 2, 1600)) {
+            const seen = await readEffect(store, line.key);
+            if (seen === null || !goingOut(seen)) break;
+            await Promise.race([Bun.sleep(gap), stopped, own.left]);
+          }
+        } catch {
+          // A store that will not answer is no reason to hold an answer back.
+        } finally {
+          own.progress.delete(id);
+          line.finished();
+        }
+      })();
+      settling.add(run);
+      void run.finally(() => settling.delete(run));
+    };
+
+    /** The card ends where it stands: nothing is left to ask for, and the row that promised a last content goes. */
+    const dropLine = async (id: string, line: ProgressLine, keepRow = false): Promise<void> => {
+      if (!keepRow) await removeRow(store, PROGRESS_SHEET, id).catch(() => {});
+      own.progress.delete(id);
+      line.finished();
+    };
+
+    /**
+     * The last content of all: L6's "ending with the totals". Says whether any card still
+     * owes it, because a read or a write of the store failed and it is asked again.
+     *
+     * A row leaving the open set is not, by itself, proof that an answer exists, so the
+     * row is asked what became of it. Only an answered or delivered stamp says `finished`,
+     * and even that says the answer is recorded and never that it has reached the chat.
+     * Anything else is `ended`, which claims nothing.
+     *
+     * THE LAST CONTENT IS ASKED FOR FIRST, and only then does the tracking row go. What the
+     * card finally reads is on disk in the ledger whether or not the platform takes the edit,
+     * so a refused, rate-limited or unknown edit leaves that intent standing, and neither the
+     * turn having ended nor the row being gone is taken for the edit having landed.
+     */
+    const finishProgress = async (): Promise<boolean> => {
+      const still = new Set(open.map((row) => row.id));
+      let owed = false;
+      for (const [id, line] of [...own.progress.entries()]) {
+        if (still.has(id) || line.closing) continue;
+        // A card the ledger did not make is left as it is, and so is its row: it is the
+        // only record of that message an adoption would ever have.
+        if (line.legacy !== null) { await dropLine(id, line, true); continue; }
+        // The key is another message's, or the row names no chat: no card to finish.
+        if (line.blocked) { await dropLine(id, line); continue; }
+        // AN EMPTY `wanted` IS WHAT THIS DOOR HEARD, NOT WHAT THE LEDGER HOLDS. A request commits
+        // in one statement and is read back in another, so an answer lost between them leaves the
+        // ledger with a card (and the effects task creating it) while this line still says nothing
+        // was asked. The ledger is asked: a failed read leaves the row and the work owed, an absence
+        // is a card that was never made, and an existing row goes on through the request below,
+        // which the ledger checks against this card's own identity like every other one.
+        if (line.wanted === "") {
+          let held: EffectRow | null;
+          try {
+            held = await readEffect(store, line.key);
+          } catch {
+            owed = true;
+            continue;
+          }
+          if (held === null) { await dropLine(id, line); continue; }
+          line.wanted = held.wanted_content;
+        }
+        let state: CardState = "ended";
+        let at = Date.now();
+        try {
+          const [now] = (await store.sql`select i.state,
+              (select max(e.at) from ledger_event e where e.stream = 'inbound' and e.subject = i.id and e.kind = 'answered') as answered_at
+            from inbound i where i.id = ${id}`) as unknown as { state: string; answered_at: Date | string | null }[];
+          if (now !== undefined && (now.state === "answered" || now.state === "delivered")) {
+            state = "finished";
+            // A turn that ended while no door watched took as long as it took, not until now.
+            if (now.answered_at) at = Math.min(at, new Date(now.answered_at).getTime());
+          }
+        } catch {
+          // What became of it cannot be read, so nothing is claimed and it is asked again.
+          owed = true;
+          continue;
+        }
+        if (!(await ask(id, line, cardOf(null, line, state, at)))) { owed = true; continue; }
+        line.closing = true;
+        await removeRow(store, PROGRESS_SHEET, id).catch(() => {});
+        // The line stays in the map until its last content has gone out or is known not to,
+        // so a reply that is ready to post finds it and waits, for a bounded time, for it.
+        settleTotals(id, line);
+      }
+      return owed;
+    };
+    /** Whether a card still owes its last content, so the timeout branch asks again. */
+    let finishOwed = false;
 
     // The people other than this agent's own whose turns it still holds. A turn
     // is announced under the person of the message it belongs to, and a message
@@ -1277,33 +1591,56 @@ export async function runDoor(options: {
         // another's on the Pi, which aborted a pooled connection and stopped
         // every delivery behind it. `check` reports such a council overdue.
         councils = [];
-        // The progress lines a door before this one posted. One that belongs to
-        // a turn still open is INHERITED, and one whose turn has ended is swept:
-        // the door that posted it died before it could edit its totals, so
-        // nobody will, and the row would otherwise stand for ever.
+        // The cards a door before this one kept for its inputs, whichever way each
+        // input has gone since. Every row becomes a line here: one whose turn is
+        // still open is EDITED ON, with what the ledger already holds for it
+        // as the content it last asked for; one whose turn ended while no door
+        // was watching (it was answered, or it is gone) is finished by the first
+        // pass of the loop below, which asks for its last content BEFORE the row
+        // goes. Sweeping such a row here, as an earlier build did, left its card
+        // saying "in progress" for good.
+        //
+        // A row of an earlier build has a `post_id` and no `key`: it names a message
+        // the ledger never made. It is inherited only so that no second card is made
+        // for its input, and is never edited, replaced or swept (see `finishProgress`).
+        let legacyCards = 0;
         for (const row of (await readSheet(store, PROGRESS_SHEET)) as unknown as {
           id: string;
           data: ProgressOnDisk;
         }[]) {
           if (String(row.data.agent) !== agent.id) continue;
-          const still = open.find((one) => one.id === row.id);
-          if (!still) {
-            await removeRow(store, PROGRESS_SHEET, row.id).catch(() => {});
-            continue;
+          const legacy = row.data.key === undefined && row.data.post_id !== undefined && String(row.data.post_id) !== "";
+          // The card stays in the chat the row names, whatever chat the agent has now. A row that
+          // names none is never given the current one: it is a card of unknown identity.
+          const chat = typeof row.data.chat === "string" ? row.data.chat : "";
+          const line = newLine(row.id, Date.parse(String(row.data.started_at)), chat, {
+            wait: row.data.wait ?? null,
+            ...(legacy ? { legacy: String(row.data.post_id) } : {}),
+          });
+          if (legacy) legacyCards += 1;
+          else {
+            line.tracked = true;
+            const held = await readEffect(store, line.key);
+            line.wanted = held?.wanted_content ?? "";
+            // A ledger row in another chat than the tracking row names is not this card, and asking
+            // for it would be refused by the ledger anyway: nothing more is asked for this input.
+            if (chat === "" || (held !== null && held.chat !== chat)) line.blocked = true;
           }
-          let finished: () => void = () => {};
-          const totals = new Promise<void>((resolve) => {
-            finished = () => resolve();
-          });
-          const startedAt = Date.parse(String(row.data.started_at));
-          own.progress.set(row.id, {
-            platformId: String(row.data.post_id),
-            actions: 0,
-            lastAction: "",
-            startedAt: Number.isNaN(startedAt) ? Date.now() : startedAt,
-            totals,
-            finished,
-          });
+          own.progress.set(row.id, line);
+        }
+        if (legacyCards > 0) {
+          process.stderr.write(finding("en", { code: "door:legacy-card", target: agent.id,
+            cause: `${legacyCards} status card(s) posted by an earlier build are left as they are` }) + "\n");
+        }
+        // What the runner's sheet says the loop was last seen doing is read once
+        // more, and only when there is a card to bring up to date, so a door with
+        // nothing inherited issues no statement here that it did not before.
+        if (own.progress.size > 0) {
+          for (const row of (await readSheet(store, TURN_PROGRESS_SHEET)) as unknown as { id: string; data: ProgressRow }[]) {
+            sheet.set(row.id, row.data);
+            const line = own.progress.get(row.id);
+            if (line) absorb(line, row.data);
+          }
         }
       });
       connectGate = turn.catch(() => {});
@@ -1313,8 +1650,24 @@ export async function runDoor(options: {
         own.attended();
       }
       retune();
+      // A card inherited from a door before this one is brought to what the store says of
+      // its input NOW (held, answered, still running), and a turn that ended while no door
+      // watched is finished, before anything else is waited for. Both are a write per card
+      // that needs one and nothing when none does.
+      await carryProgress(sheet);
+      finishOwed = await finishProgress();
 
       while (!stopping && !own.leaving) {
+        // An attempt was cut short and its input is held: the reply sender met the
+        // notice committed with the hold. One read of the open rows, which carry the
+        // hold, brings the cards to it now instead of at some later read.
+        if (own.holdSeen) {
+          own.holdSeen = false;
+          open = heard(await readOpenTurns(store, { agent: agent.id }));
+          retune();
+          await carryProgress(sheet);
+          finishOwed = await finishProgress();
+        }
         // Rows this door wrote down since the last pass. In memory, so a
         // message that nobody has claimed still has its acked clock armed.
         if (own.councils.length > 0) {
@@ -1367,7 +1720,7 @@ export async function runDoor(options: {
           for (const row of rows) sheet.set(row.id, row.data);
           retune();
           await carryProgress(sheet);
-          await finishProgress();
+          finishOwed = await finishProgress();
           continue;
         }
 
@@ -1376,6 +1729,9 @@ export async function runDoor(options: {
         // act on a deadline this door already holds, and the first of those is
         // the progress line, which costs the store nothing at all.
         await carryProgress(sheet);
+        // A card whose last content could not be asked for is asked again, once a tick
+        // and only while one is owed.
+        if (finishOwed) finishOwed = await finishProgress();
 
         // A clock that is really due is the one recorded deadline a wake is
         // allowed on.
@@ -1394,12 +1750,17 @@ export async function runDoor(options: {
           if (clock.at > Date.now()) continue;
           await sayExpired(clock.row, clock.stamp, read.sidecar);
         }
+        // The rows this read returned are the freshest the door has, so every
+        // card is brought up to them, with no statement of its own.
+        await carryProgress(sheet);
         retune();
       }
     } finally {
       if (typing !== null) clearInterval(typing);
       for (const line of own.progress.values()) line.finished();
       own.progress.clear();
+      // The waits on a last content end with the door: they check `stopping` and `left`.
+      await Promise.allSettled([...settling]);
       await waiter.close();
     }
   };
@@ -1955,6 +2316,7 @@ export async function runDoor(options: {
       posting,
       posted,
       progress: new Map<string, ProgressLine>(),
+      holdSeen: false,
       arrivals: [],
       arrived: nudge(),
       councils: [],

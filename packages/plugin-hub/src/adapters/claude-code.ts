@@ -390,6 +390,14 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
       void shut().catch(() => {});
       return;
     }
+    // A tool the loop ran has reported back. Only the FACT is passed on: the
+    // block's content is a tool's output and never leaves this file.
+    if (event.type === "user" && event.isReplay !== true) {
+      const returned = (event.message as { content?: unknown } | undefined)?.content;
+      if (Array.isArray(returned) && returned.some((block) => (block as { type?: unknown } | null)?.type === "tool_result")) {
+        for (const listener of progress) listener({ kind: "action_result", text: "" });
+      }
+    }
     if (event.type === "user" && event.isReplay === true && pending) {
       const replayed = (event.message as { content?: unknown } | undefined)?.content;
       if (typeof replayed === "string" && replayed !== pending.text) return;

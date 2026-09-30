@@ -326,13 +326,14 @@ grant update (delivered_at) on outbox to hub_door;
 -- for one outage row is an expected race and the primary key is what settles
 -- it, so the runner claims with `claimRow` and never with `appendRow`, whose
 -- refusal path writes as actor `hub` on the caller's own connection.
--- The door keeps the platform message id of the progress line it
--- posted on a sheet of its own (`door_progress`), so a door started again
--- mid-turn EDITS the line it inherits rather than posting a second one beside
--- it. It carries `delete` for that sheet alone: a thing that is gone leaves no
--- line behind (L17), and a door that could only add rows would leave one per
--- turn for ever. `door_cursor` and `door_progress` are the door's own sheets
--- and nothing else writes them.
+-- The door keeps the progress card's immutable chat, its tracking and the final
+-- intent it still owes on a sheet of its own (`door_progress`), so a door started
+-- again mid-turn finishes the card it inherits rather than posting a second one
+-- beside it. Message identity and delivery of an ordinary card live in
+-- `platform_effect`, not here. The door carries `delete` for that sheet alone: a
+-- thing that is gone leaves no line behind (L17), and a door that could only add
+-- rows would leave one per turn for ever. `door_cursor` and `door_progress` are
+-- the door's own sheets and nothing else writes them.
 grant select, insert, update, delete on state_row to hub_door;
 grant select, insert, update, delete on state_row to hub_runner;
 
@@ -1364,9 +1365,10 @@ insert into schema_version (version) values (11);
 -- restarted door needs to look for the original instead of making a second.
 -- `confirmation` is one frozen preview and the one approval it can earn.
 --
--- Additive only: nothing here changes an existing object. Ordinary replies and the
--- progress line still go through `outbox` and `door_progress`; a consumer of this
--- step has to ask for a row here, and nothing yet does on its own.
+-- Additive only: nothing here changes an existing object. Ordinary replies still go
+-- through `outbox`. An ordinary progress card's message identity and delivery are
+-- owned by `platform_effect`; `door_progress` keeps its immutable chat, tracking and
+-- final intent obligation.
 --
 -- No role but the two definer functions below inserts into either table. They are
 -- owned by whoever applies this file, as the tables are, so no role holds an insert

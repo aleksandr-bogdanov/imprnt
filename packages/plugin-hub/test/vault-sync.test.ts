@@ -1,6 +1,6 @@
 // Actual remote commits and one success stamp are required.
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
 import { stageHub } from "./helpers/hub-fixture.ts"
@@ -102,7 +102,7 @@ test("ROLL-07 ROLL-31 required vault and nested repository commits reach local r
 })
 
 import { realpathSync } from "node:fs"
-import { syncFixture, observeGit, commitChange, syncChild, auditSyncWrites } from "./helpers/rollout-sync.ts"
+import { syncFixture, observeGit, commitChange, syncChild, auditSyncWrites, type SyncFixture } from "./helpers/rollout-sync.ts"
 import { withAmbient } from "./helpers/rollout-loop.ts"
 import { recordJobSuccess, staleJobs } from "../src/check/schedule.ts"
 import { superStore } from "./helpers/hub-fixture.ts"
@@ -685,5 +685,186 @@ test("three failed runs in a row reach the person in their resident agent's chat
     git.control({})
     expect((await syncChild(f, git.env)).code).toBe(0)
     expect((await row()).failed_runs).toBeUndefined()
+  } finally { await f.stop() }
+})
+
+// A failed commit step used to record only that it failed. The diagnostic says
+// which git step stopped, how it ended and which known shape its output had,
+// and nothing git printed. The failure itself is unchanged: same code, same
+// cause, still counted, still noticed at the third run, and never retried.
+type Diagnostic = { stage: string; reason: string; exit?: number; signal?: string; errno?: string }
+type RepoRow = { id: string; status: string; code?: string; cause?: string; failed_runs?: number; diagnostic?: Diagnostic }
+const repoRow = async (f: SyncFixture, id: string) =>
+  ((await f.read.sheet("sync")).find(one => one.id === f.id)!.data.repositories as RepoRow[]).find(one => one.id === id)!
+const diaried = async (f: SyncFixture, id: string) => {
+  const entries = await f.read.ledger({ subject: f.id, kind: "sync" })
+  return (entries[entries.length - 1].detail.repositories as RepoRow[]).find(one => one.id === id)!
+}
+const failureCause = async (f: SyncFixture, id: string) => {
+  const rows = await f.read.ledger({ kind: "failed", subject: `${f.id}/${id}` })
+  return String(rows[rows.length - 1].detail.cause)
+}
+const attempts = (git: ReturnType<typeof observeGit>, path: string, verb: string) =>
+  git.events().filter(e => e.phase === "start" && e.cwd === realpathSync(path) && e.args.includes(verb)).length
+
+test("an index.lock another writer holds fails the add once and names itself, the lock is left as found, and the next run recovers", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    const lock = join(r.path, ".git", "index.lock")
+    writeFileSync(lock, "")
+    const held = statSync(lock)
+    writeFileSync(join(r.path, "pending.txt"), "an agent's note\n")
+    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    const failed = await repoRow(f, r.id)
+    // Real git, so the exit status and the wording the pattern matched are git's own.
+    expect(failed).toMatchObject({ status: "failed", code: "commit", cause: "committing the uncommitted changes failed", failed_runs: 1,
+      diagnostic: { stage: "add", reason: "index-lock", exit: 128 } })
+    expect(await diaried(f, r.id)).toEqual(failed)
+    expect(await failureCause(f, r.id)).toBe("committing the uncommitted changes failed: stage=add reason=index-lock exit=128")
+    expect((await repoRow(f, f.repos[1].id))).toMatchObject({ status: "success" })
+    expect((await repoRow(f, f.repos[1].id)).diagnostic).toBeUndefined()
+    // One attempt, nothing after it, and nothing done to the other writer's lock or the waiting file.
+    expect(attempts(git, r.path, "add")).toBe(1)
+    expect(attempts(git, r.path, "commit")).toBe(0)
+    for (const verb of ["reset", "stash", "clean", "rm", "checkout", "restore"]) expect(attempts(git, r.path, verb), verb).toBe(0)
+    expect(existsSync(lock)).toBe(true)
+    expect(readFileSync(lock, "utf8")).toBe("")
+    expect([statSync(lock).ino, statSync(lock).mtimeMs]).toEqual([held.ino, held.mtimeMs])
+    expect(readFileSync(join(r.path, "pending.txt"), "utf8")).toBe("an agent's note\n")
+    expect((await f.read.sheet("job_success")).find(row => row.id === f.id)).toBeUndefined()
+    // The other writer lets go, and the same production path commits and pushes.
+    rmSync(lock)
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:pending.txt")).toBe("an agent's note")
+    const healed = await repoRow(f, r.id)
+    expect([healed.status, healed.failed_runs, healed.diagnostic]).toEqual(["success", undefined, undefined])
+    expect((await f.read.sheet("job_success")).find(row => row.id === f.id)).toBeDefined()
+  } finally { await f.stop() }
+})
+
+test("a file that vanishes after status, and a second writer that commits the staged file first, each fail the step they hit, once", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    const here = realpathSync(r.path)
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    // Status lists the file, another writer removes it, and add is handed a path that is gone.
+    writeFileSync(join(r.path, "pending.txt"), "a note that goes\n")
+    git.control({ path: here, after: { verb: "status", remove: "pending.txt" } })
+    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    expect(await repoRow(f, r.id)).toMatchObject({ status: "failed", code: "commit", failed_runs: 1,
+      diagnostic: { stage: "add", reason: "pathspec-missing", exit: 128 } })
+    expect(attempts(git, r.path, "add")).toBe(1)
+    expect(attempts(git, r.path, "commit")).toBe(0)
+    git.control({})
+    writeFileSync(join(r.path, "after.txt"), "a note that stays\n")
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:after.txt")).toBe("a note that stays")
+    expect((await repoRow(f, r.id)).failed_runs).toBeUndefined()
+    // The staged file is committed by somebody else between diff and commit, so the sync's own
+    // commit finds nothing to take. Git says so on stdout and stderr is empty. It is still a failed
+    // run and counts as one: whether that should be a success is a separate decision.
+    writeFileSync(join(r.path, "shared-note.txt"), "a note two writers want\n")
+    git.clear()
+    git.control({ path: here, after: { verb: "diff", arg: "--cached", commit: true } })
+    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    expect(fixtureGit(r.path, "log", "-1", "--format=%s")).toBe("second writer")
+    expect(await repoRow(f, r.id)).toMatchObject({ status: "failed", code: "commit", failed_runs: 1,
+      diagnostic: { stage: "commit", reason: "nothing-to-commit", exit: 1 } })
+    expect(attempts(git, r.path, "commit")).toBe(1)
+    // Nothing was lost: the next run pushes the other writer's commit.
+    git.control({})
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:shared-note.txt")).toBe("a note two writers want")
+    expect((await repoRow(f, r.id)).failed_runs).toBeUndefined()
+  } finally { await f.stop() }
+})
+
+// The outputs here are canned. Their shapes are git's usual wording and were not observed
+// on a failing sync, so they show how each shape is classified and not what failed live.
+test("canned git failures are sorted into a reason by shape, unrecognised or foreign-language output is unknown, and no raw text reaches any record", async () => {
+  const f = await syncFixture(cluster, { chat: true, busy: true })
+  try {
+    const r = f.repos[0]
+    const here = realpathSync(r.path)
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    const canary = { url: "https://alex:CANARY-hunter2@example.invalid/vault.git", path: "/Users/canary-owner/vault/CANARY-private-note.md" }
+    const said = (line: string) => `${line}\nremote: ${canary.url}\nerror: ${canary.path}\n`
+    writeFileSync(join(r.path, "pending.txt"), "an agent's note\n")
+    const cases: { control: Parameters<typeof git.control>[0]; verb: string; expected: Diagnostic }[] = [
+      // Status's stdout is the list of names, which a name could make say anything: it is not read for a reason.
+      { control: { fail: "status", exit: 128, stderr: said("fatal: не удалось прочитать индекс"), stdout: "?? Permission denied.txt\0" },
+        verb: "status", expected: { stage: "status", reason: "unknown", exit: 128 } },
+      { control: { fail: "add", exit: 128, stderr: said(`error: open("notes/a.md"): Permission denied\nfatal: adding files failed`) },
+        verb: "add", expected: { stage: "add", reason: "permission", exit: 128 } },
+      { control: { fail: "commit", exit: 128, stderr: said("error: unable to write file: No space left on device"), stdout: said("On branch main") },
+        verb: "commit", expected: { stage: "commit", reason: "no-space", exit: 128 } },
+      { control: { fail: "commit", signal: "SIGKILL" }, verb: "commit", expected: { stage: "commit", reason: "signal", signal: "SIGKILL" } },
+    ]
+    const seen: string[] = []
+    const notices = async () => await f.read.sql(
+      "select person, agent, body, notice_key from outbox where kind = 'notice' and notice_key like 'sync-stuck:%' order by id")
+    for (const [index, one] of cases.entries()) {
+      git.clear()
+      git.control({ ...one.control, path: here })
+      const run = await syncChild(f, git.env)
+      seen.push(run.out, run.err)
+      expect(run.code, one.verb).not.toBe(0)
+      const row = await repoRow(f, r.id)
+      expect(row, one.verb).toMatchObject({ status: "failed", code: "commit", cause: "committing the uncommitted changes failed", failed_runs: index + 1 })
+      expect(row.diagnostic, one.verb).toEqual(one.expected)
+      expect(await diaried(f, r.id)).toEqual(row)
+      expect(attempts(git, r.path, one.verb), `${one.verb} is attempted once`).toBe(1)
+      expect((await notices()).length, "the existing third-run notice, once per streak").toBe(index < 2 ? 0 : 1)
+    }
+    const [notice] = await notices()
+    expect(String(notice.body)).toContain("committing the uncommitted changes failed")
+    expect(String(notice.body), "the chat copy is unchanged").not.toMatch(/stage=|reason=|exit=/)
+    // Not a byte of what git printed, its remote, or a path it named, in any place a failure lands.
+    const everywhere = JSON.stringify([await f.read.sheet("sync"), await f.read.ledger(), await notices()]) + seen.join("\n")
+    for (const raw of ["CANARY", "hunter2", "canary-owner", "Permission denied", "No space left", "adding files failed", "прочитать"])
+      expect(everywhere, raw).not.toContain(raw)
+    const landed = JSON.stringify([await failureCause(f, r.id), (await repoRow(f, r.id)).diagnostic])
+    expect(landed).not.toContain(f.root)
+    // The fault goes away and the same streak ends in a commit and a push.
+    git.control({})
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:pending.txt")).toBe("an agent's note")
+    expect((await repoRow(f, r.id)).failed_runs).toBeUndefined()
+  } finally { await f.stop() }
+})
+
+test("a step that floods stdout and stderr is drained to its end without a stall, and only the last 16 KiB of it is ever sorted", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    const here = realpathSync(r.path)
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    writeFileSync(join(r.path, "pending.txt"), "an agent's note\n")
+    const lock = `fatal: Unable to create '${join(r.path, ".git", "index.lock")}': File exists.\n`
+    // About 390 KB a side, far past any pipe buffer, and stderr goes first: a reader waiting on
+    // stdout alone leaves the child stuck on a full stderr, and the run past its own time bound.
+    const noise = "warning: synthetic noise that means nothing\n".repeat(9000)
+    const seen: string[] = []
+    for (const [where, stderr, reason] of [["at the end", noise + lock, "index-lock"], ["before the last 16 KiB", lock + noise, "unknown"]]) {
+      git.control({ fail: "commit", path: here, exit: 128, stderr, stdout: noise })
+      const run = await syncChild(f, git.env)
+      seen.push(run.out, run.err)
+      expect(run.code, where).not.toBe(0)
+      const row = await repoRow(f, r.id)
+      expect(row.diagnostic, where).toEqual({ stage: "commit", reason, exit: 128 })
+      // What is recorded is a few short fields, not the flood.
+      expect(JSON.stringify(row).length, where).toBeLessThan(600)
+    }
+    expect(seen.join("\n")).not.toContain("synthetic noise")
+    git.control({})
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:pending.txt")).toBe("an agent's note")
   } finally { await f.stop() }
 })

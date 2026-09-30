@@ -38,11 +38,27 @@ let cluster: Cluster;
 
 const SLOW = 120_000;
 
-/** The pinned templates, written out by the TEST and never imported. */
-const WORKING_WITH_ACTIONS = /^\[door\] working: (.+), (\d+) tool calls, (\d+) s$/;
-const WORKING_NO_ACTIONS = /^\[door\] working: (\d+) s$/;
-const TOTALS_WITH_ACTIONS = /^\[door\] done\. Tool calls: (\d+), time: (\d+) s\.$/;
-const TOTALS_NO_ACTIONS = /^\[door\] done\. Time: (\d+) s\.$/;
+/**
+ * The pinned templates, written out by the TEST and never imported. The card is
+ * one message: state, elapsed and last-activity age on the first line, and the
+ * last observed tool and its count on the second (plain here: this fake platform
+ * renders no spoilers, so it is sent none). The durations are the only free part.
+ */
+const DUR = "(?:<1m|\\d+m)";
+/**
+ * The message-effect ledger sends a small visible marker line under every card, which is how a
+ * message is found again after a lost answer. It is the third line of what the chat holds, and
+ * the two lines above it are the card.
+ */
+const MARK = "\\n`hub:[0-9a-f]{16}`";
+const WORKING_WITH_ACTIONS = new RegExp(
+  `^\\[door\\] in progress · ${DUR} · last activity ${DUR} ago\\nlast observed tool: (\\S+) · tool calls: (\\d+) · last event: tool start${MARK}$`,
+);
+const WORKING_NO_ACTIONS = new RegExp(
+  `^\\[door\\] in progress · ${DUR} · last activity ${DUR} ago\\nno tool calls observed · last event: text${MARK}$`,
+);
+const TOTALS_WITH_ACTIONS = new RegExp(`^\\[door\\] finished · ${DUR} · tool calls: (\\d+)${MARK}$`);
+const TOTALS_NO_ACTIONS = new RegExp(`^\\[door\\] finished · ${DUR}${MARK}$`);
 
 beforeAll(async () => {
   cluster = await startCluster();
@@ -198,7 +214,6 @@ test(
       expect(actions).toContain(counted[counted.length - 1][1]);
       for (let nth = 1; nth < counted.length; nth++) {
         expect(Number(counted[nth][2])).toBeGreaterThanOrEqual(Number(counted[nth - 1][2]));
-        expect(Number(counted[nth][3])).toBeGreaterThanOrEqual(Number(counted[nth - 1][3]));
       }
 
       // --- 4. the throttle is TIME. With five actions fired over about two

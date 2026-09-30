@@ -1,6 +1,12 @@
 // A clock running out is a line in the chat, in the person's language,
 // saying it is the door speaking.
 //
+// THE LINE IS NOW THE MESSAGE'S ONE STATUS CARD. The chat shows a clock running
+// out as a post the first time and an edit of that same message after, with the
+// state, a human duration and the reason (test/turn-visibility.test.ts pins the
+// words). What the chat log and the diary hold is the clock's own sentence, and
+// that is unchanged, which is why both sets of patterns are written out below.
+//
 // SPEC §2 and L6: "When a clock runs out, the door says so in the chat, in the
 // person's language, and says it is the door speaking." SPEC §2's Forbidden
 // carries "an expired clock with no chat line and no finding". The finding half
@@ -49,7 +55,6 @@ import {
   RUNNER,
   RUNNER2,
   chatLogLines,
-  outLineOnDisk,
   stageHub,
 } from "./helpers/hub-fixture.ts";
 
@@ -57,7 +62,11 @@ let cluster: Cluster;
 
 const SLOW = 120_000;
 
-/** The pinned lines, written out by the TEST and never imported. */
+/**
+ * The clock's own sentences, written out by the TEST and never imported. They
+ * are what the CHAT LOG and the diary hold, and they are unchanged: what the
+ * chat itself shows for a clock is one card, below.
+ */
 const CLOCK = {
   en: {
     acked: /^\[door\] still waiting: the loop has not accepted this message\. (\d+) s so far\.$/,
@@ -78,6 +87,37 @@ const ANY_CLOCK = [
 
 function isClockLine(text: string): boolean {
   return ANY_CLOCK.some((one) => one.test(text));
+}
+
+/**
+ * What the chat shows: ONE card per message, whose first line names the stage
+ * the clock stands for. A clock that runs out is an edit of it, so a stage is
+ * looked for among the edits as well as the posts, and the durations are the
+ * only free part (`<1m`, `12m`).
+ */
+const CARD = {
+  en: {
+    acked: /^\[door\] still waiting: the loop has not accepted this message · (?:<1m|\d+m)/,
+    started: /^\[door\] still waiting: the agent has not started answering · (?:<1m|\d+m)/,
+    answered: /^\[door\] in progress · (?:<1m|\d+m)/,
+  },
+  ru: {
+    acked: /^\[дверь\] всё ещё жду: агент не принял это сообщение · (?:<1 мин|\d+ мин)/,
+    started: /^\[дверь\] всё ещё жду: агент не начал отвечать · (?:<1 мин|\d+ мин)/,
+    answered: /^\[дверь\] в работе · (?:<1 мин|\d+ мин)/,
+  },
+};
+
+function isCardLine(text: string): boolean {
+  return [...Object.values(CARD.en), ...Object.values(CARD.ru)].some((one) => one.test(text));
+}
+
+/** Everything the door put on the platform, posts and edits, optionally of one chat. */
+function shown(
+  fake: { posts(): { chat: string; text: string }[]; edits(): { chat: string; text: string }[] },
+  chat?: string,
+): { chat: string; text: string }[] {
+  return [...fake.posts(), ...fake.edits()].filter((one) => chat === undefined || one.chat === chat);
 }
 
 beforeAll(async () => {
@@ -126,8 +166,13 @@ test(
           delivered_seconds: 1,
         },
       ],
-      probe: (post) =>
-        probeDir.value === "" ? null : outLineOnDisk({ stateDir: probeDir.value })(post),
+      // Taken inside the post attempt: is the clock's own sentence already in the
+      // chat log? The card's text is not a log line, so it is the SENTENCE that
+      // must be on disk before the door speaks.
+      probe: () =>
+        probeDir.value === ""
+          ? null
+          : chatLogLines(probeDir.value, PERSON, AGENT).some((line) => line.direction === "out" && isClockLine(line.text)),
     });
     await Bun.write(it.registryFile, (await Bun.file(it.registryFile).text())
       .replaceAll("[[people]]", '[[people]]\nallowed_senders = { "door-fake" = ["fixture-sender"] }'));
@@ -154,19 +199,17 @@ test(
       it.scripted.holdTurnEnd(true);
       it.fake.deliver({ text: "a question the loop never acknowledges" });
 
-      // --- 1. THE CHAT. The line is whole and it names the door, so "says it
-      //     is the door speaking" is a property of the sentence rather than of
-      //     a convention.
+      // --- 1. THE CHAT. What the door says for a clock is ONE card, and it
+      //     names the door, so "says it is the door speaking" is a property of
+      //     the text rather than of a convention. The seconds the clock waited
+      //     are the ledger's and the chat log's to hold; the card says `<1m`.
       await until(
         "the acked clock ran out and the door said so",
-        () => it.fake.posts().some((one) => CLOCK.en.acked.test(one.text)),
+        () => it.fake.posts().some((one) => CARD.en.acked.test(one.text)),
         20_000,
         () => `posts=${JSON.stringify(it.fake.posts().map((p) => p.text))}`,
       );
-      const said = it.fake.posts().find((one) => CLOCK.en.acked.test(one.text))!;
-      const seconds = Number(CLOCK.en.acked.exec(said.text)![1]);
-      expect(seconds).toBeGreaterThanOrEqual(1);
-      expect(seconds).toBeLessThan(10);
+      const said = it.fake.posts().find((one) => CARD.en.acked.test(one.text))!;
 
       const row = (await it.read.inbound())[0];
 
@@ -179,12 +222,14 @@ test(
       expect(expired[0].subject).toBe(row.id);
       expect(expired[0].detail.stamp).toBe("acked");
       expect(Number(expired[0].detail.seconds)).toBeGreaterThanOrEqual(1);
+      expect(Number(expired[0].detail.seconds)).toBeLessThan(10);
       expect(expired[0].detail.person).toBe(PERSON);
       expect(expired[0].detail.agent).toBe(AGENT);
 
       // --- 3. THE CHAT LOG, written BEFORE the post, with the DOOR as the
-      //     line's author, so a session reads exactly what the chat holds and
-      // sees it marked as machinery twice over.
+      //     line's author. It holds the clock's own sentence (unchanged, with
+      //     the seconds the ledger holds), and the card is posted only after it
+      //     is on disk: the probe was taken inside the post attempt.
       expect(said.probe).toBe(true);
       const logged = chatLogLines(it.stateDir, PERSON, AGENT).filter((line) =>
         isClockLine(line.text),
@@ -192,30 +237,55 @@ test(
       expect(logged.length).toBe(1);
       expect(logged[0].direction).toBe("out");
       expect(logged[0].from).toBe(DOOR);
-      expect(logged[0].text).toBe(said.text);
+      expect(logged[0].text).toBe(
+        (clockLine as (language: string, stamp: string, seconds: number) => string)("en", "acked", Number(expired[0].detail.seconds)),
+      );
 
       // --- 4. ONCE, not repeatedly, and the row's state is what decides which
       //     clock is armed: a `received` row waits for `acked` and for nothing
-      //     else, so five more seconds produce no second line of any kind.
+      //     else, so five more seconds produce no second card and no second post.
       await Bun.sleep(5000);
-      expect(it.fake.posts().filter((one) => isClockLine(one.text)).length).toBe(1);
+      expect(it.fake.posts().filter((one) => isCardLine(one.text)).length).toBe(1);
       expect((await it.read.ledger({ stream: "clock" })).length).toBe(1);
 
-      // --- 5. the next clock, and the next.
+      // --- 5. the next clock, and the next. Each is recorded, and each lands on
+      //     the SAME message as an edit. The ledger row is what is waited for,
+      //     because the card already reads "not started" from the moment the
+      //     loop takes the message, and releasing the next gate before the
+      //     clock's own row would take that clock away.
+      const stamped = async (stamp: string) =>
+        (await it.read.ledger({ stream: "clock" })).some((one) => one.detail.stamp === stamp);
       it.scripted.holdReceipt(false);
       await until(
-        "the started clock ran out and the door said so",
-        () => it.fake.posts().some((one) => CLOCK.en.started.test(one.text)),
+        "the started clock ran out and was recorded",
+        () => stamped("started"),
         20_000,
-        () => `posts=${JSON.stringify(it.fake.posts().map((p) => p.text))}`,
+        () => `shown=${JSON.stringify(shown(it.fake).map((p) => p.text))}`,
+      );
+      // The card's content is asked for in the ledger and delivered by the door's own
+      // task, so what the chat shows is waited for and not assumed at the ledger row.
+      await until(
+        "the card reads that the agent has not started answering",
+        () => shown(it.fake).some((one) => CARD.en.started.test(one.text)),
+        20_000,
+        () => `shown=${JSON.stringify(shown(it.fake).map((p) => p.text))}`,
       );
       it.scripted.holdProgress(false);
       await until(
-        "the answered clock ran out and the door said so",
-        () => it.fake.posts().some((one) => CLOCK.en.answered.test(one.text)),
+        "the answered clock ran out and was recorded",
+        () => stamped("answered"),
         20_000,
-        () => `posts=${JSON.stringify(it.fake.posts().map((p) => p.text))}`,
+        () => `shown=${JSON.stringify(shown(it.fake).map((p) => p.text))}`,
       );
+      await until(
+        "the card reads in progress",
+        () => shown(it.fake).some((one) => CARD.en.answered.test(one.text)),
+        20_000,
+        () => `shown=${JSON.stringify(shown(it.fake).map((p) => p.text))}`,
+      );
+      // ONE message the whole way, and every later stage an edit of it.
+      expect(it.fake.posts().length).toBe(1);
+      for (const edit of it.fake.edits()) expect(edit.id).toBe(String(said.id));
       const three = await it.read.ledger({ stream: "clock" });
       expect(three.length).toBe(3);
       expect(three.map((one) => one.detail.stamp)).toEqual([
@@ -237,11 +307,12 @@ test(
       );
       await Bun.sleep(4000);
       expect((await it.read.ledger({ stream: "clock" })).length).toBe(3);
-      // Even the attempts carry no fourth clock line, so a build that tried
-      // and was refused is caught as well as one that never tried.
+      // Even the attempts carry no other clock line, so a build that tried and
+      // was refused is caught as well as one that never tried. The one attempt
+      // there was is the card's own post: no clock has a message of its own.
       expect(
-        it.fake.attempts().filter((one) => isClockLine(one.text)).length,
-      ).toBe(3);
+        it.fake.attempts().filter((one) => isCardLine(one.text) || isClockLine(one.text)).length,
+      ).toBe(1);
       it.fake.holdPosts(false);
     } finally {
       if (runner) await runner.stop();
@@ -289,7 +360,8 @@ test(
         async () => JSON.stringify(await quick.read.inbound()),
       );
       await Bun.sleep(5000);
-      expect(quick.fake.attempts().filter((one) => isClockLine(one.text))).toEqual([]);
+      expect(quick.fake.attempts().filter((one) => isCardLine(one.text) || isClockLine(one.text))).toEqual([]);
+      expect(quick.fake.edits()).toEqual([]);
       expect(await quick.read.ledger({ stream: "clock" })).toEqual([]);
       expect(
         chatLogLines(quick.stateDir, PERSON, AGENT).filter((line) => isClockLine(line.text)),
@@ -378,8 +450,8 @@ test(
       await until(
         "both clocks ran out and the door said so in both languages",
         () =>
-          it.fake.posts().some((one) => one.chat === CHAT && CLOCK.en.acked.test(one.text)) &&
-          it.fake.posts().some((one) => one.chat === CHAT2 && CLOCK.ru.acked.test(one.text)),
+          it.fake.posts().some((one) => one.chat === CHAT && CARD.en.acked.test(one.text)) &&
+          it.fake.posts().some((one) => one.chat === CHAT2 && CARD.ru.acked.test(one.text)),
         25_000,
         () => `posts=${JSON.stringify(it.fake.posts().map((p) => [p.chat, p.text]))}`,
       );
@@ -399,25 +471,46 @@ test(
         () => `posts=${JSON.stringify(it.fake.posts().map((p) => [p.chat, p.text]))}`,
       );
       const byDefault = it.fake.posts().find((one) => one.chat === CHAT3)!;
-      expect(CLOCK.en.acked.test(byDefault.text)).toBe(true);
+      expect(CARD.en.acked.test(byDefault.text)).toBe(true);
 
-      // --- 3. the started and answered lines in Russian, both whole.
+      // --- 3. the started and answered stages in Russian, both whole, as edits
+      //     of the one Russian card. The clock's own ledger row is waited for
+      //     before the next gate is released, because the card already reads
+      //     "not started" once the loop takes the message and the clock is
+      //     armed by the row's state.
+      const russianStamped = async (stamp: string) =>
+        (await it.read.ledger({ stream: "clock" })).some(
+          (one) => one.detail.stamp === stamp && one.detail.person === PERSON2,
+        );
       second.holdProgress(true);
       second.holdTurnEnd(true);
       second.holdReceipt(false);
       await until(
-        "the Russian started line landed",
-        () => it.fake.posts().some((one) => one.chat === CHAT2 && CLOCK.ru.started.test(one.text)),
+        "the Russian started clock ran out",
+        () => russianStamped("started"),
         25_000,
-        () => `posts=${JSON.stringify(it.fake.posts().map((p) => [p.chat, p.text]))}`,
+        () => `shown=${JSON.stringify(shown(it.fake).map((p) => [p.chat, p.text]))}`,
+      );
+      await until(
+        "the Russian card reads that the agent has not started answering",
+        () => shown(it.fake, CHAT2).some((one) => CARD.ru.started.test(one.text)),
+        25_000,
+        () => `shown=${JSON.stringify(shown(it.fake).map((p) => [p.chat, p.text]))}`,
       );
       second.holdProgress(false);
       await until(
-        "the Russian answered line landed",
-        () => it.fake.posts().some((one) => one.chat === CHAT2 && CLOCK.ru.answered.test(one.text)),
+        "the Russian answered clock ran out",
+        () => russianStamped("answered"),
         25_000,
-        () => `posts=${JSON.stringify(it.fake.posts().map((p) => [p.chat, p.text]))}`,
+        () => `shown=${JSON.stringify(shown(it.fake).map((p) => [p.chat, p.text]))}`,
       );
+      await until(
+        "the Russian card reads in progress",
+        () => shown(it.fake, CHAT2).some((one) => CARD.ru.answered.test(one.text)),
+        25_000,
+        () => `shown=${JSON.stringify(shown(it.fake).map((p) => [p.chat, p.text]))}`,
+      );
+      expect(it.fake.posts().filter((one) => one.chat === CHAT2).length, "one card, and every stage after the first an edit").toBe(1);
 
       // --- 4. the ledger is NOT translated, because it is a record a household
       //     queries and a translated key is a key nobody can group by. The chat
@@ -511,7 +604,7 @@ test(
 
       // --- 1. nothing was posted yet, so what follows is about the restart and
       //     not about a line that had already landed.
-      expect(it.fake.attempts().filter((one) => isClockLine(one.text))).toEqual([]);
+      expect(it.fake.attempts().filter((one) => isCardLine(one.text) || isClockLine(one.text))).toEqual([]);
 
       // A second message nobody will claim, whose own acked clock runs out
       // BEFORE the stop, so the restarted door has one it has already spoken
@@ -521,7 +614,7 @@ test(
       it.fake.deliver({ text: "a second question nobody claims" });
       await until(
         "the acked clock of the unclaimed message ran out",
-        () => it.fake.posts().some((one) => CLOCK.en.acked.test(one.text)),
+        () => it.fake.posts().some((one) => CARD.en.acked.test(one.text)),
         20_000,
         () => `posts=${JSON.stringify(it.fake.posts().map((p) => p.text))}`,
       );
@@ -547,13 +640,19 @@ test(
       const readerPid = await it.read.pid();
       const watch = await statementWatch(cluster, [readerPid]);
 
+      // The first message's own card. It is a NEW card (nothing was posted for it
+      // before), and what it says is what the store shows of that row now: its
+      // runner is stopped and the input was handed to the loop, so it is held,
+      // and a store that does not yet show the hold still shows it as not running
+      // or in progress. Never the second message's card, which is the acked one.
+      const FIRST = /^\[door\] (?:interrupted, input held|not running right now|in progress) · /;
       await until(
         "the restarted door said the answered clock had run out",
-        () => it.fake.posts().some((one) => CLOCK.en.answered.test(one.text)),
+        () => it.fake.posts().some((one) => FIRST.test(one.text)),
         30_000,
         () => `posts=${JSON.stringify(it.fake.posts().map((p) => p.text))}`,
       );
-      const late = it.fake.posts().find((one) => CLOCK.en.answered.test(one.text))!;
+      const late = it.fake.posts().find((one) => FIRST.test(one.text))!;
       expect(late.at - receivedAt).toBeGreaterThanOrEqual(ANSWERED_SECONDS * 1000);
       // AND NOT A FRESH FULL TIMEOUT. A door that
       // armed `answered_seconds` from its own startup rather than from the
@@ -590,11 +689,19 @@ test(
 
       // --- 3. the wait is a WAIT and not a tick. With `tick_seconds` at 30, a
       //     door polling `inbound` once a second over that window issues one
-      //     statement a second and fails this bound. What is allowed is the
-      //     clock's own read on its recorded deadline, and the delivery read a
-      //     reply's notification would cause.
+      //     statement a second and fails this bound. What is allowed is EVERY
+      //     statement one clock that runs out may need, counted:
+      //       the clock's own read on its recorded deadline ................ 1
+      //       its diary row ................................................ 1
+      //       the card's tracking row, written before its content .......... 1
+      //       the card's content asked for in the ledger (`wantEffect`) .... 2
+      //       the effects task's pass on the notification that asked:
+      //         the rows it owes, and the previews it waits on ............. 2
+      //         the create's claim, and the id saved after it .............. 2
+      //     It was two before the card existed and three with its identity. A
+      //     second pass, a read per tick or a retry of anything raises the count.
       const issued = await watch.count();
-      if (issued > 2) {
+      if (issued > 9) {
         throw new Error(
           `the restarted door issued ${issued} statements while waiting out one clock, which is a tick, not a wait. Statements:\n` +
             (await watch.lines()).slice(0, 8).join("\n"),
@@ -610,13 +717,13 @@ test(
       //     about again: the `clock` ledger row is what the restarted door
       //     reads to know it has already said this.
       expect(expired.filter((one) => one.detail.stamp === "acked").length).toBe(1);
-      expect(it.fake.posts().filter((one) => CLOCK.en.acked.test(one.text)).length).toBe(1);
+      expect(it.fake.posts().filter((one) => CARD.en.acked.test(one.text)).length).toBe(1);
 
       // --- THE CONTROL: a message the restarted door sees answered in time
       //     draws no line, so it is not simply posting about everything it
       //     found on connect.
       it.scripted.holdTurnEnd(false);
-      const before = it.fake.attempts().filter((one) => isClockLine(one.text)).length;
+      const before = it.fake.attempts().filter((one) => isCardLine(one.text) || FIRST.test(one.text)).length;
       runner = await (runRunner as Function)({
         runner: RUNNER,
         registryFile: it.registryFile,
@@ -653,7 +760,7 @@ test(
       expect((await it.read.ledger({ stream: "inbound", kind: "answered", subject: open.id })).length).toBe(0);
       expect((await it.read.outbox()).some((row) => row.inbound_id === open.id)).toBe(false);
       await Bun.sleep(3000);
-      expect(it.fake.attempts().filter((one) => isClockLine(one.text)).length).toBe(before);
+      expect(it.fake.attempts().filter((one) => isCardLine(one.text) || FIRST.test(one.text)).length).toBe(before);
     } finally {
       if (runner) await runner.stop();
       if (door) await door.stop();

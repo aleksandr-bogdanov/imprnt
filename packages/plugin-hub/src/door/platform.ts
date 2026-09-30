@@ -182,6 +182,13 @@ export interface Platform {
    */
   readonly typingSeconds: number;
   /**
+   * Present and true only on a platform that renders `||text||` as a spoiler
+   * (Discord). The door puts a card's technical detail inside one there and
+   * nowhere else: a platform that does not say so is sent plain text, so a
+   * person on it never reads raw markup.
+   */
+  readonly spoilers?: boolean;
+  /**
    * A long wait: it returns when a message arrives or when `timeoutMs` passes.
    * That is what Telegram's own long poll does, and it is what keeps the door
    * waiting rather than ticking.

@@ -42,7 +42,9 @@ for (const fault of ["start", "feed"] as const) test(`ROLL-10 ${fault} task fail
     expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "sibling"))).toBe(true)
     const sibling = edge.sessions.find(r => r.fed.some(m => m.id === "sibling"))!
     await insertInbound(cluster, it.db, { id: "fault", body: "retry this" })
-    expect(await observe(async () => (await it.read.ledger()).some(r => JSON.stringify(r.detail).includes(`synthetic-task-${fault}-failure`)))).toBe(true)
+    // The refusal line, not any line naming the cause: a feed failure first ends its attempt in a
+    // transaction of its own that also carries the cause, and only the refusal commits with agent_health.
+    expect(await observe(async () => (await it.read.ledger({ subject: "p1-lair", kind: "refused.turn" })).some(r => JSON.stringify(r.detail).includes(`synthetic-task-${fault}-failure`)))).toBe(true)
     const health = (await it.read.sheet("agent_health")).find(r => r.id === "p1-lair")
     const healthyRetry = (row: typeof health) => {
       expect(row, "D-175 failed task must have agent_health").toBeDefined()
