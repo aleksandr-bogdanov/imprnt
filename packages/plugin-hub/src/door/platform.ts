@@ -70,6 +70,88 @@ export interface PlatformAdmin {
   describeChat(chat: string): Promise<ChatDescription>;
 }
 
+/** A message as a read of the chat shows it. */
+export interface ReadMessage {
+  id: string;
+  chat: string;
+  author: { id: string; bot: boolean };
+  content: string;
+  /** The platform says somebody, the author included, changed it after it was posted. */
+  edited: boolean;
+  /** What the platform reports back of the nonce a post carried, and it may report none. */
+  nonce: string | null;
+}
+
+/**
+ * What a failed call carries when the platform said more than a status. The seam
+ * throws an ordinary error and these are properties on it, so a caller that knows
+ * nothing of them still sees the same error it always saw.
+ */
+export interface PlatformRefusalDetail {
+  status?: number;
+  /** The platform's own numeric error code, from the body of the refusal. */
+  discordCode?: number;
+  /**
+   * A rate limit, and how long the platform said to wait, in milliseconds: the body's
+   * `retry_after` (seconds, a float) or else the `Retry-After` header.
+   */
+  retryAfterMs?: number;
+  /** The account-wide limit (the body's `global`, the `X-RateLimit-Global` header or the scope `global`). */
+  rateLimitGlobal?: boolean;
+  /** `X-RateLimit-Scope`: `user`, `global` or `shared`. */
+  rateLimitScope?: string;
+  /** The request was sent and the answer was lost, so the outcome is not known. */
+  sent?: boolean;
+  /**
+   * The seam did not send this request at all, because a rate limit it already knew of
+   * still holds. `status` is 429 and `retryAfterMs` is what is left of the wait. It is
+   * a definite refusal: nothing happened on the platform.
+   */
+  blocked?: boolean;
+}
+
+/**
+ * The kinds of request a platform's rate limits are kept per, so a caller can ask when
+ * one may next be sent without sending it. A route is a verb on one chat, and the
+ * account-wide limit holds every verb.
+ */
+export type PlatformVerb = "post" | "edit" | "get" | "list" | "reactors";
+
+/**
+ * Reading a chat back, which the effect ledger and the confirmation poll need and
+ * which no other part of the door does. OPTIONAL, the way `admin` is: Telegram and
+ * every fake that says nothing about it stay valid, and a door that is handed a
+ * platform without it can send an effect but can never reconcile an uncertain one,
+ * so it says unknown rather than sending again.
+ *
+ * Every verb throws for a refusal or a failure it cannot read past, and answers
+ * only what the platform actually said. `exists: false` is an ANSWER: the platform
+ * named the message or the channel as gone. A 403, a 5xx, a rate limit or a body it
+ * cannot read is never that.
+ */
+export interface PlatformReadback {
+  /** The account this door posts as, which is who "our" message was authored by. */
+  self(): Promise<{ id: string }>;
+  getMessage(options: { chat: string; id: string }): Promise<
+    { exists: true; message: ReadMessage } | { exists: false; cause: "message" | "channel" }
+  >;
+  /**
+   * ONE page of a chat's messages made after a message id, or after a moment in
+   * epoch milliseconds when there is no id yet, oldest first. A page shorter than
+   * `limit` is the end; a full one may not be, and the caller asks again from the
+   * newest id it has seen.
+   */
+  listMessages(options: { chat: string; after?: string; since?: number; limit?: number }): Promise<ReadMessage[]>;
+  /**
+   * ONE page of the users who reacted with `emoji`, after a user id. A full page may
+   * not be the end. The order the platform returns them in is not promised, so a
+   * caller continues from the greatest id it has seen.
+   */
+  reactors(options: { chat: string; id: string; emoji: string; after?: string; limit?: number }): Promise<
+    { id: string; bot: boolean }[]
+  >;
+}
+
 export interface Platform {
   readonly name: string;
   /**
@@ -77,6 +159,18 @@ export interface Platform {
    * that cannot, which is what the `unsupported` answer is about.
    */
   admin?: PlatformAdmin;
+  /** Present on a platform whose chat can be read back. See `PlatformReadback`. */
+  readback?: PlatformReadback;
+  /**
+   * When a request of this verb to this chat may next be sent, as the platform's own
+   * rate-limit answers have made known to THIS platform object: an epoch in
+   * milliseconds, or null when nothing known holds it. It is the shared boundary every
+   * request of the platform goes through, so a limit learned by the outbox, the pull or
+   * the progress line holds the effect task too, and the other way about. A request
+   * already under way is not stopped by it. OPTIONAL: a platform without it has no
+   * such memory, and its callers keep their own.
+   */
+  blockedUntil?(verb: PlatformVerb, chat: string): number | null;
   fetchMedia?(media: MediaRef): Promise<Response>;
   /**
    * How long ONE typing call shows for, from the platform's own
@@ -115,10 +209,20 @@ export interface Platform {
    * spans: Discord's is one channel, Telegram's is the whole bot.
    */
   highWater(options: { chat: string }): Promise<string | null>;
-  /** The id is the platform's own, and it is what an edit needs. */
-  post(options: { chat: string; text: string }): Promise<{ id: string | null }>;
+  /**
+   * The id is the platform's own, and it is what an edit needs. `nonce` is for a
+   * post whose answer may be lost: a platform that can use it to find or refuse a
+   * duplicate does, and one that cannot ignores it. It is never a guarantee, and no
+   * caller treats a repeat under one as safe beyond what the platform says.
+   *
+   * `suppressMentions` asks the platform to notify nobody the text names (Discord's
+   * `allowed_mentions` with an empty `parse`). It is for the shared effect and preview
+   * messages, which may echo text an owner or a model wrote; the ordinary reply path
+   * does not set it and is unchanged. A platform with no such notion ignores it.
+   */
+  post(options: { chat: string; text: string; nonce?: string; suppressMentions?: boolean }): Promise<{ id: string | null }>;
   /** The progress line is ONE message the door overwrites as the work goes. */
-  edit(options: { chat: string; id: string; text: string }): Promise<void>;
+  edit(options: { chat: string; id: string; text: string; suppressMentions?: boolean }): Promise<void>;
   /**
    * REQUIRED. "A turn open with no typing shown" is forbidden (SPEC §2), and a
    * platform that cannot show it is refused by `runDoor` at start rather than

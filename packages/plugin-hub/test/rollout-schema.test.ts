@@ -118,6 +118,65 @@ for (const role of ["hub_door", "hub_runner", "hub_agent", "hub_hub"]) {
   })
 }
 
+test("migration 12 lands on an upgraded store as the same effect and confirmation objects, checks and grants a fresh install has, and rerunning it changes nothing", async () => {
+  const upgraded = await rolloutDatabase(cluster, true)
+  const fresh = await rolloutDatabase(cluster)
+  const migrate = await migrator()
+  await migrate(upgraded.store())
+  await migrate(upgraded.store())
+  const read = async (q: any) => ({
+    functions: Array.from(await q`select p.proname, pg_get_function_identity_arguments(p.oid) as args, r.rolname as owner, p.prosecdef, p.prosrc
+      from pg_proc p join pg_roles r on r.oid = p.proowner
+      where p.proname in ('hub_effect_want', 'hub_effect_release_edit', 'hub_confirmation_freeze', 'hub_guard_platform_effect', 'hub_guard_confirmation', 'hub_notify_effect')
+      order by p.proname`),
+    columns: Array.from(await q`select table_name, column_name, data_type, is_nullable, column_default from information_schema.columns
+      where table_name in ('platform_effect', 'confirmation') order by table_name, ordinal_position`),
+    indexes: Array.from(await q`select indexname, indexdef from pg_indexes where tablename in ('platform_effect', 'confirmation') order by indexname`),
+    checks: Array.from(await q`select conrelid::regclass::text as t, conname, pg_get_constraintdef(oid) as d from pg_constraint
+      where conrelid in ('platform_effect'::regclass, 'confirmation'::regclass) order by conrelid::regclass::text, conname`),
+    triggers: Array.from(await q`select t.tgname, pg_get_triggerdef(t.oid) as d from pg_trigger t
+      where t.tgrelid in ('platform_effect'::regclass, 'confirmation'::regclass) and not t.tgisinternal order by t.tgname`),
+    tableGrants: Array.from(await q`select table_name, grantee, privilege_type from information_schema.role_table_grants
+      where table_name in ('platform_effect', 'confirmation') and grantee in ('hub_door', 'hub_runner', 'hub_hub', 'hub_agent')
+      order by table_name, grantee, privilege_type`),
+    columnGrants: Array.from(await q`select table_name, column_name, grantee, privilege_type from information_schema.column_privileges
+      where table_name in ('platform_effect', 'confirmation') and grantee in ('hub_door', 'hub_runner', 'hub_hub', 'hub_agent')
+        and privilege_type = 'UPDATE' order by table_name, column_name, grantee`),
+    routineGrants: Array.from(await q`select routine_name, grantee from information_schema.routine_privileges
+      where routine_name in ('hub_effect_want', 'hub_effect_release_edit', 'hub_confirmation_freeze') and grantee in ('hub_door', 'hub_runner', 'hub_hub', 'hub_agent')
+      order by routine_name, grantee`),
+  })
+  const a = await read(fresh.sql)
+  const b = await read(upgraded.sql)
+  // The removed generic release of an unknown edit is looked for by name, on both stores, and is on neither.
+  expect(a.functions.map((row: any) => row.proname)).not.toContain("hub_effect_release_edit")
+  expect(a.functions).toHaveLength(5)
+  expect(a.triggers.map((row: any) => row.tgname)).toEqual([
+    "confirmation_notify", "confirmation_rules", "platform_effect_notify_content", "platform_effect_notify_insert", "platform_effect_rules",
+  ])
+  expect(a.checks.length).toBeGreaterThan(10)
+  expect(b).toEqual(a)
+  // What the roles hold, read off the catalog: nobody inserts or deletes, only the door updates, and only its own columns.
+  expect(a.tableGrants.filter((row: any) => row.privilege_type !== "SELECT" && row.privilege_type !== "UPDATE")).toEqual([])
+  expect(new Set(a.columnGrants.map((row: any) => row.grantee))).toEqual(new Set(["hub_door"]))
+  expect(a.columnGrants.filter((row: any) => row.table_name === "confirmation").map((row: any) => row.column_name).sort())
+    .toEqual(["approved_at", "approved_by", "cause", "evidence", "observed_at", "state"])
+  // The edit's own columns are the door's, next to the create's: the claim, the pin and the outcome.
+  expect(a.columnGrants.filter((row: any) => row.table_name === "platform_effect").map((row: any) => row.column_name))
+    .toEqual(expect.arrayContaining(["applied_hash", "edit_state", "edit_attempt_id", "edit_revision", "edit_hash", "edit_attempts"]))
+  // What was asked for is never the door's to change.
+  expect(a.columnGrants.filter((row: any) => row.table_name === "platform_effect").map((row: any) => row.column_name))
+    .not.toEqual(expect.arrayContaining(["wanted_content"]))
+  // Nobody holds a way to release an unknown edit; the freeze and the want are the only routines.
+  expect(a.routineGrants.map((row: any) => `${row.routine_name}:${row.grantee}`)).toEqual([
+    "hub_confirmation_freeze:hub_door", "hub_confirmation_freeze:hub_hub", "hub_confirmation_freeze:hub_runner",
+    "hub_effect_want:hub_door", "hub_effect_want:hub_hub", "hub_effect_want:hub_runner",
+  ])
+  const versions = (await upgraded.sql`select version from schema_version order by version`).map((row: any) => Number(row.version))
+  expect(versions).toContain(12)
+  expect(versions).toEqual((await fresh.sql`select version from schema_version order by version`).map((row: any) => Number(row.version)))
+})
+
 test("ROLL-20 ROLL-23 D-172 replies inherit source route and notices pin their creation route", async () => {
   const f = await rolloutDatabase(cluster)
   const columns = await f.sql`select column_name from information_schema.columns where table_name = 'inbound'`
