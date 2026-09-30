@@ -130,10 +130,10 @@ test(
     let runner: { stop(): Promise<void> } | null = null;
 
     try {
-      // L2's tail is fed first on every spawn, so there is a turn before this
-      // one. The line planted here makes that tail real, and the gate goes on
-      // only once the priming turn is out of the way, so what is held open is
-      // the HUMAN message's turn.
+      // L2's tail rides with the first message of a spawn as background, so there
+      // is no turn before this one. The line planted here makes that tail real,
+      // and the gate goes on before the message, so what is held open is the
+      // HUMAN message's one turn.
       plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" });
 
       door = await (runDoor as Function)({
@@ -147,14 +147,7 @@ test(
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
 
-      await until(
-        "the priming turn of the spawn was recorded",
-        async () => (await it.read.ledger({ stream: "turn" })).length >= 1,
-        45_000,
-        () => JSON.stringify(it.scripted.fed().map((f) => f.text)),
-      );
-
-      // The turn is now held open at its end, so the ledger can be read from
+      // The turn will be held open at its end, so the ledger can be read from
       // the middle of it. This is the assertion a runner that writes all five
       // stamps in a burst at the end cannot pass. Ordering alone is not enough,
       // because a burst is also in order.
@@ -162,11 +155,13 @@ test(
       it.fake.deliver({ text: MESSAGE });
 
       // Every assertion reads the store. The adapter's own record is only what
-      // tells the test the turn has reached its middle.
+      // tells the test the turn has reached its middle. The message is what
+      // the loop is fed, behind the history it is owed.
       await until(
         "the loop reported its receipt and its first progress",
-        () => it.scripted.fed().some((f) => f.text === MESSAGE),
+        () => it.scripted.fed().some((f) => f.text.endsWith(MESSAGE)),
         45_000,
+        () => JSON.stringify(it.scripted.fed().map((f) => f.text)),
       );
       await until(
         "the started stamp landed",

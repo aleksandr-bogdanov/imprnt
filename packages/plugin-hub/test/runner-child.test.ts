@@ -123,7 +123,9 @@ test.skipIf(!gate.ok)(
 
       // --- THE PARENTAGE HALF. It passes against shipped code today (residue),
       //     so it is here as the guard criterion 4 names, never as the red.
-      const child = it.adapterServer!.childFor(AGENT);
+      // A session is named by the message it was fed: the history rides with the first input, and
+      // a session that has been fed nothing has no name here.
+      const child = it.adapterServer!.childFor("rc-1");
       expect(child).not.toBeNull();
       expect(childGone(child!)).toBe(false);
       // Not the runner itself: a build that reported the runner's own pid as the

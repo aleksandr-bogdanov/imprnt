@@ -56,6 +56,7 @@ import {
   plantChatLine,
   stageHub,
 } from "./helpers/hub-fixture.ts";
+import { BACKGROUND_CLOSE, BACKGROUND_OPEN } from "../src/chatlog.ts";
 
 const SLOW = 240_000;
 const TICK = 1;
@@ -144,9 +145,9 @@ test(
 
     let runner: ReadyProcess | null = null;
     try {
-      // The tail turn's message id IS the agent id, so a planted line makes each
-      // session self-identifying and the check can map an agent to its child
-      // across the process boundary.
+      // A session is named by the first message it is fed (the planted history rides
+      // with it as background), so the check maps an agent to its child across the
+      // process boundary by the row it answered.
       plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" });
       plantChatLine({
         stateDir: it.stateDir,
@@ -179,8 +180,8 @@ test(
         async () => JSON.stringify(await it.read.inbound()),
       );
 
-      const firstChild = it.adapterServer!.childFor(AGENT);
-      const secondChild = it.adapterServer!.childFor(AGENT2);
+      const firstChild = it.adapterServer!.childFor("mw-1");
+      const secondChild = it.adapterServer!.childFor("mw-2");
       expect(firstChild).not.toBeNull();
       expect(secondChild).not.toBeNull();
       expect(firstChild).not.toBe(secondChild);
@@ -240,7 +241,7 @@ test(
       // --- IT DIES ALONE. The other agent's child is the same process, still
       //     holding the memory it was told to hold, and it still answers, which
       //     a pid on its own would not prove.
-      expect(it.adapterServer!.childFor(AGENT)).toBe(firstChild);
+      expect(it.adapterServer!.childFor("mw-1")).toBe(firstChild);
       expect(alive(firstChild!)).toBe(true);
       expect(residentBytes(firstChild!)).toBeGreaterThan(CONTROL_GROW_MB * 0.8 * 1024 * 1024);
       expect(residentBytes(firstChild!)).toBeLessThan(CHILD_LIMIT_MB * 1024 * 1024);
@@ -255,7 +256,8 @@ test(
       expect((await it.read.outbox()).find((c) => c.inbound_id === "mw-3")!.body).toBe(
         scriptedReply(stillHere),
       );
-      expect(it.adapterServer!.childFor(AGENT)).toBe(firstChild);
+      // The same session answered the third message: it was fed it, and it is the one that was fed the first.
+      expect(it.adapterServer!.childFor("mw-3")).toBe(firstChild);
 
       // --- and the RUNNER never restarted. That is what separates a memory
       //     watch from a crash.
@@ -280,13 +282,29 @@ test(
         90_000,
         async () => JSON.stringify(await it.read.inbound()),
       );
+      // mw-4 is the FIRST input of a new child, so the history the killed
+      // session had rides with it as background, and the scripted loop answers
+      // exactly what it was fed. The expectation is that fed text, taken from
+      // the adapter, and not the bare input.
+      const fedBack = it.scripted.fed().filter((f) => f.id === "mw-4");
+      expect(fedBack.length).toBe(1);
+      const wire = fedBack[0].text;
+      expect(wire.startsWith(BACKGROUND_OPEN)).toBe(true);
+      expect(wire.endsWith(`${BACKGROUND_CLOSE}\n\n${back}`)).toBe(true);
+      // The second person's history is inside the delimiters and the first person's is not.
+      expect(wire.indexOf("what the second person said yesterday")).toBeGreaterThan(-1);
+      expect(wire.indexOf("what the second person said yesterday")).toBeLessThan(
+        wire.indexOf(BACKGROUND_CLOSE),
+      );
+      expect(wire).not.toContain("what was said yesterday");
       expect((await it.read.outbox()).find((c) => c.inbound_id === "mw-4")!.body).toBe(
-        scriptedReply(back),
+        scriptedReply(wire),
       );
       expect(it.scripted.starts().length).toBeGreaterThan(startsBefore);
-      const pidsForSecond = it.adapterServer!.childPids(AGENT2);
-      expect(pidsForSecond.length).toBeGreaterThanOrEqual(2);
-      expect(pidsForSecond[pidsForSecond.length - 1]).not.toBe(secondChild);
+      // The answer came from a session of its own, and not from the one that was killed.
+      const restarted = it.adapterServer!.childFor("mw-4");
+      expect(restarted).not.toBeNull();
+      expect(restarted).not.toBe(secondChild);
       expect(runner.pid).toBe(runnerPid);
 
       // --- THE CONTROL, over the whole check: the agent that stayed under the

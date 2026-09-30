@@ -1,22 +1,23 @@
 // LIVE. A code word planted in the log survives a REAL respawn.
 //
-// SPEC §2: "On every spawn the runner feeds the tail (24 hours, 8k tokens,
-// defaults until measured) before any human message." Its Check line is exactly
+// SPEC §2: "On every spawn of a fresh master session the runner hands it the tail
+// (24 hours, 8k tokens, defaults until measured) as delimited background on the
+// first real input." Its Check line is exactly
 // this one, and the scripted version in test/chatlog.test.ts cannot stand in
 // for it: a scripted loop is told what to say, so only a real loop can
 // demonstrate that the tail actually arrived and was understood.
 //
 // A REAL RESPAWN, not a fresh start. Starting one runner and
-// called that a respawn, and a runner that fed the human message first and the
-// tail second could still have answered with the word. So this one runs a whole
+// called that a respawn, and a runner that never handed the tail over could still
+// have answered with the word by luck. So this one runs a whole
 // ordinary exchange, STOPS the runner, plants the word into the log the door
 // has been writing, starts a SECOND runner, and asks. The word can only reach
 // the second session through the log, because the first session is gone and the
 // second one never saw the planting.
 //
-// And the feed order is OBSERVED rather than trusted: within the second spawn's
-// own stretch of the diary, the tail turn's record must come before the message
-// turn's by `seq`.
+// And the one turn is OBSERVED rather than trusted: within the second spawn's
+// own stretch of the diary there is a single turn record, the message's, and
+// none for the history that rode with it.
 //
 // WHY THIS LIVES OUTSIDE test/. It needs the Claude Code login on this Mac. CI
 // has no model login, so bunfig.toml's `[test] root = "test"` keeps `bun test`
@@ -247,22 +248,16 @@ test(
       }
       expect(answer).toContain(codeWord);
 
-      // THE FEED ORDER, observed rather than trusted. Inside the second spawn's
-      // own stretch of the diary, the priming turn is recorded before the
-      // message turn, so a runner that fed the human first and the tail second
-      // fails even when the word happens to come back.
+      // THE ONE TURN, observed rather than trusted. The history rides with the
+      // message as background, so the second spawn's own stretch of the diary holds
+      // ONE turn record, the message's, and none for the history.
       const mine = (await read.ledger({ stream: "turn" })).filter(
         (t) => t.seq > Number(seqBeforeSpawnTwo),
       );
-      const tailTurn = mine.find((t) => t.detail.tail === true);
-      const messageTurn = mine.find((t) => t.detail.tail === false);
-      expect(tailTurn).toBeDefined();
-      expect(messageTurn).toBeDefined();
-      expect(tailTurn!.subject).toBe(AGENT);
-      expect(tailTurn!.seq).toBeLessThan(messageTurn!.seq);
+      expect(mine.map((t) => t.detail.tail)).toEqual([false]);
+      expect(mine[0].subject).not.toBe(AGENT);
 
-      // And the priming turn produced no message in the chat: two exchanges,
-      // two posts.
+      // And there is one answer in the chat: two exchanges, two posts.
       expect(fake.posts().length).toBe(2);
     } finally {
       if (second) await second.stop();

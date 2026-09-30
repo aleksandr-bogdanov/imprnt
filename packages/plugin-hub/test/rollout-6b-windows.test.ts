@@ -88,7 +88,10 @@ const WINDOWS: Record<string, string> = {
   "test/door-typing.test.ts": "26bf5dfd5068c8ab1a5c3287fd3b9c7f53d021d1c60d678852c7f409c683a1e9",
   "test/door-outbox.test.ts": "019b343c1affd068ef5b37adda3bdb065081bda083a8262b51d10a4d3afc5be9",
   "test/door-clock.test.ts": "9a8061449326d2f1c8aecb05ab1390995466b65ecd85cacd061bc94d4a8b5518",
-  "test/runner-drain.test.ts": "e8a8a14e7a1025a12624915a0e1b8a90691d1af9c96a1c1e45ad8536841c93f8",
+  // runner-drain's baseline was refreshed for context bootstrap (history no longer
+  // rides a separate turn: three feeds instead of history + three inputs); its
+  // original performance and drain assertions are retained.
+  "test/runner-drain.test.ts": "b40c6db376fe05621ed993ece054cb71458a9232ed5fc7c4113a19e159d8a6dc",
   "test/wait-idle.test.ts": "30905f0bc010ee9f10e275d4d5e0c51eded16951700583888ac4acb52897fc39",
   "test/check-silence.test.ts": "5d2007df83b96ccc61b472507537b9e7b90fa688d65e2ea34260d5af51a22c67",
 }
@@ -321,8 +324,9 @@ test("ROLL-19 a door whose job was reported and answered issues nothing across a
     await until("the report was fed to the dispatcher and its answer delivered", async () =>
       (await it.read.ledger({ subject: `report:${job.id}`, kind: "delivered" })).length === 1, 60_000,
       async () => JSON.stringify((await it.read.inbound()).map(row => [row.id, row.state, row.log_ready])))
-    expect(it.edge.posts().filter(post => post.chat === LAIR_CHAT).map(post => post.text))
-      .toContain(scriptedReply(REPORT[TASK_A]))
+    // The dispatcher's session was fresh, so its first input carried the chat's history as background and the echo is to that.
+    expect(it.edge.posts().filter(post => post.chat === LAIR_CHAT).map(post => post.text)
+      .some(text => text.startsWith(scriptedReply("")) && text.endsWith(REPORT[TASK_A]))).toBe(true)
     await spoke.stop(); spoke = undefined
     await hub.stop(); hub = undefined
     await untilQuiet([readerPid], "the door after the report's answer was delivered")
@@ -476,7 +480,8 @@ test("ROLL-19 a runner drains a job, a report and two messages with no new arriv
       .filter(row => row.seq > Number(seqAtStart)).map(row => row.subject)
     expect(arrivals).toEqual([`report:${job.id}`])
     const fed = it.scripted.fed().map(one => one.text)
-    for (const body of [TASK_RU, REPORT[TASK_A], ...bodies]) expect(fed).toContain(body)
+    // The first input of the dispatcher's fresh session carries the chat's history in front of it, so each is matched by its end.
+    for (const body of [TASK_RU, REPORT[TASK_A], ...bodies]) expect(fed.some(text => text.endsWith(body)), body).toBe(true)
 
     // --- The wait. Nothing announces the next row, and nothing may look for it.
     await untilQuiet([ownerPid, doorPid, readerPid], "the runner after its drain")

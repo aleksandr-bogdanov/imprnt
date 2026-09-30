@@ -36,14 +36,15 @@ for (const evidence of ["direct", "usage", "none"] as const) test(`ROLL-06 parse
   } finally { await session.close() }
 })
 
-for (const kind of ["ordinary", "tail", "harvest"]) for (const evidence of ["direct", "none"] as const) test(`ROLL-06 ${kind} settlement retains alias identity and ${evidence} model evidence`, async () => {
+// "background" is an ordinary turn whose input carries the chat history a fresh session is owed: there is no turn of its own for history.
+for (const kind of ["ordinary", "background", "harvest"]) for (const evidence of ["direct", "none"] as const) test(`ROLL-06 ${kind} settlement retains alias identity and ${evidence} model evidence`, async () => {
   cluster ??= await startCluster()
   const common = { preset: { model: "synthetic-alias", paid: "key" }, registry: (base: RegistrySpec) => ({ ...base, agents: base.agents!.map(agent => ({ ...agent, runner: "runner-pi" })) }) }
   const harvest = kind === "harvest" ? await stageHarvest(cluster, common) : null
   const it = harvest?.hub ?? await stageHub(cluster, common)
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
-    if (kind === "tail") {
+    if (kind === "background") {
       const { appendChatLine } = await import("../src/chatlog.ts")
       await appendChatLine({ stateDir: it.stateDir, person: "p1", agent: "p1-lair" }, { at: new Date().toISOString(), direction: "in", from: "p1", text: "synthetic tail codeword" })
     }
@@ -55,8 +56,9 @@ for (const kind of ["ordinary", "tail", "harvest"]) for (const evidence of ["dir
       await sql`insert into inbound (id,person,agent,kind,body) values ('resolved-harvest','p1','p1-lair','harvest',${JSON.stringify({ person: "p1", agent: "p1-lair", until: new Date().toISOString(), reason: "demand", from: null, lines: 1 })})`
     } else await insertInbound(cluster, it.db, { id: "resolved-human", body: "synthetic input" })
     runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: adapter } })
-    await until("resolved-model settlement", async () => (await it.read.ledger({ stream: "turn" })).some(row => kind === "tail" ? row.detail.tail === true : row.subject === (harvest ? "resolved-harvest" : "resolved-human")), 15_000)
-    const record = (await it.read.ledger({ stream: "turn" })).find(row => kind === "tail" ? row.detail.tail === true : row.subject === (harvest ? "resolved-harvest" : "resolved-human"))!.detail
+    await until("resolved-model settlement", async () => (await it.read.ledger({ stream: "turn" })).some(row => row.subject === (harvest ? "resolved-harvest" : "resolved-human")), 15_000)
+    const record = (await it.read.ledger({ stream: "turn" })).find(row => row.subject === (harvest ? "resolved-harvest" : "resolved-human"))!.detail
+    if (kind === "background") expect((await it.read.ledger({ stream: "turn" })).map(row => row.subject), "no turn was run for the history").toEqual(["resolved-human"])
     expect(record.preset_id).toBe(expectedPresetId(record.preset_settings as Record<string, string>))
     expect((record.preset_settings as any).model).toBe(harvest ? harvest.harvesterPreset.model : "synthetic-alias")
     expect(record.resolved_model_ids, "D-165 settlement must retain resolved evidence").toEqual(evidence === "none" ? [] : ["synthetic-primary-model", "synthetic-side-model"])

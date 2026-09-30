@@ -44,7 +44,7 @@ test("ROLL-02 both formats preserve text sender identity UTC days and byte-exact
   } finally { f.stop() }
 })
 
-test("ROLL-02 converted recent codeword reaches readTail and the actual new-session feed before input", async () => {
+test("ROLL-02 converted recent codeword reaches readTail and rides the actual new-session feed as background in front of the input", async () => {
   const f = migrationFixture()
   try {
     const convert = await converter()
@@ -65,9 +65,12 @@ test("ROLL-02 converted recent codeword reaches readTail and the actual new-sess
       await insertInbound(cluster, h.db, { id: "new-message", body: "synthetic new work" })
       expect(await observe(async () => (await h!.read.outbox()).some(r => r.inbound_id === "new-message"))).toBe(true)
       const fed = h.scripted.fed()
+      // One feed, the input, with the converted history in front of it as background: no feed for the history alone.
+      expect(fed).toHaveLength(1)
+      expect(fed[0].id).toBe("new-message")
       expect(fed[0].text).toContain(codeword)
-      expect(fed.findIndex(r => r.text === "synthetic new work")).toBeGreaterThan(0)
-      expect(() => expect(fed.slice(1)[0].text).toContain(codeword)).toThrow()
+      expect(fed[0].text.endsWith("\n\nsynthetic new work")).toBe(true)
+      expect(fed[0].text.indexOf(codeword)).toBeLessThan(fed[0].text.indexOf("synthetic new work"))
     } finally { await runner?.stop(); await h?.stop(); await cluster.stop() }
   } finally { f.stop() }
 })

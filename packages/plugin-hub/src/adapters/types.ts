@@ -268,7 +268,8 @@ export interface Adapter {
  * A feed that was refused BEFORE any byte of it was written, and the adapter knows
  * it: the session was already closed, or its process already gone. It is the only
  * rejection that lets an input the engine never had be tried again, and only when
- * nothing else was fed to that attempt first (a priming tail is a feed).
+ * nothing else was fed to that attempt first (the runner feeds one input per attempt, with
+ * any background inside it, so that holds for a first feed; an earlier build's tail was a feed).
  */
 export class FeedNotWritten extends Error {
   constructor(readonly why: string) {

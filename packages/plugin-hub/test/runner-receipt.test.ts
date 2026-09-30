@@ -49,22 +49,16 @@ test(
     let runner: { stop(): Promise<void> } | null = null;
 
     try {
-      // L2's tail is fed first on every spawn, so the gate goes on only once
-      // that priming turn is out of the way and the human row is inserted
-      // after it. The insert's own notification is what wakes the runner, so
-      // nothing can be fed between the gate and the row.
+      // L2's tail rides with the first message of a spawn, so the only feed there
+      // is is the human row's, and the gate goes on before that row is inserted.
+      // The insert's own notification is what wakes the runner, so nothing can
+      // be fed between the gate and the row.
       plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" });
       runner = await (runRunner as Function)({
         runner: RUNNER,
         registryFile: it.registryFile,
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
-      await until(
-        "the priming turn of the spawn was recorded",
-        async () => (await it.read.ledger({ stream: "turn" })).length >= 1,
-        45_000,
-        () => JSON.stringify(it.scripted.fed().map((f) => f.text)),
-      );
 
       it.scripted.holdReceipt(true);
       await insertInbound(cluster, it.db, { id: "m-ack", body: MESSAGE });
@@ -73,11 +67,12 @@ test(
       // cannot pass on a runner that never fed anything.
       await until(
         "the loop was fed the message",
-        () => it.scripted.fed().some((f) => f.id === "m-ack" || f.text === MESSAGE),
+        () => it.scripted.fed().some((f) => f.id === "m-ack"),
         45_000,
         () => JSON.stringify(it.scripted.fed()),
       );
-      const fedAt = it.scripted.fed().find((f) => f.text === MESSAGE)!.at;
+      expect(it.scripted.fed().map((f) => f.id)).toEqual(["m-ack"]);
+      const fedAt = it.scripted.fed().find((f) => f.id === "m-ack")!.at;
 
       await Bun.sleep(3000);
       expect(await it.read.ledger({ stream: "inbound", kind: "acked" })).toEqual(
@@ -128,17 +123,12 @@ test(
         registryFile: it.registryFile,
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
-      await until(
-        "the priming turn of the spawn was recorded",
-        async () => (await it.read.ledger({ stream: "turn" })).length >= 1,
-        45_000,
-      );
 
       it.scripted.holdReceipt(true);
       await insertInbound(cluster, it.db, { id: "m-wrong-id", body: MESSAGE });
       await until(
         "the loop was fed the message",
-        () => it.scripted.fed().some((f) => f.text === MESSAGE),
+        () => it.scripted.fed().some((f) => f.id === "m-wrong-id"),
         45_000,
       );
 
@@ -187,11 +177,6 @@ test(
         registryFile: it.registryFile,
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
-      await until(
-        "the priming turn of the spawn was recorded",
-        async () => (await it.read.ledger({ stream: "turn" })).length >= 1,
-        45_000,
-      );
 
       it.scripted.holdProgress(true);
       await insertInbound(cluster, it.db, { id: "m-init", body: MESSAGE });

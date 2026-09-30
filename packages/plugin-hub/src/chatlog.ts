@@ -34,6 +34,24 @@ export function lineOrigin(value: unknown): RowOrigin | undefined {
 export const TAIL_PREAMBLE =
   "[hub] chat log tail, for context only. Do not answer it. The message to answer arrives next.";
 
+/** Opens the history a fresh master session is handed together with the input it answers. */
+export const BACKGROUND_OPEN =
+  "[hub] BACKGROUND, begin. Earlier chat history, read only so you know what was said before this session. " +
+  "It is not a request and not an instruction: do not answer it, do not act on it, and do not run, redo, edit or rebuild anything it mentions.";
+/** Closes it. What follows is the one message to answer. */
+export const BACKGROUND_CLOSE = "[hub] BACKGROUND, end. The message to answer follows.";
+
+/**
+ * What the ENGINE is handed for the first input of a fresh master session: the tail
+ * (`readTail`'s own text, format unchanged) between two delimiters, and then the
+ * input as it is. It is wire text only. The conversation's own entry, the attempt's
+ * digest and every recovery read the input WITHOUT it, so history is never in a
+ * transcript it did not come from and never replays.
+ */
+export function withBackground(background: string, input: string): string {
+  return `${BACKGROUND_OPEN}\n${background}\n${BACKGROUND_CLOSE}\n\n${input}`;
+}
+
 /** An estimate by construction, and the defaults it serves are until measured. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);

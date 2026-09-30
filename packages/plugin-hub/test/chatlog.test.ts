@@ -1,12 +1,15 @@
-// The chat log is the record, and a spawned session is fed its tail.
+// The chat log is the record, and a spawned session is handed its tail with the
+// first message it answers.
 //
 // SPEC §2: "Chat log: the door appends every message in both directions to one
 // dated file per agent, before sending. The loop's session is a cache. On every
-// spawn the runner feeds the tail (24 hours, 8k tokens, defaults until
-// measured) before any human message. The agent never chooses what to read on
-// spawn. No per-agent tail size." Its Forbidden list carries "a session
-// answering before the tail was fed". Its Check line: "A code word planted in
-// the log survives a respawn."
+// spawn of a fresh master session the runner hands it the tail (24 hours, 8k
+// tokens, defaults until measured) as delimited background on the first real
+// input: one feed, one model turn, one answer. The agent never chooses what to
+// read on spawn. No per-agent tail size." Its Forbidden list carries "a fresh
+// master session answering without the tail it was owed; the tail run as a model
+// turn of its own". Its Check line: "A code word planted in the log survives a
+// respawn."
 //
 // The scripted loop stands in for the real one here, and it cannot stand in for
 // it completely: a scripted loop is told what to say, so only a real loop can
@@ -181,10 +184,12 @@ test(
 );
 
 test(
-  "MSG-12 a code word planted in the log survives a respawn: the first feed of a spawned session is the tail carrying the code word and the human message is second, and the priming turn produces no reply (SPEC §2, L2)",
+  "MSG-12 a code word planted in the log survives a respawn: the first and only feed of a spawned session is the human message with the tail carrying the code word as delimited background, the conversation records the message as it was sent, and nothing is fed for the history alone (SPEC §2, L2)",
   async () => {
-    const { TAIL_PREAMBLE, readTail } = await seam("src/chatlog.ts");
+    const { TAIL_PREAMBLE, BACKGROUND_OPEN, BACKGROUND_CLOSE, readTail } = await seam("src/chatlog.ts");
     expect(typeof TAIL_PREAMBLE).toBe("string");
+    expect(typeof BACKGROUND_OPEN).toBe("string");
+    expect(typeof BACKGROUND_CLOSE).toBe("string");
     expect(typeof readTail).toBe("function");
     const { runRunner } = await seam("src/runner/run.ts");
     expect(typeof runRunner).toBe("function");
@@ -204,6 +209,11 @@ test(
         text: `the word for today is ${codeWord}`,
       });
 
+      // The scripted loop echoes what it was fed, and what it was fed carries the
+      // history: what is asserted about the ANSWER is that it is one, so it says
+      // something of its own.
+      it.scripted.setAnswer(() => "the one answer");
+
       door = await (runDoor as Function)({
         door: DOOR,
         registryFile: it.registryFile,
@@ -215,6 +225,11 @@ test(
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
 
+      // The session is up (an eager start) and it has been fed NOTHING: history alone is not a turn.
+      await until("the resident session was started", () => it.scripted.starts().length >= 1, 60_000);
+      await Bun.sleep(1500);
+      expect(it.scripted.fed()).toEqual([]);
+
       it.fake.deliver({ text: MESSAGE });
       await until(
         "the reply was posted",
@@ -224,25 +239,39 @@ test(
       );
       await Bun.sleep(1500);
 
+      // ONE feed, the message, with the tail in front of it between two delimiters.
       const fed = it.scripted.fed();
-      expect(fed.length).toBe(2);
+      expect(fed.length).toBe(1);
+      const text = fed[0].text;
+      expect(text.startsWith(BACKGROUND_OPEN as string)).toBe(true);
+      expect(text).toContain(TAIL_PREAMBLE as string);
+      expect(text).toContain(codeWord);
+      expect(text.endsWith(`${BACKGROUND_CLOSE as string}\n\n${MESSAGE}`)).toBe(true);
+      // The delimiters are in the right order: the code word is background, and the message is after it.
+      expect(text.indexOf(codeWord)).toBeLessThan(text.indexOf(BACKGROUND_CLOSE as string));
+      // The message being answered is not also in the history it rides with.
+      expect(text.split(MESSAGE).length - 1).toBe(1);
 
-      // The first feed of a spawned session is the tail, and it is marked as
-      // the tail so the loop can tell it from a human.
-      expect(fed[0].text.startsWith(TAIL_PREAMBLE as string)).toBe(true);
-      expect(fed[0].text).toContain(codeWord);
+      // THE CONVERSATION KEEPS THE MESSAGE AS IT WAS SENT: history is not put into
+      // a transcript it did not come from, so nothing rebuilt from the transcript can carry it.
+      const entries = (await it.read.sql(
+        "select kind, body from conversation_entry order by seq",
+      )) as { kind: string; body: string }[];
+      expect(entries.map((e) => e.kind)).toEqual(["input", "reply"]);
+      expect(entries[0].body).toBe(MESSAGE);
+      for (const entry of entries) expect(entry.body).not.toContain(codeWord);
+      // The attempt's digest names the input, and the feed intent says that history rode with it.
+      const intents = await it.read.ledger({ stream: "execution", kind: "feed.intent" });
+      expect(intents.length).toBe(1);
+      expect(intents[0].detail.context).toMatchObject({ kind: "chat-tail" });
+      expect(Number((intents[0].detail.context as { chars: number }).chars)).toBeGreaterThan(0);
+      expect((await it.read.sql("select purpose from execution")).map((r) => r.purpose)).toEqual(["turn"]);
 
-      // The second-feed assertion keeps the first from being satisfiable by a
-      // build that feeds the tail and then nothing.
-      expect(fed[1].text).toBe(MESSAGE);
-      expect(fed[1].text).not.toContain(TAIL_PREAMBLE as string);
-
-      // And the priming turn produced no message in the chat, which catches a
-      // build that lets the agent answer the tail.
+      // One visible answer, and it is the one the loop gave to the message.
       const chunks = await it.read.outbox();
       expect(chunks.length).toBe(1);
       expect(it.fake.posts().length).toBe(1);
-      expect(it.fake.posts()[0].text).toBe(scriptedReply(MESSAGE));
+      expect(it.fake.posts()[0].text).toBe("the one answer");
     } finally {
       if (runner) await runner.stop();
       if (door) await door.stop();
@@ -253,7 +282,7 @@ test(
 );
 
 test(
-  "LOOP-02 a turn without a preset ID is forbidden and the priming turn is a turn: a spawn records two turn records, the tail one against the agent and the message one against the inbound id, and the tail turn's text reaches neither the outbox nor the platform (SPEC §3 Forbidden, L18, and 02-CONTEXT D-50)",
+  "LOOP-02 a turn without a preset ID is forbidden, and a spawn takes ONE turn: the record is written against the inbound id with the numbers of the turn that was run, no turn is recorded or paid for the history, and the history reaches neither the outbox nor the platform (SPEC §3 Forbidden, L18, and 02-CONTEXT D-50)",
   async () => {
     const { TAIL_PREAMBLE } = await seam("src/chatlog.ts");
     expect(typeof TAIL_PREAMBLE).toBe("string");
@@ -273,17 +302,8 @@ test(
         text: `the word for today is ${codeWord}`,
       });
 
-      // Each turn of this session reports its OWN numbers. Two records that
-      // carry the same counts could be one record copied, and a copy is exactly
-      // the build this check has to fail: the spend it would hide is every
-      // spawn's priming turn.
-      const tailUsage = {
-        input_tokens: 4111,
-        cached_input_tokens: 11,
-        output_tokens: 17,
-        plan_usage: null,
-        raw: { which: "the priming turn", input_tokens: 4111 },
-      };
+      // The one turn of this session reports its own numbers, so a record that
+      // is not the turn's own (copied, or made up for the history) fails.
       const messageUsage = {
         input_tokens: 9222,
         cached_input_tokens: 2022,
@@ -292,9 +312,9 @@ test(
         raw: { which: "the message turn", input_tokens: 9222 },
       };
 
-      // Held at the end so the two turns are settled one at a time, each with
-      // its own numbers set just before it ends.
+      // Held at the end so the turn is settled with the numbers set just before it ends.
       it.scripted.holdTurnEnd(true);
+      it.scripted.setAnswer(() => "the one answer");
 
       door = await (runDoor as Function)({
         door: DOOR,
@@ -307,25 +327,18 @@ test(
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
 
-      await until(
-        "the tail of the log was fed first",
-        () => it.scripted.fed().length >= 1,
-        60_000,
-        () => JSON.stringify(it.scripted.fed().map((f) => f.text)),
-      );
-      it.scripted.setUsage(tailUsage);
-      it.scripted.endTurn();
-      await until(
-        "the priming turn was recorded",
-        async () => (await it.read.ledger({ stream: "turn" })).length >= 1,
-        60_000,
-      );
+      // The session comes up and nothing is fed for the history: no turn is run,
+      // so none is recorded and none is paid for.
+      await until("the resident session was started", () => it.scripted.starts().length >= 1, 60_000);
+      await Bun.sleep(1500);
+      expect(it.scripted.fed()).toEqual([]);
+      expect(await it.read.ledger({ stream: "turn" })).toEqual([]);
 
       it.scripted.setUsage(messageUsage);
       it.fake.deliver({ text: MESSAGE });
       await until(
         "the loop was fed the message",
-        () => it.scripted.fed().length >= 2,
+        () => it.scripted.fed().length >= 1,
         60_000,
       );
       it.scripted.endTurn();
@@ -336,25 +349,22 @@ test(
       );
       await Bun.sleep(1500);
 
-      // A spawn feeds the tail, the loop runs a turn, and that turn costs real
-      // tokens. Without this check a build hides a whole class of spend and the
-      // Forbidden line has a hole exactly the size of every spawn.
+      // A spawn takes one turn, and that turn costs real tokens: it is recorded
+      // once, against the message, and there is no second record for the history.
       const turns = await it.read.ledger({ stream: "turn" });
-      expect(turns.length).toBe(2);
+      expect(turns.length).toBe(1);
+      expect(it.scripted.fed().length).toBe(1);
 
       const [row] = await it.read.inbound();
-      const tailTurn = turns.find((t) => t.detail.tail === true);
-      const messageTurn = turns.find((t) => t.detail.tail === false);
-      expect(tailTurn).toBeDefined();
-      expect(messageTurn).toBeDefined();
-      // Identified by subject, so a build writing two identical records fails.
-      expect(tailTurn!.subject).toBe(AGENT);
-      expect(messageTurn!.subject).toBe(row.id);
+      const messageTurn = turns[0];
+      expect(messageTurn.detail.tail).toBe(false);
+      expect(messageTurn.subject).toBe(row.id);
+      expect(turns.some((t) => t.subject === AGENT)).toBe(false);
 
-      // Every turn carries the preset id the registry held at that moment, the
-      // priming one included. Asserting only that the tail record has SOME
-      // sixteen-character string leaves a build free to write a constant there,
-      // which is the Forbidden line with a hole the size of every spawn.
+      // Every turn carries the preset id the registry held at that moment.
+      // Asserting only that the record has SOME sixteen-character string leaves
+      // a build free to write a constant there, which is the Forbidden line with
+      // a hole the size of every spawn.
       const settings = {
         adapter: it.adapterName,
         effort: "medium",
@@ -370,38 +380,20 @@ test(
         expect(turn.detail.preset_settings).toEqual(settings);
       }
 
-      // THE LOAD on the copy: each record carries the numbers ITS OWN turn
-      // reported, and the two sets differ in all three counts and in the raw
-      // object, so a record copied from the other fails every one of them.
-      expect(tailTurn!.detail.input_tokens).toBe(tailUsage.input_tokens);
-      expect(tailTurn!.detail.cached_input_tokens).toBe(
-        tailUsage.cached_input_tokens,
-      );
-      expect(tailTurn!.detail.output_tokens).toBe(tailUsage.output_tokens);
-      expect(tailTurn!.detail.raw_usage).toEqual(tailUsage.raw);
-
-      expect(messageTurn!.detail.input_tokens).toBe(messageUsage.input_tokens);
-      expect(messageTurn!.detail.cached_input_tokens).toBe(
+      // THE LOAD: the record carries the numbers of the turn that was run.
+      expect(messageTurn.detail.input_tokens).toBe(messageUsage.input_tokens);
+      expect(messageTurn.detail.cached_input_tokens).toBe(
         messageUsage.cached_input_tokens,
       );
-      expect(messageTurn!.detail.output_tokens).toBe(messageUsage.output_tokens);
-      expect(messageTurn!.detail.raw_usage).toEqual(messageUsage.raw);
+      expect(messageTurn.detail.output_tokens).toBe(messageUsage.output_tokens);
+      expect(messageTurn.detail.raw_usage).toEqual(messageUsage.raw);
 
-      expect(tailTurn!.detail.input_tokens).not.toBe(
-        messageTurn!.detail.input_tokens,
-      );
-      expect(tailTurn!.detail.output_tokens).not.toBe(
-        messageTurn!.detail.output_tokens,
-      );
-
-      // The tail turn's own text is discarded and never becomes a reply.
-      const tailReply = scriptedReply(`${TAIL_PREAMBLE as string}`);
+      // The history the turn carried never becomes a reply.
       const chunks = await it.read.outbox();
       expect(chunks.length).toBe(1);
       for (const chunk of chunks) {
         expect(chunk.body).not.toContain(TAIL_PREAMBLE as string);
         expect(chunk.body).not.toContain(codeWord);
-        expect(chunk.body).not.toBe(tailReply);
       }
       expect(it.fake.posts().length).toBe(1);
       for (const post of it.fake.posts()) {

@@ -88,9 +88,8 @@ test(
       // door's own timing is in the way of the staging.
       await insertInbound(cluster, it.db, { id: "m-settle-kill", body: MESSAGE });
 
-      // L2's tail is fed first on every spawn, so the held gate catches the
-      // priming turn first. That one is released by hand, and the SECOND turn
-      // the gate holds is the message's.
+      // L2's tail rides with the first message of a spawn as background, so the
+      // held gate catches the message's own turn, the only one there is.
       plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" });
       it.scripted.holdTurnEnd(true);
 
@@ -102,20 +101,16 @@ test(
       ]);
 
       await until(
-        "the tail of the log was fed first",
-        () => it.scripted.fed().length >= 1,
-        45_000,
-        () => JSON.stringify(it.scripted.fed().map((f) => f.text)),
-      );
-      expect(it.scripted.fed()[0].text).not.toBe(MESSAGE);
-      it.scripted.endTurn();
-
-      await until(
         "the loop was fed the message",
-        () => it.scripted.fed().some((f) => f.text === MESSAGE),
+        () => it.scripted.fed().some((f) => f.id === "m-settle-kill"),
         45_000,
         () => JSON.stringify(it.scripted.fed().map((f) => f.text)),
       );
+      // One feed: the message, with the history in front of it.
+      expect(it.scripted.fed().length).toBe(1);
+      expect(it.scripted.fed()[0].text).toContain("what was said yesterday");
+      expect(it.scripted.fed()[0].text.endsWith(MESSAGE)).toBe(true);
+      const fedText = it.scripted.fed()[0].text;
       await until(
         "the row was claimed by this runner",
         async () => (await it.read.inbound())[0].claimed_by === RUNNER,
@@ -140,8 +135,7 @@ test(
       await waitForBackendsGone(cluster, it.db, [blocked], 30_000);
 
       // The settle left nothing, and the claim is still standing. The turn
-      // query is scoped to this message's own subject, because each spawn's
-      // priming turn is a turn record too and it is not what is under test.
+      // query is scoped to this message's own subject.
       expect(await it.read.outbox()).toEqual([]);
       expect(await it.read.ledger({ stream: "inbound", kind: "answered" })).toEqual(
         [],
@@ -185,7 +179,8 @@ test(
       // The four things the settle transaction owns, exactly once each.
       const chunks = await it.read.outbox();
       expect(chunks.length).toBe(1);
-      expect(chunks[0].body).toBe(scriptedReply(MESSAGE));
+      // The reply is the one the first run journaled, to what the engine was fed.
+      expect(chunks[0].body).toBe(scriptedReply(fedText));
       expect(
         (await it.read.ledger({ stream: "inbound", kind: "answered" })).length,
       ).toBe(1);
@@ -194,24 +189,23 @@ test(
           (t) => t.subject === "m-settle-kill",
         ).length,
       ).toBe(1);
-      // And the restart spawned a session of its own, so its priming turn is
-      // recorded too rather than hidden.
+      // The restart settled from the journal and fed nothing: no turn was run for the history or for anything else.
       expect(
         (await it.read.ledger({ stream: "turn" })).filter(
           (t) => t.subject === AGENT,
         ).length,
-      ).toBeGreaterThanOrEqual(1);
+      ).toBe(0);
       expect(
         (await it.read.ledger({ stream: "inbound", kind: "delivered" })).length,
       ).toBe(1);
       expect(it.fake.posts().length).toBe(1);
-      expect(it.fake.posts()[0].text).toBe(scriptedReply(MESSAGE));
+      expect(it.fake.posts()[0].text).toBe(scriptedReply(fedText));
 
       // The loop accepted the message once, before the kill, and was not
       // handed it again: the message was fed exactly one time in all.
       const acked = await it.read.ledger({ stream: "inbound", kind: "acked" });
       expect(acked.length).toBeGreaterThanOrEqual(1);
-      expect(it.scripted.fed().filter((f) => f.text === MESSAGE).length).toBe(1);
+      expect(it.scripted.fed().filter((f) => f.id === "m-settle-kill").length).toBe(1);
 
       // And the claim was cleared by the settle, so the row is nobody's now.
       const settled = await it.read.inbound();
@@ -253,24 +247,17 @@ test(
         it.adapterName,
       ]);
 
-      // The priming turn first, released by hand.
+      // The message's turn (the history rides with it), up to and including its
+      // started stamp. The lock goes on only after that, because an access
+      // exclusive lock on ledger_event would otherwise block the acked and
+      // started stamps and the kill would land somewhere other than the settle.
       await until(
-        "the tail of the log was fed first",
-        () => it.scripted.fed().length >= 1,
+        "the loop was fed the message",
+        () => it.scripted.fed().some((f) => f.id === "m-ledger-kill"),
         45_000,
         () => JSON.stringify(it.scripted.fed().map((f) => f.text)),
       );
-      it.scripted.endTurn();
-
-      // The message's turn, up to and including its started stamp. The lock
-      // goes on only after that, because an access exclusive lock on
-      // ledger_event would otherwise block the acked and started stamps and
-      // the kill would land somewhere other than the settle.
-      await until(
-        "the loop was fed the message",
-        () => it.scripted.fed().some((f) => f.text === MESSAGE),
-        45_000,
-      );
+      const fedText = it.scripted.fed().find((f) => f.id === "m-ledger-kill")!.text;
       await until(
         "the message turn reached its first progress",
         async () =>
@@ -343,7 +330,7 @@ test(
       expect(chunks.length).toBe(1);
       expect(chunks[0].inbound_id).toBe("m-ledger-kill");
       expect(chunks[0].seq_in_reply).toBe(1);
-      expect(chunks[0].body).toBe(scriptedReply(MESSAGE));
+      expect(chunks[0].body).toBe(scriptedReply(fedText));
       expect(
         (await it.read.ledger({ stream: "inbound", kind: "answered" })).length,
       ).toBe(1);
@@ -356,7 +343,7 @@ test(
         (await it.read.ledger({ stream: "inbound", kind: "delivered" })).length,
       ).toBe(1);
       expect(it.fake.posts().length).toBe(1);
-      expect(it.fake.posts()[0].text).toBe(scriptedReply(MESSAGE));
+      expect(it.fake.posts()[0].text).toBe(scriptedReply(fedText));
       expect((await it.read.inbound())[0].claimed_by).toBeNull();
     } finally {
       if (lock) await lock.release();

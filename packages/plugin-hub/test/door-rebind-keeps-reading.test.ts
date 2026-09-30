@@ -40,7 +40,7 @@ for (const edit of ["allowlist", "person, chat already read", "person, chat not 
     try {
       door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: edge.platform })
       runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: it.scripted.adapter } })
-      const answered = (text: string) => edge.posts().some(post => post.chat === CHAT && post.text === `reply to ${text}`)
+      const answered = (text: string) => edge.posts().some(post => post.chat === CHAT && post.text.startsWith("reply to ") && post.text.endsWith(text))
       if (edit !== "person, chat not read yet") {
         edge.batch([message("1", "before the edit")], "2")
         // Both answer waits measured max 6747 ms in 8 runs on the Linux box at a load average of 5 to 8.

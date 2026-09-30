@@ -8,6 +8,7 @@ import { proveMigrationFixtures } from "../live/prove-rollout-migration.ts"
 import { deliveryEdge, proveDeliveryEdge } from "./helpers/rollout-delivery.ts"
 import { runDoor } from "../src/door/run.ts"
 import { runRunner } from "../src/runner/run.ts"
+import { BACKGROUND_CLOSE } from "../src/chatlog.ts"
 import { observe } from "./helpers/rollout-runner.ts"
 
 beforeAll(async () => {
@@ -79,7 +80,12 @@ for (const name of ["telegram", "discord"] as const) test(`ROLL-18 ${name} froze
       runner = await runRunner({ runner: "runner-pi", registryFile: h.registryFile, adapters: { [h.adapterName]: h.scripted.adapter } })
       door = await runDoor({ door: "door-fake", registryFile: h.registryFile, platform: edge.platform })
       expect(await observe(() => edge.posts().some(r => r.text === "reply to later arrival"), 7000)).toBe(true)
-      const accepts = (texts: string[], calls: string[]) => {
+      // The first input of a fresh session carries the chat's history in front of it as background (and the echo of it), so
+      // each text is compared as the input it ends with.
+      const bare = (s: string) => s.includes(BACKGROUND_CLOSE) ? s.slice(s.indexOf(BACKGROUND_CLOSE) + BACKGROUND_CLOSE.length + 2) : s
+      const accepts = (postedTexts: string[], fedTexts: string[]) => {
+        const texts = postedTexts.map(s => s.startsWith("reply to ") && s.includes(BACKGROUND_CLOSE) ? `reply to ${bare(s)}` : s)
+        const calls = fedTexts.map(bare)
         expect(texts.filter(s => s === "fully owed")).toHaveLength(1)
         expect(texts.filter(s => s === "remaining owed")).toHaveLength(1)
         expect(texts).not.toContain("already delivered")

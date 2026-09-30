@@ -21,17 +21,20 @@
 //   H4/H5  a key reused by another tool; operations named by their origin
 //   S3     two conversations with one key, and a repeat cycle
 //   G7     placing a gate against opening an attempt, in both orders, for an
-//          input's attempt and for a tail
+//          input's attempt and for a tail (the runner no longer opens one; the fence
+//          stays for what an earlier build left)
 //   G8     opening an attempt against a tool call that spends the same input:
 //          the call's invocation holds the conversation, the opening holds the
 //          input, and neither waits for the other in a circle (the call and the
 //          opening are on two connections, two server processes, shown as such)
-//   R8-R11 a stop against the attempt settling and the next input opening; the
-//          other feed boundary; an accepted stop while the answer lands; a stop
-//          whose write fails, and two requests for one attempt
+//   R8-R11 a stop against the attempt settling and the next input opening; an
+//          accepted stop while the answer lands; a stop whose write fails, and
+//          two requests for one attempt (R10, the boundary between a priming tail
+//          and the input, is gone with the tail: history rides on the input's one feed)
 //   R12-R14 an attempt of this incarnation that is unknown; a request the runner
 //          could not read; a stop asked while the attempt is only being opened
 //   R15/R16 a claim that committed before a gate; a resident starting beside one
+//          (it opens nothing at start, so it is the first input that waits)
 //   R17/R18 the opening handoff of a stop: an attempt claimed when the stop begins and
 //          fed by the time it is judged, in both orders (the write accepted after
 //          the feed; the write refused before it and its read after it)
@@ -50,7 +53,7 @@ import { connect, createServer, type AddressInfo, type Server, type Socket } fro
 import { backendPid, startCluster, freshDatabase, hubPath, lockTable, statementWatch, until, untilIssued, waitForLockWaiter, type Cluster } from "./helpers/cluster.ts"
 import { rolloutDatabase } from "./helpers/rollout-fixtures.ts"
 import { AGENT, CHAT, DOOR, PERSON, RUNNER, insertInbound, plantChatLine, stageHub, type NoticeRow } from "./helpers/hub-fixture.ts"
-import { controlledAdapter, observe, processTree, retrySettings } from "./helpers/rollout-runner.ts"
+import { controlledAdapter, editAgent, observe, processTree, retrySettings } from "./helpers/rollout-runner.ts"
 import { insertJob, jobSource, livingProcess } from "./helpers/conversations.ts"
 import { childGone } from "./helpers/scripted-adapter.ts"
 import { runRunner } from "../src/runner/run.ts"
@@ -1406,45 +1409,6 @@ test("R9 a stop accepted while the answer lands keeps the answer, and the sessio
   } finally { release(); await runner?.stop(); await s.stop() }
 }, 90_000)
 
-test("R10 a stop accepted after the priming tail's answer landed and before the input is fed ends the attempt as stopped, and the input is never fed", async () => {
-  const s = await stageRunner({ descendants: true })
-  let runner: Runner | undefined
-  let pause: Awaited<ReturnType<typeof holdKey>> | undefined
-  try {
-    plantChatLine({ stateDir: s.it.stateDir, text: "what was said yesterday" })
-    // The resident's own tail is refused (A15), so the row's fresh child carries the tail on the row's attempt.
-    await s.q(`create function test_tail_busy() returns trigger language plpgsql as $$ begin
-      raise unique_violation using message = 'duplicate key value violates unique constraint "execution_one_per_agent"'; end $$`)
-    await s.q("create trigger test_tail_busy before insert on execution for each row when (new.purpose = 'tail') execute function test_tail_busy()")
-    runner = await s.start()
-    expect(await observe(async () => (await s.it.read.ledger({ stream: "runner", kind: "tail.refused" })).length === 1, 15_000)).toBe(true)
-    // The tail's own answer is held as it is recorded: the tail has been fed and has answered, the input has not been fed.
-    await s.q(`create function test_hold_tail() returns trigger language plpgsql as $$ begin
-      if new.stream = 'turn' and new.detail ->> 'tail' = 'true' then perform pg_advisory_lock(90213); perform pg_advisory_unlock(90213); end if;
-      return new; end $$`)
-    await s.q("create trigger test_hold_tail before insert on ledger_event for each row execute function test_hold_tail()")
-    pause = await holdKey(s.it.db, 90213)
-    await insertInbound(cluster, s.it.db, { id: "h1", body: "the input" })
-    expect(await waiting(s.it.db)("hub_runner")).toBe(true)
-    const [attempt] = await s.q("select id, state from execution where inbound_id = 'h1'")
-    expect(attempt.state, "the tail was fed on the row's attempt").toMatch(/feed_intent|received|running/)
-    expect(s.fedCount("h1")).toBe(0)
-
-    await requestStop(s.hub, { operation: "op-boundary", target: { execution: attempt.id }, by: "test" })
-    expect(await observe(async () => (await stopsOf(s.hub, "op-boundary"))[0].state === "stopped", 20_000)).toBe(true)
-    await pause.release()
-    pause = undefined
-    await Bun.sleep(1500)
-    expect(s.fedCount("h1"), "the input is not fed to the session that was ended for its attempt").toBe(0)
-    expect(s.edge.sessions.flatMap(row => row.fed).map(message => message.id), "only the tail was ever fed").toEqual([AGENT])
-    expect(await s.q("select state from execution where inbound_id = 'h1'")).toEqual([{ state: "stopped" }])
-    expect(await s.q("select inbound_id, cause, state from replay_hold")).toEqual([{ inbound_id: "h1", cause: "stopped", state: "held" }])
-    expect((await s.it.read.inbound()).find(row => row.id === "h1")).toMatchObject({ claimed_by: null })
-    expect((await s.it.read.outbox()).some(row => row.inbound_id === "h1")).toBe(false)
-    expect((await s.it.read.noticeRows()).filter(row => String(row.notice_key).startsWith("agent-retry"))).toEqual([])
-  } finally { await pause?.release().catch(() => {}); await runner?.stop(); await s.stop() }
-}, 90_000)
-
 test("R11 a stop whose write fails leaves no intent behind and is done again on the tick; two requests for one attempt signal it once", async () => {
   const s = await stageRunner()
   const signals = watchSignals(s)
@@ -1686,32 +1650,33 @@ test("R15 a claim that committed before a gate is not opened under it: the runne
   } finally { await order?.commit().catch(() => {}); await runner?.stop(); await s.stop() }
 }, 90_000)
 
-test("R16 a resident that starts beside a gate placed while it was starting does not prime its tail, and its first input waits for the release", async () => {
+test("R16 a resident that starts beside the agent's ordering lock and a gate placed while it was starting opens nothing and feeds nothing, and its first input waits for the release and then carries the history", async () => {
   const s = await stageRunner({ tick: 30 })
   let runner: Runner | undefined
   let order: Awaited<ReturnType<typeof holdOrder>> | undefined
   try {
     plantChatLine({ stateDir: s.it.stateDir, text: "what was said yesterday" })
     order = await holdOrder(s.it.db, AGENT)
-    const starting = s.start()
-    expect(await waiting(s.it.db)("hub_runner"), "the resident is opening its tail attempt, behind the lock").toBe(true)
+    // The start only brings the child up. It opens no attempt, so it has nothing to wait for behind the lock.
+    runner = await within(s.start(), 15_000, "the resident's start (it opens no attempt, so the lock is not in its way)")
     await order.gate("op-tail", "agent", AGENT, "archive")
     await order.commit()
     order = undefined
-    runner = await starting
-    const [refused] = await s.it.read.ledger({ stream: "runner", kind: "tail.refused" })
-    expect(String((refused.detail as { cause: string }).cause), "refused by name, for the gate").toMatch(/\(gate\)/)
-    expect(s.edge.sessions.flatMap(row => row.fed), "nothing was generated").toEqual([])
+    expect(s.edge.sessions, "the resident's child is up").toHaveLength(1)
+    expect(s.edge.sessions.flatMap(row => row.fed), "nothing was generated for the history").toEqual([])
     expect(await s.q("select 1 from execution"), "and no attempt was owned").toEqual([])
-    expect(await observe(() => s.edge.sessions.every(row => row.closed))).toBe(true)
+    expect(await s.it.read.ledger({ stream: "runner", kind: "tail.refused" })).toEqual([])
 
     await insertInbound(cluster, s.it.db, { id: "h1", body: "the first input" })
     await Bun.sleep(1200)
-    expect(s.fedCount("h1")).toBe(0)
+    expect(s.fedCount("h1"), "the gate keeps the first input from the child that is already up").toBe(0)
+    expect(await s.q("select 1 from execution")).toEqual([])
     expect((await s.it.read.inbound()).find(row => row.id === "h1")).toMatchObject({ claimed_by: null })
     expect(await releaseGates(s.hub, { operation: "op-tail" })).toBe(1)
     expect(await s.answered("h1", 20_000)).toBe(true)
-    expect(s.edge.sessions.flatMap(row => row.fed).map(message => message.id), "the tail rides the input's own attempt, once").toEqual([AGENT, "h1"])
+    expect(s.edge.sessions.flatMap(row => row.fed).map(message => message.id), "the history rides the input's own feed, once").toEqual(["h1"])
+    expect(s.edge.sessions[0].fed[0].text).toContain("what was said yesterday")
+    expect(s.edge.sessions[0].fed[0].text.endsWith("\n\nthe first input")).toBe(true)
   } finally { await order?.commit().catch(() => {}); await runner?.stop(); await s.stop() }
 }, 90_000)
 
@@ -1852,25 +1817,22 @@ async function logStopWrites(s: Staged) {
 }
 
 /**
- * A runner whose resident has no child, and an input about to open its attempt on a FRESH one, whose priming tail rides
- * that attempt. Everything is held: the child's start (when armed), the tail's turn and the input's turn, so nothing
- * finishes on its own. Call `openAttempt` after the runner is up.
+ * A runner whose agent has no child (it is on demand), and an input about to open its attempt on a FRESH one, which
+ * carries the chat history on the input's own feed. Everything is held: the child's start (when armed) and the input's
+ * turn, so nothing finishes on its own. Call `openAttempt` after the runner is up.
  */
 async function stageOpening(s: Staged) {
   const starts = holdStarts(s)
   const sent = signalLog(s)
   const written = await logStopWrites(s)
   plantChatLine({ stateDir: s.it.stateDir, text: "what was said yesterday" })
-  // The resident's own tail is refused (A15), so it is left with no child, and the input's fresh child carries the tail on the input's attempt.
-  await s.q(`create function test_tail_busy() returns trigger language plpgsql as $$ begin
-    raise unique_violation using message = 'duplicate key value violates unique constraint "execution_one_per_agent"'; end $$`)
-  await s.q("create trigger test_tail_busy before insert on execution for each row when (new.purpose = 'tail') execute function test_tail_busy()")
-  s.edge.hold(message => message.id === AGENT || message.id === "h1")
+  // An on-demand agent has no child until an input asks for one, so the input's attempt is opened before any child exists.
+  editAgent(s.it.registryFile, AGENT, { mode: "on-demand", idle_seconds: 60 })
+  s.edge.hold(message => message.id === "h1")
   return {
     starts, sent, written,
     /** The input is claimed and its attempt is owned; the child's start is held, so no child of it exists. */
     async openAttempt() {
-      expect(await observe(async () => (await s.it.read.ledger({ stream: "runner", kind: "tail.refused" })).length === 1, 15_000)).toBe(true)
       const before = s.edge.sessions.length
       starts.arm()
       await insertInbound(cluster, s.it.db, { id: "h1", body: "the input" })
@@ -1884,7 +1846,7 @@ async function stageOpening(s: Staged) {
   }
 }
 
-test("R17 a stop that read no session while its attempt was only claimed, and whose write was accepted after that same attempt was fed on a fresh child, signals THAT child once and ends stopped on proof: the input riding behind the tail is never fed", async () => {
+test("R17 a stop that read no session while its attempt was only claimed, and whose write was accepted after that same attempt was fed on a fresh child, signals THAT child once and ends stopped on proof: the input, with the history that rode on its feed, is fed once and never again", async () => {
   const s = await stageRunner({ descendants: true })
   const open = await stageOpening(s)
   const wired = await wire(s)
@@ -1905,11 +1867,12 @@ test("R17 a stop that read no session while its attempt was only claimed, and wh
     expect((await s.q("select state from execution where id = $1", [attempt.id]))[0].state).toBe("claimed")
     expect(s.edge.sessions.length, "still no child").toBe(attempt.before)
 
-    // While it is held the SAME attempt gets its child and is fed the tail (feed intent committed, the turn held): what the write finds
+    // While it is held the SAME attempt gets its child and is fed the input (feed intent committed, the turn held): what the write finds
     // is a fed attempt, so it is accepted, and the session the runner read before the write is not the one the attempt is on.
     open.starts.release()
-    expect(await observe(() => s.fedCount(AGENT) === 1, 15_000)).toBe(true)
-    const fresh = s.sessionFed(AGENT)!
+    expect(await observe(() => s.fedCount("h1") === 1, 15_000)).toBe(true)
+    const fresh = s.sessionFed("h1")!
+    expect(fresh.fed[0].text, "the fresh child was handed the history with the input").toContain("what was said yesterday")
     expect(s.edge.sessions.indexOf(fresh), "a child that did not exist when the stop began").toBe(attempt.before)
     expect(await s.q("select id, state from execution where inbound_id = 'h1'")).toEqual([{ id: attempt.id, state: expect.stringMatching(/^(feed_intent|received|running)$/) }])
     expect(await observe(() => processTree(fresh.session.pid!).length === 3)).toBe(true)
@@ -1930,10 +1893,10 @@ test("R17 a stop that read no session while its attempt was only claimed, and wh
       .toEqual([{ id: attempt.id, state: "stopped" }])
     expect((await stopsOf(s.hub, "op-opening-a"))[0]).toMatchObject({ id: made.id, state: "stopped", outcome: "stopped" })
 
-    // Nothing rides on: the input behind the tail is never fed, and nothing else is signalled or said.
+    // Nothing rides on: the input is not fed again, and nothing else is signalled or said.
     await Bun.sleep(1500)
-    expect(s.fedCount("h1"), "the input is never fed to a child that was ended for its attempt").toBe(0)
-    expect(s.edge.sessions.flatMap(row => row.fed).map(message => message.id), "only the tail was ever fed").toEqual([AGENT])
+    expect(s.fedCount("h1"), "the input was fed once, to the child that was ended for its attempt, and never again").toBe(1)
+    expect(s.edge.sessions.flatMap(row => row.fed).map(message => message.id), "and nothing else was ever fed").toEqual(["h1"])
     expect(open.sent).toHaveLength(1)
     expect(await s.q("select inbound_id, cause, state from replay_hold")).toEqual([{ inbound_id: "h1", cause: "stopped", state: "held" }])
     expect((await s.it.read.outbox()).some(row => row.inbound_id === "h1")).toBe(false)
@@ -1976,8 +1939,8 @@ test("R18 a stop whose write met its attempt claimed and whose read met it fed i
 
     // The runner has not been told. The loop feeds the attempt, on its fresh child, before the read that follows the write.
     open.starts.release()
-    expect(await observe(() => s.fedCount(AGENT) === 1, 15_000)).toBe(true)
-    const fresh = s.sessionFed(AGENT)!
+    expect(await observe(() => s.fedCount("h1") === 1, 15_000)).toBe(true)
+    const fresh = s.sessionFed("h1")!
     expect(await s.q("select id, state from execution where inbound_id = 'h1'")).toEqual([{ id: attempt.id, state: expect.stringMatching(/^(feed_intent|received|running)$/) }])
     expect(await observe(() => processTree(fresh.session.pid!).length === 3)).toBe(true)
     const tree = processTree(fresh.session.pid!)
@@ -1998,8 +1961,8 @@ test("R18 a stop whose write met its attempt claimed and whose read met it fed i
     expect((await stopsOf(s.hub, "op-opening-b"))[0]).toMatchObject({ id: made.id, state: "stopped", outcome: "stopped" })
 
     await Bun.sleep(1500)
-    expect(s.fedCount("h1"), "the input is never fed to a child that was ended for its attempt").toBe(0)
-    expect(s.edge.sessions.flatMap(row => row.fed).map(message => message.id), "only the tail was ever fed").toEqual([AGENT])
+    expect(s.fedCount("h1"), "the input was fed once, to the child that was ended for its attempt, and never again").toBe(1)
+    expect(s.edge.sessions.flatMap(row => row.fed).map(message => message.id), "and nothing else was ever fed").toEqual(["h1"])
     expect(open.sent).toHaveLength(1)
     expect(await s.q("select inbound_id, cause, state from replay_hold")).toEqual([{ inbound_id: "h1", cause: "stopped", state: "held" }])
     expect(await s.it.read.ledger({ stream: "execution", subject: attempt.id, kind: "stop.deferred" }), "asked again inside the bounded look, not left owed").toEqual([])
