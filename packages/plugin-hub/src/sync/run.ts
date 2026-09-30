@@ -188,7 +188,7 @@ function nestedIn(path: string, registry: Registry): string[] {
  * what git's own documentation names as a command, and a new key git grows is
  * added here by name.
  */
-const PROGRAM_KEYS: RegExp[] = [
+export const PROGRAM_KEYS: RegExp[] = [
   /^filter\..+\.(clean|smudge|process)$/i,
   /^core\.(sshcommand|askpass|gitproxy|hookspath|fsmonitor|fsmonitorhookversion|alternaterefscommand|editor|pager|worktree)$/i,
   /^credential\.(.+\.)?helper$/i,
