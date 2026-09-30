@@ -88,8 +88,8 @@ export interface ClaimGate {
  *
  * WHAT A COMMITTED GATE MEANS FOR A CONSUMER THAT WANTS THE AGENT QUIET (an archive,
  * a move). Placing the gate is ordered against the opening of attempts for the agent
- * it is about (one short lock, see `hub_gate_place`), and every opening, an input's
- * or a resident's priming tail, reads the gates after that lock. So once this
+ * it is about (one short lock, see `hub_gate_place`), and every opening (an input's,
+ * or a tail's that an earlier build left) reads the gates after that lock. So once this
  * transaction has committed, an attempt either exists and is listed by
  * `attemptsOf(..., { ownedOnly: true })`, or its opening is refused and its claim is
  * handed back. The consumer keeps the gate for as long as it needs the quiet, looks at

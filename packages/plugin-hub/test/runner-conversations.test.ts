@@ -20,8 +20,9 @@ import { startCluster, type Cluster } from "./helpers/cluster.ts"
 import { AGENT, CHAT, DOOR, PERSON, RUNNER, insertInbound, plantChatLine, stageHub } from "./helpers/hub-fixture.ts"
 import { controlledAdapter, observe, processTree, retrySettings } from "./helpers/rollout-runner.ts"
 import { insertJob, livingProcess } from "./helpers/conversations.ts"
-import { childGone } from "./helpers/scripted-adapter.ts"
+import { childGone, scriptedReply } from "./helpers/scripted-adapter.ts"
 import { runRunner } from "../src/runner/run.ts"
+import { BACKGROUND_CLOSE, BACKGROUND_OPEN, TAIL_PREAMBLE } from "../src/chatlog.ts"
 import { claimNext } from "../src/runner/claim.ts"
 import { alive } from "../src/os/tree.ts"
 import { stageHarvest, plantLine } from "./helpers/harvest-stage.ts"
@@ -464,58 +465,66 @@ test("A9 a recovery context counts as told only once the engine has it: a feed t
   } finally { await runner?.stop(); await edge.stop(); await it.stop() }
 }, 90_000)
 
-test("A10 a resident's priming tail is a model turn and is owned: the agent is blocked while it runs, and a tail that completes leaves nothing", async () => {
+test("A10 a resident's start runs no model turn for the history: nothing is fed and no attempt is owned, and the first input is fed once with the history as background while the conversation keeps the input raw", async () => {
   const { it, edge, start, answered } = await stage({ worker: false })
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
     plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" })
-    // The tail is the one message whose id is the agent's own; the loop takes it and does not finish it.
-    edge.hold(m => m.id === AGENT)
     runner = await start()
-    expect(await observe(() => edge.sessions.some(r => r.fed.some(m => m.id === AGENT)))).toBe(true)
-    const [tail] = await rows(it, "select purpose, state, inbound_id from execution where agent = $1", [AGENT])
-    expect(tail).toMatchObject({ purpose: "tail", inbound_id: null })
-    expect(["feed_intent", "received", "running"]).toContain(tail.state as string)
-    // Owned: the agent is blocked by the table, so no other claimant gets an input to it beside the tail.
-    expect((await rows(it, "select hub_agent_blocked($1) as blocked", [AGENT]))[0].blocked).toBe(true)
-    await insertInbound(cluster, it.db, { id: "h1", body: "hello" })
-    const other = { sql: cluster.connectAs("hub_runner", it.db), url: cluster.url(it.db) } as StoreLike
-    expect(await claimNext(other, { runner: "another-runner", agent: AGENT, leaseMs: 60_000, resumeOk: true })).toBeNull()
-    expect(edge.sessions.flatMap(r => r.fed).filter(m => m.id === "h1")).toEqual([])
+    // The eager start brings the resident's child up and stops there: history alone is not a turn.
+    expect(await observe(() => edge.sessions.length === 1)).toBe(true)
+    await Bun.sleep(1500)
+    expect(edge.sessions[0].fed, "nothing was fed for the history alone").toEqual([])
+    expect(await rows(it, "select 1 from execution"), "no attempt of any kind was opened for it").toEqual([])
+    expect((await rows(it, "select hub_agent_blocked($1) as blocked", [AGENT]))[0].blocked, "so the agent is free").toBe(false)
+    expect(await it.read.ledger({ stream: "turn" }), "and no turn was recorded or paid for").toEqual([])
 
-    // The tail ends; the attempt is over, no hold is left, and the agent takes its input.
-    edge.hold(() => false)
-    for (const one of edge.sessions) one.loop.holdTurnEnd(false)
+    await insertInbound(cluster, it.db, { id: "h1", body: "hello" })
     expect(await answered("h1", 15_000)).toBe(true)
-    expect((await rows(it, "select purpose, state from execution where agent = $1 order by started_at", [AGENT])).map(r => [r.purpose, r.state])).toEqual([["tail", "completed"], ["turn", "completed"]])
+    // ONE feed, on the session that was already up: the input, behind the history between two delimiters.
+    expect(edge.sessions).toHaveLength(1)
+    expect(edge.sessions[0].fed.map(m => m.id)).toEqual(["h1"])
+    const wire = edge.sessions[0].fed[0].text
+    expect(wire.startsWith(BACKGROUND_OPEN)).toBe(true)
+    expect(wire).toContain(TAIL_PREAMBLE)
+    expect(wire).toContain("what was said yesterday")
+    expect(wire.endsWith(`${BACKGROUND_CLOSE}\n\nhello`)).toBe(true)
+    // One attempt, an ordinary one, and its own feed intent names the history that rode with it.
+    const [attempt] = await rows(it, "select id, purpose, state, evidence ->> 'tail_fed' as tail_fed from execution where agent = $1", [AGENT]) as { id: string; purpose: string; state: string; tail_fed: string | null }[]
+    expect(attempt).toMatchObject({ purpose: "turn", state: "completed", tail_fed: null })
+    const intents = await it.read.ledger({ stream: "execution", subject: attempt.id, kind: "feed.intent" })
+    expect(intents.map(one => (one.detail as { purpose: string }).purpose)).toEqual(["turn"])
+    expect(intents[0].detail.context).toMatchObject({ kind: "chat-tail", chars: expect.any(Number) })
+    // THE CONVERSATION'S OWN RECORD OF THE INPUT IS THE RAW MESSAGE: the history is not recorded as input, so nothing rebuilt from the
+    // entries can carry it. A REPLY is the model's own words and may quote what it was fed: the scripted loop echoes the whole wire
+    // text, so the reply is stored exactly as it was given, history included, and that is not the input being enriched.
+    const entries = await rows(it, "select kind, source_id, body from conversation_entry order by seq")
+    expect(entries.map(e => [e.kind, e.source_id])).toEqual([["input", "h1"], ["reply", "h1"]])
+    expect(entries[0].body).toBe("hello")
+    expect(String(entries[0].body)).not.toContain("what was said yesterday")
+    expect(entries[1].body, "the reply is stored faithfully, as the loop said it").toBe(scriptedReply(wire))
     expect(await rows(it, "select 1 from replay_hold")).toEqual([])
   } finally { await runner?.stop(); await edge.stop(); await it.stop() }
 }, 60_000)
 
-test("A12 an engine that cannot report its processes is primed under an owned attempt like any other: a tail that completes releases its own attempt, and one that is cut off stays unknown and blocks a second claimant", async () => {
-  // Completes: owned while it runs, nothing invented, released by its own completion.
+test("A12 an engine that cannot report its processes takes its history with its first input like any other: nothing is owned before the input, and an input cut off with no evidence stays unknown, is held with the history that rode with it not replayed, and blocks a second claimant", async () => {
+  // Completes: nothing is opened at start, and the one attempt is the input's.
   const done = await stage({ worker: false, evidence: false })
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
     plantChatLine({ stateDir: done.it.stateDir, text: "what was said yesterday" })
-    done.edge.hold(m => m.id === AGENT)
     runner = await done.start()
-    expect(await observe(() => done.edge.sessions.some(r => r.fed.some(m => m.id === AGENT)))).toBe(true)
+    expect(await observe(() => done.edge.sessions.length === 1)).toBe(true)
     expect(done.edge.sessions[0].session.processes, "this engine reports no processes and no evidence").toBeUndefined()
-    const [tail] = await rows(done.it, "select purpose, state, inbound_id from execution where agent = $1", [AGENT])
-    expect(tail, "the tail is owned although the engine can say nothing about its processes").toMatchObject({ purpose: "tail", inbound_id: null })
-    expect(["feed_intent", "received", "running"]).toContain(tail.state as string)
-    expect((await rows(done.it, "select hub_agent_blocked($1) as blocked", [AGENT]))[0].blocked).toBe(true)
+    await Bun.sleep(1000)
+    expect(done.edge.sessions[0].fed).toEqual([])
+    expect(await rows(done.it, "select 1 from execution"), "no attempt is owned for the history").toEqual([])
+    expect((await rows(done.it, "select hub_agent_blocked($1) as blocked", [AGENT]))[0].blocked).toBe(false)
     await insertInbound(cluster, done.it.db, { id: "h1", body: "hello" })
-    const other = { sql: cluster.connectAs("hub_runner", done.it.db), url: cluster.url(done.it.db) } as StoreLike
-    expect(await claimNext(other, { runner: "another-runner", agent: AGENT, leaseMs: 60_000, resumeOk: true }), "a second claimant gets nothing beside the tail").toBeNull()
-    await other.sql.close()
-    expect(done.edge.sessions.flatMap(r => r.fed).filter(m => m.id === "h1")).toEqual([])
-    // Ordinary healthy behaviour is unchanged: the tail ends, releases only its own attempt, and the input is taken.
-    done.edge.hold(() => false)
-    for (const one of done.edge.sessions) one.loop.holdTurnEnd(false)
     expect(await done.answered("h1", 15_000)).toBe(true)
-    expect((await rows(done.it, "select purpose, state from execution where agent = $1 order by started_at", [AGENT])).map(r => [r.purpose, r.state])).toEqual([["tail", "completed"], ["turn", "completed"]])
+    expect(done.edge.sessions.flatMap(r => r.fed).map(m => m.id)).toEqual(["h1"])
+    expect(done.edge.sessions[0].fed[0].text).toContain("what was said yesterday")
+    expect((await rows(done.it, "select purpose, state from execution where agent = $1 order by started_at", [AGENT])).map(r => [r.purpose, r.state])).toEqual([["turn", "completed"]])
     expect(await rows(done.it, "select 1 from replay_hold")).toEqual([])
   } finally { await runner?.stop(); await done.edge.stop(); await done.it.stop() }
 
@@ -524,14 +533,14 @@ test("A12 an engine that cannot report its processes is primed under an owned at
   let second: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
     plantChatLine({ stateDir: cut.it.stateDir, text: "what was said yesterday" })
-    cut.edge.hold(m => m.id === AGENT)
+    cut.edge.hold(m => m.id === "h1")
     second = await cut.start()
-    expect(await observe(() => cut.edge.sessions.some(r => r.fed.some(m => m.id === AGENT)))).toBe(true)
-    cut.edge.sessions.find(r => r.fed.some(m => m.id === AGENT))!.fail()
-    expect(await observe(async () => (await rows(cut.it, "select state from execution where agent = $1", [AGENT]))[0]?.state === "unknown", 15_000)).toBe(true)
-    expect(await rows(cut.it, "select purpose, state, inbound_id from execution where agent = $1", [AGENT])).toEqual([{ purpose: "tail", state: "unknown", inbound_id: null }])
-    expect(await rows(cut.it, "select 1 from replay_hold"), "a tail has no input to hold").toEqual([])
     await insertInbound(cluster, cut.it.db, { id: "h1", body: "hello" })
+    expect(await observe(() => cut.edge.sessions.some(r => r.fed.some(m => m.id === "h1")))).toBe(true)
+    cut.edge.sessions.find(r => r.fed.some(m => m.id === "h1"))!.fail()
+    expect(await observe(async () => (await rows(cut.it, "select state from execution where agent = $1", [AGENT]))[0]?.state === "unknown", 15_000)).toBe(true)
+    expect(await rows(cut.it, "select purpose, state, inbound_id from execution where agent = $1", [AGENT])).toEqual([{ purpose: "turn", state: "unknown", inbound_id: "h1" }])
+    expect(await rows(cut.it, "select cause, state from replay_hold"), "the input the engine was handed is held, for its owner").toEqual([{ cause: "ownership-unknown", state: "held" }])
     const other = { sql: cluster.connectAs("hub_runner", cut.it.db), url: cluster.url(cut.it.db) } as StoreLike
     expect(await claimNext(other, { runner: "another-runner", agent: AGENT, leaseMs: 60_000, resumeOk: true }), "nobody else starts beside it").toBeNull()
     await expect(other.sql.begin(async (tx: any) => {
@@ -540,41 +549,70 @@ test("A12 an engine that cannot report its processes is primed under an owned at
     })).rejects.toThrow(/not claimable/)
     await other.sql.close()
     await Bun.sleep(3500)
-    // The tail's own process was never asked about and nothing was invented for it; the input waits, and no other child was started.
+    // Nothing was invented about its process; the input waits for its owner, is fed once, and no other child was started.
     expect(cut.edge.sessions, "no second child").toHaveLength(1)
-    expect(cut.edge.sessions.flatMap(r => r.fed).filter(m => m.id === "h1")).toEqual([])
+    expect(cut.edge.sessions.flatMap(r => r.fed).filter(m => m.id === "h1"), "fed once, with the history it carried").toHaveLength(1)
     expect((await rows(cut.it, "select state from execution where agent = $1", [AGENT]))[0].state).toBe("unknown")
-    expect((await cut.it.read.inbound()).find(r => r.id === "h1")).toMatchObject({ state: "received", claimed_by: null })
+    expect((await cut.it.read.inbound()).find(r => r.id === "h1")).toMatchObject({ claimed_by: null })
+    expect((await cut.it.read.inbound()).find(r => r.id === "h1")!.state).not.toBe("answered")
   } finally { await second?.stop(); await cut.edge.stop(); await cut.it.stop() }
 }, 90_000)
 
-test("A15 a tail that cannot be owned is refused by name before anything is generated, and the tail of a claimed row's fresh child is a feed of that row's attempt", async () => {
+test("A15 the history rides with the first input of a fresh session only: the next input of the same session is fed as it is, and each feed is one attempt with one feed intent", async () => {
   const { it, edge, start, answered } = await stage({ worker: false, evidence: false })
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
     plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" })
-    // Another attempt of the agent takes the slot between the check and the opening: the table's own refusal.
-    await it.read.sql(`create function test_tail_busy() returns trigger language plpgsql as $$ begin
-      raise unique_violation using message = 'duplicate key value violates unique constraint "execution_one_per_agent"'; end $$`)
-    await it.read.sql("create trigger test_tail_busy before insert on execution for each row when (new.purpose = 'tail') execute function test_tail_busy()")
     runner = await start()
-    expect(await observe(async () => (await it.read.ledger({ stream: "runner", kind: "tail.refused" })).length === 1, 15_000), "the refusal is named in the diary").toBe(true)
-    expect(edge.sessions, "the child that was started for it").toHaveLength(1)
-    expect(edge.sessions[0].fed, "nothing was fed to it, so nothing was generated").toEqual([])
-    expect(await observe(() => edge.sessions[0].closed), "and it was closed").toBe(true)
-    expect(await rows(it, "select 1 from execution"), "no attempt exists for it").toEqual([])
-
-    // An ordinary input then starts a fresh child, and that child's tail is a feed of the input's own attempt:
-    // its feed intent is committed BEFORE the tail, so a crash inside the tail is uncertain and not "never fed".
     await insertInbound(cluster, it.db, { id: "h1", body: "hello" })
     expect(await answered("h1", 20_000)).toBe(true)
-    expect(edge.sessions.flatMap(r => r.fed).map(m => m.id), "the tail first, then the input, once each").toEqual([AGENT, "h1"])
-    const [attempt] = await rows(it, "select id, state, evidence ->> 'tail_fed' as tail_fed from execution where inbound_id = 'h1'") as { id: string; state: string; tail_fed: string }[]
-    expect(attempt).toMatchObject({ state: "completed", tail_fed: "true" })
-    const intents = await it.read.ledger({ stream: "execution", subject: attempt.id, kind: "feed.intent" })
-    expect(intents.map(one => (one.detail as { purpose: string }).purpose)).toEqual(["tail", "turn"])
-    expect((await rows(it, "select kind, source_id from conversation_entry where conversation_id = (select conversation_id from execution where id = $1) order by seq", [attempt.id])).map(e => [e.kind, e.source_id]))
-      .toEqual([["input", "h1"], ["reply", "h1"]])
+    await insertInbound(cluster, it.db, { id: "h2", body: "and again" })
+    expect(await answered("h2", 20_000)).toBe(true)
+    expect(edge.sessions, "one child served both").toHaveLength(1)
+    const fed = edge.sessions[0].fed
+    expect(fed.map(m => m.id), "no feed but the two inputs").toEqual(["h1", "h2"])
+    expect(fed[0].text.endsWith(`${BACKGROUND_CLOSE}\n\nhello`)).toBe(true)
+    expect(fed[0].text).toContain("what was said yesterday")
+    expect(fed[1].text, "the second input carries nothing of the history").toBe("and again")
+    const attempts = await rows(it, "select id, inbound_id, purpose, state, evidence ->> 'tail_fed' as tail_fed from execution order by started_at") as { id: string; inbound_id: string; purpose: string; state: string; tail_fed: string | null }[]
+    expect(attempts.map(a => [a.inbound_id, a.purpose, a.state, a.tail_fed])).toEqual([["h1", "turn", "completed", null], ["h2", "turn", "completed", null]])
+    // The history is named on the first feed intent and on no other.
+    const contexts = []
+    for (const a of attempts) {
+      const intents = await it.read.ledger({ stream: "execution", subject: a.id, kind: "feed.intent" })
+      expect(intents).toHaveLength(1)
+      contexts.push(intents[0].detail.context ?? null)
+    }
+    expect(contexts[0]).toMatchObject({ kind: "chat-tail" })
+    expect(contexts[1]).toBeNull()
+    // Both inputs are the conversation's entries exactly as they were sent.
+    expect((await rows(it, "select kind, source_id, body from conversation_entry where kind = 'input' order by seq")).map(e => [e.source_id, e.body])).toEqual([["h1", "hello"], ["h2", "and again"]])
+  } finally { await runner?.stop(); await edge.stop(); await it.stop() }
+}, 60_000)
+
+test("A16 a native session that is resumed is handed no history: the conversation the engine already has is not told what it knows, whatever the chat log holds", async () => {
+  const { it, edge, start, answered, sessionFed } = await stage({ worker: false })
+  let runner: Awaited<ReturnType<typeof runRunner>> | undefined
+  try {
+    plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" })
+    runner = await start()
+    await insertInbound(cluster, it.db, { id: "h1", body: "first" })
+    expect(await answered("h1", 20_000)).toBe(true)
+    const first = sessionFed("h1")!
+    expect(first.loop.starts()[0].session).toMatchObject({ resume: false })
+    expect(first.fed[0].text, "the fresh session was handed it").toContain("what was said yesterday")
+
+    // The runner restarts and the log has moved on: the engine's own session is resumed, and it has all of it.
+    await runner.stop()
+    plantChatLine({ stateDir: it.stateDir, text: "what was said an hour ago" })
+    runner = await start()
+    expect(await observe(() => edge.sessions.length === 2)).toBe(true)
+    await insertInbound(cluster, it.db, { id: "h2", body: "second" })
+    expect(await answered("h2", 20_000)).toBe(true)
+    const second = sessionFed("h2")!
+    expect(second.loop.starts()[0].session).toMatchObject({ resume: true })
+    expect(second.fed.map(m => [m.id, m.text]), "the resumed session was fed the input and nothing else").toEqual([["h2", "second"]])
+    expect(await rows(it, "select purpose, state from execution order by started_at")).toEqual([{ purpose: "turn", state: "completed" }, { purpose: "turn", state: "completed" }])
   } finally { await runner?.stop(); await edge.stop(); await it.stop() }
 }, 60_000)
 
@@ -694,14 +732,6 @@ test("A11 a machine that booted again proves an attempt over, whatever is or is 
 
 const REFUSED = { cause: "login" as const, said: "synthetic terminal refusal" }
 
-/** Another attempt of the agent takes the slot when the eager priming tail is opened: the tail is refused by name, and the first input's fresh child is primed by a RIDING tail. */
-async function refuseEagerTail(it: Awaited<ReturnType<typeof stage>>["it"]) {
-  plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" })
-  await it.read.sql(`create function test_tail_busy() returns trigger language plpgsql as $$ begin
-    raise unique_violation using message = 'duplicate key value violates unique constraint "execution_one_per_agent"'; end $$`)
-  await it.read.sql("create trigger test_tail_busy before insert on execution for each row when (new.purpose = 'tail') execute function test_tail_busy()")
-}
-
 test("B1 an attempt the engine was handed and refused, with no receipt and no output, is held with real exit proof: fed once, and no outage ending, generic recover, restart or passing retry feeds it again", async () => {
   const { it, edge, start } = await stage({ worker: false, caps: { safeResume: true } })
   let refusing = true
@@ -742,28 +772,30 @@ test("B1 an attempt the engine was handed and refused, with no receipt and no ou
   } finally { await runner?.stop(); await edge.stop(); await it.stop() }
 }, 90_000)
 
-test("B2 a riding tail counts as a feed: the tail runs, the input is then refused with no output, and the attempt is held with the tail's effects kept and neither the tail nor the assignment fed again", async () => {
+test("B2 the history that rode with an input is part of that one feed: the loop refuses the input, the attempt is held with its feed intent naming the history, and neither the input nor the history is fed again by a recover or a restart", async () => {
   const { it, edge, start } = await stage({ worker: false, caps: { safeResume: true } })
-  // Every feed of the tail is a synthetic effect: a real tail is a model turn and can run tools.
-  let tailFeeds = 0
   let refusing = true
   edge.hold(m => {
-    if (m.id === AGENT) tailFeeds += 1
     if (m.id === "h1" && refusing) edge.sessions.find(r => r.fed.some(f => f.id === "h1"))!.loop.setRefusal(REFUSED)
     return false
   })
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
-    await refuseEagerTail(it)
+    plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" })
     runner = await start()
-    expect(await observe(async () => (await it.read.ledger({ stream: "runner", kind: "tail.refused" })).length === 1, 15_000)).toBe(true)
     await insertInbound(cluster, it.db, { id: "h1", body: "do the risky thing" })
     expect(await observe(async () => (await rows(it, "select 1 from replay_hold where inbound_id = 'h1'")).length === 1, 20_000)).toBe(true)
-    const [attempt] = await rows(it, "select id, state, evidence ->> 'tail_fed' as tail_fed from execution where inbound_id = 'h1'") as { id: string; state: string; tail_fed: string }[]
-    expect(attempt, "the tail was fed on this attempt, so it is not an attempt that never fed anything").toMatchObject({ state: "interrupted", tail_fed: "true" })
-    expect((await it.read.ledger({ stream: "execution", subject: attempt.id, kind: "feed.intent" })).map(e => (e.detail as { purpose: string }).purpose)).toEqual(["tail", "turn"])
-    expect(tailFeeds).toBe(1)
+    const [attempt] = await rows(it, "select id, state, purpose from execution where inbound_id = 'h1'") as { id: string; state: string; purpose: string }[]
+    expect(attempt).toMatchObject({ state: "interrupted", purpose: "turn" })
+    // One feed intent, and it says the history rode with the input: there is no feed of the history apart from it.
+    const intents = await it.read.ledger({ stream: "execution", subject: attempt.id, kind: "feed.intent" })
+    expect(intents.map(e => (e.detail as { purpose: string }).purpose)).toEqual(["turn"])
+    expect(intents[0].detail.context).toMatchObject({ kind: "chat-tail" })
+    expect(edge.sessions.flatMap(r => r.fed).map(m => m.id), "one feed in all").toEqual(["h1"])
+    expect(edge.sessions[0].fed[0].text).toContain("what was said yesterday")
     expect(await rows(it, "select cause, state, revision from replay_hold")).toEqual([{ cause: "interrupted", state: "held", revision: 1 }])
+    // The conversation kept the input as it was sent.
+    expect((await rows(it, "select body from conversation_entry where source_id = 'h1' and kind = 'input'")).map(e => e.body)).toEqual(["do the risky thing"])
 
     refusing = false
     await runner.recoverAgent({ id: "generic-recover", agent: AGENT })
@@ -771,14 +803,13 @@ test("B2 a riding tail counts as a feed: the tail runs, the input is then refuse
     await runner.stop()
     runner = await start()
     await Bun.sleep(3500)
-    expect(tailFeeds, "the tail's effect happened once and was not repeated").toBe(1)
-    expect(edge.sessions.flatMap(r => r.fed).filter(m => m.id === "h1"), "the assignment was fed once").toHaveLength(1)
+    expect(edge.sessions.flatMap(r => r.fed).map(m => m.id), "nothing was fed again, the history included").toEqual(["h1"])
     expect((await it.read.outbox()).some(r => r.inbound_id === "h1")).toBe(false)
     expect(await rows(it, "select id, state from execution where inbound_id = 'h1'")).toEqual([{ id: attempt.id, state: "interrupted" }])
   } finally { await runner?.stop(); await edge.stop(); await it.stop() }
 }, 90_000)
 
-test("B3 a feed that rejects after it may have been written is uncertain and held, and so is a refusal before any byte once a tail was fed first; only a refusal before any byte of an input nothing else was fed to is tried again (A9)", async () => {
+test("B3 a feed that rejects after it may have been written is uncertain and held; only a refusal before any byte is tried again (A9), and it carries the history again because nothing of it was handed", async () => {
   // A flush that failed after the engine took the message.
   const flush = await stage({ worker: false })
   flush.edge.hold(m => m.id === "h1")
@@ -796,49 +827,55 @@ test("B3 a feed that rejects after it may have been written is uncertain and hel
     expect((await flush.it.read.noticeRows()).filter(n => String(n.notice_key).startsWith("agent-retry"))).toEqual([])
   } finally { await runner?.stop(); await flush.edge.stop(); await flush.it.stop() }
 
-  // A refusal before any byte, after the priming tail was fed to the same attempt.
-  const riding = await stage({ worker: false })
-  riding.edge.throwFeed(m => m.id === "h1")
+  // A refusal before any byte of the FIRST feed, with the history riding on it: nothing was handed to the engine, the history
+  // included, so the attempt is a failed one, the input is tried again, and the retry carries the history again. Each feed is
+  // one input; no feed exists for the history alone, so there is nothing to run twice.
+  const refusedFirst = await stage({ worker: false })
+  let refused = 0
+  refusedFirst.edge.throwFeed(m => m.id === "h1" && refused++ === 0)
   let second: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
-    await refuseEagerTail(riding.it)
-    second = await riding.start()
-    expect(await observe(async () => (await riding.it.read.ledger({ stream: "runner", kind: "tail.refused" })).length === 1, 15_000)).toBe(true)
-    await insertInbound(cluster, riding.it.db, { id: "h1", body: "do the risky thing" })
-    expect(await observe(async () => (await rows(riding.it, "select 1 from replay_hold where inbound_id = 'h1'")).length === 1, 20_000)).toBe(true)
-    expect(await rows(riding.it, "select state, evidence ->> 'tail_fed' as tail_fed from execution where inbound_id = 'h1'")).toEqual([{ state: "interrupted", tail_fed: "true" }])
-    await Bun.sleep(3500)
-    expect(riding.edge.sessions.flatMap(r => r.fed).filter(m => m.id === "h1"), "the tail was a feed of this attempt, so the input is not tried again").toHaveLength(1)
-    expect(riding.edge.sessions.flatMap(r => r.fed).filter(m => m.id === AGENT), "and the tail was not fed again").toHaveLength(1)
-  } finally { await second?.stop(); await riding.edge.stop(); await riding.it.stop() }
+    plantChatLine({ stateDir: refusedFirst.it.stateDir, text: "what was said yesterday" })
+    second = await refusedFirst.start()
+    await insertInbound(cluster, refusedFirst.it.db, { id: "h1", body: "do the risky thing" })
+    expect(await refusedFirst.answered("h1", 25_000)).toBe(true)
+    const fed = refusedFirst.edge.sessions.flatMap(r => r.fed).filter(m => m.id === "h1")
+    expect(fed, "fed twice: the refused feed and the one that landed").toHaveLength(2)
+    for (const message of fed) {
+      expect(message.text).toContain("what was said yesterday")
+      expect(message.text.endsWith(`${BACKGROUND_CLOSE}\n\ndo the risky thing`)).toBe(true)
+    }
+    expect((await rows(refusedFirst.it, "select state from execution where inbound_id = 'h1' order by started_at")).map(r => r.state)).toEqual(["failed", "completed"])
+    expect(await rows(refusedFirst.it, "select 1 from replay_hold"), "nothing was handed to the engine, so nothing is held").toEqual([])
+    expect(refusedFirst.edge.sessions.flatMap(r => r.fed).filter(m => m.id === AGENT), "and no feed of the history alone exists").toEqual([])
+    // One entry for the input, raw.
+    expect((await rows(refusedFirst.it, "select body from conversation_entry where source_id = 'h1' and kind = 'input'")).map(e => e.body)).toEqual(["do the risky thing"])
+  } finally { await second?.stop(); await refusedFirst.edge.stop(); await refusedFirst.it.stop() }
 }, 120_000)
 
-test("B4 an eager priming tail the loop refused is never completed: its attempt ends with the evidence of its processes, the refusal is written down, and the healthy priming is unchanged", async () => {
-  // Every process shown gone: interrupted, and the agent is free.
+test("B4 an engine that would refuse is not asked at start, and a refusal of the first input ends its attempt with the evidence of its processes: held when they are shown gone, unknown (and nobody starts beside it) when nothing shows it", async () => {
+  // Every process shown gone: interrupted, and the input is held for its owner.
   const proved = await stage({ worker: false, caps: { safeResume: true } })
-  let refusing = true
-  proved.edge.onStart(row => { if (refusing) row.loop.setRefusal(REFUSED) })
+  proved.edge.onStart(row => row.loop.setRefusal(REFUSED))
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
     plantChatLine({ stateDir: proved.it.stateDir, text: "what was said yesterday" })
     runner = await proved.start()
-    expect(await observe(async () => (await rows(proved.it, "select 1 from execution where purpose = 'tail' and state = 'interrupted'")).length === 1, 15_000)).toBe(true)
-    expect(await rows(proved.it, "select purpose, state, inbound_id from execution"), "the tail was not completed").toEqual([{ purpose: "tail", state: "interrupted", inbound_id: null }])
-    expect(await rows(proved.it, "select 1 from replay_hold"), "a tail has no input to hold and no owner to ask").toEqual([])
-    expect((await rows(proved.it, "select hub_agent_blocked($1) as blocked", [AGENT]))[0].blocked, "every process is shown gone, so the agent is free").toBe(false)
-    expect((await proved.it.read.ledger({ stream: "refusal", subject: AGENT })).map(e => String(e.kind).startsWith("refused."))).toEqual([true])
-    expect(proved.edge.sessions, "the child that was refused").toHaveLength(1)
-    expect(proved.edge.sessions[0].fed.map(m => m.id)).toEqual([AGENT])
-    expect(proved.edge.sessions[0].closed).toBe(true)
+    // The start asks the loop nothing, so there is nothing for it to refuse: no attempt, no refusal, no outage.
+    expect(await observe(() => proved.edge.sessions.length === 1)).toBe(true)
+    await Bun.sleep(1500)
+    expect(proved.edge.sessions[0].fed).toEqual([])
+    expect(await rows(proved.it, "select 1 from execution")).toEqual([])
+    expect(await proved.it.read.ledger({ stream: "refusal" })).toEqual([])
+    expect(await proved.it.read.outageSheet()).toEqual([])
 
-    // The loop is healthy again: the next input starts a child of its own, primed and answered as ever.
-    refusing = false
     await insertInbound(cluster, proved.it.db, { id: "h1", body: "hello" })
-    expect(await proved.answered("h1", 20_000)).toBe(true)
-    // The engine acknowledged the refused tail's session, so the new child resumes it and is not primed again.
-    expect(proved.edge.sessions.flatMap(r => r.fed).map(m => m.id), "the refused tail once, then the input").toEqual([AGENT, "h1"])
-    expect(proved.edge.sessions, "the input went to a child of its own").toHaveLength(2)
-    expect((await rows(proved.it, "select purpose, state from execution order by started_at")).map(r => [r.purpose, r.state])).toEqual([["tail", "interrupted"], ["turn", "completed"]])
+    expect(await observe(async () => (await rows(proved.it, "select 1 from replay_hold where inbound_id = 'h1'")).length === 1, 15_000)).toBe(true)
+    expect(await rows(proved.it, "select purpose, state, inbound_id from execution"), "the one attempt is the input's").toEqual([{ purpose: "turn", state: "interrupted", inbound_id: "h1" }])
+    expect((await rows(proved.it, "select hub_agent_blocked($1) as blocked", [AGENT]))[0].blocked, "every process is shown gone, so the agent is free").toBe(false)
+    expect((await proved.it.read.ledger({ stream: "refusal", subject: "h1" })).map(e => String(e.kind).startsWith("refused."))).toEqual([true])
+    expect(proved.edge.sessions.flatMap(r => r.fed).map(m => m.id), "one feed: the input, with the history").toEqual(["h1"])
+    expect(proved.edge.sessions[0].closed).toBe(true)
   } finally { await runner?.stop(); await proved.edge.stop(); await proved.it.stop() }
 
   // Nothing shows the process gone: the attempt stays unknown and nobody starts beside it.
@@ -848,37 +885,35 @@ test("B4 an eager priming tail the loop refused is never completed: its attempt 
   try {
     plantChatLine({ stateDir: cut.it.stateDir, text: "what was said yesterday" })
     second = await cut.start()
-    expect(await observe(async () => (await rows(cut.it, "select 1 from execution where state = 'unknown'")).length === 1, 15_000)).toBe(true)
-    expect(await rows(cut.it, "select purpose, state, inbound_id from execution")).toEqual([{ purpose: "tail", state: "unknown", inbound_id: null }])
-    expect(await rows(cut.it, "select 1 from replay_hold")).toEqual([])
-    expect((await rows(cut.it, "select hub_agent_blocked($1) as blocked", [AGENT]))[0].blocked).toBe(true)
     await insertInbound(cluster, cut.it.db, { id: "h1", body: "hello" })
+    expect(await observe(async () => (await rows(cut.it, "select 1 from execution where state = 'unknown'")).length === 1, 15_000)).toBe(true)
+    expect(await rows(cut.it, "select purpose, state, inbound_id from execution")).toEqual([{ purpose: "turn", state: "unknown", inbound_id: "h1" }])
+    expect((await rows(cut.it, "select hub_agent_blocked($1) as blocked", [AGENT]))[0].blocked).toBe(true)
+    await insertInbound(cluster, cut.it.db, { id: "h2", body: "and again" })
     await Bun.sleep(3500)
     expect(cut.edge.sessions, "no second child beside an attempt that may still be running").toHaveLength(1)
-    expect(cut.edge.sessions.flatMap(r => r.fed).map(m => m.id)).toEqual([AGENT])
-    expect((await cut.it.read.inbound()).find(r => r.id === "h1")).toMatchObject({ state: "received", claimed_by: null })
+    expect(cut.edge.sessions.flatMap(r => r.fed).map(m => m.id)).toEqual(["h1"])
+    expect((await cut.it.read.inbound()).find(r => r.id === "h2")).toMatchObject({ state: "received", claimed_by: null })
     expect((await rows(cut.it, "select state from execution"))[0].state).toBe("unknown")
   } finally { await second?.stop(); await cut.edge.stop(); await cut.it.stop() }
 }, 120_000)
 
-test("B5 a riding tail the loop refused holds the claimed row with its attempt and the input is never fed after it, to that child or to any other", async () => {
+test("B5 an input the loop refused holds the claimed row with its attempt, and neither it nor the history that rode with it is fed after, to that child or to any other", async () => {
   const { it, edge, start } = await stage({ worker: false, caps: { safeResume: true } })
   let refusing = true
   edge.onStart(row => { if (refusing) row.loop.setRefusal(REFUSED) })
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
-    // The eager tail is refused by name, so the first input's fresh child is primed by a riding tail.
-    await refuseEagerTail(it)
+    plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" })
     runner = await start()
-    expect(await observe(async () => (await it.read.ledger({ stream: "runner", kind: "tail.refused" })).length === 1, 15_000)).toBe(true)
     await insertInbound(cluster, it.db, { id: "h1", body: "do the risky thing" })
     expect(await observe(async () => (await rows(it, "select 1 from replay_hold where inbound_id = 'h1'")).length === 1, 20_000)).toBe(true)
-    const [attempt] = await rows(it, "select id, state, effects, evidence ->> 'tail_fed' as tail_fed from execution where inbound_id = 'h1'") as { id: string; state: string; effects: unknown; tail_fed: string }[]
-    expect(attempt, "held with the exit evidence of the child, never completed").toMatchObject({ state: "interrupted", tail_fed: "true", effects: { actions: 0, lastAction: "" } })
+    const [attempt] = await rows(it, "select id, state, effects from execution where inbound_id = 'h1'") as { id: string; state: string; effects: unknown }[]
+    expect(attempt, "held with the exit evidence of the child, never completed").toMatchObject({ state: "interrupted", effects: { actions: 0, lastAction: "" } })
     expect(await rows(it, "select cause, state, revision from replay_hold")).toEqual([{ cause: "interrupted", state: "held", revision: 1 }])
-    expect((await rows(it, "select purpose from execution")).map(r => r.purpose), "no attempt of the tail's own").toEqual(["turn"])
-    expect(edge.sessions.flatMap(r => r.fed).map(m => m.id), "the tail was fed, the input was not").toEqual([AGENT])
-    expect(await rows(it, "select 1 from conversation_entry where source_id = 'h1' and kind = 'input'"), "the input was never fed, so it is not the conversation's entry").toEqual([])
+    expect((await rows(it, "select purpose from execution")).map(r => r.purpose), "no attempt of any other kind").toEqual(["turn"])
+    expect(edge.sessions.flatMap(r => r.fed).map(m => m.id), "the input was fed, once, with the history").toEqual(["h1"])
+    expect((await rows(it, "select body from conversation_entry where source_id = 'h1' and kind = 'input'")).map(e => e.body), "the conversation has the input as it was sent").toEqual(["do the risky thing"])
     const [row] = await rows(it, "select state, claimed_by, retry_at from inbound where id = 'h1'")
     expect(row).toMatchObject({ claimed_by: null, retry_at: null })
     expect(row.state).not.toBe("answered")
@@ -894,8 +929,7 @@ test("B5 a riding tail the loop refused holds the claimed row with its attempt a
     await runner.stop()
     runner = await start()
     await Bun.sleep(3500)
-    expect(edge.sessions.flatMap(r => r.fed).filter(m => m.id === "h1"), "never fed").toEqual([])
-    expect(edge.sessions.flatMap(r => r.fed).filter(m => m.id === AGENT), "the tail was fed once").toHaveLength(1)
+    expect(edge.sessions.flatMap(r => r.fed).map(m => m.id), "fed once, and nothing was fed after it").toEqual(["h1"])
     expect((await it.read.outbox()).some(r => r.inbound_id === "h1")).toBe(false)
     expect(await rows(it, "select id, state from execution")).toEqual([{ id: attempt.id, state: "interrupted" }])
   } finally { await runner?.stop(); await edge.stop(); await it.stop() }

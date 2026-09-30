@@ -201,17 +201,18 @@ test("D-214 a job for a stopped runner waits unclaimed, is claimed when it start
       .map(one => one.subject).sort()).toEqual(["p2-lair", "p2-research"])
 
     // --- The control: an agent with a chat, on the machine that holds its
-    //     state, is fed its tail before anything else and shows typing while it
-    //     works, exactly as it does today.
+    //     state, is handed its tail with the first thing it is fed (as background,
+    //     in the same feed) and shows typing while it works.
     await projectInbound(store, { stateDir: it.stateDir, inboundId: `report:${job.id}` })
     hub = await runRunner({ runner: "runner-pi", registryFile: it.registryFile,
       adapters: { [it.adapterName]: it.scripted.adapter } })
     await until("the dispatcher is fed the report", async () =>
       it.scripted.fed().some(one => one.id === `report:${job.id}`), 30_000)
     const lair = it.scripted.fed().filter(one => one.id === DISPATCHER || one.id === `report:${job.id}`)
-    expect(lair.map(one => one.id)).toEqual([DISPATCHER, `report:${job.id}`])
+    // One feed, the report, and nothing for the history alone (the DISPATCHER id was the tail's).
+    expect(lair.map(one => one.id)).toEqual([`report:${job.id}`])
     expect(lair[0].text).toContain(`${DISPATCH_PHRASES.en} ${DISPATCH_JOB_ONLY} ${TASK}`)
-    expect(lair[1].text).toBe(REPORT)
+    expect(lair[0].text.endsWith(`\n\n${REPORT}`)).toBe(true)
     await until("typing shows in the dispatcher's chat", async () =>
       it.edge.typings().some(one => one.chat === LAIR_CHAT), 10_000)
   } finally {

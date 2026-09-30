@@ -37,7 +37,7 @@ import {
   superStore,
 } from "./helpers/hub-fixture.ts";
 import { proveRolloutRunner } from "../live/prove-rollout-runner.ts";
-import { TAIL_PREAMBLE } from "../src/chatlog.ts";
+import { BACKGROUND_CLOSE, BACKGROUND_OPEN, TAIL_PREAMBLE } from "../src/chatlog.ts";
 import { deriveTail } from "../src/chatlog/derive.ts";
 import { encodeHarvestBody, harvestRowId } from "../src/harvest/row.ts";
 import { loadRegistry } from "../src/registry/load.ts";
@@ -99,16 +99,19 @@ test(
         adapters: { [it.adapterName]: edge.adapter },
       });
       expect(
-        await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length > 1),
-        "the spoke's runner started a session, fed it the tail and then the waiting message",
+        await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length >= 1),
+        "the spoke's runner started a session and fed it the waiting message with the tail in front of it",
       ).toBe(true);
+      expect(edge.sessions[0].fed.map((fed) => fed.id), "one feed: the waiting message, and nothing for the history alone").toEqual(["newer"]);
       const first = edge.sessions[0].fed[0].text;
-      expect(first.startsWith(TAIL_PREAMBLE), `first fed message: ${first}`).toBe(true);
-      expect(first).toContain("sapphire-otter");
-      expect(first).toContain("copper-kettle");
-      expect(first.indexOf("sapphire-otter")).toBeLessThan(first.indexOf("copper-kettle"));
-      expect(first, "the waiting message is not in the tail").not.toContain("brass-lantern");
-      expect(edge.sessions[0].fed[1]).toMatchObject({ id: "newer", text: "brass-lantern" });
+      const background = first.slice(0, first.indexOf(BACKGROUND_CLOSE));
+      expect(first.startsWith(BACKGROUND_OPEN), `first fed message: ${first}`).toBe(true);
+      expect(background).toContain(TAIL_PREAMBLE);
+      expect(background).toContain("sapphire-otter");
+      expect(background).toContain("copper-kettle");
+      expect(background.indexOf("sapphire-otter")).toBeLessThan(background.indexOf("copper-kettle"));
+      expect(background, "the waiting message is not in the tail").not.toContain("brass-lantern");
+      expect(first.endsWith(`${BACKGROUND_CLOSE}\n\nbrass-lantern`)).toBe(true);
       // Read off the filesystem, after the feed: there is no chat log on this
       // machine and there never was one.
       expect(existsSync(join(it.stateDir, PERSON, "chatlog"))).toBe(false);
@@ -141,8 +144,10 @@ test(
         await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length > 0),
       ).toBe(true);
       const first = edge.sessions[0].fed[0].text;
-      expect(first.startsWith(TAIL_PREAMBLE), `first fed message: ${first}`).toBe(true);
+      expect(first.startsWith(BACKGROUND_OPEN), `first fed message: ${first}`).toBe(true);
+      expect(first).toContain(TAIL_PREAMBLE);
       expect(first).toContain("copper-kettle");
+      expect(first.endsWith(`${BACKGROUND_CLOSE}\n\na message`)).toBe(true);
     } finally {
       await runner?.stop();
       await edge.stop();
@@ -186,13 +191,17 @@ test("a session spawned while a message waits is handed that message once, as it
     appendFileSync(file, JSON.stringify({ id: "open-line", at: at.toISOString(), direction: "in", from: PERSON, text: "brass-lantern" }) + "\n");
     await insertInbound(cluster, it.db, { ...planted("open-line", "brass-lantern", at), id: "open-row" });
     runner = await runRunner({ runner: RUNNER, registryFile: it.registryFile, adapters: { [it.adapterName]: edge.adapter } });
-    expect(await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length >= 2)).toBe(true);
-    const [tail, turn] = edge.sessions[0].fed;
-    expect(tail.text.startsWith(TAIL_PREAMBLE)).toBe(true);
-    expect(tail.text).toContain("copper-kettle");
-    expect(tail.text, "the waiting message is not in the tail").not.toContain("brass-lantern");
+    expect(await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length >= 1)).toBe(true);
+    // One feed, for the waiting message, with the tail as background in front of it.
+    expect(edge.sessions[0].fed).toHaveLength(1);
+    const [turn] = edge.sessions[0].fed;
     expect(turn.id).toBe("open-row");
-    expect(turn.text).toBe("brass-lantern");
+    const background = turn.text.slice(0, turn.text.indexOf(BACKGROUND_CLOSE));
+    expect(background).toContain(TAIL_PREAMBLE);
+    expect(background).toContain("copper-kettle");
+    expect(background, "the waiting message is not in the tail").not.toContain("brass-lantern");
+    expect(turn.text.split("brass-lantern").length - 1, "handed once").toBe(1);
+    expect(turn.text.endsWith(`${BACKGROUND_CLOSE}\n\nbrass-lantern`)).toBe(true);
   } finally {
     await runner?.stop();
     await edge.stop();

@@ -192,7 +192,8 @@ test(
       it.fake.deliver({ chat: `${CHAT}1`, from: PERSON2, text: hello });
       await until(
         "the agent added to the file was pulled by the door and served by the runner, with nothing restarted",
-        async () => (await it.read.outbox()).some((c) => c.body === scriptedReply(hello)),
+        // The added agent's first message carries the history it is owed, so the reply is to that.
+        async () => (await it.read.outbox()).some((c) => c.body.startsWith(scriptedReply("")) && c.body.endsWith(hello)),
         25_000,
         async () =>
           `inbound: ${JSON.stringify(await it.read.inbound())} pulls: ${it.fake.pulls().length}`,
@@ -257,7 +258,7 @@ test(
       // the listed agent's message went the whole way. A door that kept pulling
       // the removed agent's chat fails here.
       expect((await it.read.inbound()).some((r) => r.body === gone)).toBe(false);
-      expect((await it.read.outbox()).some((c) => c.body === scriptedReply(gone))).toBe(false);
+      expect((await it.read.outbox()).some((c) => c.body.endsWith(gone))).toBe(false);
       expect(runner.pid).toBe(runnerPid);
       expect(door.pid).toBe(doorPid);
 

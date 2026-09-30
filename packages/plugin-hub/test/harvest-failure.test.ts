@@ -206,7 +206,9 @@ test(
       );
       const reply = (await it.read.outbox()).filter((chunk) => chunk.inbound_id === "m-after");
       expect(reply.length).toBe(1);
-      expect(reply[0].body).toBe(scriptedReply("an ordinary message"));
+      // The agent's own session was fed nothing until now: this first input carries the chat history it is owed as background.
+      expect(reply[0].body.startsWith(scriptedReply(""))).toBe(true);
+      expect(reply[0].body.endsWith("an ordinary message")).toBe(true);
       // And no `refused.turn` was written about the agent itself, which is what
       // the outer catch writes on its way out of the serving loop.
       expect(

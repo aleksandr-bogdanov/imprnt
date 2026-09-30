@@ -9,7 +9,7 @@ import { adapterFor, loopLaunch } from "../adapters/index.ts";
 import { AdapterMissing, FeedNotWritten, type Adapter, type AdapterSession, type ExitEvidence, type TurnEnd } from "../adapters/types.ts";
 import { credentialSource, type HubMcpServer } from "../adapters/launch.ts";
 import { boxContextFor } from "../box/index.ts";
-import { readTail } from "../chatlog.ts";
+import { readTail, withBackground } from "../chatlog.ts";
 import { deriveTail } from "../chatlog/derive.ts";
 import { SAID_CAP } from "../harvest/parse.ts";
 import { thisOs } from "../os/index.ts";
@@ -60,7 +60,6 @@ import {
   ExecutionBusy,
   ExecutionNotOwned,
   activateProtocol,
-  completeTail,
   conversationFor,
   hasEntry,
   journalResult,
@@ -74,7 +73,6 @@ import {
   notePids,
   openExecution,
   openHoldsOf,
-  openTailExecution,
   readExecution,
   recordEntry,
   registerIncarnation,
@@ -211,7 +209,6 @@ interface OpenTurn {
   id: string;
   person: string;
   agent: string;
-  tail: boolean;
   acked: boolean;
   started: boolean;
   /** What the loop has done so far, and when it started doing it. */
@@ -680,13 +677,22 @@ export async function runRunner(options: {
     let turn: OpenTurn | null = null;
     let waiter: Waiter | null = null;
     /**
-     * Whether the engine may have been handed anything of the open attempt (the
-     * priming tail counts, as the input does): true from the moment a feed intent
-     * is committed until the attempt ends. A rejected feed does NOT make it false;
-     * only the adapter's own proof that nothing was written (`FeedNotWritten`), of
-     * a first feed with no effects, lets the attempt end as never given the input.
+     * Whether the engine may have been handed anything of the open attempt: true from
+     * the moment a feed intent is committed until the attempt ends. A rejected feed does
+     * NOT make it false; only the adapter's own proof that nothing was written
+     * (`FeedNotWritten`), of a first feed with no effects, lets the attempt end as never
+     * given the input.
      */
     let handed = false;
+    /**
+     * Whether the live session is a fresh MASTER child that has not yet been handed the
+     * chat history it has no memory of. Set by `spawn` (never for a resumed session, a
+     * worker or an agent with no chat) and cleared when the first real input's feed intent
+     * is committed. It feeds nothing by itself: the history is read when that input is
+     * claimed and rides on the same feed as background (`withBackground`), so there is no
+     * model turn for history alone, and none at an eager start.
+     */
+    let contextOwed = false;
     let effects = { actions: 0, lastAction: "" };
     /** The process tree of the open attempt, recorded so that a crash can be judged against it. */
     const noteTree = async (): Promise<void> => {
@@ -753,7 +759,7 @@ export async function runRunner(options: {
     /**
      * Whether the session this loop holds is the one an accepted stop signalled. It is
      * never fed again: not the next queued input after the attempt it was signalled for,
-     * and not the input that follows a priming tail. Bound to the session itself, so a
+     * and not an input whose attempt was opened while the stop was accepted. Bound to the session itself, so a
      * session started after it is not affected and nothing has to be cleared.
      */
     const retired = (): boolean => own.retiring !== null && own.retiring.session === own.session;
@@ -942,9 +948,17 @@ export async function runRunner(options: {
       covered(open);
     };
 
+    /**
+     * ONE MODEL TURN FOR ONE CLAIMED INPUT. `message.text` is the input as the conversation records it
+     * (and as the attempt's digest was taken over it), and it is never changed here. `about.background`
+     * is the chat history a fresh master child is owed: it is added to what the ENGINE is handed
+     * (`withBackground`) and to nothing else. It is not the conversation's entry, not part of the
+     * attempt's input digest and not something a recovery or a replay can rebuild a turn from; the
+     * feed intent only says that it rode along, and how big it was.
+     */
     const oneTurn = async (
       message: { id: string; text: string },
-      about: { preset: Preset; tail: boolean; registry: Registry; source?: InboundSource | null; kind?: string },
+      about: { preset: Preset; registry: Registry; source?: InboundSource | null; kind?: string; background?: string },
     ): Promise<void> => {
       let finish: (end: TurnEnd) => void = () => {};
       const ended = new Promise<TurnEnd>((resolve) => {
@@ -954,7 +968,6 @@ export async function runRunner(options: {
         id: message.id,
         person: agent.person,
         agent: agent.id,
-        tail: about.tail,
         acked: false,
         started: false,
         actions: 0,
@@ -970,11 +983,9 @@ export async function runRunner(options: {
         finish,
       };
       const opened = turn;
-      // EVERY FEED, of an input or of a priming tail, goes to an attempt that is owned
-      // and whose feed intent is committed first. A tail is a model turn and can do
-      // things, so the tail of a claimed row's fresh child is a feed of that row's
-      // attempt (`stage: "tail"`), and the tail an eager start owns has an attempt of
-      // its own. There is no feed to an engine without one.
+      // EVERY FEED goes to an attempt that is owned and whose feed intent is committed first. The
+      // only feed there is is a claimed input's: there is no feed for history alone, and no feed to an
+      // engine without an attempt.
       if (!own.attempt) throw new Error("feed-without-attempt");
       // A SESSION AN ACCEPTED STOP SIGNALLED IS NOT FED AGAIN, at the top of a feed and once more right
       // before the first byte: the stop can be accepted while the feed intent is being committed. What
@@ -986,32 +997,34 @@ export async function runRunner(options: {
       // reached the engine with no process, no group and no boot on record, and
       // nothing could ever show it over.
       await noteTree();
-      // Whether anything was fed to THIS attempt before this feed: the priming tail of a claimed row's fresh
-      // child is a feed of that row's attempt, and a model turn that may have done things.
+      // Whether anything was fed to THIS attempt before this feed. Nothing is fed ahead of an input any
+      // more, so this is false on the first feed; it stays the rule for a rejection's meaning.
       const priorFeed = handed;
+      // WHAT THE ENGINE IS HANDED: the input, behind the background when there is one.
+      const background = about.background ?? "";
+      const wire = background === "" ? message.text : withBackground(background, message.text);
       // COMMITTED BEFORE THE FIRST BYTE, with the input as the conversation's
-      // own entry, and fenced by the claim, the incarnation and the placement. From
-      // here a crash, an exit or a killed child is uncertain: the engine may have
-      // done any of it, and nothing feeds it again.
-      await markFeedIntent(store, own.attempt, message.text, about.tail && own.attempt.purpose === "turn" ? "tail" : "input");
+      // own entry (the RAW input: `message.text`, never `wire`), and fenced by the claim, the
+      // incarnation and the placement. From here a crash, an exit or a killed child is uncertain:
+      // the engine may have done any of it, and nothing feeds it again. The history that rides
+      // with it is named in the same commit, so an attempt that carried it says so.
+      await markFeedIntent(store, own.attempt, message.text, "input",
+        background === "" ? undefined : { kind: "chat-tail", digest: taskDigest(background), chars: background.length });
       handed = true;
+      // From here the engine may have the history, so it is not owed again to this session.
+      contextOwed = false;
       if (retired()) throw Object.assign(new Error("session-retired"), { retired: true });
       // A REJECTED FEED IS NOT PROOF THAT NOTHING WAS DELIVERED. Only the adapter's own `FeedNotWritten`
       // says so (it refused before a byte was written), and even that lets the input be tried again only
       // if nothing else was fed to this attempt first and it has done nothing. A write or a flush that
       // failed, a pipe that broke, a rejection with no name: any of them may have come after the engine
       // had some or all of it, and stay uncertain, held, exactly like a crash after the call.
-      const delivering = Promise.resolve().then(() => own.session!.feed(message)).catch((error: unknown) => {
+      const delivering = Promise.resolve().then(() => own.session!.feed({ id: message.id, text: wire })).catch((error: unknown) => {
         const failure = error instanceof Error ? error : new Error(String(error));
         throw error instanceof FeedNotWritten && !priorFeed && effects.actions === 0 ? Object.assign(failure, { notDelivered: true }) : failure;
       });
       delivering.catch(() => {});
       await Promise.race([delivering, stopped, own.left, failedSession(own.session!)]);
-      // The agent is SERVED from here: its session is up and it has been handed
-      // the tail of its own log. What the loop answers to that tail can take as
-      // long as a loop takes, and a runner that reported itself ready only
-      // after it would be a runner a service manager waits on for a model.
-      if (about.tail) own.settle();
       const end = await Promise.race([ended, stopped, own.left, failedSession(own.session!)]);
       // The trailing write goes with the turn. A turn that ended has its own last write below;
       // one cut short by a stop writes what the loop last reported first, before its attempt is closed.
@@ -1044,7 +1057,8 @@ export async function runRunner(options: {
         primary_model_id: end.usage.primary_model_id ?? null,
         session_id: end.session_id,
         lacks: [...own.session!.lacks, ...(end.usage.resolved_model_ids?.length ? [] : ["resolved_model"])],
-        tail: about.tail,
+        // The record's field is kept for the turns already in the ledger; no turn is a tail's any more.
+        tail: false,
       };
 
       const credential = credentialFor(about.registry, agent);
@@ -1071,26 +1085,6 @@ export async function runRunner(options: {
         }
       }
 
-      // The tail's own answer is not a reply to anybody, so it is recorded and
-      // dropped. Only a turn fed from an inbound row reaches the outbox. A tail the
-      // loop REFUSED is not an answered tail: it is ended below, like any refused turn.
-      if (about.tail && !end.refused) {
-        await appendRunnerEntry({
-          stream: "turn",
-          subject: agent.id,
-          kind: "turn",
-          actor: "runner",
-          detail: record as unknown as Record<string, unknown>,
-        });
-        // The tail an eager start owned is over, and the agent is free.
-        if (own.attempt?.purpose === "tail") {
-          await completeTail(store, own.attempt);
-          own.attempt = null;
-          handed = false;
-        }
-        return;
-      }
-
       // A turn the loop refused writes NO chunk and NO stamp. The input the engine was handed is
       // HELD (below) and is not tried again by anything; the diary says why, and the person is told
       // once about the CAUSE rather than once about every message of theirs that is waiting on it.
@@ -1106,7 +1100,7 @@ export async function runRunner(options: {
             : new Date(Date.now() + every * 1000).toISOString();
         // A TURN THE ENGINE WAS HANDED AND REFUSED IS HELD, whether or not it produced anything. The
         // absence of output or of a receipt is not the absence of delivery: the input reached the engine
-        // (its feed intent is committed and the adapter took it), a riding tail may already have run
+        // (its feed intent is committed and the adapter took it), it may already have run
         // tools, and a terminal failure of the adapter is not a reason to feed it again (design §4: the
         // engine's own retry and backoff happen inside the one attempt; once it reports a terminal
         // failure the assignment is not fed again without the owner's choice). A refusal ending the TURN
@@ -1114,16 +1108,11 @@ export async function runRunner(options: {
         // proof that the attempt is over. The child is closed and what the process table says of it is
         // the evidence, exactly as for any other end; the next turn starts a child of its own. Confirmed
         // only if it really is gone. A council seat is held the same way and is not given up on: its
-        // council waits for its owner. Only a row that was never fed is retried, and none gets here.
-        //
-        // A REFUSED PRIMING TAIL IS THE SAME, and is never completed: it was a model turn the engine was
-        // handed, so its attempt ends with the evidence of its processes (an eager tail's attempt is
-        // `interrupted` only if they are shown gone, otherwise `unknown` and the agent's slot stays taken;
-        // a riding tail holds the claimed row, with the effects seen). A tail asks nothing of anybody, so an
-        // eager one has no input to hold and no owner to ask, and nothing is fed after a refused riding one.
-        const heldRow = about.tail ? own.attempt?.inbound_id ?? null : message.id;
+        // council waits for its owner. Only a row that was never fed is retried, and none gets here. The
+        // history that rode with the input is not fed again either: the held input's own continuation
+        // resumes the native session it was fed under, which has it.
         if (own.attempt) {
-          await closeAttempt(`the loop refused the ${about.tail ? "priming tail" : "turn"}: ${end.refused.cause}`);
+          await closeAttempt(`the loop refused the turn: ${end.refused.cause}`);
           await forgetSession();
         }
         // The refusal is written down for what it was; the held input carries NO retry (saying it does
@@ -1134,26 +1123,15 @@ export async function runRunner(options: {
         // retry and nothing else, and a household counting its outages by
         // this line would otherwise count one that never opened.
         const refusedKind = scope.scope === "local" ? "refused.local" : "refused.outage";
-        if (heldRow !== null) {
-          await refuseTurn(store, {
-            inboundId: heldRow,
-            runner: options.runner,
-            agent: agent.id,
-            cause: end.refused.cause,
-            said: end.refused.said,
-            retryAt: null,
-            kind: refusedKind,
-          });
-        } else {
-          // An eager tail has no row: the line is about the agent.
-          await appendRunnerEntry({
-            stream: "refusal",
-            subject: agent.id,
-            kind: refusedKind,
-            actor: "runner",
-            detail: { agent: agent.id, runner: options.runner, cause: end.refused.cause, said: end.refused.said, retry_at: null, purpose: "tail" },
-          });
-        }
+        await refuseTurn(store, {
+          inboundId: message.id,
+          runner: options.runner,
+          agent: agent.id,
+          cause: end.refused.cause,
+          said: end.refused.said,
+          retryAt: null,
+          kind: refusedKind,
+        });
         // WHAT WAS NEVER FED WAITS. This agent's other unfinished rows were not handed to the engine, so
         // they are not held: they wait out the same retry interval (or the window's own reset) instead of
         // being fed one after another into an engine that has just said it will not answer, each of them
@@ -1342,15 +1320,6 @@ export async function runRunner(options: {
         const open = turn;
         if (!open || open.acked || messageId !== open.id) return;
         open.acked = true;
-        if (open.tail) {
-          // The engine took the tail: the session it was launched under is one it
-          // has acknowledged, so a restart resumes it instead of starting it over.
-          write(async () => {
-            if (own.attempt?.purpose === "tail") await markProgress(store, own.attempt.id, "received");
-            if (plan) await noteNative(store, conversation.id, "started");
-          });
-          return;
-        }
         write(() => stamp(store, { messageId: open.id, kind: "acked", actor: "runner" }));
         write(async () => {
           const attempt = own.attempt;
@@ -1374,16 +1343,6 @@ export async function runRunner(options: {
       session.onProgress((event) => {
         const open = turn;
         if (!open) return;
-        if (open.tail) {
-          // A tail is a model turn and may start tools of its own: what it starts is
-          // recorded on the progress cadence, as for any turn, so a crash inside it is
-          // judged against every process it was seen to start.
-          if (event.kind === "action" && Date.now() - open.wroteAt >= setting(registry, "hub.tick_seconds") * 1000) {
-            open.wroteAt = Date.now();
-            write(noteTree);
-          }
-          return;
-        }
         // WHAT THE LOOP JUST DID, as the loop said it. This is the only place the
         // moment is taken, so it moves with real events and with nothing else.
         open.activityAt = new Date().toISOString();
@@ -1451,21 +1410,33 @@ export async function runRunner(options: {
       });
       session.onTurnEnd((end) => turn?.finish(end));
 
-      // A spawned session has no memory of what was said, so the tail of the
-      // log is the first thing it is fed and a human message is never the first.
+      // A spawned session has no memory of what was said, so it is OWED the tail of the
+      // log. Nothing is fed for it here: starting a child is not a reason to run a model, and
+      // a tail fed as a turn of its own was one the loop could act on (it ran tools and rebuilt
+      // files from history) for minutes before the message it was started for was accepted.
+      // The tail is read when the first real input is claimed and rides with that input as
+      // background (`readBackground`, `oneTurn`): one feed, one turn, one answer.
       //
       // AN AGENT WITH NO CHAT HAS NO TAIL, and its entry is what says so: it
       // takes jobs alone, and a job's body is its whole input. That is a
       // declared empty tail, and a different thing from an agent whose chat log
-      // lives on another machine, which is read from the store below. Whatever
+      // lives on another machine, which is read from the store. Whatever
       // sits where a chat log would be is not this agent's conversation,
       // because no door writes one for an agent with no door.
       //
-      // A JOB'S CHILD IS NOT GIVEN THE TAIL EITHER, and neither is a resumed
+      // A JOB'S CHILD IS NOT OWED THE TAIL EITHER, and neither is a resumed
       // one: a worker's context is its brief and its own transcript, and must not
       // include what a configured seat's chat said before this job; a resumed
       // session already has what it had.
-      if (agent.chat === undefined || conversation.kind !== "master" || plan?.resume) return;
+      contextOwed = agent.chat !== undefined && conversation.kind === "master" && !plan?.resume;
+    };
+
+    /**
+     * The history a fresh master child is owed, as the background of the input that was just
+     * claimed: the tail in its existing format (`readTail`, or the store's own lines), or "" when
+     * there is none. Read only for that claimed input, so it can leave that input out.
+     */
+    const readBackground = async (registry: Registry): Promise<string> => {
       // Where those lines are read from is the registry's answer: the file this
       // machine's door wrote, or the store when that door is somewhere else.
       const where = {
@@ -1477,16 +1448,16 @@ export async function runRunner(options: {
       };
       // A message still waiting for its answer is not in the tail. The door
       // wrote it down the moment it landed, and this session is about to be
-      // handed it as a turn of its own, so inside the tail it would be the same
-      // message twice: the loop is told not to answer the tail, and a loop
-      // that reads a task there still runs it.
+      // handed it as a turn of its own (the claimed input is one of them), so
+      // inside the tail it would be the same message twice: the loop is told
+      // not to answer the tail, and a loop that reads a task there still runs it.
       //
       // ONE SNAPSHOT FOR BOTH READS. The waiting set and the store's own lines
       // are two statements, and a message the door commits between them, with
       // a platform time before the cutoff, would sit in the tail unexcluded and
       // then be claimed and fed again as a turn. Under repeatable read the
       // second statement sees exactly the rows the first did.
-      const tail = await store.sql.begin("isolation level repeatable read read only", async (tx) => {
+      return await store.sql.begin("isolation level repeatable read read only", async (tx) => {
         const inside = { ...store, sql: tx as unknown as Store["sql"] };
         const waiting = new Set<string>(((await inside.sql`
           select source ->> 'log_id' as log_id from inbound
@@ -1497,44 +1468,6 @@ export async function runRunner(options: {
           ? await deriveTail(inside, { registry, ...where, exclude: waiting, stateDir })
           : await readTail({ stateDir, ...where, exclude: waiting });
       });
-      if (tail !== "") {
-        // PRIMING THE TAIL IS A MODEL TURN, so it is owned like one. A start that no
-        // claimed row is behind (the eager start of a resident) opens an attempt of
-        // its own for it, fenced by the incarnation and the placement, and the table
-        // allows one attempt per agent: a child that has been handed the tail
-        // beside another attempt of the agent cannot exist. A start that a claimed
-        // row asked for is already inside that row's attempt.
-        //
-        // FOR EVERY ENGINE, WHATEVER IT CAN REPORT. An engine that cannot show what it
-        // left behind is not primed unowned: it is owned like any other, and a tail
-        // that completes releases its own attempt (nothing is claimed about a process
-        // it was never asked about). One that is cut off is `unknown` for as long as
-        // nothing shows its process gone (a reboot does, by the boot recorded here), so
-        // the agent's slot stays taken and nobody else starts beside it.
-        if (own.attempt === null) {
-          handed = false;
-          effects = { actions: 0, lastAction: "" };
-          try {
-            own.attempt = await openTailExecution(store, { agent: agent.id, conversation, runner: options.runner, incarnation,
-              digest: taskDigest(tail), nativeSession: plan?.id ?? null, evidence: { machine: here.machine, boot_id: here.boot } });
-          } catch (error) {
-            if (!(error instanceof ExecutionBusy) && !(error instanceof ExecutionNotOwned)) throw error;
-            // REFUSED BY NAME BEFORE ANYTHING WAS GENERATED: another attempt of the agent holds the
-            // slot, or this incarnation or placement is no longer current. The child was never
-            // handed a byte, so it is closed and the first row that can be claimed starts one.
-            await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: "tail.refused", actor: "runner",
-              detail: { agent: agent.id, conversation: conversation.id, cause: error.message } });
-            readings.delete(session);
-            await session.close().catch(() => {});
-            own.session = null;
-            own.conversation = null;
-            await own.facade?.close().catch(() => {});
-            own.facade = null;
-            return;
-          }
-        }
-        await oneTurn({ id: agent.id, text: tail }, { preset, tail: true, registry });
-      }
     };
 
     try {
@@ -1577,7 +1510,11 @@ export async function runRunner(options: {
         heldByWindow = standing?.cause === "window";
       }
       // A resident agent with a chat is started ahead of its first message, on
-      // its master conversation. One with no chat takes jobs alone, and every
+      // its master conversation. The start only brings the child up: it feeds
+      // nothing, opens no attempt and runs no model turn, so a runner that is
+      // ready has only said that its session exists. What the child is owed of
+      // the chat's history is attached to the first real input it is claimed for.
+      // One with no chat takes jobs alone, and every
       // job has a conversation of its own, so a child started now would only be
       // closed by the first of them: it starts with its first job.
       // NOR IS ONE STARTED BESIDE AN ATTEMPT THAT MAY STILL BE RUNNING, or beside
@@ -1603,8 +1540,8 @@ export async function runRunner(options: {
         await spawn(eagerPreset, initial, master, await planSession(master, eager, initial, null));
         await own.noteWait(null);
       }
-      // An agent whose log had no tail to feed is served the moment its session
-      // is up, and this is where that one settles.
+      // An agent is served the moment its session is up (or at once, when it starts
+      // none), and this is where it settles: no model turn stands between the two.
       own.settle();
       /**
        * WHY THIS LOOP STILL ASKS ON ITS BOUND.
@@ -2017,22 +1954,14 @@ export async function runRunner(options: {
           await spawn(preset, registry, conversation, plan);
           await own.noteWait(null);
         }
-        // A priming tail the loop refused has ended this attempt and held the row (`oneTurn`): the
-        // input is not fed after it, to a child that was closed or to a new one.
-        if (!own.attempt) {
-          pendingContext = [];
-          claimed = null;
-          claimedReturn = null;
-          claimedSeat = null;
-          lastWork = Date.now();
-          continue;
-        }
-        // THE OTHER FEED BOUNDARY. The priming tail was a turn of its own, and a stop accepted for this
-        // attempt while it ran signalled the session the input was about to go to. The tail can still
-        // come back normally (its answer landed first), so the absence of an exception here says nothing:
-        // the input is not fed to a session that was ended for the attempt it belongs to.
+        // A session an accepted stop signalled while this attempt was being opened and started is not fed
+        // the input that belongs to it; `oneTurn` asks again right before the first byte.
         if (retired()) throw Object.assign(new Error("session-retired"), { retired: true });
-        await oneTurn({ id: row.id, text }, { preset, tail: false, registry, source: row.source, kind: row.kind });
+        // THE HISTORY A FRESH MASTER CHILD IS OWED RIDES WITH THIS INPUT, and is read now so that this input
+        // (claimed, so still waiting) is left out of it. It is background for the engine and only that: `text`
+        // stays the input the conversation records and the attempt's digest names.
+        const background = contextOwed ? await readBackground(registry) : "";
+        await oneTurn({ id: row.id, text }, { preset, registry, source: row.source, kind: row.kind, background });
         claimed = null;
         claimedReturn = null;
         claimedSeat = null;

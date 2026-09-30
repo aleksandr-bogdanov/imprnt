@@ -75,9 +75,8 @@ test(
     let runner: { stop(): Promise<void> } | null = null;
 
     try {
-      // L2's tail is fed first on every spawn, so what the drain fed is the
-      // tail and then the three waiting rows. Asserting that here puts "before
-      // any human message" under this check as well as under chatlog.test.ts.
+      // L2's tail rides with the first input of the spawn, so what the drain fed is
+      // the three waiting rows, the first with the history in front of it.
       plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" });
 
       const bodies = [
@@ -133,7 +132,10 @@ test(
       );
       for (const chunk of chunks) {
         const row = (await it.read.inbound()).find((r) => r.id === chunk.inbound_id)!;
-        expect(chunk.body).toBe(scriptedReply(row.body));
+        // The first row the spawn answered carries the history in front of it, and the reply is to what the loop was fed.
+        const fedText = it.scripted.fed().find((f) => f.id === row.id)!.text;
+        expect(chunk.body).toBe(scriptedReply(fedText));
+        expect(fedText.endsWith(row.body)).toBe(true);
       }
 
       // The assertion that makes this more than an end to end smoke. No new
@@ -151,8 +153,12 @@ test(
 
       // And a drain that shuffles is caught, which costs nothing here.
       const fed = it.scripted.fed();
-      expect(fed[0].text.startsWith(TAIL_PREAMBLE as string)).toBe(true);
-      expect(fed.slice(1).map((f) => f.text)).toEqual(bodies);
+      expect(fed.map((f) => f.id)).toEqual(["w1", "w2", "w3"]);
+      // The history is in front of the first of them, and of no other: three feeds, three turns, none for the history.
+      expect(fed[0].text).toContain(TAIL_PREAMBLE as string);
+      expect(fed[0].text).toContain("what was said yesterday");
+      expect(fed[0].text.endsWith(`\n\n${bodies[0]}`)).toBe(true);
+      expect(fed.slice(1).map((f) => f.text)).toEqual(bodies.slice(1));
     } finally {
       if (runner) await runner.stop();
       await it.stop();

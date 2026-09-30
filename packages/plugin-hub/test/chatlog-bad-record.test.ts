@@ -10,7 +10,7 @@ import { startCluster, type Cluster } from "./helpers/cluster.ts"
 import { rolloutStage } from "./helpers/rollout-stage.ts"
 import { observe } from "./helpers/rollout-runner.ts"
 import { superStore } from "./helpers/hub-fixture.ts"
-import { chatLogPath, readTail } from "../src/chatlog.ts"
+import { BACKGROUND_CLOSE, BACKGROUND_OPEN, chatLogPath, readTail } from "../src/chatlog.ts"
 import { enqueueInbound } from "../src/store/inbound.ts"
 import { runDoor } from "../src/door/run.ts"
 import { runRunner } from "../src/runner/run.ts"
@@ -76,7 +76,10 @@ for (const middle of ["malformed", "invalid", "good", "torn-last"] as const) {
 // ever with the person hearing nothing.
 for (const middle of ["malformed", "good"] as const) {
   test(`IMP-160 D-172 an agent whose day file holds a ${middle} record still answers, fed the rest of its tail`, async () => {
-    const it = await rolloutStage(cluster, "telegram", { adapter: { answer: ({ text }) => "answer: " + text } })
+    // The first real feed of a fresh master session is the history and then the input, so the reply is
+    // a fixed line and the feed is asserted on its own below rather than echoed into the answer.
+    const reply = "scripted answer to the real request"
+    const it = await rolloutStage(cluster, "telegram", { adapter: { answer: () => reply } })
     const now = new Date()
     const earlier = new Date(now.getTime() - 60_000).toISOString()
     const history = (id: string, text: string) => JSON.stringify({ id, at: earlier, direction: "in", from: "p1", text }) + "\n"
@@ -92,7 +95,20 @@ for (const middle of ["malformed", "good"] as const) {
       runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: it.scripted.adapter } })
       door = await runDoor({ door: "door-fake", registryFile: it.registryFile, platform: it.edge.platform })
       it.edge.batch([{ platform_message_id: "8", chat: "1000000001", sender_id: "p1", from: "p1", text: "still there", at: now.toISOString(), media: [] }], "9")
-      expect(await observe(() => it.edge.posts().some(post => post.text === "answer: still there"), 8000), "the agent answers").toBe(true)
+      expect(await observe(() => it.edge.posts().some(post => post.text === reply), 8000), "the agent answers").toBe(true)
+      expect(it.edge.posts().filter(post => post.text === reply), "the request is answered once").toHaveLength(1)
+      // What the engine was really handed: one feed, history first and the untouched request last.
+      const fed = it.scripted.fed().filter(one => one.text.includes("still there"))
+      expect(fed, "the request is fed exactly once").toHaveLength(1)
+      const wire = fed[0].text
+      expect(wire.startsWith(BACKGROUND_OPEN), "the first real feed opens with the history").toBe(true)
+      expect(wire.endsWith(`${BACKGROUND_CLOSE}\n\nstill there`), "the actual request follows the history, intact").toBe(true)
+      const background = wire.slice(BACKGROUND_OPEN.length, wire.length - `${BACKGROUND_CLOSE}\n\nstill there`.length)
+      expect(background, "the history in the feed keeps the good lines around a bad one").toContain("first history line")
+      expect(background).toContain("third history line")
+      expect(background, "the request is not also inside the history").not.toContain("still there")
+      if (middle === "good") expect(background).toContain("second history line")
+      else expect(background, "the malformed record is not handed to the engine").not.toContain("broken")
     } finally { await door?.stop(); await runner?.stop(); await it.stop() }
   })
 }

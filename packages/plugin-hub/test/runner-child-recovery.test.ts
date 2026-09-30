@@ -34,8 +34,10 @@ for (const mode of ["exit", "eof", "parse"] as const) {
   })
 }
 
-for (const phase of ["ordinary", "tail", "memory"] as const) {
-  test(`ROLL-09 ${phase} death releases claims and progress and retries with tail while sibling PID survives`, async () => {
+// There is no "tail" phase any more: history is background on the input's own feed, so a child that dies before it
+// was handed the input is a start failure (covered by A9/B3 in runner-conversations), and one that dies after is held.
+for (const phase of ["ordinary", "memory"] as const) {
+  test(`ROLL-09 ${phase} death releases claims and progress and holds the input handed to the child while sibling PID survives`, async () => {
     // The defective edge is run first through the identical runner path.
     // Only its exited signal is suppressed. The recovery predicate must reject it.
     for (const defective of phase === "memory" ? [false] : [true, false]) {
@@ -48,7 +50,7 @@ for (const phase of ["ordinary", "tail", "memory"] as const) {
       retrySettings(it)
       plantChatLine({ stateDir: it.stateDir, text: "recovery-tail-codeword" })
       const edge = controlledAdapter(it.adapterName)
-      edge.hold(m => phase === "tail" ? m.id === "p1-lair" : m.id === "interrupted")
+      edge.hold(m => m.id === "interrupted")
       edge.suppressExit(defective)
       let runner: Awaited<ReturnType<typeof runRunner>> | undefined
       const runnerPid = process.pid
@@ -59,8 +61,11 @@ for (const phase of ["ordinary", "tail", "memory"] as const) {
         const sibling = edge.sessions.find(r => r.fed.some(m => m.id === "sibling-control"))!
         const siblingPid = sibling.session.pid
         await insertInbound(cluster, it.db, { id: "interrupted", body: "pending input" })
-        expect(await observe(() => edge.sessions.some(r => r.fed.some(m => m.id === (phase === "tail" ? "p1-lair" : "interrupted"))))).toBe(true)
-        const target = edge.sessions.find(r => r.fed.some(m => m.id === "p1-lair"))!
+        expect(await observe(() => edge.sessions.some(r => r.fed.some(m => m.id === "interrupted")))).toBe(true)
+        const target = edge.sessions.find(r => r.fed.some(m => m.id === "interrupted"))!
+        // The one feed of the session is the input, with the planted history carried as background.
+        expect(target.fed.map(m => m.id)).toEqual(["interrupted"])
+        expect(target.fed[0].text).toContain("recovery-tail-codeword")
         edge.hold(() => false)
         if (phase === "memory") target.grow(200)
         else target.fail()
@@ -74,17 +79,8 @@ for (const phase of ["ordinary", "tail", "memory"] as const) {
         expect(Number.isFinite(retryAt)).toBe(true)
         expect((await it.read.inbound()).find(r => r.id === "interrupted")!.claimed_by).toBeNull()
         expect((await it.read.sheet("turn_progress")).filter(r => r.id === "interrupted")).toEqual([])
-        if (phase === "tail") {
-          // The child died before the engine had been handed the input, so
-          // nothing was attempted and the row is tried again as it always was.
-          expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "interrupted"), 5000), "D-175 pending answer resumes").toBe(true)
-          const successor = edge.sessions.find(r => r !== target && r.fed.some(m => m.id === "interrupted"))!
-          expect(successor).toBeDefined()
-          expect(successor.loop.starts()[0].at).toBeGreaterThanOrEqual(retryAt)
-          expect(successor.fed[0].text).toContain("recovery-tail-codeword")
-          expect(successor.session.pid).not.toBe(target.session.pid)
-        } else {
-          // The child died AFTER it was handed the input. What it did is not
+        {
+          // The child died AFTER it was handed the input (and the history that rode with it). What it did is not
           // known, so the input is held for its owner: no successor is fed it,
           // however long the retry deadline has passed, and the owner is told
           // what to type.

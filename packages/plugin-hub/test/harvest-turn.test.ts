@@ -217,20 +217,13 @@ test(
         30_000,
         () => JSON.stringify(it.scripted.starts()),
       );
-      // AND WAS FED ITS TAIL, before anything counts what came after. `spawn`
-      // records the start, registers its handlers, reads the tail and only then
-      // feeds it, so a wait on the START alone can land inside that gap and
-      // capture `fedBefore` at zero with the tail feed still in flight. The
-      // harvest assertions below would then see two entries and fail for a
-      // fixture's reason rather than the runner's, which is the exact shape
-      // the filing rules forbid. The tail is non-empty here, because five
-      // lines are planted above and `hub.tail_hours` is a day.
-      await until(
-        "the agent's own session was fed the tail of its chat log",
-        () => it.scripted.fed().some((one) => one.id === AGENT),
-        30_000,
-        () => JSON.stringify(it.scripted.fed()),
-      );
+      // AND HAS BEEN FED NOTHING: the tail the agent's session is owed rides with
+      // the first real input it is claimed for, so an eager start feeds nothing and
+      // there is no feed in flight for `fedBefore` to race. The tail is non-empty
+      // here (five lines are planted above and `hub.tail_hours` is a day), which is
+      // what makes "nothing" a fact about the runner and not about an empty log.
+      await Bun.sleep(1000);
+      expect(it.scripted.fed()).toEqual([]);
       const agentStart = it.scripted.starts()[0];
       const fedBefore = it.scripted.fed().length;
 
@@ -315,11 +308,10 @@ test(
       //     properly, because both produce two starts and one feed. The
       //     session the message really landed in is what tells them apart.
       expect(fedAfter[0].session).toBe(2);
-      // And the resident session, which is the first start, was fed its tail
-      // and nothing since.
+      // And the resident session, which is the first start, was fed nothing at
+      // all: no input was claimed for it, and its tail waits for one.
       const intoAgent = it.scripted.fed().filter((one) => one.session === 1);
-      expect(intoAgent.length).toBe(1);
-      expect(intoAgent[0].id).toBe(AGENT);
+      expect(intoAgent.length).toBe(0);
 
       // --- 7. THE DOOR LINE IS NOT IN IT. Check 5 binds the filter, and this
       //     binds that the filter is on the path the model is really fed.
@@ -328,8 +320,8 @@ test(
       expect(fedAfter[0].text).not.toContain("[door]");
 
       // --- 8. `TAIL_PREAMBLE` is not in the fed text, and the harvester's
-      //     session was never fed a tail at all: `spawn` feeds a tail under the
-      //     AGENT's id, and no such feed happened after the agent's own.
+      //     session was never given a tail at all: a chat tail rides only with
+      //     an input claimed for the agent's own master session.
       expect(fedAfter[0].text).not.toContain(TAIL_PREAMBLE);
       expect(fedAfter.some((one) => one.id === AGENT)).toBe(false);
       expect(fedAfter[0].id).toBe(rowId);
@@ -424,7 +416,10 @@ test(
       );
       const reply = (await it.read.outbox()).filter((chunk) => chunk.inbound_id === "m-human");
       expect(reply.length).toBe(1);
-      expect(reply[0].body).toBe(scriptedReply("an ordinary message"));
+      // The agent's own session was fed nothing until now, so this first input carries the chat history it is owed
+      // as background, and the scripted reply is to what the loop was fed.
+      expect(reply[0].body.startsWith(scriptedReply(""))).toBe(true);
+      expect(reply[0].body.endsWith("\n\nan ordinary message")).toBe(true);
       expect(it.scripted.starts().length).toBe(startsBefore);
       const humanStamps = await it.read.ledger({ stream: "inbound", subject: "m-human" });
       expect(humanStamps.map((one) => one.kind)).toContain("acked");

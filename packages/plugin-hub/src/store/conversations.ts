@@ -340,8 +340,13 @@ async function whyRefused(sql: StoreLike["sql"], open: { row: { id: string; agen
 }
 
 /**
- * Own the agent for a TAIL: the chat log a master's fresh child is primed with is
- * a model turn, so it is an attempt like any other. Same fence, no input row, and
+ * LEGACY: the runner no longer opens one. A fresh master child is not primed by a model turn of its
+ * own, so nothing starts an attempt without an input; the history rides with the first real input
+ * (`markFeedIntent`'s `context`). Kept for `purpose = 'tail'` rows an earlier build left, which the
+ * table and `endAttempt` still understand, and for the fence tests that place gates against them.
+ *
+ * Own the agent for a TAIL: the chat log a master's fresh child was primed with was
+ * a model turn, so it was an attempt like any other. Same fence, no input row, and
  * the same gate rule: a closed gate over the agent or the conversation is not opened
  * under (`gate`), ordered against the placing of gates exactly as `openExecution`
  * is, so a resident that starts beside a gate that has been placed does not prime.
@@ -396,13 +401,26 @@ export async function noteExecution(store: StoreLike, execution: string, kind: s
  * claimed by this runner. An obsolete owner meets `ExecutionNotOwned` here, before
  * any byte can reach an engine.
  *
- * `stage: "tail"` is the priming tail a fresh child is fed on the attempt of a claimed
- * input. The tail is a model turn and may do things, so it is a feed of its own: the
- * attempt is `feed_intent` before it, and a crash inside it is uncertain and not "the
- * input was never fed". It records no conversation entry (the tail is not the input),
- * and the input's own feed intent then follows on the same attempt, once.
+ * `text` is the input as the conversation records it, and only that. What else the engine
+ * is handed with it (the chat history a fresh master child is owed) is `context`: it is
+ * named in the diary line of this intent (what it is, its digest and its size) and is
+ * written nowhere else, so it is never part of the transcript or of anything rebuilt from it.
+ *
+ * `stage: "tail"` is LEGACY. Earlier builds fed the priming tail as a model turn of its own
+ * on the attempt of a claimed input; the runner no longer does, and history is carried by
+ * `context` on the one feed. The stage stays so a store that still holds such an attempt
+ * (`tail_fed`), or one journaled before this change, is understood and resolved by the same
+ * fences (`endAttempt` holds it or leaves it unknown; nothing here feeds it again).
+ * It records no conversation entry (the tail is not the input), and the input's own feed
+ * intent then follows on the same attempt, once.
  */
-export async function markFeedIntent(store: StoreLike, execution: ExecutionRow, text: string, stage: "input" | "tail" = "input"): Promise<void> {
+export async function markFeedIntent(
+  store: StoreLike,
+  execution: ExecutionRow,
+  text: string,
+  stage: "input" | "tail" = "input",
+  context?: { kind: string; digest: string; chars: number },
+): Promise<void> {
   await store.sql.begin(async (tx) => {
     const inside = { ...store, sql: tx as unknown as StoreLike["sql"] };
     const moved = await tx`update execution e set state = 'feed_intent', feed_intent_at = coalesce(e.feed_intent_at, now()),
@@ -424,7 +442,8 @@ export async function markFeedIntent(store: StoreLike, execution: ExecutionRow, 
     if (execution.inbound_id !== null && stage === "input") {
       await recordEntry(inside, { conversation: execution.conversation_id, source: execution.inbound_id, kind: "input", body: text, execution: execution.id });
     }
-    await noteExecution(inside, execution.id, "feed.intent", { inbound: execution.inbound_id, digest: execution.input_digest, purpose: stage === "tail" ? "tail" : execution.purpose });
+    await noteExecution(inside, execution.id, "feed.intent", { inbound: execution.inbound_id, digest: execution.input_digest, purpose: stage === "tail" ? "tail" : execution.purpose,
+      ...(context ? { context } : {}) });
     // A council's event reaching the master is consumed here, at the one point every input passes; nothing for any other input.
     if (stage === "input") await noteEventFed(inside, execution);
   });
@@ -537,7 +556,7 @@ export async function completeExecution(store: StoreLike, done: { execution: str
   }
 }
 
-/** A tail turn ended: the attempt is over, under the same fence as any settle. */
+/** LEGACY (see `openTailExecution`): a tail turn ended, so the attempt is over, under the same fence as any settle. */
 export async function completeTail(store: StoreLike, execution: ExecutionRow): Promise<void> {
   const moved = await store.sql`update execution e set state = 'completed', ended_at = now()
       from conversation c, runner_incarnation r

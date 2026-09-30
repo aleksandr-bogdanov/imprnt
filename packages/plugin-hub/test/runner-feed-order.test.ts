@@ -52,15 +52,18 @@ test(
   async () => {
     const { runRunner } = await seam("src/runner/run.ts");
     expect(typeof runRunner).toBe("function");
-    const { TAIL_PREAMBLE } = await seam("src/chatlog.ts");
+    const { TAIL_PREAMBLE, BACKGROUND_OPEN, BACKGROUND_CLOSE } = await seam("src/chatlog.ts");
     expect(typeof TAIL_PREAMBLE).toBe("string");
+    expect(typeof BACKGROUND_OPEN).toBe("string");
+    expect(typeof BACKGROUND_CLOSE).toBe("string");
 
     const it = await stageHub(cluster);
     let runner: { stop(): Promise<void> } | null = null;
 
     try {
-      // L2's tail is fed first on every spawn, so the order asserted below is
-      // the order AFTER it, and the tail's own place is asserted too.
+      // L2's tail rides with the first input of the spawn as background, so the
+      // order asserted below is the order of the inputs themselves, and the
+      // tail's own place (in front of the first one only) is asserted too.
       plantChatLine({ stateDir: it.stateDir, text: "what was said yesterday" });
 
       // Four rows land while the runner is down. The fixture separates rank
@@ -117,9 +120,13 @@ test(
       await Bun.sleep(1500);
 
       const fed = it.scripted.fed();
-      expect(fed[0].text.startsWith(TAIL_PREAMBLE as string)).toBe(true);
+      expect(fed.map((f) => f.id)).toEqual(["a-human-early", "c-report", "b-human-late", "d-triage"]);
+      // The history is in front of the first input and of no other.
+      expect(fed[0].text.startsWith(BACKGROUND_OPEN as string)).toBe(true);
+      expect(fed[0].text).toContain(TAIL_PREAMBLE as string);
+      expect(fed[0].text).toContain("what was said yesterday");
+      expect(fed[0].text.endsWith(`${BACKGROUND_CLOSE as string}\n\nthe first thing the person said`)).toBe(true);
       expect(fed.slice(1).map((f) => f.text)).toEqual([
-        "the first thing the person said",
         "the job that answers the first thing finished",
         "the second thing the person said",
         "a watcher wants a verdict",
@@ -244,11 +251,13 @@ test(
           async () => (await second.read.outbox()).length >= 2,
           60_000,
         );
-        // Index 0 is the spawn's tail, so the human row is the first HUMAN
-        // thing fed and the harvest row waits behind it.
-        const order = second.scripted.fed().slice(1).map((f) => f.text);
-        expect(order[0]).toBe("the person said something just now");
-        expect(order[1]).toBe("yesterday is worth filing");
+        // The human row is the first thing fed (with the spawn's history in
+        // front of it) and the room row waits behind it.
+        const order = second.scripted.fed();
+        expect(order.map((f) => f.id)).toEqual(["m-human", "m-room"]);
+        expect(order[0].text.endsWith("\n\nthe person said something just now")).toBe(true);
+        expect(order[0].text).toContain("what was said yesterday");
+        expect(order[1].text).toBe("yesterday is worth filing");
       } finally {
         if (laterRunner) await laterRunner.stop();
         await second.stop();

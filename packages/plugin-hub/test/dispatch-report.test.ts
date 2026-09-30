@@ -171,15 +171,20 @@ test("D-213 a report is fed before the message that arrived while its job ran, c
     //     the shipped work channel and on nothing new.
     expect(work).toContain(DISPATCHER)
 
-    // --- 1 and 4. Now the dispatcher's runner. Its first feed is its tail,
-    //     and after that the order the person is answered in.
+    // --- 1 and 4. Now the dispatcher's runner. Its first feed is the first report,
+    //     with the chat's tail in front of it as background, and after that the
+    //     order the person is answered in.
     hub = await runRunner({ runner: "runner-pi", registryFile: it.registryFile,
       adapters: { [it.adapterName]: it.scripted.adapter } })
     await until("all three are answered", async () =>
       (await it.read.outbox()).filter(r => [reportA.id, reportB.id, human.id].includes(String(r.inbound_id))).length === 3, 30_000)
     const fed = it.scripted.fed().filter(one => [reportA.id, reportB.id, human.id].includes(one.id)).map(one => one.id)
     expect(fed).toEqual([reportA.id, reportB.id, human.id])
-    expect(it.scripted.fed().filter(one => one.id === reportA.id).map(one => one.text)).toEqual([REPORT_A])
+    // The first report is the fresh session's first input: it is fed once, and the history (when the chat has any) rides in front of it.
+    const fedTextOf = (id: string) => it.scripted.fed().filter(one => one.id === id).map(one => one.text)
+    expect(fedTextOf(reportA.id)).toHaveLength(1)
+    expect(fedTextOf(reportA.id)[0].endsWith(REPORT_A)).toBe(true)
+    expect(fedTextOf(reportB.id)).toEqual([REPORT_B])
     // No second channel on the runner side: the runners listen on the work
     // channel they always did and on nothing the projection added.
     expect(await listeners(it, "hub_runner", "hub_project")).toEqual([])
@@ -196,7 +201,7 @@ test("D-213 a report is fed before the message that arrived while its job ran, c
     expect(it.edge.posts().filter(p => p.chat === LAIR_CHAT).map(p => p.text)).toEqual([
       dispatchAccepted("en", { agent: DISPATCH_JOB_ONLY }),
       dispatchAccepted("en", { agent: DISPATCH_JOB_ONLY }),
-      scriptedReply(REPORT_A),
+      scriptedReply(fedTextOf(reportA.id)[0]),
       scriptedReply(REPORT_B),
       scriptedReply(QUESTION),
     ])

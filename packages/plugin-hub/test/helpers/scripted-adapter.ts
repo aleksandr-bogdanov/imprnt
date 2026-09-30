@@ -182,8 +182,8 @@ export interface ScriptedOptions {
    * does) and produces NO text at all, so no `started` stamp can land and the
    * runner has nothing to write into the outbox.
    *
-   * The count includes the tail turn the runner feeds on every spawn, because
-   * that is a turn the loop really refused too.
+   * Every turn counts, the first real input of a session included (a session's
+   * history rides with it, so there is no turn before it).
    */
   refusals?: number;
   /** The window every turn of this loop reports, until it is changed. */
@@ -823,11 +823,10 @@ export function createScriptedAdapter(
  * What one session over the wire did: the messages it was fed and the pid of
  * the real child the CLIENT spawned for it.
  *
- * This is how a check maps an agent to its child across a process boundary. The
- * runner feeds the tail of the chat log as the first message of every spawned
- * session and that message's id IS the agent id (`src/runner/run.ts` passes
- * `{ id: agent.id, text: tail }`), so a planted chat line makes every session
- * self-identifying with nothing plumbed through argv.
+ * This is how a check maps an agent to its child across a process boundary: by the
+ * id of a message the session was fed (the row it answered). A session is fed
+ * nothing until an input is claimed for it: the chat history a fresh master child is
+ * owed rides on that first input as background, not as a message of its own.
  */
 export interface SeenSession {
   session: string;
@@ -842,8 +841,8 @@ export interface AdapterServer {
   /** The child's pid of the LATEST session fed a message with this id. */
   childFor(messageId: string): number | null;
   /** Every child pid, oldest first, of the sessions fed a message with this id.
-   *  A respawn opens a second session and feeds the same tail, so this is how a
-   *  check tells the child that died from the one that replaced it. */
+   *  A message is fed once, so this names one session per id; a check tells the child
+   *  that died from the one that replaced it by two ids. */
   childPids(messageId: string): number[];
   stop(): Promise<void>;
 }

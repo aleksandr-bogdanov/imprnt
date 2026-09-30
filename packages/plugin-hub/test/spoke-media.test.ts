@@ -32,7 +32,7 @@ import {
 import { localMediaPath, readMedia } from "../src/store/media.ts";
 import { runDoor } from "../src/door/run.ts";
 import { runRunner } from "../src/runner/run.ts";
-import { TAIL_PREAMBLE } from "../src/chatlog.ts";
+import { BACKGROUND_CLOSE, TAIL_PREAMBLE } from "../src/chatlog.ts";
 
 const SLOW = 120_000;
 const HUB_ONLY = join("/nowhere-on-this-machine", crypto.randomUUID());
@@ -117,8 +117,11 @@ test(
       const waiting = await planted("media-now", "read this one", new Date(now - 60_000), payload, "bin");
 
       runner = await runRunner({ runner: RUNNER2, registryFile: it.registryFile, adapters: { [it.adapterName]: edge.adapter } });
-      expect(await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length >= 2)).toBe(true);
-      const [tail, turn] = edge.sessions[0].fed;
+      expect(await observe(() => edge.sessions.length === 1 && edge.sessions[0].fed.length >= 1)).toBe(true);
+      // One feed: the waiting message, with the tail in front of it as background.
+      expect(edge.sessions[0].fed).toHaveLength(1);
+      const [turn] = edge.sessions[0].fed;
+      const tail = { text: turn.text.slice(0, turn.text.indexOf(BACKGROUND_CLOSE)) };
       // The turn names the spoke's own file, and the file holds the bytes.
       expect(turn.id).toBe("media-now");
       expect(turn.text).toContain(`(file ${waiting.local})`);
@@ -128,7 +131,7 @@ test(
       expect(waiting.local.startsWith(join(spokeState, PERSON, "inbox"))).toBe(true);
       // The tail names the spoke's path for the earlier file too, and never
       // the hub machine's.
-      expect(tail.text.startsWith(TAIL_PREAMBLE)).toBe(true);
+      expect(tail.text).toContain(TAIL_PREAMBLE);
       expect(tail.text).toContain(earlier.local);
       expect(tail.text).not.toContain(HUB_ONLY);
 

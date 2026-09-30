@@ -222,10 +222,10 @@ test(
       // claim writes no ledger event (`src/runner/claim.ts`), so a wrong runner
       // that claimed the row, fed it to a loop and released it between two
       // samples would leave the row looking untouched. The adapter server
-      // records every session and every message fed to it, and the runner feeds
-      // the tail of an agent's chat log as the first message of every session
-      // it spawns with the AGENT ID as that message's id, so a session for the
-      // other machine's agent is visible even when no work was settled.
+      // records every session and every message fed to it, and a session is fed
+      // only the input it was claimed for (the chat history rides with it as
+      // background), so a session for the other machine's agent shows as a feed
+      // of that agent's row even when no work was settled.
       const wrongFeeds: string[] = [];
       const watch = (async () => {
         while (watching) {
@@ -233,7 +233,7 @@ test(
           if (row) claimsSeen.add(String(row.claimed_by));
           for (const session of it.adapterServer!.seen()) {
             for (const fed of session.fed) {
-              if (fed.id === AGENT2 || fed.text === waiting) {
+              if (fed.id === "tm-waiting" || fed.text.includes(waiting)) {
                 wrongFeeds.push(`${session.session} was fed ${fed.id}: ${fed.text.slice(0, 40)}`);
               }
             }
@@ -269,12 +269,12 @@ test(
       await watch;
       expect(wrongFeeds).toEqual([]);
       const before = it.adapterServer!.seen();
-      expect(before.some((s) => s.fed.some((f) => f.id === AGENT2))).toBe(false);
-      expect(before.some((s) => s.fed.some((f) => f.text === waiting))).toBe(false);
+      expect(before.some((s) => s.fed.some((f) => f.id === "tm-waiting"))).toBe(false);
+      expect(before.some((s) => s.fed.some((f) => f.text.includes(waiting)))).toBe(false);
       // The control beside it: the runner that IS running did open a session
       // for its OWN agent, so "no session for the other agent" is a fence and
       // not a loop that never ran.
-      expect(before.some((s) => s.fed.some((f) => f.id === AGENT))).toBe(true);
+      expect(before.some((s) => s.fed.some((f) => f.id === "tm-live"))).toBe(true);
 
       // --- and now the machine comes up. The notification its insert emitted
       //     was gone long before this process existed.
@@ -291,13 +291,15 @@ test(
       );
 
       const chunk = (await it.read.outbox()).find((c) => c.inbound_id === "tm-waiting")!;
-      expect(chunk.body).toBe(scriptedReply(waiting));
+      // The fresh session's first input carries the planted history as background, and the reply is to what the engine was fed.
+      expect(chunk.body.startsWith(scriptedReply(""))).toBe(true);
+      expect(chunk.body.endsWith(waiting)).toBe(true);
       const settled = (await it.read.inbound()).find((r) => r.id === "tm-waiting")!;
       expect(settled.state).not.toBe("received");
       // And the feed that answered it appeared only once the other machine was
       // up, so the work was done by the runner that owns the agent.
       const after = it.adapterServer!.seen();
-      expect(after.some((s) => s.fed.some((f) => f.text === waiting))).toBe(true);
+      expect(after.some((s) => s.fed.some((f) => f.id === "tm-waiting" && f.text.endsWith(waiting)))).toBe(true);
       expect(after.length).toBeGreaterThan(before.length);
 
       // NO NEW ARRIVAL. By sequence rather than by timestamp, the way

@@ -217,7 +217,7 @@ test("the opening is the fence: one attempt per agent even across two jobs, and 
   expect((await readExecution(s.runner, attempt.id))?.state).toBe("feed_intent")
 })
 
-test("a priming tail is a model turn and is owned like one: it cannot run beside another attempt of the agent, and leaves no hold", async () => {
+test("a tail attempt an earlier build left is owned like any other (the runner no longer opens one): it cannot run beside another attempt of the agent, and leaves no hold", async () => {
   const s = await stage()
   await s.human("h1")
   await s.incarnate("runner-a", "one")

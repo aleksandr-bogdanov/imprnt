@@ -196,7 +196,7 @@ for (const name of ["discord", "telegram"] as const) {
           stage.send(LIVE)
         }
         // Measured max 32688 ms. Three times that is 98064, rounded up.
-        expect(await observe(() => stage.posts.some(post => post.chat === NEW && post.text === `reply to ${LIVE}`), 100000),
+        expect(await observe(() => stage.posts.some(post => post.chat === NEW && post.text.startsWith("reply to ") && post.text.endsWith(LIVE)), 100000),
           "a message sent once the door is on the new chat is answered there").toBe(true)
         // The control: a message older than the boundary is history. It gets no
         // row, so no turn and no answer, and nothing is said about it.
