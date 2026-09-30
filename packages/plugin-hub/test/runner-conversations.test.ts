@@ -935,7 +935,14 @@ test("C1 a held conversation whose session the engine never acknowledged is bloc
     await Bun.sleep(3500)
     expect(edge.sessions.filter(r => r.fed.some(m => m.id === "h2" || m.id === "continue:h1:1")), "no executor started for either").toEqual([])
     expect(edge.sessions, "and none at all beside the one that died").toHaveLength(1)
-    expect((await it.read.inbound()).find(r => r.id === "h2")).toMatchObject({ state: "received", claimed_by: null })
+    // On every tick the loop selects h2 (the engine is shown able to resume, so selection lets it through), claims it, finds the
+    // session was never acknowledged and gives the claim back before anything is built (`resume.blocked`). A read can land inside
+    // that look, so one read finding the claim proves nothing either way. What must hold is that the claim does not STAND: it is
+    // back within a bounded look (a stuck claim holds for its whole lease and never is), and the row never leaves `received`.
+    let h2: Awaited<ReturnType<typeof it.read.inbound>>[number] | undefined
+    expect(await observe(async () => { h2 = (await it.read.inbound()).find(r => r.id === "h2"); return h2?.claimed_by === null }),
+      "a claim on the fresh message is given back within the look that took it").toBe(true)
+    expect(h2).toMatchObject({ state: "received", claimed_by: null })
 
     // The owner is told the specific cause, once, keyed on the attempt, revision and cause.
     const told = (await it.read.noticeRows()).filter(n => String(n.notice_key).startsWith("context:"))

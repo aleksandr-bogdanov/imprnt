@@ -1,11 +1,9 @@
-import { createHash } from "node:crypto";
 import { chooseHold, contextOf, contextSentence, effectsLine, holdContextOf, type HoldOutcome } from "../recovery/holds.ts";
-import { senderAllowed } from "../registry/entries.ts";
 import type { Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { openHoldsOf } from "../store/conversations.ts";
-import type { InboundSource } from "../store/inbound.ts";
-import { HUB_TOPIC, ToolError, canonical, readTopicRequest, type ResumeRequest, type ToolReply } from "./contracts.ts";
+import { HUB_TOPIC, READERS, ToolError, type ResumeRequest, type ToolReply } from "./contracts.ts";
+import { Undo, refusal, requireMaster, runRequest } from "./requests.ts";
 
 /**
  * What a call is bound to. The runner builds it from its own launch and nothing
@@ -23,18 +21,30 @@ export interface McpBinding {
   attempt(): string | null;
 }
 
-/** A refusal that must leave nothing behind: not the invocation, not the messages it would have used. */
-class Undo extends Error {
-  constructor(readonly reply: ToolReply) { super("undo"); }
-}
+type Handler = (binding: McpBinding, request: never) => Promise<ToolReply>;
 
-const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+/**
+ * What each action of each tool does, beside how its arguments are read
+ * (`READERS`, `TOPIC_ACTIONS` in `contracts.ts`). A handler that changes something
+ * is a few lines around `runRequest`, which owns the request key, the source
+ * evidence and the recorded answer; it is handed the arguments its reader accepted
+ * and the runner's binding, and nothing a model said names whose call it is.
+ */
+const HANDLERS: Record<string, Record<string, Handler>> = {
+  [HUB_TOPIC]: {
+    inspect: (binding) => inspect(binding),
+    resume: (binding, request: ResumeRequest) => resume(binding, request),
+  },
+};
 
 /** Run one call of the hub's tool. Throws a `ToolError` for anything the model is to be told by name. */
 export async function callTool(binding: McpBinding, name: string, args: unknown): Promise<ToolReply> {
-  if (name !== HUB_TOPIC) throw new ToolError("unknown_tool", `the hub has no tool ${JSON.stringify(name)}`);
-  const request = readTopicRequest(args);
-  return request.action === "inspect" ? await inspect(binding) : await resume(binding, request);
+  const read = Object.hasOwn(READERS, name) ? READERS[name] : undefined;
+  if (!read) throw new ToolError("unknown_tool", `the hub has no tool ${JSON.stringify(name)}`);
+  const request = read(args);
+  const handler = HANDLERS[name]?.[request.action];
+  if (!handler) throw new ToolError("unsupported_action", `${name} has no action ${JSON.stringify(request.action)} yet`);
+  return await (handler as (binding: McpBinding, request: unknown) => Promise<ToolReply>)(binding, request);
 }
 
 /** What is held in this conversation, and what is and is not known about it. */
@@ -82,74 +92,28 @@ async function inspect(binding: McpBinding): Promise<ToolReply> {
  * and a changed argument under the same key is a conflict, not a second choice.
  */
 async function resume(binding: McpBinding, request: ResumeRequest): Promise<ToolReply> {
-  if (binding.kind !== "master") {
-    throw new ToolError("not_owner_conversation", "only a conversation the owner talks to can record the owner's choice");
-  }
-  const { store } = binding;
-  const hash = digest(canonical(request));
+  requireMaster(binding, "record the owner's choice");
   const decision = request.recovery_decision;
-  try {
-    return await store.sql.begin(async (tx) => {
-      const inside = { ...store, sql: tx as unknown as StoreLike["sql"] };
-      const fresh = await tx`insert into tool_invocation (conversation_id, request_key, tool, action, payload_hash, execution_id)
-        values (${binding.conversation}, ${request.request_key}, ${HUB_TOPIC}, 'resume', ${hash}, ${binding.attempt()})
-        on conflict (conversation_id, request_key) do nothing returning request_key`;
-      if (fresh.length === 0) {
-        const [seen] = (await tx`select payload_hash, result from tool_invocation
-          where conversation_id = ${binding.conversation} and request_key = ${request.request_key}`) as unknown as { payload_hash: string; result: ToolReply | null }[];
-        if (seen.payload_hash !== hash) {
-          throw new ToolError("idempotency_conflict", "this request_key was used with different arguments: use a new key for a different request");
-        }
-        return seen.result ?? failed(decision.attempt_id, "closed", "the earlier call under this key recorded no result");
-      }
-      const [hold] = (await tx`select h.revision, h.created_at, h.conversation_id from replay_hold h
+  return await runRequest(binding, {
+    tool: HUB_TOPIC,
+    request,
+    object: decision.attempt_id,
+    async open(tx) {
+      const [hold] = (await tx.sql`select h.revision, h.created_at, h.conversation_id from replay_hold h
         where h.execution_id = ${decision.attempt_id}`) as unknown as { revision: number; created_at: Date; conversation_id: string }[];
-      if (!hold || hold.conversation_id !== binding.conversation) throw new Undo(failed(decision.attempt_id, "unknown_attempt", "no held attempt with that id in this conversation"));
-      const registry = binding.registry();
-      let sender = "";
-      for (const id of request.source_message_ids) {
-        const [row] = (await tx`select id, person, agent, kind, source, received_at from inbound where id = ${id}`) as unknown as
-          { id: string; person: string; agent: string; kind: string; source: InboundSource | null; received_at: Date }[];
-        if (!row || row.person !== binding.person || row.agent !== binding.agent || row.kind !== "human" || !row.source?.sender_id) {
-          throw new ToolError("source_invalid", `${id} is not a message the owner sent to this agent`);
-        }
-        if (!senderAllowed(registry, binding.person, String(row.source.door), row.source.sender_id)) {
-          throw new ToolError("source_invalid", `${id} is from a sender this person does not allow`);
-        }
-        if (row.received_at.getTime() <= new Date(hold.created_at).getTime()) {
-          throw new ToolError("source_invalid", `${id} is older than the interruption it would decide`);
-        }
-        sender = sender || row.source.sender_id;
-        const taken = await tx`insert into source_consumption (source_id, conversation_id, request_key, payload_hash)
-          values (${id}, ${binding.conversation}, ${request.request_key}, ${hash})
-          on conflict (source_id) do nothing returning source_id`;
-        if (taken.length === 0) {
-          const [used] = (await tx`select conversation_id, request_key from source_consumption where source_id = ${id}`) as unknown as { conversation_id: string; request_key: string }[];
-          if (used.conversation_id !== binding.conversation || used.request_key !== request.request_key) {
-            throw new ToolError("source_already_used", `${id} already authorized a different request`);
-          }
-        }
-      }
-      const outcome = await chooseHold(inside, {
+      if (!hold || hold.conversation_id !== binding.conversation) throw new Undo(refusal(decision.attempt_id, "unknown_attempt", "no held attempt with that id in this conversation"));
+      return { context: hold, since: { at: hold.created_at, what: "the interruption it would decide" } };
+    },
+    async apply(tx, _hold, owner) {
+      const outcome = await chooseHold(tx, {
         attempt: decision.attempt_id, agent: binding.agent, revision: decision.expected_recovery_revision,
-        choice: decision.choice, by: sender,
+        choice: decision.choice, by: owner.sender,
         evidence: { source: "tool", request_key: request.request_key, messages: request.source_message_ids },
         context: decision.continuation_context,
       });
-      const reply = await replyFor(inside, decision.attempt_id, outcome, request.request_key);
-      if (reply.status === "failed") throw new Undo(reply);
-      await tx`update tool_invocation set result = ${reply}::jsonb
-        where conversation_id = ${binding.conversation} and request_key = ${request.request_key}`;
-      return reply;
-    });
-  } catch (error) {
-    if (error instanceof Undo) return error.reply;
-    throw error;
-  }
-}
-
-function failed(attempt: string, cause: string, message: string): ToolReply {
-  return { operation_id: null, object_id: attempt, revision: null, status: "failed", stage: "refused", cause, status_message: message };
+      return await replyFor(tx, decision.attempt_id, outcome, request.request_key);
+    },
+  });
 }
 
 /** What a recorded choice became, in the words of the one reply shape. */
@@ -177,10 +141,10 @@ async function replyFor(store: StoreLike, attempt: string, outcome: HoldOutcome,
       return { ...base, status: "queued", stage: "continuation_queued", ...(hold?.continuation_id ? { next_event_id: hold.continuation_id } : {}),
         status_message: "Recorded. A continuation is queued behind the current turn." };
     case "stale-revision":
-      return failed(attempt, "stale_revision", "what is known about this attempt changed: inspect again and ask the owner again");
+      return refusal(attempt, "stale_revision", "what is known about this attempt changed: inspect again and ask the owner again");
     case "unknown-attempt":
-      return failed(attempt, "unknown_attempt", "no held attempt with that id for this agent");
+      return refusal(attempt, "unknown_attempt", "no held attempt with that id for this agent");
     default:
-      return failed(attempt, "closed", "this attempt is already being continued or is closed");
+      return refusal(attempt, "closed", "this attempt is already being continued or is closed");
   }
 }

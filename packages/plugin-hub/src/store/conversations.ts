@@ -82,7 +82,7 @@ export class ExecutionBusy extends Error {
  * `reason` says which fence held.
  */
 export class ExecutionNotOwned extends Error {
-  constructor(readonly execution: string, readonly reason: "state" | "claim" | "generation" | "incarnation" | "stored-result" = "state") {
+  constructor(readonly execution: string, readonly reason: "state" | "claim" | "generation" | "incarnation" | "stored-result" | "gate" = "state") {
     super(`execution-not-owned: ${execution} (${reason})`);
     this.name = "ExecutionNotOwned";
   }
@@ -237,11 +237,24 @@ function busyOrThrow(error: unknown, conversation: string): never {
  *   the input is still claimed by this runner (the claim is current, not a lease
  *     that was read a moment ago),
  *   this runner incarnation is the one registered as current,
- *   the conversation is on the placement generation the caller planned with.
+ *   the conversation is on the placement generation the caller planned with,
+ *   no open claim gate covers the input, its agent or its conversation.
  * The table then allows one unresolved attempt per agent and per conversation, so
  * two claimants that both got here, two jobs of one worker included, cannot both
  * insert: the second fails at the index, not at a check that ran before it.
  * A stale snapshot is refused, never quietly replaced by the current generation.
+ *
+ * THE GATE IS READ AFTER THE ORDERING POINT. A claim that was made before a gate was
+ * placed spends time planning before it gets here, so the gate has to be asked at the
+ * opening. Asking inside the insert is not enough by itself: a statement that read the
+ * gates before the gate committed could still insert after whoever placed it had looked
+ * for attempts and found none. So the opening first takes the per-agent ordering lock
+ * (`hub_open_order`, the lock `hub_gate_place` takes) in a statement of its own, and the
+ * insert that follows reads the gates in a new snapshot: either the gate is already
+ * committed and the opening is refused (`gate`, and the caller hands the claim back), or
+ * the attempt commits first and whoever placed the gate afterwards sees it. Only a gate
+ * is asked here, and never a hold: the owner's continuation opens under its own hold.
+ * An attempt that is already open is not touched by a gate, and finishes.
  */
 export async function openExecution(
   store: StoreLike,
@@ -259,6 +272,7 @@ export async function openExecution(
   const id = crypto.randomUUID();
   try {
     return await store.sql.begin(async (tx) => {
+      await tx`select hub_open_order(${open.row.id}::text, ${open.conversation.id}::text, ${open.row.agent}::text)`;
       const [made] = (await tx`insert into execution
         (id, inbound_id, conversation_id, agent, runner, incarnation, placement_generation, state, input_digest, native_session, evidence)
         select ${id}::text, i.id, c.id, ${open.row.agent}::text, ${open.runner}::text, ${open.incarnation}::text,
@@ -267,6 +281,7 @@ export async function openExecution(
          where i.id = ${open.row.id} and i.claimed_by = ${open.runner} and i.state not in ('answered', 'delivered')
            and c.id = ${open.conversation.id} and c.placement_generation = ${open.conversation.placement_generation}
            and r.runner = ${open.runner} and r.incarnation = ${open.incarnation}
+           and not hub_gate_covers(${open.row.agent}::text, c.id, i.id)
            for update of i, c for share of r
         returning *`) as unknown as ExecutionRow[];
       if (!made) throw await whyRefused(tx as unknown as StoreLike["sql"], open, id);
@@ -284,21 +299,27 @@ export async function openExecution(
 }
 
 /** Which of the fences an insert that wrote nothing was stopped by, for the error that names it. */
-async function whyRefused(sql: StoreLike["sql"], open: { row: { id: string }; conversation: Conversation; runner: string; incarnation: string }, id: string): Promise<ExecutionNotOwned> {
+async function whyRefused(sql: StoreLike["sql"], open: { row: { id: string; agent: string }; conversation: Conversation; runner: string; incarnation: string }, id: string): Promise<ExecutionNotOwned> {
   const [seen] = (await sql`select
       (select claimed_by from inbound where id = ${open.row.id}) as claimed_by,
       (select placement_generation from conversation where id = ${open.conversation.id}) as generation,
-      (select incarnation from runner_incarnation where runner = ${open.runner}) as current`) as unknown as
-    { claimed_by: string | null; generation: number | null; current: string | null }[];
+      (select incarnation from runner_incarnation where runner = ${open.runner}) as current,
+      hub_gate_covers(${open.row.agent}::text, ${open.conversation.id}::text, ${open.row.id}::text) as gated`) as unknown as
+    { claimed_by: string | null; generation: number | null; current: string | null; gated: boolean }[];
   const reason = seen?.current !== open.incarnation ? "incarnation"
     : seen?.claimed_by !== open.runner ? "claim"
+    : seen?.generation !== open.conversation.placement_generation ? "generation"
+    : seen?.gated ? "gate"
     : "generation";
   return new ExecutionNotOwned(id, reason);
 }
 
 /**
  * Own the agent for a TAIL: the chat log a master's fresh child is primed with is
- * a model turn, so it is an attempt like any other. Same fence, no input row.
+ * a model turn, so it is an attempt like any other. Same fence, no input row, and
+ * the same gate rule: a closed gate over the agent or the conversation is not opened
+ * under (`gate`), ordered against the placing of gates exactly as `openExecution`
+ * is, so a resident that starts beside a gate that has been placed does not prime.
  */
 export async function openTailExecution(
   store: StoreLike,
@@ -306,20 +327,28 @@ export async function openTailExecution(
 ): Promise<ExecutionRow> {
   const id = crypto.randomUUID();
   try {
-    const [made] = (await store.sql`insert into execution
-      (id, inbound_id, conversation_id, agent, runner, incarnation, placement_generation, state, input_digest, purpose, native_session, evidence)
-      select ${id}::text, null::text, c.id, ${open.agent}::text, ${open.runner}::text, ${open.incarnation}::text,
-             c.placement_generation, 'claimed', ${open.digest}::text, 'tail', ${open.nativeSession}::text, ${open.evidence ?? {}}::jsonb
-        from conversation c, runner_incarnation r
-       where c.id = ${open.conversation.id} and c.placement_generation = ${open.conversation.placement_generation}
-         and r.runner = ${open.runner} and r.incarnation = ${open.incarnation}
-         for update of c for share of r
-      returning *`) as unknown as ExecutionRow[];
-    if (!made) {
-      const [seen] = (await store.sql`select (select incarnation from runner_incarnation where runner = ${open.runner}) as current`) as unknown as { current: string | null }[];
-      throw new ExecutionNotOwned(id, seen?.current !== open.incarnation ? "incarnation" : "generation");
-    }
-    return made;
+    return await store.sql.begin(async (tx) => {
+      await tx`select hub_open_order(null::text, ${open.conversation.id}::text, ${open.agent}::text)`;
+      const [made] = (await tx`insert into execution
+        (id, inbound_id, conversation_id, agent, runner, incarnation, placement_generation, state, input_digest, purpose, native_session, evidence)
+        select ${id}::text, null::text, c.id, ${open.agent}::text, ${open.runner}::text, ${open.incarnation}::text,
+               c.placement_generation, 'claimed', ${open.digest}::text, 'tail', ${open.nativeSession}::text, ${open.evidence ?? {}}::jsonb
+          from conversation c, runner_incarnation r
+         where c.id = ${open.conversation.id} and c.placement_generation = ${open.conversation.placement_generation}
+           and r.runner = ${open.runner} and r.incarnation = ${open.incarnation}
+           and not hub_gate_covers(${open.agent}::text, c.id, null::text)
+           for update of c for share of r
+        returning *`) as unknown as ExecutionRow[];
+      if (!made) {
+        const [seen] = (await tx`select (select incarnation from runner_incarnation where runner = ${open.runner}) as current,
+            (select placement_generation from conversation where id = ${open.conversation.id}) as generation,
+            hub_gate_covers(${open.agent}::text, ${open.conversation.id}::text, null::text) as gated`) as unknown as
+          { current: string | null; generation: number | null; gated: boolean }[];
+        throw new ExecutionNotOwned(id, seen?.current !== open.incarnation ? "incarnation"
+          : seen?.generation !== open.conversation.placement_generation ? "generation" : seen?.gated ? "gate" : "generation");
+      }
+      return made;
+    });
   } catch (error) {
     if (error instanceof ExecutionNotOwned) throw error;
     return busyOrThrow(error, open.conversation.id);
