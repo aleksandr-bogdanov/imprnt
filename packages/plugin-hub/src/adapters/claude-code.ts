@@ -29,19 +29,27 @@ import {
  * that detached, another tool profile, another machine, a person's box, or the Pi;
  * the model chose to stay quiet when asked not to continue, and nothing here
  * prevents a resumed model from choosing to act.
+ *
+ * 2.1.286, measured once (Sonnet 5.5, the same stream-json input and probe, the
+ * same unboxed single-MCP-server boundary): the same observation, SIGKILL after one
+ * fsynced effect with a durable `tool_use` and no `tool_result`, the same session
+ * resumed with a NEW question, no tool call of its own, effect count 1 → 1. The same
+ * resume limits apply. A separate production boxed init read-back confirmed the
+ * same tool set; it made no model, tool-execution or resume measurement.
  */
-export const VALIDATED_SAFE_RESUME: readonly string[] = ["2.1.285"];
+export const VALIDATED_SAFE_RESUME: readonly string[] = ["2.1.285", "2.1.286"];
 
 /**
  * The installed builds on which an explicit `--tools` list was OBSERVED to be the
  * whole of the effective tool set, with the native delegation, team, workflow and
  * scheduling tools absent, and what that list was (`VALIDATED_BUILTIN_TOOLS`).
  * 2.1.284: the restricted Read, Glob and Grep list. 2.1.285: the nine ordinary
- * tools with one MCP server beside them (see there). Neither is evidence about any
- * other list, and `delegationDisabled` says only what this says. A build that is
- * not here is refused for an ordinary launch by name (`native-tool-control-unvalidated`).
+ * tools with one MCP server beside them (see there). 2.1.286: the same nine and one
+ * server, measured once. None is evidence about any other list, and
+ * `delegationDisabled` says only what this says. A build that is not here is refused
+ * for an ordinary launch by name (`native-tool-control-unvalidated`).
  */
-export const VALIDATED_TOOL_CONTROL: readonly string[] = ["2.1.284", "2.1.285"];
+export const VALIDATED_TOOL_CONTROL: readonly string[] = ["2.1.284", "2.1.285", "2.1.286"];
 
 /**
  * The BUILTIN tools each validated build was observed to expose exactly, when
@@ -56,23 +64,28 @@ export const VALIDATED_TOOL_CONTROL: readonly string[] = ["2.1.284", "2.1.285"];
  * 2.1.285 (the measured probes, `--tools` the nine, one stdio MCP server): all nine
  * exposed, the MCP server connected, and none of the denied names present; nothing
  * unrequested appeared.
+ * 2.1.286 (one measured probe, unboxed, both phases, `--tools` the same nine, one
+ * stdio MCP server): the same, exactly the nine plus the server's tool; the same
+ * limits.
  */
 export const VALIDATED_BUILTIN_TOOLS: Readonly<Record<string, readonly string[]>> = {
   "2.1.284": ["Read", "Glob", "Grep"],
   "2.1.285": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch"],
+  "2.1.286": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch"],
 };
 
 /**
  * The ordinary working tools an agent that names none is launched with, per
  * build, as an explicit list and never as the CLI's own default (which still
  * carries Workflow, background and scheduling tools). Only a profile somebody read
- * back from the real CLI is here: 2.1.285's nine. A build with none has an agent
+ * back from the real CLI is here: the nine of 2.1.285 and of 2.1.286. A build with none has an agent
  * with no tool list of its own refused by name (`ordinary-tool-profile-unvalidated`);
  * agents that DO name their tools are launched with exactly those, if the build
  * validated them (`VALIDATED_BUILTIN_TOOLS`).
  */
 export const VALIDATED_ORDINARY_PROFILES: Readonly<Record<string, readonly string[]>> = {
   "2.1.285": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch"],
+  "2.1.286": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch"],
 };
 
 /**
