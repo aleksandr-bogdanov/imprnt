@@ -124,9 +124,11 @@ test("the hub's tool server is added beside the person's servers and never in pl
 
 test("capabilities are read off the installed CLI and what a build may be launched with is claimed only for the builds somebody measured, by name and for the scope measured", async () => {
   const f = loopFixture()
-  // Three installed builds: the one measured for an ordinary profile and interrupted resume (2.1.285), the one
-  // measured for a restricted tool list only (2.1.284), and one nobody measured.
+  // Installed builds: the two measured for an ordinary profile and interrupted resume (2.1.285, 2.1.286), the one
+  // measured for a restricted tool list only (2.1.284), one nobody measured, and the next version after the last
+  // measured one, which no version pattern may let in.
   const measured = scriptedClaude("never", "2.1.285"), restricted = scriptedClaude("never", "2.1.284"), unknown = scriptedClaude("never", "2.1.0")
+  const next = scriptedClaude("never", "2.1.286"), later = scriptedClaude("never", "2.1.287")
   const probeOf = (cli: { bin: string }) => ({ bin: cli.bin, timeoutMs: 5000, writePaths: [dirname(cli.bin)] })
   const ask = (cli: { bin: string }) => claudeCode.capabilities!({ registry: f.registry(), agent: { id: "p1-lair", preset: "daily" }, preset: "daily", probe: probeOf(cli) })
   const launch = (cli: { bin: string }, over: Record<string, unknown> = {}, purpose = "ordinary") =>
@@ -137,13 +139,16 @@ test("capabilities are read off the installed CLI and what a build may be launch
   const original = readFileSync(measured.bin, "utf8")
   try {
     // WHAT IS CLAIMED, exactly: the measured tables and nothing else.
-    expect([...VALIDATED_TOOL_CONTROL]).toEqual(["2.1.284", "2.1.285"])
-    expect([...VALIDATED_SAFE_RESUME], "interrupted-tool resume is measured on 2.1.285 alone").toEqual(["2.1.285"])
-    expect(VALIDATED_ORDINARY_PROFILES, "the ordinary profile is the nine tools measured on 2.1.285 alone").toEqual({ "2.1.285": NINE })
-    expect(VALIDATED_BUILTIN_TOOLS).toEqual({ "2.1.284": ["Read", "Glob", "Grep"], "2.1.285": NINE })
+    expect([...VALIDATED_TOOL_CONTROL]).toEqual(["2.1.284", "2.1.285", "2.1.286"])
+    expect([...VALIDATED_SAFE_RESUME], "interrupted-tool resume is measured on 2.1.285 and 2.1.286 alone").toEqual(["2.1.285", "2.1.286"])
+    expect(VALIDATED_ORDINARY_PROFILES, "the ordinary profile is the nine tools measured on 2.1.285 and 2.1.286 alone").toEqual({ "2.1.285": NINE, "2.1.286": NINE })
+    expect(VALIDATED_BUILTIN_TOOLS).toEqual({ "2.1.284": ["Read", "Glob", "Grep"], "2.1.285": NINE, "2.1.286": NINE })
 
     // Read off each build: a flag in the help is not a claim, the measured table is.
     expect(await ask(measured)).toEqual({ stableSession: true, delegationDisabled: true, safeResume: true, version: "2.1.285" })
+    expect(await ask(next)).toEqual({ stableSession: true, delegationDisabled: true, safeResume: true, version: "2.1.286" })
+    expect(await ask(later), "no pattern: the build after the last measured one is not claimed")
+      .toEqual({ stableSession: true, delegationDisabled: false, safeResume: false, version: "2.1.287" })
     expect(await ask(restricted)).toEqual({ stableSession: true, delegationDisabled: true, safeResume: false, version: "2.1.284" })
     expect(await ask(unknown), "everything the help names, and nothing claimed about a build nobody measured")
       .toEqual({ stableSession: true, delegationDisabled: false, safeResume: false, version: "2.1.0" })
@@ -162,6 +167,11 @@ test("capabilities are read off the installed CLI and what a build may be launch
     // Delegation names still refuse, whatever the build.
     await expect(launch(measured, withAgent({ tools: ["Read", "PushNotification"] }))).rejects.toThrow("native-delegation-configured")
 
+    // 2.1.286 is launched the same way; 2.1.287 is refused by name and version.
+    expect(tools(await launch(next, withAgent({ tools: undefined })))).toBe(NINE.join(","))
+    await expect(launch(next, withAgent({ tools: ["Read", "TodoWrite"] }))).rejects.toThrow("tool-profile-unvalidated: TodoWrite not validated on claude 2.1.286")
+    await expect(launch(later)).rejects.toThrow("native-tool-control-unvalidated: claude 2.1.287")
+
     // The build measured for a restricted list only: that list, and no ordinary profile.
     await expect(launch(restricted, withAgent({ tools: undefined }))).rejects.toThrow("ordinary-tool-profile-unvalidated")
     await expect(launch(restricted)).rejects.toThrow("tool-profile-unvalidated: Write not validated on claude 2.1.284")
@@ -179,7 +189,7 @@ test("capabilities are read off the installed CLI and what a build may be launch
     writeFileSync(measured.bin, original.replace(" --disallowedTools", ""))
     expect(await ask(measured)).toMatchObject({ stableSession: true, delegationDisabled: false })
     await expect(launch(measured)).rejects.toThrow("native-delegation-unsupported")
-  } finally { measured.stop(); restricted.stop(); unknown.stop(); f.stop() }
+  } finally { measured.stop(); restricted.stop(); unknown.stop(); next.stop(); later.stop(); f.stop() }
 }, 90_000)
 
 /** An engine whose loop has a tool process under it, the way a running turn does. */
