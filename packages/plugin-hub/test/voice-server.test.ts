@@ -283,8 +283,12 @@ test(`any path but the two is not found, on both verbs${PYTHON_SUFFIX}`, async (
   for (const path of ["/", "/transcribe/extra", "/metrics"]) {
     const got = await fetch(`http://127.0.0.1:${child.port}${path}`);
     expect(got.status, `GET ${path}`).toBe(404);
+    // This server closes after every reply, and here it answers without reading
+    // the body. Reusing a pooled connection was seen to draw an occasional reset
+    // on the POST, so each request gets its own.
     const posted = await fetch(`http://127.0.0.1:${child.port}${path}`, {
       method: "POST",
+      keepalive: false,
       body: body(16),
     });
     expect(posted.status, `POST ${path}`).toBe(404);

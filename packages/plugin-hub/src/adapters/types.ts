@@ -9,7 +9,13 @@ import type { LoopLaunchInput, LoopProbeOptions } from "./launch.ts";
  * No loop code lives in this file and nothing in it names a loop.
  */
 export interface AdapterProgress {
-  kind: "text" | "action";
+  /**
+   * `text` and `action` are the two the hub has always had. `action_result` is
+   * OPTIONAL for a loop to send: a tool the loop started has reported back. It
+   * carries no text, and a loop that cannot tell it apart sends nothing, so the
+   * door then knows only the last tool start and says exactly that.
+   */
+  kind: "text" | "action" | "action_result";
   text: string;
 }
 

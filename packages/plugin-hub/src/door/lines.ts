@@ -84,7 +84,9 @@ const WAIT: Record<Language, Record<WaitReason, string>> = {
     window: "the plan's usage window is used up. It resumes {date}.",
     off: "this agent is switched off on the board.",
     "runner-down": "the runner {runner} is down, or the machine that runs this agent is offline.",
-    working: "the model is working on it: accepted, the answer is not ready.",
+    // Said of a claim in the store, so it names what is RECORDED and never
+    // claims a live process: the store cannot say the loop is still there.
+    working: "the loop accepted it and no answer is recorded yet.",
     unknown: "no known reason. Raw state: {state}.",
   },
   ru: {
@@ -98,15 +100,20 @@ const WAIT: Record<Language, Record<WaitReason, string>> = {
     window: "лимит тарифа исчерпан, продолжу {date}.",
     off: "этот агент выключен на панели.",
     "runner-down": "раннер {runner} не работает, или машина этого агента выключена.",
-    working: "модель работает: сообщение принято, ответ ещё не готов.",
+    working: "сообщение принято, ответа пока не записано.",
     unknown: "причина неизвестна. Состояние: {state}.",
   },
 };
 
+/** Why the message is waiting, as the sentence itself, with no marker in front. */
+export function waitReasonText(language: Language, reason: string, values: LineValues = {}): string {
+  const known = (WAIT_REASONS as readonly string[]).includes(reason) ? (reason as WaitReason) : "unknown";
+  return interpolate(language, WAIT[language][known], values);
+}
+
 /** Why the message is waiting, as the line under a clock line. */
 export function waitReasonLine(language: Language, reason: string, values: LineValues = {}): string {
-  const known = (WAIT_REASONS as readonly string[]).includes(reason) ? (reason as WaitReason) : "unknown";
-  return says(language, interpolate(language, WAIT[language][known], values));
+  return says(language, waitReasonText(language, reason, values));
 }
 
 /**
@@ -313,49 +320,166 @@ export function harvestNothing(language: Language): string {
 }
 
 /**
- * What the agent is doing, edited as it goes.
- *
- * A loop that reported no action at all gets the form that says only the
- * elapsed time, which is honest rather than silent: "a turn with no tool call
- * still lands" is the case this covers.
+ * A wait a person reads: `<1m`, `12m`, `1h 05m`. Never raw seconds past a
+ * minute, and never a false precision under it.
  */
-export function progressLine(
-  language: Language,
-  what: { lastAction?: string; actions?: number; seconds: number },
-): string {
-  const actions = what.actions ?? 0;
-  if (actions <= 0 || !what.lastAction) {
-    return says(
-      language,
-      language === "ru" ? `работаю: ${what.seconds} с` : `working: ${what.seconds} s`,
-    );
-  }
-  return says(
-    language,
-    language === "ru"
-      ? `работаю: ${what.lastAction}, вызовов инструментов: ${actions}, ${what.seconds} с`
-      : `working: ${what.lastAction}, ${actions} tool calls, ${what.seconds} s`,
-  );
+export function humanDuration(language: Language, seconds: number): string {
+  const whole = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  if (whole < 60) return language === "ru" ? "<1 мин" : "<1m";
+  const minutes = Math.floor(whole / 60);
+  if (minutes < 60) return language === "ru" ? `${minutes} мин` : `${minutes}m`;
+  const rest = String(minutes % 60).padStart(2, "0");
+  return language === "ru" ? `${Math.floor(minutes / 60)} ч ${rest} мин` : `${Math.floor(minutes / 60)}h ${rest}m`;
 }
 
-/** The last edit before the reply is posted: "ending with the totals". */
-export function progressTotals(
-  language: Language,
-  what: { actions?: number; seconds: number },
-): string {
-  const actions = what.actions ?? 0;
-  if (actions <= 0) {
-    return says(
-      language,
-      language === "ru" ? `готово. Время: ${what.seconds} с.` : `done. Time: ${what.seconds} s.`,
-    );
+/**
+ * Where one message stands, as the ONE card the door keeps for it.
+ *
+ * A state is what the door can show from evidence it holds, and no state says a
+ * process is alive: `working` is a turn the store shows as accepted and claimed,
+ * and the age of the last thing the loop was SEEN doing sits beside it.
+ *
+ *   queued      waiting for the loop to accept it
+ *   accepted    the loop has it and has produced nothing yet
+ *   working     the loop has started answering and the turn is not over
+ *   idle        an open turn nothing is running: it waits to be picked up again
+ *   held        an attempt was cut short and its input is the owner's to decide
+ *   continuing  the owner chose to continue and it has not started yet
+ *   finished    an answer is recorded (it says nothing about delivery)
+ *   ended       the turn left the open set and no answer is recorded
+ */
+export type CardState = "queued" | "accepted" | "working" | "idle" | "held" | "continuing" | "finished" | "ended";
+
+export interface StatusCard {
+  state: CardState;
+  /** Seconds since the door began counting this wait. */
+  elapsed: number;
+  /** Seconds since the loop was last SEEN doing anything, or null when it never was. */
+  quiet: number | null;
+  actions: number;
+  /** The last tool the loop was seen to start. Its name only, never its arguments. */
+  tool: string;
+  /** What the last observed event was: `text`, `action`, `action_result`, or empty. */
+  event: string;
+  /** Why the message waits, when a clock that ran out found a reason. No marker. */
+  why: string | null;
+  /** The cause of the hold on the input, when there is one. */
+  hold: string | null;
+  /** Whether this platform renders `||spoilers||`. */
+  spoilers: boolean;
+}
+
+const CARD_STATE: Record<Language, Record<CardState, string>> = {
+  en: {
+    queued: "still waiting: the loop has not accepted this message",
+    accepted: "still waiting: the agent has not started answering",
+    working: "in progress",
+    idle: "not running right now",
+    held: "interrupted, input held",
+    continuing: "continuation authorized",
+    finished: "finished",
+    ended: "no longer active",
+  },
+  ru: {
+    queued: "всё ещё жду: агент не принял это сообщение",
+    accepted: "всё ещё жду: агент не начал отвечать",
+    working: "в работе",
+    idle: "сейчас не выполняется",
+    held: "прервано, ввод удержан",
+    continuing: "продолжение разрешено",
+    finished: "завершено",
+    ended: "больше не активно",
+  },
+};
+
+const CARD_NOTE: Record<Language, { held: string; continuing: string; idle: string; ended: string }> = {
+  en: {
+    held: "Nothing runs again until you decide: see the recovery notice.",
+    continuing: "you chose to continue; it starts when it can.",
+    idle: "waiting to be picked up again.",
+    ended: "the outcome is not confirmed here.",
+  },
+  ru: {
+    held: "Ничего не запустится снова, пока вы не решите: см. сообщение о восстановлении.",
+    continuing: "вы выбрали продолжить; начнётся, как только сможет.",
+    idle: "ждёт, когда его возьмут снова.",
+    ended: "итог здесь не подтверждён.",
+  },
+};
+
+const CARD_EVENT: Record<Language, Record<string, string>> = {
+  en: { text: "text", action: "tool start", action_result: "tool result" },
+  ru: { text: "текст", action: "запуск инструмента", action_result: "результат инструмента" },
+};
+
+/** Text that came from outside a card cannot open or close a spoiler, or run past its line. */
+function inCard(value: string, limit = 160): string {
+  const flat = safeValue(value).replaceAll("||", "| |");
+  return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
+}
+
+/** A tool's NAME and nothing around it: arguments, paths and output never get this far. */
+function toolName(value: string): string {
+  return value.replace(/[^\w.:-]/g, "").slice(0, 40);
+}
+
+/** The technical detail: what the loop was last seen to do, in one short line. */
+function cardDetail(language: Language, card: StatusCard): string | null {
+  const ru = language === "ru";
+  const parts: string[] = [];
+  const tool = toolName(card.tool);
+  if (card.actions > 0) {
+    parts.push(ru ? `последний замеченный инструмент: ${tool || "?"}` : `last observed tool: ${tool || "unnamed"}`);
+    parts.push(ru ? `вызовов: ${card.actions}` : `tool calls: ${card.actions}`);
+  } else if (card.event !== "") {
+    parts.push(ru ? "вызовов инструментов не замечено" : "no tool calls observed");
   }
-  return says(
-    language,
-    language === "ru"
-      ? `готово. Вызовов инструментов: ${actions}, время: ${what.seconds} с.`
-      : `done. Tool calls: ${actions}, time: ${what.seconds} s.`,
-  );
+  const event = CARD_EVENT[language][card.event];
+  if (event) parts.push(ru ? `последнее событие: ${event}` : `last event: ${event}`);
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
+/**
+ * The card: at most TWO short lines, edited in place as the wait goes on.
+ *
+ * The first line is the state, the time since the door began counting, and how
+ * long ago the loop was last SEEN doing anything. The second carries the reason
+ * a wait has, in the open, and the technical detail after it, which is a Discord
+ * spoiler where the platform renders one and plain text where it does not. A
+ * spoiler hides text and does not fold the line, which is why there are two lines
+ * at most. An elapsed wait is never called a failure here: it is a state and a
+ * time, and what it is waiting for.
+ *
+ * These are the two lines of TEXT. The message-effect ledger appends its own small
+ * visible marker line to what it sends (`store/effects.ts`), which is how a message
+ * is found again after a lost answer, so the chat shows that line under these two.
+ */
+export function statusCard(language: Language, card: StatusCard): string {
+  const ru = language === "ru";
+  const first = [CARD_STATE[language][card.state], humanDuration(language, card.elapsed)];
+  if (card.state === "accepted" || card.state === "working") {
+    first.push(card.quiet === null
+      ? (ru ? "активности пока не замечено" : "no activity observed yet")
+      : (ru ? `последняя активность ${humanDuration(language, card.quiet)} назад` : `last activity ${humanDuration(language, card.quiet)} ago`));
+  } else if ((card.state === "idle" || card.state === "held" || card.state === "continuing") && card.quiet !== null) {
+    first.push(ru ? `последняя активность ${humanDuration(language, card.quiet)} назад` : `last activity ${humanDuration(language, card.quiet)} ago`);
+  } else if (card.state === "finished" && card.actions > 0) {
+    first.push(ru ? `вызовов инструментов: ${card.actions}` : `tool calls: ${card.actions}`);
+  }
+  const lines = [says(language, first.join(" · "))];
+
+  const note = card.state === "held"
+    ? `${inCard(HOLD_CAUSE[language][String(card.hold)] ?? String(card.hold ?? ""), 100)}. ${CARD_NOTE[language].held}`
+    : card.state === "continuing" || card.state === "idle" || card.state === "ended"
+      ? CARD_NOTE[language][card.state]
+      : card.why !== null ? inCard(card.why) : null;
+  const detail = card.state === "finished" || card.state === "queued" ? null : cardDetail(language, card);
+  const second = [
+    ...(note === null || note === "" ? [] : [note]),
+    ...(detail === null ? [] : [card.spoilers ? `||${detail}||` : detail]),
+  ];
+  if (second.length > 0) lines.push(second.join(" · "));
+  return lines.join("\n");
 }
 
 /** Interpolated data cannot introduce another line or expose a credential. */
