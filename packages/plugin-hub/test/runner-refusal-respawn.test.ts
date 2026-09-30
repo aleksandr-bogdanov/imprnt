@@ -229,9 +229,12 @@ test(
       //     past the retry, and past a generic recover, nothing has started a
       //     child for it or fed it.
       const [attempt] = (await it.read.sql(
-        "select id, state from execution where inbound_id = 'rr-1'",
-      )) as { id: string; state: string }[];
-      expect(attempt.state, "the closed child and its group are shown gone: a real exit proof").toBe("interrupted");
+        "select id, state, evidence->'exit' as exit from execution where inbound_id = 'rr-1'",
+      )) as { id: string; state: string; exit: unknown }[];
+      expect(
+        attempt.state,
+        `the closed child and its group are shown gone: a real exit proof; exit=${JSON.stringify(attempt.exit)}`,
+      ).toBe("interrupted");
       expect(await it.read.sql("select cause, state, revision from replay_hold")).toEqual([
         { cause: "interrupted", state: "held", revision: 1 },
       ]);

@@ -10,7 +10,8 @@
 // separate, live question, and nothing here claims to answer it.
 
 import { beforeAll, expect, test } from "bun:test"
-import { readFileSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { claudeCode, VALIDATED_BUILTIN_TOOLS, VALIDATED_ORDINARY_PROFILES, VALIDATED_SAFE_RESUME, VALIDATED_TOOL_CONTROL } from "../src/adapters/claude-code.ts"
 import { loopLaunch } from "../src/adapters/index.ts"
@@ -217,7 +218,58 @@ test("stopping is judged on the whole tree: a leader that exits leaves its tool 
     // has nothing observed to say, and "nothing observed" is unverified and never "none".
     expect(said.descendants).toBe(blind.group?.() != null ? "survivors" : "unverified")
   } finally { if (tool !== undefined) { try { process.kill(tool, 9) } catch { /* gone */ } } }
-})
+}, 20_000)
+
+/**
+ * An engine whose tool stays up until it is released and then goes down a moment later, the way what a box
+ * wrapper's namespace holds is going down when the wrapper is ended. The release is a file in `dir`, and the
+ * directory being gone releases it too, so a test that fails early and removes its directory leaves nothing
+ * running. A tool nobody releases ends on its own after 30 s.
+ */
+function withDyingTool(dir: string, release: string, exitAfterMs: number) {
+  const tool = `
+    const { existsSync } = require("node:fs");
+    const failsafe = Date.now() + 30000;
+    const poll = setInterval(() => {
+      if (existsSync(${JSON.stringify(release)}) || !existsSync(${JSON.stringify(dir)}) || Date.now() > failsafe) {
+        clearInterval(poll);
+        setTimeout(() => process.exit(0), ${exitAfterMs});
+      }
+    }, 20);`
+  const script = `
+    Bun.spawn([process.execPath, "-e", ${JSON.stringify(tool)}], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+    process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "s" }) + "\\n");
+    setInterval(() => {}, 1e9);`
+  return () => [process.execPath, "-e", script]
+}
+
+test("a leader that has exited is given a bounded moment for its group to empty: a tool released after the leader is gone is proved gone once it has, where the lookup at the instant of exit found it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "native-session-dying-"))
+  const release = join(dir, "release")
+  const session = await claudeCode.start({ preset, sessionId: null, wrap: withDyingTool(dir, release, 150) })
+  let tool: number | undefined
+  try {
+    expect(await observe(() => (session.processes?.() ?? []).length >= 2)).toBe(true)
+    const grouped = (session.group?.() ?? null) !== null
+    tool = session.processes!()!.find(pid => pid !== session.pid)!
+    await session.close()
+    // The leader is reaped and its tool is held up until released: no clock decides that it is there, and
+    // this is the instant the evidence used to be taken at.
+    expect(alive(tool), "the tool is still up when the leader is gone").toBe(true)
+    // The evidence is asked for while the tool is known to be up, and only then is the tool let go. Taking the
+    // lookup at once, as it was, finds it; waiting for the group to empty finds it gone (init reaps it: the
+    // fixture runs under `--init`, and a tool that stayed a zombie would still be a survivor here).
+    const asked = session.exitEvidence!()
+    writeFileSync(release, "")
+    const said = await asked
+    expect(alive(tool), "the evidence waited for the tool to go").toBe(false)
+    expect(said).toMatchObject({ leader: "exited", confirmed: grouped, descendants: grouped ? "none" : "unverified", survivors: [] })
+  } finally {
+    if (tool !== undefined) { try { process.kill(tool, 9) } catch { /* gone */ } }
+    await session.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+}, 20_000)
 
 test("a loop that leads a process group of its own is judged and stopped on the group, and the basis of what is said is named", async () => {
   const session = await claudeCode.start({ preset, sessionId: null, wrap: withTool() })

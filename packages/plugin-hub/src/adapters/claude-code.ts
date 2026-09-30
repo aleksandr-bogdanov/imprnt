@@ -263,6 +263,17 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
     return { confirmed: leader === "exited" && descendants === "none" && !survivors.includes(child.pid!), leader, descendants, pids, survivors,
       unknown, partial: incomplete, basis: inGroup === "absent" ? "process-group" : "observed-tree", group: ownGroup, via };
   };
+  // Whether the leader has exited AND nothing seen under it, nor anything in its group, is left, waited
+  // for up to `limitMs`. It returns the moment that holds and never reports a lookup that failed as gone.
+  const settled = async (limitMs: number) => {
+    const empty = () => gone() && [...seenTree].every(one => !alive(one)) && (ownGroup === null || !groupAlive(ownGroup));
+    const until = Date.now() + limitMs;
+    while (Date.now() < until) {
+      if (empty()) return true;
+      await Bun.sleep(25);
+    }
+    return empty();
+  };
   let terminal!: (cause: unknown) => void;
   const exited = new Promise<unknown>(resolve => { terminal = resolve; });
   void child.exited.then(code => terminal({ cause: "child-exited", code }));
@@ -512,6 +523,13 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
       // exiting is given a moment, because the reader learns of an exit a beat
       // before the process table does.
       if (!gone()) await Promise.race([child.exited, Bun.sleep(200)]);
+      // A LEADER THAT HAS EXITED HAS NOT YET FINISHED TAKING ITS TREE WITH IT. The box wrapper on linux
+      // (`bwrap --unshare-pid --die-with-parent`) is the leader, and `close()` signals only it: the loop
+      // and the namespace's reaper are ended by the kernel a moment after, and stay in the group, as
+      // zombies until init reaps them, so a lookup taken the instant the leader is reaped finds the
+      // group occupied by what is already dying. The same lookup is taken once the group is empty, or
+      // after a bound: a process that is still there at the bound is a survivor, exactly as before.
+      if (gone()) await settled(1000);
       return evidence(ownGroup === null
         ? "the process tree observed under the loop (no process group of its own, so what was never observed is not covered)"
         : "the loop's process group and every process recorded under it, looked up again (a process that left the group before it was recorded is not covered)");
@@ -531,15 +549,6 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
       const signalGroup = (name: NodeJS.Signals) => {
         if (ownGroup === null) return;
         try { process.kill(-ownGroup, name); } catch { /* the group is empty */ }
-      };
-      const settled = async (limitMs: number) => {
-        const empty = () => gone() && [...seenTree].every(one => !alive(one)) && (ownGroup === null || !groupAlive(ownGroup));
-        const until = Date.now() + limitMs;
-        while (Date.now() < until) {
-          if (empty()) return true;
-          await Bun.sleep(25);
-        }
-        return empty();
       };
       // Tools first, then the loop: the loop is what would report the tools
       // exiting, and a loop ended first leaves them running unobserved. The group
