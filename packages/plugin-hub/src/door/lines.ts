@@ -512,7 +512,7 @@ export const WORDS: Record<string, string> = {
   "state unavailable on this machine": "данные недоступны на этой машине",
   "delivery outcome unknown": "результат доставки неизвестен", "retry limit reached": "достигнут предел повторов",
   "operation failed": "операция не выполнена",
-  "command altered": "команда изменена", "not approved": "не подтверждено",
+  "command altered": "команда изменена", "not approved": "не подтверждено", "configuration changed": "настройка изменилась",
   "same device": "то же устройство", "copy does not match": "копия не совпадает",
   "unsupported on this platform": "на этой платформе недоступно",
   "chat name ambiguous": "название чата неоднозначно", "one agent per bot": "один агент на бота",

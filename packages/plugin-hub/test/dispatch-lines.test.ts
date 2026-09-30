@@ -231,6 +231,11 @@ const NEW_CAUSES: [string, string][] = [
   ["one agent per bot", "один агент на бота"],
 ];
 
+// Added by the reviewed council runtime: a job whose worker no longer matches the accepted profile is refused by this name.
+const COUNCIL_CAUSES: [string, string][] = [
+  ["configuration changed", "настройка изменилась"],
+];
+
 const NEW_LABELS: [string, string][] = [
   ["dispatch", "передача"],
   ["adopt", "принятие"],
@@ -262,13 +267,29 @@ for (const [label, russian] of NEW_LABELS) {
   });
 }
 
-test("ROLL-19 ROLL-27 ROLL-28 ROLL-32 the closed list is exactly the shipped words plus the eleven decided here", async () => {
+test("the council runtime's refusal cause is translated inside the refusal sentence", async () => {
+  const mod = await seam("src/door/lines.ts");
+  expect(typeof mod.dispatchRefused, "missing sentence dispatchRefused").toBe("function");
+  const render = mod.dispatchRefused as Render;
+  for (const [cause, russian] of COUNCIL_CAUSES) {
+    expect(render("en", { agent: "p1-research", cause })).toBe(`[door] dispatch to p1-research refused: ${cause}.`);
+    expect(render("ru", { agent: "p1-research", cause })).toBe(`[дверь] передача p1-research отклонена: ${russian}.`);
+  }
+});
+
+test("ROLL-19 ROLL-27 ROLL-28 ROLL-32 the closed list is exactly the shipped words plus the eleven decided here and the council runtime's one", async () => {
   const mod = await seam("src/door/lines.ts");
   expect(typeof mod.WORDS, "the closed list is not readable").toBe("object");
   const words = mod.WORDS as Record<string, string>;
-  const wanted = [...SHIPPED_WORDS, ...NEW_CAUSES.map(([en]) => en), ...NEW_LABELS.map(([en]) => en)];
-  expect(wanted).toHaveLength(40);
+  const wanted = [
+    ...SHIPPED_WORDS,
+    ...NEW_CAUSES.map(([en]) => en),
+    ...NEW_LABELS.map(([en]) => en),
+    ...COUNCIL_CAUSES.map(([en]) => en),
+  ];
+  expect(wanted).toHaveLength(41);
   expect(Object.keys(words).sort()).toEqual(wanted.sort());
+  for (const [cause, russian] of COUNCIL_CAUSES) expect(words[cause]).toBe(russian);
 });
 
 test("ROLL-19 a cause nobody decided on is interpolated verbatim in both languages rather than refused", async () => {

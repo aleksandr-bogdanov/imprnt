@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { historyHarvestFrom } from "../registry/entries.ts";
+import { archiveOf, generalOf, legacyMastersOf } from "../registry/topics.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
 import { classifyPlatformError, prepareReply } from "./reply.ts";
 import { requestRecovery } from "../hub/control.ts";
@@ -23,6 +24,7 @@ import {
   credentialFor,
   harvestFor,
   languageOf,
+  listPeople,
   listRunEntries,
   senderAllowed,
   thresholdsFor,
@@ -59,13 +61,11 @@ import { openOutboxWaiter, openTurnWaiter } from "../store/wake.ts";
 import { listenForWork, type Listener } from "../store/listen.ts";
 import { acceptBatch, type PendingVoiceRow } from "./ingest.ts";
 import { lookUpAdopt, parseAgentCommand, type ResolvedRef } from "./agentctl.ts";
-import { claimCouncilLate, clockDeadlines, COUNCIL_STAMP, councilDeadline, readSpokenClocks, recordExpiry, type OpenCouncil } from "./clock.ts";
-import { openSeatsOf, seatJobId } from "./council.ts";
-import { recordSeatAnswer } from "../runner/council.ts";
+import { clockDeadlines, readSpokenClocks, recordExpiry } from "./clock.ts";
 import { CURSOR_SHEET, cursorId, readCursor, writeCursor } from "./cursor.ts";
+import { startCouncilWatch, type CouncilWatch } from "../council/watch.ts";
 import {
   clockLine,
-  councilLate,
   finding,
   safeValue,
   statusCard,
@@ -82,6 +82,8 @@ import type { Platform, PlatformPull } from "./platform.ts";
 import { credentialKeyOf, waitFacts, waitReason } from "./reason.ts";
 import type { ApprovalHooks } from "./confirm.ts";
 import { startEffects, type EffectsTask } from "./effects-task.ts";
+import { startTopics, type TopicsTask } from "./topic-task.ts";
+import { topicApprovals } from "./topic-approval.ts";
 
 /**
  * What a card remembers of the last clock that ran out on its message: the
@@ -302,8 +304,6 @@ interface Served {
   /** Rows this door wrote down itself, handed to `attend` with no read. */
   arrivals: OpenTurnRow[];
   arrived: Nudge;
-  /** Councils this door convened itself, handed to `attend` with no read. */
-  councils: OpenCouncil[];
   /** Notes this door wrote down that are waiting for their words. */
   voice: PendingVoiceRow[];
   voiced: Nudge;
@@ -495,6 +495,10 @@ export async function runDoor(options: {
   // announced on this channel too, with a payload that says so, so that task costs
   // the door no connection of its own.
   let effects: EffectsTask | null = null;
+  // And the council task's (`council/watch.ts`), the same way: `council:<door>` on this channel.
+  let council: CouncilWatch | null = null;
+  // And the topic task's (`topic-task.ts`), on the same wake, for the same reason.
+  let topics: TopicsTask | null = null;
   let projection: Listener | null = null;
   let projectionClosed = false;
   let projectionRetry: ReturnType<typeof setTimeout> | null = null;
@@ -513,12 +517,14 @@ export async function runDoor(options: {
         onNotify: (payload) => {
           if (payload === options.door) sweepSoon();
           else if (payload === `effect:${options.door}`) effects?.wake();
+          else if (payload === `council:${options.door}`) council?.wake();
+          else if (payload === `topic:${options.door}`) topics?.wake();
         },
         // Every notification after a drop is gone, so the rows they announced
         // are found by sweeping once something is listening again.
         onLost: () => {
           projection = null;
-          void listenForProjection().then(() => { if (projection) { sweepSoon(); effects?.wake(); } });
+          void listenForProjection().then(() => { if (projection) { sweepSoon(); effects?.wake(); council?.wake(); topics?.wake(); } });
         },
       });
       if (projectionClosed) { await projection.close(); projection = null; }
@@ -528,7 +534,7 @@ export async function runDoor(options: {
       // and the sweep after a listen that finally opens finds what was missed.
       projectionRetry = setTimeout(() => {
         projectionRetry = null;
-        void listenForProjection().then(() => { if (projection) { sweepSoon(); effects?.wake(); } });
+        void listenForProjection().then(() => { if (projection) { sweepSoon(); effects?.wake(); council?.wake(); topics?.wake(); } });
       }, timeoutMs);
     }
   };
@@ -733,12 +739,6 @@ export async function runDoor(options: {
               pending(row) {
                 own.voice.push(row);
                 own.voiced.wake();
-              },
-              council(row) {
-                // The council's one clock is armed on the next pass, the way a
-                // row's is, and nothing was asked of the store.
-                own.councils.push(row);
-                own.arrived.wake();
               },
             });
           } finally { connection.release(); }
@@ -1041,19 +1041,10 @@ export async function runDoor(options: {
       return out;
     };
 
-    /** The councils this agent convened that are still owed their one line. */
-    let councils: OpenCouncil[] = [];
-    const graceSeconds = (): number => Number(readSetting(registryThisTick(), "hub.job_grace_seconds") ?? 300);
-
     const nextDeadline = (): number | null => {
       let soonest: number | null = null;
       for (const clock of clocksOf(open)) {
         soonest = soonest === null ? clock.at : Math.min(soonest, clock.at);
-      }
-      // A council's one clock, from the moment the question was typed.
-      for (const council of councils) {
-        const due = councilDeadline(council, graceSeconds());
-        soonest = soonest === null ? due : Math.min(soonest, due);
       }
       // The first progress line is a deadline of this door's own, held in
       // memory: a turn with no tool call reports nothing after `started`, so
@@ -1340,56 +1331,6 @@ export async function runDoor(options: {
     };
 
     /**
-     * The council's one clock line: claimed on the sheet row, then the chat
-     * log, the diary, and the chat. Said for the council and never per seat.
-     *
-     * The claim is the read: a council whose merge has landed has no row, and
-     * one a door before this one spoke about carries the mark, and in both
-     * cases there is nothing to say. What the line reports is how many seats
-     * have answered as the row stood at the claim.
-     */
-    const sayCouncilLate = async (council: OpenCouncil): Promise<void> => {
-      councils = councils.filter((one) => one.id !== council.id);
-      const at = new Date().toISOString();
-      const id = `clock:${council.id}:${COUNCIL_STAMP}`;
-      // ONE transaction: the claim, the seats nobody claimed given up on, and
-      // the diary row. The grace has run out, so a seat no runner has taken
-      // is a seat no runner is going to take in time, and the merge lands
-      // with "no answer" for it rather than never. A seat some runner holds
-      // is left to that runner. What the line reports is the count as the
-      // row stood at the claim, which is what the person has been waiting on.
-      const said = await store.sql.begin(async (tx) => {
-        const inside = { ...store, sql: tx as unknown as Store["sql"] };
-        const standing = await claimCouncilLate(inside, { id: council.id, at });
-        if (standing === null) return null;
-        const seconds = Math.max(1, Math.round((Date.now() - new Date(standing.at).getTime()) / 1000));
-        const answered = Object.keys(standing.answered ?? {}).length;
-        for (const seat of openSeatsOf(standing)) {
-          const [gone] = (await tx`select hub_council_abandon(${seatJobId(council.id, seat)}, ${"unclaimed past the grace"}) as closed`) as
-            unknown as { closed: boolean }[];
-          if (gone?.closed) await recordSeatAnswer(inside, { council: { id: council.id, seat }, answer: null }, { actor: "door" });
-        }
-        await recordExpiry(inside, {
-          messageId: council.id, stamp: COUNCIL_STAMP, seconds,
-          person: standing.person, agent: standing.agent, id, at,
-        });
-        return { standing, seconds, answered };
-      });
-      if (said === null) return;
-      const text = councilLate(language, { answered: said.answered, seats: said.standing.seats.length, seconds: said.seconds });
-      await appendChatLineOnce(
-        { stateDir, person: said.standing.person, agent: said.standing.agent },
-        { id, at, direction: "out", from: options.door, text },
-      );
-      try {
-        await options.platform.post({ chat: agent.chat, text });
-      } catch {
-        // The platform refused the line. The row is marked and the diary has
-        // it either way.
-      }
-    };
-
-    /**
      * When this turn's progress line is worth posting, or null when there is
      * nothing to post one about.
      *
@@ -1585,12 +1526,6 @@ export async function runDoor(options: {
           spoken.add(key);
           spokenAt.set(key, Date.now());
         }
-        // A council convened before this door started is not re-armed here: a
-        // door serving many agents runs this connect for each of them at once,
-        // and the SQL client was measured mixing a statement of this read with
-        // another's on the Pi, which aborted a pooled connection and stopped
-        // every delivery behind it. `check` reports such a council overdue.
-        councils = [];
         // The cards a door before this one kept for its inputs, whichever way each
         // input has gone since. Every row becomes a line here: one whose turn is
         // still open is EDITED ON, with what the ledger already holds for it
@@ -1670,11 +1605,6 @@ export async function runDoor(options: {
         }
         // Rows this door wrote down since the last pass. In memory, so a
         // message that nobody has claimed still has its acked clock armed.
-        if (own.councils.length > 0) {
-          for (const council of own.councils.splice(0)) {
-            if (!councils.some((one) => one.id === council.id)) councils.push(council);
-          }
-        }
         if (own.arrivals.length > 0) {
           for (const row of own.arrivals.splice(0)) {
             const at = open.findIndex((one) => one.id === row.id);
@@ -1735,9 +1665,6 @@ export async function runDoor(options: {
 
         // A clock that is really due is the one recorded deadline a wake is
         // allowed on.
-        for (const council of [...councils]) {
-          if (councilDeadline(council, graceSeconds()) <= Date.now()) await sayCouncilLate(council);
-        }
         const ripe = clocksOf(open).filter((clock) => clock.at <= Date.now());
         if (ripe.length === 0) continue;
         // The one read an expiry makes, with the facts the reason line needs
@@ -2319,7 +2246,6 @@ export async function runDoor(options: {
       holdSeen: false,
       arrivals: [],
       arrived: nudge(),
-      councils: [],
       voice: [],
       voiced: nudge(),
       inFlight: new Set<string>(),
@@ -2375,7 +2301,8 @@ export async function runDoor(options: {
   // statement for the rows it owes and one for the previews it waits on, and nothing
   // after them while none is owed.
   effects = startEffects({
-    store, platform: options.platform, door: options.door, hooks: options.approvals ?? {},
+    // What acts on an approval is what this door was handed and, always, the topic chat's own.
+    store, platform: options.platform, door: options.door, hooks: { ...topicApprovals(), ...(options.approvals ?? {}) },
     registry: () => registryThisTick(),
     settings: () => {
       const fresh = registryThisTick();
@@ -2391,6 +2318,47 @@ export async function runDoor(options: {
   });
   await effects.ready;
 
+  // The council task: keeps each live council's card true and says what needs its owner. Ready means its one
+  // connect read (which councils this door has something to say about) is made, in the connect gate's turn; a
+  // door with none has one statement there and nothing after it.
+  council = startCouncilWatch({
+    store, door: options.door, registry: () => registryThisTick(), tickMs: timeoutMs,
+    gate: (read) => {
+      const turn = connectGate.then(read);
+      connectGate = turn.then(() => {}, () => {});
+      return turn;
+    },
+  });
+  await council.ready;
+
+  // The topic task: chats the owner asked to be made, archived, reopened, or found gone. It starts
+  // once every chat is being read, so its first reads never race the connect reads above, and with
+  // no topic on this door it costs one statement.
+  topics = startTopics({
+    store, platform: options.platform, door: options.door, registry: () => registryThisTick(), stateDir,
+    settings: () => {
+      const fresh = registryThisTick();
+      return { retrySeconds: Number(readSetting(fresh, "door.delivery_retry_seconds")),
+        maxAttempts: Number(readSetting(fresh, "door.delivery_max_attempts")),
+        pollSeconds: Number(readSetting(fresh, "door.topic_poll_seconds")) };
+    },
+    tickMs: timeoutMs,
+  });
+  await topics.ready;
+
+  // THE TOPIC TASK LINKS THE ORDINARY MASTERS THE REGISTRY NAMES, and it hears when that set changes (an adoption adds
+  // one, a repair moves one, an archive mapping is added) from here, on the tick this loop already takes, rather than
+  // polling for it. The shape is compared as text, so an edit that changes nothing of it wakes nothing. It also holds where each
+  // person's General is, because what could not be told is owed until a place can take it, and a registry edit that names one
+  // (or none) is what makes a place that could not take it able to.
+  const mastersShape = (fresh: unknown): string => JSON.stringify([
+    legacyMastersOf(fresh, options.door).map(one => [one.agent.id, one.agent.person, one.agent.chat, one.machine, one.runner, one.preset]),
+    archiveOf(fresh, options.door),
+    listPeople(fresh).map(person => { const general = generalOf(fresh, person.id); return [person.id, general?.id ?? null, general?.door ?? null, general?.chat ?? null]; }),
+  ]);
+  let mastersSeen = "";
+  try { mastersSeen = mastersShape(loadRegistry(options.registryFile)); } catch { /* the first tick that reads a file sets it */ }
+
   const supervise = (async () => {
     while (!stopping) {
       await Promise.race([Bun.sleep(timeoutMs), stopped]);
@@ -2402,6 +2370,8 @@ export async function runDoor(options: {
         continue;
       }
       try {
+        const shape = mastersShape(fresh);
+        if (shape !== mastersSeen) { mastersSeen = shape; topics?.wake(); }
         const wanted = agentsFor(fresh, { door: options.door });
         for (const agent of wanted) {
           const it = served.get(agent.id);
@@ -2455,6 +2425,8 @@ export async function runDoor(options: {
       release();
       await supervise;
       await Promise.allSettled([...served.values()].flatMap((it) => [it.done, it.readDone]));
+      await topics?.stop();
+      await council?.stop();
       await effects?.stop();
       await closeProjection();
       await ingress.close();

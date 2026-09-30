@@ -3,29 +3,23 @@
  * Pure: the facade process the engine starts imports only this file, so it
  * carries no database code and no credential of any kind.
  *
- * ONE TOOL SO FAR, `hub_topic`, and only the two actions this slice implements:
- * `inspect` (what is held and what is known about it) and `resume` (the owner's
- * choice about one interrupted attempt). A later slice adds actions to the same
- * tool and a second tool beside it; an action that is not implemented is not
- * listed, and one that is asked for anyway is refused by name.
+ * TWO TOOLS. `hub_topic` has the actions implemented: `inspect` (what is held and what
+ * is known about it, or where one topic chat stands), `resume` (the owner's choice about
+ * one interrupted attempt), and a topic chat's `create` (which only ever freezes a
+ * preview), `archive` and `reopen`. `hub_council` (`council-contract.ts`) has `start`,
+ * `continue`, `inspect` and `stop`. An action that is not implemented (move, delete, stop
+ * of a topic) is not listed, and one that is asked for anyway is refused by name.
  *
  * Identity is never an argument. The person, the agent, the conversation and
  * the turn are the runner's own binding of this launch, and a schema that had a
  * field for them would be a field a model could fill.
  */
 
-export type ToolErrorCode =
-  | "invalid_arguments" | "unknown_tool" | "unsupported_action"
-  | "idempotency_conflict" | "source_invalid" | "source_already_used"
-  | "unknown_attempt" | "stale_revision" | "closed" | "not_owner_conversation";
+import { COUNCIL_TOOL, HUB_COUNCIL, readCouncilRequest } from "./council-contract.ts";
+import { ToolError, exact, readRequestKey, readSourceIds, refuse } from "./reading.ts";
 
-/** An error the model is told by name, with what to do next. */
-export class ToolError extends Error {
-  constructor(readonly code: ToolErrorCode, message: string) {
-    super(message);
-    this.name = "ToolError";
-  }
-}
+export { ToolError, exact, readRequestKey, readSourceIds, refuse, type ToolErrorCode } from "./reading.ts";
+export { HUB_COUNCIL } from "./council-contract.ts";
 
 export const HUB_TOPIC = "hub_topic";
 
@@ -34,18 +28,51 @@ export const TOOLS = [
   {
     name: HUB_TOPIC,
     description:
-      "Inspect work in this conversation that was interrupted, or record the owner's decision about one interrupted attempt. " +
-      "inspect: lists interrupted attempts with what is known and not known about their effects. " +
+      "Inspect work in this conversation that was interrupted, record the owner's decision about one interrupted attempt, " +
+      "and make, archive or reopen a topic chat. " +
+      "inspect: lists interrupted attempts with what is known and not known about their effects; with topic_id it says where one topic chat stands. " +
       "resume: records the owner's choice for ONE attempt at the recovery revision inspect showed. It needs request_key and the platform " +
       "message ids in which the owner actually said so; continue queues a new message behind the current turn once the old attempt is " +
-      "shown to be over, and keep_held authorizes nothing. Never use resume on your own initiative.",
+      "shown to be over, and keep_held authorizes nothing. Never use resume on your own initiative. " +
+      "create: asks for a new topic chat. It never makes the chat: it freezes the exact preview (Chat, Execution machine, Agent and the message " +
+      "the new agent will be given, verbatim) in this conversation's chat, and only the owner's green-check reaction to it creates anything. " +
+      "Leave execution_machine or preset out to use the configured defaults, which the preview then shows. To correct a preview, call create " +
+      "again with its topic_id and the expected_revision inspect or the last reply gave; the old preview can no longer be approved. " +
+      "It needs request_key and the platform message ids in which the owner asked. initial_request is the owner's request, or a handover " +
+      "of this discussion only if the owner asked to bring it over; write nothing of your own into it. " +
+      "archive / reopen: the owner's explicit request, from that topic's own chat or from General, needs no confirmation and " +
+      "carries request_key and source_message_ids. Archive stops the topic's agent now and moves its chat to the archive; delegated work " +
+      "the owner already approved keeps running and its results wait. topic_id is a topic id, or the id of a chat's agent.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        action: { type: "string", enum: ["inspect", "resume"] },
+        action: { type: "string", enum: ["inspect", "resume", "create", "archive", "reopen"] },
         request_key: { type: "string", minLength: 1, maxLength: 200 },
         source_message_ids: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 10 },
+        topic_id: { type: "string", minLength: 1, maxLength: 200 },
+        expected_revision: { type: "integer", minimum: 0 },
+        setup: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            chat_name: { type: "string", minLength: 1, maxLength: 100 },
+            execution_machine: { type: "string", minLength: 1, maxLength: 100 },
+            preset: { type: "string", minLength: 1, maxLength: 100 },
+            tool_profile: { type: "array", items: { type: "string", minLength: 1, maxLength: 100 }, minItems: 1, maxItems: 20 },
+            initial_request: { type: "string", minLength: 1, maxLength: 8000 },
+          },
+          required: ["chat_name", "initial_request"],
+        },
+        creation_decision: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            choice: { type: "string", enum: ["adopt", "recreate"] },
+            chat: { type: "string", minLength: 1, maxLength: 100 },
+          },
+          required: ["choice"],
+        },
         recovery_decision: {
           type: "object",
           additionalProperties: false,
@@ -61,46 +88,46 @@ export const TOOLS = [
       required: ["action"],
     },
   },
+  COUNCIL_TOOL,
 ] as const;
 
-export interface InspectRequest { action: "inspect" }
+export interface InspectRequest { action: "inspect"; topic_id?: string }
 export interface ResumeRequest {
   action: "resume";
   request_key: string;
   source_message_ids: string[];
   recovery_decision: { attempt_id: string; expected_recovery_revision: number; choice: "continue" | "keep_held"; continuation_context?: string };
 }
-export type HubTopicRequest = InspectRequest | ResumeRequest;
-
-/** The refusal every reader below gives: named `invalid_arguments`, and it says what was wrong. */
-export function refuse(message: string): never {
-  throw new ToolError("invalid_arguments", message);
+/** What the owner is shown and confirms: exactly these fields, and nothing a model could add. */
+export interface TopicSetupRequest {
+  chat_name: string;
+  execution_machine?: string;
+  preset?: string;
+  tool_profile?: string[];
+  initial_request: string;
 }
-
-/** An object that carries only the keys it may: any other key is refused, so no field a model could fill exists unless the schema names it. */
-export function exact(value: unknown, allowed: readonly string[], where: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) refuse(`${where} must be an object`);
-  const record = value as Record<string, unknown>;
-  const extra = Object.keys(record).filter(key => !allowed.includes(key));
-  if (extra.length > 0) refuse(`${where} does not take: ${extra.join(", ")}`);
-  return record;
+export interface CreateRequest {
+  action: "create";
+  request_key: string;
+  source_message_ids: string[];
+  /** Present only to correct a preview that is still waiting, or to decide about a creation nobody could settle. */
+  topic_id?: string;
+  expected_revision?: number;
+  setup?: TopicSetupRequest;
+  creation_decision?: { choice: "adopt" | "recreate"; chat?: string };
 }
-
-/** The `request_key` of a call that changes something: the caller's own idempotency, scoped to the conversation that made it. */
-export function readRequestKey(top: Record<string, unknown>, action: string): string {
-  const key = top.request_key;
-  if (typeof key !== "string" || key === "" || key.length > 200) refuse(`${action} needs a request_key`);
-  return key;
+/** An archive or reopen: the owner's explicit request, with no confirmation of its own. */
+interface LifecycleBase {
+  request_key: string;
+  source_message_ids: string[];
+  /** A topic id, or the id of a chat's agent. Absent, it is this conversation's own topic. */
+  topic_id?: string;
+  expected_revision?: number;
 }
-
-/** The platform message ids a call cites as its evidence: one to ten, each a non-empty string, deduplicated and in order. */
-export function readSourceIds(top: Record<string, unknown>, action: string, why: string): string[] {
-  const sources = top.source_message_ids;
-  if (!Array.isArray(sources) || sources.length < 1 || sources.length > 10 || sources.some(one => typeof one !== "string" || one === "")) {
-    refuse(`${action} needs source_message_ids: ${why}`);
-  }
-  return [...new Set(sources as string[])].sort();
-}
+export interface ArchiveRequest extends LifecycleBase { action: "archive" }
+export interface ReopenRequest extends LifecycleBase { action: "reopen" }
+export type LifecycleRequest = ArchiveRequest | ReopenRequest;
+export type HubTopicRequest = InspectRequest | ResumeRequest | CreateRequest | ArchiveRequest | ReopenRequest;
 
 /**
  * One action of `hub_topic`: the keys it takes beside `action`, and how its
@@ -114,10 +141,80 @@ interface ActionReader<R extends HubTopicRequest> {
   read(top: Record<string, unknown>): R;
 }
 
+/** A text argument: one string within its bounds, or a refusal that names it. */
+function readText(value: unknown, where: string, max: number): string {
+  if (typeof value !== "string" || value === "" || value.length > max) refuse(`${where} is text of 1 to ${max} characters`);
+  return value as string;
+}
+
+/** The arguments an archive and a reopen share: the owner's own words as evidence, and which topic. */
+function readLifecycle(top: Record<string, unknown>, action: "archive" | "reopen"): LifecycleBase & { action: typeof action } {
+  const key = readRequestKey(top, action);
+  const sources = readSourceIds(top, action, "the messages in which the owner asked for it");
+  if (top.topic_id !== undefined) readText(top.topic_id, "topic_id", 200);
+  if (top.expected_revision !== undefined && (!Number.isSafeInteger(top.expected_revision) || (top.expected_revision as number) < 0)) {
+    refuse("expected_revision is a whole number, the revision the last reply or inspect showed");
+  }
+  return { action, request_key: key, source_message_ids: sources,
+    ...(top.topic_id !== undefined ? { topic_id: top.topic_id as string } : {}),
+    ...(top.expected_revision !== undefined ? { expected_revision: top.expected_revision as number } : {}) };
+}
+
 const TOPIC_ACTIONS: { [A in HubTopicRequest["action"]]: ActionReader<Extract<HubTopicRequest, { action: A }>> } = {
   inspect: {
-    keys: [],
-    read: () => ({ action: "inspect" }),
+    keys: ["topic_id"],
+    read: (top) => {
+      if (top.topic_id !== undefined) readText(top.topic_id, "topic_id", 200);
+      return { action: "inspect", ...(top.topic_id !== undefined ? { topic_id: top.topic_id as string } : {}) };
+    },
+  },
+  create: {
+    keys: ["request_key", "source_message_ids", "topic_id", "expected_revision", "setup", "creation_decision"],
+    read(top) {
+      const key = readRequestKey(top, "create");
+      const sources = readSourceIds(top, "create", "the messages in which the owner asked for the chat");
+      const out: CreateRequest = { action: "create", request_key: key, source_message_ids: sources };
+      if (top.topic_id !== undefined) out.topic_id = readText(top.topic_id, "topic_id", 200);
+      if (top.expected_revision !== undefined) {
+        if (!Number.isSafeInteger(top.expected_revision) || (top.expected_revision as number) < 0) refuse("expected_revision is a whole number");
+        out.expected_revision = top.expected_revision as number;
+      }
+      if ((top.setup === undefined) === (top.creation_decision === undefined)) {
+        refuse("create takes a setup (a new chat, or the correction of a preview) or a creation_decision (about a creation nobody could settle), and one of them");
+      }
+      if (top.setup !== undefined) {
+        const setup = exact(top.setup, ["chat_name", "execution_machine", "preset", "tool_profile", "initial_request"], "setup");
+        const made: TopicSetupRequest = {
+          chat_name: readText(setup.chat_name, "setup.chat_name", 100),
+          initial_request: readText(setup.initial_request, "setup.initial_request", 8000),
+        };
+        if (setup.execution_machine !== undefined) made.execution_machine = readText(setup.execution_machine, "setup.execution_machine", 100);
+        if (setup.preset !== undefined) made.preset = readText(setup.preset, "setup.preset", 100);
+        if (setup.tool_profile !== undefined) {
+          if (!Array.isArray(setup.tool_profile) || setup.tool_profile.length < 1 || setup.tool_profile.length > 20) {
+            refuse("setup.tool_profile is a list of 1 to 20 tool names");
+          }
+          made.tool_profile = (setup.tool_profile as unknown[]).map((one, at) => readText(one, `setup.tool_profile[${at}]`, 100));
+        }
+        out.setup = made;
+      } else {
+        if (out.topic_id === undefined) refuse("a creation_decision names the topic_id it is about");
+        const decision = exact(top.creation_decision, ["choice", "chat"], "creation_decision");
+        if (decision.choice !== "adopt" && decision.choice !== "recreate") refuse("choice is adopt or recreate");
+        if (decision.choice === "adopt") readText(decision.chat, "creation_decision.chat", 100);
+        else if (decision.chat !== undefined) refuse("recreate takes no chat");
+        out.creation_decision = { choice: decision.choice, ...(decision.chat !== undefined ? { chat: decision.chat as string } : {}) };
+      }
+      return out;
+    },
+  },
+  archive: {
+    keys: ["request_key", "source_message_ids", "topic_id", "expected_revision"],
+    read: (top) => readLifecycle(top, "archive") as ArchiveRequest,
+  },
+  reopen: {
+    keys: ["request_key", "source_message_ids", "topic_id", "expected_revision"],
+    read: (top) => readLifecycle(top, "reopen") as ReopenRequest,
   },
   resume: {
     keys: ["request_key", "source_message_ids", "recovery_decision"],
@@ -163,6 +260,7 @@ export function readTopicRequest(args: unknown): HubTopicRequest {
  */
 export const READERS: Record<string, (args: unknown) => { action: string }> = {
   [HUB_TOPIC]: readTopicRequest,
+  [HUB_COUNCIL]: readCouncilRequest,
 };
 
 /**
@@ -184,7 +282,7 @@ export interface ToolReply {
   operation_id: string | null;
   object_id: string | null;
   revision: number | null;
-  status: "accepted" | "queued" | "waiting_owner" | "stopping" | "stopped" | "complete" | "failed" | "unknown";
+  status: "awaiting_confirmation" | "accepted" | "queued" | "running" | "waiting_owner" | "stopping" | "stopped" | "complete" | "failed" | "unknown";
   stage: string;
   cause?: string;
   status_message?: string;

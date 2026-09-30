@@ -46,6 +46,20 @@ retry_seconds = 300
 give_up_hours = 24
 chunk_deadline_seconds = 120
 
+# A council's thresholds. None of them stops, retries or fails a worker. The
+# checkpoint is measured from the start of the current owner-authorized period:
+# a round running when it passes finishes, and a FURTHER round waits for the
+# owner. A worker with no output for quiet_minutes, or on one attempt for
+# overrun_minutes, is only said, once. The card in the chat is written at most
+# once in status_write_seconds and, unless its stage changed, every
+# status_edit_seconds when its words changed.
+[council]
+checkpoint_minutes = 30
+quiet_minutes = 5
+overrun_minutes = 30
+status_write_seconds = 5
+status_edit_seconds = 10
+
 # Where the store's own process is, so the hub can measure it without guessing
 # at a process tree. Every standard install writes a pid file: this is Debian's,
 # and `imprnt install` writes the right one for the box it is run on, once.
@@ -107,11 +121,27 @@ acked_seconds = 30
 started_seconds = 60
 answered_seconds = 900
 delivered_seconds = 60
+# The agent whose chat is this person's General: where anything that needs them
+# (a council waiting for their choice, its checkpoint) is also said. Named, never
+# guessed: with none, or one without a chat, that is said in the council's own
+# chat as a named issue and nowhere else.
+general = "p1-lair"
 harvester = "harvest"
 vault = "/var/lib/imprnt-hub/p1/vault-project"
 harvest_quiet_minutes = 30
 harvest_min_messages = 1
 harvest_report = true
+# Topic chats: a chat this person asks a master to make. Both are optional and
+# nothing is guessed. `topic_machine` (a declared machine) and `topic_preset` (a
+# declared preset) are what a new topic chat is made with when the request names
+# neither. The owner sees both in the preview they confirm, and a request that names
+# one overrides it. With neither in the request, in the door's own override (below)
+# or here, the request is refused by name. The `general` above is the same General
+# for topics: where anything that cannot be said in a topic chat's own place is put
+# (an archived or deleted one). It has to be this person's own agent with a chat,
+# not a seat or a triage master.
+# topic_machine = "pi"
+# topic_preset = "daily"
 # Where this person's tree and vault are on a machine that is not the hub's,
 # keyed by machine id. An agent whose runner is on that machine is boxed in the
 # tree there and files into the vault there. A placement names a tree, and it
@@ -238,15 +268,14 @@ door = "door-telegram-triage"
 runner = "runner-pi"
 role = "triage"
 
-# A council seat. `role = "council"` marks an agent that answers the council
-# command: `/council <question>` in a chat puts the question to every seat of
-# that person in parallel, and the chat's agent writes ONE merged answer from
-# their reports, which is the only thing the chat sees. A seat takes those jobs
-# alone, so it carries no door and no chat (the loader refuses one that does),
-# and its preset is its own, so one seat may run a stronger model. Fewer than
-# two seats is no council. All of a person's seats form their council. Its
+# A worker that can sit on a council. An agent with no door and no chat takes
+# jobs alone, and any such agent of a person can be named as a council
+# participant. `role = "council"` is only a label for one kept for that: a
+# council's participants are ALWAYS the ones the owner named, never "all seats".
+# The agent's own preset and runner are what a participant runs on, and a
+# council request that asks for another preset or machine is refused. Its
 # runner must be a [[run]] entry of kind "runner" in this file. Spawn it on
-# demand: a resident seat holds one of its runner's child slots while it
+# demand: a resident worker holds one of its runner's child slots while it
 # waits for a question, and a council of them would starve the chat agents.
 [[agents]]
 id = "p1-seat-1"
@@ -274,6 +303,17 @@ cached_per_m = 0.1
 output_per_m = 5.0
 currency = "USD"
 
+# A Discord door can also make and archive topic chats. Every key below is optional,
+# a Discord id is digits only, and none belongs on a Telegram door:
+#   topic_machine, topic_preset  override the person's defaults for chats made here
+#   topic_category               the category a new topic chat is made under
+#   archive_category             the category an archived chat is moved into
+#   archive_readonly_roles       the roles denied writing in it while it is there
+#                                (with archive_category, or neither: an archive that
+#                                is refused without them says so)
+# Reopening puts back only what archiving changed. Moving a chat into or out of the
+# archive category by hand is the same archive or reopen; renaming or editing a
+# chat is not.
 [[run]]
 id = "door-telegram"
 kind = "door"

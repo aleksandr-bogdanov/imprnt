@@ -98,7 +98,7 @@ test.skipIf(!gate.ok)(`the engine's facade command runs inside the person's box 
       expect(started.result.serverInfo.name).toBe("hub")
       await send({ method: "notifications/initialized" })
       const listed = await call({ id: 2, method: "tools/list" })
-      expect(listed.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["hub_topic"])
+      expect(listed.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["hub_topic", "hub_council"])
       // Only a call the runner answered proves the socket: initialize and tools/list never leave the box.
       const inspected = await call({ id: 3, method: "tools/call", params: { name: "hub_topic", arguments: { action: "inspect" } } })
       expect(inspected.result.isError, inspected.result.content?.[0]?.text).toBeUndefined()

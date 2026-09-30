@@ -38,7 +38,17 @@ const ROLLOUT_DEFAULTS: Record<string, number> = {
   "door.read_retry_seconds": 30,
   "door.read_timeout_seconds": 60,
   "door.read_notice_after_seconds": 300,
+  // How often a door reads its server's channel list to see a topic chat archived, reopened or
+  // gone. One read per door per interval, whatever number of topics it serves. Chosen, not measured.
+  "door.topic_poll_seconds": 30,
   "runner.task_retry_seconds": 30,
+  // A council's thresholds. None of them stops, retries or fails a worker: the checkpoint blocks a FURTHER round
+  // until the owner extends it, and the other four only decide how often and when something is said.
+  "council.checkpoint_minutes": 30,
+  "council.quiet_minutes": 5,
+  "council.overrun_minutes": 30,
+  "council.status_write_seconds": 5,
+  "council.status_edit_seconds": 10,
 };
 
 export const SETTING_FIELDS: SettingField[] = [
@@ -260,6 +270,12 @@ export class UnknownSetting extends Error {
 export const RUN_KINDS = ["hub", "door", "runner", "sync", "board", "backup", "watch"] as const;
 
 /**
+ * The keys only a door reads about its topic chats. The first two override a person's own
+ * defaults; the other three are Discord ids.
+ */
+export const TOPIC_DOOR_KEYS = ["topic_machine", "topic_preset", "topic_category", "archive_category", "archive_readonly_roles"] as const;
+
+/**
  * What a `kind = "watch"` entry may fetch from, and what the Sentry one counts
  * by when the file says nothing.
  *
@@ -356,6 +372,19 @@ export interface RunEntry {
    */
   guild?: string;
   default_preset?: string;
+  /**
+   * What a door says about the topic chats made through it, all optional and read only
+   * by `registry/topics.ts`. `topic_machine` and `topic_preset` override the person's own
+   * defaults for a topic made in this door's chats; `topic_category` is the category a new
+   * topic chat is made under; `archive_category` is the category an archived topic chat is
+   * moved into, and `archive_readonly_roles` are the roles that are denied sending in it
+   * while it is there. Discord ids, and only on a Discord door.
+   */
+  topic_machine?: string;
+  topic_preset?: string;
+  topic_category?: string;
+  archive_category?: string;
+  archive_readonly_roles?: string[];
   /**
    * A board's one specific listening address.
    *
@@ -583,6 +612,17 @@ export interface PersonEntry {
    * exposes is one deliberate line here.
    */
   artifacts?: boolean;
+  /**
+   * The defaults a new topic chat is made with when the request names neither: the
+   * machine that executes it (`topic_machine`, a declared machine) and the agent preset
+   * (`topic_preset`, a declared preset). A door may override them. And `general`: the
+   * agent of this person whose chat is their General, the one place anything that
+   * needs them is put when the chat it belongs to cannot say it. It is named, never
+   * found: nothing picks a chat of this person because it looks like one.
+   */
+  topic_machine?: string;
+  topic_preset?: string;
+  general?: string;
   allowed_senders?: Record<string, string[]>;
   history_harvest_after?: string;
   filing_rules?: string;
@@ -1480,6 +1520,44 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
           `${id} has ${field} ${describe(value)}, and it must be a nonempty string`);
       }
     }
+    // What a door says about the topic chats made through it (see `RunEntry`). A machine has
+    // to be one this file declares, and a category or role is a Discord id, on a Discord door.
+    for (const field of TOPIC_DOOR_KEYS) {
+      const value = entry[field];
+      if (value === undefined || value === null) continue;
+      const where = `${at}.${field}`;
+      const atField = lines.get(where) ?? here;
+      if (entry.kind !== "door") {
+        refuse(where, atField, `${id} is a ${entry.kind} and carries ${field}, which only a door reads`);
+      }
+      if (field === "topic_machine" || field === "topic_preset") {
+        if (typeof value !== "string" || value.trim() === "") {
+          refuse(where, atField, `${id} has ${field} ${describe(value)}, and it must be a nonempty string`);
+        }
+        if (field === "topic_machine" && !declared.has(value as string)) {
+          refuse(where, atField, `${id} makes topic chats on ${describe(value)}, which no [[machines]] entry declares`);
+        }
+        continue;
+      }
+      if (entry.platform !== "discord") {
+        refuse(where, atField, `${id} carries ${field}, and only a Discord door can make or archive a topic chat`);
+      }
+      const ids = field === "archive_readonly_roles" ? value : [value];
+      if (!Array.isArray(ids) || (field === "archive_readonly_roles" && ids.length === 0) ||
+          ids.some(one => typeof one !== "string" || !/^\d+$/.test(one))) {
+        refuse(where, atField, `${id} has ${field} ${describe(value)}, and it is ${field === "archive_readonly_roles" ? "a list of Discord role ids" : "a Discord id, digits only"}`);
+      }
+    }
+    if (entry.kind === "door" && entry.archive_category !== undefined && entry.archive_category !== null
+        && (entry.archive_readonly_roles === undefined || entry.archive_readonly_roles === null)) {
+      refuse(`${at}.archive_readonly_roles`, lines.get(`${at}.archive_category`) ?? here,
+        `${id} names an archive category and no archive_readonly_roles, and an archived chat is made read only for the roles that name`);
+    }
+    if (entry.kind === "door" && entry.archive_readonly_roles !== undefined && entry.archive_readonly_roles !== null
+        && (entry.archive_category === undefined || entry.archive_category === null)) {
+      refuse(`${at}.archive_category`, lines.get(`${at}.archive_readonly_roles`) ?? here,
+        `${id} names archive_readonly_roles and no archive_category to apply them in`);
+    }
 
     // The transcriber's own three. The door posts to 127.0.0.1:<port>, so an
     // entry without one could never be reached at all.
@@ -1668,7 +1746,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       // explain.
       ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
         : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"]
-        : entry.kind === "door" ? ["guild", "default_preset"]
+        : entry.kind === "door" ? ["guild", "default_preset", ...TOPIC_DOOR_KEYS]
         : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS]
         : entry.kind === "watch" ? ["source", "person", ...SENTRY_KEYS, ...HUNT_KEYS] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
@@ -1959,6 +2037,27 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         artifactsNotBoolean("en", { id, value: describeBare(shows) }),
       );
     }
+    // The defaults a new topic chat gets and the person's General (see `PersonEntry`). Each is
+    // refused by key and line when it is there and wrong, and none is required: a household
+    // that does not make topic chats from a chat declares none of them. Whether General is
+    // this person's own agent with a chat is asked once the agents are parsed.
+    for (const field of ["topic_machine", "topic_preset", "general"] as const) {
+      const value = entry[field];
+      if (value === undefined || value === null) continue;
+      const atField = lines.get(`${where}.${field}`) ?? here;
+      if (typeof value !== "string" || value.trim() === "") {
+        refuse(`${where}.${field}`, atField, `${id} has ${field} ${describe(value)}, and it must be a nonempty string`);
+      }
+      if (field === "topic_machine" && !declared.has(value as string)) {
+        refuse(`${where}.${field}`, atField, `${id} makes topic chats on ${describe(value)}, which no [[machines]] entry declares`);
+      }
+      if (field === "topic_preset" && !Object.hasOwn(presets, value as string)) {
+        refuse(`${where}.${field}`, atField, `${id} makes topic chats with the preset ${describe(value)}, which this file does not define`);
+      }
+      if (field === "general" && !isAgentId(value)) {
+        refuse(`${where}.${field}`, atField, `${id} has general ${describe(value)}, and it names an agent by its id`);
+      }
+    }
     // Where this person is on a machine that is not the hub's: the same two
     // rules the entry's own tree and vault get, applied per machine. A
     // placement names a tree, because it is the box's fence there, and it
@@ -2071,6 +2170,8 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       // Spread, never set, like every optional field above: a check binds the
       // shape of a person who declares none of them.
       ...(typeof shows === "boolean" ? { artifacts: shows } : {}),
+      ...Object.fromEntries(["topic_machine", "topic_preset", "general"]
+        .filter(key => typeof entry[key] === "string").map(key => [key, entry[key]])),
     };
 
     // Spread, never set: a file that carries none of the ten leaves an entry
@@ -2331,6 +2432,28 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         lines.get(`run[${nth}].default_preset`) ?? lines.get(`run[${nth}].id`) ?? 0,
         `${entry.id} adopts agents with the preset ${entry.default_preset}, which this file does not define`,
       );
+    }
+  });
+
+  // The topic settings that name something the file defines elsewhere. A door's own preset,
+  // and each person's General, which has to be that person's own agent with a chat and no
+  // role: a seat or the triage master is not somebody's General, and no chat is chosen for it.
+  entries.forEach((entry, nth) => {
+    if (entry.kind !== "door" || entry.topic_preset === undefined) return;
+    if (!Object.hasOwn(presets, entry.topic_preset)) {
+      refuse(`run[${nth}].topic_preset`, lines.get(`run[${nth}].topic_preset`) ?? lines.get(`run[${nth}].id`) ?? 0,
+        `${entry.id} makes topic chats with the preset ${entry.topic_preset}, which this file does not define`);
+    }
+  });
+  people.forEach((person, nth) => {
+    if (person.general === undefined) return;
+    const at = lines.get(`people[${nth}].general`) ?? lines.get(`people[${nth}]`) ?? 0;
+    const named = agents.find(one => one.id === person.general);
+    if (!named || named.person !== person.id) {
+      refuse(`people[${nth}].general`, at, `${person.id} names ${person.general} as their General, and that is not an agent of theirs`);
+    }
+    if (named!.chat === undefined || named!.door === undefined || named!.role !== undefined) {
+      refuse(`people[${nth}].general`, at, `${person.id} names ${person.general} as their General, and General is an ordinary agent with a chat, not a seat or a triage master`);
     }
   });
 

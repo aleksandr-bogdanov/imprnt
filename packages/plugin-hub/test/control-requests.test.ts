@@ -22,6 +22,10 @@
 //   S3     two conversations with one key, and a repeat cycle
 //   G7     placing a gate against opening an attempt, in both orders, for an
 //          input's attempt and for a tail
+//   G8     opening an attempt against a tool call that spends the same input:
+//          the call's invocation holds the conversation, the opening holds the
+//          input, and neither waits for the other in a circle (the call and the
+//          opening are on two connections, two server processes, shown as such)
 //   R8-R11 a stop against the attempt settling and the next input opening; the
 //          other feed boundary; an accepted stop while the answer lands; a stop
 //          whose write fails, and two requests for one attempt
@@ -33,7 +37,7 @@
 //          the feed; the write refused before it and its read after it)
 //
 // The seams: an advisory lock held on a reserved connection that a trigger (for a
-// statement of the runner) or the store's own ordering lock waits for, and
+// statement of the runner, or of a tool call) or the store's own ordering lock waits for, and
 // `lock table execution` for the moment an insert is in flight. A backend is
 // seen waiting in `pg_stat_activity` before the test moves on. A trigger pause
 // holds a statement AFTER its snapshot, so it cannot place a write after a feed; R17/R18 hold
@@ -43,7 +47,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
 import { readFileSync, writeFileSync } from "node:fs"
 import { connect, createServer, type AddressInfo, type Server, type Socket } from "node:net"
-import { startCluster, freshDatabase, hubPath, lockTable, statementWatch, until, untilIssued, waitForLockWaiter, type Cluster } from "./helpers/cluster.ts"
+import { backendPid, startCluster, freshDatabase, hubPath, lockTable, statementWatch, until, untilIssued, waitForLockWaiter, type Cluster } from "./helpers/cluster.ts"
 import { rolloutDatabase } from "./helpers/rollout-fixtures.ts"
 import { AGENT, CHAT, DOOR, PERSON, RUNNER, insertInbound, plantChatLine, stageHub, type NoticeRow } from "./helpers/hub-fixture.ts"
 import { controlledAdapter, observe, processTree, retrySettings } from "./helpers/rollout-runner.ts"
@@ -199,7 +203,7 @@ async function ownerConversation() {
  * around `runRequest`. It writes a diary line as its effect, so what a refusal
  * rolls back can be looked at.
  */
-function probe(over: { key?: string; sources?: string[]; note?: string; effect?: "ok" | "refuse" | "throw" | "undo-open"; since?: Date } = {}) {
+function probe(over: { key?: string; sources?: string[]; note?: string; effect?: "ok" | "refuse" | "throw" | "undo-open"; since?: Date | string } = {}) {
   const request = { action: "probe", request_key: over.key ?? "k1", source_message_ids: over.sources ?? ["h2"], note: over.note ?? "a" }
   const calls = { open: 0, apply: 0 }
   const plan: RequestPlan<typeof request, { note: string }> = {
@@ -310,17 +314,59 @@ test("H2 a refusal leaves nothing behind: not the invocation, not the messages i
   } finally { await s.close() }
 })
 
+test("H2b freshness is decided by the database at the microsecond: a message in the same millisecond as the bound is newer, equal or older by its own microseconds, and a refusal spends nothing", async () => {
+  const s = await ownerConversation()
+  try {
+    // Three messages inside ONE millisecond, a microsecond apart, and the bound between them as PostgreSQL writes it.
+    const bound = "2026-09-30 12:00:00.123456+00"
+    await s.human("older", { at: "2026-09-30 12:00:00.123455+00" })
+    await s.human("equal", { at: bound })
+    await s.human("newer", { at: "2026-09-30 12:00:00.123457+00" })
+    const times = Array.from(await s.su`select id, received_at from inbound where id in ('older', 'equal', 'newer')`) as { id: string; received_at: Date }[]
+    expect(new Set(times.map(one => one.received_at.getTime())).size, "the premise: a JS Date cannot tell these three apart").toBe(1)
+    const spent = async () => [await s.count("tool_invocation"), await s.count("source_consumption")]
+
+    // Not newer than the bound, in either direction inside the millisecond: refused by name, and nothing is left behind.
+    for (const id of ["older", "equal"]) expect(await code(runRequest(s.binding, probe({ key: `k-${id}`, sources: [id], since: bound }).plan)), id).toBe("source_invalid")
+    expect(await spent()).toEqual([0, 0])
+
+    // A microsecond newer is newer, though the same millisecond.
+    const first = probe({ key: "k-newer", sources: ["newer"], since: bound })
+    const reply = await runRequest(s.binding, first.plan)
+    expect(reply).toMatchObject({ status: "accepted" })
+    expect(await spent()).toEqual([1, 1])
+
+    // The other guards stand: the same request is its own answer, the same key with another source is a conflict, and the message is spent for any other request.
+    const again = probe({ key: "k-newer", sources: ["newer"], since: bound })
+    expect(await runRequest(s.binding, again.plan)).toEqual(reply)
+    expect(again.calls).toEqual({ open: 0, apply: 0 })
+    expect(await code(runRequest(s.binding, probe({ key: "k-newer", sources: ["equal"], since: bound }).plan))).toBe("idempotency_conflict")
+    expect(await code(runRequest(s.binding, probe({ key: "k-other", sources: ["newer"], since: bound }).plan))).toBe("source_already_used")
+    expect(await spent()).toEqual([1, 1])
+
+    // What was refused is still unspent: it is evidence for a request that sets no such bound.
+    expect(await runRequest(s.binding, probe({ key: "k-free", sources: ["equal"] }).plan)).toMatchObject({ status: "accepted" })
+    // A bound that really is a moment of code (a Date, milliseconds) is compared as exactly that: a message microseconds into that millisecond is newer.
+    expect(await runRequest(s.binding, probe({ key: "k-date", sources: ["older"], since: new Date("2026-09-30T12:00:00.123Z") }).plan)).toMatchObject({ status: "accepted" })
+    expect(await s.count("source_consumption")).toBe(3)
+  } finally { await s.close() }
+})
+
 test("H3 the tools the model is offered are unchanged, and an action nobody registered is refused by name", async () => {
   const s = await ownerConversation()
   try {
-    expect(TOOLS.map(tool => tool.name)).toEqual(["hub_topic"])
+    expect(TOOLS.map(tool => tool.name)).toEqual(["hub_topic", "hub_council"])
     expect(TOOLS[0].inputSchema.additionalProperties).toBe(false)
-    expect(Object.keys(TOOLS[0].inputSchema.properties).sort()).toEqual(["action", "recovery_decision", "request_key", "source_message_ids"])
-    expect(TOOLS[0].inputSchema.properties.action.enum).toEqual(["inspect", "resume"])
+    expect(Object.keys(TOOLS[0].inputSchema.properties).sort()).toEqual(["action", "creation_decision", "expected_revision", "recovery_decision",
+      "request_key", "setup", "source_message_ids", "topic_id"])
+    expect(TOOLS[0].inputSchema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen"])
+    expect(TOOLS[1].inputSchema.additionalProperties).toBe(false)
+    expect(TOOLS[1].inputSchema.properties.action.enum).toEqual(["start", "continue", "inspect", "stop"])
     // Nothing that is not listed is offered, and what is asked for anyway is refused by name, before anything is looked at.
     expect(await code(callTool(s.binding, "hub_topic", { action: "stop", request_key: "k", source_message_ids: ["h1"] }))).toBe("unsupported_action")
     expect(await code(callTool(s.binding, "hub_topic", { action: "toString" }))).toBe("unsupported_action")
-    expect(await code(callTool(s.binding, "hub_council", { action: "start" }))).toBe("unknown_tool")
+    expect(await code(callTool(s.binding, "hub_council", { action: "start" }))).toBe("invalid_arguments")
+    expect(await code(callTool(s.binding, "hub_council", { action: "delete" }))).toBe("unsupported_action")
     expect(await code(callTool(s.binding, "constructor", {}))).toBe("unknown_tool")
     expect(await code(callTool(s.binding, "hub_topic", { action: "inspect", person: "p2" }))).toBe("invalid_arguments")
     expect(await code(callTool(s.binding, "hub_topic", { action: "inspect", request_key: "k" }))).toBe("invalid_arguments")
@@ -446,7 +492,9 @@ test("G3 a gate makes the council's grace and the table's fence say no too: a ga
   expect((await s.su`select state from inbound where id = 'seat'`)[0].state).not.toBe("answered")
   expect(await s.su`select 1 from ledger_event where subject = 'seat' and kind in ('answered', 'dispatch.abandoned')`).toHaveLength(0)
   await releaseGates(s.door, { operation: "op-council" })
-  expect(await abandon(), "released, it is what the grace was always for").toBe(true)
+  // The store's grace no longer gives up on a council seat at all: a council waits for its owner over a member it cannot wait for.
+  expect(await abandon(), "released, the seat is still not given up on: the function is switched off").toBe(false)
+  expect((await s.su`select state from inbound where id = 'seat'`)[0].state).not.toBe("answered")
 })
 
 test("G4 a gate is owned by its operation: the same request is one gate, a replay after release does not reopen it, another cause is refused, and one operation's release opens nothing of another's", async () => {
@@ -619,6 +667,131 @@ test("G7 placing a gate and opening an attempt are ordered, in either order and 
     await reset()
   }
 })
+
+/**
+ * Backends of this database, seen from a connection of the test's own. `at(text, "advisory")`: a statement that contains `text` stands still on an advisory
+ * lock (a trigger of the test is what holds it there). `at(text, "another")`: it waits for another transaction's lock. `activity()` says what every
+ * backend is doing, for the message of a wait that did not come.
+ */
+function backends(db: string) {
+  const connection = track(cluster.connect(db)) as any
+  return {
+    at: async (text: string, on: "advisory" | "another") => Number((await connection.unsafe(
+      `select count(*)::int as n from pg_stat_activity
+        where datname = $1 and pid <> pg_backend_pid() and wait_event_type = 'Lock' and query like $2 and (wait_event = 'advisory') = $3::boolean`,
+      [db, `%${text}%`, on === "advisory"]))[0].n) > 0,
+    /** The server processes whose statement contains `text` and stands on an advisory lock: which connection the seam is holding. */
+    pidsAt: async (text: string) => Array.from(await connection.unsafe(
+      `select pid::int as pid from pg_stat_activity
+        where datname = $1 and pid <> pg_backend_pid() and wait_event_type = 'Lock' and wait_event = 'advisory' and query like $2 order by pid`,
+      [db, `%${text}%`])).map((row: any) => Number(row.pid)),
+    activity: async () => JSON.stringify(Array.from(await connection.unsafe(
+      `select state, wait_event_type as type, wait_event as event, left(regexp_replace(query, '\\s+', ' ', 'g'), 60) as query
+         from pg_stat_activity where datname = $1 and pid <> pg_backend_pid() and state <> 'idle' order by pid`, [db]))),
+  }
+}
+
+test("G8 opening an attempt and a tool call that spends the same input do not wait for each other in a circle: the call holds its invocation's key share of the conversation, the opening holds its input and conversation locks, the call then spends the input, and both finish once, while a writer of the placement still waits for the opening", async () => {
+  const s = await ownerConversation()
+  const seen = backends(s.it.db)
+  const writer = track(cluster.connect(s.it.db)) as any
+  const running: Promise<unknown>[] = []
+  // The call runs on the owner's binding, whose store is ONE connection (the cluster's connections are max 1), and it keeps that connection for as long as its
+  // transaction lasts. The runner's opening therefore has to be a connection of its own: the same role, database, identities and incarnation, a second backend.
+  const openerSql = track(cluster.connectAs("hub_runner", s.it.db))
+  const opener = { sql: openerSql, url: cluster.url(s.it.db) } as StoreLike
+  /** Where a promise stands, for the message of a wait that did not come: an opening that was refused or has not returned before its statement shows here. */
+  const standing = (name: string, promise: Promise<unknown>) => {
+    const box = { name, state: "pending" }
+    promise.then(() => { box.state = "resolved" }, error => { box.state = `rejected: ${String((error as Error)?.message ?? error).slice(0, 300)}` })
+    return box
+  }
+  let spending: Awaited<ReturnType<typeof holdKey>> | undefined
+  let opening: Awaited<ReturnType<typeof holdKey>> | undefined
+  /** Whether a row lock could be taken NOW, in a transaction of its own that never waits: what another transaction holds in a way that conflicts says no. */
+  const lockable = async (take: (tx: any) => Promise<unknown>) => {
+    try { await (s.su as any).begin(async (tx: any) => { await take(tx) }); return true }
+    catch (error) { if (/could not obtain lock/i.test(String((error as Error).message))) return false; throw error }
+  }
+  try {
+    // The owner's message h2 is the input the runner has claimed and is about to open, and the message the model's call cites as its words.
+    await s.human("h2")
+    await registerIncarnation(s.store, { runner: "runner-a", incarnation: "one", machine: "pi", bootId: null })
+    await s.su`update inbound set claimed_by = 'runner-a', claim_deadline = now() + interval '1 hour' where id = 'h2'`
+    // The two seams are triggers of the test: the call stands still BEFORE it spends its source (after its invocation was written), and the opening stands
+    // still in its insert (after the locks of its select were taken). Each waits for an advisory lock the test holds, and is seen waiting there.
+    await s.su.unsafe(`create function test_hold_source() returns trigger language plpgsql as $$ begin perform pg_advisory_lock(90311); perform pg_advisory_unlock(90311); return new; end $$;
+      create trigger test_hold_source before insert on source_consumption for each row execute function test_hold_source();
+      create function test_hold_opening() returns trigger language plpgsql as $$ begin perform pg_advisory_lock(90312); perform pg_advisory_unlock(90312); return new; end $$;
+      create trigger test_hold_opening before insert on execution for each row execute function test_hold_opening()`)
+    spending = await holdKey(s.it.db, 90311)
+    opening = await holdKey(s.it.db, 90312)
+    const conversation = s.conversation.id
+
+    // The premise, shown and not assumed: the call's connection and the opener's are two different server processes of the same role, so the opening does not
+    // wait for the call's transaction to give its connection back.
+    const callPid = await backendPid(s.binding.store.sql as any)
+    const openerPid = await backendPid(openerSql as any)
+    expect(openerPid, "the opening is on a server process of its own").not.toBe(callPid)
+    expect(s.binding.store.sql, "and on a connection object of its own").not.toBe(opener.sql)
+    for (const one of [s.binding.store.sql, openerSql] as any[]) expect((await one.unsafe("select current_user as who"))[0].who).toBe("hub_runner")
+
+    // THE CALL, through the real request helper: its invocation is written, which is a key share of the conversation until its commit, and it stands before its source.
+    const call = probe({ key: "k-open", sources: ["h2"] })
+    const requesting = runRequest(s.binding, call.plan)
+    requesting.catch(() => {}); running.push(requesting)
+    const requestingNow = standing("call", requesting)
+    await until("the call wrote its invocation and stands before spending its source", () => seen.at("insert into source_consumption", "advisory"), 15_000,
+      async () => `${await seen.activity()} ${JSON.stringify(requestingNow)}`)
+    expect(await seen.pidsAt("insert into source_consumption"), "it is the call's own server process that stands there").toEqual([callPid])
+    expect(await lockable(tx => tx`select 1 from conversation where id = ${conversation} for update nowait`), "the invocation holds the conversation").toBe(false)
+    expect(await lockable(tx => tx`select 1 from conversation where id = ${conversation} for no key update nowait`), "as a key share, which a writer of its state does not conflict with").toBe(true)
+
+    // THE OPENING, through the real opener, while the call holds that. It must get past the conversation, take its input, and stand in its insert. An opening that
+    // asked the conversation for more than the call's key share allows waits for the call here, and never arrives.
+    const attempt = openExecution(opener, { row: { id: "h2", agent: "p1-lair" }, conversation: s.conversation, runner: "runner-a", incarnation: "one", digest: "d", nativeSession: null })
+    attempt.catch(() => {}); running.push(attempt)
+    const attemptNow = standing("opening", attempt)
+    await until("the opening holds its input and its conversation and stands in its insert", () => seen.at("insert into execution", "advisory"), 15_000,
+      async () => `${await seen.activity()} ${JSON.stringify([requestingNow, attemptNow])}`)
+    expect(await seen.pidsAt("insert into execution"), "it is the opener's own server process that stands there, beside the call's").toEqual([openerPid])
+    expect(await seen.pidsAt("insert into source_consumption"), "and the call is still standing on its own").toEqual([callPid])
+    // What the opening holds is what the fence needs: the input, and the conversation against every writer of its state and against its deletion. Only a reference to it passes.
+    expect(await lockable(tx => tx`select 1 from inbound where id = 'h2' for key share nowait`), "the input is the opening's: a foreign key that spends it waits").toBe(false)
+    expect(await lockable(tx => tx`select 1 from conversation where id = ${conversation} for no key update nowait`), "no update of the conversation passes the opening").toBe(false)
+    expect(await lockable(tx => tx`select 1 from conversation where id = ${conversation} for update nowait`), "no deletion of it passes the opening").toBe(false)
+    expect(await lockable(tx => tx`select 1 from conversation where id = ${conversation} for key share nowait`), "a row that only refers to it does").toBe(true)
+    // A real writer of the placement is seen waiting for the opening, on the row's lock and not on the test's.
+    const placing = (async () => { await writer`update conversation set placement_generation = 2 where id = ${conversation}` })()
+    placing.catch(() => {}); running.push(placing)
+    await until("a writer of the placement waits behind the opening", () => seen.at("update conversation set placement_generation", "another"), 15_000, seen.activity)
+
+    // THE CALL SPENDS THE INPUT the opening holds. It waits for the opening, which no longer waits for it: this was the cycle.
+    await spending.release(); spending = undefined
+    await until("the call waits for the opening that holds the input it cites", () => seen.at("insert into source_consumption", "another"), 15_000, seen.activity)
+
+    // The opening goes on. Both finish, and the writer after them.
+    await opening.release(); opening = undefined
+    const settled = await Promise.allSettled([attempt, requesting, placing])
+    expect(settled.map(one => one.status === "fulfilled" ? "done" : String((one as PromiseRejectedResult).reason)), "no deadlock and no refusal").toEqual(["done", "done", "done"])
+    const made = await attempt
+
+    // One invocation, one spending of the source, one attempt: fenced on the generation it read, which the waiting writer then moved.
+    expect(await requesting).toMatchObject({ status: "accepted", stage: "probed" })
+    expect(call.calls).toEqual({ open: 1, apply: 1 })
+    expect([await s.count("tool_invocation"), await s.count("source_consumption"), await s.count("execution")]).toEqual([1, 1, 1])
+    expect({ ...(await s.su`select source_id, conversation_id, request_key from source_consumption`)[0] }).toEqual({ source_id: "h2", conversation_id: conversation, request_key: "k-open" })
+    expect({ ...(await s.su`select inbound_id, conversation_id, runner, incarnation, state, placement_generation from execution`)[0] })
+      .toEqual({ inbound_id: "h2", conversation_id: conversation, runner: "runner-a", incarnation: "one", state: "claimed", placement_generation: 1 })
+    expect(Number((await s.su`select placement_generation from conversation where id = ${conversation}`)[0].placement_generation), "the writer went through after the opening").toBe(2)
+    await expect(markFeedIntent(opener, made, "body of h2"), "the attempt is on the placement it opened on, which has moved").rejects.toMatchObject({ name: "ExecutionNotOwned" })
+  } finally {
+    await spending?.release().catch(() => {}); await opening?.release().catch(() => {})
+    await Promise.allSettled(running)
+    await openerSql.close().catch(() => {})
+    await s.close()
+  }
+}, 60_000)
 
 // ---------------------------------------------------------------------------
 // S. Stop requests as a store rule.
@@ -817,19 +990,31 @@ test("M1 an upgraded store carries the same gate, stop and claim objects, checks
   ])
   const versions = (await upgraded.sql`select version from schema_version order by version`).map((row: any) => Number(row.version))
   expect(versions).toEqual(MIGRATION_FILES.map(([version]) => version))
-  expect(versions.at(-1)).toBe(13)
+  // Later steps append to this list, so this step's own number is asserted present, not last of the list: the councils (14)
+  // and the topics (15) follow it, in that order.
+  expect(versions).toContain(13)
+  expect(versions.slice(-2)).toEqual([14, 15])
   expect(versions).toEqual((await fresh.sql`select version from schema_version order by version`).map((row: any) => Number(row.version)))
   // What the step adds to the tables of the step before it is nothing: the rows an upgrade found are the rows it has.
   expect(Number((await upgraded.sql`select count(*)::int as n from inbound`)[0].n)).toBe(1)
   expect(Number((await upgraded.sql`select count(*)::int as n from claim_gate`)[0].n)).toBe(0)
 })
 
-test("M2 the fresh schema ends with the migration, byte for byte, and its version, and the migration is registered under its own number", () => {
+test("M2 the fresh schema carries the migration, byte for byte, and its version, and the migration is registered under its own number", () => {
   const migration = readFileSync(hubPath("src/store/migrations/013-execution-controls.sql"), "utf8")
   const schema = readFileSync(hubPath("src/schema.sql"), "utf8")
-  expect(schema.endsWith(`${migration}\ninsert into schema_version (version) values (13);\n`)).toBe(true)
-  expect(MIGRATION_FILES.at(-1)).toEqual([13, "013-execution-controls.sql"])
-  expect(MIGRATION_FILES.map(([version]) => version)).toEqual(Array.from({ length: 13 }, (_, i) => i + 1))
+  // Later steps are appended after it, so the step is found whole, followed by its version, and nothing of it is reworded.
+  expect(schema.includes(`${migration}\ninsert into schema_version (version) values (13);\n`)).toBe(true)
+  expect(MIGRATION_FILES).toContainEqual([13, "013-execution-controls.sql"])
+  expect(MIGRATION_FILES.map(([version]) => version).slice(0, 13)).toEqual(Array.from({ length: 13 }, (_, i) => i + 1))
+  // The councils (14) follow it whole and are followed by the topics (15), which end the fresh schema, in the order they migrate.
+  const councils = readFileSync(hubPath("src/store/migrations/014-councils.sql"), "utf8")
+  const topics = readFileSync(hubPath("src/store/migrations/015-topics.sql"), "utf8")
+  const at = (text: string) => schema.indexOf(text)
+  expect(at(`${councils}\ninsert into schema_version (version) values (14);\n`)).toBeGreaterThan(at(`${migration}\ninsert into schema_version (version) values (13);\n`))
+  expect(schema.endsWith(`${topics}\ninsert into schema_version (version) values (15);\n`)).toBe(true)
+  expect(at(`${topics}\ninsert into schema_version (version) values (15);\n`)).toBeGreaterThan(at(`${councils}\ninsert into schema_version (version) values (14);\n`))
+  expect(MIGRATION_FILES.slice(-2)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"]])
 })
 
 // ---------------------------------------------------------------------------

@@ -52,8 +52,9 @@ import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { holdFindings, readOpenHolds } from "./holds.ts";
+import { topicFindings } from "./topics.ts";
 import { readWatchState, watchFindings } from "./watch.ts";
-import { councilFindings, readOpenCouncils } from "./council.ts";
+import { councilFindings, readLiveCouncils } from "./council.ts";
 import { silentRunners } from "./silence.ts";
 import { admissionFindings } from "./admission.ts";
 import { unattemptedReplyFindings } from "./delivery.ts";
@@ -650,6 +651,13 @@ export async function runCheck(options: {
   // THE MACHINE IS THE AGENT'S RUNNER'S, so two machines running `check` do not
   // both report one row. The set is the one `agent-unboxed` already computed.
   const mine = listAgents(registry).filter((agent) => ownRunners.has(agent.runner));
+  // --- topic chats: a creation nobody could settle, a bind or an archive that is not finishing, a chat that
+  //     vanished, an identity the store retired that the registry still names. One finding per thing.
+  findings.push(...await topicFindings({
+    store: options.store, registry, machine, now,
+    doors: new Set(entries.filter(entry => entry.kind === "door").map(entry => entry.id)),
+    agents: mine.map(agent => agent.id),
+  }));
   // AND THE AGENTS OF EVERY FLAGGED MACHINE, from the store machine's view: a
   // runner on a copy that is behind, or on a machine whose hub is silent,
   // claims nothing, so the chats it owes are overdue with no check there to
@@ -707,14 +715,15 @@ export async function runCheck(options: {
     );
     // --- every input held after an interrupted attempt ----------------------
     findings.push(...holdFindings({ holds: await readOpenHolds(options.store, { agents: mine.map((agent) => agent.id) }), machine }));
-    // --- every council past the grace with seats still open (criterion 2) --
+    // --- every live council that waits on its owner or its master, whose card cannot be shown, or whose person has no General
     //
-    //     One finding per council and not per seat, the way the door says it
-    //     is late once. The seats' own rows are jobs of the seats and never of
-    //     the dispatcher, so the finding above never reports them here.
+    //     One finding per council and not per participant, the way the door says a thing once. The
+    //     participants' own rows are jobs of the workers and never of the dispatcher, so the finding
+    //     above never reports them here.
     findings.push(
       ...councilFindings({
-        councils: await readOpenCouncils(options.store),
+        councils: await readLiveCouncils(options.store),
+        registry,
         agents: new Set(mine.map((agent) => agent.id)),
         graceSeconds: setting(registry, "hub.job_grace_seconds", 300),
         machine,

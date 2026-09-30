@@ -1,4 +1,5 @@
 import type { StoreLike } from "../store/connect.ts";
+import { RUNNER_PROTOCOL } from "../store/conversations.ts";
 import type { EligibleRow } from "../store/wake.ts";
 
 /**
@@ -32,12 +33,13 @@ export async function claimNext(
   const maxRank = who.maxRank ?? 1;
   // ONE TRANSACTION, on a connection of its own, and the protocol is said inside
   // it: `set_config(..., true)` lasts until this transaction ends, so a pooled
-  // connection that claimed under protocol 2 hands the next borrower nothing, and
-  // the claim trigger sees the setting on exactly this statement. A claim made any
-  // other way (a runner that predates the protocol) does not carry it and is
-  // refused once the protocol is activated.
+  // connection that claimed under this protocol hands the next borrower nothing,
+  // and the claim trigger sees the setting on exactly this statement. A claim made
+  // any other way (a runner that predates the protocol, including one of protocol 2
+  // once 3 is active) does not carry it and is refused, and a council's job or
+  // event is refused to it even before the protocol is activated.
   return await store.sql.begin(async (connection) => {
-    await connection`select set_config('hub.runner_protocol', '2', true)`;
+    await connection`select set_config('hub.runner_protocol', ${String(RUNNER_PROTOCOL)}, true)`;
     const rows = (await connection`
       update inbound
          set claimed_by = ${who.runner},

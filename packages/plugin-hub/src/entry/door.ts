@@ -7,6 +7,7 @@
 //
 // Usage: bun run src/entry/door.ts <registryFile> <entry id>
 
+import { councilApprovals } from "../council/approval.ts";
 import { runDoor } from "../door/run.ts";
 import { discord } from "../door/platforms/discord.ts";
 import { telegram } from "../door/platforms/telegram.ts";
@@ -43,5 +44,8 @@ if (!make) {
 // The server a channel name is resolved against, when the entry names one. A
 // door without it still takes a channel id, and nothing else reads the field.
 const guild = typeof raw.guild === "string" ? raw.guild : undefined;
-const handle = await runDoor({ door, registryFile, platform: make({ tokenFile, guild }) });
+// What an owner's green check on a frozen preview does is registered by the feature that owns the operation.
+// A council's proposal is one (`council/approval.ts`); it reads the registry as it is at the moment of the approval.
+const approvals = councilApprovals({ registry: () => loadRegistry(registryFile) });
+const handle = await runDoor({ door, registryFile, platform: make({ tokenFile, guild }), approvals });
 await hold(handle);

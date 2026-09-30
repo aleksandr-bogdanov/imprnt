@@ -67,7 +67,8 @@ test("D-210 the dispatch migration is ordered, idempotent, and the version set i
   // The WHOLE sorted set, which is the assertion that catches a skipped number:
   // a gap breaks the ordered list every later step is applied against.
   expect(versions).toEqual(MIGRATION_FILES.map(([version]) => version))
-  expect(versions).toEqual(Array.from({ length: MIGRATION_FILES.length }, (_, i) => i + 1))
+  // Whole: 001..015 with no number left empty (014 councils, then 015 topics).
+  expect(versions).toEqual(Array.from({ length: MIGRATION_FILES.at(-1)![0] }, (_, i) => i + 1))
   expect((await f.sql`select count(*)::int as n from schema_version where version = ${VERSION}`)[0].n).toBe(1)
 })
 

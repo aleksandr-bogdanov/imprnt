@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { classifyPlatformError } from "../reply.ts";
+import { channelAdmin } from "./discord-channels.ts";
 import type {
   ChatDescription,
   ChatResolution,
@@ -334,6 +335,9 @@ export function discord(options: {
   return {
     name: "discord",
     admin: {
+      // The four verbs a topic chat's lifecycle needs, in their own file. They go through this
+      // seam's one request boundary, so a rate limit any request learned holds them too.
+      ...channelAdmin({ api: API, guild: options.guild, headers, request, refusal, timeoutMs: ANSWER_WITHIN_MS }),
       async resolveChat(ref: string): Promise<ChatResolution> {
         if (/^\d+$/.test(ref)) {
           const found = await channel(ref);

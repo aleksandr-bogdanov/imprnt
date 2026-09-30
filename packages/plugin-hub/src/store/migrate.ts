@@ -25,6 +25,8 @@ export const MIGRATION_FILES: readonly (readonly [number, string])[] = [
   [11, "011-conversations.sql"],
   [12, "012-effects-confirmations.sql"],
   [13, "013-execution-controls.sql"],
+  [14, "014-councils.sql"],
+  [15, "015-topics.sql"],
 ];
 
 const MIGRATIONS: Migration[] = MIGRATION_FILES.map(([version, file]) => ({

@@ -63,7 +63,9 @@ test("a call names nothing but its arguments: an argument that would name whose 
     expect(await code(callTool(s.binding, "hub_topic", { action: "inspect", ...extra }))).toBe("invalid_arguments")
   }
   expect(await code(callTool(s.binding, "hub_topic", { action: "resume", ...{ recovery_decision: { attempt_id: "a", expected_recovery_revision: 1, choice: "continue", by: "p1" } }, request_key: "k", source_message_ids: ["h2"] }))).toBe("invalid_arguments")
-  expect(await code(callTool(s.binding, "hub_council", { action: "start" }))).toBe("unknown_tool")
+  expect(await code(callTool(s.binding, "hub_council", { action: "start" }))).toBe("invalid_arguments")
+  expect(await code(callTool(s.binding, "hub_council", { action: "start", request_key: "k", authority: { source_message_ids: ["h2"] }, question: "q", person: "p2" }))).toBe("invalid_arguments")
+  expect(await code(callTool(s.binding, "not_a_tool", { action: "start" }))).toBe("unknown_tool")
   expect(await code(callTool(s.binding, "hub_topic", { action: "delete" }))).toBe("unsupported_action")
   expect(await code(callTool(s.binding, "hub_topic", { action: "resume", request_key: "k", source_message_ids: [], recovery_decision: { attempt_id: "a", expected_recovery_revision: 1, choice: "continue" } }))).toBe("invalid_arguments")
   expect(await code(callTool(s.binding, "hub_topic", { action: "resume", request_key: "k", source_message_ids: ["h2"], recovery_decision: { attempt_id: "a", expected_recovery_revision: 1, choice: "carry-on" } }))).toBe("invalid_arguments")
@@ -222,11 +224,13 @@ test("over the socket: the engine's stdio server is bound to the launch, holds n
     expect(started.result.serverInfo.name).toBe("hub")
     await talk.notify({ method: "notifications/initialized" })
     const listed = await talk.call({ id: 2, method: "tools/list" })
-    expect(listed.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["hub_topic"])
+    expect(listed.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["hub_topic", "hub_council"])
+    expect(listed.result.tools[1].inputSchema.additionalProperties).toBe(false)
     const schema = listed.result.tools[0].inputSchema
     expect(schema.additionalProperties).toBe(false)
-    expect(Object.keys(schema.properties).sort()).toEqual(["action", "recovery_decision", "request_key", "source_message_ids"])
-    expect(schema.properties.action.enum).toEqual(["inspect", "resume"])
+    expect(Object.keys(schema.properties).sort()).toEqual(["action", "creation_decision", "expected_revision", "recovery_decision",
+      "request_key", "setup", "source_message_ids", "topic_id"])
+    expect(schema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen"])
 
     const inspected = await talk.call({ id: 3, method: "tools/call", params: { name: "hub_topic", arguments: { action: "inspect" } } })
     expect(inspected.result.isError).toBeUndefined()

@@ -319,6 +319,11 @@ test(
       // the placement is unsupported.
       // `log_ready` carries a trigger, so `source` alone is dropped: the probe
       // selects both and a store missing either cannot serve the derivation.
+      // Migration 014's `inbound_no_new_legacy_council` reads `source` in its
+      // WHEN clause, so Postgres refuses the drop while it stands. It guards
+      // inserts only and this disposable store takes none after this point:
+      // exactly that one trigger is removed first, and nothing else changes.
+      await it.read.sql("drop trigger inbound_no_new_legacy_council on inbound");
       await it.read.sql("alter table inbound drop column source");
       const againDir = join(it.stateDir, "units-again");
       mkdirSync(againDir, { recursive: true });
@@ -336,6 +341,8 @@ test(
       }
       expect(refusal).toContain("source");
       expect(refusal).not.toContain("agent-state-unavailable");
+      // A refused install leaves no unit behind on the second machine.
+      expect(second.files).toHaveLength(0);
     } finally {
       await it.stop();
     }

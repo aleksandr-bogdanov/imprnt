@@ -55,19 +55,63 @@ export interface ChatDescription {
 }
 
 /**
- * The administration seam, TWO VERBS WIDE ON PURPOSE.
+ * A permission overwrite on a channel, as the platform keeps it: who it is about (`type` 0 a
+ * role, 1 a member), and the two bit sets it allows and denies, as decimal strings because
+ * they outgrow a number. It is the smallest thing "read only" is made of, and it is compared
+ * exactly, so a change somebody else made to it is told from the one this hub made.
+ */
+export interface ChannelOverwrite {
+  id: string;
+  type: 0 | 1;
+  allow: string;
+  deny: string;
+}
+
+/** A channel as a read of it shows it. */
+export interface ChannelInfo {
+  id: string;
+  name: string;
+  /** `text`, `category`, `voice` and so on, in the seam's own words. */
+  kind: string;
+  topic: string | null;
+  /** The category it is in, or null for none. */
+  parent_id: string | null;
+  permission_overwrites: ChannelOverwrite[];
+}
+
+/**
+ * The administration seam, TWO VERBS WIDE FOR A CHAT THE PERSON POINTS AT, and four more for a
+ * chat the hub makes itself.
  *
- * What is deliberately not here: create, rename and delete. Creating a chat
- * needs Manage Channels on Discord and is impossible for a bot on Telegram,
- * renaming needs the same class of permission on both, and each of them widens
- * what a stolen bot token can do to a household's whole server. Deleting a chat
- * deletes history, and a control that deletes history must fail. A person makes
- * and renames a chat in the app, the registry holds its id, and nothing in the
- * hub has to change for a rename at all.
+ * `resolveChat` and `describeChat` are what they always were: a person makes and renames a chat
+ * in the app, the registry holds its id, and these only answer about it.
+ *
+ * The four optional verbs are the topic lifecycle's and nothing else's. A platform that says
+ * nothing about them (Telegram, and every fake that predates them) can be served by a door and
+ * is never asked to make a chat; a door that is handed one without them says so and does not
+ * try. They were left out on purpose while nothing needed them, because each widens what a
+ * stolen bot token can do to a household's whole server, and what is still NOT here is
+ * DELETING a chat. Deleting deletes history, and a control that deletes history must fail
+ * until the step that owns it does.
+ *
+ *  * `listChannels` is ONE complete listing of the server or it throws. A partial page is not
+ *    an answer, because "not in the list" is used for nothing but a reason to look further.
+ *  * `readChannel` answers `exists: false` ONLY when the platform names the channel as gone
+ *    (a 404 with the code for an unknown channel). A refusal (403), a 5xx, a rate limit and a
+ *    body it cannot read are thrown, and none of them is "gone".
+ *  * `createChannel` puts `topic` (a marker a later look can find) into the channel and never
+ *    retries: a lost answer is `sent` on the error, and looking for the channel is the
+ *    caller's.
+ *  * `editChannel` changes the category and/or the overwrites of a channel and nothing else.
+ *    Both are a request for the SAME VALUES when asked again, so it is safe to repeat.
  */
 export interface PlatformAdmin {
   resolveChat(ref: string): Promise<ChatResolution>;
   describeChat(chat: string): Promise<ChatDescription>;
+  listChannels?(): Promise<ChannelInfo[]>;
+  readChannel?(chat: string): Promise<{ exists: true; channel: ChannelInfo } | { exists: false }>;
+  createChannel?(options: { name: string; parent_id?: string | null; topic: string }): Promise<ChannelInfo>;
+  editChannel?(options: { chat: string; parent_id?: string | null; permission_overwrites?: ChannelOverwrite[] }): Promise<ChannelInfo>;
 }
 
 /** A message as a read of the chat shows it. */

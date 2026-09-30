@@ -98,7 +98,10 @@ import {
   type Here,
 } from "./execution.ts";
 import { bindFacade, type FacadeBinding } from "./ipc.ts";
-import { abandonJob, admitJob, refuseJob } from "./job.ts";
+import { checkLaunch, launchProfileOf } from "../council/launch.ts";
+import { admitOnce } from "./admission.ts";
+import { councilOfJob, fenceAbandonedClaims, noteJobFailed, sweepAbandonedClaims } from "./council.ts";
+import { admitJob, refuseJob } from "./job.ts";
 import { clearProgress, writeProgress, type TurnProgress } from "./progress.ts";
 import { watchStops } from "./stops.ts";
 import {
@@ -584,18 +587,26 @@ export async function runRunner(options: {
   const admitChild = async (registry: Registry, own: Live, reserve = true): Promise<boolean> => {
     let recorded = false;
     while (!stopping && !own.leaving) {
-      // Read again on every pass, because a registry edit that raises the
-      // count or the budget is one of the things this wait is woken for.
-      const entry = listRunEntries(load()).find(one => one.id === options.runner);
-      const limits = runnerAdmission(entry ?? {});
-      const reserveMb = limits.reserve_mb;
-      const usedMb = Math.max(reservations * reserveMb, measuredBytes / 1048576);
-      const roomByCount = reservations < limits.max_active_children;
-      if (roomByCount && usedMb + reserveMb <= limits.child_memory_budget_mb) {
-        if (reserve) reservations++;
+      // A worker is not admitted into the room an active council's master needs on this runner (`council/capacity.ts`), once per master
+      // however many councils it has. THE STORE IS ASKED FIRST and everything this runner knows about itself is read AFTER it answers, in the
+      // one synchronous step that decides and reserves (`runner/admission.ts`): the limits (read again on every pass, because a registry edit that
+      // raises the count or the budget is one of the things this wait is woken for), the children reserved, the memory measured and the masters that
+      // already hold a slot. Nothing else about admission changes, and nothing is stopped to make room.
+      const decision = await admitOnce({
+        store, runner: options.runner, registry, admitting: own.agent,
+        now: () => ({
+          reservations, measuredBytes,
+          limits: runnerAdmission(listRunEntries(load()).find(one => one.id === options.runner) ?? {}),
+          resident: agent => live.get(agent)?.reserved === true,
+        }),
+        take: () => { reservations++; },
+      }, reserve);
+      if (decision.admitted) {
         if (recorded) await own.noteWait(null);
         return true;
       }
+      const { held, roomByCount, usedMb, limits } = decision;
+      const reserveMb = limits.reserve_mb;
       own.settle();
       if (!recorded) {
         recorded = true;
@@ -608,11 +619,13 @@ export async function runRunner(options: {
       // whose harvest has one of its own. A budget that is full with slots to
       // spare is a different sentence, with the numbers.
       await own.noteWait(roomByCount
-        ? { kind: "memory", budget_mb: limits.child_memory_budget_mb, used_mb: Math.round(usedMb), reserve_mb: reserveMb }
+        ? { kind: "memory", budget_mb: limits.child_memory_budget_mb, used_mb: Math.round(usedMb), reserve_mb: reserveMb,
+            ...(held.length > 0 ? { held_for_master: held.length } : {}) }
         : { kind: "slots", count: limits.max_active_children, holders: [...new Set([
             ...[...live.values()].filter(other => other.reserved && other !== own).map(other => other.agent.id),
             ...[...harvestSessions.values()].map(owner => owner.agent.id),
-          ])] });
+            ...held,
+          ])], ...(held.length > 0 ? { held_for_master: held.length, ...(limits.admits <= held.length ? { conflict: true } : {}) } : {}) });
       // Woken by a child starting or being released, by the tick seeing a
       // changed limit or a fallen aggregate reading, and by the tick itself
       // as the bound: the re-check above is in memory and reads no table, so
@@ -657,6 +670,10 @@ export async function runRunner(options: {
     let claimedReturn: { agent: string; door: string; chat: string } | null = null;
     /** The claimed row itself when it is a council seat's job, for the give-up path. */
     let claimedSeat: EligibleRow | null = null;
+    /** The digest of the profile a claimed council job was approved under and passed (`council/launch.ts`), or null for any other row. */
+    let claimedProfile: string | null = null;
+    /** The digest of the profile the live session was started under: what a council's job may be fed to must have been started under the accepted one. */
+    let startedProfile: string | null = null;
     let unhealthy = retries.has(agent.id);
     /** The last answer to "can this engine resume an interrupted conversation", to notice it flip. */
     let lastResumeOk: boolean | null = null;
@@ -1319,6 +1336,7 @@ export async function runRunner(options: {
       // it comes back: before the next turn, with the runner never restarting.
       own.killed = false;
       startedWith = presetId(preset);
+      startedProfile = launchProfileOf(registry, agent.id);
 
       session.onReceipt((messageId) => {
         const open = turn;
@@ -1528,6 +1546,16 @@ export async function runRunner(options: {
       waiter = await openWorkWaiter(store, { agent: agent.id });
       const initial = load();
       preflight(initial, agent);
+      // A CLAIM IS NOT A RETRY BARRIER. A council member's job that an earlier loop of this runner (or the process before it) claimed and never got an
+      // attempt for is a launch that did not finish, and the claim it left is what this very loop would take again first (`claimNext` takes the runner's
+      // own claim back without waiting out a lease). Whether the failure was ever written down does not matter here: the store is asked, and every such
+      // job is fenced (the failure fence the council reads as a member that failed before its input) and released BEFORE this loop claims anything. If the
+      // store cannot be written the loop ends here, claims nothing, and is served again after the retry delay, where this runs first once more. Only a
+      // council's job is looked at, and only when its runner holds the claim with nothing owned behind it.
+      for (const one of await sweepAbandonedClaims(store, { runner: options.runner, agent: agent.id,
+        cause: "the loop that claimed this input ended before an attempt was opened for it: nothing shows it was handed to an engine" })) {
+        process.stderr.write(`council-claim-fenced: ${agent.id}: ${safeValue(one.id)}\n`);
+      }
       // THE HOLD AFTER A RESTART. The hold outlives the process that opened it:
       // the rows keep the window's reset as their `retry_at`, and only the way
       // out of the hold clears it. A loop that started with the flag false
@@ -1796,6 +1824,10 @@ export async function runRunner(options: {
         // branch costs no read.
         claimed = row.id;
         claimedHuman = row.kind !== "harvest";
+        // WHETHER THIS IS A COUNCIL MEMBER'S JOB IS KNOWN BEFORE ANYTHING THAT CAN FAIL, from the provenance the claim itself returned. The failure
+        // path fences by what the store shows (`fenceAbandonedClaims`), so it does not depend on this, but it names the member it lets the council see
+        // and the notice it does not send, and it must not depend on a read (the profile check) having succeeded first.
+        claimedSeat = row.kind === "job" && councilOfJob(row.source) !== null ? row : null;
         if (row.kind === "harvest") {
           // NOTHING A HARVEST DOES LEAVES THIS LOOP. `Bun.spawn`
           // throws SYNCHRONOUSLY on a command it cannot find (measured, bun
@@ -1836,16 +1868,25 @@ export async function runRunner(options: {
         // THE GATE GOES ABOVE THE RESPAWN LINE, so a job nobody approved starts
         // no child at all. The whole of it is a hash over a string already in
         // hand, so it costs no statement between the claim and the feed.
+        claimedProfile = null;
         if (row.kind === "job") {
-          const refusal = admitJob(row);
+          // A council's job is launched only under the profile its owner approved (`council/launch.ts`): the worker, its preset (the five settings and the
+          // name), its tools, its instruction, settings and MCP files, its runner and its machine, and the conversation it names, compared against the registry
+          // THIS launch uses, before a conversation is chosen or a child is started. Whatever the job is (a first input that waited for its machine, a later
+          // round, a follow-up, a correction, a retry, a continuation the store queued), a worker that no longer matches is refused by name and nothing is fed.
+          const approval = admitJob(row);
+          const launch = approval === null ? await checkLaunch(store, { row, registry }) : null;
+          const refusal = approval ?? launch?.refusal ?? null;
           if (refusal) {
             await refuseJob(store, { row, refusal, registry, runner: options.runner });
             claimed = null;
             claimedReturn = null;
+            claimedSeat = null;
             continue;
           }
           claimedReturn = row.source?.dispatch?.return ?? null;
-          claimedSeat = row.source?.dispatch?.approved?.source === "council" ? row : null;
+          // The digest of the accepted profile, kept for the launch below: the session that receives the bytes must have been started under it.
+          claimedProfile = launch?.profile ?? null;
         }
         const preset = getPreset(registry, agent.preset);
         const adapter = adapterFor(options.adapters, preset.adapter);
@@ -1937,8 +1978,11 @@ export async function runRunner(options: {
         // a new child, and so is one whose child the memory watch killed. It is
         // also bound to ONE conversation: another's input is never fed to it.
         // The runner process itself never restarts for any of them.
+        // A council's job is fed only to a session that was started under the profile its owner approved (`claimedProfile`): a resident child whose configuration
+        // was another one (started before an edit and reused after it was undone, or the reverse) is replaced, in the same conversation, and never fed the job.
         const mustSpawn = !own.session || presetId(preset) !== startedWith || own.killed
-          || own.conversation !== conversation.id || holds.length > 0;
+          || own.conversation !== conversation.id || holds.length > 0
+          || (claimedProfile !== null && startedProfile !== claimedProfile);
         const plan = mustSpawn ? await planSession(conversation, adapter, registry, resumeFrom) : null;
         // THE ATTEMPT IS OWNED BEFORE ANYTHING LAUNCHES. The table allows one
         // that is running or unresolved per conversation, so a second launch is
@@ -2019,26 +2063,28 @@ export async function runRunner(options: {
       await store.sql.begin(async tx => {
         const inside = { ...store, sql: tx as unknown as Store["sql"] };
         if (claimed) await clearProgress(inside, claimed);
-        // A council seat whose turn failed after the council's grace has run
-        // out is given up on rather than retried: the person has already read
-        // that the council is late, and a seat retried for ever holds the
-        // merge back for ever. Settled here, so the retry below never sees it.
-        if (claimedSeat && claimed === claimedSeat.id) {
-          const grace = Number(readSetting(registry, "hub.job_grace_seconds") ?? 300) * 1000;
-          const convened = Date.parse(String(claimedSeat.source?.dispatch?.approved?.at ?? ""));
-          // A seat whose input reached the engine is held, or its ownership is
-          // unresolved: `abandonJob` leaves it alone, and the council waits for
-          // its attempt or its owner instead of merging without it.
-          if (Number.isFinite(convened) && Date.now() > convened + grace
-              && await abandonJob(inside, { row: claimedSeat, runner: options.runner, cause })) {
-            // Settled, so nothing below may say it stopped and will be tried
-            // again: that line would be false, and it would carry the seat's
-            // id into the chat that asked the question.
-            claimedSeat = null;
-            claimed = null;
-            claimedReturn = null;
-            claimedHuman = false;
-          }
+        // A council member whose attempt ended BEFORE the engine was handed its input is not tried again by
+        // the runner as an ordinary job would be: it is the owner's to decide (retry it, replace it, do without
+        // it), so its job is gated where it stands and the council names the failure. A member whose input
+        // did reach the engine is held by the attempt's own hold, which the council reads the same way. Nothing
+        // is given up on, stamped answered or merged, and nobody is told it will be tried again.
+        //
+        // A member whose attempt ended `failed` was fenced in that very transaction (`endAttempt`, mandatory). EVERY council job this runner still holds
+        // for this agent with nothing owned (no attempt that may be running, no hold: it failed before an attempt existed, whichever step it was in,
+        // the profile check, the conversation, the capabilities, the opening itself) is fenced HERE, from what the store shows and not from what this
+        // loop remembers, first, in the transaction that releases the claims just below: if the fence cannot be written this transaction fails, no
+        // claim is released onto a retry time, and the loop that ends by it is followed by a start that fences again before it claims anything
+        // (`sweepAbandonedClaims`, at the top of the loop). The council is only shown it afterwards (optional).
+        const abandoned = await fenceAbandonedClaims(inside, { runner: options.runner, agent: agent.id, cause });
+        const fencedNow = (id: string | null): boolean => id !== null && abandoned.some(one => one.id === id);
+        for (const one of abandoned) await noteJobFailed(inside, { job: one.id, source: one.source });
+        const seat = claimedSeat && claimed === claimedSeat.id && !held && !fencedNow(claimed) ? claimedSeat : null;
+        if (seat !== null) await noteJobFailed(inside, { job: seat.id, source: seat.source });
+        if (seat !== null || fencedNow(claimed)) {
+          claimedSeat = null;
+          claimed = null;
+          claimedReturn = null;
+          claimedHuman = false;
         }
         await tx`update inbound set claimed_by = null, claim_deadline = null, retry_at = ${retryAt}::timestamptz
           where agent = ${agent.id} and claimed_by = ${options.runner} and state not in ('answered', 'delivered')`;
@@ -2129,7 +2175,12 @@ export async function runRunner(options: {
       noteWait: waitRecorder(store, agent.id),
     };
     live.set(agent.id, it);
-    it.done = runAgent(agent, it);
+    // A loop that ends by a failure of its own (a write its failure path needed and the store refused, for one) is said, and the supervisor serves the
+    // agent again after its retry delay; nothing is left as an unhandled rejection of the process, and the attempt it could not end stays owned in
+    // the store, where the next start of this runner ends it (and, for a council's member, fences it) exactly as for any attempt.
+    it.done = runAgent(agent, it).catch((error: unknown) => {
+      process.stderr.write(`agent-loop-ended: ${agent.id}: ${safeValue(String((error as Error)?.message ?? error)).slice(0, 300)}\n`);
+    });
   };
 
   const drop = async (id: string): Promise<void> => {
@@ -2312,6 +2363,8 @@ export async function runRunner(options: {
     recovering.add(agent.id);
     try {
       await drop(agent.id);
+      // The owner's recovery frees what the runner held, and does not feed a council member's input that never reached an engine: it is fenced first.
+      await sweepAbandonedClaims(store, { runner: options.runner, agent: agent.id, cause: "the agent was recovered before an attempt was opened for this input: nothing shows it was handed to an engine" });
       await store.sql`update inbound set claimed_by = null, claim_deadline = null, retry_at = null
         where agent = ${agent.id} and (claimed_by = ${options.runner} or claimed_by is null)
           and state not in ('answered', 'delivered')`;
