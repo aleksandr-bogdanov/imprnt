@@ -171,12 +171,12 @@ test("D-214 a job for a stopped runner waits unclaimed, is claimed when it start
     //     The three shipped mechanisms that carry this are the insert's own
     //     notification at the commit, the connect read and the read on every
     //     bound for a runner that was off, and the waiter reopening its LISTEN
-    //     when the connection is lost. The second listener is the runner
-    //     process's own control channel, which every runner holds whatever it
-    //     serves.
+    //     when the connection is lost. The other two listeners are the runner
+    //     process's own control and stop channels, which every runner holds
+    //     whatever it serves.
     await until("the spoke's waiter is listening again after the turn", async () =>
       (await runnerListeners(it)).filter(one => one.query === "listen hub_work").length === 1, 10_000, () => runnerBackends(it))
-    expect((await runnerListeners(it)).map(one => one.query).sort()).toEqual(["listen hub_control", "listen hub_work"])
+    expect((await runnerListeners(it)).map(one => one.query).sort()).toEqual(["listen hub_control", "listen hub_stop", "listen hub_work"])
 
     // --- 5. The body and nothing else, asserted whole on the loop's own record.
     expect(it.scripted.fed().map(one => ({ id: one.id, text: one.text }))).toEqual([{ id: job.id, text: TASK }])
@@ -280,7 +280,7 @@ test("D-214 a runner whose listening connection is cut from the server's side he
     expect((await it.read.inbound()).filter(r => r.kind === "report")).toHaveLength(1)
     expect((await it.read.ledger({ subject: job.id, kind: "answered" }))).toHaveLength(1)
     expect((await it.read.ledger({ subject: job.id, kind: "dispatch.reported" }))).toHaveLength(1)
-    expect((await runnerListeners(it)).map(one => one.query).sort()).toEqual(["listen hub_control", "listen hub_work"])
+    expect((await runnerListeners(it)).map(one => one.query).sort()).toEqual(["listen hub_control", "listen hub_stop", "listen hub_work"])
   } finally { await spoke?.stop(); await door?.stop(); await it.stop() }
 }, 120_000)
 

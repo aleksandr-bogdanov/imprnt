@@ -100,6 +100,7 @@ import {
 import { bindFacade, type FacadeBinding } from "./ipc.ts";
 import { abandonJob, admitJob, refuseJob } from "./job.ts";
 import { clearProgress, writeProgress, type TurnProgress } from "./progress.ts";
+import { watchStops } from "./stops.ts";
 import {
   clearOutage,
   classifyRefusal,
@@ -129,9 +130,12 @@ export interface RunnerHandle {
    * proved. `stopped` is only ever the answer when the loop and everything last
    * seen under it are gone; a process that cannot be shown to have left is
    * `stop_unknown`, and its input stays held either way. Nothing is undone and
-   * nothing is retried.
+   * nothing is retried. With `execution` it stops that attempt or nothing (`none`):
+   * a request frozen to one attempt never reaches a newer one. An attempt that is
+   * only claimed, not yet fed, is `opening`: nothing is signalled (the resident
+   * session that may be there is not its own yet) and it is asked again once fed.
    */
-  stopExecution(request: { agent: string; graceMs?: number }): Promise<{ state: string; revision: number | null }>;
+  stopExecution(request: { agent: string; execution?: string; graceMs?: number }): Promise<{ state: string; revision: number | null }>;
 }
 
 /**
@@ -167,8 +171,24 @@ interface Live {
   nativeSession: string | null;
   /** The open attempt, for an explicit stop to find. */
   attempt: ExecutionRow | null;
-  /** An explicit stop is in progress: the loop ending under it is the stop, not a failure. */
-  stopRequested: boolean;
+  /**
+   * An explicit stop was ACCEPTED for one attempt on one session: the loop ending under it
+   * is the stop, not a failure, and that session is never fed again. It names the attempt and
+   * the session that attempt holds when the store's acceptance is seen (a fresh child is
+   * installed while an opening attempt's stop is in flight, so that is read after the answer,
+   * not before the question), and is set only once the attempt is shown to still be current,
+   * so it can never describe a newer attempt or a replacement session, and nothing clears it
+   * for another caller: a session that is not the one named is simply not retiring.
+   * `evidence` is the one signal that was sent (a second caller for the same attempt never
+   * signals again), and `done` is the ending that followed it, which a second caller waits on
+   * and which is made again if it failed.
+   */
+  retiring: {
+    execution: string;
+    session: AdapterSession;
+    evidence: Promise<ExitEvidence | null>;
+    done: Promise<{ state: string; revision: number | null }>;
+  } | null;
   /** The hub's tool facade bound to this child's launch, closed with it. */
   facade: FacadeBinding | null;
   leaving: boolean;
@@ -713,6 +733,31 @@ export async function runRunner(options: {
       await own.facade?.close().catch(() => {});
       own.facade = null;
     };
+    /**
+     * Whether the session this loop holds is the one an accepted stop signalled. It is
+     * never fed again: not the next queued input after the attempt it was signalled for,
+     * and not the input that follows a priming tail. Bound to the session itself, so a
+     * session started after it is not affected and nothing has to be cleared.
+     */
+    const retired = (): boolean => own.retiring !== null && own.retiring.session === own.session;
+    /** Whether what ended the open attempt is the stop that was accepted for THAT attempt, and not something else. */
+    const stoppedByRequest = (): boolean => own.retiring !== null && own.attempt !== null && own.retiring.execution === own.attempt.id;
+    /**
+     * A signalled session with no attempt left on it (the attempt it was signalled for
+     * settled with its own result): once the stop is over the session is closed and
+     * forgotten, and whatever is queued next starts a session of its own by the normal road.
+     */
+    const dropRetired = async (): Promise<void> => {
+      const retiring = own.retiring;
+      if (!retiring) return;
+      await retiring.done.catch(() => {});
+      if (own.session === retiring.session) {
+        readings.delete(retiring.session);
+        await retiring.session.close().catch(() => {});
+        await forgetSession();
+      }
+      if (own.retiring === retiring) own.retiring = null;
+    };
     /** This agent stopped claiming because the household's window is used up. */
     let heldByWindow = false;
     /** One notice per person, and never a second one for the same outage. */
@@ -914,6 +959,11 @@ export async function runRunner(options: {
       // attempt (`stage: "tail"`), and the tail an eager start owns has an attempt of
       // its own. There is no feed to an engine without one.
       if (!own.attempt) throw new Error("feed-without-attempt");
+      // A SESSION AN ACCEPTED STOP SIGNALLED IS NOT FED AGAIN, at the top of a feed and once more right
+      // before the first byte: the stop can be accepted while the feed intent is being committed. What
+      // the stop was accepted for ends the attempt as stopped; nothing else is fed to a session that
+      // was ended for it.
+      if (retired()) throw Object.assign(new Error("session-retired"), { retired: true });
       // WHAT IS KNOWN OF THE PROCESSES IS RECORDED FIRST, and only then the intent:
       // a crash between the two would otherwise leave an attempt that may have
       // reached the engine with no process, no group and no boot on record, and
@@ -928,6 +978,7 @@ export async function runRunner(options: {
       // done any of it, and nothing feeds it again.
       await markFeedIntent(store, own.attempt, message.text, about.tail && own.attempt.purpose === "turn" ? "tail" : "input");
       handed = true;
+      if (retired()) throw Object.assign(new Error("session-retired"), { retired: true });
       // A REJECTED FEED IS NOT PROOF THAT NOTHING WAS DELIVERED. Only the adapter's own `FeedNotWritten`
       // says so (it refused before a byte was written), and even that lets the input be tried again only
       // if nothing else was fed to this attempt first and it has done nothing. A write or a flush that
@@ -1545,6 +1596,9 @@ export async function runRunner(options: {
       while (!stopping && !own.leaving) {
         // Before each turn, because a preset or a rate is a registry edit and
         // the agent picks it up on its next turn without anything restarting.
+        // A session an accepted stop signalled, whose attempt has since settled with its own result, is
+        // finished with: what is queued next is started on a session of its own, never fed to that one.
+        if (own.attempt === null && retired()) await dropRetired();
         const registry = load();
         agent = listAgents(registry).find(one => one.id === agent.id) ?? agent;
         const lifetime = lifetimeFor(registry, agent.id);
@@ -1929,6 +1983,11 @@ export async function runRunner(options: {
           lastWork = Date.now();
           continue;
         }
+        // THE OTHER FEED BOUNDARY. The priming tail was a turn of its own, and a stop accepted for this
+        // attempt while it ran signalled the session the input was about to go to. The tail can still
+        // come back normally (its answer landed first), so the absence of an exception here says nothing:
+        // the input is not fed to a session that was ended for the attempt it belongs to.
+        if (retired()) throw Object.assign(new Error("session-retired"), { retired: true });
         await oneTurn({ id: row.id, text }, { preset, tail: false, registry, source: row.source, kind: row.kind });
         claimed = null;
         claimedReturn = null;
@@ -1938,7 +1997,7 @@ export async function runRunner(options: {
     } catch (error) {
       // An explicit stop is answered by the stop, and shutting down or leaving
       // is answered by the `finally` below: both end the attempt there.
-      if (stopping || own.leaving || own.stopRequested) return;
+      if (stopping || own.leaving || stoppedByRequest()) return;
       // BEFORE THE FIRST AWAIT: an armed trailing write, or an event the adapter still delivers
       // while this waits on the queue and the attempt, must not write the sheet after the
       // transaction below clears it.
@@ -2023,7 +2082,7 @@ export async function runRunner(options: {
       // again by whoever serves this agent next.
       if (own.attempt) {
         await closeAttempt(stopping ? "the runner was stopped" : own.leaving ? "the agent was stopped or recovered" : "the loop ended",
-          { requested: own.stopRequested }).catch(() => {});
+          { requested: stoppedByRequest() }).catch(() => {});
       }
       if (claimed && own.leaving) await clearProgress(store, claimed);
       await own.noteWait(null);
@@ -2059,7 +2118,7 @@ export async function runRunner(options: {
       conversation: null,
       nativeSession: null,
       attempt: null,
-      stopRequested: false,
+      retiring: null,
       facade: null,
       leaving: false,
       left,
@@ -2182,6 +2241,8 @@ export async function runRunner(options: {
   await Promise.all([...live.values()].map((it) => it.serving));
 
   const recovering = new Set<string>();
+  /** The runner's end of the store's stop requests, opened below; the tick asks it to look again only while a request is owed. */
+  let stops: Awaited<ReturnType<typeof watchStops>> | undefined;
   let seenLimits = JSON.stringify(runnerAdmission(listRunEntries(first).find(one => one.id === options.runner) ?? {}));
   const supervise = (async () => {
     while (!stopping) {
@@ -2215,6 +2276,11 @@ export async function runRunner(options: {
         // only while there is one, and only proof moves an attempt. The watch goes down only on a
         // look during which no other attempt was left unresolved (`unknownWatch`).
         if (unresolvedWatch.watching) await unresolvedWatch.look(() => reevaluateUnknown(store, { runner: options.runner, registry, here, moved: () => contextWatch.raise() }));
+        // A stop request that was deferred, or whose look failed (a read, a write, the stop itself), is owed
+        // another look, and the notification that announced it is not repeated. Asked to look only while one
+        // is owed, and not waited for: a stop can take as long as its grace, and the tick goes on. Nothing is
+        // read while nothing is owed.
+        if (stops?.owed) stops.retry();
         // A held conversation's native context is measured whether or not any row of it can be claimed
         // (an engine not shown able to resume is filtered out of every claim), so the owner is told what
         // it is waiting for. Only while there is one to measure; a full look that measured them all lowers it.
@@ -2258,19 +2324,11 @@ export async function runRunner(options: {
       recovered.add(request.id);
     } finally { recovering.delete(agent.id); }
   };
-  const stopExecution = async (request: { agent: string; graceMs?: number }): Promise<{ state: string; revision: number | null }> => {
-    const it = live.get(request.agent);
-    const attempt = it?.attempt ?? null;
-    if (!it || !attempt) return { state: "none", revision: null };
-    it.stopRequested = true;
-    await store.sql`update execution set state = 'stop_requested'
-      where id = ${attempt.id} and state in ('feed_intent', 'received', 'running')`;
-    // Only an engine that can say what it left behind can be stopped truthfully;
-    // one that cannot is asked nothing and reported as not proved.
-    const evidence = it.session?.interrupt ? await it.session.interrupt({ graceMs: request.graceMs ?? 5000 }).catch(() => null) : null;
+  /** The end of an attempt whose session was signalled, from what the signal proved. It can be made again: it is only writes. */
+  const endStopped = async (execution: string, evidence: Promise<ExitEvidence | null>): Promise<{ state: string; revision: number | null }> => {
     let known: Registry | null = null;
     try { known = load(); } catch { known = null; }
-    const ended = await endAttempt(store, { execution: attempt.id, evidence, cause: "stop requested", requested: true, registry: known });
+    const ended = await endAttempt(store, { execution, evidence: await evidence, cause: "stop requested", requested: true, registry: known });
     if (ended.state === "stop_unknown" || ended.state === "unknown") unresolvedWatch.raise();
     if (ended.revision !== null) contextWatch.raise();
     if (ended.state === "journaled") {
@@ -2278,16 +2336,97 @@ export async function runRunner(options: {
       // answer it produced, not an interruption of it: it is settled from the
       // journal now if the store will take it, and on every tick until it does.
       owesJournal();
-      await settleStored(store, { runner: options.runner, only: attempt.id });
-      const after = await readExecution(store, attempt.id);
+      await settleStored(store, { runner: options.runner, only: execution });
+      const after = await readExecution(store, execution);
       return { state: after?.state ?? "journaled", revision: null };
     }
     return { state: ended.state, revision: ended.revision };
+  };
+  /**
+   * Stop the attempt an agent is running, if this process is running it. The answer is
+   *   `none`     this process is not running that attempt, or it is running it but the store does not
+   *              say it is in a state a stop applies to (it settled, ended, or another caller's stop
+   *              is not this one's to repeat): NOTHING was signalled and nothing was marked, and the
+   *              caller judges the request from the store;
+   *   `opening`  the attempt is this process's and is passing from claimed to fed: either the store still
+   *              says claimed (its loop has not yet handed it to a session, and the resident session that
+   *              may still be there belongs to whatever ran before), or the statement below met it claimed
+   *              and the loop fed it before the read that followed. Not signalled, not marked; the request
+   *              is looked at again, and the next look finds it fed and stops it;
+   *   otherwise  the attempt's own state after the stop.
+   *
+   * THE ORDER, and why. (1) The store decides: the attempt is moved to `stop_requested` only from a
+   * fed state, and only what that statement RETURNS says it was moved (a row already `stop_requested`
+   * is a stop accepted earlier and not yet signalled, and is accepted again). (2) What was read before
+   * the await is read again after it: the same Live, running the same attempt. The attempt can settle
+   * and the next input can be opened during the await, and the attempt is then somebody else's.
+   * (3) THE SESSION IS THE ONE THE ACCEPTED ATTEMPT HAS WHEN THE ACCEPTANCE IS SEEN, read after the
+   * await and never before it. An attempt that is only claimed has no session of its own yet: a fresh
+   * child is installed (`spawn`) and fed while this statement is in flight, and the session read before
+   * it was the previous one or none. The loop installs the session before it feeds, and it does not
+   * replace the session of an attempt it has fed (a new session belongs to the next attempt, which the
+   * attempt check rejects), so the store's acceptance of a fed attempt names the session the Live holds
+   * once the answer is back. That session is read in the same synchronous step as the check, and the
+   * retirement is recorded in that step, naming the attempt and that session; it is what forbids any
+   * later feed to that session, and the one signal is sent to it, by the value read here and not by
+   * whatever `it.session` is later. A stop that fails at (1) records nothing at all, so a database
+   * failure leaves no intent behind, and one that loses at (2) clears nothing that another caller accepted.
+   */
+  const stopExecution = async (request: { agent: string; execution?: string; graceMs?: number }): Promise<{ state: string; revision: number | null }> => {
+    const none = { state: "none", revision: null };
+    const opening = { state: "opening", revision: null };
+    const it = live.get(request.agent);
+    const attempt = it?.attempt ?? null;
+    if (!it || !attempt || (request.execution !== undefined && attempt.id !== request.execution)) return none;
+    /**
+     * A stop already accepted for this very attempt on the session named is that same stop, waited for (and its
+     * ending made again if it failed). The session is an argument, so each caller says which one it means.
+     */
+    const standing = (session: AdapterSession | null): Promise<{ state: string; revision: number | null }> | null => {
+      const held = it.retiring;
+      return held && session !== null && held.execution === attempt.id && held.session === session
+        ? held.done.catch(() => (held.done = endStopped(attempt.id, held.evidence)))
+        : null;
+    };
+    // Only a shortcut: a stop that was accepted for what is running now is waited for and the store is not asked again.
+    const again = standing(it.session);
+    if (again) return await again;
+    const moved = await store.sql`update execution set state = 'stop_requested'
+      where id = ${attempt.id} and state in ('feed_intent', 'received', 'running') returning id`;
+    if (moved.length === 0) {
+      const now = await readExecution(store, attempt.id);
+      if (now?.state === "claimed") return opening;
+      // The statement met the attempt claimed and the loop fed it before this read: it is still this process's, still
+      // passing from claimed to fed, and not "not held here". Saying `none` would have the caller end a live, held
+      // attempt from its record without signalling it. Asked again by the caller's own bounded look, with the same checks.
+      if ((now?.state === "feed_intent" || now?.state === "received" || now?.state === "running")
+          && live.get(request.agent) === it && it.attempt?.id === attempt.id) return opening;
+      if (now?.state !== "stop_requested") return none;
+    }
+    // What was read before an await is only good if it is still the case.
+    const accepted = it.session;
+    if (live.get(request.agent) !== it || it.attempt?.id !== attempt.id || accepted === null) return none;
+    const meanwhile = standing(accepted);
+    if (meanwhile) return await meanwhile;
+    // Only an engine that can say what it left behind can be stopped truthfully;
+    // one that cannot is asked nothing and reported as not proved. The signal is sent
+    // ONCE, here, to the session accepted above, and only after the retirement is recorded.
+    const evidence = accepted.interrupt ? Promise.resolve().then(() => accepted.interrupt!({ graceMs: request.graceMs ?? 5000 })).catch(() => null) : Promise.resolve(null);
+    const retiring: NonNullable<Live["retiring"]> = { execution: attempt.id, session: accepted, evidence, done: undefined as never };
+    it.retiring = retiring;
+    retiring.done = endStopped(attempt.id, evidence);
+    return await retiring.done;
   };
   const controls = await watchControls(store, "runner", data => data.target_kind === "agent" &&
     agentsFor(load(), { runner: options.runner }).some(a => a.id === data.target_id),
     async data => { await recoverAgent({ id: String(data.id), agent: String(data.target_id) }); },
     { registry: () => load() });
+  // Durable stop requests for the attempts this runner owns: read at start and on the
+  // store's own notification, and stopped with `stopExecution` above (see `./stops.ts`).
+  const watching = await watchStops(store, { runner: options.runner, incarnation, here, registry: () => load(),
+    stop: request => stopExecution(request),
+    moved: what => { if (what === "unresolved") unresolvedWatch.raise(); else if (what === "hold") contextWatch.raise(); else owesJournal(); } });
+  stops = watching;
   return {
     runner: options.runner,
     recoverAgent,
@@ -2296,6 +2435,7 @@ export async function runRunner(options: {
       stopping = true;
       release();
       await controls.close();
+      await watching.close();
       await supervise;
       await Promise.allSettled([...live.values()].map((it) => it.done));
       // Nobody is measuring any more, so nothing measured is left standing as current.

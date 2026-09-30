@@ -72,11 +72,13 @@ export interface ResumeRequest {
 }
 export type HubTopicRequest = InspectRequest | ResumeRequest;
 
-function refuse(message: string): never {
+/** The refusal every reader below gives: named `invalid_arguments`, and it says what was wrong. */
+export function refuse(message: string): never {
   throw new ToolError("invalid_arguments", message);
 }
 
-function exact(value: unknown, allowed: readonly string[], where: string): Record<string, unknown> {
+/** An object that carries only the keys it may: any other key is refused, so no field a model could fill exists unless the schema names it. */
+export function exact(value: unknown, allowed: readonly string[], where: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) refuse(`${where} must be an object`);
   const record = value as Record<string, unknown>;
   const extra = Object.keys(record).filter(key => !allowed.includes(key));
@@ -84,46 +86,91 @@ function exact(value: unknown, allowed: readonly string[], where: string): Recor
   return record;
 }
 
-/** Read the arguments of a `hub_topic` call, refusing anything the schema does not name. */
-export function readTopicRequest(args: unknown): HubTopicRequest {
-  const top = exact(args, ["action", "request_key", "source_message_ids", "recovery_decision"], "arguments");
-  if (top.action === "inspect") {
-    exact(top, ["action"], "inspect");
-    return { action: "inspect" };
-  }
-  if (top.action !== "resume") throw new ToolError("unsupported_action", `hub_topic has no action ${JSON.stringify(top.action)} yet`);
+/** The `request_key` of a call that changes something: the caller's own idempotency, scoped to the conversation that made it. */
+export function readRequestKey(top: Record<string, unknown>, action: string): string {
   const key = top.request_key;
-  if (typeof key !== "string" || key === "" || key.length > 200) refuse("resume needs a request_key");
+  if (typeof key !== "string" || key === "" || key.length > 200) refuse(`${action} needs a request_key`);
+  return key;
+}
+
+/** The platform message ids a call cites as its evidence: one to ten, each a non-empty string, deduplicated and in order. */
+export function readSourceIds(top: Record<string, unknown>, action: string, why: string): string[] {
   const sources = top.source_message_ids;
   if (!Array.isArray(sources) || sources.length < 1 || sources.length > 10 || sources.some(one => typeof one !== "string" || one === "")) {
-    refuse("resume needs source_message_ids: the messages in which the owner chose");
+    refuse(`${action} needs source_message_ids: ${why}`);
   }
-  const decision = exact(top.recovery_decision, ["attempt_id", "expected_recovery_revision", "choice", "continuation_context"], "recovery_decision");
-  if (typeof decision.attempt_id !== "string" || decision.attempt_id === "") refuse("recovery_decision needs attempt_id");
-  if (!Number.isSafeInteger(decision.expected_recovery_revision) || (decision.expected_recovery_revision as number) < 1) refuse("recovery_decision needs expected_recovery_revision");
-  if (decision.choice !== "continue" && decision.choice !== "keep_held") refuse("choice is continue or keep_held");
-  if (decision.continuation_context !== undefined && (typeof decision.continuation_context !== "string" || decision.continuation_context.length > 4000)) {
-    refuse("continuation_context is text of at most 4000 characters");
-  }
-  return {
-    action: "resume",
-    request_key: key,
-    source_message_ids: [...new Set(sources as string[])].sort(),
-    recovery_decision: {
-      attempt_id: decision.attempt_id,
-      expected_recovery_revision: decision.expected_recovery_revision as number,
-      choice: decision.choice,
-      ...(decision.continuation_context !== undefined ? { continuation_context: decision.continuation_context as string } : {}),
-    },
-  };
+  return [...new Set(sources as string[])].sort();
 }
+
+/**
+ * One action of `hub_topic`: the keys it takes beside `action`, and how its
+ * arguments are read. Adding an action is one entry here, one in the handler table
+ * of `handlers.ts`, and the schema in `TOOLS` (which is what is advertised; nothing
+ * that is not listed there is offered to a model, and one that is asked for anyway
+ * is refused by name).
+ */
+interface ActionReader<R extends HubTopicRequest> {
+  keys: readonly string[];
+  read(top: Record<string, unknown>): R;
+}
+
+const TOPIC_ACTIONS: { [A in HubTopicRequest["action"]]: ActionReader<Extract<HubTopicRequest, { action: A }>> } = {
+  inspect: {
+    keys: [],
+    read: () => ({ action: "inspect" }),
+  },
+  resume: {
+    keys: ["request_key", "source_message_ids", "recovery_decision"],
+    read(top) {
+      const key = readRequestKey(top, "resume");
+      const sources = readSourceIds(top, "resume", "the messages in which the owner chose");
+      const decision = exact(top.recovery_decision, ["attempt_id", "expected_recovery_revision", "choice", "continuation_context"], "recovery_decision");
+      if (typeof decision.attempt_id !== "string" || decision.attempt_id === "") refuse("recovery_decision needs attempt_id");
+      if (!Number.isSafeInteger(decision.expected_recovery_revision) || (decision.expected_recovery_revision as number) < 1) refuse("recovery_decision needs expected_recovery_revision");
+      if (decision.choice !== "continue" && decision.choice !== "keep_held") refuse("choice is continue or keep_held");
+      if (decision.continuation_context !== undefined && (typeof decision.continuation_context !== "string" || decision.continuation_context.length > 4000)) {
+        refuse("continuation_context is text of at most 4000 characters");
+      }
+      return {
+        action: "resume",
+        request_key: key,
+        source_message_ids: sources,
+        recovery_decision: {
+          attempt_id: decision.attempt_id,
+          expected_recovery_revision: decision.expected_recovery_revision as number,
+          choice: decision.choice,
+          ...(decision.continuation_context !== undefined ? { continuation_context: decision.continuation_context as string } : {}),
+        },
+      };
+    },
+  },
+};
+
+/** Read the arguments of a `hub_topic` call, refusing anything the schema does not name. */
+export function readTopicRequest(args: unknown): HubTopicRequest {
+  const every = new Set(Object.values(TOPIC_ACTIONS).flatMap(one => one.keys));
+  const top = exact(args, ["action", ...every], "arguments");
+  const action = Object.hasOwn(TOPIC_ACTIONS, String(top.action)) ? (top.action as HubTopicRequest["action"]) : null;
+  if (action === null) throw new ToolError("unsupported_action", `hub_topic has no action ${JSON.stringify(top.action)} yet`);
+  exact(top, ["action", ...TOPIC_ACTIONS[action].keys], action);
+  return TOPIC_ACTIONS[action].read(top);
+}
+
+/**
+ * How each tool's arguments are read: a tool that is not here is `unknown_tool`,
+ * before anything of its arguments is looked at. A later tool is one entry here and
+ * one in the handler table.
+ */
+export const READERS: Record<string, (args: unknown) => { action: string }> = {
+  [HUB_TOPIC]: readTopicRequest,
+};
 
 /**
  * The canonical form a request is hashed in: keys in order, the request key
  * itself left out, so the same arguments hash the same however a model spelled
  * them, and a changed argument under the same key cannot hash the same.
  */
-export function canonical(request: HubTopicRequest): string {
+export function canonical(request: unknown): string {
   const sort = (value: unknown): unknown => Array.isArray(value) ? value.map(sort)
     : value && typeof value === "object"
       ? Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => key !== "request_key")
@@ -137,7 +184,7 @@ export interface ToolReply {
   operation_id: string | null;
   object_id: string | null;
   revision: number | null;
-  status: "accepted" | "queued" | "waiting_owner" | "complete" | "failed";
+  status: "accepted" | "queued" | "waiting_owner" | "stopping" | "stopped" | "complete" | "failed" | "unknown";
   stage: string;
   cause?: string;
   status_message?: string;
