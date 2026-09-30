@@ -78,6 +78,8 @@ import {
 } from "./lines.ts";
 import type { Platform, PlatformPull } from "./platform.ts";
 import { credentialKeyOf, waitFacts, waitReason } from "./reason.ts";
+import type { ApprovalHooks } from "./confirm.ts";
+import { startEffects, type EffectsTask } from "./effects-task.ts";
 
 /**
  * The one progress line this door posted for a message, while its turn is open.
@@ -334,6 +336,14 @@ export async function runDoor(options: {
   registryFile: string;
   platform: Platform;
   /**
+   * What acts on an owner's approval of a frozen preview, by the kind of operation the
+   * preview was for (`store/confirmations.ts`). A kind with nothing registered here is
+   * never approved by this door: its preview waits, and says why. Nothing registers
+   * one yet in a shipped door, because nothing yet freezes a preview; the door that
+   * owns an operation passes its own.
+   */
+  approvals?: ApprovalHooks;
+  /**
    * Stops a door that is still waiting for its cutover batch. Once
    * the door is ready, `stop()` on the handle is how it is stopped.
    */
@@ -410,6 +420,10 @@ export async function runDoor(options: {
   // Opened BEFORE the startup sweep, so a row committed between the sweep's
   // read and the listen is announced to a listener that already exists.
   let projecting: Promise<void> = Promise.resolve();
+  // The same wake carries the platform-message task's (`effects-task.ts`): its rows are
+  // announced on this channel too, with a payload that says so, so that task costs
+  // the door no connection of its own.
+  let effects: EffectsTask | null = null;
   let projection: Listener | null = null;
   let projectionClosed = false;
   let projectionRetry: ReturnType<typeof setTimeout> | null = null;
@@ -425,10 +439,16 @@ export async function runDoor(options: {
       projection = await listenForWork({
         url: store.url,
         channel: PROJECT_CHANNEL,
-        onNotify: (payload) => { if (payload === options.door) sweepSoon(); },
+        onNotify: (payload) => {
+          if (payload === options.door) sweepSoon();
+          else if (payload === `effect:${options.door}`) effects?.wake();
+        },
         // Every notification after a drop is gone, so the rows they announced
         // are found by sweeping once something is listening again.
-        onLost: () => { projection = null; void listenForProjection().then(() => { if (projection) sweepSoon(); }); },
+        onLost: () => {
+          projection = null;
+          void listenForProjection().then(() => { if (projection) { sweepSoon(); effects?.wake(); } });
+        },
       });
       if (projectionClosed) { await projection.close(); projection = null; }
     } catch {
@@ -437,7 +457,7 @@ export async function runDoor(options: {
       // and the sweep after a listen that finally opens finds what was missed.
       projectionRetry = setTimeout(() => {
         projectionRetry = null;
-        void listenForProjection().then(() => { if (projection) sweepSoon(); });
+        void listenForProjection().then(() => { if (projection) { sweepSoon(); effects?.wake(); } });
       }, timeoutMs);
     }
   };
@@ -737,14 +757,22 @@ export async function runDoor(options: {
           await options.platform.post({ chat: route.chat, text: chunk.body });
         } catch (error) {
           const failure = classifyPlatformError(error);
-          const terminal = failure.kind === "permanent" || attempts >= maxAttempts;
+          // A limit the platform named is waited out as named, and never sooner than
+          // the retry spacing. A request the platform seam HELD for a limit it already
+          // knew of never left, so it is not an attempt and is not a new failure to
+          // record: the limit that held it was.
+          const limit = error as { retryAfterMs?: unknown; blocked?: unknown } | null;
+          const named = typeof limit?.retryAfterMs === "number" ? limit.retryAfterMs : 0;
+          const held = limit?.blocked === true;
+          const spent = held ? Number(chunk.attempts) : attempts;
+          const terminal = failure.kind === "permanent" || spent >= maxAttempts;
           // The pre-send durable stamp may itself have waited on storage.
           // Space retries from the observed failure, not that earlier write.
-          const retry = terminal ? null : new Date(Date.now() + seconds * 1000).toISOString();
-          await store.sql`update outbox set delivery_state = ${terminal ? "failed" : "pending"},
+          const retry = terminal ? null : new Date(Date.now() + Math.max(seconds * 1000, named)).toISOString();
+          await store.sql`update outbox set attempts = ${spent}, delivery_state = ${terminal ? "failed" : "pending"},
             retry_at = ${retry}::timestamptz, failure = ${failure}::jsonb where id = ${chunk.id}`;
           if (terminal) projected.delete(chunk.id);
-          await recordOperationFailure(store, "post", options.door, route.chat, failure);
+          if (!held) await recordOperationFailure(store, "post", options.door, route.chat, failure);
           if (terminal) await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
             agent, chat: route.chat, health: health.health, key: `delivery-failed:${chunk.id}`,
             failure, operation: "post", seconds });
@@ -1981,6 +2009,26 @@ export async function runDoor(options: {
   await Promise.all([...served.values()].map((it) => it.transcribing));
   await Promise.all([...served.values()].map((it) => it.posting));
 
+  // The platform-message task. Ready means its connect reads are made, which is one
+  // statement for the rows it owes and one for the previews it waits on, and nothing
+  // after them while none is owed.
+  effects = startEffects({
+    store, platform: options.platform, door: options.door, hooks: options.approvals ?? {},
+    registry: () => registryThisTick(),
+    settings: () => {
+      const fresh = registryThisTick();
+      return { retrySeconds: Number(readSetting(fresh, "door.delivery_retry_seconds")),
+        maxAttempts: Number(readSetting(fresh, "door.delivery_max_attempts")) };
+    },
+    tickMs: timeoutMs,
+    gate: (read) => {
+      const turn = connectGate.then(read);
+      connectGate = turn.then(() => {}, () => {});
+      return turn;
+    },
+  });
+  await effects.ready;
+
   const supervise = (async () => {
     while (!stopping) {
       await Promise.race([Bun.sleep(timeoutMs), stopped]);
@@ -2045,6 +2093,7 @@ export async function runDoor(options: {
       release();
       await supervise;
       await Promise.allSettled([...served.values()].flatMap((it) => [it.done, it.readDone]));
+      await effects?.stop();
       await closeProjection();
       await ingress.close();
       await store.close();
