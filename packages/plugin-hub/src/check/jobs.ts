@@ -31,6 +31,8 @@ export async function readOpenJobs(
   const rows = (await store.sql`
     select id, agent, person, received_at from inbound
     where kind = 'job' and state not in ('answered', 'delivered')
+      -- A held job is not late: it is waiting for its owner, and \`attempt-held\` says so.
+      and not hub_row_held(id)
     order by received_at, id`) as unknown as OpenJobRow[];
   return rows
     .filter((row) => mine.has(row.agent))

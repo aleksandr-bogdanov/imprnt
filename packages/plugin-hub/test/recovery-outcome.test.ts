@@ -81,7 +81,7 @@ test("IMP-160 D-178 a refused chat recovery tells the chat it came from, once, w
 
 for (const phase of ["unnoticed", "exit", "memory"] as const) {
   const defective = phase === "unnoticed"
-  test(`IMP-160 D-175 a child that dies under a person's message ${defective ? "unnoticed (control) says nothing" : `by ${phase === "exit" ? "exiting" : "the memory limit"} tells that chat once when it will retry`}`, async () => {
+  test(`IMP-160 D-175 a child that dies under a person's message ${defective ? "unnoticed (control) says nothing" : `by ${phase === "exit" ? "exiting" : "the memory limit"} tells that chat once that the input is held and what decides it, and does not retry it`}`, async () => {
     const it = await stageHub(cluster, {
       hub: { tick_seconds: 1 },
       agents: [{ id: "p2-lair", person: "p2", preset: "daily", runner: "runner-pi", door: "door-fake", chat: "0000000000" }],
@@ -101,16 +101,26 @@ for (const phase of ["unnoticed", "exit", "memory"] as const) {
       edge.hold(() => false)
       if (phase === "memory") target.grow(200)
       else target.fail()
+      // The input reached the engine before the child died, so what it did is
+      // unknown and a retry would repeat it. The person is told what is held and
+      // the exact command that decides it, and the row is not tried again.
+      const holds = () => it.read.noticeRows().then(rows => rows.filter(row => String(row.notice_key).startsWith("hold:")))
       const retries = () => it.read.noticeRows().then(rows => rows.filter(row => String(row.notice_key).startsWith("agent-retry")))
-      const told = await observe(async () => (await retries()).length > 0, phase === "memory" ? 6000 : 2500)
+      const told = await observe(async () => (await holds()).length > 0, phase === "memory" ? 6000 : 2500)
       if (defective) { expect(told).toBe(false); return }
       expect(told, "the person whose message the child died under is told").toBe(true)
-      const cause = phase === "memory" ? "memory limit reached" : "child exited"
-      expect((await retries()).map(row => [row.person, row.agent, row.body])).toEqual([["p1", "p1-lair", `[door] p1-lair stopped: ${cause}. I will retry in 1 s.`]])
+      const [attempt] = await it.read.sql("select id from execution where inbound_id = 'interrupted'")
+      const said = await holds()
+      expect(said.map(row => [row.person, row.agent])).toEqual([["p1", "p1-lair"]])
+      expect(said[0].body).toContain("its input is held")
+      expect(said[0].body).toContain(`/recover p1-lair ${attempt.id} 1 continue`)
+      expect(said[0].body).toContain(`/recover p1-lair ${attempt.id} 1 keep-held`)
       expect((await it.read.sql("select route from outbox where kind = 'notice'"))[0].route).toEqual({ door: "door-fake", chat: "1000000001" })
-      // The retry answers, and the same message is not announced twice.
-      expect(await observe(async () => (await it.read.outbox()).some(row => row.inbound_id === "interrupted"), 5000)).toBe(true)
-      expect(await retries()).toHaveLength(1)
+      // No retry is promised and none happens, and the same attempt is not announced twice.
+      expect(await retries()).toHaveLength(0)
+      await Bun.sleep(2500)
+      expect((await it.read.outbox()).some(row => row.inbound_id === "interrupted")).toBe(false)
+      expect(await holds()).toHaveLength(1)
     } finally { await runner?.stop(); await edge.stop(); await it.stop() }
   })
 }

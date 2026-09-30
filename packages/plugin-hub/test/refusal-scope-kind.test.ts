@@ -30,7 +30,9 @@ test(
       preset: { credential: "shared-login" },
     });
     retrySettings(it);
-    const edge = controlledAdapter(it.adapterName);
+    // The local refusal below is terminal for the input the engine was handed, so that input is held and the
+    // next message is a fresh turn on a resumed conversation, which needs a loop that says it can resume.
+    const edge = controlledAdapter(it.adapterName, false, { capabilities: { stableSession: true, safeResume: true, delegationDisabled: true } });
     let mode: "healthy" | "local" | "login" = "healthy";
     const configure = (row: (typeof edge.sessions)[number]) => {
       row.loop.setRefusal(mode === "healthy" ? null
@@ -60,6 +62,9 @@ test(
       expect(local[0].kind).toBe("refused.local");
       expect(local[0].actor).toBe("runner");
       expect(local[0].detail.cause).toBe("other");
+      // ...and the refused input is held, carrying no retry that the diary line could be read as promising.
+      expect(local[0].detail.retry_at).toBeNull();
+      expect((await it.read.sql("select 1 from replay_hold where inbound_id = 'local-refusal'")).length).toBe(1);
 
       // --- 2. THE CONTROL. A verified shared login refusal opens the outage
       //     and keeps the outage label.

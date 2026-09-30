@@ -41,6 +41,16 @@ export interface DispatchEnvelope {
    * know when the last one has landed.
    */
   council?: { id: string; seats: string[]; seat: string };
+  /**
+   * The conversation this job continues, when the person asked for a follow-up
+   * and not a new job. Absent, the job gets a conversation of its own. It is
+   * outside the approved digest on purpose: what was approved is the task, and
+   * the runner refuses a conversation that is not this worker's and this
+   * person's.
+   */
+  conversation?: string;
+  /** The held input this job continues, set by the owner's recovery choice. */
+  continues?: string;
 }
 
 /**

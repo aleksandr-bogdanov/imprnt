@@ -221,6 +221,13 @@ export async function runInstall(options: { registryFile: string; stage?: string
     await store.sql`select source, log_ready, media_state from inbound limit 0`;
     await store.sql`select route, delivery_state from outbox limit 0`;
     await store.sql`select 'hub_report(text, text)'::regprocedure`;
+    // Conversations and attempts: the runner refuses to serve without them, so a
+    // box whose step 11 did not land says so here, by the function that guards
+    // the claim, and not on the first turn.
+    await store.sql`select 'hub_row_held(text)'::regprocedure`;
+    await store.sql`select 'hub_hold_choice(text, text, integer, text, text, jsonb, text)'::regprocedure`;
+    await store.sql`select runner_protocol from hub_protocol limit 0`;
+    await store.sql`select runner, incarnation from runner_incarnation limit 0`;
     // The newest step grants rather than creates, so what is probed is the
     // grant itself: without it this hub applies a lifecycle control and cannot
     // say a word about it in the chat that asked.

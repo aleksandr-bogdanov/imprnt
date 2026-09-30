@@ -5,6 +5,7 @@ import { appendEntry } from "../records/diary.ts";
 import { stamp } from "../records/stamps.ts";
 import { putRow } from "../records/statesheet.ts";
 import { appendChunks, appendNotice } from "../store/outbox.ts";
+import { completeExecution, type SettleFence } from "../store/conversations.ts";
 import { clearProgress } from "./progress.ts";
 import { recordSeatAnswer } from "./council.ts";
 import type { Price } from "../registry/presets.ts";
@@ -70,7 +71,15 @@ export async function settleTurn(
   store: StoreLike,
   turn: { inboundId: string; chunks: string[]; turn: TurnRecord; person?: string; source?: InboundSource | null; imported?: Record<string, unknown>; receipts?: ({ at: string } | null)[];
     /** What the row was. A `job` reports instead of writing chunks. */
-    kind?: string },
+    kind?: string;
+    /**
+     * The attempt this settles. It completes in this same transaction, under the
+     * fence it names: the normal settle needs the current incarnation on the
+     * placement the attempt started on, and only the deliberate recovery of a
+     * result the attempt journaled asks for neither. A settle that is not allowed
+     * meets `ExecutionNotOwned` and writes nothing.
+     */
+    execution?: { id: string; runner: string; fence: SettleFence } },
 ): Promise<void> {
   await store.sql.begin(async (tx) => {
     const inside = { ...store, sql: tx as unknown as StoreLike["sql"] };
@@ -133,6 +142,10 @@ export async function settleTurn(
       actor: "runner",
       detail: turn.turn as unknown as Record<string, unknown>,
     });
+    // The attempt completes with the reply, or neither does.
+    if (turn.execution) {
+      await completeExecution(inside, { execution: turn.execution.id, runner: turn.execution.runner, reply: turn.chunks.join("\n"), fence: turn.execution.fence });
+    }
     // The open turn's progress row goes with the settle, inside the one
     // transaction, so the door never edits a line about a turn that has ended.
     await clearProgress(inside, turn.inboundId);
@@ -215,7 +228,11 @@ export async function refuseTurn(
     agent: string;
     cause: string;
     said: string;
-    retryAt: string;
+    /**
+     * When the row is tried again, or null when it is not: an input the engine was
+     * handed is held and is never tried again by the runner, so it carries no retry.
+     */
+    retryAt: string | null;
     /**
      * Which refusal this is. `refused.harvest` is the one a household
      * reading its own diary needs to tell a dead login from a note the vault
@@ -244,6 +261,10 @@ export async function refuseTurn(
       },
     });
     await clearProgress(inside, refusal.inboundId);
+    if (refusal.retryAt === null) {
+      await tx`update inbound set claimed_by = null, claim_deadline = null where id = ${refusal.inboundId}`;
+      return;
+    }
     await tx`update inbound
                 set claimed_by = null, claim_deadline = null, retry_at = ${refusal.retryAt}
               where id = ${refusal.inboundId}`;

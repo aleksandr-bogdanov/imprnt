@@ -38,7 +38,7 @@ const PAST_THE_DEADLINE_MS = 50;
  */
 export async function readEligible(
   store: StoreLike,
-  where: { agent: string },
+  where: { agent: string; resumeOk?: boolean; runner?: string },
 ): Promise<EligibleRow[]> {
   return (await store.sql`
     select id, person, agent, body, kind, rank, received_at, state,
@@ -48,6 +48,11 @@ export async function readEligible(
       and log_ready and state not in ('answered', 'delivered')
       and (claimed_by is null or (claim_deadline is not null and claim_deadline <= now()))
       and (retry_at is null or retry_at <= now())
+      and not hub_row_held(id)
+      -- A scheduled harvest asks the ownership question too. With no runner named the
+      -- answer is the strictest one: any unresolved attempt of the agent holds it.
+      and not (case when kind = 'harvest' then hub_harvest_blocked(agent, ${where.runner ?? null}::text) else hub_agent_blocked(agent) end)
+      and (${where.resumeOk ?? false}::boolean or not hub_row_needs_resume(id, agent, kind, source))
     order by rank, received_at, id`) as unknown as EligibleRow[];
 }
 

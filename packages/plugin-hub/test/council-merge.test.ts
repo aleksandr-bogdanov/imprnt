@@ -219,14 +219,15 @@ test("the door's late mark on the sheet row survives a seat's settle, and the la
   } finally { await door.close(); await runner.close(); await store.close(); await it.stop() }
 }, 60_000)
 
-test("a seat whose loop keeps refusing is given up on by its runner once the grace has run out, with no retry line, and the council completes", async () => {
-  // The scripted loop refuses every turn. The grace is one second and the
-  // refusal retry is one second, so the second refusal of each seat falls
-  // past the grace and is the one that gives the seat up. No door runs, so
-  // the door's own give-up cannot be what closes a seat here. The council is
-  // the second person's two seats, because the one runner admits four
-  // children and the two resident chat agents already hold two of them.
-  const it = await rolloutStage(cluster, "telegram", { council: true, hub: { job_grace_seconds: 1, outage_retry_seconds: 1 }, adapter: { refusals: 1000 } })
+test("a seat whose loop refused the turn it was handed is HELD for its owner and not given up on: the grace running out abandons nothing, each seat was fed once, and the council stays open", async () => {
+  // The scripted loop refuses every turn, and says its child is gone once closed (`exitProof`), so a
+  // refused seat is a terminal, held attempt. The grace is one second: a seat the engine was handed is
+  // not one nobody works on, and closing the council over it would merge a partial council and stamp
+  // answered work the model never answered (design §4: an expected council member still asks the
+  // owner rather than being retried or dropped). No door runs, so the door's own give-up cannot be
+  // what closes a seat here. The council is the second person's two seats, because the one runner
+  // admits four children and the two resident chat agents already hold two of them.
+  const it = await rolloutStage(cluster, "telegram", { council: true, hub: { job_grace_seconds: 1, outage_retry_seconds: 1 }, adapter: { refusals: 1000, exitProof: true } })
   const store = await superStore(cluster, it.db)
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   try {
@@ -236,32 +237,31 @@ test("a seat whose loop keeps refusing is given up on by its runner once the gra
     const council = { ...made, jobs: (await it.read.inbound()).filter(r => r.kind === "job" && String(r.id).startsWith(made.id + ":")) }
     expect(council.jobs.map(j => j.agent).sort()).toEqual([...COUNCIL_SEATS_RU].sort())
     runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile, adapters: { [it.adapterName]: it.scripted.adapter } })
-    await until("every seat is given up on and the merge lands", async () =>
-      (await it.read.inbound()).some(r => r.id === mergeIdOf(council.id)), 60_000,
+    await until("every seat was handed the turn, refused it and is held", async () =>
+      Number((await it.read.sql("select count(*)::int as n from replay_hold h join inbound i on i.id = h.inbound_id where i.kind = 'job'"))[0].n) === council.jobs.length, 60_000,
       async () => JSON.stringify({ rows: await it.read.sql("select id, state, claimed_by, retry_at, now() as now from inbound where kind = 'job'"),
         refusals: (await it.read.ledger({ stream: "refusal" })).map(e => [e.subject, e.kind, e.detail]),
         health: await it.read.sheet("agent_health") }))
+    // Long past the grace (one second) and the retry interval (one second), and several ticks.
+    await Bun.sleep(4000)
     const rows = await it.read.inbound()
     for (const job of council.jobs) {
-      expect(rows.find(r => r.id === job.id)!.state).toBe("answered")
+      expect(rows.find(r => r.id === job.id)!.state, "not stamped answered: the model never answered it").not.toBe("answered")
       expect(rows.find(r => r.id === `report:${job.id}`)).toBeUndefined()
-      const abandoned = await it.read.ledger({ subject: job.id, kind: "dispatch.abandoned" })
-      expect(abandoned).toHaveLength(1)
-      expect(abandoned[0]).toMatchObject({ actor: "runner" })
-      expect(abandoned[0].detail).toMatchObject({ agent: job.agent, runner: "runner-pi", cause: "login", council: council.id })
-      // Each seat was refused at least once and written down as refused, and
-      // the give-up came after a refusal past the grace.
+      expect(await it.read.ledger({ subject: job.id, kind: "dispatch.abandoned" }), "a seat the engine was handed is never abandoned").toEqual([])
+      // Each seat was refused once, written down as refused with no retry, fed once and has one attempt.
       const refused = await it.read.ledger({ stream: "refusal", subject: job.id })
-      expect(refused.length).toBeGreaterThanOrEqual(1)
-      expect(refused.at(-1)!.detail).toMatchObject({ retry_at: null })
+      expect(refused).toHaveLength(1)
+      expect(refused[0].detail).toMatchObject({ retry_at: null, cause: "login" })
+      expect(it.scripted.fed().filter(one => one.id === job.id)).toHaveLength(1)
+      expect((await it.read.sql("select state from execution where inbound_id = $1", [job.id])).map(r => r.state)).toEqual(["interrupted"])
     }
-    const merge = rows.find(r => r.id === mergeIdOf(council.id))!
-    expect(merge.agent).toBe("p2-lair")
-    for (const n of [1, 2]) expect(merge.body).toContain(`Seat ${n}:\nno answer`)
-    expect(merge.body).not.toContain("Seat 3")
-    expect(await it.read.sheet(COUNCIL_SHEET)).toEqual([])
-    expect((await it.read.ledger({ kind: "council.merged" }))).toHaveLength(1)
-    // Nothing told the chat a seat stopped or will be retried.
+    // The council waits for its owner instead of merging without its seats.
+    expect(rows.find(r => r.id === mergeIdOf(council.id))).toBeUndefined()
+    expect((await it.read.sheet(COUNCIL_SHEET)).length).toBe(1)
+    expect((await it.read.ledger({ kind: "council.merged" }))).toEqual([])
+    // Every seat's owner is told which attempt and which command decides it; nobody is told a seat will be retried.
+    expect((await it.read.noticeRows()).filter(one => String(one.notice_key).startsWith("hold:")).length).toBe(council.jobs.length)
     expect((await it.read.noticeRows()).filter(one => String(one.notice_key).startsWith("agent-retry:"))).toEqual([])
   } finally { await runner?.stop(); await store.close(); await it.stop() }
 }, 90_000)

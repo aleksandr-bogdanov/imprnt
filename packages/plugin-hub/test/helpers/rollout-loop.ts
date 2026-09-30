@@ -226,7 +226,7 @@ export function capabilityProbe(bin: string, env: Record<string, string | undefi
  * one place both boxes let a command read and write that is nobody's tree.
  */
 export type Hang = "never" | "first" | "always"
-export function scriptedClaude(hang: Hang = "never") {
+export function scriptedClaude(hang: Hang = "never", version = "2.1.0") {
   const dir = realpathSync(mkdtempSync("/tmp/hub-scripted-claude-"))
   const bin = join(dir, "claude"), log = join(dir, "calls")
   writeFileSync(log, "")
@@ -238,8 +238,8 @@ export function scriptedClaude(hang: Hang = "never") {
       `log=${JSON.stringify(log)}`,
       'printf \'%s\\n\' "$*" >> "$log"',
       'case "$1" in',
-      "  --version) echo '2.1.0 (Claude Code)' ;;",
-      "  --help) echo 'Options: --settings --setting-sources --strict-mcp-config --tools' ;;",
+      `  --version) echo '${version} (Claude Code)' ;;`,
+      "  --help) echo 'Options: --settings --setting-sources --strict-mcp-config --tools --session-id --resume --disallowedTools' ;;",
       "  auth)",
       "    n=$(grep -c '^auth status' \"$log\")",
       hangs[mode],
@@ -259,9 +259,12 @@ export function scriptedClaude(hang: Hang = "never") {
   install(hang)
   const calls = () => readFileSync(log, "utf8").split("\n").filter(Boolean)
   // The same file overwritten where it stands: same inode, same size, other bytes.
+  // A build the probe has not measured reports 2.1.0 and 2.1.1 in turn; any other version keeps the one it
+  // reports and changes another byte, so that a rewrite of a measured build is not an update to another.
   const rewrite = () => {
     const text = readFileSync(bin, "utf8")
-    writeFileSync(bin, text.includes("2.1.0 (") ? text.replace("2.1.0 (", "2.1.1 (") : text.replace("2.1.1 (", "2.1.0 ("))
+    writeFileSync(bin, text.includes("2.1.0 (") ? text.replace("2.1.0 (", "2.1.1 (") : text.includes("2.1.1 (") ? text.replace("2.1.1 (", "2.1.0 (")
+      : text.includes("(Claude Code)") ? text.replace("(Claude Code)", "(Claude Codf)") : text.replace("(Claude Codf)", "(Claude Code)"))
   }
   return { dir, bin, calls, auth: () => calls().filter(line => line.startsWith("auth status")).length,
     replace: install, rewrite, stop() { rmSync(dir, { recursive: true, force: true }) } }

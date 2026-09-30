@@ -47,6 +47,7 @@ import { writeRegistry } from "./helpers/registry.ts"
 import { requirePasswords } from "./helpers/scram.ts"
 import { loadRegistry } from "../src/registry/load.ts"
 import { getPreset } from "../src/registry/presets.ts"
+import { VALIDATED_ORDINARY_PROFILES } from "../src/adapters/claude-code.ts"
 
 const SLOW = 120_000
 const ROLES = ["hub_door", "hub_runner", "hub_agent", "hub_hub"]
@@ -111,6 +112,8 @@ async function launchOf(h: Household) {
   const agent = registry.agents.find(one => one.id === "p1-lair")!
   return (makeLoopLaunch as Function)({
     registry, agent, preset: getPreset(registry, "daily"), purpose: "ordinary",
+    // The agent names no tools, so the launch gets the profile a build validated, as production gives it.
+    toolProfile: VALIDATED_ORDINARY_PROFILES["2.1.285"],
     credential: (credentialSource as Function)(registry, "daily"),
     sessionDir: join(h.stateDir, "p1", "sessions", "p1-lair", crypto.randomUUID()),
     box: (boxContextFor as Function)(registry, "p1-lair"),

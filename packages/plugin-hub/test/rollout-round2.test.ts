@@ -27,6 +27,9 @@ afterAll(async () => { await cluster?.stop() })
 
 test("L05 ordinary runner passes the complete selected recipe to the real adapter", async () => {
   const f = loopFixture()
+  // A selected recipe with one synthetic server, so the pass-through check has something to keep or lose.
+  // It is only ever written into the captured launch; nothing connects to it.
+  writeFileSync(f.files.mcp, JSON.stringify({ mcpServers: { "p1-memory": { type: "http", url: "http://127.0.0.1:9/mcp" } } }))
   const it = await stageHub(cluster, { registry: base => ({ ...base,
     people: [{ id: "p1", tree: f.trees.person("p1").tree }],
     credentials: [f.credential],
@@ -48,7 +51,19 @@ test("L05 ordinary runner passes the complete selected recipe to the real adapte
       expect(appended(got.fragment).preamble, "L05 the code's own section opens the prompt").toBe(true)
       expect(got.fragment.endsWith(readFileSync(f.files.fragment, "utf8")), "L05 runner fragment bytes close it").toBe(true)
       expect(got.settings, "L05 runner allow and deny lists").toEqual(JSON.parse(readFileSync(f.files.settings, "utf8")))
-      expect(got.mcp, "L05 runner MCP").toEqual(JSON.parse(readFileSync(f.files.mcp, "utf8")))
+      // The launch adds the hub's own tool facade beside the person's servers. What the agent selected is
+      // passed on exactly, and the one added entry is the runner's bound facade: its interpreter and server
+      // file, and an environment of the socket and token alone, so no database login rides along.
+      const selected = JSON.parse(readFileSync(f.files.mcp, "utf8"))
+      expect(selected.mcpServers.hub, "the selected recipe does not itself name a hub server").toBeUndefined()
+      const { hub, ...servers } = got.mcp.mcpServers
+      expect(Object.keys(selected.mcpServers), "the selected recipe names a server to keep").not.toEqual([])
+      expect({ ...got.mcp, mcpServers: servers }, "L05 runner MCP keeps every selected server exactly").toEqual(selected)
+      expect(hub.command, "L05 hub facade runs on the runner's interpreter").toBe(process.execPath)
+      expect(hub.args, "L05 hub facade runs the shipped server").toEqual([hubPath("src/mcp/server.ts")])
+      expect(Object.keys(hub.env).sort(), "L05 hub facade env is the binding and nothing else").toEqual(["HUB_MCP_SOCKET", "HUB_MCP_TOKEN"])
+      expect(hub.env.HUB_MCP_SOCKET, "L05 hub facade socket is the launch's own directory").toMatch(/[\\/]hub-mcp-[^\\/]+[\\/]s$/)
+      expect(hub.env.HUB_MCP_TOKEN, "L05 hub facade token is the launch's own").toMatch(/^[0-9a-f-]{36}$/)
       expect(got.argv).toContain("--dangerously-skip-permissions")
       expect(got.argv).toContain("--strict-mcp-config")
       const at = got.argv.indexOf("--tools")
@@ -60,8 +75,15 @@ test("L05 ordinary runner passes the complete selected recipe to the real adapte
       expect(got.ambient).toEqual([])
     }
     const got = JSON.parse(readFileSync(capture, "utf8"))
-    for (const field of ["fragment", "settings", "mcp", "credentialDigest"]) expect(() => accepts({ ...got, [field]: null })).toThrow()
+    // The real capture must pass first, so an oracle that refuses everything cannot make the controls below count.
     accepts(got)
+    for (const field of ["fragment", "settings", "mcp", "credentialDigest"]) expect(() => accepts({ ...got, [field]: null })).toThrow()
+    // Control on the two halves of the MCP check: a launch without the facade, one that lost a selected
+    // server, and one whose facade carries anything more than its binding are each refused.
+    const { hub, ...servers } = got.mcp.mcpServers
+    expect(() => accepts({ ...got, mcp: { ...got.mcp, mcpServers: servers } })).toThrow()
+    expect(() => accepts({ ...got, mcp: { ...got.mcp, mcpServers: { hub } } })).toThrow()
+    expect(() => accepts({ ...got, mcp: { ...got.mcp, mcpServers: { ...servers, hub: { ...hub, env: { ...hub.env, DATABASE_URL: "postgres://synthetic" } } } } })).toThrow()
   } finally { await runner?.stop(); await it.stop(); f.stop() }
 })
 

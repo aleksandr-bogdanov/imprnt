@@ -19,13 +19,11 @@ export function adapterFor(adapters: Record<string, Adapter>, name: string): Ada
 
 /** Synthetic adapters need no real login, but cannot silently inherit explicit sources. */
 export async function loopLaunch(input: LoopLaunchInput, probe: LoopProbeOptions = {}) {
-  const { makeLoopLaunch, sessionBox } = await import("./launch.ts");
-  if (input.preset.adapter === claudeCode.name) {
-    // Probed once per binary and login, and the login is checked every time.
-    const { credentialSource, loopCapabilitiesFor } = await import("./launch.ts");
-    await loopCapabilitiesFor(input.credential ?? credentialSource(input.registry, input.agent.preset), probe);
-    return makeLoopLaunch(input);
-  }
+  const { sessionBox } = await import("./launch.ts");
+  // What a launch is made of is the engine's own, so it is prepared by the
+  // adapter that names it. Nothing here knows what Claude needs.
+  const own = ADAPTERS[input.preset.adapter];
+  if (own?.prepareLaunch) return await own.prepareLaunch(input, probe);
   if ([input.agent.fragment, input.agent.settings, input.agent.mcp, input.agent.tools]
       .some(value => value !== undefined)) throw new Error("loop-configuration-unsupported");
   return input.box.tree ? sessionBox(input) : {};
@@ -36,5 +34,8 @@ export async function checkLoopSource(registry: unknown, presetName: string, pro
   if (getPreset(registry, presetName).adapter !== claudeCode.name) return;
   const { credentialSource, validateCredentialSource, probeLoopCapabilities } = await import("./launch.ts");
   validateCredentialSource(credentialSource(registry, presetName));
-  await probeLoopCapabilities(probe.bin, probe.timeoutMs, probe.writePaths);
+  const found = await probeLoopCapabilities(probe.bin, probe.timeoutMs, probe.writePaths);
+  // A build that cannot deny a tool cannot be launched with native delegation
+  // off, and that is said as what it is and not as a bad login.
+  if (!found.native.includes("--disallowedTools")) throw new Error("native-delegation-unsupported");
 }

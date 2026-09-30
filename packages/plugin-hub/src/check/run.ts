@@ -50,6 +50,7 @@ import { readVoiceState, transcribingFindings, voiceFindings } from "./voice.ts"
 import { kernelFindings, type KernelView } from "./kernel.ts";
 import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
+import { holdFindings, readOpenHolds } from "./holds.ts";
 import { readWatchState, watchFindings } from "./watch.ts";
 import { councilFindings, readOpenCouncils } from "./council.ts";
 import { silentRunners } from "./silence.ts";
@@ -689,6 +690,8 @@ export async function runCheck(options: {
         now,
       }),
     );
+    // --- every input held after an interrupted attempt ----------------------
+    findings.push(...holdFindings({ holds: await readOpenHolds(options.store, { agents: mine.map((agent) => agent.id) }), machine }));
     // --- every council past the grace with seats still open (criterion 2) --
     //
     //     One finding per council and not per seat, the way the door says it
@@ -915,6 +918,14 @@ export async function runCheck(options: {
           findings.push({ id: findingId(machine, kind, preset), kind, subject: preset, machine,
             says: findingLine("en", { code: kind, target: preset, cause: `claude ${call} timed out after ${timeoutMs / 1000} s, twice` }),
             fix: `run claude ${call} by hand to see whether it answers, then imprnt hub check ${options.registryFile}`,
+          });
+          continue;
+        }
+        if ((error as Error)?.message === "native-delegation-unsupported") {
+          const named = "native-delegation-unsupported";
+          findings.push({ id: findingId(machine, named, preset), kind: named, subject: preset, machine,
+            says: findingLine("en", { code: named, target: preset, cause: "the installed claude cannot deny a tool, so a launch cannot remove native delegation" }),
+            fix: `install a claude build whose help names --disallowedTools, then imprnt hub check ${options.registryFile}`,
           });
           continue;
         }

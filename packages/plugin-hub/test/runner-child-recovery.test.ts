@@ -74,12 +74,32 @@ for (const phase of ["ordinary", "tail", "memory"] as const) {
         expect(Number.isFinite(retryAt)).toBe(true)
         expect((await it.read.inbound()).find(r => r.id === "interrupted")!.claimed_by).toBeNull()
         expect((await it.read.sheet("turn_progress")).filter(r => r.id === "interrupted")).toEqual([])
-        expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "interrupted"), 5000), "D-175 pending answer resumes").toBe(true)
-        const successor = edge.sessions.find(r => r !== target && r.fed.some(m => m.id === "interrupted"))!
-        expect(successor).toBeDefined()
-        expect(successor.loop.starts()[0].at).toBeGreaterThanOrEqual(retryAt)
-        expect(successor.fed[0].text).toContain("recovery-tail-codeword")
-        expect(successor.session.pid).not.toBe(target.session.pid)
+        if (phase === "tail") {
+          // The child died before the engine had been handed the input, so
+          // nothing was attempted and the row is tried again as it always was.
+          expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "interrupted"), 5000), "D-175 pending answer resumes").toBe(true)
+          const successor = edge.sessions.find(r => r !== target && r.fed.some(m => m.id === "interrupted"))!
+          expect(successor).toBeDefined()
+          expect(successor.loop.starts()[0].at).toBeGreaterThanOrEqual(retryAt)
+          expect(successor.fed[0].text).toContain("recovery-tail-codeword")
+          expect(successor.session.pid).not.toBe(target.session.pid)
+        } else {
+          // The child died AFTER it was handed the input. What it did is not
+          // known, so the input is held for its owner: no successor is fed it,
+          // however long the retry deadline has passed, and the owner is told
+          // what to type.
+          const attempts = await it.read.sql("select id, state from execution where inbound_id = 'interrupted'")
+          expect(attempts).toHaveLength(1)
+          expect(attempts[0].state, "an attempt whose processes are all gone is interrupted, not unknown").toBe("interrupted")
+          const held = await it.read.sql("select cause, state, revision from replay_hold where inbound_id = 'interrupted'")
+          expect(held).toEqual([{ cause: "interrupted", state: "held", revision: 1 }])
+          await Bun.sleep(2500)
+          expect(edge.sessions.filter(r => r !== target && r.fed.some(m => m.id === "interrupted")), "D-175 an interrupted input is never fed again by machinery").toEqual([])
+          expect((await it.read.outbox()).some(r => r.inbound_id === "interrupted")).toBe(false)
+          const notice = (await it.read.noticeRows()).find(r => r.notice_key === `hold:${attempts[0].id}:1`)
+          expect(notice, "the owner is told which attempt and which command").toBeDefined()
+          expect(notice!.body).toContain(`/recover p1-lair ${attempts[0].id} 1 continue`)
+        }
         await insertInbound(cluster, it.db, { id: "sibling-after", body: "still here", person: "p2", agent: "p2-lair" })
         expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "sibling-after"))).toBe(true)
         expect(sibling.fed.some(m => m.id === "sibling-after")).toBe(true)

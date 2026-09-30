@@ -10,6 +10,9 @@ import { message } from "./helpers/rollout-ingress.ts"
 import { observe } from "./helpers/rollout-runner.ts"
 import { commandHarness } from "./helpers/rollout-command.ts"
 import { runHub } from "../src/hub/run.ts"
+import { requestHoldChoice } from "../src/door/recovery.ts"
+import { loadRegistry } from "../src/registry/load.ts"
+import type { StoreLike } from "../src/store/connect.ts"
 import { createScriptedAdapter, serveAdapter, childGone } from "./helpers/scripted-adapter.ts"
 let cluster: Cluster
 beforeAll(async () => { cluster = await startCluster() })
@@ -157,12 +160,15 @@ test("ROLL-22 operator door recovery loads atomically replaced token and preserv
   } finally {await hub?.stop();for(const c of children.reverse())await c.stop();await server.stop(true);await adapterServer.stop();await store.close();await f.stop()}
 })
 
-test("ROLL-22 recovery releases an in-flight target claim and leaves a healthy sibling serving", async () => {
+test("ROLL-22 recovery releases an in-flight target claim without replaying what the engine was handed, leaves a healthy sibling serving, and the target is served again by a fresh input and by the owner's explicit continuation", async () => {
   const it = await rolloutStage(cluster, "telegram", { machines: [{ id: "mac", os: process.platform === "darwin" ? "macos" : "linux" }], registry: base => ({ ...base, agents: base.agents!.map(a => ({ ...a, person: "p1" })) }) })
   const store = await superStore(cluster, it.db)
+  const door = { sql: cluster.connectAs("hub_door", it.db), url: cluster.url(it.db) } as StoreLike
   const { controlledAdapter } = await import("./helpers/rollout-runner.ts")
   const { runRunner } = await import("../src/runner/run.ts")
-  const edge = controlledAdapter(it.adapterName)
+  // A build that says it can resume an interrupted session, so a held conversation can be served again.
+  const edge = controlledAdapter(it.adapterName, false, { capabilities: { stableSession: true, safeResume: true, delegationDisabled: true } })
+  const fedOf = (id: string) => edge.sessions.flatMap(r => r.fed).filter(m => m.id === id)
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
   let hub: Awaited<ReturnType<typeof runHub>> | undefined
   try {
@@ -181,14 +187,49 @@ test("ROLL-22 recovery releases an in-flight target claim and leaves a healthy s
     expect((await it.read.inbound()).find(r => r.id === "stuck-target")!.claimed_by).not.toBeNull()
     edge.hold(() => false)
     await (requestRecovery as Function)(store, { id: crypto.randomUUID(), registryFile: it.registryFile, source: "cli", actor: "operator", person: "p1", target_kind: "agent", target_id: "p2-lair" })
-    expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "stuck-target")), "recovered claim must produce its owed answer").toBe(true)
-    const successor = edge.sessions.filter(r => r.fed.some(m => m.id === "stuck-target")).at(-1)!
-    expect(successor.session.pid).not.toBe(target.session.pid)
-    expect(target.closed).toBe(true)
+    // The generic recovery ends the target's child and releases its claim. The input WAS handed to that
+    // child, so it is held with the exit proof of the child that ended and is never fed again by the
+    // recovery: no successor child is started for it and no answer is owed by a replay.
+    expect(await observe(async () => (await it.read.sql("select 1 from replay_hold where inbound_id = 'stuck-target'")).length === 1), "the handed input is held").toBe(true)
+    expect(await observe(() => target.closed)).toBe(true)
+    expect(childGone(target.session.pid!)).toBe(true)
+    const [attempt] = (await it.read.sql("select id, state from execution where inbound_id = 'stuck-target'")) as { id: string; state: string }[]
+    expect(attempt.state, "the ended child is shown gone: a real exit proof").toBe("interrupted")
+    expect(await it.read.sql("select cause, state, revision from replay_hold")).toEqual([{ cause: "interrupted", state: "held", revision: 1 }])
+    await Bun.sleep(3000)
+    expect(fedOf("stuck-target"), "recovery never feeds the handed input again").toHaveLength(1)
+    expect(edge.sessions.filter(r => r.fed.some(m => m.id === "stuck-target"))).toHaveLength(1)
+    expect((await it.read.outbox()).some(r => r.inbound_id === "stuck-target")).toBe(false)
+    expect((await it.read.inbound()).find(r => r.id === "stuck-target")!.claimed_by).toBeNull()
+    expect((await it.read.sql("select hub_row_held('stuck-target') as held"))[0].held).toBe(true)
+    expect(await it.read.sql("select id from execution where inbound_id = 'stuck-target'")).toEqual([{ id: attempt.id }])
+    // The healthy sibling was not touched: its own child is alive and still the one that serves it.
     expect(sibling.closed).toBe(false)
     expect(childGone(sibling.session.pid!)).toBe(false)
-    expect((await it.read.inbound()).find(r => r.id === "stuck-target")!.claimed_by).toBeNull()
-    expect((await it.read.outbox()).filter(r => r.inbound_id === "stuck-target")).toHaveLength(1)
+    await insertInbound(cluster, it.db, { id: "sibling-after", agent: "p1-lair", body: "sibling still serving" })
+    expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "sibling-after"))).toBe(true)
+    expect(sibling.fed.map(m => m.id)).toEqual(["healthy-sibling", "sibling-after"])
     expect(os.calls.filter(c => c.operation === "restart")).toEqual([])
-  } finally { await hub?.stop(); await runner?.stop(); await edge.stop(); await store.close(); await it.stop() }
+
+    // The target is served again by a fresh input, on the session the held attempt ran under.
+    await insertInbound(cluster, it.db, { id: "target-fresh", agent: "p2-lair", person: "p1", body: "fresh after recovery" })
+    expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "target-fresh"))).toBe(true)
+    const fresh = edge.sessions.find(r => r.fed.some(m => m.id === "target-fresh"))!
+    expect(fresh).not.toBe(target)
+    expect(fresh.session.pid).not.toBe(target.session.pid)
+    expect(fedOf("stuck-target")).toHaveLength(1)
+
+    // And by the owner's explicit choice, which queues ONE new input carrying the held one's words. The
+    // held input itself stays held and unanswered for good.
+    const outcome = await requestHoldChoice(door, { registry: loadRegistry(it.registryFile), person: "p1", door: "door-fake", chat: "0000000000",
+      sender_id: "p1", message: "recover:1", at: new Date().toISOString(), agent: "p2-lair", attempt: attempt.id, revision: 1, choice: "continue" })
+    expect(outcome).toBe("continuing")
+    expect(await observe(async () => (await it.read.outbox()).some(r => r.inbound_id === "continue:stuck-target:1"), 15_000)).toBe(true)
+    expect(edge.sessions.find(r => r.fed.some(m => m.id === "continue:stuck-target:1"))!.fed.find(m => m.id === "continue:stuck-target:1")!.text).toContain("stuck")
+    expect(fedOf("stuck-target"), "the original was fed once, before recovery, and never again").toHaveLength(1)
+    expect((await it.read.outbox()).some(r => r.inbound_id === "stuck-target")).toBe(false)
+    expect((await it.read.sql("select hub_row_held('stuck-target') as held"))[0].held).toBe(true)
+    expect((await it.read.sql("select state from replay_hold"))[0].state).toBe("released")
+    expect(childGone(sibling.session.pid!)).toBe(false)
+  } finally { await hub?.stop(); await runner?.stop(); await edge.stop(); await door.sql.close(); await store.close(); await it.stop() }
 })

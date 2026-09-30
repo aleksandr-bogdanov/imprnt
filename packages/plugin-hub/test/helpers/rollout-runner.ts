@@ -1,7 +1,7 @@
 // Test edges only. Queue, retry, lifetime and outage policy remain in src/.
 import { readFileSync, writeFileSync, rmSync } from "node:fs"
 import { createScriptedAdapter, childGone, growChild, growFileFor, residentBytes } from "./scripted-adapter.ts"
-import type { Adapter, AdapterSession } from "../../src/adapters/types.ts"
+import { FeedNotWritten, type Adapter, type AdapterCapabilities, type AdapterSession } from "../../src/adapters/types.ts"
 import type { StagedHub } from "./hub-fixture.ts"
 import { toml } from "../../src/migrate/files.ts"
 
@@ -55,7 +55,14 @@ export function processTree(root: number): number[] {
 
 export function treeBytes(root: number) { return processTree(root).reduce((sum, pid) => sum + residentBytes(pid), 0) }
 
-export function controlledAdapter(name = "controlled-" + crypto.randomUUID(), descendants = false) {
+/**
+ * `capabilities` is what the adapter says it can do (absent: it says nothing,
+ * as every shipped fixture does). `evidence: false` leaves the sessions unable to
+ * say whether their processes are gone, which is what an engine that cannot
+ * report descendants looks like to the runner.
+ */
+export function controlledAdapter(name = "controlled-" + crypto.randomUUID(), descendants = false,
+  settings: { capabilities?: AdapterCapabilities; evidence?: boolean } = {}) {
   const profiles = new Set<string>()
   const sessions: {
     loop: ReturnType<typeof createScriptedAdapter>, session: AdapterSession & { exited: Promise<unknown> },
@@ -65,12 +72,14 @@ export function controlledAdapter(name = "controlled-" + crypto.randomUUID(), de
   let configure: (row: typeof sessions[number]) => void = () => {}
   let hold: (message: { id: string, text: string }) => boolean = () => false
   let throwFeed: (message: { id: string, text: string }) => boolean = () => false
+  let failAfterWrite: (message: { id: string, text: string }) => boolean = () => false
   let startFailure = 0
   let failStart: (options: Parameters<Adapter["start"]>[0]) => boolean = () => true
   let suppressExit = false
   let suppressClose = false
   const adapter: Adapter = {
     name,
+    ...(settings.capabilities ? { capabilities: async () => ({ ...settings.capabilities! }) } : {}),
     async start(options) {
       if (startFailure > 0 && failStart(options)) { startFailure--; throw new Error("synthetic-task-start-failure") }
       // One scripted loop per session avoids the shipped helper's single-turn gate
@@ -112,13 +121,44 @@ export function controlledAdapter(name = "controlled-" + crypto.randomUUID(), de
           for (const pid of pids) { owned.add(pid); growChild(pid, mb) }
         },
       }
+      // What this fixture's processes look like from outside: the tree it last
+      // saw, and whether any of it is still there. Its own reading of the
+      // process table, so the runner is not asked to grade itself.
+      const seen = new Set<number>()
+      const snapshot = () => {
+        if (!base.pid) return null
+        const tree = processTree(base.pid)
+        for (const pid of tree) seen.add(pid)
+        return tree
+      }
+      const evidenceOf = (via: string) => {
+        const pids = [...seen]
+        const survivors = pids.filter(pid => !childGone(pid))
+        return { confirmed: base.pid !== null && childGone(base.pid) && survivors.length === 0,
+          leader: base.pid !== null && childGone(base.pid) ? "exited" as const : "alive" as const,
+          descendants: survivors.some(pid => pid !== base.pid) ? "survivors" as const : "none" as const,
+          pids, survivors, via }
+      }
+      const reporting = settings.evidence === false ? {} : {
+        processes: snapshot,
+        async exitEvidence() { return evidenceOf("scripted process table") },
+        async interrupt({ graceMs }: { graceMs: number }) {
+          snapshot()
+          for (const pid of [...seen].reverse()) { try { process.kill(pid, 9) } catch {} }
+          await observe(() => [...seen].every(pid => childGone(pid)), Math.max(graceMs, 1000))
+          return evidenceOf("scripted interrupt")
+        },
+      }
       row.session = {
-        ...base, exited,
+        ...base, exited, ...reporting,
         async feed(message) {
           row.fed.push({ ...message })
-          if (throwFeed(message)) throw new Error("synthetic-task-feed-failure")
+          // Refused before a byte was written, and the adapter says so: the only rejection that is proof.
+          if (throwFeed(message)) throw new FeedNotWritten("synthetic-task-feed-failure")
           loop.holdTurnEnd(hold(message))
           await base.feed(message)
+          // The engine HAS the message and then the write's flush fails: a rejection that proves nothing.
+          if (failAfterWrite(message)) throw new Error("synthetic-task-flush-failure")
         },
         async close() {
           if (suppressClose) return
@@ -139,7 +179,10 @@ export function controlledAdapter(name = "controlled-" + crypto.randomUUID(), de
     adapter, sessions,
     onStart(callback: typeof configure) { configure = callback },
     hold(predicate: typeof hold) { hold = predicate },
+    /** The feed is refused before any byte of it is written (`FeedNotWritten`). */
     throwFeed(predicate: typeof throwFeed) { throwFeed = predicate },
+    /** The engine took the message and the feed still rejects: an ambiguous write or flush failure. */
+    failFeedAfterWrite(predicate: typeof failAfterWrite) { failAfterWrite = predicate },
     failStarts(count: number, predicate: typeof failStart = () => true) { startFailure = count; failStart = predicate },
     suppressExit(on: boolean) { suppressExit = on },
     suppressClose(on: boolean) { suppressClose = on },

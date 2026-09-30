@@ -298,7 +298,7 @@ const DECISIONS: Record<string, Owner[]> = {
 const WINDOWS: Record<string, string> = {
   "test/door-typing.test.ts": "26bf5dfd5068c8ab1a5c3287fd3b9c7f53d021d1c60d678852c7f409c683a1e9",
   "test/door-outbox.test.ts": "019b343c1affd068ef5b37adda3bdb065081bda083a8262b51d10a4d3afc5be9",
-  "test/door-clock.test.ts": "bacd4b48bac4b2755876a78c82aa7631f1704b3d1a945e783ef792fc303b605a",
+  "test/door-clock.test.ts": "8575fbecbeb01457c26a82ce47eb2ece421a439c2ec274b008321821c5ce0056",
   "test/runner-drain.test.ts": "e8a8a14e7a1025a12624915a0e1b8a90691d1af9c96a1c1e45ad8536841c93f8",
   "test/wait-idle.test.ts": "30905f0bc010ee9f10e275d4d5e0c51eded16951700583888ac4acb52897fc39",
   "test/check-silence.test.ts": "5d2007df83b96ccc61b472507537b9e7b90fa688d65e2ea34260d5af51a22c67",

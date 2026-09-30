@@ -1,4 +1,5 @@
 import type { Preset } from "../registry/presets.ts";
+import type { LoopLaunchInput, LoopProbeOptions } from "./launch.ts";
 
 /**
  * The seam. A loop does exactly five things and the rest of the hub knows
@@ -71,6 +72,12 @@ export interface AdapterSession {
   readonly exited?: Promise<unknown>;
   readonly sessionId: string | null;
   /**
+   * The session id the ENGINE has reported, and null until it has. `sessionId`
+   * starts as the id the hub asked for, so only this one can verify that the
+   * engine is running the conversation it was told to.
+   */
+  readonly reportedSessionId?: string | null;
+  /**
    * The process id of the child this loop is, when the hub has one to watch.
    *
    * A handle property like `close`, never a sixth verb: the memory watch needs
@@ -85,19 +92,154 @@ export interface AdapterSession {
    * runner behaves the same for every loop and branches on none of them.
    */
   readonly lacks: readonly string[];
+  /**
+   * Hand the loop one message. The runner records a feed intent before this call.
+   *
+   * A REJECTION IS NOT PROOF THAT NOTHING WAS DELIVERED. Only a `FeedNotWritten`
+   * says so: the adapter checked, before it wrote a byte, that it could not. Any
+   * other rejection (a write or a flush that failed, a pipe that broke) may have
+   * come after some or all of the message reached the engine, and is uncertain
+   * exactly as a crash or an exit after the call is. An adapter that cannot tell
+   * must reject with anything but `FeedNotWritten`.
+   */
   feed(message: { id: string; text: string }): Promise<void>;
   onReceipt(handler: (messageId: string) => void): void;
   onProgress(handler: (event: AdapterProgress) => void): void;
   onTurnEnd(handler: (end: TurnEnd) => void): void;
   /** Not a sixth verb: the handle's stop, the same as a door's or a runner's. */
   close(): Promise<void>;
+  /**
+   * The loop's process tree right now, leader first, or null when it has no
+   * local processes for this hub to name. What a crash is later judged
+   * against, so it is recorded while the turn runs.
+   */
+  processes?(): number[] | null;
+  /**
+   * Whether any read of the process table failed since this session began, so that
+   * the processes reported may lack one that was there. Absent means nothing is
+   * claimed about it either way.
+   */
+  partial?(): boolean;
+  /**
+   * The process group the loop leads, when it was started as the leader of a
+   * group of its own and that was checked against the process table; null when it
+   * shares the runner's group or nothing can be said. It is what lets a stop reach
+   * a tool that was reparented, and it is never a promise about one that left it.
+   */
+  group?(): number | null;
+  /**
+   * Whether the loop's processes are gone, judged from what this session saw of
+   * them. `confirmed` needs the leader to have exited AND every process last
+   * seen under it to be gone: the parent leaving is not the tools leaving.
+   */
+  exitEvidence?(): Promise<ExitEvidence>;
+  /**
+   * Stop the loop on request: ask, wait up to `graceMs`, then end what is left,
+   * and report what is provably gone. Only ever called for an explicit stop.
+   */
+  interrupt?(options: { graceMs: number }): Promise<ExitEvidence>;
+}
+
+/**
+ * What is known about whether a loop's processes are gone. `unverified` is never
+ * `none`, and `confirmed` is never true while the leader is not shown to have
+ * exited: a leader that is alive, or of which nothing is known, is not an
+ * attempt that ended.
+ *
+ * THE ONLY POSITIVE THERE IS, apart from a machine that booted again: the loop
+ * led a process group of its own and the system says that group is empty, every
+ * process recorded under it is gone, and the leader exited. A lookup that failed
+ * is `unknown`, never absent. A process that was never recorded and left the
+ * group (its own session, its own group) is not covered by that, and nothing here
+ * says it is: without a verified group, the answer is `unverified`. Nothing says a
+ * tool's effect on anything outside the process table (a file, an API, a
+ * message) was undone, either.
+ */
+export interface ExitEvidence {
+  confirmed: boolean;
+  leader: "exited" | "alive" | "unknown";
+  descendants: "none" | "survivors" | "unverified";
+  /** Every process the session had seen under the loop. */
+  pids: number[];
+  /** Those of them still present. */
+  survivors: number[];
+  /** Those of them whose lookup failed: neither present nor gone. */
+  unknown?: number[];
+  /** True when a read of the process table failed while the tree was observed, so the record may lack a process. */
+  partial?: boolean;
+  /**
+   * What the answer rests on. `boot`: the machine started again. `process-group`:
+   * the loop was its own group, the group is empty, and the recorded tree is gone.
+   * `observed-tree`: only what was seen of the tree is gone, which does not cover
+   * a process nobody saw or one that left the loop's group. `none`: nothing.
+   */
+  basis?: "boot" | "process-group" | "observed-tree" | "none";
+  /** The loop's own process group, when the child was started as the leader of one. */
+  group?: number | null;
+  /** How the answer was reached, in words a person can read in the diary. */
+  via: string;
+}
+
+/**
+ * What an engine can be relied on for, per launch. A capability the adapter
+ * cannot show is false, never true: a missing answer is the same as no.
+ */
+export interface AdapterCapabilities {
+  /** Launchable under an id the hub chooses, and resumable under it later. */
+  stableSession: boolean;
+  /**
+   * A resumed session does not replay the tool calls an interrupted turn left
+   * unfinished and does not continue the old assignment on its own. Only true
+   * for an engine build somebody validated.
+   */
+  safeResume: boolean;
+  /** The engine's own delegation tools are off in a hub launch. */
+  delegationDisabled: boolean;
+  version?: string;
+}
+
+/** What a prepared launch hands to `Adapter.start`, alongside the preset and the session. */
+export interface PreparedLaunch {
+  cwd?: string;
+  argv?: string[];
+  env?: Record<string, string | undefined>;
+  credentialId?: string;
+  wrap?: (argv: string[]) => string[];
+}
+
+/** What an adapter is asked about, without the adapter naming the registry's types. */
+export interface CapabilityContext {
+  registry: unknown;
+  agent: { id: string; preset: string };
+  preset: string;
+  probe?: LoopProbeOptions;
 }
 
 export interface Adapter {
   readonly name: string;
+  /**
+   * What this engine can do, or absent when the adapter says nothing, which the
+   * runner reads as "nothing that has to be proved". Asked before a claim, so
+   * it must not start a model.
+   */
+  capabilities?(context: CapabilityContext): Promise<AdapterCapabilities>;
+  /**
+   * Everything about a launch that is this engine's own: the configuration it
+   * is given, the tools it is left with, the servers it is told about, the
+   * session it is launched under. The shared context (the person's paths, the
+   * box, the credential's owner) comes in through `input` and is not the
+   * adapter's to change.
+   */
+  prepareLaunch?(input: LoopLaunchInput, probe?: LoopProbeOptions): Promise<PreparedLaunch>;
   start(options: {
     preset: Preset;
     sessionId: string | null;
+    /**
+     * A session the hub chose. `resume: false` launches the engine under this
+     * id for the first time, `resume: true` resumes it. Never "the latest":
+     * the id is the conversation's own.
+     */
+    session?: { id: string; resume: boolean };
     credentialId?: string;
     cwd?: string;
     argv?: string[];
@@ -114,6 +256,19 @@ export interface Adapter {
      */
     wrap?: (argv: string[]) => string[];
   }): Promise<AdapterSession>;
+}
+
+/**
+ * A feed that was refused BEFORE any byte of it was written, and the adapter knows
+ * it: the session was already closed, or its process already gone. It is the only
+ * rejection that lets an input the engine never had be tried again, and only when
+ * nothing else was fed to that attempt first (a priming tail is a feed).
+ */
+export class FeedNotWritten extends Error {
+  constructor(readonly why: string) {
+    super(`feed-not-written: ${why}`);
+    this.name = "FeedNotWritten";
+  }
 }
 
 /** A preset naming a loop nobody registered. Loud, never a silent wait. */

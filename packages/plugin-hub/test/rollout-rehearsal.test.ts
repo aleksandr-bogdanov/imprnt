@@ -83,7 +83,9 @@ for (const osName of ["linux", "macos"] as const) {
     const vault = await scratchVault(repos[1].path)
     cleanups.push(() => vault.remove())
     const shim = writeImprntShim(f.dir)
-    const model = controlledAdapter("claude-code")
+    // A build whose resume of an interrupted session was validated, so the master
+    // can take fresh turns beside the input a dead child left held.
+    const model = controlledAdapter("claude-code", false, { capabilities: { stableSession: true, safeResume: true, delegationDisabled: true } })
     cleanups.push(() => model.stop())
     const transcript: string[] = []
     let harvestingHistory = true
@@ -262,10 +264,12 @@ for (const osName of ["linux", "macos"] as const) {
     target.fail()
     // Default 3500 ms window. Measured max 33 ms in 29 runs on the Linux box.
     expect(await observe(()=>childGone(target.session.pid!))).toBe(true)
-    // Measured max 3867 ms in 29 runs on the Linux box, a 1 s retry plus runner ticks. Three times that is 11601, rounded up.
-    expect(await observe(()=>edges[0].posts().some(p=>p.text==="reply to death during turn"),12000)).toBe(true)
+    // The child died AFTER the engine was handed the input, so the input is held and never retried by
+    // machinery: the chat is told what is held and the command that decides it, and no reply is made up.
+    expect(await observe(()=>edges[0].posts().some(p=>/\/(recover|восстановить) p1-lair \S+ 1 continue/.test(p.text)),12000)).toBe(true)
+    expect(edges[0].posts().some(p=>p.text==="reply to death during turn")).toBe(false)
     expect((await read.ledger({subject:"p1-lair"})).some(r=>r.kind==="refused.turn" && Number.isFinite(Date.parse(String(r.detail.retry_at))))).toBe(true)
-    expect((await read.sheet("agent_health")).some(r=>r.id==="p1-lair")).toBe(false)
+    expect((await read.sql("select cause, state from replay_hold")).map(r=>[r.cause,r.state])).toEqual([["interrupted","held"]])
     // The command watchdog is in helpers/rollout-command.ts. This recover measured max 269 ms in 29 runs on the Linux box.
     const recovery=await command.run(["recover",registryFile,"agent:p1-lair"])
     expect(recovery.code,recovery.err).toBe(0)

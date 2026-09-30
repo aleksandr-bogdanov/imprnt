@@ -459,6 +459,11 @@ test(
     const it = await stageHub(cluster, {
       servers: true,
       hub: { tick_seconds: 30 },
+      // The runner is stopped with a turn open, and an input the engine was handed is HELD with the
+      // exit proof of the loop it was fed to and never fed again by a restart (design §4). The scripted
+      // loop has no process of its own (`exitProof`) and says it can resume a conversation, so the
+      // stopped turn is a terminal held attempt and the rows behind it are fed in their turn.
+      adapter: { exitProof: true, capabilities: { stableSession: true, safeResume: true, delegationDisabled: true } },
       people: [
         {
           id: PERSON,
@@ -617,27 +622,36 @@ test(
         registryFile: it.registryFile,
         adapters: { [it.adapterName]: it.scripted.adapter },
       });
-      // The two earlier messages are still this runner's to answer, and one
-      // delivered now waits behind both turns before it is acked. Against a
-      // one second acked clock that wait is a clock really running out on a
-      // slow runner, which drew a line and failed this control on CI (PR 31).
-      // So the control's message goes in once the backlog is answered, and
-      // what it shows is a message answered in time drawing nothing.
+      // The first message was handed to the loop before the runner stopped, so
+      // the restart does NOT feed it again: it stays held, and only the second
+      // message, which was never fed, is this runner's to answer. A message
+      // delivered now waits behind that one before it is acked. Against a one
+      // second acked clock that wait is a clock really running out on a slow
+      // runner, which drew a line and failed this control on CI (PR 31). So the
+      // control's message goes in once the backlog is answered, and what it
+      // shows is a message answered in time drawing nothing.
+      const second = (await it.read.inbound()).find((one) => one.body === "a second question nobody claims")!;
       await until(
-        "the restarted runner answered the two earlier messages",
+        "the restarted runner answered the second message",
         async () =>
-          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 2,
+          (await it.read.ledger({ stream: "inbound", kind: "answered", subject: second.id })).length >= 1,
         45_000,
-        async () => JSON.stringify(await it.read.inbound()),
+        async () => `${JSON.stringify(await it.read.inbound())} fed=${JSON.stringify(it.scripted.fed().map((one) => one.id))}`,
       );
       it.fake.deliver({ text: "a question answered while the new door watches" });
       await until(
         "the new message was answered and posted",
         async () =>
-          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 3,
+          (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 2,
         45_000,
         async () => JSON.stringify(await it.read.inbound()),
       );
+      // THE HELD ORIGINAL WAS NEVER REPLAYED: fed once, before the stop, and not
+      // answered by the restart, so what the restarted door spoke about was the
+      // clock and not an answer the restart produced.
+      expect(it.scripted.fed().filter((one) => one.id === open.id).length).toBe(1);
+      expect((await it.read.ledger({ stream: "inbound", kind: "answered", subject: open.id })).length).toBe(0);
+      expect((await it.read.outbox()).some((row) => row.inbound_id === open.id)).toBe(false);
       await Bun.sleep(3000);
       expect(it.fake.attempts().filter((one) => isClockLine(one.text)).length).toBe(before);
     } finally {
