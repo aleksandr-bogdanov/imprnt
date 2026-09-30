@@ -76,26 +76,48 @@ export function observeGit(root: string) {
   writeFileSync(log, "")
   writeFileSync(config, "{}")
   writeFileSync(join(bin, "git"), `#!${process.execPath}
-import {appendFileSync,readFileSync,realpathSync} from 'node:fs';
-import {resolve} from 'node:path';
+import {appendFileSync,readFileSync,realpathSync,unlinkSync} from 'node:fs';
+import {join,resolve} from 'node:path';
 const args=process.argv.slice(2), pid=process.pid;
 let cwd=process.cwd();
 for(let n=0;n<args.length;n++) if(args[n]==='-C') cwd=resolve(cwd,args[++n]);
 cwd=realpathSync(cwd);
 const control=JSON.parse(readFileSync(${JSON.stringify(config)},'utf8'));
-const verb=args.find(a=>['fetch','rebase','push'].includes(a));
+const verb=args.find(a=>['status','add','diff','commit','fetch','rebase','push'].includes(a));
 const say=(phase,code)=>appendFileSync(${JSON.stringify(log)},JSON.stringify({pid,cwd,args,phase,code,at:Date.now()})+'\\n');
+const put=(stream,text)=>new Promise(done=>stream.write(text,done));
+const here=!control.path || cwd===control.path;
 say('start');
 if(verb==='rebase' && control.delay) await Bun.sleep(control.delay);
 let code;
-if(control.fail && control.fail===verb && (!control.path || cwd===control.path)) { console.error('synthetic '+verb+' refusal'); code=73; }
+if(control.fail && control.fail===verb && here) {
+  // A signal ends this process the way the OS would end a killed git.
+  if(control.signal) { process.kill(pid,control.signal); await Bun.sleep(5000); }
+  // Canned output is written whole before exit, stderr first, so a reader that
+  // waits on stdout alone while stderr fills its pipe stalls here.
+  await put(process.stderr,control.stderr ?? 'synthetic '+verb+' refusal\\n');
+  if(control.stdout) await put(process.stdout,control.stdout);
+  code=control.exit ?? 73;
+}
 else if(control.noPush && verb==='push') code=0;
-else { const child=Bun.spawn([${JSON.stringify(real)},'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','tag.gpgsign=false','-c','user.name=p1','-c','user.email=p1@example.invalid',...args],{stdin:'inherit',stdout:'inherit',stderr:'inherit'}); code=await child.exited; }
+else {
+  const child=Bun.spawn([${JSON.stringify(real)},'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','tag.gpgsign=false','-c','user.name=p1','-c','user.email=p1@example.invalid',...args],{stdin:'inherit',stdout:'inherit',stderr:'inherit'}); code=await child.exited;
+  // What another writer does in the gap after this step: take a file away, or
+  // commit whatever is staged with a real git of its own, unseen in the log.
+  const after=control.after;
+  if(code===0 && after && after.verb===verb && here && (!after.arg || args.includes(after.arg))) {
+    if(after.remove) unlinkSync(join(cwd,after.remove));
+    if(after.commit) Bun.spawnSync([${JSON.stringify(real)},'-C',cwd,'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=p2','-c','user.email=p2@example.invalid','commit','--no-verify','--quiet','-m','second writer'],{stdout:'ignore',stderr:'ignore'});
+  }
+}
 say('end',code); process.exit(code);
 `, { mode: 0o755 })
   return {
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "file", GIT_AUTHOR_NAME: "p1", GIT_AUTHOR_EMAIL: "p1@example.invalid", GIT_COMMITTER_NAME: "p1", GIT_COMMITTER_EMAIL: "p1@example.invalid" },
-    control(value: { fail?: string; path?: string; noPush?: boolean; delay?: number }) { writeFileSync(config, JSON.stringify(value)) },
+    // `fail` refuses one verb with `exit` (73) after printing canned `stderr` and `stdout`, or dies of
+    // `signal`. `after` acts once that verb has really succeeded, in the repository at `path`.
+    control(value: { fail?: string; path?: string; noPush?: boolean; delay?: number; exit?: number; stderr?: string; stdout?: string;
+      signal?: string; after?: { verb: string; arg?: string; remove?: string; commit?: boolean } }) { writeFileSync(config, JSON.stringify(value)) },
     events(): GitEvent[] { return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) },
     clear() { writeFileSync(log, "") },
   }
