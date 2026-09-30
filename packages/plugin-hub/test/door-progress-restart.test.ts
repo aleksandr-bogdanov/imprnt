@@ -38,8 +38,8 @@ let cluster: Cluster;
 const SLOW = 120_000;
 
 /** The pinned templates, written out by the TEST and never imported. */
-const WORKING = /^\[door\] working: /;
-const TOTALS = /^\[door\] done\./;
+const WORKING = /^\[door\] in progress · /;
+const TOTALS = /^\[door\] finished · /;
 
 beforeAll(async () => {
   cluster = await startCluster();
@@ -160,5 +160,135 @@ test(
       await it.stop();
     }
   },
+  SLOW,
+);
+
+// ---------------------------------------------------------------------------
+// A turn that COMPLETES while no door is up.
+//
+// The door before it asked for the card's contents in the message-effect ledger
+// and kept a tracking row that says the card's LAST content is still owed. The
+// door that starts after the turn has ended finishes the card from the store's
+// own answer, before the row goes. An earlier build swept such a row at connect
+// and left the card saying "in progress" for good.
+// ---------------------------------------------------------------------------
+
+/** What is asked of the ledger for one input's card: the key is one per input. */
+const keyOf = (inboundId: string) => `turn-card:${DOOR}:${inboundId}`;
+
+/**
+ * The ledger looks for a request that may still land after `door.delivery_retry_seconds`,
+ * which is thirty. One second keeps the check short and changes nothing about what a look
+ * may conclude: a platform with no readback concludes nothing, whatever the interval.
+ */
+async function quickLooks(registryFile: string): Promise<void> {
+  await Bun.write(registryFile, `${await Bun.file(registryFile).text()}\n[door]\ndelivery_retry_seconds = 1\ndelivery_max_attempts = 3\n`);
+}
+
+async function completedOffline(failEdit: boolean): Promise<void> {
+  const { runRunner } = await seam("src/runner/run.ts");
+  const it = await stageHub(cluster, { servers: true, language: "en", hub: { tick_seconds: 1 } });
+  await quickLooks(it.registryFile);
+  let door: ReadyProcess | null = null;
+  let runner: { stop(): Promise<void> } | null = null;
+  const startDoor = () =>
+    startReadySubprocess("test/helpers/door-subprocess.ts", [it.registryFile, DOOR, it.platformUrl]);
+  const cardPosts = () => it.fake.posts().filter((one) => one.chat === CHAT && WORKING.test(one.text));
+  const edits = () => it.fake.edits().filter((one) => one.chat === CHAT);
+  const effectOf = async (key: string) =>
+    (await it.read.sql(
+      "select state, edit_state, applied_revision, wanted_revision, wanted_content, failure from platform_effect where key = $1",
+      [key],
+    ))[0];
+  const question = "a question whose turn ends while the door is down";
+  try {
+    door = await startDoor();
+    runner = (await (runRunner as Function)({
+      runner: RUNNER,
+      registryFile: it.registryFile,
+      adapters: { [it.adapterName]: it.scripted.adapter },
+    })) as { stop(): Promise<void> };
+    it.scripted.holdTurnEnd(true);
+    it.fake.deliver({ text: question });
+    await until("the first door posted the card", () => cardPosts().length >= 1, 45_000,
+      () => `posts=${JSON.stringify(it.fake.posts().map((p) => p.text))}`);
+    const card = cardPosts()[0];
+    const [row] = await it.read.inbound();
+    const key = keyOf(String(row.id));
+    // Nothing of the card is left in flight when the door goes: the ledger says the
+    // message exists and shows what was last asked for.
+    await until("the ledger holds the card as delivered", async () => {
+      const seen = await effectOf(key);
+      return seen?.state === "confirmed" && seen.edit_state === "idle" && Number(seen.applied_revision) === Number(seen.wanted_revision);
+    }, 20_000, async () => JSON.stringify(await effectOf(key)));
+    expect(String((await effectOf(key)).wanted_content).startsWith("[door] in progress · ")).toBe(true);
+    await door.stop();
+    door = null;
+
+    // --- the turn ends with no door up. The row that promises a last content is still there.
+    it.scripted.holdTurnEnd(false);
+    await until("the turn was answered with no door", async () =>
+      (await it.read.ledger({ stream: "inbound", kind: "answered" })).length >= 1, 45_000,
+      async () => JSON.stringify(await it.read.inbound()));
+    expect((await it.read.sheet("door_progress")).length, "the last content is still owed").toBe(1);
+    const editsBefore = edits().length;
+    if (failEdit) {
+      // The platform refuses every edit from here on. Over the socket that is a lost answer,
+      // which is not proof that the edit did not land.
+      it.fake.platform.edit = async () => { throw new Error("the platform refused the edit"); };
+    }
+
+    // --- the door that starts now finishes the card from the store's own answer.
+    door = await startDoor();
+    await until("the last content is on disk in the ledger", async () => {
+      const seen = await effectOf(key);
+      return String(seen?.wanted_content ?? "").startsWith("[door] finished · ");
+    }, 30_000, async () => JSON.stringify(await effectOf(key)));
+    await until("the tracking row is gone only after that", async () => (await it.read.sheet("door_progress")).length === 0, 15_000);
+    await until("the reply was delivered", async () =>
+      (await it.read.ledger({ stream: "inbound", kind: "delivered" })).length >= 1, 45_000,
+      async () => JSON.stringify(await it.read.inbound()));
+
+    // ONE message for the whole turn, restart included, and no other kind of card.
+    expect(cardPosts().length).toBe(1);
+    if (!failEdit) {
+      await until("the final edit landed on the same message", async () => {
+        const now = await effectOf(key);
+        return now?.state === "confirmed" && now.edit_state === "idle" && Number(now.applied_revision) === Number(now.wanted_revision);
+      }, 20_000, async () => JSON.stringify(await effectOf(key)));
+      const last = edits()[edits().length - 1];
+      expect(last.text).toMatch(/^\[door\] finished · /);
+      for (const edit of edits()) expect(edit.id).toBe(String(card.id));
+    } else {
+      // The final content is durable and is NOT claimed delivered: the ledger keeps the edit
+      // as one whose outcome is unknown, so nothing newer is sent over it, and the card the
+      // chat shows is exactly what it was. Nothing here turned a missing row into a success.
+      await until("the edit is recorded as not known to have landed", async () => {
+        const now = await effectOf(key);
+        return now?.edit_state === "unknown" || (now?.failure as { permanent?: boolean } | null)?.permanent === true;
+      }, 20_000, async () => JSON.stringify(await effectOf(key)));
+      const now = await effectOf(key);
+      expect(Number(now.applied_revision)).toBeLessThan(Number(now.wanted_revision));
+      expect(String(now.wanted_content).startsWith("[door] finished · ")).toBe(true);
+      expect(edits().length, "no edit went through").toBe(editsBefore);
+      expect(edits().some((edit) => /finished/.test(edit.text))).toBe(false);
+    }
+    expect(await it.read.sheet("door_progress")).toEqual([]);
+  } finally {
+    if (runner) await runner.stop();
+    if (door) await door.stop();
+    await it.stop();
+  }
+}
+
+test(
+  "MSG-10 a turn that completed while no door was up is finished by the door that starts next: the same message is edited to finished, the tracking row goes only after the last content is on disk, and the reply is delivered",
+  () => completedOffline(false),
+  SLOW,
+);
+
+test(
+  "MSG-10 a turn that completed while no door was up and whose final edit cannot be sent keeps that last content durable: the reply is still delivered, nothing claims the card was updated, and the tracking row does not stand in for a delivery",
+  () => completedOffline(true),
   SLOW,
 );

@@ -373,6 +373,8 @@ export function discord(options: {
     },
     // "Post a typing indicator ... which expires after 10 seconds", API v10.
     typingSeconds: 10,
+    // Discord's own markdown: `||text||` hides text until it is clicked.
+    spoilers: true,
     async pull({ chat, cursor, timeoutMs }) {
       const deadline = Date.now() + timeoutMs;
       for (;;) {

@@ -40,6 +40,17 @@ export interface OpenTurnRow {
    * exists.
    */
   reported_at: Date | null;
+  /**
+   * The hold on this input, when an attempt on it was cut short and it is the
+   * owner's to decide: the hold's cause and its state, both null otherwise.
+   *
+   * A held row is still an OPEN row (its stamp did not move), so this is what
+   * tells the door that "not running" is a decision waiting for a person and not
+   * a queue. It rides on the reads below as a scalar subquery, so it costs no
+   * statement of its own. Optional so a row built by hand stays valid.
+   */
+  hold_cause?: string | null;
+  hold_state?: string | null;
 }
 
 /**
@@ -79,7 +90,9 @@ export async function readOpenTurns(
 ): Promise<OpenTurnRow[]> {
   return (await store.sql`
     select id, person, agent, received_at, state, claimed_by,
-           media_state, media_done_at, reported_at
+           media_state, media_done_at, reported_at,
+           (select h.cause from replay_hold h where h.inbound_id = inbound.id and h.state <> 'released') as hold_cause,
+           (select h.state from replay_hold h where h.inbound_id = inbound.id and h.state <> 'released') as hold_state
     from inbound
     where agent = ${where.agent}
       and kind in ('human', 'report')
@@ -127,6 +140,8 @@ export async function readOpenTurnsWithWait(
     )
     select i.id, i.person, i.agent, i.received_at, i.state, i.claimed_by,
            i.media_state, i.media_done_at, i.reported_at,
+           (select h.cause from replay_hold h where h.inbound_id = i.id and h.state <> 'released') as hold_cause,
+           (select h.state from replay_hold h where h.inbound_id = i.id and h.state <> 'released') as hold_state,
            f.wait, f.health, f.outage, f.runner_live
     from facts f
     left join inbound i on i.agent = ${where.agent}

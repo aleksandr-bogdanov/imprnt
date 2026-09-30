@@ -16,6 +16,14 @@ export interface ProgressRow {
   actions: number;
   last_action: string;
   started_at: string;
+  /**
+   * The last moment the LOOP itself was seen doing anything: an event the
+   * adapter reported, and never a timer of the runner's. Absent on a row an
+   * older runner wrote, and on a loop that reported nothing.
+   */
+  activity_at?: string;
+  /** What that event was: `text`, `action` (a tool started) or `action_result`. */
+  activity?: string;
 }
 
 /** The same progress in the runner's own spelling, before it becomes a row. */
@@ -26,6 +34,8 @@ export interface TurnProgress {
   actions: number;
   lastAction: string;
   startedAt: string;
+  activityAt?: string | null;
+  activity?: string;
 }
 
 export async function writeProgress(
@@ -38,6 +48,7 @@ export async function writeProgress(
     actions: progress.actions,
     last_action: progress.lastAction,
     started_at: progress.startedAt,
+    ...(progress.activityAt ? { activity_at: progress.activityAt, activity: progress.activity ?? "" } : {}),
   });
 }
 

@@ -197,6 +197,29 @@ interface OpenTurn {
   startedAt: string;
   /** When the sheet was last written, for the throttle that is a TIME. */
   wroteAt: number;
+  /**
+   * The last event the LOOP reported, and when. Set only by what the adapter
+   * says, never by a timer of the runner's, so a long silence stays visible as
+   * one. It rides on the same throttled sheet write as the counts.
+   */
+  activityAt: string | null;
+  activity: string;
+  /** When the sheet was last written for an event that is not a tool start. */
+  activityWroteAt: number;
+  /**
+   * What the loop reported since the sheet was last written, that the cadence did not
+   * write, and the one timer that writes it when the cadence allows. The timer only
+   * decides WHEN: the values it writes, the count and the moment of the last event, were
+   * taken from adapter events as they arrived.
+   */
+  unwritten: boolean;
+  flushTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * Set at the error cleanup boundary, before its first await. Events that are still
+   * delivered after it are counted as evidence, and nothing of this turn is written to
+   * the sheet again, so the row that cleanup clears is not made anew.
+   */
+  sealed: boolean;
   finish(end: TurnEnd): void;
 }
 
@@ -237,6 +260,8 @@ function progressOf(open: {
   actions: number;
   lastAction: string;
   startedAt: string;
+  activityAt: string | null;
+  activity: string;
 }): TurnProgress {
   return {
     messageId: open.id,
@@ -245,6 +270,8 @@ function progressOf(open: {
     actions: open.actions,
     lastAction: open.lastAction,
     startedAt: open.startedAt,
+    activityAt: open.activityAt,
+    activity: open.activity,
   };
 }
 
@@ -801,6 +828,58 @@ export async function runRunner(options: {
       });
     };
 
+    /**
+     * THE TRAILING WRITE of the turn's progress sheet. The sheet is written on the hub's
+     * tick and never per event, so a burst of events followed by silence would leave the last
+     * count and the last moment unwritten until the next event, which may be never. What the
+     * cadence skipped is written once, when the cadence allows.
+     *
+     * It is a write of what the loop REPORTED. `activityAt` is taken in `onProgress` from a
+     * real adapter event and nowhere else, so the timer's firing time is never a moment the
+     * loop was seen doing anything, and a long silence after the burst still reads as one.
+     * No event means no timer: nothing here beats, and an idle turn arms nothing.
+     */
+    const flushProgress = (open: OpenTurn): void => {
+      if (open.flushTimer !== null) { clearTimeout(open.flushTimer); open.flushTimer = null; }
+      if (turn !== open || open.sealed || !open.started || !open.unwritten) return;
+      open.unwritten = false;
+      // Only the sign-of-life stamp, as a write for a text event moves: a tool start that
+      // follows is still written on its own cadence, with the attempt's evidence.
+      open.activityWroteAt = Date.now();
+      write(() => writeProgress(store, progressOf(open)));
+    };
+    const flushSoon = (open: OpenTurn, every: number): void => {
+      open.unwritten = true;
+      if (open.sealed || open.flushTimer !== null) return;
+      const due = Math.max(open.wroteAt, open.activityWroteAt) + every;
+      open.flushTimer = setTimeout(() => flushProgress(open), Math.max(1, due - Date.now()));
+    };
+    /** A write that just covered everything reported: nothing is left for the timer. */
+    const covered = (open: OpenTurn): void => {
+      open.unwritten = false;
+      if (open.flushTimer !== null) { clearTimeout(open.flushTimer); open.flushTimer = null; }
+    };
+    /** The turn is over one way or another: its timer goes with it. */
+    const cancelFlush = (): void => {
+      const open = turn as OpenTurn | null;
+      if (open) covered(open);
+    };
+    /** The sheet write of a turn, unless the error cleanup has begun: it clears the row and nothing may write it again. */
+    const writeSheet = (open: OpenTurn): void => {
+      if (!open.sealed) write(() => writeProgress(store, progressOf(open)));
+    };
+    /**
+     * The error cleanup's first act, before any await. The timer goes and no callback that is
+     * still buffered can arm it or write the sheet again; what such a callback reports is still
+     * counted into the evidence `closeAttempt` records, and the writes already queued drain first.
+     */
+    const sealTurn = (): void => {
+      const open = turn as OpenTurn | null;
+      if (!open) return;
+      open.sealed = true;
+      covered(open);
+    };
+
     const oneTurn = async (
       message: { id: string; text: string },
       about: { preset: Preset; tail: boolean; registry: Registry; source?: InboundSource | null; kind?: string },
@@ -820,6 +899,12 @@ export async function runRunner(options: {
         lastAction: "",
         startedAt: new Date().toISOString(),
         wroteAt: 0,
+        activityAt: null,
+        activity: "",
+        activityWroteAt: 0,
+        unwritten: false,
+        flushTimer: null,
+        sealed: false,
         finish,
       };
       const opened = turn;
@@ -860,6 +945,10 @@ export async function runRunner(options: {
       // after it would be a runner a service manager waits on for a model.
       if (about.tail) own.settle();
       const end = await Promise.race([ended, stopped, own.left, failedSession(own.session!)]);
+      // The trailing write goes with the turn. A turn that ended has its own last write below;
+      // one cut short by a stop writes what the loop last reported first, before its attempt is closed.
+      if (end === "stopped") flushProgress(opened);
+      else covered(opened);
       turn = null;
       if (end === "stopped") return;
 
@@ -1226,6 +1315,10 @@ export async function runRunner(options: {
           }
           return;
         }
+        // WHAT THE LOOP JUST DID, as the loop said it. This is the only place the
+        // moment is taken, so it moves with real events and with nothing else.
+        open.activityAt = new Date().toISOString();
+        open.activity = event.kind;
         if (!open.started) {
           open.started = true;
           open.startedAt = new Date().toISOString();
@@ -1239,9 +1332,26 @@ export async function runRunner(options: {
           // One write at `started`, which is what gives the door a line to post
           // for a turn that never calls a tool at all.
           open.wroteAt = Date.now();
-          write(() => writeProgress(store, progressOf(open)));
+          open.activityWroteAt = open.wroteAt;
+          covered(open);
+          writeSheet(open);
         }
-        if (event.kind !== "action") return;
+        if (event.kind !== "action") {
+          // Text and a tool's result are signs of life and never counts, so they
+          // carry no effects and cost no extra write: the moment rides on the
+          // sheet write the same cadence already makes, and at most one more per
+          // tick when nothing else wrote it. What the cadence skips is written
+          // once by the trailing write, so the last event is never lost to silence.
+          const every = setting(registry, "hub.tick_seconds") * 1000;
+          if (Date.now() - Math.max(open.wroteAt, open.activityWroteAt) >= every) {
+            open.activityWroteAt = Date.now();
+            covered(open);
+            writeSheet(open);
+          } else {
+            flushSoon(open, every);
+          }
+          return;
+        }
         open.actions += 1;
         open.lastAction = event.text;
         effects = { actions: open.actions, lastAction: open.lastAction };
@@ -1252,9 +1362,15 @@ export async function runRunner(options: {
         // cadence is the hub's own, so no second setting exists to be the same
         // number.
         const every = setting(registry, "hub.tick_seconds") * 1000;
-        if (Date.now() - open.wroteAt < every) return;
+        if (Date.now() - open.wroteAt < every) {
+          // Counted, and written once by the trailing write, never per action.
+          flushSoon(open, every);
+          return;
+        }
         open.wroteAt = Date.now();
-        write(() => writeProgress(store, progressOf(open)));
+        open.activityWroteAt = open.wroteAt;
+        covered(open);
+        writeSheet(open);
         // What the attempt has done and which processes it has, on the same
         // cadence: it is all the evidence there will be after a crash.
         write(async () => {
@@ -1823,6 +1939,10 @@ export async function runRunner(options: {
       // An explicit stop is answered by the stop, and shutting down or leaving
       // is answered by the `finally` below: both end the attempt there.
       if (stopping || own.leaving || own.stopRequested) return;
+      // BEFORE THE FIRST AWAIT: an armed trailing write, or an event the adapter still delivers
+      // while this waits on the queue and the attempt, must not write the sheet after the
+      // transaction below clears it.
+      sealTurn();
       const registry = load();
       const taskRetrySeconds = Number(readSetting(registry, "runner.task_retry_seconds") ?? 30);
       const retryAt = new Date(Date.now() + taskRetrySeconds * 1000).toISOString();
@@ -1894,6 +2014,7 @@ export async function runRunner(options: {
             ...(error instanceof AdapterMissing ? { adapter: safeValue(error.adapter) } : {}) } });
       });
     } finally {
+      cancelFlush();
       turn = null;
       await writes;
       // An attempt still open here was cut off, by the runner stopping, by the

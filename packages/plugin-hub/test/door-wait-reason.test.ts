@@ -15,7 +15,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 import { startCluster, until, type Cluster } from "./helpers/cluster.ts"
 import { AGENT, CHAT, DOOR, PERSON, RUNNER, chatLogLines, insertInbound, stageHub, superStore } from "./helpers/hub-fixture.ts"
 import { runDoor } from "../src/door/run.ts"
-import { WAIT_REASONS, clockLine, waitReasonLine } from "../src/door/lines.ts"
+import { WAIT_REASONS, clockLine, waitReasonLine, waitReasonText } from "../src/door/lines.ts"
 import { credentialKeyOf, waitReason, type WaitFacts } from "../src/door/reason.ts"
 import { readUnexplainedWaits, unexplainedFindings } from "../src/check/waits.ts"
 import { loadRegistry } from "../src/registry/load.ts"
@@ -26,6 +26,9 @@ beforeAll(async () => { cluster = await startCluster() })
 afterAll(async () => { await cluster?.stop() })
 
 const NOW = Date.parse("2026-09-26T10:00:00.000Z")
+
+/** The card's own two lines: the message-effect ledger appends a marker line under what it sends. */
+const bare = (text: string): string => text.replace(/\n`hub:[0-9a-f]{16}`$/, "")
 
 function row(fields: Partial<OpenTurnRow> = {}): OpenTurnRow {
   return { id: "m1", person: PERSON, agent: AGENT, received_at: new Date(NOW - 60_000), state: "received", claimed_by: null,
@@ -92,24 +95,28 @@ async function stage(language: "en" | "ru") {
   return it
 }
 
-test("with no runner connected, the clock line is followed by the runner-down reason, in the chat, in the chat log and in the ledger row", async () => {
+test("with no runner connected, the status card carries the runner-down reason under its state line, and the chat log and the ledger row carry the clock's own sentence and the reason line", async () => {
   const it = await stage("en")
   let door: Awaited<ReturnType<typeof runDoor>> | undefined
   try {
     door = await runDoor({ door: DOOR, registryFile: it.registryFile, platform: it.fake.platform })
     it.fake.deliver({ text: "a question nobody is there to take" })
     const reason = waitReasonLine("en", "runner-down", { runner: RUNNER })
-    await until("the door said why", () => it.fake.posts().some(p => p.text === reason), 20_000,
+    const sentence = waitReasonText("en", "runner-down", { runner: RUNNER })
+    await until("the door said why", () => it.fake.posts().some(p => bare(p.text).endsWith(`\n${sentence}`)), 20_000,
       () => `posts=${JSON.stringify(it.fake.posts().map(p => p.text))}`)
     const posts = it.fake.posts().map(p => p.text)
-    const clock = posts.findIndex(text => /^\[door\] still waiting: the loop has not accepted/.test(text))
-    expect(clock).toBeGreaterThanOrEqual(0)
-    expect(posts[clock + 1], "the reason is the line right under the clock line").toBe(reason)
-    expect(posts[clock]).toBe(clockLine("en", "acked", Number(/(\d+) s so far/.exec(posts[clock])![1])))
+    expect(posts, "one message: the reason is the card's second line and not a message of its own").toHaveLength(1)
+    expect(posts[0], "the reason is the line right under the state line").toMatch(
+      /^\[door\] still waiting: the loop has not accepted this message · (?:<1m|\d+m)\n/)
+    expect(bare(posts[0]).endsWith(`\n${sentence}`)).toBe(true)
+    expect(posts[0], "the ledger's marker is the only line under the card").toMatch(/\n`hub:[0-9a-f]{16}`$/)
     const logged = chatLogLines(it.stateDir, PERSON, AGENT).filter(line => line.text === reason)
     expect(logged, "written down once, as the door").toHaveLength(1)
     expect(logged[0].from).toBe(DOOR)
     const [expired] = await it.read.ledger({ stream: "clock" })
+    expect(chatLogLines(it.stateDir, PERSON, AGENT).some(line => line.text === clockLine("en", "acked", Number(expired.detail.seconds))),
+      "the clock's own sentence is in the chat log, unchanged").toBe(true)
     expect(expired.detail.why).toMatchObject({ kind: "runner-down", values: { runner: RUNNER } })
     expect(String((expired.detail.why as { id: string }).id)).toBe(`clock:${(await it.read.inbound())[0].id}:acked:why`)
   } finally { await door?.stop(); await it.stop() }
@@ -150,7 +157,8 @@ test("with a runner connected that wrote down the slots it is waiting for, the r
     it.fake.deliver({ text: "вопрос, который ждёт слота" })
     const reason = waitReasonLine("ru", "slots", { count: 1, holders: "p2-lair" })
     expect(reason).toBe("[дверь] все слоты агентов заняты (1): p2-lair.")
-    await until("the door said why, in Russian", () => it.fake.posts().some(p => p.text === reason), 20_000,
+    const sentence = waitReasonText("ru", "slots", { count: 1, holders: "p2-lair" })
+    await until("the door said why, in Russian", () => it.fake.posts().some(p => bare(p.text).endsWith(`\n${sentence}`)), 20_000,
       () => `posts=${JSON.stringify(it.fake.posts().map(p => p.text))}`)
     expect(it.fake.posts().every(p => p.chat === CHAT)).toBe(true)
     expect(it.fake.posts().some(p => /runner-test|не работает/.test(p.text)), "the runner is connected, so it is not down").toBe(false)
