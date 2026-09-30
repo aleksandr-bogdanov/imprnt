@@ -1,34 +1,44 @@
 import type { Adapter, AdapterCapabilities, CapabilityContext, ExitEvidence } from "../adapters/types.ts";
-import { contextNotice, holdNotice, type Language } from "../door/lines.ts";
+import { councilOfJob } from "../council/provenance.ts";
+import { contextNotice, holdNotice, safeValue, type Language } from "../door/lines.ts";
 import { effectsLine, type NativeContext } from "../recovery/holds.ts";
 import { appendEntry } from "../records/diary.ts";
 import { languageOf, noticeRoute } from "../registry/entries.ts";
 import type { Registry } from "../registry/load.ts";
 import { bootMoved, groupPresence, presence } from "../os/tree.ts";
 import type { StoreLike } from "../store/connect.ts";
+import { placeGate } from "../store/controls.ts";
 import { appendNotice, type ReplyRoute } from "../store/outbox.ts";
-import { UNRESOLVED, journaledOf, noteExecution, unresolvedOf, type ExecutionRow } from "../store/conversations.ts";
+import { RUNNER_PROTOCOL, UNRESOLVED, journaledOf, noteExecution, unresolvedOf, type ExecutionRow } from "../store/conversations.ts";
 import type { InboundSource } from "../store/inbound.ts";
 import { clearProgress } from "./progress.ts";
 import { settleTurn, type TurnRecord } from "./settle.ts";
 
 /**
- * The protocol a runner speaks. 1 is every runner before conversations: it feeds
- * a claimed row again after a crash and treats an expired lease as a dead
- * process. 2 owns an attempt before it launches and never feeds a row that
- * reached the engine twice. A runner of 2 activates it in the store when it
- * starts (`activateProtocol`), and from then on the claim trigger refuses every
- * claim that does not say it speaks 2, on any connection; the diary line at start
+ * The protocol a runner speaks is defined beside the store's activation of it
+ * (`RUNNER_PROTOCOL`, store/conversations.ts). A runner activates it in the store when
+ * it starts (`activateProtocol`), and from then on the claim trigger refuses every
+ * claim that does not say it speaks it, on any connection; the diary line at start
  * is only what `check` reads to see which runners are which.
  */
-export const RUNNER_PROTOCOL = 2;
+export { RUNNER_PROTOCOL };
 
-/** The migration this runner needs. A runner ahead of its schema does not serve. */
+/**
+ * The migrations this runner needs. A runner ahead of its schema does not serve, and says so before it
+ * activates a protocol, registers an incarnation, claims a row or hands anything to an engine: a runner
+ * of protocol 3 on a store at migration 13 or older has no council tables, no council-aware claim rule
+ * and no way to tell a council's job from an ordinary one.
+ */
 export async function requireSchema(store: StoreLike): Promise<void> {
   const [found] = (await store.sql`select to_regclass('public.execution') is not null
       and to_regclass('public.runner_incarnation') is not null
-      and to_regclass('public.hub_protocol') is not null as present`) as unknown as { present: boolean }[];
+      and to_regclass('public.hub_protocol') is not null as present,
+    to_regclass('public.council') is not null
+      and to_regprocedure('public.hub_council_job(text, text, text, text, jsonb)') is not null
+      and to_regprocedure('public.hub_council_event_put(text, text, integer, text, text, text, text, text, jsonb, jsonb)') is not null as councils`) as unknown as
+    { present: boolean; councils: boolean }[];
   if (!found?.present) throw new Error("schema-behind: apply migration 11 (conversations) before this runner serves");
+  if (!found.councils) throw new Error("schema-behind: apply migration 14 (councils) before this runner serves");
 }
 
 const NONE: AdapterCapabilities = { stableSession: false, safeResume: false, delegationDisabled: false };
@@ -309,6 +319,16 @@ export function usableJournal(result: Record<string, unknown> | null): result is
  * A `tail` attempt has no input to hold: it ends the same way and leaves no hold.
  * Nothing here retries, rolls back or feeds anything: a held input is the
  * owner's to decide, and the choice arrives as a new input.
+ *
+ * A COUNCIL MEMBER THAT NEVER WAS GIVEN ITS INPUT IS FENCED IN THIS SAME TRANSACTION. A `failed` attempt releases its claim
+ * and leaves its row eligible again, which is right for an ordinary job and is exactly what a council's member must not
+ * get: its failure is the owner's to decide (retry it, replace it, do without it). So when the attempt ends `failed` and the
+ * job is a council's, the claim gate `council-failed:<job>` is written HERE, mandatory, in the transaction that ends the attempt
+ * and releases the claim (`council/hooks.ts`, `noteJobFailed`, only lets the council see it). If the gate cannot be written the transaction fails
+ * and the attempt is still only `claimed`: it blocks its agent and its row exactly as before, nothing is retried by the runner's catch, by the
+ * next admission, at the retry deadline or after a restart (a restart ends the attempt here again, and writes the gate then), and
+ * nothing was fed. The agent's ordering lock is taken BEFORE the attempt's row lock in that case, the order every gate placement and every
+ * opening of an attempt uses (`store/controls.ts`).
  */
 export async function endAttempt(
   store: StoreLike,
@@ -326,6 +346,12 @@ export async function endAttempt(
 ): Promise<EndedAttempt> {
   return await store.sql.begin(async (tx) => {
     const inside = { ...store, sql: tx as unknown as StoreLike["sql"] };
+    // The ordering lock first, when this may become a council member's failure: the fence below takes it, and it is always taken before the attempt's row.
+    const [peek] = (await tx`select e.state, i.agent, i.source from execution e left join inbound i on i.id = e.inbound_id where e.id = ${end.execution}`) as unknown as
+      { state: string; agent: string | null; source: InboundSource | null }[];
+    if (peek && peek.agent !== null && councilOfJob(peek.source) !== null && (end.delivered === false || peek.state === "claimed")) {
+      await tx`select hub_gate_order(${peek.agent}::text)`;
+    }
     const [ex] = (await tx`select * from execution where id = ${end.execution} for update`) as unknown as ExecutionRow[];
     if (!ex || !(UNRESOLVED as readonly string[]).includes(ex.state)) return { state: ex?.state ?? "missing", revision: null };
     // A finished answer is not an interruption. The model produced it and it is
@@ -360,6 +386,11 @@ export async function endAttempt(
     await tx`update inbound set claimed_by = null, claim_deadline = null where id = ${ex.inbound_id} and claimed_by is not null`;
     await clearProgress(inside, ex.inbound_id);
     if (state === "failed") {
+      const council = councilOfJob(row?.source);
+      if (council !== null && row) {
+        await placeGate(inside, { operation: `council-failed:${row.id}`, scope: { kind: "row", id: row.id }, cause: "council",
+          evidence: { council, cause: safeValue(end.cause).slice(0, 200) } });
+      }
       await noteExecution(inside, ex.id, "failed", { cause: end.cause });
       return { state, revision: null };
     }

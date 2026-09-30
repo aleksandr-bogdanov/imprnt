@@ -7,7 +7,7 @@ import { putRow } from "../records/statesheet.ts";
 import { appendChunks, appendNotice } from "../store/outbox.ts";
 import { completeExecution, type SettleFence } from "../store/conversations.ts";
 import { clearProgress } from "./progress.ts";
-import { recordSeatAnswer } from "./council.ts";
+import { afterMasterSettle, noteJobSettled } from "../council/hooks.ts";
 import type { Price } from "../registry/presets.ts";
 
 /**
@@ -113,19 +113,15 @@ export async function settleTurn(
         detail: { agent: turn.turn.agent, runner: turn.turn.runner },
       });
       const approvedBy = turn.source?.dispatch?.approved?.source;
-      if (approvedBy === "watch" || approvedBy === "council") {
+      if (approvedBy === "watch" || approvedBy === "council" || turn.source?.dispatch?.council_round) {
         // A hunt reads its master's verdicts by id on the next tick, and a
-        // council reads a seat's answer out of its sheet row. Nobody is
+        // council reads a member's answer from this very report. Nobody is
         // waiting on this report as a turn, so it is recorded and never fed:
         // the door still projects the line into the dispatcher's chat log, and
-        // every feed path leaves an answered row alone.
+        // every feed path leaves an answered row alone. A member's owner-authorized
+        // continuation is a job approved as a recovery, and it carries the council's
+        // mark all the same, so its report is never fed to the master as a turn either.
         await stamp(inside, { messageId: `report:${turn.inboundId}`, kind: "answered", actor: "runner" });
-      }
-      const council = turn.source?.dispatch?.council;
-      if (approvedBy === "council" && council) {
-        // This seat's answer into the council, and the merge row when it was
-        // the last one, inside this same transaction.
-        await recordSeatAnswer(inside, { council, answer: turn.chunks.join("\n") });
       }
     } else {
       await appendChunks(inside, turn.inboundId, turn.chunks, turn.receipts);
@@ -146,6 +142,13 @@ export async function settleTurn(
     if (turn.execution) {
       await completeExecution(inside, { execution: turn.execution.id, runner: turn.execution.runner, reply: turn.chunks.join("\n"), fence: turn.execution.fence });
     }
+    // A council hears of it in this same transaction: a member's report is read into its round (and the master's
+    // event is written when it was the last), and a master attempt that called finalize completes the council.
+    // A member's is an optional reconcile (a savepoint, never waits for a council: `noteJobSettled`). The master's is
+    // PART OF THE SETTLEMENT: the council's result is recorded with the reply or the settlement does not commit, and the
+    // runner settles the same journaled answer again without another input to the engine (`afterMasterSettle`).
+    if (turn.kind === "job") await noteJobSettled(inside, turn.source);
+    else if (turn.execution) await afterMasterSettle(inside, { execution: turn.execution.id, inbound: turn.inboundId, reply: turn.chunks.join("\n") });
     // The open turn's progress row goes with the settle, inside the one
     // transaction, so the door never edits a line about a turn that has ended.
     await clearProgress(inside, turn.inboundId);

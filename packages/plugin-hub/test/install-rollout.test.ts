@@ -51,7 +51,8 @@ test("ROLL-05 database stage migrates an existing previous schema and preserves 
     for (let n = 0; n < 2; n++) await (runInstall as Function)({ registryFile: f.registryFile, stage: "database", os: probe.os })
     const versions = (await db`select version from schema_version order by version`).map((row: any) => Number(row.version))
     expect(versions).toEqual(MIGRATION_FILES.map(([version]) => version))
-    expect(versions).toEqual(Array.from({ length: MIGRATION_FILES.length }, (_, i) => i + 1))
+    // Whole: 001..015 with no number left empty (014 councils, then 015 topics).
+    expect(versions).toEqual(Array.from({ length: MIGRATION_FILES.at(-1)![0] }, (_, i) => i + 1))
     // D-210: exercise the installer's dispatch registration instead of matching
     // a historical spelling of its migration list in the TypeScript source.
     expect((await db`select to_regprocedure('hub_report(text,text)')::text as report`)[0].report).toBe("hub_report(text,text)")

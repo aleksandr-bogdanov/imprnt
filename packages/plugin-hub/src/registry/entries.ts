@@ -377,10 +377,9 @@ export function filingRulesFor(registry: unknown, personId: string): string | nu
 }
 
 /**
- * The council of one person: every agent of theirs carrying `role =
- * "council"`, in file order. Fewer than two is no council at all, which the
- * door answers with the usage line rather than a refusal, because what is
- * missing is a registry entry.
+ * The agents of one person carrying `role = "council"`, in file order. They are workers that take
+ * jobs alone, and nothing more: this is NOT a roster. A council's participants are only ever the ones
+ * the owner named (`council/roster.ts`), and no "usual seats" are ever chosen for them.
  */
 export function councilSeatsOf(registry: unknown, personId: string): AgentEntry[] {
   return listAgents(registry).filter((agent) => agent.person === personId && agent.role === "council");

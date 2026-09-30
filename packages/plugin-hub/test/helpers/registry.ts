@@ -93,6 +93,12 @@ export interface RunSpec {
   guild?: string;
   /** The preset an agent adopted through this door is created with. */
   default_preset?: string;
+  /** What a door says about its topic chats: overrides of the person's defaults, and the archive mapping. */
+  topic_machine?: string;
+  topic_preset?: string;
+  topic_category?: string;
+  archive_category?: string;
+  archive_readonly_roles?: string[];
   /** The declared repository ids a `kind = "sync"` entry keeps in step. */
   repositories?: string[];
   /**
@@ -144,6 +150,9 @@ export interface MachineSpec {
 /** Where a person or a credential is on one machine, keyed by machine id. */
 export type PlacementSpec = Record<string, Record<string, string | undefined>>;
 
+/** The senders a person allows, keyed by door id. */
+export type SendersSpec = Record<string, string[]>;
+
 /** A person and the tree that is their boundary. */
 export interface PersonSpec {
   id: string;
@@ -174,7 +183,13 @@ export interface PersonSpec {
   harvest_report?: boolean;
   /** This person's tree and vault on a machine that is not the hub's. */
   on?: PlacementSpec;
-  [key: string]: string | number | boolean | PlacementSpec | undefined;
+  /** Who may speak to this person's agents, by door id: a list of stable sender ids each. */
+  allowed_senders?: SendersSpec;
+  /** The machine, the agent preset and the General agent topic chats default to. */
+  topic_machine?: string;
+  topic_preset?: string;
+  general?: string;
+  [key: string]: string | number | boolean | PlacementSpec | SendersSpec | undefined;
 }
 
 /**
@@ -283,7 +298,7 @@ function value(v: unknown): string {
   if (v !== null && typeof v === "object") {
     const pairs = Object.entries(v as Record<string, unknown>)
       .filter(([, one]) => one !== undefined)
-      .map(([key, one]) => `${key} = ${value(one)}`);
+      .map(([key, one]) => `${/^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key)} = ${value(one)}`);
     return `{ ${pairs.join(", ")} }`;
   }
   return typeof v === "number" ? String(v) : JSON.stringify(v);
@@ -506,6 +521,11 @@ function renderRegistry(spec: RegistrySpec): string {
       idle_seconds: entry.idle_seconds,
       guild: entry.guild,
       default_preset: entry.default_preset,
+      topic_machine: entry.topic_machine,
+      topic_preset: entry.topic_preset,
+      topic_category: entry.topic_category,
+      archive_category: entry.archive_category,
+      archive_readonly_roles: entry.archive_readonly_roles,
       destination: entry.destination,
       dump_argv: entry.dump_argv,
       upload_argv: entry.upload_argv,

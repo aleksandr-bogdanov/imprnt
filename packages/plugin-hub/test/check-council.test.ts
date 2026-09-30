@@ -1,61 +1,81 @@
-// `check` reports a council past the grace with seats still open, once per
-// council, naming the seats that have not answered in the fix, and clears it
-// when the merge lands (the row is gone) or the seats answer.
+// `check` reports a live council that has waited for its owner or its master past the grace, one whose card
+// cannot be shown, and a person with a live council and no General to hear about it in: once per council (or
+// person), and clears it when the council moves. A worker that is only quiet or slow is not a finding.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { startCluster, type Cluster } from "./helpers/cluster.ts";
-import { insertInbound, stageHub, superStore } from "./helpers/hub-fixture.ts";
+import { stageHub, superStore } from "./helpers/hub-fixture.ts";
 import type { RunSpec } from "./helpers/registry.ts";
 import { fakeProber } from "./helpers/prober.ts";
-import { appendRow, putRow, removeRow } from "../src/records/statesheet.ts";
-import { COUNCIL_SHEET, type CouncilRow } from "../src/door/council.ts";
-import { councilFindings } from "../src/check/council.ts";
+import { councilFindings, type LiveCouncil } from "../src/check/council.ts";
 import { runCheck, type Finding } from "../src/check/run.ts";
+import { loadRegistry } from "../src/registry/load.ts";
 
 const HERE = process.platform === "darwin" ? "mac" : "pi";
 const HERE_OS = process.platform === "darwin" ? "macos" : "linux";
 const T0 = new Date("2026-09-26T10:00:00.000Z");
-const SEATS = ["p1-seat-1", "p1-seat-2", "p1-seat-3"];
 const later = (seconds: number) => new Date(T0.getTime() + seconds * 1000);
 
 let cluster: Cluster;
 beforeAll(async () => { cluster = await startCluster(); });
 afterAll(async () => { await cluster?.stop(); });
 
-function council(over: Partial<CouncilRow> = {}): CouncilRow {
-  return { person: "p1", agent: "p1-lair", door: "door-fake", chat: "1000000001", task: "weigh it",
-    seats: SEATS, at: T0.toISOString(), answered: {}, ...over };
+const live = (over: Partial<LiveCouncil> = {}): LiveCouncil => ({
+  id: "council:abc", person: "p1", agent: "p1-lair", lifecycle: "waiting_owner", origin_kind: "owner_request",
+  updated_at: T0, waiting: { kind: "members_missing" }, card: "confirmed", ...over });
+
+async function stagedRegistry(general: boolean) {
+  const it = await stageHub(cluster, {
+    people: [{ id: "p1", allowed_senders: { "door-fake": ["p1"] }, ...(general ? { general: "p1-lair" } : {}) } as never],
+  });
+  return { it, registry: loadRegistry(it.registryFile) };
 }
 
-test("the finding is pure arithmetic over the sheet: one per open council past the grace, none for a council of another machine's agent, none once every seat is in", () => {
-  const args = { agents: new Set(["p1-lair"]), graceSeconds: 300, machine: HERE };
-  const open = { id: "council:telegram:1000000001:1", ...council(), claims: { "p1-seat-1": null, "p1-seat-2": "runner-mac", "p1-seat-3": null } };
-  expect(councilFindings({ ...args, councils: [open], now: later(300) })).toEqual([]);
-  const found = councilFindings({ ...args, councils: [open], now: later(301) });
-  expect(found).toHaveLength(1);
-  expect(found[0]).toEqual({
-    id: `${HERE}/council-overdue:${open.id}`, kind: "council-overdue", subject: open.id, machine: HERE,
-    says: `${open.id} was convened for p1-lair 301 seconds ago and 3 of its 3 seats have not answered, which is 1 seconds past the 300 second grace`,
-    fix: "read the runner log for p1-seat-1 (unclaimed), p1-seat-2 (claimed by runner-mac), p1-seat-3 (unclaimed)",
-  });
-  // Two seats in, one open: the fix names the one. A dead seat (null) counts as in.
-  const two = { ...open, answered: { "p1-seat-1": "yes", "p1-seat-3": null } };
-  expect(councilFindings({ ...args, councils: [two], now: later(1000) })[0].fix).toBe("read the runner log for p1-seat-2 (claimed by runner-mac)");
-  // Every seat in: nothing, even though the row has not been removed yet.
-  const all = { ...open, answered: { "p1-seat-1": "yes", "p1-seat-2": "no", "p1-seat-3": null } };
-  expect(councilFindings({ ...args, councils: [all], now: later(1000) })).toEqual([]);
-  // Another machine's agent: not this machine's to report.
-  expect(councilFindings({ ...args, agents: new Set(["p2-lair"]), councils: [open], now: later(1000) })).toEqual([]);
+test("the findings are arithmetic over the live council rows: waiting for the owner or the master past the grace, an undeliverable card, no General; one each, none for another machine's agent", async () => {
+  const withGeneral = await stagedRegistry(true);
+  const without = await stagedRegistry(false);
+  try {
+    const args = { agents: new Set(["p1-lair"]), graceSeconds: 300, machine: HERE, registry: withGeneral.registry };
+    expect(councilFindings({ ...args, councils: [live()], now: later(300) }), "not yet past the grace").toEqual([]);
+    const owner = councilFindings({ ...args, councils: [live()], now: later(301) });
+    expect(owner).toHaveLength(1);
+    expect(owner[0]).toMatchObject({ id: `${HERE}/council-waiting-owner:council:abc`, kind: "council-waiting-owner", subject: "council:abc", machine: HERE });
+    expect(owner[0].says).toContain("301 seconds");
+    expect(owner[0].says).toContain("nothing is rerun, replaced or left out until they choose");
+
+    const master = councilFindings({ ...args, councils: [live({ lifecycle: "waiting_master", waiting: null })], now: later(400) });
+    expect(master.map(one => one.kind)).toEqual(["council-waiting-master"]);
+    const assessing = councilFindings({ ...args, councils: [live({ lifecycle: "assessing", waiting: null })], now: later(400) });
+    expect(assessing.map(one => one.kind)).toEqual(["council-waiting-master"]);
+    // A council that is running is not a finding, however long it takes, and neither is one a worker is quiet on.
+    expect(councilFindings({ ...args, councils: [live({ lifecycle: "running", waiting: null })], now: later(100_000) })).toEqual([]);
+
+    for (const card of ["failed", "missing", "unknown"]) {
+      const found = councilFindings({ ...args, councils: [live({ lifecycle: "running", waiting: null, card })], now: later(1) });
+      expect(found.map(one => one.kind), card).toEqual(["council-card"]);
+      expect(found[0].says).toContain(card);
+    }
+    expect(councilFindings({ ...args, councils: [live({ lifecycle: "running", waiting: null, card: "not_sent" })], now: later(1) })).toEqual([]);
+
+    // No General: one finding per person, however many councils they have, and not for a legacy council.
+    const noGeneral = { ...args, registry: without.registry };
+    const two = councilFindings({ ...noGeneral, councils: [live({ lifecycle: "running", waiting: null }), live({ id: "council:def", lifecycle: "running", waiting: null })], now: later(1) });
+    expect(two.filter(one => one.kind === "council-no-general")).toEqual([expect.objectContaining({ id: `${HERE}/council-no-general:p1`, subject: "p1" })]);
+    expect(councilFindings({ ...noGeneral, councils: [live({ origin_kind: "legacy", lifecycle: "running", waiting: null })], now: later(1) })).toEqual([]);
+    expect(councilFindings({ ...args, councils: [live({ lifecycle: "running", waiting: null })], now: later(1) }), "a General is configured").toEqual([]);
+    // Another machine's agent is not this machine's to report.
+    expect(councilFindings({ ...args, agents: new Set(["p2-lair"]), councils: [live()], now: later(100_000) })).toEqual([]);
+  } finally { await withGeneral.it.stop(); await without.it.stop(); }
 });
 
-test("check reports council-overdue against the real sheet and clears it when the row goes", async () => {
+test("check reports the real council row and clears it when the council moves on", async () => {
   const DOOR_ENTRY: RunSpec = { id: "door-fake", kind: "door", machine: HERE, platform: "fake", person: "p1",
     token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 };
   const RUNNER_ENTRY: RunSpec = { id: "runner-test", kind: "runner", machine: HERE, schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048 };
   const it = await stageHub(cluster, {
     hub: { tick_seconds: 1, job_grace_seconds: 60 },
     machines: [{ id: HERE, os: HERE_OS }],
-    agents: SEATS.map((id) => ({ id, person: "p1", preset: "daily", runner: "runner-test", role: "council" })),
+    people: [{ id: "p1", allowed_senders: { "door-fake": ["p1"] }, general: "p1-lair" } as never],
     run: [DOOR_ENTRY, RUNNER_ENTRY],
   });
   let store: Awaited<ReturnType<typeof superStore>> | null = null;
@@ -63,25 +83,19 @@ test("check reports council-overdue against the real sheet and clears it when th
     store = await superStore(cluster, it.db);
     const check = async (now: Date) => ((await runCheck({
       machine: HERE, registryFile: it.registryFile, store: store!, os: null, kernel: null, credentials: fakeProber({}), now,
-    })) as Finding[]).filter((one) => one.kind === "council-overdue");
-    const id = "council:telegram:1000000001:7";
+    })) as Finding[]).filter((one) => one.kind.startsWith("council-"));
     expect(await check(later(100))).toEqual([]);
-    await appendRow(store, COUNCIL_SHEET, id, council() as unknown as Record<string, unknown>);
-    expect(await check(later(60))).toEqual([]);
-    const found = await check(later(61));
-    expect(found).toHaveLength(1);
-    expect(found[0]).toMatchObject({ kind: "council-overdue", subject: id, machine: HERE,
-      fix: `read the runner log for ${SEATS.map((seat) => `${seat} (unclaimed)`).join(", ")}` });
-    // The third seat's job is on the queue and a runner holds it: the fix says who.
-    await insertInbound(cluster, it.db, { id: `${id}:p1-seat-3`, body: "weigh it", person: "p1", agent: "p1-seat-3", kind: "job", logReady: true });
-    await store.sql`update inbound set claimed_by = 'runner-test', claim_deadline = now() + interval '1 hour' where id = ${`${id}:p1-seat-3`}`;
-    expect((await check(later(61)))[0].fix).toBe("read the runner log for p1-seat-1 (unclaimed), p1-seat-2 (unclaimed), p1-seat-3 (claimed by runner-test)");
-    // Two seats land: the fix narrows to the one still open.
-    await putRow(store, COUNCIL_SHEET, id, council({ answered: { "p1-seat-1": "yes", "p1-seat-2": null } }) as unknown as Record<string, unknown>);
-    expect((await check(later(61)))[0].fix).toBe("read the runner log for p1-seat-3 (claimed by runner-test)");
-    // The merge landed, the row is gone, the finding clears.
-    await removeRow(store, COUNCIL_SHEET, id);
-    expect(await check(later(1000))).toEqual([]);
+    const at = new Date().toISOString();
+    await store.sql`insert into council (id, person, agent, origin_kind, origin, return_route, operation_id, question, lifecycle, waiting, checkpoint_deadline, status_effect_key, updated_at)
+      values ('council:live', 'p1', 'p1-lair', 'owner_request', ${{ at }}::jsonb, ${{ agent: "p1-lair", door: "door-fake", chat: "1000000001" }}::jsonb,
+              'op-live', 'weigh it', 'waiting_owner', ${{ kind: "members_missing" }}::jsonb, now() + interval '30 minutes', 'council-status:council:live', now() - interval '10 minutes')`;
+    const found = await check(new Date());
+    expect(found.map(one => [one.kind, one.subject])).toEqual([["council-waiting-owner", "council:live"]]);
+    // The council moves on: the finding clears.
+    await store.sql`update council set lifecycle = 'running', waiting = null, updated_at = now() where id = 'council:live'`;
+    expect(await check(new Date())).toEqual([]);
+    await store.sql`update council set lifecycle = 'complete' where id = 'council:live'`;
+    expect(await check(new Date(Date.now() + 3_600_000))).toEqual([]);
   } finally {
     await store?.close();
     await it.stop();

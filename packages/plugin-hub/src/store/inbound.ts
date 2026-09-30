@@ -20,6 +20,12 @@ export interface InboundSource {
    * seats' answers only inside the merge row it is fed as a turn.
    */
   origin?: RowOrigin;
+  /**
+   * Set when the person's message began with a command the door no longer acts on by itself
+   * (`/council`): the text is still the person's own message and the agent reads it as one, and
+   * this is the door's note of which command it began with. It authorizes nothing.
+   */
+  command?: "council";
 }
 
 /** Who caused a row that is in the log for the person and in neither tail. */
@@ -41,6 +47,14 @@ export interface DispatchEnvelope {
    * know when the last one has landed.
    */
   council?: { id: string; seats: string[]; seat: string };
+  /**
+   * Present on a job that is one input of a participant of a council (`council/`): which
+   * council and round, which participant, and which input of that participant in that round
+   * (a correction or an owner's retry is a further one). It is how the store tells a council
+   * member's report from any other, and it carries no authority of its own: the job is
+   * approved by the owner it names in `approved`, like any job.
+   */
+  council_round?: { council: string; round: number; participant: string; revision: number };
   /**
    * The conversation this job continues, when the person asked for a follow-up
    * and not a new job. Absent, the job gets a conversation of its own. It is

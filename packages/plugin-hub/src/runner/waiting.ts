@@ -14,8 +14,10 @@ import type { StoreLike } from "../store/connect.ts";
 export const AGENT_WAIT_SHEET = "agent_wait";
 
 export type AgentWait =
-  | { kind: "slots"; count: number; holders: string[] }
-  | { kind: "memory"; budget_mb: number; used_mb: number; reserve_mb: number }
+  // `held_for_master` is how many of the slots are kept free for masters whose councils are active
+  // (`council/capacity.ts`), and `conflict` says the runner's limits leave no room for a worker at all beside them.
+  | { kind: "slots"; count: number; holders: string[]; held_for_master?: number; conflict?: boolean }
+  | { kind: "memory"; budget_mb: number; used_mb: number; reserve_mb: number; held_for_master?: number }
   | { kind: "starting" }
   | { kind: "harvest" };
 

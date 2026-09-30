@@ -228,6 +228,9 @@ export async function runInstall(options: { registryFile: string; stage?: string
     await store.sql`select 'hub_hold_choice(text, text, integer, text, text, jsonb, text)'::regprocedure`;
     await store.sql`select runner_protocol from hub_protocol limit 0`;
     await store.sql`select runner, incarnation from runner_incarnation limit 0`;
+    // Councils: a runner of this build refuses to serve a store before step 14, so the box says so here, by the function
+    // that writes a council's job, and not when the runner starts.
+    await store.sql`select 'hub_council_job(text, text, text, text, jsonb)'::regprocedure`;
     // The newest step grants rather than creates, so what is probed is the
     // grant itself: without it this hub applies a lifecycle control and cannot
     // say a word about it in the chat that asked.

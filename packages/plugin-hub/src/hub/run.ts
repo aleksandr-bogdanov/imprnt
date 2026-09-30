@@ -18,6 +18,8 @@ import { mayReach, RUN_RECOVERY_KINDS, watchControls } from "./control.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { programForKind, transcriberArgv } from "./program.ts";
 import { recordRegistryDigest } from "./digest.ts";
+import { bindTopics } from "./topics.ts";
+import { identityReserved, readTopicByAgent, readTopicByChat, rebindLegacyTopic, type TopicRow } from "../store/topics.ts";
 
 /**
  * The hub: one process per machine, ours, unsandboxed, and the only thing that
@@ -186,6 +188,10 @@ export async function runHub(options: {
     // request lands within one tick of being written rather than behind
     // whatever the registry happened to change in the same pass.
     await acknowledge(entries);
+    // The agents of topic chats whose channels were made: written into the registry, on the runner of the
+    // machine each was made for. A pass that could not bind one is said in the diary and the tick goes on.
+    try { await bindTopics({ store, registryFile: options.registryFile, machine: options.machine, load }); }
+    catch (error) { await recordOperationFailure(store, { operation: "topic-bind", target: options.machine, error }); }
     const started = new Set<string>();
     // An entry whose install failed this tick has already said so, and loading
     // or starting below would only make the manager fail again on the same file.
@@ -414,6 +420,31 @@ export async function runHub(options: {
     // reason the door gives: a chat id means something only on its own door,
     // and the cursor removed below is keyed by the agent's door.
     if (existing && existing.door !== door.id) throw new Error("access denied");
+    // TOPIC MASTERS ARE NOT THIS PATH'S TO BYPASS. A reserved identity is never adopted, an id a topic made is
+    // never made or rebound by hand, and a topic that is archived, being reopened or gone is not retired out
+    // from under its own lifecycle. The refusal says "invalid configuration", the word a person already reads
+    // for a change this path cannot make, and the diary says which rule it was.
+    //
+    // What stays possible is what always was, for an ADOPTED master (a legacy topic) that is ACTIVE: it can be retired,
+    // adopted again onto a chat with everything it was (its identity, its conversation, its history), and repaired onto
+    // another chat, including one whose own chat was deleted while it was active. Nothing here is a ban on retiring.
+    const refuseTopicRule = async (rule: string): Promise<never> => {
+      await recordOperationFailure(store, { operation: String(data.operation), target: id, error: new Error(rule) });
+      throw new Error("invalid configuration");
+    };
+    if (await identityReserved(store, "agent", id)) await refuseTopicRule("identity-reserved: this agent id was retired and is never used again");
+    const owning = await readTopicByAgent(store, id);
+    if (owning !== null && data.operation === "retire" && (owning.lifecycle !== "active" || owning.origin === "created")) {
+      await refuseTopicRule("topic-managed: a topic master is archived or deleted, not retired");
+    }
+    /** Why a topic's chat may not be changed by this path, or null when it may: a legacy topic that is active, or gone while it was. */
+    const stuckChat = (t: TopicRow): string | null => {
+      if (t.origin !== "legacy") return "topic-managed: a topic keeps the chat it has";
+      if (t.lifecycle === "active" || (t.lifecycle === "channel_missing" && t.missing_from === "active")) return null;
+      return t.lifecycle === "channel_missing"
+        ? "topic-managed: this chat vanished while it was archived or being reopened, and that archive still holds it"
+        : "topic-managed: a topic keeps the chat it has";
+    };
     if (data.operation === "retire") {
       // ALREADY GONE IS DONE. The edit renames the file before this row's own
       // transaction commits, so a hub that dies between the two finds the row
@@ -438,7 +469,50 @@ export async function runHub(options: {
     if (listAgents(registry).some(one => one.id !== id && one.door === door.id && one.chat === chat)) {
       throw new Error("invalid configuration");
     }
-    if (existing) { await setKey(options.registryFile, `agents[${id}]`, "chat", chat); return; }
+    // Another topic's chat is not this agent's to take, whichever way it is asked for.
+    const holder = await readTopicByChat(store, door.id, chat);
+    if (holder !== null && holder.id !== owning?.id) await refuseTopicRule("topic-managed: that chat belongs to another topic");
+    if (existing) {
+      // A topic follows its master when it is repaired onto another chat, unless the Hub made that chat. What may not
+      // follow is refused BEFORE the file is touched. The file is edited FIRST and the topic follows, so a hub that dies
+      // between the two finds the file already saying it and the topic still gated, and asking again finishes it: the
+      // edit is idempotent, and so is the topic's answer for the chat it already has.
+      if (owning !== null) {
+        const rule = stuckChat(owning);
+        if (rule !== null) await refuseTopicRule(rule);
+        // The store refuses a retired topic or conversation identity when the topic follows, and that is after the file was edited.
+        if ((await identityReserved(store, "topic", owning.id)) || (await identityReserved(store, "conversation", owning.conversation_id))) {
+          await refuseTopicRule("identity-reserved: this chat's history was retired and is never used again");
+        }
+      }
+      await setKey(options.registryFile, `agents[${id}]`, "chat", chat);
+      if (owning !== null && (await rebindLegacyTopic(store, id, chat)) !== "rebound") {
+        await refuseTopicRule("topic-managed: a topic keeps the chat it has");
+      }
+      return;
+    }
+    if (owning !== null) {
+      // AN ACTIVE ADOPTED MASTER THAT WAS RETIRED comes back as itself: the same identity and conversation, the preset and
+      // the runner it had, on the chat it is adopted onto. Everything else that has a topic (one the Hub made, one that is
+      // archived, being reopened or gone, a reserved identity) keeps its guard.
+      if (owning.origin !== "legacy" || owning.lifecycle !== "active") await refuseTopicRule("topic-managed: this agent id belongs to a topic");
+      if (owning.person !== person || owning.door !== door.id) await refuseTopicRule("topic-managed: this agent id belongs to a topic of another door or person");
+      if ((await identityReserved(store, "topic", owning.id)) || (await identityReserved(store, "conversation", owning.conversation_id))) {
+        await refuseTopicRule("identity-reserved: this chat's history was retired and is never used again");
+      }
+      const served = runEntriesFor(registry, options.machine).find(e => e.kind === "runner" && wantedState(e) === "running");
+      if (!served || served.id !== owning.runner) await refuseTopicRule("topic-managed: the runner that served this chat is not the one this machine keeps running");
+      if (!Object.hasOwn(registry.presets, owning.preset)) await refuseTopicRule("topic-managed: the preset this chat was served with is not defined any more");
+      const [history] = (await store.sql`select adapter from conversation where id = ${owning.conversation_id}`) as unknown as { adapter: string }[];
+      if (history !== undefined && history.adapter !== "unknown" && history.adapter !== registry.presets[owning.preset].adapter) {
+        await refuseTopicRule("topic-managed: the preset now runs another engine than this chat's history was made with");
+      }
+      await appendRegistryEntry(options.registryFile, "agents", {
+        id, person, preset: owning.preset, chat, door: door.id, runner: owning.runner,
+      });
+      if ((await rebindLegacyTopic(store, id, chat)) !== "rebound") await refuseTopicRule("topic-managed: a topic keeps the chat it has");
+      return;
+    }
     // The machine's runner that the file says is running, because an agent
     // given to a runner somebody stopped would be an agent nothing ever serves.
     const runner = runEntriesFor(registry, options.machine).find(e => e.kind === "runner" && wantedState(e) === "running");

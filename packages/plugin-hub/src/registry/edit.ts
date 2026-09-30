@@ -1,7 +1,7 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { chmodSync, chownSync, closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { indexLines, loadRegistry } from "./load.ts";
+import { indexLines, loadRegistry, type Registry } from "./load.ts";
 
 /**
  * The only place the registry is ever written.
@@ -43,7 +43,7 @@ import { indexLines, loadRegistry } from "./load.ts";
  * registry to somebody else.
  */
 export class RegistryEditRefused extends Error {
-  /** Which step refused: `path`, `value`, `load`, `diff`, `concurrent`, `owner` or `locked`. */
+  /** Which step refused: `path`, `value`, `load`, `diff`, `concurrent`, `owner`, `locked` or `precondition`. */
   readonly step: string;
   /** The candidate left behind, when there is one. */
   readonly candidate: string | null;
@@ -69,8 +69,22 @@ export interface RegistryEditSeam {
   afterCheck?(candidate: string): void | Promise<void>;
 }
 
+/**
+ * A judgment on the registry an edit is ABOUT to change, made inside the writer's lock from
+ * the very bytes the edit is built from. A caller that loaded the registry earlier, and then
+ * waited on a database or on the lock, is judging a file that may have changed since; this is
+ * judged against the file the edit is really about to replace.
+ *
+ * `ok` lets the edit go on. `ok` with `present` says the file already says what the edit
+ * would have written, so nothing is written and the edit reports `changed: false`. Not `ok`
+ * refuses the edit with `reason`, before a candidate exists, and the file is left as it is.
+ */
+export type RegistryPrecondition = (registry: Registry) => { ok: true; present?: boolean } | { ok: false; reason: string };
+
 export interface RegistryEditOptions {
   seam?: RegistryEditSeam;
+  /** Only `appendEntry` asks it: the one edit that has to know what it is appending to. */
+  precondition?: RegistryPrecondition;
 }
 
 export interface RegistryEditResult {
@@ -299,6 +313,10 @@ export async function appendEntry(file: string, table: string, block: Record<str
   options: RegistryEditOptions = {}): Promise<RegistryEditResult> {
   return await locked(file, async live => {
     const read = readLive(live);
+    // Judged on the bytes this edit is built from, under the lock, before anything is prepared.
+    const verdict = options.precondition?.(read.registry);
+    if (verdict && !verdict.ok) throw new RegistryEditRefused("precondition", verdict.reason);
+    if (verdict?.ok && verdict.present) return { changed: false };
     await options.seam?.afterRead?.(file);
     const { before } = read;
     const rendered = [`[[${table}]]`, ...Object.entries(block).map(([key, value]) => `${key} = ${render(value, `${table}.${key}`)}`)];
@@ -314,9 +332,10 @@ export async function appendEntry(file: string, table: string, block: Record<str
 }
 
 /** The one read an edit is built from: the bytes, and what they parse to. */
-function readLive(live: string): { before: string; data: Record<string, unknown> } {
+function readLive(live: string): { before: string; data: Record<string, unknown>; registry: Registry } {
   const before = readFileSync(live, "utf8");
-  return { before, data: loadRegistry(live).data as Record<string, unknown> };
+  const registry = loadRegistry(live);
+  return { before, data: registry.data as Record<string, unknown>, registry };
 }
 
 /**

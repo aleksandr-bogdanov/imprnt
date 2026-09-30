@@ -72,6 +72,15 @@ export function requireMaster(binding: McpBinding, doing: string): void {
   if (binding.kind !== "master") throw new ToolError("not_owner_conversation", `only a conversation the owner talks to can ${doing}`);
 }
 
+/**
+ * The moment a cited message must be newer than, and what to call it in the refusal. The comparison is made BY THE DATABASE, so a moment is
+ * compared as PostgreSQL holds it: a string is a `timestamptz` read as text in the same transaction (`col::text`), microseconds included. A JS
+ * `Date` keeps milliseconds only, and a message written microseconds after the news it must follow is in the same millisecond as it: read as a
+ * `Date`, it looks equal and is refused as not newer. A caller that has the moment from a row passes it as text; a `Date` is only for a
+ * moment that really is one (a clock read in code).
+ */
+export interface Since { at: Date | string; what: string }
+
 /** What every request that changes something carries. Its arguments were read strictly by the tool's reader. */
 export interface RequestLike {
   action: string;
@@ -91,7 +100,7 @@ export interface RequestPlan<R extends RequestLike, Context> {
    * message may not be older than, and `what` names it in the refusal; leave it out
    * when the action sets no such bound.
    */
-  open?(tx: StoreLike): Promise<{ context: Context; since?: { at: Date; what: string } }>;
+  open?(tx: StoreLike): Promise<{ context: Context; since?: Since }>;
   /**
    * Apply the request, in the same transaction. `owner.sender` is the sender of the
    * first cited message, or "" when none was cited. A reply whose status is
@@ -126,19 +135,21 @@ export async function runRequest<R extends RequestLike, Context = undefined>(bin
         }
         return seen.result ?? refusal(plan.object, "closed", "the earlier call under this key recorded no result");
       }
-      const opened: { context: Context; since?: { at: Date; what: string } } = plan.open ? await plan.open(inside) : { context: undefined as Context };
+      const opened: { context: Context; since?: Since } = plan.open ? await plan.open(inside) : { context: undefined as Context };
       const registry = binding.registry();
+      // The bound as the database will compare it: text for a moment read from a row (microseconds kept), an ISO string for a `Date`. Null: no bound.
+      const bound = opened.since === undefined ? null : typeof opened.since.at === "string" ? opened.since.at : opened.since.at.toISOString();
       let sender = "";
       for (const id of request.source_message_ids ?? []) {
-        const [row] = (await tx`select id, person, agent, kind, source, received_at from inbound where id = ${id}`) as unknown as
-          { id: string; person: string; agent: string; kind: string; source: InboundSource | null; received_at: Date }[];
+        const [row] = (await tx`select id, person, agent, kind, source, received_at <= ${bound}::timestamptz as not_newer from inbound where id = ${id}`) as unknown as
+          { id: string; person: string; agent: string; kind: string; source: InboundSource | null; not_newer: boolean | null }[];
         if (!row || row.person !== binding.person || row.agent !== binding.agent || row.kind !== "human" || !row.source?.sender_id) {
           throw new ToolError("source_invalid", `${id} is not a message the owner sent to this agent`);
         }
         if (!senderAllowed(registry, binding.person, String(row.source.door), row.source.sender_id)) {
           throw new ToolError("source_invalid", `${id} is from a sender this person does not allow`);
         }
-        if (opened.since && row.received_at.getTime() <= new Date(opened.since.at).getTime()) {
+        if (opened.since && row.not_newer !== false) {
           throw new ToolError("source_invalid", `${id} is older than ${opened.since.what}`);
         }
         sender = sender || row.source.sender_id;

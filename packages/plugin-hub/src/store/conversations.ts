@@ -1,3 +1,4 @@
+import { noteEventFed } from "../council/feed.ts";
 import type { StoreLike } from "./connect.ts";
 import type { InboundSource, JobSource } from "./inbound.ts";
 
@@ -12,6 +13,18 @@ import type { InboundSource, JobSource } from "./inbound.ts";
  * and every reader (`evidence ->> 'pids'`, `jsonb ||`) then reads nothing or
  * builds an array. The cast is written out and the object is the parameter.
  */
+
+/**
+ * The protocol a runner speaks, in ONE place: the number it registers with
+ * (`registerIncarnation`), activates in the store (`activateProtocol`) and says on
+ * every claim (`hub.runner_protocol`, `runner/claim.ts`). 1 is every runner before
+ * conversations. 2 owns an attempt before it launches and never feeds a row that
+ * reached the engine twice. 3 is 2 plus councils: a runner that knows a council's
+ * jobs and events, settles them as the council's and never as an ordinary report.
+ * Once a store has activated 3, the claim trigger and the incarnation row refuse
+ * anything that speaks less, on every connection (migration 014).
+ */
+export const RUNNER_PROTOCOL = 3;
 
 /** The states in which an attempt may be running, or may have run and not been shown to have ended. */
 export const UNRESOLVED = ["claimed", "feed_intent", "received", "running", "unknown", "stop_requested", "stop_unknown"] as const;
@@ -210,19 +223,22 @@ export async function registerIncarnation(
   who: { runner: string; incarnation: string; machine: string | null; bootId: string | null },
 ): Promise<void> {
   await store.sql`insert into runner_incarnation (runner, incarnation, protocol, machine, boot_id)
-    values (${who.runner}, ${who.incarnation}, 2, ${who.machine}, ${who.bootId})
+    values (${who.runner}, ${who.incarnation}, ${RUNNER_PROTOCOL}::integer, ${who.machine}, ${who.bootId})
     on conflict (runner) do update
       set incarnation = excluded.incarnation, protocol = excluded.protocol, machine = excluded.machine,
           boot_id = excluded.boot_id, started_at = now()`;
 }
 
 /**
- * Say that this runner speaks protocol 2, for good. Refused by the table while an
- * input a runner of protocol 1 may have handed to the engine is in flight, because
- * nothing could then say what became of it: the error names those inputs.
+ * Say that this runner speaks its protocol (the newest this build knows by default), for
+ * good. Refused by the table while an input a runner of protocol 1 may have handed to the
+ * engine is in flight, because nothing could then say what became of it: the error names
+ * those inputs. A store at 1 can be taken to 2 and on to 3 a step at a time by naming the
+ * protocol; nothing ever moves it back. Activation starts, stops, settles and replays
+ * nothing: it only changes which claims the table accepts from then on.
  */
-export async function activateProtocol(store: StoreLike): Promise<void> {
-  await store.sql`update hub_protocol set runner_protocol = 2, activated_at = now() where runner_protocol < 2`;
+export async function activateProtocol(store: StoreLike, protocol: number = RUNNER_PROTOCOL): Promise<void> {
+  await store.sql`update hub_protocol set runner_protocol = ${protocol}::integer, activated_at = now() where runner_protocol < ${protocol}::integer`;
 }
 
 /** The busy answer to a unique violation of the table's own one-executor rule. */
@@ -243,6 +259,15 @@ function busyOrThrow(error: unknown, conversation: string): never {
  * two claimants that both got here, two jobs of one worker included, cannot both
  * insert: the second fails at the index, not at a check that ran before it.
  * A stale snapshot is refused, never quietly replaced by the current generation.
+ *
+ * THE LOCKS ARE THE SMALLEST THAT KEEP THAT TRUE. The input is locked `for update`: nothing
+ * else may change or consume it while the attempt is opened. The conversation is locked `for
+ * no key update`: a writer of its placement or state, and its deletion, still wait for the
+ * opening, so the generation read is the generation the attempt is opened on. What that lock
+ * lets through is a foreign key that only REFERS to the conversation (a tool call's invocation
+ * row takes a key share of it and keeps it to its commit). A `for update` there made the
+ * opening wait for such a call's commit after it had locked the input, while the same call,
+ * spending the cited input as its source, waited for the opening's input lock: a cycle.
  *
  * THE GATE IS READ AFTER THE ORDERING POINT. A claim that was made before a gate was
  * placed spends time planning before it gets here, so the gate has to be asked at the
@@ -282,7 +307,7 @@ export async function openExecution(
            and c.id = ${open.conversation.id} and c.placement_generation = ${open.conversation.placement_generation}
            and r.runner = ${open.runner} and r.incarnation = ${open.incarnation}
            and not hub_gate_covers(${open.row.agent}::text, c.id, i.id)
-           for update of i, c for share of r
+           for update of i for no key update of c for share of r
         returning *`) as unknown as ExecutionRow[];
       if (!made) throw await whyRefused(tx as unknown as StoreLike["sql"], open, id);
       // The attempt that owns the conversation from here is what the owner's
@@ -400,6 +425,8 @@ export async function markFeedIntent(store: StoreLike, execution: ExecutionRow, 
       await recordEntry(inside, { conversation: execution.conversation_id, source: execution.inbound_id, kind: "input", body: text, execution: execution.id });
     }
     await noteExecution(inside, execution.id, "feed.intent", { inbound: execution.inbound_id, digest: execution.input_digest, purpose: stage === "tail" ? "tail" : execution.purpose });
+    // A council's event reaching the master is consumed here, at the one point every input passes; nothing for any other input.
+    if (stage === "input") await noteEventFed(inside, execution);
   });
 }
 

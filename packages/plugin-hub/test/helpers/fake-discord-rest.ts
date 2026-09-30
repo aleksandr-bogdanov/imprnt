@@ -131,6 +131,11 @@ export interface FakeDiscordOptions {
   listAfter?: "oldest" | "newest";
   /** What Discord does to content it keeps. The default keeps it as sent. */
   normalize?: (content: string) => string;
+  /**
+   * What Discord does to the name of a text channel it makes or renames: it keeps a lower-case name with
+   * hyphens for spaces. The default keeps the name as sent, and a check that depends on the real rule says so.
+   */
+  normalizeChannelName?: (name: string) => string;
   /** The fake's clock at the start, in ms. Fixed, so a run is the same on every machine. */
   start?: number;
 }
@@ -159,6 +164,8 @@ export interface FakeDiscord {
   channels(): FakeChannel[];
   removeChannel(id: string): void;
   hideChannel(id: string): void;
+  /** A person changed a channel in the app: its category, its description, its name, or who may write in it. Nothing is logged as a request. */
+  editChannelByHand(id: string, patch: { parent_id?: string | null; topic?: string | null; name?: string; permission_overwrites?: unknown[] }): void;
   /** A message somebody typed. Returns its id. `bot` marks another bot's, which is not ours whatever it says. */
   say(channel: string, text: string, author?: string, bot?: boolean): string;
   /** Everything in the channel that was not deleted, oldest first, the bot's own included. */
@@ -181,6 +188,7 @@ export function createFakeDiscord(options: FakeDiscordOptions = {}): FakeDiscord
   const reactorOrder = options.reactorOrder ?? "ascending";
   const listAfter = options.listAfter ?? "oldest";
   const normalize = options.normalize ?? ((content: string) => content);
+  const normalizeChannelName = options.normalizeChannelName ?? ((name: string) => name);
   let clock = options.start ?? 1_790_000_000_000;
   let last = 0n;
   const messages = new Map<string, FakeMessage>();
@@ -252,7 +260,18 @@ export function createFakeDiscord(options: FakeDiscordOptions = {}): FakeDiscord
 
     if ((hit = /^\/guilds\/(\d+)\/channels$/.exec(path))) {
       if (method === "GET") {
-        return reply([...channels.values()].filter(one => one.exists).sort((a, b) => byId(a.id, b.id)).map(channelJson));
+        // A channel the bot cannot see is not in the listing, which is how Discord hides it.
+        return reply([...channels.values()].filter(one => one.exists && !one.hidden).sort((a, b) => byId(a.id, b.id)).map(channelJson));
+      }
+      if (method === "POST") {
+        // Guild channel creation has no idempotency key: every request that is handled makes a channel.
+        const name = String(body?.name ?? "");
+        if (name === "") return refuse(400, 50035, "Invalid Form Body");
+        const parent = body?.parent_id === undefined || body.parent_id === null ? null : String(body.parent_id);
+        const made: FakeChannel = { id: mint(), name: normalizeChannelName(name), type: Number(body?.type ?? 0),
+          topic: body?.topic === undefined ? null : String(body.topic), parent_id: parent, permission_overwrites: [], exists: true, hidden: false };
+        channels.set(made.id, made);
+        return reply(channelJson(made));
       }
     }
 
@@ -260,6 +279,14 @@ export function createFakeDiscord(options: FakeDiscordOptions = {}): FakeDiscord
       const found = reach(hit[1]);
       if (found instanceof Response) return found;
       if (method === "GET") return reply(channelJson(found));
+      if (method === "PATCH") {
+        // Only what the request carries changes, and `permission_overwrites` REPLACES the whole list, as Discord's does.
+        if (body?.parent_id !== undefined) found.parent_id = body.parent_id === null ? null : String(body.parent_id);
+        if (Array.isArray(body?.permission_overwrites)) found.permission_overwrites = body.permission_overwrites as unknown[];
+        if (body?.name !== undefined) found.name = normalizeChannelName(String(body.name));
+        if (body?.topic !== undefined) found.topic = body.topic === null ? null : String(body.topic);
+        return reply(channelJson(found));
+      }
     }
 
     if ((hit = /^\/channels\/(\d+)\/messages$/.exec(path))) {
@@ -381,6 +408,14 @@ export function createFakeDiscord(options: FakeDiscordOptions = {}): FakeDiscord
     channels: () => [...channels.values()].filter(one => one.exists).sort((a, b) => byId(a.id, b.id)),
     removeChannel(id) { const one = channels.get(id); if (one) one.exists = false; },
     hideChannel(id) { const one = channels.get(id); if (one) one.hidden = true; },
+    editChannelByHand(id, patch) {
+      const one = channels.get(id);
+      if (!one) throw new Error(`fake-discord-rest: no channel ${id} to edit`);
+      if (patch.parent_id !== undefined) one.parent_id = patch.parent_id;
+      if (patch.topic !== undefined) one.topic = patch.topic;
+      if (patch.name !== undefined) one.name = patch.name;
+      if (patch.permission_overwrites !== undefined) one.permission_overwrites = patch.permission_overwrites;
+    },
     say(channel, text, author = HUMAN, bot = author === botId) {
       const made: FakeMessage = { id: mint(), channel, author, bot, content: text, nonce: null, edited: null, deleted: false, reactions: new Map() };
       if (bot) bots.add(author);

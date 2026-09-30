@@ -7,7 +7,7 @@ import { stamp } from "../records/stamps.ts";
 import type { StoreLike } from "../store/connect.ts";
 import type { EligibleRow } from "../store/wake.ts";
 import { appendNotice } from "../store/outbox.ts";
-import { recordSeatAnswer } from "./council.ts";
+import { noteJobRefused } from "../council/hooks.ts";
 
 /** A job whose approval is missing or is not a digest at all. */
 export const NOT_APPROVED = "not approved";
@@ -17,9 +17,13 @@ export const COMMAND_ALTERED = "command altered";
 export interface JobRefusal {
   /**
    * The two approval causes, and the two a conversation can refuse a job for:
-   * a follow-up that is not this worker's, and one the engine cannot resume.
+   * a follow-up that is not this worker's, and one the engine cannot resume. A council's
+   * job is also refused when its worker is no longer the one the owner approved
+   * (`configuration changed`, `council/launch.ts`).
    */
-  cause: typeof NOT_APPROVED | typeof COMMAND_ALTERED | "conversation unavailable" | "conversation elsewhere" | "resume unsupported";
+  cause: typeof NOT_APPROVED | typeof COMMAND_ALTERED | "conversation unavailable" | "conversation elsewhere" | "resume unsupported" | "configuration changed";
+  /** For `configuration changed`: the parts of the accepted profile that differ, by name (never a value). */
+  changed?: readonly string[];
 }
 
 /** A return route with every part a report needs, which the door always pins. */
@@ -83,7 +87,8 @@ export async function refuseJob(
     await appendEntry(inside, {
       stream: "control", subject: refusal.row.id, kind: "dispatch.refused", actor: "runner",
       detail: { agent: refusal.row.agent, runner: refusal.runner, cause: refusal.refusal.cause,
-        dispatcher: envelope?.dispatcher ?? null },
+        dispatcher: envelope?.dispatcher ?? null,
+        ...(refusal.refusal.changed && refusal.refusal.changed.length > 0 ? { changed: refusal.refusal.changed.join(", ") } : {}) },
     });
     if (route) {
       await appendNotice(inside, {
@@ -95,52 +100,10 @@ export async function refuseJob(
         route: { door: route.door, chat: route.chat }, platform, language,
       });
     }
-    // A refused seat is a seat with no answer, recorded as such so the
-    // council closes without it rather than waiting for it for ever.
-    if (envelope?.approved?.source === "council" && envelope.council) {
-      await recordSeatAnswer(inside, { council: envelope.council, answer: null });
-    }
+    // A refused member is a member the council cannot wait for, and the owner is asked. It is never given
+    // up on and never left out: the council reads the refusal that was just recorded and names it.
+    await noteJobRefused(inside, refusal.row.source);
     await tx`update inbound set claimed_by = null, claim_deadline = null
              where id = ${refusal.row.id}`;
   });
-}
-
-/**
- * A council seat the runner gives up on: its turn failed again after the
- * council's grace had run out, and trying it once more would hold the
- * council open past the point the person was told it is late.
- *
- * Settled `answered` with no report, as a refusal is, and recorded into the
- * council as a seat with no answer, so the merge lands with "no answer" in
- * its place. Only a COUNCIL seat is ever given up on: an ordinary job keeps
- * its recorded retry, because nobody but its dispatcher is waiting and the
- * job clock already says it is late.
- *
- * A SEAT THAT IS HELD, OR WHOSE ATTEMPT IS NOT SETTLED, IS NOT GIVEN UP ON. Its
- * input reached the engine and was interrupted (or may still be running), so it is
- * the owner's to decide: closing the council over it would merge a partial council
- * and stamp `answered` a seat the model never answered. Returns whether the seat
- * was abandoned; false leaves everything exactly as it was. The store's own
- * `hub_council_abandon` refuses the same seats, for the door's caller.
- */
-export async function abandonJob(
-  store: StoreLike,
-  abandoned: { row: Pick<EligibleRow, "id" | "agent" | "source">; runner: string; cause: string },
-): Promise<boolean> {
-  const envelope = abandoned.row.source?.dispatch;
-  if (envelope?.approved?.source !== "council" || !envelope.council) return false;
-  const [open] = (await store.sql`select hub_row_held(${abandoned.row.id}) as held, exists (
-      select 1 from execution e where e.inbound_id = ${abandoned.row.id}
-        and e.state in ('claimed', 'feed_intent', 'received', 'running', 'unknown', 'stop_requested', 'stop_unknown')) as unresolved`) as unknown as
-    { held: boolean; unresolved: boolean }[];
-  if (open.held || open.unresolved) return false;
-  await stamp(store, { messageId: abandoned.row.id, kind: "answered", actor: "runner" });
-  await appendEntry(store, {
-    stream: "control", subject: abandoned.row.id, kind: "dispatch.abandoned", actor: "runner",
-    detail: { agent: abandoned.row.agent, runner: abandoned.runner, cause: abandoned.cause,
-      dispatcher: envelope.dispatcher, council: envelope.council.id },
-  });
-  await recordSeatAnswer(store, { council: envelope.council, answer: null });
-  await store.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${abandoned.row.id}`;
-  return true;
 }

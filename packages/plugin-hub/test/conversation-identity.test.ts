@@ -17,13 +17,13 @@ import type { ExitEvidence } from "../src/adapters/types.ts"
 import { MIGRATION_FILES, migrate } from "../src/store/migrate.ts"
 import { claimNext } from "../src/runner/claim.ts"
 import { readEligible } from "../src/store/wake.ts"
-import { abandonJob, admitJob } from "../src/runner/job.ts"
-import { endAttempt, evidenceFromRecord, markedWatch, reevaluateUnknown, settleStored } from "../src/runner/execution.ts"
+import { admitJob } from "../src/runner/job.ts"
+import { endAttempt, evidenceFromRecord, markedWatch, reevaluateUnknown, requireSchema, settleStored } from "../src/runner/execution.ts"
 import { chooseHold } from "../src/recovery/holds.ts"
 import { settleTurn } from "../src/runner/settle.ts"
 import { alive, bootIdentityFrom, bootMoved, groupOf, groupPresence, presence, readBootIdentity, type BootSources } from "../src/os/tree.ts"
 import {
-  ConversationRefused, ExecutionBusy, ExecutionNotOwned, activateProtocol, completeTail, conversationFor, journalResult, markFeedIntent,
+  ConversationRefused, ExecutionBusy, ExecutionNotOwned, RUNNER_PROTOCOL, activateProtocol, completeTail, conversationFor, journalResult, markFeedIntent,
   notePids, openExecution, openHoldsOf, openTailExecution, readExecution, registerIncarnation,
 } from "../src/store/conversations.ts"
 
@@ -618,14 +618,12 @@ test("a job's continuation is a new approved job on the same worker conversation
   expect((await readExecution(s.runner, attempt.id))?.state).toBe("interrupted")
 })
 
-test("a council seat that is held, or whose attempt is not settled, is not abandoned, by the runner or by the store's own grace", async () => {
+test("a council seat is never abandoned by a clock: the store's own grace is switched off, whether the seat is held, unresolved or plain", async () => {
   const s = await stage()
   await s.incarnate("runner-a", "one")
   const heldSource = await s.job("seat-held")
   const openSource = await s.job("seat-unresolved")
   await s.job("seat-plain")
-  const seat = (source: any) => ({ ...source, dispatch: { ...source.dispatch, approved: { ...source.dispatch.approved, source: "council" },
-    council: { id: "c1", question: "q", seats: ["p1-worker"], convened: source.at } } })
 
   // A seat whose input reached the engine and was interrupted.
   const conversation = await s.worker("seat-held", heldSource)
@@ -636,7 +634,6 @@ test("a council seat that is held, or whose attempt is not settled, is not aband
   expect((await s.su`select claimed_by from inbound where id = 'seat-held'`)[0].claimed_by, "the claim was released, which is all the store's grace looked at").toBeNull()
   const door = async (id: string) => (await s.door.sql`select hub_council_abandon(${id}, 'the council is late') as done`)[0].done
   expect(await door("seat-held"), "the door's grace does not close a held seat").toBe(false)
-  expect(await abandonJob(s.runner, { row: { id: "seat-held", agent: "p1-worker", source: seat(heldSource) }, runner: "runner-a", cause: "child exited" }), "nor does the runner").toBe(false)
   expect((await s.su`select state from inbound where id = 'seat-held'`)[0].state).not.toBe("answered")
   expect(Array.from(await s.su`select kind from ledger_event where subject = 'seat-held' and kind = 'dispatch.abandoned'`)).toEqual([])
 
@@ -648,9 +645,9 @@ test("a council seat that is held, or whose attempt is not settled, is not aband
   expect(running.state).toBe("claimed")
   expect(await door("seat-unresolved")).toBe(false)
 
-  // A seat nobody worked on is what the grace is for, and is still closed.
-  expect(await door("seat-plain")).toBe(true)
-  expect((await s.su`select state from inbound where id = 'seat-plain'`)[0].state).toBe("answered")
+  // A seat nobody worked on is not closed by the grace any more either: a council waits for its owner instead.
+  expect(await door("seat-plain")).toBe(false)
+  expect((await s.su`select state from inbound where id = 'seat-plain'`)[0].state).not.toBe("answered")
 })
 
 test("a scheduled harvest asks the same ownership question as every other claim: an unresolved attempt of the agent holds it, and only the claimant's own live turn lets it run beside", async () => {
@@ -772,12 +769,12 @@ test("a protocol that is activated refuses every claim that does not say it spea
   // An input an old runner acked and never settled: nothing can say what became of it.
   await sql`insert into ledger_event (stream, subject, kind, actor) values ('inbound', 'fed-by-old', 'acked', 'runner')`
   await sql`update inbound set claimed_by = 'old-runner', claim_deadline = now() + interval '1 minute' where id = 'fed-by-old'`
-  await expect(activateProtocol(runner)).rejects.toThrow(/legacy-inputs-in-flight.*fed-by-old/)
+  await expect(activateProtocol(runner, 2)).rejects.toThrow(/legacy-inputs-in-flight.*fed-by-old/)
   expect(await protocol()).toBe(1)
   await sql`insert into ledger_event (stream, subject, kind, actor) values ('inbound', 'fed-by-old', 'answered', 'runner')`
-  await activateProtocol(runner)
+  await activateProtocol(runner, 2)
   expect(await protocol()).toBe(2)
-  await activateProtocol(runner)
+  await activateProtocol(runner, 2)
   await expect(runner.sql`update hub_protocol set runner_protocol = 1`.execute()).rejects.toThrow(/only moves forward/)
 
   // After it, a runner that predates the protocol is refused on every row and every claim.
@@ -785,7 +782,8 @@ test("a protocol that is activated refuses every claim that does not say it spea
     .rejects.toThrow(/does not speak protocol 2/)
   await expect(runner.sql`update inbound set claimed_by = 'old-runner', claim_deadline = now() + interval '1 minute' where id = 'other-work'`.execute())
     .rejects.toThrow(/does not speak protocol 2/)
-  // A runner that says it speaks it claims, and what it said does not stay on the connection for the next borrower.
+  // A runner that says it speaks a protocol at least as new claims (this build says its own, which is newer than the
+  // one activated here), and what it said does not stay on the connection for the next borrower.
   expect((await claimNext(runner, { runner: "runner-pi", agent: "p1-third", leaseMs: 1000 }))?.id).toBe("other-work")
   for (const id of ["quiet", "old-input"]) {
     await expect(runner.sql`update inbound set claimed_by = 'old-runner', claim_deadline = now() + interval '1 minute' where id = ${id}`.execute())
@@ -794,6 +792,139 @@ test("a protocol that is activated refuses every claim that does not say it spea
   // Nothing was claimed by the refused ones, and the one that spoke it holds its row
   // (beside the answered input the old runner left its claim on).
   expect((await sql`select id from inbound where claimed_by is not null order by id`).map((r: any) => r.id)).toEqual(["fed-by-old", "other-work"])
+})
+
+/** A council's job and the event the master reads for one, as the hub writes them, planted for the claim rule to meet. */
+const councilJobSource = (id: string) => ({ log_id: id, at: new Date().toISOString(), door: "door-fake", chat: "1000000001", from: "p1", text: "a council's question",
+  dispatch: { dispatcher: "p1-lair", target: "p1-w1", approved: { by: "p1", at: new Date().toISOString(), digest: "d", source: "council" },
+    return: { agent: "p1-lair", door: "door-fake", chat: "1000000001" }, council_round: { council: "c1", round: 1, participant: "c1:p1", revision: 1 } } })
+const councilEventSource = (id: string) => ({ log_id: id, at: new Date().toISOString(), door: "door-fake", chat: "1000000001", from: "council", text: "council round_complete",
+  origin: "council", council_event: { council: "c1", seq: 1, kind: "round_complete" } })
+
+/** A claim the way a connection of a given protocol makes it: `null` says nothing at all, as every runner before 2 did. */
+const claimSaying = (store: StoreLike, protocol: string | null, id: string, by = "some-runner") => store.sql.begin(async (tx: any) => {
+  if (protocol !== null) await tx`select set_config('hub.runner_protocol', ${protocol}, true)`
+  await tx`update inbound set claimed_by = ${by}, claim_deadline = now() + interval '1 minute' where id = ${id}`
+})
+
+test("protocol 3: a council's job and event are claimable only by a connection that says 3, before and after 3 is active, and once it is active nothing that says less claims, registers or moves the protocol back", async () => {
+  const s = await rollout()
+  const sql = s.sql
+  const runner = s.store("hub_runner") as unknown as StoreLike
+  await sql`insert into inbound (id, person, agent, body, kind, source, log_ready) values ('c-job', 'p1', 'p1-w1', 'a council question', 'job', ${councilJobSource("c-job")}::jsonb, true)`
+  await sql`insert into inbound (id, person, agent, body, kind, received_at, reported_at, source, log_ready)
+    values ('c-event', 'p1', 'p1-w2', 'council round_complete', 'report', now(), now(), ${councilEventSource("c-event")}::jsonb, true)`
+  await sql`insert into inbound (id, person, agent, body) values ('plain', 'p1', 'p1-third', 'an ordinary message')`
+  const claimed = async () => (await sql`select id from inbound where claimed_by is not null order by id`).map((r: any) => r.id)
+  const release = async (id: string) => { await runner.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${id}` }
+  const protocol = async () => Number((await sql`select runner_protocol from hub_protocol`)[0].runner_protocol)
+  expect(RUNNER_PROTOCOL).toBe(3)
+
+  // BEFORE ACTIVATION the store is at 1, and the rule is on the row and not on what is active: a connection that says nothing,
+  // or says 2 (a pooled connection's previous borrower's word does not survive its transaction, and this one is a runner of 2's),
+  // cannot take a council's job or event. An ordinary row is asked nothing yet.
+  expect(await protocol()).toBe(1)
+  for (const id of ["c-job", "c-event"]) {
+    await expect(claimSaying(runner, null, id), `${id}: says nothing`).rejects.toThrow(/belongs to a council.*does not speak protocol 3/)
+    await expect(claimSaying(runner, "2", id), `${id}: says 2`).rejects.toThrow(/belongs to a council.*does not speak protocol 3/)
+  }
+  await claimSaying(runner, "2", "plain")
+  await release("plain")
+  expect(await claimed(), "nothing was claimed by the refused ones").toEqual([])
+  // This build's own claim takes the council's job.
+  expect((await claimNext(runner, { runner: "runner-new", agent: "p1-w1", leaseMs: 60_000, resumeOk: true }))?.id).toBe("c-job")
+  await release("c-job")
+
+  // ACTIVATION: one statement, nothing started, stopped, settled or discarded; the protocol is this build's.
+  await activateProtocol(runner)
+  expect(await protocol()).toBe(RUNNER_PROTOCOL)
+  await activateProtocol(runner)
+  await activateProtocol(runner, 2)
+  expect(await protocol(), "activating an older protocol is no move").toBe(RUNNER_PROTOCOL)
+  for (const id of ["plain", "c-job", "c-event"]) {
+    await expect(claimSaying(runner, null, id), `${id}: says nothing`).rejects.toThrow(/does not speak protocol 3/)
+    await expect(claimSaying(runner, "2", id), `${id}: a runner of 2 claims nothing once 3 is active`).rejects.toThrow(/does not speak protocol 3/)
+  }
+  expect(await claimed()).toEqual([])
+  expect((await claimNext(runner, { runner: "runner-new", agent: "p1-third", leaseMs: 60_000, resumeOk: true }))?.id).toBe("plain")
+  expect((await claimNext(runner, { runner: "runner-new", agent: "p1-w2", leaseMs: 60_000, resumeOk: true }))?.id).toBe("c-event")
+  // What this build said does not stay on the connection for the next borrower.
+  await expect(claimSaying(runner, null, "c-job")).rejects.toThrow(/does not speak protocol 3/)
+  expect(await claimed()).toEqual(["c-event", "plain"])
+  await release("plain")
+  await release("c-event")
+
+  // THE INCARNATION: a registration that speaks less than what is active cannot become current and fence out the one that serves.
+  await expect(runner.sql`insert into runner_incarnation (runner, incarnation, protocol) values ('runner-old', 'x', 2)`.execute()).rejects.toThrow(/does not serve/)
+  await registerIncarnation(runner, { runner: "runner-new", incarnation: "one", machine: "pi", bootId: null })
+  expect(Number((await sql`select protocol from runner_incarnation where runner = 'runner-new'`)[0].protocol)).toBe(RUNNER_PROTOCOL)
+  await expect(runner.sql`update runner_incarnation set incarnation = 'old', protocol = 2 where runner = 'runner-new'`.execute()).rejects.toThrow(/does not serve/)
+  expect((await sql`select incarnation from runner_incarnation where runner = 'runner-new'`)[0].incarnation).toBe("one")
+
+  // THE PROTOCOL ONLY MOVES FORWARD, and only to a value the table knows.
+  await expect(runner.sql`update hub_protocol set runner_protocol = 2`.execute()).rejects.toThrow(/only moves forward/)
+  await expect(runner.sql`update hub_protocol set runner_protocol = 4`.execute()).rejects.toThrow(/check constraint/)
+  expect(await protocol()).toBe(RUNNER_PROTOCOL)
+})
+
+test("version skew: a runner of this build refuses a store at migration 13 before it does anything, landing 14 (and 15, the topics, after it) over live work touches none of it and activates nothing, and activating 3 closes the claim door to older runners and settles, stops and discards nothing", async () => {
+  const old = await rollout(true)
+  const files = (upTo: number) => MIGRATION_FILES.filter(([version]) => version <= upTo)
+    .map(([version, file]) => ({ version, sql: readFileSync(join(hubPath("src/store/migrations"), file), "utf8" ) }))
+  await migrate(old.store(), files(13))
+  const sql = old.sql
+  const runner = old.store("hub_runner") as unknown as StoreLike
+  const protocol = async () => Number((await sql`select runner_protocol from hub_protocol`)[0].runner_protocol)
+  expect(Number((await sql`select max(version) as version from schema_version`)[0].version)).toBe(13)
+
+  // A runner of this build on this store refuses by name, before it activates a protocol, registers an incarnation or claims a row.
+  await expect(requireSchema(runner)).rejects.toThrow(/schema-behind: apply migration 14/)
+  expect(await protocol()).toBe(1)
+  expect(Number((await sql`select count(*)::int as n from runner_incarnation`)[0].n)).toBe(0)
+
+  // Live work of a runner of protocol 2: a turn claimed and an attempt opened for it, and ordinary rows waiting beside it.
+  await sql`insert into inbound (id, person, agent, body, kind, source) values ('live', 'p1', 'p1-lair', 'a turn in flight', 'human',
+    ${{ log_id: "live", at: new Date().toISOString(), door: "door-fake", chat: "1000000001", sender_id: "p1", text: "a turn in flight" }}::jsonb)`
+  await sql`insert into inbound (id, person, agent, body) values ('plain', 'p1', 'p1-third', 'an ordinary message')`
+  await sql`insert into runner_incarnation (runner, incarnation, protocol) values ('runner-pi', 'old-inc', 2)`
+  await sql`update inbound set claimed_by = 'runner-pi', claim_deadline = now() + interval '1 hour' where id = 'live'`
+  const conversation = await conversationFor(runner, { row: { id: "live", person: "p1", agent: "p1-lair", kind: "human" }, adapter: "claude-code", machine: "pi" })
+  const attempt = await openExecution(runner, { row: { id: "live", agent: "p1-lair" }, conversation, runner: "runner-pi", incarnation: "old-inc", digest: "d", nativeSession: null })
+  const everything = async () => ({
+    inbound: Array.from(await sql`select id, state, claimed_by, retry_at from inbound order by id`).map((r: any) => ({ ...r })),
+    execution: Array.from(await sql`select id, state, runner, incarnation from execution order by id`).map((r: any) => ({ ...r })),
+    holds: Array.from(await sql`select inbound_id, state from replay_hold order by inbound_id`).map((r: any) => ({ ...r })),
+    ledger: Number((await sql`select count(*)::int as n from ledger_event`)[0].n),
+  })
+  const before = await everything()
+  expect(before.execution).toEqual([{ id: attempt.id, state: "claimed", runner: "runner-pi", incarnation: "old-inc" }])
+
+  // LANDING 14 over it (and 15, which `migrate` applies after it and which reads no row of live work): every row, attempt, hold and
+  // diary line is as it was, the protocol is where it was, and the runner now serves.
+  await migrate(old.store())
+  expect(await everything(), "the step moved, discarded and settled nothing").toEqual(before)
+  expect(await protocol(), "landing the step activates nothing").toBe(1)
+  await requireSchema(runner)
+  // Until a runner of 3 activates it an older runner still claims ordinary work, but no council's row.
+  await claimSaying(runner, "2", "plain")
+  await runner.sql`update inbound set claimed_by = null, claim_deadline = null where id = 'plain'`
+  await sql`insert into inbound (id, person, agent, body, kind, source, log_ready) values ('c-job', 'p1', 'p1-w1', 'a council question', 'job', ${councilJobSource("c-job")}::jsonb, true)`
+  await expect(claimSaying(runner, "2", "c-job")).rejects.toThrow(/belongs to a council.*does not speak protocol 3/)
+  const beforeActivation = await everything()
+  expect(beforeActivation.execution, "the attempt is untouched by all of it").toEqual(before.execution)
+  expect(beforeActivation.inbound.find((r: any) => r.id === "live"), "and so is the row it is for").toEqual(before.inbound.find((r: any) => r.id === "live"))
+
+  // ACTIVATING 3 is allowed with that work in flight (it has an attempt, which is what a row an old runner may have fed lacks), and it moves none of it.
+  await activateProtocol(runner)
+  expect(await protocol()).toBe(RUNNER_PROTOCOL)
+  expect(await everything(), "activation killed, settled, discarded and replayed nothing").toEqual(beforeActivation)
+  // From then on the door is shut to every older claim, ordinary rows included, and the agent with the attempt stays blocked for everyone.
+  await expect(claimSaying(runner, null, "plain")).rejects.toThrow(/does not speak protocol 3/)
+  await expect(claimSaying(runner, "2", "plain")).rejects.toThrow(/does not speak protocol 3/)
+  await expect(runner.sql`insert into runner_incarnation (runner, incarnation, protocol) values ('runner-old', 'x', 2)`.execute()).rejects.toThrow(/does not serve/)
+  expect(await claimNext(runner, { runner: "runner-new", agent: "p1-lair", leaseMs: 1000, resumeOk: true }), "the agent with an unresolved attempt takes nothing").toBeNull()
+  expect((await claimNext(runner, { runner: "runner-new", agent: "p1-third", leaseMs: 1000, resumeOk: true }))?.id).toBe("plain")
+  expect((await claimNext(runner, { runner: "runner-new", agent: "p1-w1", leaseMs: 1000, resumeOk: true }))?.id).toBe("c-job")
 })
 
 test("the claim and the activation of the protocol are ordered by a row lock and not by a clock: an old claim already in flight makes the activation refuse, and an activation in flight makes an old claim refuse", async () => {
@@ -913,10 +1044,11 @@ test("the step refuses to land while an old runner may have fed an input, and le
     functions: Array.from(await q`select p.proname, pg_get_function_identity_arguments(p.oid) as args, r.rolname as owner, p.prosecdef, p.prosrc
       from pg_proc p join pg_roles r on r.oid = p.proowner
       where p.proname in ('hub_row_held', 'hub_agent_blocked', 'hub_harvest_blocked', 'hub_row_needs_resume', 'hub_guard_inbound_claim', 'hub_hold_advance', 'hub_hold_choice',
-                          'hub_legacy_inputs', 'hub_guard_protocol_activation', 'hub_council_abandon')
-      order by p.proname`),
+                          'hub_legacy_inputs', 'hub_guard_protocol_activation', 'hub_council_abandon', 'hub_guard_runner_incarnation',
+                          'hub_council_merge', 'hub_guard_legacy_council_job')
+      order by p.proname`) as { proname: string; args: string; owner: string; prosecdef: boolean; prosrc: string }[],
     triggers: Array.from(await q`select t.tgname, pg_get_triggerdef(t.oid) as d from pg_trigger t
-      where t.tgname in ('inbound_claim_honours_holds', 'hub_protocol_activation') order by t.tgname`),
+      where t.tgname in ('inbound_claim_honours_holds', 'hub_protocol_activation', 'runner_incarnation_speaks_protocol', 'inbound_no_new_legacy_council') order by t.tgname`),
     columns: Array.from(await q`select table_name, column_name, data_type, is_nullable from information_schema.columns
       where table_name in ('conversation', 'conversation_entry', 'execution', 'replay_hold', 'tool_invocation', 'source_consumption', 'runner_incarnation', 'hub_protocol')
       order by table_name, ordinal_position`),
@@ -931,9 +1063,16 @@ test("the step refuses to land while an old runner may have fed an input, and le
   })
   const a = await read(fresh.sql)
   const b = await read(sql)
-  expect(a.triggers).toHaveLength(2)
-  expect(a.functions).toHaveLength(10)
+  // The three of the protocol's machinery and the one that closes the old design's council creation; the eleven functions of that machinery and the two that
+  // switch the old merge off and refuse a new legacy seat. The old merge is not a function this step may leave writing, on either side.
+  expect(a.triggers).toHaveLength(4)
+  expect(a.functions).toHaveLength(13)
+  expect(a.functions.find(one => one.proname === "hub_council_merge")!.prosrc).toContain("return false")
   expect(a.protocol).toEqual([{ runner_protocol: 1 }])
+  // The protocol table allows the three protocols and is one constraint under one name on both sides.
+  const protocolChecks = (a.checks as { t: string; conname: string; d: string }[]).filter(one => one.t === "hub_protocol" && one.d.includes("runner_protocol"))
+  expect(protocolChecks.map(one => one.conname)).toEqual(["hub_protocol_runner_protocol_check"])
+  expect(protocolChecks[0].d).toContain("3")
   expect(b.functions).toEqual(a.functions)
   expect(b.triggers).toEqual(a.triggers)
   expect(b.columns).toEqual(a.columns)

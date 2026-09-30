@@ -2,8 +2,10 @@ import { chooseHold, contextOf, contextSentence, effectsLine, holdContextOf, typ
 import type { Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { openHoldsOf } from "../store/conversations.ts";
-import { HUB_TOPIC, READERS, ToolError, type ResumeRequest, type ToolReply } from "./contracts.ts";
+import { HUB_COUNCIL, HUB_TOPIC, READERS, ToolError, type ArchiveRequest, type CreateRequest, type InspectRequest, type ReopenRequest, type ResumeRequest, type ToolReply } from "./contracts.ts";
+import { councilHandlers } from "./council.ts";
 import { Undo, refusal, requireMaster, runRequest } from "./requests.ts";
+import { archiveTopic, createTopic, inspectTopic, reopenTopic } from "./topic-actions.ts";
 
 /**
  * What a call is bound to. The runner builds it from its own launch and nothing
@@ -32,9 +34,14 @@ type Handler = (binding: McpBinding, request: never) => Promise<ToolReply>;
  */
 const HANDLERS: Record<string, Record<string, Handler>> = {
   [HUB_TOPIC]: {
-    inspect: (binding) => inspect(binding),
+    inspect: (binding, request: InspectRequest) => request.topic_id === undefined ? inspect(binding) : inspectTopic(binding, request),
     resume: (binding, request: ResumeRequest) => resume(binding, request),
+    // A topic chat's own actions live in `topic-actions.ts`, beside what a topic's request means.
+    create: (binding, request: CreateRequest) => createTopic(binding, request),
+    archive: (binding, request: ArchiveRequest) => archiveTopic(binding, request),
+    reopen: (binding, request: ReopenRequest) => reopenTopic(binding, request),
   },
+  [HUB_COUNCIL]: councilHandlers as unknown as Record<string, Handler>,
 };
 
 /** Run one call of the hub's tool. Throws a `ToolError` for anything the model is to be told by name. */
@@ -99,8 +106,9 @@ async function resume(binding: McpBinding, request: ResumeRequest): Promise<Tool
     request,
     object: decision.attempt_id,
     async open(tx) {
-      const [hold] = (await tx.sql`select h.revision, h.created_at, h.conversation_id from replay_hold h
-        where h.execution_id = ${decision.attempt_id}`) as unknown as { revision: number; created_at: Date; conversation_id: string }[];
+      // The interruption's time as text (microseconds kept): the comparison with the owner's message is made by the database.
+      const [hold] = (await tx.sql`select h.revision, h.created_at::text as created_at, h.conversation_id from replay_hold h
+        where h.execution_id = ${decision.attempt_id}`) as unknown as { revision: number; created_at: string; conversation_id: string }[];
       if (!hold || hold.conversation_id !== binding.conversation) throw new Undo(refusal(decision.attempt_id, "unknown_attempt", "no held attempt with that id in this conversation"));
       return { context: hold, since: { at: hold.created_at, what: "the interruption it would decide" } };
     },
