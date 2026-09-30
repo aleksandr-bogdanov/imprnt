@@ -172,22 +172,29 @@ test("D-212 the report rides the settle, no chunk is written, and no clock is ar
     // The control beside it: an ordinary human message through the same runner.
     it.edge.batch([typed("210", "an ordinary sentence")], "211")
 
+    // The three halves are read in ONE statement, so they come from one
+    // snapshot: two statements would let the settle commit between them and
+    // show a subset that no reader of a single snapshot can see.
+    const watch = async () => {
+      const [row] = await it.read.sql(
+        `select exists (select 1 from inbound where id = $1) as report,
+                exists (select 1 from ledger_event where subject = $2 and kind = 'answered') as answered,
+                exists (select 1 from ledger_event where subject = $2 and kind = 'dispatch.reported') as reported`,
+        [`report:${job.id}`, job.id])
+      seen.push([row.report, row.answered, row.reported].map(Number).join(""))
+      return seen.at(-1) === "111"
+    }
+    // The state before the runner exists is taken here, before it starts, so
+    // "000" is observed by construction and not by polling faster than the turn.
+    await watch()
+    expect(seen).toEqual(["000"])
+
     runner = await runRunner({ runner: "runner-pi", registryFile: it.registryFile,
       adapters: { [it.adapterName]: it.scripted.adapter } })
     // Polled while the turn runs: the report row, the answered stamp and the
     // diary line are one transaction, so a reader never sees a subset. The
     // runner was not killed between the turn's end and the settle, so this is
     // evidence about concurrent readers and not about a crash.
-    const watch = async () => {
-      const rows = await it.read.inbound()
-      const diary = await it.read.ledger()
-      seen.push([
-        rows.some(r => r.id === `report:${job.id}`),
-        diary.some(e => e.subject === job.id && e.kind === "answered"),
-        diary.some(e => e.subject === job.id && e.kind === "dispatch.reported"),
-      ].map(Number).join(""))
-      return seen.at(-1) === "111"
-    }
     expect(await observe(watch, 30_000)).toBe(true)
     expect(new Set(seen)).toEqual(new Set(["000", "111"]))
 
