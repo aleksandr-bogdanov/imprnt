@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, chmodSync, closeSync, openSync, readdirSync, rmSync, writeFileSync, type Dirent } from "node:fs";
+import { existsSync, mkdirSync, chmodSync, closeSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RunEntry } from "../registry/load.ts";
@@ -216,6 +216,41 @@ export function launchd(options: { unitDir?: string; bin?: string } = {}): OsSea
       // job while its plist is still on disk. Same ordering as systemd's.
       if (existsSync(fileOf(label))) rmSync(fileOf(label), { force: true });
       await ask(["bootout", `gui/${uid()}/${label}`]);
+    },
+
+    async load(entryId: string): Promise<boolean> {
+      // `kickstart` cannot load a job that was booted out: it answers "Could not
+      // find service", and `stop` is a bootout, so a plist can be on disk with
+      // nothing in the domain. Loading is `bootstrap`, and what happens
+      // afterwards is the plist's own business: RunAtLoad launches a resident,
+      // and a scheduled or on-demand job carries none, so nothing here dispatches
+      // it and it is left to its declared interval or to a person.
+      const label = unitName(entryId);
+      // A job already in the domain is left exactly as it is, running or not:
+      // bootstrapping it again fails, and booting it out to load it again would
+      // kill a healthy child.
+      if (await print(label)) return false;
+      const file = fileOf(label);
+      let text: string;
+      try {
+        text = readFileSync(file, "utf8");
+      } catch (error) {
+        throw new Error(`load: ${entryId}: cannot read ${file}: ${(error as Error).message}`);
+      }
+      // The label the file declares is what the manager will register, so a
+      // plist under our name that declares another would load somebody else's job
+      // and leave ours missing.
+      const declared = /<key>Label<\/key>\s*<string>([^<]*)<\/string>/.exec(text)?.[1];
+      if (declared !== label) {
+        throw new Error(`load: ${entryId}: ${file} declares label ${declared ?? "nothing"}, and this entry is ${label}`);
+      }
+      const result = await ask(["bootstrap", `gui/${uid()}`, file]);
+      if (result.code !== 0) {
+        throw new Error(`load: ${entryId}: bootstrap ${file} exited ${result.code}: ${(result.err || result.out).trim()}`);
+      }
+      // A manager that said yes and does not list the job has not loaded it.
+      if (!(await print(label))) throw new Error(`load: ${entryId}: bootstrap said yes and ${label} is not in the domain`);
+      return true;
     },
 
     async start(entryId: string): Promise<void> {

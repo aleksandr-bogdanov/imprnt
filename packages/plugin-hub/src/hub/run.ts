@@ -187,6 +187,9 @@ export async function runHub(options: {
     // whatever the registry happened to change in the same pass.
     await acknowledge(entries);
     const started = new Set<string>();
+    // An entry whose install failed this tick has already said so, and loading
+    // or starting below would only make the manager fail again on the same file.
+    const installFailed = new Set<string>();
 
     for (const entry of entries) {
       const files = os.render(entry, contextFor(registry, entry));
@@ -196,7 +199,7 @@ export async function runHub(options: {
       if (!changed) continue;
       let written: string[];
       try { written = await os.install(files); }
-      catch (error) { await recordOperationFailure(store, { operation: "install", target: entry.id, error }); continue; }
+      catch (error) { installFailed.add(entry.id); await recordOperationFailure(store, { operation: "install", target: entry.id, error }); continue; }
       await say("unit.installed", entry.id, { entry: entry.id, machine: options.machine, files: written });
       if (wantedState(entry) === "running") {
         try { await os.start(entry.id); }
@@ -211,8 +214,35 @@ export async function runHub(options: {
     const found = (await seenUnits(os, entries)).filter(unit => !elsewhere.has(entryIdOf(unit.name) ?? ""));
     const difference = diffUnits({ wanted, found });
 
+    // What the registry wants and the manager does not carry. `missing` never
+    // holds a stopped entry, and the wanted set is this machine's own entries,
+    // so nothing the household turned off or another machine's hub owns is
+    // loaded here.
+    //
+    // LOADING COMES BEFORE STARTING, and only a resident is started after it. A
+    // job launchd no longer has, or a systemd timer somebody stopped while the
+    // files stayed the same, is not something `start` can repair: `kickstart`
+    // cannot load a plist and starting a scheduled service runs it this instant
+    // instead of arming its cadence. `load` leaves a healthy or running unit
+    // alone and asks for no explicit start or restart of a scheduled service.
+    // It restores the declared state, which may promptly run something: a
+    // resident plist with `RunAtLoad` launches, and an overdue interval or
+    // persistent calendar timer may catch up once armed. An entry that is
+    // missing again next tick is one whose load failed, and the failure was
+    // recorded.
+    //
+    // AN ENTRY WHOSE INSTALL FAILED THIS TICK IS SKIPPED WHOLE. Its install has
+    // said so already, and neither loading nor starting against a definition that
+    // was just refused could do more than fail a second time or run an older
+    // carried one. It is missing again next tick and tried again then.
     for (const one of difference.missing) {
-      if (one.state !== "running" || started.has(one.id)) continue;
+      if (started.has(one.id) || installFailed.has(one.id)) continue;
+      if (os.load) {
+        try {
+          if (await os.load(one.id, one.state)) await say("unit.loaded", one.id, { entry: one.id, machine: options.machine, wanted: one.state });
+        } catch (error) { await recordOperationFailure(store, { operation: "load", target: one.id, error }); continue; }
+      }
+      if (one.state !== "running") continue;
       try { await os.start(one.id); }
       catch (error) { await recordOperationFailure(store, { operation: "start", target: one.id, error }); continue; }
       await say("unit.started", one.id, { entry: one.id, machine: options.machine });

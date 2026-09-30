@@ -47,6 +47,7 @@ export function ownedOs(inner: OsSeam, unitDir: string, ownershipFile: string): 
     flavour: inner.flavour,
     render(entry, context) { requireEntry(entry.id); const files = inner.render(entry, context); checkFiles(files); return files; },
     async install(files) { checkFiles(files); return await inner.install(files); },
+    async load(id, wanted) { requireEntry(id); return (await inner.load?.(id, wanted)) ?? false; },
     async start(id) { requireEntry(id); await inner.start(id); },
     async stop(id) { requireEntry(id); await inner.stop(id); },
     async restart(id) { requireEntry(id); await inner.restart(id); },
