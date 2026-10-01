@@ -631,12 +631,15 @@ export function missingOperationOf(topic: Pick<TopicRow, "missing_operation">): 
   return { gate: topic.missing_operation, request: `deletion-request:${occurrence}`, notice: `topic:missing:${occurrence}` };
 }
 
-/** Whether a runner has a session on the store right now: the same look the door's waiting line is made from. */
-export async function runnerLive(store: StoreLike, runner: string): Promise<boolean> {
+/** Whether a process has a session on the store right now, under the id it opened it with (a runner's or a door's own). */
+export async function sessionLive(store: StoreLike, name: string): Promise<boolean> {
   const [row] = await store.sql`select exists (select 1 from pg_stat_activity
-    where datname = current_database() and application_name = ${runner}) as live`;
+    where datname = current_database() and application_name = ${name}) as live`;
   return row.live === true;
 }
+
+/** Whether a runner has a session on the store right now: the same look the door's waiting line is made from. */
+export const runnerLive = sessionLive;
 
 /**
  * Whether the runner the topic was bound to has picked up the owner's first input: it claimed it, or an attempt of that

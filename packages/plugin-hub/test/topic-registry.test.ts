@@ -13,8 +13,8 @@ import { writeRegistry } from "./helpers/authorized-registry.ts"
 import type { AgentSpec, PersonSpec, RegistrySpec, RunSpec } from "./helpers/registry.ts"
 import { RegistryRefused, loadRegistry, type Registry } from "../src/registry/load.ts"
 import {
-  archiveOf, attentionRoute, canMakeChats, generalOf, generalRoute, legacyBindingOf, legacyMastersOf, resolveTopicSetup, runnerOfMachine, topicCategoryOf,
-  topicDefaultsFor,
+  archiveOf, attentionRoute, canMakeChats, generalOf, generalRoute, legacyBindingOf, legacyMastersOf, resolveMoveDestination, resolveTopicSetup, runnerOfMachine,
+  topicCategoryOf, topicDefaultsFor,
 } from "../src/registry/topics.ts"
 import { topicConfirmationAsk, topicPreview } from "../src/door/topic-lines.ts"
 import { previewHash } from "../src/store/confirmations.ts"
@@ -160,6 +160,32 @@ test("nothing is invented: a missing default, an unknown name, a machine nothing
   // A registry that declares no machines has nothing to choose between.
   const none = registry({ machines: [], run: spec().run!.map(({ machine: _machine, ...rest }) => rest), person: { topic_machine: undefined } })
   expect(code(none)).toBe("no_machines_declared")
+})
+
+test("a move's destination is the machine that was named and the one runner that serves it: never a default, and every unusable machine is refused by name", () => {
+  const code = (it: Registry, machine: string) => {
+    const answer = resolveMoveDestination(it, machine)
+    return answer.ok ? "resolved" : answer.code
+  }
+  // The person's and the door's `topic_machine` are for making a chat: a move resolves only what it is given.
+  const defaults = registry({ person: { topic_machine: "pi" }, door: { topic_machine: "pi" } })
+  expect(resolveMoveDestination(defaults, "mac")).toEqual({ ok: true, machine: "mac", runner: "runner-mac" })
+  expect(resolveMoveDestination(defaults, "pi")).toEqual({ ok: true, machine: "pi", runner: "runner-pi" })
+  expect(code(defaults, "cloud")).toBe("execution_machine_unknown")
+  expect(code(defaults, "")).toBe("execution_machine_unknown")
+  const unknown = resolveMoveDestination(defaults, "cloud")
+  expect(unknown.ok ? "" : unknown.message).toContain("cloud")
+  expect(unknown.ok ? "" : unknown.message).not.toContain("topic_machine")
+  // A machine nothing serves, one the file stopped, and one with two runners are not chosen for the owner.
+  expect(code(registry({ run: spec().run!.filter(one => one.id !== "runner-mac") }), "mac")).toBe("execution_machine_has_no_runner")
+  expect(code(registry({ run: spec().run!.map(one => one.id === "runner-mac" ? { ...one, enabled: false } : one) }), "mac")).toBe("execution_machine_has_no_runner")
+  const two = registry({ run: [...spec().run!, { id: "runner-mac-2", kind: "runner", machine: "mac", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048 }] })
+  expect(code(two, "mac")).toBe("execution_machine_has_several_runners")
+  const several = resolveMoveDestination(two, "mac")
+  expect(several.ok ? "" : several.message).toContain("runner-mac-2")
+  // A registry that declares no machines has nothing to name.
+  const none = registry({ machines: [], run: spec().run!.map(({ machine: _machine, ...rest }) => rest), person: { topic_machine: undefined } })
+  expect(code(none, "mac")).toBe("no_machines_declared")
 })
 
 test("where something that needs the person goes: the chat that can take it, else their General when General can, else nowhere and it says so", () => {

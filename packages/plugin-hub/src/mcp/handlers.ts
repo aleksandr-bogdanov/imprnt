@@ -2,10 +2,11 @@ import { chooseHold, contextOf, contextSentence, effectsLine, holdContextOf, typ
 import type { Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { openHoldsOf } from "../store/conversations.ts";
-import { HUB_COUNCIL, HUB_TOPIC, READERS, ToolError, type ArchiveRequest, type CreateRequest, type InspectRequest, type ReopenRequest, type ResumeRequest, type ToolReply } from "./contracts.ts";
+import { HUB_COUNCIL, HUB_TOPIC, READERS, ToolError, type ArchiveRequest, type CreateRequest, type InspectRequest, type MoveRequest, type ReopenRequest, type ResumeRequest, type ToolReply } from "./contracts.ts";
 import { councilHandlers } from "./council.ts";
 import { Undo, refusal, requireMaster, runRequest } from "./requests.ts";
 import { archiveTopic, createTopic, inspectTopic, reopenTopic } from "./topic-actions.ts";
+import { moveTopic } from "./topic-move.ts";
 
 /**
  * What a call is bound to. The runner builds it from its own launch and nothing
@@ -40,6 +41,8 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
     create: (binding, request: CreateRequest) => createTopic(binding, request),
     archive: (binding, request: ArchiveRequest) => archiveTopic(binding, request),
     reopen: (binding, request: ReopenRequest) => reopenTopic(binding, request),
+    // A move has its own file: its request, withdrawal and acknowledgement are three branches of one action.
+    move: (binding, request: MoveRequest) => moveTopic(binding, request),
   },
   [HUB_COUNCIL]: councilHandlers as unknown as Record<string, Handler>,
 };

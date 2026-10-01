@@ -56,7 +56,7 @@ test("I1 every action the catalog offers has a handler and nothing else is offer
       }
     }
     // The actions neither slice built are not listed, and asking anyway is refused before anything is looked at.
-    for (const [tool, action] of [["hub_topic", "stop"], ["hub_topic", "move"], ["hub_topic", "delete"], ["hub_council", "move"], ["hub_council", "delete"]] as const) {
+    for (const [tool, action] of [["hub_topic", "stop"], ["hub_topic", "delete"], ["hub_council", "move"], ["hub_council", "delete"]] as const) {
       expect(await code(callTool(s.binding(), tool, { action })), `${tool} ${action}`).toBe("unsupported_action")
     }
     expect(await code(callTool(s.binding(), "hub_general", { action: "inspect" }))).toBe("unknown_tool")
@@ -96,7 +96,7 @@ test("I2 both families run under the one binding: the call is the launch's own, 
 }, 120_000)
 
 // ---------------------------------------------------------------------------
-// I3-I4. The migrations: 013 (deployed), 014 councils, 015 topics.
+// I3-I4. The migrations: 013 (deployed), 014 councils, 015 topics, 016 topic movement.
 // ---------------------------------------------------------------------------
 
 const COUNCIL_TABLES = ["council", "council_participant", "council_round", "round_member", "council_decision", "council_event"]
@@ -136,9 +136,9 @@ type Shape = Awaited<ReturnType<typeof shape>>
 const versionsOf = async (q: any) => (await q`select version from schema_version order by version`).map((row: any) => Number(row.version))
 const exists = async (q: any, table: string) => (await q.unsafe(`select to_regclass('public.${table}') is not null as there`))[0].there as boolean
 
-test("I3 the list is whole and ordered, and a store upgraded 013 to 014 to 015 carries what a fresh one does: both features' routines, fences and grants, and nothing of 014 rewritten by 015", async () => {
-  expect(MIGRATION_FILES.map(([version]) => version)).toEqual(whole(15))
-  expect(MIGRATION_FILES.slice(-2)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"]])
+test("I3 the list is whole and ordered, and a store upgraded 013 to 014 to 015 to 016 carries what a fresh one does: both features' routines, fences and grants, nothing of 014 rewritten by 015, and of both only the claim guard and the protocol check touched by 016", async () => {
+  expect(MIGRATION_FILES.map(([version]) => version)).toEqual(whole(16))
+  expect(MIGRATION_FILES.slice(-3)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"], [16, "016-topic-move.sql"]])
 
   // The deployed store: everything through 013, with live work in it.
   const stepped = await rolloutDatabase(cluster, true)
@@ -154,28 +154,50 @@ test("I3 the list is whole and ordered, and a store upgraded 013 to 014 to 015 c
   expect([await exists(stepped.sql, "council"), await exists(stepped.sql, "topic")]).toEqual([true, false])
   const at14 = await shape(stepped.sql)
 
-  // 015 on top, twice: the second changes nothing.
-  await migrate(opened())
-  await migrate(opened())
+  // 015 on top: its own slice, compared with 014's below before anything later is applied.
+  await migrate(opened(), files(15))
   expect(await versionsOf(stepped.sql)).toEqual(whole(15))
+  const at15 = await shape(stepped.sql)
+
+  // 015 added its own objects and replaced none of 014's or 013's: every routine, grant and trigger 014 wrote is as it was.
+  const ours = (row: { proname?: string; routine_name?: string }) => /^hub_(topic|identity)/.test(row.proname ?? row.routine_name ?? "")
+  expect(at15.functions.filter(row => !ours(row))).toEqual(at14.functions)
+  expect(at15.routineGrants.filter(row => !ours(row))).toEqual(at14.routineGrants)
+  expect(at15.policies).toEqual(at14.policies)
+  expect(at15.constraints.filter(row => row.tbl === "hub_protocol")).toEqual(at14.constraints.filter(row => row.tbl === "hub_protocol"))
+  const onInbound = (shaped: Shape) => new Set(shaped.triggers.filter(row => row.tbl === "inbound").map(row => row.tgname))
+  expect(onInbound(at15)).toEqual(new Set([...onInbound(at14), "inbound_refuses_reserved"]))
+  expect(onInbound(at15)).toContain("inbound_no_new_legacy_council")
+  expect(at15.triggers.filter(row => row.tbl === "conversation").map(row => row.tgname)).toContain("conversation_refuses_reserved")
+
+  // 016 on top, twice: the second changes nothing, and the store is the one a fresh schema is.
+  await migrate(opened())
+  await migrate(opened())
+  expect(await versionsOf(stepped.sql)).toEqual(whole(16))
   const after = await shape(stepped.sql)
 
   const fresh = await rolloutDatabase(cluster)
   track(fresh.sql)
-  expect(await versionsOf(fresh.sql)).toEqual(whole(15))
+  expect(await versionsOf(fresh.sql)).toEqual(whole(16))
   const born: Shape = await shape(fresh.sql)
   for (const part of Object.keys(born) as (keyof Shape)[]) expect(after[part], `${part}: upgraded and fresh`).toEqual(born[part])
 
-  // 015 added its own objects and replaced none of 014's or 013's: every routine, grant and trigger 014 wrote is as it was.
-  const ours = (row: { proname?: string; routine_name?: string }) => /^hub_(topic|identity)/.test(row.proname ?? row.routine_name ?? "")
-  expect(after.functions.filter(row => !ours(row))).toEqual(at14.functions)
-  expect(after.routineGrants.filter(row => !ours(row))).toEqual(at14.routineGrants)
-  expect(after.policies).toEqual(at14.policies)
-  expect(after.constraints.filter(row => row.tbl === "hub_protocol")).toEqual(at14.constraints.filter(row => row.tbl === "hub_protocol"))
-  const onInbound = (shaped: Shape) => new Set(shaped.triggers.filter(row => row.tbl === "inbound").map(row => row.tgname))
-  expect(onInbound(after)).toEqual(new Set([...onInbound(at14), "inbound_refuses_reserved"]))
-  expect(onInbound(after)).toContain("inbound_no_new_legacy_council")
-  expect(after.triggers.filter(row => row.tbl === "conversation").map(row => row.tgname)).toContain("conversation_refuses_reserved")
+  // 016 is additive except the two objects a protocol change has to touch: the claim guard is the one routine of either feature (or
+  // of the shared ones) it rewrites, and the protocol check is the one constraint. Every other routine, grant, fence and policy is as 015 left it.
+  const guard = (row: { proname?: string }) => row.proname === "hub_guard_inbound_claim"
+  expect(after.functions.filter(row => !guard(row))).toEqual(at15.functions.filter(row => !guard(row)))
+  expect(after.functions.find(guard)?.prosrc, "the claim guard is 016's").not.toEqual(at15.functions.find(guard)?.prosrc)
+  expect(after.routineGrants).toEqual(at15.routineGrants)
+  expect(after.policies).toEqual(at15.policies)
+  expect(after.columns).toEqual(at15.columns)
+  expect(after.indexes).toEqual(at15.indexes)
+  expect(after.tableGrants).toEqual(at15.tableGrants)
+  const protocol = (shaped: Shape) => shaped.constraints.filter(row => row.tbl === "hub_protocol")
+  expect(protocol(after), "016's protocol check is the one change").not.toEqual(protocol(at15))
+  expect(after.constraints.filter(row => row.tbl !== "hub_protocol")).toEqual(at15.constraints.filter(row => row.tbl !== "hub_protocol"))
+  expect(after.triggers.filter(row => row.tbl !== "replay_hold")).toEqual(at15.triggers.filter(row => row.tbl !== "replay_hold"))
+  const onHold = (shaped: Shape) => new Set(shaped.triggers.filter(row => row.tbl === "replay_hold").map(row => row.tgname))
+  expect(onHold(after)).toEqual(new Set([...onHold(at15), "replay_hold_move_failure"]))
 
   // Who may call what, from both steps, on the same store: each family's routines with the roles its own step gave them.
   const grantees = (name: string) => [...new Set(after.routineGrants.filter(row => row.routine_name === name).map(row => row.grantee))].sort()

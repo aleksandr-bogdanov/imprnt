@@ -6,8 +6,8 @@
  * TWO TOOLS. `hub_topic` has the actions implemented: `inspect` (what is held and what
  * is known about it, or where one topic chat stands), `resume` (the owner's choice about
  * one interrupted attempt), and a topic chat's `create` (which only ever freezes a
- * preview), `archive` and `reopen`. `hub_council` (`council-contract.ts`) has `start`,
- * `continue`, `inspect` and `stop`. An action that is not implemented (move, delete, stop
+ * preview), `archive`, `reopen` and `move`. `hub_council` (`council-contract.ts`) has `start`,
+ * `continue`, `inspect` and `stop`. An action that is not implemented (delete, stop
  * of a topic) is not listed, and one that is asked for anyway is refused by name.
  *
  * Identity is never an argument. The person, the agent, the conversation and
@@ -29,7 +29,7 @@ export const TOOLS = [
     name: HUB_TOPIC,
     description:
       "Inspect work in this conversation that was interrupted, record the owner's decision about one interrupted attempt, " +
-      "and make, archive or reopen a topic chat. " +
+      "and make, archive, reopen or move a topic chat. " +
       "inspect: lists interrupted attempts with what is known and not known about their effects; with topic_id it says where one topic chat stands. " +
       "resume: records the owner's choice for ONE attempt at the recovery revision inspect showed. It needs request_key and the platform " +
       "message ids in which the owner actually said so; continue queues a new message behind the current turn once the old attempt is " +
@@ -42,12 +42,22 @@ export const TOOLS = [
       "of this discussion only if the owner asked to bring it over; write nothing of your own into it. " +
       "archive / reopen: the owner's explicit request, from that topic's own chat or from General, needs no confirmation and " +
       "carries request_key and source_message_ids. Archive stops the topic's agent now and moves its chat to the archive; delegated work " +
-      "the owner already approved keeps running and its results wait. topic_id is a topic id, or the id of a chat's agent.",
+      "the owner already approved keeps running and its results wait. topic_id is a topic id, or the id of a chat's agent. " +
+      "move: the owner's explicit request needs no confirmation and carries request_key and source_message_ids. It takes exactly one of " +
+      "destination_machine (the machine the owner NAMED: there is no default and none is chosen for them) or move_decision. " +
+      "A move gates the topic's agent; the turn already being answered finishes, nothing new is handled on the old machine, and a " +
+      "destination that is offline is waited for. The owner asks for it from the topic's own chat or from General, and a move is only " +
+      "started when General can still show where it stands and withdraw it. " +
+      "move_decision {choice: withdraw} cancels a move that has not reached activation. It is refused while a turn of that agent is still " +
+      "finishing: ask again after it ended. " +
+      "move_decision {choice: continue, attempt_id, expected_recovery_revision} only records that the owner saw the interruption inspect " +
+      "showed under move.failure and puts the move back to waiting. It does NOT resume, release or replay the interrupted work, which stays held " +
+      "and is decided separately with resume. inspect with topic_id shows where an open move stands, and what is available next.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        action: { type: "string", enum: ["inspect", "resume", "create", "archive", "reopen"] },
+        action: { type: "string", enum: ["inspect", "resume", "create", "archive", "reopen", "move"] },
         request_key: { type: "string", minLength: 1, maxLength: 200 },
         source_message_ids: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 10 },
         topic_id: { type: "string", minLength: 1, maxLength: 200 },
@@ -70,6 +80,17 @@ export const TOOLS = [
           properties: {
             choice: { type: "string", enum: ["adopt", "recreate"] },
             chat: { type: "string", minLength: 1, maxLength: 100 },
+          },
+          required: ["choice"],
+        },
+        destination_machine: { type: "string", minLength: 1, maxLength: 100 },
+        move_decision: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            choice: { type: "string", enum: ["withdraw", "continue"] },
+            attempt_id: { type: "string", minLength: 1, maxLength: 200 },
+            expected_recovery_revision: { type: "integer", minimum: 1 },
           },
           required: ["choice"],
         },
@@ -127,7 +148,15 @@ interface LifecycleBase {
 export interface ArchiveRequest extends LifecycleBase { action: "archive" }
 export interface ReopenRequest extends LifecycleBase { action: "reopen" }
 export type LifecycleRequest = ArchiveRequest | ReopenRequest;
-export type HubTopicRequest = InspectRequest | ResumeRequest | CreateRequest | ArchiveRequest | ReopenRequest;
+/** What the owner decides about an open move: to withdraw it, or to say they saw the interruption it stopped on. */
+export type MoveDecision = { choice: "withdraw" } | { choice: "continue"; attempt_id: string; expected_recovery_revision: number };
+/** A move: the owner's explicit request with the machine they named, or their decision about a move that is open. Exactly one of the two. */
+export interface MoveRequest extends LifecycleBase {
+  action: "move";
+  destination_machine?: string;
+  move_decision?: MoveDecision;
+}
+export type HubTopicRequest = InspectRequest | ResumeRequest | CreateRequest | ArchiveRequest | ReopenRequest | MoveRequest;
 
 /**
  * One action of `hub_topic`: the keys it takes beside `action`, and how its
@@ -148,7 +177,7 @@ function readText(value: unknown, where: string, max: number): string {
 }
 
 /** The arguments an archive and a reopen share: the owner's own words as evidence, and which topic. */
-function readLifecycle(top: Record<string, unknown>, action: "archive" | "reopen"): LifecycleBase & { action: typeof action } {
+function readLifecycle(top: Record<string, unknown>, action: "archive" | "reopen" | "move"): LifecycleBase & { action: typeof action } {
   const key = readRequestKey(top, action);
   const sources = readSourceIds(top, action, "the messages in which the owner asked for it");
   if (top.topic_id !== undefined) readText(top.topic_id, "topic_id", 200);
@@ -215,6 +244,35 @@ const TOPIC_ACTIONS: { [A in HubTopicRequest["action"]]: ActionReader<Extract<Hu
   reopen: {
     keys: ["request_key", "source_message_ids", "topic_id", "expected_revision"],
     read: (top) => readLifecycle(top, "reopen") as ReopenRequest,
+  },
+  move: {
+    keys: ["request_key", "source_message_ids", "topic_id", "expected_revision", "destination_machine", "move_decision"],
+    read(top) {
+      const base = readLifecycle(top, "move");
+      if ((top.destination_machine === undefined) === (top.move_decision === undefined)) {
+        refuse("move takes a destination_machine (the machine the owner named, to ask for a move) or a move_decision (about a move that is open), and one of them");
+      }
+      const out: MoveRequest = { ...base, action: "move" };
+      if (top.destination_machine !== undefined) {
+        out.destination_machine = readText(top.destination_machine, "destination_machine", 100);
+        return out;
+      }
+      const decision = exact(top.move_decision, ["choice", "attempt_id", "expected_recovery_revision"], "move_decision");
+      if (decision.choice === "withdraw") {
+        if (decision.attempt_id !== undefined || decision.expected_recovery_revision !== undefined) refuse("withdraw takes no attempt_id and no expected_recovery_revision");
+        out.move_decision = { choice: "withdraw" };
+      } else if (decision.choice === "continue") {
+        // The interruption the owner was shown: the attempt and the revision inspect gave under move.failure, and nothing else.
+        readText(decision.attempt_id, "move_decision.attempt_id", 200);
+        if (!Number.isSafeInteger(decision.expected_recovery_revision) || (decision.expected_recovery_revision as number) < 1) {
+          refuse("continue needs expected_recovery_revision, the recovery revision inspect showed under move.failure");
+        }
+        out.move_decision = { choice: "continue", attempt_id: decision.attempt_id as string, expected_recovery_revision: decision.expected_recovery_revision as number };
+      } else {
+        refuse("choice is withdraw or continue");
+      }
+      return out;
+    },
   },
   resume: {
     keys: ["request_key", "source_message_ids", "recovery_decision"],

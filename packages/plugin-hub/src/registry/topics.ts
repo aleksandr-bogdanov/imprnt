@@ -214,6 +214,38 @@ export function resolveTopicSetup(registry: unknown, input: {
   };
 }
 
+/** The machine a move was asked to go to, and the one runner the registry keeps running there. */
+export interface ResolvedDestination {
+  ok: true;
+  machine: string;
+  runner: string;
+}
+
+/**
+ * Where a move goes: the machine the owner NAMED, and the runner that serves it. There is no default here and nothing is
+ * chosen for the caller (`topic_machine` is for making a chat, not for moving one): a machine that is not declared, has no
+ * running runner, or has two is a refusal that names it, with the same codes a new chat's setup uses.
+ */
+export function resolveMoveDestination(registry: unknown, machine: string): ResolvedDestination | SetupRefusal {
+  const it = loaded(registry, "resolveMoveDestination") as Registry;
+  const refuse = (code: SetupRefusalCode, message: string): SetupRefusal => ({ ok: false, code, message });
+  const machines = listMachines(it);
+  if (machines.length === 0) {
+    return refuse("no_machines_declared", "this registry declares no [[machines]], so there is no machine to move a chat to");
+  }
+  if (!machines.some(one => one.id === machine)) {
+    return refuse("execution_machine_unknown",
+      `${JSON.stringify(machine)} is not a machine this registry declares (${machines.map(one => one.id).join(", ")})`);
+  }
+  const served = runnerOfMachine(it, machine);
+  if ("refused" in served) {
+    return served.refused === "none"
+      ? refuse("execution_machine_has_no_runner", `${machine} has no runner the registry keeps running, so nothing there could take the chat over`)
+      : refuse("execution_machine_has_several_runners", `${machine} has more than one running runner (${served.runners.join(", ")}), and which one takes the chat over is not chosen for you`);
+  }
+  return { ok: true, machine, runner: served.runner.id };
+}
+
 /** An ordinary master of one door that a topic can be made for: what the registry says it is, and nothing about a topic. */
 export interface LegacyMaster {
   agent: ChatAgent;

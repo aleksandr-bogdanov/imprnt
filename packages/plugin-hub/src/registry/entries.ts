@@ -391,6 +391,12 @@ export function senderAllowed(registry: unknown, personId: string, door: string,
   return senders && Object.hasOwn(senders, door) ? senders[door].includes(sender) : false;
 }
 
+/** The senders this person allows on one door: a sender id means something only on the door it was read on, so these are that door's and no other's. */
+export function allowedSendersOn(registry: unknown, personId: string, door: string): string[] {
+  const senders = loaded(registry, "allowedSendersOn").people.find(one => one.id === personId)?.allowed_senders;
+  return senders && Object.hasOwn(senders, door) ? [...senders[door]] : [];
+}
+
 export function runnerLimitsFor(registry: unknown, runnerId: string) {
   const entry = loaded(registry, "runnerLimitsFor").run.find(one => one.id === runnerId && one.kind === "runner");
   if (!entry) throw new TypeError(`unknown runner: ${runnerId}`);

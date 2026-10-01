@@ -40,7 +40,8 @@ export interface AgentSpec {
   chat?: string;
   door?: string;
   runner: string;
-  [key: string]: string | number | undefined;
+  /** Any other key of an agent's entry, `sleeping` among them. */
+  [key: string]: string | number | boolean | undefined;
 }
 
 export interface RateSpec {
