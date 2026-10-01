@@ -1,6 +1,6 @@
 // What a deletion says about its earlier backup copies, against a real store: nothing without the owner's number, "cannot verify" for a
 // destination that cannot list and expire, the copies that are this deletion's history for one that can, and "expired" only from receipts of
-// copies the destination no longer lists. The store refuses the word on its own, whoever asks.
+// copies the destination no longer lists. Uninventoried legacy storage still prevents a global expiry claim.
 
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"
@@ -25,7 +25,7 @@ const GENERATED = {
   list_argv: ["/fake/list", "{destination}"], expire_argv: ["/fake/expire", "{destination}", "{generation}"],
 }
 
-test("a deletion's account of its earlier copies follows the owner's number and what the destination can do, and says expired only for copies shown gone", async () => {
+test("a deletion's account of its earlier copies follows the owner's number and what the destination can do, and keeps legacy storage unverified after enumerated copies expire", async () => {
   const s = await stageTopics(cluster)
   const topic = await deleted(s)
   const store = s.as("hub_hub")
@@ -61,28 +61,29 @@ test("a deletion's account of its earlier copies follows the owner's number and 
   ]
   expect(await trackRetention(store, GENERATED, { days: 30, outcomes })).toBe(1)
   const tracking = await state()
-  expect(tracking.retention_state).toBe("tracking")
+  expect(tracking.retention_state).toBe("retention_unverified")
   expect(tracking.backup_retention_until?.toISOString()).toBe("2026-10-01T00:00:00.000Z")
   expect((await receiptsOf(store, op, { historical: true })).map(one => `${one.class}:${one.location}:${one.state}`)).toEqual(["backup_generation:20260901T000000Z:pending"])
   // The word is refused by the store while a copy of that history is not shown gone, whoever asks for it.
   expect(await recordRetention(store, op, { state: "historical_copies_expired" })).toBe("unverified")
-  expect((await state()).retention_state).toBe("tracking")
+  expect((await state()).retention_state).toBe("retention_unverified")
   // A copy the destination cannot be made to remove is a blocked retention, with its date, and not an expired one.
   outcomes = [{ ...outcomes[0], state: "retention_blocked" }, outcomes[1]]
   expect(await trackRetention(store, GENERATED, { days: 30, outcomes })).toBe(1)
   expect((await state()).retention_state).toBe("retention_blocked")
   expect(await said()).toEqual(["backup-retention-blocked"])
 
-  // Shown gone by the destination's own listing: now, and only now, it is expired.
+  // Enumerated copies are shown gone, but legacy history and provider versions remain unverified.
   outcomes = [{ ...outcomes[0], state: "expired" }, outcomes[1]]
   expect(await trackRetention(store, GENERATED, { days: 30, outcomes })).toBe(1)
   const expired = await state()
-  expect(expired.retention_state).toBe("historical_copies_expired")
-  expect(await said(), "nothing is left to say once every earlier copy is shown gone").toEqual([])
+  expect(expired.retention_state).toBe("retention_unverified")
+  expect(expired.retention_detail.generation_state).toBe("historical_copies_expired")
+  expect(await said()).toEqual(["backup-retention-unverified"])
   expect((await receiptsOf(store, op, { historical: true })).map(one => one.state)).toEqual(["expired"])
-  // And it stays so: a later run that finds nothing of that history left does not take it back, or write it again.
-  expect(await trackRetention(store, GENERATED, { days: 30, outcomes: [] })).toBe(0)
-  expect((await state()).retention_state).toBe("historical_copies_expired")
+  // An empty later listing still cannot certify legacy storage.
+  expect(await trackRetention(store, GENERATED, { days: 30, outcomes: [] })).toBe(1)
+  expect((await state()).retention_state).toBe("retention_unverified")
   // The active deletion was complete the whole time: the retention is its own account, and never held it up.
   expect(expired.stage).toBe("active_deleted")
 }, 120_000)
