@@ -16,7 +16,7 @@ export type CreateState =
   | "previewed" | "confirmed" | "create_intent" | "creation_unknown" | "channel_known"
   | "bind_intent" | "bound" | "failed" | "legacy";
 
-export type Lifecycle = "pending" | "active" | "archiving" | "archived" | "reopening" | "channel_missing";
+export type Lifecycle = "pending" | "active" | "archiving" | "archived" | "reopening" | "channel_missing" | "deleting";
 
 /** What was frozen with the preview and approved: the exact setup, with the identities it will have. */
 export interface TopicSetup {
@@ -161,7 +161,7 @@ export async function topicsOfDoor(store: StoreLike, door: string,
 }
 
 const CREATE_STATES: readonly string[] = ["previewed", "confirmed", "create_intent", "creation_unknown", "channel_known", "bind_intent", "bound", "failed", "legacy"];
-const LIFECYCLES: readonly string[] = ["pending", "active", "archiving", "archived", "reopening", "channel_missing"];
+const LIFECYCLES: readonly string[] = ["pending", "active", "archiving", "archived", "reopening", "channel_missing", "deleting"];
 
 // ---------------------------------------------------------------------------------------------
 // Identities
@@ -656,9 +656,9 @@ export async function firstInputPickedUp(store: StoreLike, topic: Pick<TopicRow,
   return row.picked === true;
 }
 
-/** Whether the chat can take a line said in it: not one that is archived, being reopened or gone. */
+/** Whether the chat can take a line said in it: not one that is archived, being reopened, gone or being deleted. */
 export async function chatUsable(store: StoreLike, door: string, chat: string): Promise<boolean> {
   const [row] = await store.sql`select not exists (select 1 from topic where door = ${door} and chat = ${chat}
-    and lifecycle in ('archiving', 'archived', 'reopening', 'channel_missing')) as usable`;
+    and lifecycle in ('archiving', 'archived', 'reopening', 'channel_missing', 'deleting')) as usable`;
   return row.usable === true;
 }

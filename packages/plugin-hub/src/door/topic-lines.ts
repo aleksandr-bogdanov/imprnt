@@ -193,14 +193,14 @@ export function reopenDoneNotice(language: Language, v: ReopenNoticeFacts): stri
     (v.held > 0 ? ` Interrupted work is waiting for your choice, and it will not continue on its own.` : ""));
 }
 
-/** The chat is gone from Discord. Nothing is erased, and erasing is a separate step that is not available yet. */
+/** The chat is gone from Discord. Nothing is erased: erasing is a separate request that the owner confirms. */
 export function channelMissingNotice(language: Language, v: { name: string }): string {
   const name = safeValue(v.name);
   return language === "ru"
     ? says(language, `Чат ${name} удалён в Discord. Агент и его история остались здесь, ничего не стёрто, а новых задач агент не берёт. ` +
-      "Удаление агента и истории — отдельный шаг, он пока недоступен, поэтому всё останется как есть.")
+      "Чтобы удалить агента и историю, попросите об этом здесь и подтвердите: до подтверждения ничего не стирается.")
     : says(language, `The chat ${name} was deleted in Discord. Its agent and history are still here and nothing was erased, and the agent takes no new work. ` +
-      "Deleting them is a separate step that is not available yet, so they stay as they are until it is.");
+      "To delete them, ask for it here and confirm: nothing is erased before you confirm.");
 }
 
 /** Delegated results that arrived for an archived chat's agent. They are kept, and wait for a reopen. */

@@ -135,6 +135,15 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "how long a runner waits before it tries a credential that refused a turn again",
     required: false,
   },
+  // How many days a historical backup copy may live, counted from the copy's own creation. There is NO default and nothing fills
+  // one in: the owner chooses it, an absent value means no retention is configured, and every deletion says so. 30 days was
+  // proposed in the design and has not been chosen; it is not applied anywhere.
+  {
+    key: "hub.backup_retention_days",
+    type: "integer",
+    what: "how many days after its creation a historical backup copy is allowed to remain, chosen by the owner; absent means none is configured",
+    required: false,
+  },
   // Which binary files a harvested note is a HOUSEHOLD FACT and not a
   // thing for code to guess: one box's is a package build, another's predates
   // the `vault` verb, and the monorepo's own runs under bun with no build step.
@@ -324,7 +333,18 @@ export const DEFAULT_CHILD_MEMORY_BUDGET_MB = 2048;
  * read back, relative to the copy, and the scratch file it is read into.
  */
 export const BACKUP_ARGVS = ["dump_argv", "upload_argv", "readback_argv"] as const;
-export const BACKUP_PLACEHOLDERS = ["{staging}", "{destination}", "{path}", "{out}"] as const;
+/**
+ * The two commands that give a destination a finite retention, both optional and only ever together: `list_argv` prints the id of every
+ * copy ("generation") the destination holds, one per line and nothing else, and `expire_argv` removes ONE whole generation, named by
+ * `{generation}` (a value the job has checked to be an id of the shape it makes, never text the destination sent). A destination
+ * without them keeps its copies until a person removes them, and is reported as one that cannot verify retention.
+ */
+export const BACKUP_RETENTION_ARGVS = ["list_argv", "expire_argv"] as const;
+/**
+ * `{generation}` is the copy's own id (the UTC time it was assembled, `20261001T120000Z`). An upload that carries it puts each copy
+ * in a place of its own, which is what a destination needs to hold generations at all; a read-back of such an upload carries it too.
+ */
+export const BACKUP_PLACEHOLDERS = ["{staging}", "{destination}", "{path}", "{out}", "{generation}"] as const;
 
 /** A password written into a command line, which every process on the box can read. */
 export const PASSWORD_LITERAL = /password\s*=|:\/\/[^/\s]*:[^/\s]*@/i;
@@ -426,6 +446,9 @@ export interface RunEntry {
   dump_argv?: string[];
   upload_argv?: string[];
   readback_argv?: string[];
+  /** Optional, and only together: what lets the destination's copies be enumerated and expired (`BACKUP_RETENTION_ARGVS`). */
+  list_argv?: string[];
+  expire_argv?: string[];
   destination?: string;
   /**
    * A watch's own: where it reads (`source`, one of `WATCH_SOURCES`), whose
@@ -1612,12 +1635,9 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
           `${id} is a backup with schedule ${describe(entry.schedule)}, and a copy runs on a cadence such as hourly ` +
             `or every 30m: one that never stops, or that nobody starts, is not an hourly copy`);
       }
-      for (const key of BACKUP_ARGVS) {
+      const checkArgv = (key: (typeof BACKUP_ARGVS)[number] | (typeof BACKUP_RETENTION_ARGVS)[number]): string[] => {
         const where = `${at}.${key}`;
         const argv = entry[key];
-        if (argv === undefined || argv === null) {
-          refuse(where, here, `${id} is a backup with no ${key}, and the copy runs exactly the three commands the file names`);
-        }
         strings(argv, where, false);
         const args = argv as string[];
         if (args.some(arg => PASSWORD_LITERAL.test(arg))) refuse(where, here, `${where} must not contain password literals`);
@@ -1627,10 +1647,11 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
           refuse(where, here,
             `${where} names ${describe(relative)}, a relative path, which is a different file in every directory a process starts in`);
         }
+        const retention = (BACKUP_RETENTION_ARGVS as readonly string[]).includes(key);
         for (const token of args.flatMap(arg => arg.match(/\{[A-Za-z_]+\}/g) ?? [])) {
           if (!(BACKUP_PLACEHOLDERS as readonly string[]).includes(token)) {
             refuse(where, here,
-              `${where} carries ${token}, and the four placeholders are ${BACKUP_PLACEHOLDERS.slice(0, 3).join(", ")} and ${BACKUP_PLACEHOLDERS[3]}`);
+              `${where} carries ${token}, and the five placeholders are ${BACKUP_PLACEHOLDERS.slice(0, 4).join(", ")} and ${BACKUP_PLACEHOLDERS[4]}`);
           }
           if (key !== "readback_argv" && (token === "{path}" || token === "{out}")) {
             refuse(where, here, `${where} carries ${token}, which names the one file a read-back reads and means nothing here`);
@@ -1640,6 +1661,42 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
           if (key === "readback_argv" && token === "{staging}") {
             refuse(where, here, `${where} reads {staging}, which is the copy on this box, so it would match whatever the upload did`);
           }
+          // What a copy is called belongs to where it goes and to what is read back and expired there, and to nothing else.
+          if (token === "{generation}" && (key === "dump_argv" || key === "list_argv")) {
+            refuse(where, here, `${where} carries {generation}, which names one copy and means nothing to a ${key === "dump_argv" ? "dump" : "listing of every copy"}`);
+          }
+          if (retention && token === "{staging}") {
+            refuse(where, here, `${where} carries {staging}, the copy on this box: a retention command is about what the destination holds`);
+          }
+        }
+        return args;
+      };
+      for (const key of BACKUP_ARGVS) {
+        if (entry[key] === undefined || entry[key] === null) {
+          refuse(`${at}.${key}`, here, `${id} is a backup with no ${key}, and the copy runs exactly the three commands the file names`);
+        }
+        checkArgv(key);
+      }
+      const generated = (args: string[]): boolean => args.some(arg => arg.includes("{generation}"));
+      const upload = entry.upload_argv as string[];
+      const readback = entry.readback_argv as string[];
+      if (generated(upload) !== generated(readback)) {
+        refuse(`${at}.${generated(upload) ? "readback_argv" : "upload_argv"}`, here,
+          `${id} puts each copy in a place of its own ({generation}) in only one of upload_argv and readback_argv, and a read-back of another place proves nothing`);
+      }
+      // THE RETENTION COMMANDS: both or neither, and only for an upload that gives every copy a place of its own. A listing with no way to
+      // expire (or the reverse) is a half of a policy, and a destination that holds one mirror has no copy to expire.
+      const given = BACKUP_RETENTION_ARGVS.filter(key => entry[key] !== undefined && entry[key] !== null);
+      if (given.length === 1) {
+        refuse(`${at}.${given[0]}`, here, `${id} carries ${given[0]} without ${given[0] === "list_argv" ? "expire_argv" : "list_argv"}, and retention needs both: one lists the copies and the other removes one`);
+      }
+      if (given.length === 2) {
+        for (const key of BACKUP_RETENTION_ARGVS) checkArgv(key);
+        if (!generated(upload)) {
+          refuse(`${at}.upload_argv`, here, `${id} can list and expire copies but its upload_argv has no {generation}, so every copy lands on the last one and there is nothing to expire`);
+        }
+        if (!generated(entry.expire_argv as string[])) {
+          refuse(`${at}.expire_argv`, here, `${at}.expire_argv has no {generation}, so it names no copy to expire`);
         }
       }
       // THE DESTINATION IS NOT PARSED. It is a value the commands receive and
@@ -1747,7 +1804,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
         : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"]
         : entry.kind === "door" ? ["guild", "default_preset", ...TOPIC_DOOR_KEYS]
-        : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS]
+        : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS, ...BACKUP_RETENTION_ARGVS]
         : entry.kind === "watch" ? ["source", "person", ...SENTRY_KEYS, ...HUNT_KEYS] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { erasureFence } from "../erasure/startup.ts";
 import { historyHarvestFrom } from "../registry/entries.ts";
 import { archiveOf, generalOf, legacyMastersOf } from "../registry/topics.ts";
 import { doorHealth, recordOperationFailure, routeNotice } from "./health.ts";
@@ -436,6 +437,10 @@ export async function runDoor(options: {
   const store: Store = await openStore({
     url: storeUrlFor(registry, "hub_door", options.door),
   });
+  // A store restored from a copy older than a deletion this machine recorded is not served from: the hub brings it forward, and the
+  // manager starts this process again after it. Nothing has been read from a chat yet.
+  const erasureHold = await erasureFence(store, stateDir);
+  if (erasureHold !== null) { await store.close().catch(() => {}); throw new Error(`erasure-behind: ${erasureHold}`); }
 
   const batch = (registry.data.hub as { cutover_batch?: string }).cutover_batch;
   if (batch) {

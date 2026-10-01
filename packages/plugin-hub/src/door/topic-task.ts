@@ -18,6 +18,7 @@ import {
 } from "../store/topics.ts";
 import { languageOf, listAgents } from "../registry/entries.ts";
 import { CURSOR_SHEET, cursorId } from "./cursor.ts";
+import { deletionPhase } from "./deletion-task.ts";
 import { classify, type EffectsContext } from "./effects.ts";
 import {
   planArchive, planRestore, showsArchived, showsPrior, withArchived, type ArchivePlan, type Left, type RestorePlan,
@@ -85,7 +86,8 @@ import {
  *    settles, through the same gate and stop. A reopen that could not know the chat's prior category and
  *    so left it inside the category is not undone by the observer: being where the operation left it is
  *    not a change.
- *  * Nothing is ever erased here, and no notice says it was.
+ *  * Nothing is erased here for a topic the owner has not confirmed the deletion of, and a chat that is merely gone is not
+ *    that. A deletion the owner CONFIRMED is the one phase that erases (`deletion-task.ts`), through the store's own routine.
  *
  * Its one process-local memory (`TopicsMemory`) is a rate limit, a schedule and a note of what it
  * has already said or settled. A restart drops all of it, and everything that matters is in the store.
@@ -201,6 +203,14 @@ export async function runTopicPass(ctx: TopicsContext, memory: TopicsMemory): Pr
   } catch (error) {
     await report(ctx, ctx.door, error);
     next = clock(ctx) + Math.max(1, ctx.retrySeconds) * 1000;
+  }
+  // A CONFIRMED DELETION IS OWED WHETHER OR NOT THE DOOR STILL SERVES A TOPIC: erasing removes the topic's row, and the door that
+  // deleted its last one still has to delete the chat, judge the receipts and say what became of it. With none, it is one statement.
+  try {
+    next = soonest(next, await deletionPhase(ctx));
+  } catch (error) {
+    await report(ctx, ctx.door, error);
+    next = soonest(next, clock(ctx) + Math.max(1, ctx.retrySeconds) * 1000);
   }
   // A door that serves no topic has nothing here, and that is one statement, not four.
   const [held] = await ctx.store.sql`select exists (select 1 from topic where door = ${ctx.door}) as some`;

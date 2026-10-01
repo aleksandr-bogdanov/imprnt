@@ -53,6 +53,7 @@ import { readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { holdFindings, readOpenHolds } from "./holds.ts";
 import { topicFindings } from "./topics.ts";
+import { deletionFindings } from "./deletions.ts";
 import { readWatchState, watchFindings } from "./watch.ts";
 import { councilFindings, readLiveCouncils } from "./council.ts";
 import { silentRunners } from "./silence.ts";
@@ -657,6 +658,11 @@ export async function runCheck(options: {
     store: options.store, registry, machine, now,
     doors: new Set(entries.filter(entry => entry.kind === "door").map(entry => entry.id)),
     agents: mine.map(agent => agent.id),
+  }));
+  // --- topic deletions: one waiting for a stop or a machine, one that part of cannot be erased, and the earlier backup copies a
+  //     deletion does not erase (no retention configured, or one the destination cannot verify).
+  findings.push(...await deletionFindings({
+    store: options.store, machine, now, doors: new Set(entries.filter(entry => entry.kind === "door").map(entry => entry.id)),
   }));
   // AND THE AGENTS OF EVERY FLAGGED MACHINE, from the store machine's view: a
   // runner on a copy that is behind, or on a machine whose hub is silent,

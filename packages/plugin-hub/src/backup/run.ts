@@ -15,6 +15,11 @@ import {
 import { dirname, isAbsolute, join, sep } from "node:path";
 import { recordJobSuccess } from "../check/schedule.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
+import { CONTROL_MANIFEST_FILE, renderManifest as renderControlManifest } from "../erasure/manifest.ts";
+import {
+  RetentionInvalid, accountOf, enforceRetention, expiryOf, fill, generationIdOf, retentionDaysOf, trackRetention, transportOf, type Outcome,
+} from "../erasure/retention.ts";
+import { backupHold, deletionSchemaReady, erasureGeneration, readErasureManifest } from "../store/deletions.ts";
 import { putRow } from "../records/statesheet.ts";
 import {
   backupStagingFor,
@@ -24,7 +29,7 @@ import {
   listRepositories,
   listRunEntries,
 } from "../registry/entries.ts";
-import { BACKUP_PLACEHOLDERS, readSetting, type Registry, type RepositoryEntry, type RunEntry } from "../registry/load.ts";
+import { readSetting, type Registry, type RepositoryEntry, type RunEntry } from "../registry/load.ts";
 import { localRemotePath, remoteUrlOf } from "../registry/remote.ts";
 import { openStore, type StoreLike } from "../store/connect.ts";
 import { secretsDirOf, storeUrlFor } from "../store/secrets.ts";
@@ -62,6 +67,12 @@ const DUMP_DIR = "dump";
 const DUMP_FILE = "hub.sql";
 const FILES_DIR = "files";
 const READBACK_DIR = ".readback";
+/**
+ * Where a copy is assembled when the entry's upload gives every copy a place of its own (`{generation}`), inside the staging directory:
+ * a standalone dump (no repository, so no history of earlier dumps rides along in every copy), the files, and the two manifests. What
+ * the destination receives is this directory, and the legacy dump repository beside it in the staging directory is never sent again.
+ */
+const GENERATION_DIR = "generation";
 
 /** The two files a copy is judged by, relative to the copy's root. */
 const READ_BACK = [`${DUMP_DIR}/${DUMP_FILE}`, MANIFEST_FILE];
@@ -95,6 +106,12 @@ export interface BackupResult {
   committed: boolean;
   /** The declared repositories left out because their remote is off the box. */
   left_out?: string[];
+  /** The erasure generation this copy was assembled under (also in its manifest). */
+  erasure_generation?: number;
+  /** The copy's own id at the destination, when its upload gives each copy a place of its own. */
+  generation?: string;
+  /** What the owner configured for historical copies, and what the destination can verify of it. Never a default. */
+  retention?: { days: number | null; state: string; reason: string; expires_at: string | null };
 }
 
 /**
@@ -148,18 +165,6 @@ export class BackupRefused extends Error {
     this.reason = reason;
     this.detail = detail;
   }
-}
-
-type Placeholder = (typeof BACKUP_PLACEHOLDERS)[number] extends `{${infer Name}}` ? Name : never;
-
-/**
- * The placeholders filled into each argument in ONE pass, so a value that
- * happens to contain a placeholder's spelling is never filled in again.
- */
-function fill(argv: string[], values: Partial<Record<Placeholder, string>>): string[] {
-  const known = new Set<string>(BACKUP_PLACEHOLDERS);
-  return argv.map((arg) => arg.replace(/\{[A-Za-z_]+\}/g, (token) =>
-    known.has(token) ? values[token.slice(1, -1) as Placeholder] ?? token : token));
 }
 
 /**
@@ -286,6 +291,45 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
   const machine = declared.machine;
   const store = await openStore({ url: storeUrlFor(registry, "hub_hub", declared.id) });
   const readback = join(staging, READBACK_DIR);
+  // WHETHER EACH COPY GETS A PLACE OF ITS OWN at the destination. If it does, the copy is assembled in a directory that holds nothing
+  // else (a standalone dump, the files, the manifests), and that directory is what the upload is handed as `{staging}`: no earlier
+  // dump's history rides along in every copy, and the destination can hold, list and expire whole generations. If it does not, the copy
+  // is the one mirror it always was, and its earlier copies cannot be told apart or expired through this transport.
+  const generational = (declared.upload_argv ?? []).some((arg) => arg.includes("{generation}"));
+  const root = generational ? join(staging, GENERATION_DIR) : staging;
+  // The owner's retention, or none. Read first because the expiry below runs whether or not this copy lands: a failed fresh backup is
+  // reported, and is never a reason to keep old history silently. A value that is not a day count refuses the COPY, by name.
+  let days: number | null = null;
+  let daysInvalid: string | null = null;
+  try { days = retentionDaysOf(registry); } catch (error) {
+    if (!(error instanceof RetentionInvalid)) { await store.close(); throw error; }
+    daysInvalid = error.message;
+  }
+  let outcomes: Outcome[] | null = null;
+  const publication = await store.sql.reserve();
+  let publicationLocked = false;
+  /**
+   * THE RETENTION, as far as the destination can carry it out: with a configured number and a destination that can list and expire its
+   * copies, every copy older than the number is removed and looked for again, and each deletion is given the account of the copies
+   * that are its history. With no number nothing is expired. With a destination that cannot, nothing is expired and the deletions are
+   * `retention_unverified`, with that reason. It runs after a copy that landed and after one that did not, and a failure of it is said
+   * in the diary and never costs the copy: it is not the copy's.
+   */
+  const keepRetention = async (): Promise<void> => {
+    try {
+      // A store that has not been migrated to 017 has no deletion to account for. The expiry is the destination's own and does not need it.
+      const accounted = await deletionSchemaReady(store);
+      if (days !== null && transportOf(declared).supported) {
+        mkdirSync(readback, { recursive: true });
+        outcomes = (await enforceRetention({ entry: declared, scratch: readback }, { days, now: new Date() })).outcomes;
+      }
+      if (accounted) await trackRetention(store, declared, { days, outcomes });
+    } catch (error) {
+      const said = error as { step?: unknown; message?: unknown };
+      await recordOperationFailure(store, { operation: "backup-retention", target: declared.id,
+        error: { code: typeof said.step === "string" ? `retention-${said.step}` : "retention-failed", message: typeof said.message === "string" ? said.message.slice(0, 200) : "operation failed" } }).catch(() => {});
+    }
+  };
   try {
     // REFUSE FIRST, before anything is dumped or sent. A copy on the filesystem
     // that dies is not a copy. The staging directory is the account's own,
@@ -295,30 +339,48 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
       throw new BackupRefused("device", "same device", "the destination is on the staging directory's own filesystem");
     }
 
-    // THE DUMP, in its own repository, committed only when it changed. A dump
-    // command that exits zero and says nothing is the same failure as an
-    // upload that does nothing.
-    const dump = await run(fill(declared.dump_argv ?? [], { staging, destination }), "dump", "operation failed", true);
+    // THE ERASURE BARRIER, before anything is dumped. A copy is never assembled across an erasure generation, and never while a
+    // topic the owner confirmed the deletion of still has its rows, or a file this machine copies, to be removed: the copy is held
+    // and says why, and the next run assembles it from what is left. This is fresh assembly, not a rewrite of an earlier copy.
+    const held = await backupHold(store, machine);
+    if (held !== null) throw new BackupRefused("barrier", "operation failed", held);
+    const barrier = await readErasureManifest(store);
+    if (daysInvalid !== null) throw new BackupRefused("stage", "invalid configuration", daysInvalid);
+
+    // THE DUMP. A dump command that exits zero and says nothing is the same
+    // failure as an upload that does nothing.
+    const dump = await run(fill(declared.dump_argv ?? [], { staging: root, destination }), "dump", "operation failed", true);
     if (dump.length === 0) throw new BackupRefused("dump", "operation failed", "the dump command wrote nothing");
-    const dumpDir = join(staging, DUMP_DIR);
-    mkdirSync(dumpDir, { recursive: true });
-    if (!existsSync(join(dumpDir, ".git"))) await git(dumpDir, ["init", "-q"]);
-    const dumpFile = join(dumpDir, DUMP_FILE);
-    if (!existsSync(dumpFile) || !sameBytes(readFileSync(dumpFile), dump)) writeFileSync(dumpFile, dump);
-    // Whether it changed is asked of the last COMMIT, with two calls that never
-    // write git's index. An unchanged dump then leaves every byte of the
-    // repository as it was, and a dump written by a copy that died before its
-    // commit is still committed by the next one.
-    const changed = (await git(dumpDir, ["hash-object", "--", DUMP_FILE])) !==
-      (await git(dumpDir, ["rev-parse", "--verify", "--quiet", `HEAD:${DUMP_FILE}`], true));
-    if (changed) {
-      await git(dumpDir, ["add", "--", DUMP_FILE]);
-      await git(dumpDir, ["commit", "-q", "-m", `the hub's store, dumped at ${new Date().toISOString()}`]);
+    let changed = true;
+    if (generational) {
+      // A STANDALONE DUMP in a directory made new for this copy: nothing of an earlier copy is in it, so what an earlier generation
+      // held cannot ride along in this one, and the generation can be removed whole.
+      rmSync(root, { recursive: true, force: true });
+      mkdirSync(join(root, DUMP_DIR), { recursive: true });
+      writeFileSync(join(root, DUMP_DIR, DUMP_FILE), dump);
+    } else {
+      // In its own repository, committed only when it changed.
+      const dumpDir = join(staging, DUMP_DIR);
+      mkdirSync(dumpDir, { recursive: true });
+      if (!existsSync(join(dumpDir, ".git"))) await git(dumpDir, ["init", "-q"]);
+      const dumpFile = join(dumpDir, DUMP_FILE);
+      if (!existsSync(dumpFile) || !sameBytes(readFileSync(dumpFile), dump)) writeFileSync(dumpFile, dump);
+      // Whether it changed is asked of the last COMMIT, with two calls that never
+      // write git's index. An unchanged dump then leaves every byte of the
+      // repository as it was, and a dump written by a copy that died before its
+      // commit is still committed by the next one.
+      changed = (await git(dumpDir, ["hash-object", "--", DUMP_FILE])) !==
+        (await git(dumpDir, ["rev-parse", "--verify", "--quiet", `HEAD:${DUMP_FILE}`], true));
+      if (changed) {
+        await git(dumpDir, ["add", "--", DUMP_FILE]);
+        await git(dumpDir, ["commit", "-q", "-m", `the hub's store, dumped at ${new Date().toISOString()}`]);
+      }
     }
 
     // THE REST, fresh every time. Only what this job put here is cleared, so
     // nothing else that happens to sit beside the dump is ever deleted.
-    for (const own of [FILES_DIR, MANIFEST_FILE, READBACK_DIR]) rmSync(join(staging, own), { recursive: true, force: true });
+    for (const own of [FILES_DIR, MANIFEST_FILE, CONTROL_MANIFEST_FILE]) rmSync(join(root, own), { recursive: true, force: true });
+    rmSync(readback, { recursive: true, force: true });
     const repositories = repositoriesToCopy(registry);
     const left = excludedFromCopy(registry, { stateDir, staging, leftOut: repositories.leftOut });
     const trees: { path: string; required: boolean }[] = [
@@ -348,16 +410,31 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
       }
       // One inside another is already in the copy, once.
       if (taken.some((root) => within(root, from))) continue;
-      copyTree(from, mirror(staging, isAbsolute(tree.path) ? tree.path : from), left);
+      copyTree(from, mirror(root, isAbsolute(tree.path) ? tree.path : from), left);
       taken.push(from);
     }
 
-    // THE MANIFEST, last.
-    const at = new Date().toISOString();
-    const files = buildManifest(staging);
-    writeFileSync(join(staging, MANIFEST_FILE), renderManifest({ at, machine, files }));
+    // THE CONTROL MANIFEST goes in the copy (identifiers only: no name, no request, no word of any history), so a restore from this
+    // copy finds what was deleted before it. Then the barrier is asked again: a deletion confirmed while the copy was assembled, or
+    // one whose rows are still to go, means this copy was assembled across it, and it is not described or sent.
+    writeFileSync(join(root, CONTROL_MANIFEST_FILE), renderControlManifest(barrier));
+    await publication`select pg_advisory_lock_shared(682151, 1)`;
+    publicationLocked = true;
+    const later = await backupHold(store, machine);
+    if (later !== null) throw new BackupRefused("barrier", "operation failed", later);
+    if ((await erasureGeneration(store)) !== barrier.generation) {
+      throw new BackupRefused("barrier", "operation failed", "a deletion was confirmed while the copy was being assembled, so this copy is not published and the next run assembles it again");
+    }
 
-    await run(fill(declared.upload_argv ?? [], { staging, destination }), "upload", "operation failed");
+    // THE MANIFEST, last. It carries the generation the copy was assembled under and, when the owner configured one, the date the copy
+    // is due to expire (counted from `at`, never from an upload): informational until the destination can list and expire its copies.
+    const at = new Date().toISOString();
+    const generation = generationIdOf(new Date(at));
+    const files = buildManifest(root);
+    const expiresAt = days === null ? null : expiryOf(new Date(at), days).toISOString();
+    writeFileSync(join(root, MANIFEST_FILE), renderManifest({ at, machine, files, erasure_generation: barrier.generation, retention_days: days, expires_at: expiresAt }));
+
+    await run(fill(declared.upload_argv ?? [], { staging: root, destination, generation }), "upload", "operation failed");
 
     // THE READ-BACK, into a scratch directory inside the staging directory so
     // it is fenced from every agent's box the way the copy is. It is made after
@@ -367,14 +444,14 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
     const intoFile = names.some((arg) => arg.includes("{out}"));
     for (const [n, path] of READ_BACK.entries()) {
       const out = join(readback, String(n));
-      const said = await run(fill(names, { destination, path, out }), "readback", "copy does not match", !intoFile);
+      const said = await run(fill(names, { destination, path, out, generation }), "readback", "copy does not match", !intoFile);
       let received: Uint8Array;
       try {
         received = intoFile ? readFileSync(out) : said;
       } catch {
         throw new BackupRefused("readback", "copy does not match", `nothing was read back for ${path}`);
       }
-      if (!sameBytes(readFileSync(join(staging, path)), received)) {
+      if (!sameBytes(readFileSync(join(root, path)), received)) {
         throw new BackupRefused("compare", "copy does not match", `${path} read back different bytes`);
       }
     }
@@ -397,7 +474,10 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
     } catch {
       throw new BackupRefused("stamp", "operation failed", "the stamp could not be written");
     }
-    return { ...landed, committed: changed };
+    // What the earlier copies' retention comes to is settled in `finally`, for a copy that landed and for one that did not alike.
+    const account = accountOf({ days, transport: transportOf(declared), until: null });
+    return { ...landed, committed: changed, erasure_generation: barrier.generation, ...(generational ? { generation } : {}),
+      retention: { days, state: account.state, reason: account.reason, expires_at: expiresAt } };
   } catch (error) {
     // Anything else is the filesystem refusing the copy, and its errno code is
     // the one part of it that is safe to keep.
@@ -414,6 +494,9 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
     } catch { /* the failure is thrown whether or not it could be recorded */ }
     throw refused;
   } finally {
+    try { if (publicationLocked) await publication`select pg_advisory_unlock_shared(682151, 1)`; }
+    finally { publication.release(); }
+    await keepRetention();
     rmSync(readback, { recursive: true, force: true });
     await store.close();
   }

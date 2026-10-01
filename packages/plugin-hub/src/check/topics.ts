@@ -88,8 +88,8 @@ export async function topicFindings(args: {
     } else if (topic.lifecycle === "channel_missing") {
       findings.push({
         id: findingId(args.machine, "topic-channel-missing", subject), kind: "topic-channel-missing", subject, machine: args.machine,
-        says: `the chat ${topic.display_name} was deleted in Discord. Its agent and history are kept, nothing was erased, and the agent takes no new work. Deleting them is not available yet`,
-        fix: "nothing to run: the owner is asked in General, and the topic stays as it is until deleting exists",
+        says: `the chat ${topic.display_name} was deleted in Discord. Its agent and history are kept, nothing was erased, and the agent takes no new work. Deleting them waits for the owner's confirmation`,
+        fix: "nothing to run: the owner is asked in General, and the topic stays as it is until the owner asks for it to be deleted and confirms",
       });
     }
     // An adopted master whose registry entry was edited onto another route while its topic could not follow: the door moves an

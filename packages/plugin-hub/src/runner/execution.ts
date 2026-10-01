@@ -29,8 +29,10 @@ export { RUNNER_PROTOCOL };
  * of protocol 3 on a store at migration 13 or older has no council tables, no council-aware claim rule
  * and no way to tell a council's job from an ordinary one, and a runner of protocol 4 on a store at
  * migration 15 or older has no topic moves: no gate of a move, no drain intent or evidence, no
- * `hub_move` notification. It is the last check, so the first thing a runner reads of a move is read
- * from a schema that has them.
+ * `hub_move` notification, and a runner of this build on a store at migration 16 or older has no
+ * tombstones: no way for the store to say that an agent was deleted. It is the last check, so the first
+ * thing a runner reads of a move or of a deletion is read from a schema that has them. The order of a
+ * rollout follows: migrate the store (the install step's database stage), then the hubs, doors and runners.
  */
 export async function requireSchema(store: StoreLike): Promise<void> {
   const [found] = (await store.sql`select to_regclass('public.execution') is not null
@@ -46,11 +48,19 @@ export async function requireSchema(store: StoreLike): Promise<void> {
       and to_regprocedure('public.hub_move_drain_seal(text, text, text, jsonb)') is not null
       and to_regprocedure('public.hub_move_drain_done(text, text, text, jsonb)') is not null
       and to_regprocedure('public.hub_move_note_carry(text, jsonb)') is not null
-      and to_regprocedure('public.hub_notify_move()') is not null as moves`) as unknown as
-    { present: boolean; councils: boolean; moves: boolean }[];
+      and to_regprocedure('public.hub_notify_move()') is not null as moves,
+    to_regclass('public.topic_tombstone') is not null
+      and to_regclass('public.erasure_control') is not null
+      and to_regprocedure('public.hub_erasure_manifest()') is not null
+      and to_regprocedure('public.hub_erasure_apply(jsonb)') is not null
+      and to_regprocedure('public.hub_deletion_erase_active(text)') is not null as deletions`) as unknown as
+    { present: boolean; councils: boolean; moves: boolean; deletions: boolean }[];
   if (!found?.present) throw new Error("schema-behind: apply migration 11 (conversations) before this runner serves");
   if (!found.councils) throw new Error("schema-behind: apply migration 14 (councils) before this runner serves");
   if (!found.moves) throw new Error("schema-behind: apply migration 16 (topic moves) before this runner serves");
+  // A topic that was deleted has its identities reserved and its tombstone kept by this migration: a runner serving a store without
+  // them could not be told, by that store, that an agent it is handed was deleted.
+  if (!found.deletions) throw new Error("schema-behind: apply migration 17 (topic deletion) before this runner serves");
 }
 
 const NONE: AdapterCapabilities = { stableSession: false, safeResume: false, delegationDisabled: false };

@@ -6,8 +6,8 @@
  * TWO TOOLS. `hub_topic` has the actions implemented: `inspect` (what is held and what
  * is known about it, or where one topic chat stands), `resume` (the owner's choice about
  * one interrupted attempt), and a topic chat's `create` (which only ever freezes a
- * preview), `archive`, `reopen` and `move`. `hub_council` (`council-contract.ts`) has `start`,
- * `continue`, `inspect` and `stop`. An action that is not implemented (delete, stop
+ * preview), `archive`, `reopen`, `move` and `delete` (which only ever freezes the scope of a deletion for the owner's check).
+ * `hub_council` (`council-contract.ts`) has `start`, `continue`, `inspect` and `stop`. An action that is not implemented (stop
  * of a topic) is not listed, and one that is asked for anyway is refused by name.
  *
  * Identity is never an argument. The person, the agent, the conversation and
@@ -29,7 +29,7 @@ export const TOOLS = [
     name: HUB_TOPIC,
     description:
       "Inspect work in this conversation that was interrupted, record the owner's decision about one interrupted attempt, " +
-      "and make, archive, reopen or move a topic chat. " +
+      "and make, archive, reopen, move or delete a topic chat. " +
       "inspect: lists interrupted attempts with what is known and not known about their effects; with topic_id it says where one topic chat stands. " +
       "resume: records the owner's choice for ONE attempt at the recovery revision inspect showed. It needs request_key and the platform " +
       "message ids in which the owner actually said so; continue queues a new message behind the current turn once the old attempt is " +
@@ -54,12 +54,18 @@ export const TOOLS = [
       "finishing: ask again after it ended. " +
       "move_decision {choice: continue, attempt_id, expected_recovery_revision} only records that the owner saw the interruption inspect " +
       "showed under move.failure and puts the move back to waiting. It does NOT resume, release or replay the interrupted work, which stays held " +
-      "and is decided separately with resume. inspect with topic_id shows where an open move stands, and what is available next.",
+      "and is decided separately with resume. inspect with topic_id shows where an open move stands, and what is available next. " +
+      "delete: the owner's explicit request to delete a topic chat, its agent and its active history, from that topic's own chat or from General, " +
+      "with request_key and source_message_ids. It deletes nothing: it freezes the exact scope (what is removed, which machines hold copies, what " +
+      "stays, and what the earlier backups do) in a preview in this conversation's chat, and ONLY the owner's green-check reaction to that preview " +
+      "confirms it. Tell the owner what the preview shows. After the check the topic's agent and its delegated work are stopped, the active copies are " +
+      "removed and each is reported; the deletion is complete only when every one is, and a machine that is offline is waited for. Notes already saved " +
+      "in the vault are not touched, and earlier backup copies are not rewritten. A deletion cannot be undone, and its identifiers are never reused.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        action: { type: "string", enum: ["inspect", "resume", "create", "archive", "reopen", "move"] },
+        action: { type: "string", enum: ["inspect", "resume", "create", "archive", "reopen", "move", "delete"] },
         request_key: { type: "string", minLength: 1, maxLength: 200 },
         source_message_ids: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 10 },
         topic_id: { type: "string", minLength: 1, maxLength: 200 },
@@ -150,6 +156,11 @@ interface LifecycleBase {
 export interface ArchiveRequest extends LifecycleBase { action: "archive" }
 export interface ReopenRequest extends LifecycleBase { action: "reopen" }
 export type LifecycleRequest = ArchiveRequest | ReopenRequest;
+/**
+ * A deletion of a topic chat, its agent and its ACTIVE history. Unlike an archive it is never carried out on the owner's request
+ * alone: it freezes the exact scope in a preview, and only the owner's green check on that preview deletes anything.
+ */
+export interface DeleteRequest extends LifecycleBase { action: "delete" }
 /** What the owner decides about an open move: to withdraw it, or to say they saw the interruption it stopped on. */
 export type MoveDecision = { choice: "withdraw" } | { choice: "continue"; attempt_id: string; expected_recovery_revision: number };
 /** A move: the owner's explicit request with the machine they named, or their decision about a move that is open. Exactly one of the two. */
@@ -158,7 +169,7 @@ export interface MoveRequest extends LifecycleBase {
   destination_machine?: string;
   move_decision?: MoveDecision;
 }
-export type HubTopicRequest = InspectRequest | ResumeRequest | CreateRequest | ArchiveRequest | ReopenRequest | MoveRequest;
+export type HubTopicRequest = InspectRequest | ResumeRequest | CreateRequest | ArchiveRequest | ReopenRequest | MoveRequest | DeleteRequest;
 
 /**
  * One action of `hub_topic`: the keys it takes beside `action`, and how its
@@ -179,7 +190,7 @@ function readText(value: unknown, where: string, max: number): string {
 }
 
 /** The arguments an archive and a reopen share: the owner's own words as evidence, and which topic. */
-function readLifecycle(top: Record<string, unknown>, action: "archive" | "reopen" | "move"): LifecycleBase & { action: typeof action } {
+function readLifecycle(top: Record<string, unknown>, action: "archive" | "reopen" | "move" | "delete"): LifecycleBase & { action: typeof action } {
   const key = readRequestKey(top, action);
   const sources = readSourceIds(top, action, "the messages in which the owner asked for it");
   if (top.topic_id !== undefined) readText(top.topic_id, "topic_id", 200);
@@ -246,6 +257,10 @@ const TOPIC_ACTIONS: { [A in HubTopicRequest["action"]]: ActionReader<Extract<Hu
   reopen: {
     keys: ["request_key", "source_message_ids", "topic_id", "expected_revision"],
     read: (top) => readLifecycle(top, "reopen") as ReopenRequest,
+  },
+  delete: {
+    keys: ["request_key", "source_message_ids", "topic_id", "expected_revision"],
+    read: (top) => readLifecycle(top, "delete") as DeleteRequest,
   },
   move: {
     keys: ["request_key", "source_message_ids", "topic_id", "expected_revision", "destination_machine", "move_decision"],

@@ -21,7 +21,7 @@
 // and the check act are red for behaviour.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { startCluster, statementWatch, until, type Cluster } from "./helpers/cluster.ts";
@@ -410,6 +410,7 @@ test(
     try {
       const { board, it } = staged;
       running = await runHub({ registryFile: it.registryFile, machine: HERE, os: hub.os });
+      await until("startup erasure manifest", async () => existsSync(join(dirname(it.registryFile), "erasure-manifest.json")), 5000);
       const before = treeDigest(dirname(it.registryFile));
 
       const stopped = await press(board, "/act/enabled", { target: SCHEDULED_ENTRY.id, value: "false" });

@@ -162,8 +162,14 @@ export interface BackupStage {
   recorder: string;
   calls(): string[][];
   clearCalls(): void;
-  /** Re-render the registry with a different destination or argv. */
-  configure(change: { destination?: string; dump_argv?: string[]; upload_argv?: string[]; readback_argv?: string[] }): void;
+  /**
+   * Re-render the registry with a different destination or argv. `list_argv` and `expire_argv` are the optional retention commands (give them
+   * with an upload and a read-back that carry `{generation}`), and `retention_days` is the owner's number (null takes it out again).
+   */
+  configure(change: {
+    destination?: string; dump_argv?: string[]; upload_argv?: string[]; readback_argv?: string[];
+    list_argv?: string[]; expire_argv?: string[]; retention_days?: number | null;
+  }): void;
   /** A directory on the staging directory's own device. */
   sameDevice(): string;
   /** A directory on another device, or why this machine cannot give one. */
@@ -252,7 +258,8 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
 
     let secretsDirPath = "";
     let credentialPath = "";
-    const argv = {
+    let retentionDays: number | null = null;
+    const argv: { dump: string[]; upload: string[]; readback: string[]; list?: string[]; expire?: string[] } = {
       dump: options.dump_argv ?? [pgDumpGate().bin, "--dbname", cluster.url(db)],
       // `-f`, because a second copy lands on the first and git writes its
       // objects read-only, which a plain `cp` refuses to overwrite.
@@ -272,11 +279,14 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
       dump_argv: argv.dump,
       upload_argv: argv.upload,
       readback_argv: argv.readback,
+      list_argv: argv.list,
+      expire_argv: argv.expire,
     });
 
     const complete = (from: RegistrySpec): RegistrySpec => ({
       ...from,
-      hub: { ...(from.hub ?? {}), store_url: storeUrl, state_dir: stateDir, secrets_dir: secretsDirPath },
+      hub: { ...(from.hub ?? {}), store_url: storeUrl, state_dir: stateDir, secrets_dir: secretsDirPath,
+        ...(retentionDays === null ? {} : { backup_retention_days: retentionDays }) },
       people: (from.people ?? []).map((one) => (one.id === "p1" ? { ...one, filing_rules: named.filing } : one)),
       credentials: [{ id: "p2-key", kind: "api-key", file: credentialPath, owner: "p2" }],
       presets: {
@@ -423,6 +433,9 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
         if (change.dump_argv !== undefined) argv.dump = change.dump_argv;
         if (change.upload_argv !== undefined) argv.upload = change.upload_argv;
         if (change.readback_argv !== undefined) argv.readback = change.readback_argv;
+        if (change.list_argv !== undefined) argv.list = change.list_argv;
+        if (change.expire_argv !== undefined) argv.expire = change.expire_argv;
+        if (change.retention_days !== undefined) retentionDays = change.retention_days;
         render();
       },
       sameDevice: () => scratchUnder(base, "same-device-destination"),
