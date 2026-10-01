@@ -209,6 +209,34 @@ test("S5: a side-state, unvalidated pair or build refusal, a missing proof, port
   expect((await r.s.reread(r.move)).block).toBeNull()
 })
 
+test("S5a: a side's block under the SAME code is restated when its detail moved (the store answers replay to the code alone), and a repeat on the same facts writes nothing", async () => {
+  const r = await rig()
+  await prepareDestination(r.dst.w, r.move.id)
+  await drainOnly(r.s, r.move)
+  const look = () => exportSource(r.src.w, PROVEN, r.move.id)
+  r.fake.behavior.exportRefuses = new NativeRefusal("native_side_state_unsupported", "config/todos")
+  expect(await look()).toMatchObject({ state: "blocked", reason: "native_side_state_unsupported", detail: { path: "config/todos" } })
+  const first = (await r.s.reread(r.move)).block!
+  expect(first).toMatchObject({ code: "native_side_state_unsupported", by: "source", detail: { path: "config/todos" } })
+  // The same facts again: the row is exactly as it was (no clear, no set, the same `since`).
+  expect(await look()).toMatchObject({ state: "blocked", reason: "native_side_state_unsupported" })
+  expect((await r.s.reread(r.move)).block).toEqual(first)
+
+  // What the refusal is about moved on under the one code: the row says the new subject, not the first.
+  r.fake.behavior.exportRefuses = new NativeRefusal("native_side_state_unsupported", "config/plans")
+  expect(await look()).toMatchObject({ state: "blocked", reason: "native_side_state_unsupported", detail: { path: "config/plans" } })
+  const second = (await r.s.reread(r.move)).block!
+  expect(second).toMatchObject({ code: "native_side_state_unsupported", by: "source", detail: { path: "config/plans" } })
+  expect(second.since, "it was set again").not.toBe(first.since)
+  expect((await r.s.reread(r.move)).stage).toBe("waiting")
+  expect(await blobsOf(r.s, r.move)).toBe(0)
+
+  // And it is still this side's own: the fix releases, with nothing left on the row.
+  r.fake.behavior.exportRefuses = null
+  expect(await look()).toMatchObject({ state: "done", reason: "released" })
+  expect((await r.s.reread(r.move)).block).toBeNull()
+})
+
 test("S5b: another party's block stands: nothing is read, stored or sealed, and it is never cleared by the source", async () => {
   const r = await rig()
   await prepareDestination(r.dst.w, r.move.id)

@@ -36,7 +36,7 @@ export type TransferCode =
   | "stage-ambiguous" | "stage-stale" | "operation-invalid"
   // repositories
   | "repo-invalid" | "repo-not-toplevel" | "repo-unsafe-config" | "repo-head-unborn" | "repo-conflict"
-  | "repo-operation" | "repo-submodule" | "repo-nested" | "repo-symlink" | "repo-index-flags" | "repo-reserved-path"
+  | "repo-operation" | "repo-submodule" | "repo-nested" | "repo-symlink" | "repo-symlink-outside" | "repo-symlink-unresolved" | "repo-index-flags" | "repo-reserved-path"
   | "repo-index-state" | "repo-withheld" | "snapshot-mismatch"
   | "repo-git-failed" | "repo-git-output" | "repo-revision-invalid" | "repo-revision-missing"
   | "dependency-missing"

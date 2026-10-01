@@ -17,21 +17,19 @@ import { isRecord, sameJson } from "./move-handoff.ts";
  *
  * WHAT IT IS NOT: a comparison of the CONTENT of the files the launch reads. A person's and an agent's settings, MCP and instruction files are
  * placed per machine, and the profile holds the paths' NAMES and not their bytes, so two machines whose registries agree can still hold
- * different files at those paths; the permissions and servers an agent really runs with are in those files. Nothing compares them, and the
- * credential is host-local and is never read, hashed or exported (an MCP file can hold keys, so a digest of one is not offered either).
- * That is a gate, and it is ENFORCED, not commented: `unverified` names every such reference the launch of THIS agent really reads
- * (`configReferences`), the source refuses to release while it is not empty (`profile_unverified`, `move-export.ts`) and the destination
- * refuses to record its preflight (`dest_profile_unverified`, `move-import.ts`), each naming the references and never a path or a value.
- * No owner acknowledgement clears it: it clears when the registry no longer points the agent at such a file. An agent whose launch reads
- * none (it names none and its person names none, or it is the triage master, which is launched with no tools, no MCP server and no
- * instructions of the person's) has an empty list and is not held by it.
+ * different files at those paths; the permissions and servers an agent really runs with are in those files. The hub cannot read a spoke's
+ * files, so their content cannot be a section of this object (it is compared by the hub's receipt and the serve by equality). The content is
+ * compared where it can be read, in `move-config.ts`: digests of the effective launch configuration, recorded by the destination's preflight
+ * (`dest_facts.effective`), sealed by the source (`manifest.config`) and asked again by the destination before the import and at the serve.
+ * The credential is host-local and is never read, hashed or exported.
  *
- * NOT IN THE PROFILE, and gated elsewhere: the instruction files a launch reads by default (the vault root's `CLAUDE.md` and
- * `CLAUDE.local.md`, when the person names no list). The registry cannot say whether they exist, and whether they do is a fact of ONE machine,
- * so it cannot be a section this machine-neutral object holds (the hub compares its own reading of the file with what a destination recorded).
- * They are named by file and refused where they exist, never read, hashed or compared: on the source by the scope gate (`defaultInstructionsOf`
- * in `move-scope.ts`, `scope_unsupported`) and on the destination by its preflight (`dest_local_unverified`, `move-import.ts`). A future profile
- * module adds verified evidence as further sections of this object; the comparison below is by section, so adding one changes nothing else.
+ * `unverified` stays in the profile (names every such reference the launch of THIS agent really reads: `configReferences`) so a profile
+ * equal on both sides stays equal, and it is still a gate (`profile_unverified`, `dest_profile_unverified`, `dest_local_unverified`) for a world
+ * that supplies no `effectiveConfig`: it never lets a configuration nothing compares go by. Where the world compares, the gate is the comparison.
+ * An agent whose launch reads none (it names none and its person names none, or it is the triage master, which is launched with no tools, no
+ * MCP server and no instructions of the person's) has an empty list.
+ *
+ * The comparison below is by section, so adding a section changes nothing else.
  */
 export const PROFILE_VERSION = 2;
 

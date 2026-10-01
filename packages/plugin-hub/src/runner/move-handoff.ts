@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { NativeSessionPort } from "../adapters/types.ts";
 import type { BundleLimits } from "../transfer/bundle.ts";
 import type { StoreLike } from "../store/connect.ts";
-import { MOVE_MAX_FILE_BYTES, blockMove, unblockMove, type MoveRow } from "../store/moves.ts";
+import { MOVE_MAX_FILE_BYTES, blockMove, readMove, unblockMove, type MoveRow } from "../store/moves.ts";
 
 /**
  * What the source's export and the destination's import of ONE conversation's native session need from whoever runs them, written as
@@ -20,17 +20,18 @@ import { MOVE_MAX_FILE_BYTES, blockMove, unblockMove, type MoveRow } from "../st
  * - `exclusive`: one in-process chain per conversation id, NOT re-entrant (a call from inside the callback of the same key waits for
  *   itself). Every function here that touches the session directory takes it exactly once; the ones that run inside it say so.
  * - `build`: a FRESH read of the engine build (never a cache): the version is what the adapter's tables are keyed by.
- * - `scope` (source): the proof that what leaves is exactly the native session. Absent, not about this move or not bound to the
- *   export generation standing now, the export is refused (`scope_unproven`): nothing here knows whether a conversation depends on a
- *   workspace or a repository, and this slice carries neither. A dependency the caller names and nothing here carries or verifies is a
- *   `ScopeRefusal` (`scope_unsupported`); the runner's (`move-scope.ts`) names a declared repository, vault or zone, files found in the
- *   person's own tree and a default instruction file, and never reads that the absence of a declaration means there is nothing.
- *   `materializeRepo` and a proof of a verified sync or snapshot are the workspace slice's. It is a
+ * - `scope` (source): the proof that what leaves is the native session and what is verified beside it. Absent, not about this move or not
+ *   bound to the export generation standing now, the export is refused (`scope_unproven`). This slice carries no file: a dependency the
+ *   caller names and nothing here carries or verifies is a `ScopeRefusal` (`scope_unsupported`). The runner's (`move-scope.ts`) names a
+ *   repository either machine's sync does not keep in step, a vault nothing covers and files found in the person's own tree, and never
+ *   reads that the absence of a declaration means there is nothing. Declared repositories that both syncs keep are VERIFIED (`carries`
+ *   `native+workspace`; `sourceWorkspace`, `destWorkspace`: clean and at one exact commit, observed under the sync's lock), and the
+ *   effective launch configuration is compared (`effectiveConfig`). `materializeRepo` is not used. It is a
  *   function of the move row it is given and is called again on a fresh row at every re-check.
  * - `profile` (destination): an explicit binding of the destination's profile to this move. There is no default and no
  *   derivation: absent or not about this move, the preflight is refused (`dest_profile_unbound`). A profile that lists configuration
- *   references nothing compares (`move-profile.ts`, `unverified`) is refused by name on both sides (`dest_profile_unverified`,
- *   `profile_unverified`).
+ *   references (`move-profile.ts`, `unverified`) is refused by name on both sides (`dest_profile_unverified`, `profile_unverified`)
+ *   where the world supplies no `effectiveConfig`; where it does, the content of those files is what is compared.
  * - `idle`: no live session and no ledger record of the agent in this incarnation. It gates every removal of a destination copy.
  */
 
@@ -47,6 +48,24 @@ export const done = (reason: string, detail?: Record<string, unknown>): HandoffS
 export const waiting = (reason: string, detail?: Record<string, unknown>): HandoffStep => ({ state: "waiting", reason, ...(detail ? { detail } : {}) });
 export const blocked = (reason: string, detail?: Record<string, unknown>): HandoffStep => ({ state: "blocked", reason, ...(detail ? { detail } : {}) });
 
+/**
+ * HOW OFTEN A LOOK THAT STOOD ON A PROBE OF THE ENGINE IS MADE AGAIN when nothing else moved. The engine's build is asked of the engine itself (a
+ * process), which the runner's tick never does; and no fact the tick compares (the registry, the tree, the checkouts) moves when a build that could
+ * not be read is readable again, when an engine that was replaced is put back, or when a login is restored. So the watch keeps such a look owed
+ * by the clock alone: one slot of this many milliseconds, compared as a number (nothing is spawned or read by the tick), and ONE look, hence one
+ * probe, when the slot has changed. It makes no decision: the look says again what it finds, a block that still stands is restated and writes nothing.
+ */
+export const ENGINE_RECHECK = { ms: 30_000 };
+
+/** The refusals and waits whose look read the engine's build (`HandoffWorld.build`) and decided from it, the source's and the destination's. */
+const ENGINE_PROBED: ReadonlySet<string> = new Set([
+  "native_build_unknown", "native_build_unvalidated", "native_pair_unvalidated", "dest_build_unknown", "build-unreadable", "serve_capabilities_changed",
+]);
+
+/** Whether a step was decided from a probe of the engine, as its own reason or as the one block of this side that stands for it. */
+export const probedEngine = (step: HandoffStep): boolean =>
+  ENGINE_PROBED.has(step.reason) || (step.reason === "blocked" && typeof step.detail?.code === "string" && ENGINE_PROBED.has(step.detail.code));
+
 /** The engine this host would run: what `capabilities()` reports now, read fresh. */
 export interface EngineBuild { version: string; capabilities: Record<string, unknown> }
 
@@ -57,7 +76,21 @@ export interface EngineBuild { version: string; capabilities: Record<string, unk
  * the sealed manifest so the owner can read what was relied on. It is not computed here and it is not a statement about workspaces in
  * general. `exportSource` asks for it again after every await that matters (see there) and seals the one it was last given.
  */
-export interface ScopeProof { move: string; conversation: string; agent: string; generation: number; carries: "native-only"; basis: string }
+export interface ScopeProof { move: string; conversation: string; agent: string; generation: number; carries: "native-only" | "native+workspace"; basis: string }
+
+/**
+ * What the source's workspace look answers (`move-workspace.ts`): either `sealed`, the repositories as they stood (head, branch, counts of what is
+ * not carried), with a `hold` on the sync locks of those checkouts that the caller releases once its release is committed (or it gave up), or a
+ * named refusal. A refusal holds nothing. The destination's look is the same shape with nothing to seal.
+ */
+export interface WorkspaceHold { release(): Promise<void> }
+export type WorkspaceVerdict =
+  | { ok: true; sealed: Record<string, unknown>; hold: WorkspaceHold }
+  | { ok: false; code: string; detail: Record<string, unknown> };
+
+/** This machine's effective launch configuration for a move (`move-config.ts`), or the reason it cannot be told. Digests only: never a value. */
+export interface ConfigSections { version: number; sections: Record<string, string>; excluded: string[] }
+export type ConfigAnswer = ConfigSections | { unverifiable: string };
 
 /**
  * The caller's answer that the conversation depends on something this move does not carry (a repository's working copy, say): the export
@@ -105,11 +138,31 @@ export interface HandoffWorld {
   /**
    * DESTINATION: the default instruction files (`CLAUDE.md`, `CLAUDE.local.md` of the vault root) the agent's launch would read ON THIS
    * MACHINE, by name (`defaultInstructionsOf`, `move-scope.ts`): their presence is a fact of the machine, so it cannot be a section of the
-   * machine-neutral profile the hub and the serve compare. Nothing compares their content (it is never read), so one that exists is the
-   * preflight's refusal `dest_local_unverified`, and `null` (it cannot be told) is that refusal too. Optional only so that a caller with no
-   * file system (a test of the store half) can leave it out: the runner always supplies it.
+   * machine-neutral profile the hub and the serve compare. Where `effectiveConfig` is supplied their content is compared there and this is
+   * not asked; without it nothing compares their content (it is never read), so one that exists is the preflight's refusal
+   * `dest_local_unverified`, and `null` (it cannot be told) is that refusal too. Optional only so that a caller with no file system (a
+   * test of the store half) can leave it out: the runner always supplies it.
    */
   localInstructions?(move: MoveRow): string[] | null;
+  /**
+   * THIS MACHINE'S effective launch configuration of the move's agent, from this runner's own registry (`registry` when the caller has one
+   * it must be consistent with, as the serve does): the sections the launch really reads (settings, MCP servers, instructions) as per-move
+   * digests, `{ unverifiable }` when it cannot be read as a launch reads it, and null when the registry cannot be read. Sections are compared
+   * by equality and named, never shown. When supplied it replaces the profile's `unverified` gate (`profile_unverified`,
+   * `dest_profile_unverified`, `dest_local_unverified`): the source compares it with what the destination recorded, the destination with
+   * what the source sealed (before the import) and the serve with what the move sealed. Absent, those gates stay. A destination that recorded it
+   * never imports, serves or launches a manifest that sealed none (a source of an older build): `not-sealed`.
+   */
+  effectiveConfig?(move: MoveRow, registry?: unknown): ConfigAnswer | null;
+  /**
+   * DESTINATION'S PREFLIGHT: the facts of this machine's declared repositories the source compares (`move-workspace.ts`): the plan and this
+   * machine's roots as digests, or the named reason this machine cannot take them, or null when the person declares none.
+   */
+  workspaceFacts?(move: MoveRow): { plan: string; roots: string; repositories: number } | { refused: string; detail?: Record<string, unknown> } | null;
+  /** SOURCE: the declared repositories looked at under their sync locks, for a proof whose `carries` is `native+workspace`. */
+  sourceWorkspace?(move: MoveRow): Promise<WorkspaceVerdict>;
+  /** DESTINATION: the repositories the manifest sealed, looked at here and now under their sync locks, for a manifest that carries `workspace`. */
+  destWorkspace?(move: MoveRow): Promise<WorkspaceVerdict>;
   /** Non-re-entrant, per conversation id. */
   exclusive<T>(conversation: string, fn: () => Promise<T>): Promise<T>;
   idle(agent: string): boolean;
@@ -228,18 +281,42 @@ export function sameJson(a: unknown, b: unknown): boolean {
 
 export const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 
+/** A value's identity as text, whatever order its keys came in. */
+export function stableText(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableText).join(",")}]`;
+  if (isRecord(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableText(value[key])}`).join(",")}}`;
+  return JSON.stringify(value) ?? "null";
+}
+
 /**
  * Put THIS side's own name on the stage and say so. The store never replaces another party's block (`occupied`): then nothing is
- * set and the answer is a wait that names it. Every other answer that is not a block is the stage moving on and is a wait too.
+ * set and the answer is a wait that names it. Every other answer that is not a block is the stage moving on and is a wait too. This side's own
+ * block under the same code is restated when its detail changed (`restate`), and left exactly as it is when it did not.
  */
 export async function raise(w: HandoffWorld, id: string, code: string, detail: Record<string, unknown>): Promise<HandoffStep> {
   const answer = await blockMove(w.store, id, who(w), code, detail);
-  if (answer === "blocked" || answer === "replay") return blocked(code, detail);
+  if (answer === "blocked") return blocked(code, detail);
+  if (answer === "replay") return await restate(w, id, code, detail);
   if (answer === "occupied") {
     await sayOnce(w, `occupied:${id}:${code}`, "move.block-occupied", { move: id, code, ...detail });
     return waiting("block-occupied", { code });
   }
   return waiting(answer, { code });
+}
+
+/**
+ * The store answers `replay` to a side that sets the block it already holds under the same code, WHATEVER the detail: a refusal whose subject
+ * moved on under one code (the next repository that is dirty, another section that differs) would stay worded by the first look for as long as
+ * the code stands. A side may replace its own block, so when the detail it holds is not the one just decided, the block is cleared and set again
+ * (the way the drain's own block is replaced). The same detail writes nothing: a look repeated on facts that did not change is a no-op.
+ */
+async function restate(w: HandoffWorld, id: string, code: string, detail: Record<string, unknown>): Promise<HandoffStep> {
+  const held = (await readMove(w.store, id))?.block;
+  // The detail as the store holds it (a JSON round trip drops what jsonb would, so an undefined member is not a difference).
+  if (!held || held.code !== code || sameJson(held.detail, JSON.parse(JSON.stringify(detail)))) return blocked(code, detail);
+  await unblockMove(w.store, id, who(w), code);
+  const again = await blockMove(w.store, id, who(w), code, detail);
+  return again === "blocked" || again === "replay" ? blocked(code, detail) : waiting(again, { code });
 }
 
 /** Clear the block this side set, but only when it is one of `codes` (its own export or preflight codes): never another party's, never the drain's. */

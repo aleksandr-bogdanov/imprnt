@@ -6,12 +6,13 @@ import {
   MoveBlobsGone, activateMove, advanceImport, beginImport, checkpointOf, copiesAtLocation, copiesDueForCleanup, copiesOf, copyRemoved, destReady, failImport,
   readBlobs, readMove, type DestFacts, type MoveBlob, type MoveCopyRow, type MoveRow,
 } from "../store/moves.ts";
+import { configDifference } from "./move-config.ts";
 import { nativeSideOf } from "./move-export.ts";
 import { profileUnverified } from "./move-profile.ts";
 import {
   COPY_EVIDENCE_LIMIT, FAILURE_DETAIL_LIMIT, MOVE_NATIVE_LIMITS, blocked, clearOwn, clip, done, failureRecord, fitsLifetime, isCurrent, isHex64, isRecord, jsonbBytes,
   lifetimeBytes, raise, removalReport, sameJson, sayOnce, waiting, who,
-  type HandoffStep, type HandoffWorld, type ProfileBinding, type Removal,
+  type ConfigSections, type HandoffStep, type HandoffWorld, type ProfileBinding, type Removal, type WorkspaceHold,
 } from "./move-handoff.ts";
 
 /**
@@ -56,8 +57,22 @@ import {
 /** The block codes this side sets at preflight and clears itself. */
 export const PREFLIGHT_CODES: ReadonlySet<string> = new Set([
   "dest_profile_unbound", "dest_profile_unverified", "dest_local_unverified", "dest_build_unknown", "dest_facts_invalid", "native_port_missing", "native_destination_invalid",
-  "native_build_unvalidated", "native_locator_unsupported_path",
+  "native_build_unvalidated", "native_locator_unsupported_path", "dest_config_unverifiable", "dest_workspace_unavailable",
 ]);
+
+/**
+ * The block codes this side sets right before the import (`destGate`) and clears itself when the same look passes. Each is a fact of THIS
+ * machine's files: the configuration the source sealed is no longer what a launch here would read, or a checkout is not clean at exactly the
+ * sealed commit. `behind` and `busy` clear when the destination's own sync pulls or finishes; the others need the owner, who may withdraw
+ * (nothing is activated yet). None is ever resolved by changing a file here.
+ */
+export const DEST_GATE_CODES: ReadonlySet<string> = new Set([
+  "dest_config_unverifiable", "dest_config_changed", "dest_workspace_unavailable", "dest_workspace_moved", "dest_workspace_busy", "dest_workspace_branch",
+  "dest_workspace_dirty", "dest_workspace_behind", "dest_workspace_ahead", "dest_workspace_divergent",
+]);
+
+/** What `dest_facts` may weigh (the store's own bound, `octet_length(jsonb::text)`). */
+const DEST_FACTS_LIMIT = 16384;
 
 declare const heldBrand: unique symbol;
 /** Proof that the conversation's lock is held by the caller. Only `underLock` makes one. */
@@ -114,13 +129,28 @@ export async function prepareDestination(w: HandoffWorld, id: string): Promise<H
   if (!profileBound(bound, move, w)) return raise(w, id, "dest_profile_unbound", { reason: bound ? "mismatch" : "missing" });
   // A profile that holds a reference to configuration whose content nothing compares is not a binding this side records (see `move-profile.ts`):
   // named by reference, never by path or value, and cleared only when the registry no longer points the agent at the file.
+  // Where the world compares the effective configuration (`effectiveConfig`, below) these two are not gates: what they guarded is compared.
   const unverified = profileUnverified(bound.profile);
-  if (unverified.length > 0) return raise(w, id, "dest_profile_unverified", { references: unverified });
+  if (unverified.length > 0 && !w.effectiveConfig) return raise(w, id, "dest_profile_unverified", { references: unverified });
   // The default instruction files this machine's launch would read are a fact of THIS machine and nothing compares them with the source's:
   // named by file (never a path or a content), and cleared only when they are no longer there or the agent no longer reads them.
-  if (w.localInstructions) {
+  if (w.localInstructions && !w.effectiveConfig) {
     const present = w.localInstructions(move);
     if (present === null || present.length > 0) return raise(w, id, "dest_local_unverified", { references: present === null ? ["instructions"] : present.map(name => `instruction:${name}`) });
+  }
+  // THIS MACHINE'S effective launch configuration and checkouts, recorded for the source to compare: one that cannot be told is this side's
+  // named refusal and nothing is recorded over it.
+  let effective: ConfigSections | undefined;
+  if (w.effectiveConfig) {
+    const mine = w.effectiveConfig(move);
+    if (mine === null || "unverifiable" in mine) return raise(w, id, "dest_config_unverifiable", { reason: mine === null ? "registry" : mine.unverifiable });
+    effective = mine;
+  }
+  let workspace: Record<string, unknown> | undefined;
+  if (w.workspaceFacts) {
+    const mine = w.workspaceFacts(move);
+    if (mine !== null && "refused" in mine) return raise(w, id, "dest_workspace_unavailable", { why: clip(mine.refused), ...(mine.detail ?? {}) });
+    if (mine !== null) workspace = { version: 1, ...mine };
   }
   const build = await w.build(move.agent);
   if (!build) return raise(w, id, "dest_build_unknown", {});
@@ -129,7 +159,10 @@ export async function prepareDestination(w: HandoffWorld, id: string): Promise<H
 
   // A conversation the engine never started carries no file, so no path is asked about: its first launch here is a fresh one.
   let native: NativeSide | null = null;
-  const facts = { profile: bound.profile, capabilities: build.capabilities, profile_basis: bound.basis };
+  const facts = {
+    profile: bound.profile, capabilities: build.capabilities, profile_basis: bound.basis,
+    ...(effective ? { effective } : {}), ...(workspace ? { workspace } : {}),
+  };
   if (checkpoint.native_state !== "new") {
     const port = w.port(move.adapter);
     if (!port) return refuseNative(w, id, "native_port_missing", { adapter: move.adapter }, facts);
@@ -140,6 +173,9 @@ export async function prepareDestination(w: HandoffWorld, id: string): Promise<H
     }
   }
 
+  // The store refuses facts over its bound as `facts-invalid` without saying why; a destination whose sections do not fit says so.
+  const weight = jsonbBytes({ ...facts, native });
+  if (weight > DEST_FACTS_LIMIT) return raise(w, id, "dest_facts_invalid", { why: "size", bytes: weight, limit: DEST_FACTS_LIMIT });
   await clearOwn(w, move, "dest", PREFLIGHT_CODES);
   const answer = await destReady(w.store, id, who(w), { ...facts, native });
   switch (answer) {
@@ -369,12 +405,53 @@ export async function importDestination(w: HandoffWorld, id: string): Promise<Ha
   return underLock(w, first.conversation_id, held => importLocked(w, held, id));
 }
 
+/**
+ * THE FRESH OBSERVATIONS BEFORE ANYTHING IRREVERSIBLE, asked at every look of an import (the first and every resumed one) and never remembered: the
+ * configuration a launch here would read is still the one the source sealed, and every checkout is on its branch, clean and at exactly the
+ * sealed commit, observed under the sync's locks. The locks are held (`hold`) until the import's look is over, activation included, so no sync here
+ * moves a checkout between the observation and the activation. A manifest that sealed neither, from a destination that recorded neither (an older
+ * move on both sides), has nothing to check. A destination that RECORDED what it compares (`dest_facts.effective`, `dest_facts.workspace`) never
+ * imports a manifest that sealed none of it (a source of an older build released it): that is `dest_config_unverifiable` / `dest_workspace_unavailable`
+ * with `not-sealed`, and nothing is compared by an older rule instead. A refusal is this side's named block, cleared by the same look when it passes;
+ * nothing is changed to make it pass.
+ */
+async function destGate(w: HandoffWorld, move: MoveRow): Promise<{ hold: WorkspaceHold | null } | HandoffStep> {
+  const sealedConfig = move.manifest?.config;
+  const sealedWorkspace = move.manifest?.workspace;
+  const recorded = isRecord(move.dest_facts?.workspace);
+  const recordedConfig = isRecord(move.dest_facts?.effective);
+  if (sealedConfig === undefined && sealedWorkspace === undefined && !recorded && !recordedConfig) return { hold: null };
+  if (sealedConfig === undefined && recordedConfig) return raise(w, move.id, "dest_config_unverifiable", { reason: "not-sealed" });
+  if (sealedConfig !== undefined) {
+    if (!w.effectiveConfig) return raise(w, move.id, "dest_config_unverifiable", { reason: "no-verifier" });
+    const now = w.effectiveConfig(move);
+    if (now === null || "unverifiable" in now) return raise(w, move.id, "dest_config_unverifiable", { reason: now === null ? "registry" : now.unverifiable });
+    const differs = configDifference(sealedConfig, now);
+    if (differs.length > 0) return raise(w, move.id, "dest_config_changed", { sections: differs.slice(0, 16) });
+  }
+  let hold: WorkspaceHold | null = null;
+  if (sealedWorkspace !== undefined || recorded) {
+    if (sealedWorkspace === undefined) return raise(w, move.id, "dest_workspace_unavailable", { why: "not-sealed" });
+    if (!w.destWorkspace) return raise(w, move.id, "dest_workspace_unavailable", { why: "no-verifier" });
+    const seen = await w.destWorkspace(move);
+    if (!seen.ok) return raise(w, move.id, seen.code, seen.detail);
+    hold = seen.hold;
+  }
+  try { await clearOwn(w, move, "dest", DEST_GATE_CODES); } catch (error) { await hold?.release().catch(() => {}); throw error; }
+  return { hold };
+}
+
 async function importLocked(w: HandoffWorld, held: Held, id: string): Promise<HandoffStep> {
   const move = await readMove(w.store, id);
   if (!move) return waiting("unknown-move");
   if (move.stage === "activated" || move.stage === "registry_written" || move.stage === "active") return done(`stage:${move.stage}`);
   if (move.stage !== "source_released" && move.stage !== "importing") return waiting(`stage:${move.stage}`);
+  const gate = await destGate(w, move);
+  if ("state" in gate) return gate;
+  try { return await importStaged(w, held, id, move); } finally { await gate.hold?.release().catch(() => {}); }
+}
 
+async function importStaged(w: HandoffWorld, held: Held, id: string, move: MoveRow): Promise<HandoffStep> {
   let begun = await beginImport(w.store, id, who(w));
   if (begun.answer === "cleanup-pending") {
     // An earlier copy of this very location is owed its removal. This call holds the conversation's lock already: it cleans up under it.

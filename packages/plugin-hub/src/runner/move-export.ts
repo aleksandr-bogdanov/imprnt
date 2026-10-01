@@ -3,9 +3,10 @@ import { buildBundle, contentKey, TransferError } from "../transfer/bundle.ts";
 import {
   checkpointOf, exportGenerationOf, putBlob, readMove, releaseSource, type MoveCheckpoint, type MoveManifest, type MoveRow,
 } from "../store/moves.ts";
+import { configDifference } from "./move-config.ts";
 import {
-  MOVE_NATIVE_LIMITS, clearOwn, clip, done, isHex64, isRecord, jsonbBytes, raise, sameJson, sayOnce, waiting, who,
-  type HandoffStep, type HandoffWorld, type ProvenDrain, type ScopeProof,
+  MOVE_NATIVE_LIMITS, clearOwn, clip, done, isHex64, isRecord, jsonbBytes, raise, sameJson, sayOnce, sha256, stableText, waiting, who,
+  type ConfigSections, type HandoffStep, type HandoffWorld, type ProvenDrain, type ScopeProof, type WorkspaceHold,
 } from "./move-handoff.ts";
 import { profileDifference, profileUnverified } from "./move-profile.ts";
 
@@ -25,10 +26,16 @@ import { profileDifference, profileUnverified } from "./move-profile.ts";
  * release. Any of them failing ends the look: a drain that is not final waits (`drain-not-final`), a proof that is gone is
  * `scope_unproven`. What is sealed is the proof the LAST ask returned, never one remembered from the first.
  *
- * WHAT IT CARRIES: the native session and NOTHING ELSE. `w.scope` must prove that is all the conversation needs; without that proof
- * the export is refused (`scope_unproven`) before anything is read, and the proof is kept in the sealed manifest. A dependency the registry
- * declares and nothing here carries or verifies (a repository, a vault, a shared-zone checkout) is `scope_unsupported`, and a configuration
- * file the agent's launch reads and nothing compares is `profile_unverified`: both before anything is read, both without any acknowledgement. A conversation
+ * WHAT IT CARRIES: the native session and NOTHING ELSE. `w.scope` must prove that is all the conversation needs beyond what is verified;
+ * without that proof the export is refused (`scope_unproven`) before anything is read, and the proof is kept in the sealed manifest. A dependency
+ * the registry declares and nothing here carries or verifies is `scope_unsupported`, and a configuration file the agent's launch reads that
+ * nothing compares (a world with no `effectiveConfig`) is `profile_unverified`: both before anything is read, both without any acknowledgement.
+ * WHAT IT VERIFIES BESIDE IT, when the world can: the effective launch configuration, equal to the one the destination recorded (`config_mismatch`,
+ * sealed as `manifest.config`), and the declared repositories, observed once under the sync's locks that are held until the release is committed
+ * (`workspace_*`, sealed as `manifest.workspace` with the generation and the profile). The observation is sealed only while this machine's own
+ * repository facts of the LAST look (plan AND roots) are the ones it observed: a placement moved to another checkout during the look ends it
+ * (`workspace-moved`, nothing sealed, the hold released) and the next look observes and locks the current roots. The source's roots are never
+ * compared with the destination's, whose placements legitimately differ. Nothing is changed to make either true. A conversation
  * the engine never started (`native_state` new) has no file and is sealed with an EMPTY manifest, never one blob. A conversation
  * the engine only LAUNCHED (`native_state` launched) is neither: see `stateGate`.
  *
@@ -47,6 +54,8 @@ import { profileDifference, profileUnverified } from "./move-profile.ts";
 export const EXPORT_CODES: ReadonlySet<string> = new Set([
   "scope_unproven", "scope_unsupported", "profile_unverified", "profile_mismatch", "source_profile_unbound", "native_port_missing", "native_build_unknown", "native_dest_facts_missing", "native_dest_refused", "native_export_changed",
   "native_export_rejected", "native_export_failed", "native_state_launched", "native_state_unsupported",
+  // The configuration and the repositories, compared with what the destination recorded and observed at the source under the sync's lock.
+  "config_mismatch", "config_unverifiable", "workspace_unsynced", "workspace_unpushed", "workspace_branch", "workspace_unavailable", "workspace_plan_mismatch",
   // The adapter's refusals that can come from reading and describing a source (the destination's own are its to raise).
   "native_build_unvalidated", "native_pair_unvalidated", "native_session_invalid", "native_transcript_missing", "native_locator_ambiguous",
   "native_locator_rule_mismatch", "native_side_state_unsupported", "native_export_mismatch",
@@ -63,7 +72,7 @@ export function nativeSideOf(value: unknown): NativeSide | null {
 
 function scopeProven(proof: ScopeProof | null, move: MoveRow, generation: number): ScopeProof | null {
   if (!proof || proof.move !== move.id || proof.conversation !== move.conversation_id || proof.agent !== move.agent || proof.generation !== generation ||
-      proof.carries !== "native-only" || typeof proof.basis !== "string" || proof.basis.trim() === "" || proof.basis.length > 256) return null;
+      (proof.carries !== "native-only" && proof.carries !== "native+workspace") || typeof proof.basis !== "string" || proof.basis.trim() === "" || proof.basis.length > 256) return null;
   return proof;
 }
 
@@ -150,7 +159,11 @@ async function exportNative(w: HandoffWorld, move: MoveRow, checkpoint: MoveChec
   };
 }
 
-interface Final { move: MoveRow; generation: number; scope: ScopeProof }
+/**
+ * `config` is this machine's configuration as the look compared it (null where the world compares none); `source` is this machine's own
+ * repository facts as the look read them (plan and roots; null where the world has none or the person declares none).
+ */
+interface Final { move: MoveRow; generation: number; scope: ScopeProof; config: ConfigSections | null; source: { plan: string; roots: string } | null }
 
 /**
  * THE LOCAL QUESTION, asked on a FRESH row every time (never on one read before an await): is this move still waiting at this source,
@@ -185,11 +198,11 @@ async function finalLook(w: HandoffWorld, drain: ProvenDrain, id: string, expect
   if (!scope) return raise(w, id, "scope_unproven", { reason: supplied ? "mismatch" : "missing" });
   if (w.sourceProfile) {
     const mine = w.sourceProfile(move);
-    // THE CONTENT OF THE FILES THE LAUNCH READS is compared by nothing (see `move-profile.ts`), so a profile that holds such a reference is a
-    // refusal HERE, whatever the destination has or has not recorded: named by reference (never a path or a value), before anything is read,
-    // stored or released. Nothing acknowledges it away; it clears when the registry no longer points the agent at the file.
+    // THE CONTENT OF THE FILES THE LAUNCH READS is compared by `w.effectiveConfig` where the world has one (below). Where it has none nothing
+    // compares it (see `move-profile.ts`), so a profile that holds such a reference is a refusal HERE, whatever the destination has or has not
+    // recorded: named by reference (never a path or a value), before anything is read, stored or released.
     const unverified = mine ? profileUnverified(mine) : [];
-    if (unverified.length > 0) return raise(w, id, "profile_unverified", { references: unverified });
+    if (unverified.length > 0 && !w.effectiveConfig) return raise(w, id, "profile_unverified", { references: unverified });
     // THE PROFILE THE DESTINATION RECORDED must be the one this agent runs under here: compared by section, never by value. Asked only once
     // the destination has recorded one (`dest_ready_at`): until then the move waits for it, as it always did.
     if (move.dest_facts !== null) {
@@ -198,7 +211,32 @@ async function finalLook(w: HandoffWorld, drain: ProvenDrain, id: string, expect
       if (differs.length > 0) return raise(w, id, "profile_mismatch", { sections: differs.slice(0, 16) });
     }
   }
-  return { move, generation, scope };
+  // THE EFFECTIVE LAUNCH CONFIGURATION, exactly: what a launch of the agent reads here (read now, as a launch reads it) against what the
+  // destination recorded for itself. A configuration that cannot be read is named and refused whatever the destination recorded; one that
+  // differs is `config_mismatch` naming sections, never values. What the sealed manifest records is the one this last look compared.
+  let config: ConfigSections | null = null;
+  if (w.effectiveConfig) {
+    const mine = w.effectiveConfig(move);
+    if (mine === null || "unverifiable" in mine) return raise(w, id, "config_unverifiable", { reason: mine === null ? "registry" : mine.unverifiable });
+    config = mine;
+    if (move.dest_facts !== null) {
+      const differs = configDifference(mine, move.dest_facts.effective);
+      if (differs.length > 0) return raise(w, id, "config_mismatch", { sections: differs.slice(0, 16) });
+    }
+  }
+  // THE REPOSITORIES BOTH MACHINES MEAN: the destination's recorded plan (ids, branches, nesting) is the source's. Whether they hold the
+  // commits is observed later, under the sync's lock; this only refuses two registries that do not agree on what is being verified.
+  // The source's own facts of this look are kept: the release binds the observation to them (`exportHeld`). Its roots are never compared with the destination's.
+  let source: Final["source"] = null;
+  if (w.workspaceFacts && move.dest_facts !== null) {
+    const mine = w.workspaceFacts(move);
+    if (mine !== null && "refused" in mine) return raise(w, id, "workspace_unavailable", { why: clip(mine.refused), ...(mine.detail ?? {}) });
+    const theirs = move.dest_facts.workspace;
+    const theirPlan = isRecord(theirs) && typeof theirs.plan === "string" ? theirs.plan : null;
+    if ((mine?.plan ?? null) !== theirPlan) return raise(w, id, "workspace_plan_mismatch", { why: mine === null ? "source-declares-none" : theirPlan === null ? "destination-declares-none" : "plans-differ" });
+    if (mine) source = { plan: mine.plan, roots: mine.roots };
+  }
+  return { move, generation, scope, config, source };
 }
 
 /**
@@ -220,6 +258,26 @@ export async function exportSource(w: HandoffWorld, drain: ProvenDrain, id: stri
   const gated = stateGate(w, id, checkpoint);
   if (gated) return gated;
 
+  // THE REPOSITORIES ARE OBSERVED ONCE, here: after the drain is final and before anything is read or stored, under the sync's locks, which are
+  // HELD until the release below is committed (or this look gave up), so that no sync commits, rebases or pushes between what was observed and
+  // what is sealed. A repository that is not as a move needs is a named block; nothing is changed to make it so.
+  let hold: WorkspaceHold | null = null;
+  let workspace: Record<string, unknown> | null = null;
+  try {
+    if (first.scope.carries === "native+workspace") {
+      if (!w.sourceWorkspace) return raise(w, id, "workspace_unavailable", { why: "no-verifier" });
+      const seen = await w.sourceWorkspace(move);
+      if (!seen.ok) return raise(w, id, seen.code, seen.detail);
+      hold = seen.hold;
+      // The profile it is sealed with is not known yet: it is the one the LAST look reads (`exportHeld`), never the first's.
+      workspace = { ...seen.sealed, generation };
+    }
+    return await exportHeld(w, drain, id, { move, checkpoint, generation, workspace });
+  } finally { await hold?.release().catch(() => {}); }
+}
+
+async function exportHeld(w: HandoffWorld, drain: ProvenDrain, id: string, at: { move: MoveRow; checkpoint: MoveCheckpoint; generation: number; workspace: Record<string, unknown> | null }): Promise<HandoffStep> {
+  const { move, checkpoint, generation, workspace } = at;
   let exported: Exported | HandoffStep;
   try { exported = await exportNative(w, move, checkpoint, generation); } catch (error) { return refuse(w, id, error); }
   if ("state" in exported) return exported;
@@ -243,7 +301,24 @@ export async function exportSource(w: HandoffWorld, drain: ProvenDrain, id: stri
     const now = nativeSideOf(last.move.dest_facts?.native);
     if (!now || !sameJson(now, exported.to)) return waiting("dest-facts-changed");
   }
-  const manifest: MoveManifest = { ...exported.manifest, scope: { carries: last.scope.carries, basis: last.scope.basis } };
+  // The proof of the last look, and the repositories and configuration it compared: the manifest records what was observed, never what was remembered.
+  // A manifest never says it carries the repositories without having observed them, nor seals an observation its proof no longer names.
+  if (!workspace !== (last.scope.carries !== "native+workspace")) return raise(w, id, "scope_unproven", { reason: "workspace-proof-changed" });
+  // The observation is sealed with the profile of the facts the LAST look read, and only while the plan it observed is still the one the destination
+  // recorded in them: facts that moved to another plan during the look end it (nothing sealed), and the next look observes again.
+  let sealedWorkspace: Record<string, unknown> | null = null;
+  if (workspace) {
+    const theirs = last.move.dest_facts?.workspace;
+    if (!isRecord(theirs) || theirs.plan !== workspace.plan) return waiting("dest-facts-changed");
+    // And only while the checkouts it observed (and locked) are the ones the source's own registry names now: a placement moved to another
+    // checkout during the look leaves the move unreleased, the hold goes with the look, and the next look observes and locks the current roots.
+    if (!last.source || last.source.plan !== workspace.plan || last.source.roots !== workspace.roots) return waiting("workspace-moved");
+    sealedWorkspace = { ...workspace, profile: sha256(stableText(last.move.dest_facts?.profile)) };
+  }
+  const manifest: MoveManifest = {
+    ...exported.manifest, scope: { carries: last.scope.carries, basis: last.scope.basis },
+    ...(sealedWorkspace ? { workspace: sealedWorkspace } : {}), ...(last.config ? { config: last.config } : {}),
+  };
   const answer = await releaseSource(w.store, id, who(w), generation, checkpoint, manifest);
   switch (answer) {
     case "released":

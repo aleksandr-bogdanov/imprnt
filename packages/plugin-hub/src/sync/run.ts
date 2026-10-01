@@ -321,6 +321,9 @@ async function noticeStuck(store: StoreLike, registry: Registry, entry: string, 
   }
 }
 
+/** The advisory lock a sync of one checkout holds on one machine, keyed by the real path of its common git directory. A move takes the same one. */
+export const syncLockKey = (machine: string, commonDir: string): string => `sync:${machine}:${commonDir}`;
+
 export async function runSync(entry: RunEntry, registry: Registry): Promise<void> {
   const declared = listRunEntries(registry).find(one => one.id === entry?.id && one.kind === "sync");
   if (!declared) throw new Error("sync-entry-unknown");
@@ -343,7 +346,7 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
         let locked = false;
         try {
           code = "locked";
-          const [row] = await connection`select pg_try_advisory_lock(hashtextextended(${`sync:${declared.machine}:${identity}`}, 0)) as held`;
+          const [row] = await connection`select pg_try_advisory_lock(hashtextextended(${syncLockKey(declared.machine, identity)}, 0)) as held`;
           locked = row.held;
           if (!locked) throw new Error(code);
           // Before any command that reads the working tree or dials the remote:
@@ -376,7 +379,7 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           await git(path, ["push", "--", repo.remote, `HEAD:refs/heads/${repo.branch}`], code, "push", { config: dial, discard: true });
         } finally {
           try {
-            if (locked) await connection`select pg_advisory_unlock(hashtextextended(${`sync:${declared.machine}:${identity}`}, 0))`;
+            if (locked) await connection`select pg_advisory_unlock(hashtextextended(${syncLockKey(declared.machine, identity)}, 0))`;
           } finally { connection.release(); }
         }
         results.push({ id: repo.id, required: repo.required, status: "success", ...(committed ? { committed } : {}) });

@@ -121,13 +121,15 @@ import {
   type MoveWatch,
   type Owed,
 } from "./move.ts";
+import { effectiveConfigOf, moveConfigDrift } from "./move-config.ts";
 import { exportSource } from "./move-export.ts";
-import { MOVE_NATIVE_LIMITS, waiting as handoffWaiting, type EngineBuild, type HandoffStep, type HandoffWorld } from "./move-handoff.ts";
-import { cleanupCopies, importDestination, prepareDestination } from "./move-import.ts";
+import { ENGINE_RECHECK, MOVE_NATIVE_LIMITS, probedEngine, waiting as handoffWaiting, type EngineBuild, type HandoffStep, type HandoffWorld } from "./move-handoff.ts";
+import { DEST_GATE_CODES, cleanupCopies, importDestination, prepareDestination } from "./move-import.ts";
 import { importedBy, noteBlock, notesOwedTo, type CarriedNote } from "./move-note.ts";
 import { profileOf } from "./move-profile.ts";
 import { defaultInstructionsOf, localShapeOf, scopeOf } from "./move-scope.ts";
 import { serveDestination, type ServeWorld } from "./move-serve.ts";
+import { observeDest, observeSource, workspaceFactsOf } from "./move-workspace.ts";
 import {
   clearOutage,
   classifyRefusal,
@@ -1849,7 +1851,12 @@ export async function runRunner(options: {
               await placedElsewhere();
               return null;
             });
-          if (master !== null) {
+          // A MOVED CONVERSATION'S NOTE STILL OWED (a runner that restarted after the serve and before the first input): this launch resumes the
+          // imported session like the first input's does, so it is held to the same question (`moveConfigDrift`). A drifted or unreadable
+          // configuration starts no child here; the first input's launch asks again and starts it once the files are what the move compared.
+          const drift = master !== null && master.kind === "master" ? await moveConfigDrift(store, initial, options.runner, agent.id, master.id) : null;
+          if (drift) await sayMove("move.note-refused", { agent: agent.id, move: drift.move, answer: drift.answer, execution: null, state: null });
+          else if (master !== null) {
             try { await spawn(eagerPreset, initial, master, await planSession(master, eager, initial, null)); }
             catch (error) { if (!(error instanceof SpawnFenced)) throw error; }
           }
@@ -2334,6 +2341,16 @@ export async function runRunner(options: {
         handed = false;
         effects = { actions: 0, lastAction: "" };
         try {
+          // THE FIRST RESUMED LAUNCH OF A MOVED CONVERSATION re-reads the configuration the move sealed (`moveConfigDrift`): the launch inputs are
+          // not left to what the preflight, the import and the serve once saw. A drifted or unreadable one is refused like any feed a move refuses
+          // (`MoveNoteRefused`, handed back below): nothing is spawned, the input waits, and it launches once the files are what the move compared.
+          // It is asked of every launch in the master conversation (what is owed is the store's: a conversation with none costs one small read). A job
+          // is not asked because it cannot be in that conversation: it runs in a worker conversation of its own, or in the worker one it names
+          // (`conversationFor` refuses any other), and only the master moves. The other launch of that conversation, the eager start below, asks it too.
+          if (mustSpawn && conversation.kind === "master") {
+            const drift = await moveConfigDrift(store, registry, options.runner, agent.id, conversation.id);
+            if (drift) throw new MoveNoteRefused(drift.move, drift.answer);
+          }
           if (mustSpawn) {
             await own.noteWait({ kind: "starting" });
             await spawn(preset, registry, conversation, plan);
@@ -2559,6 +2576,9 @@ export async function runRunner(options: {
    *   for the destination's preflight;
    * - `profile` is the destination's binding (this runner's registry, which must be the one measured current), `sourceProfile` the same profile
    *   as the source reads it (`move-profile.ts`);
+   * - `effectiveConfig` is what a launch of the agent would read here, as per-move digests (`move-config.ts`); `workspaceFacts`, `sourceWorkspace` and
+   *   `destWorkspace` look at the person's declared repositories under the sync's own lock (`move-workspace.ts`). They replace the profile's
+   *   unverified-file gates: the content is compared, before the release, before the import and at the serve;
    * - `exclusive` is the chain the launch (`spawn`) takes too;
    * - `idle` is the ledger's and the loop's: no live session, no child owed an account of, no loop still closing.
    */
@@ -2592,6 +2612,10 @@ export async function runRunner(options: {
     },
     sourceProfile: move => { try { return profileOf(load(), move.agent); } catch { return null; } },
     localInstructions: move => { try { return defaultInstructionsOf(load(), move.agent); } catch { return null; } },
+    effectiveConfig: (move, registry) => { try { return effectiveConfigOf((registry as Registry | undefined) ?? load(), move.agent, move.id); } catch { return null; } },
+    workspaceFacts: move => { try { return workspaceFactsOf(load(), move); } catch { return { refused: "registry" }; } },
+    sourceWorkspace: move => observeSource({ registry: load(), storeUrl: store.url }, move),
+    destWorkspace: move => observeDest({ registry: load(), storeUrl: store.url }, move),
     exclusive,
     idle: agent => !live.get(agent)?.session && children.of(agent).length === 0 && !ending.has(agent),
     say: sayMove,
@@ -2621,8 +2645,10 @@ export async function runRunner(options: {
    * WHAT A REFUSAL FROM FACTS OF THIS MACHINE WAITS ON: the registry's bytes and whether this copy is measured current, whether the agent's loop is
    * up, and the default instruction files and top level of the person's tree (`localShapeOf`: names, never a content). No move row changes when one
    * of them does, so no notification comes; the tick compares (`Owed` `local`, nothing is asked of the store or of the engine until it differs).
-   * The engine's build is NOT here: reading it asks the engine, which is not done on a tick, and a block made from it (`dest_build_unknown`,
-   * `serve_capabilities_changed`) is looked at again by what else changes, a notification or a restart, and never by a guess that it moved.
+   * The engine's build is NOT here: reading it asks the engine, which is not done on a tick, and nothing this machine's files say moves when it
+   * does. A look that was decided from that probe (`probedEngine`: `dest_build_unknown`, `build-unreadable`, `serve_capabilities_changed`, ...) is
+   * owed by the clock as well (`engineSlot`, `ENGINE_RECHECK`): one slot compared as a number on the tick, and one look, hence one probe, when it
+   * changes. No other look is made again for the engine, and nothing is guessed about what it will say.
    * Taken BEFORE the look decides, so a fact that changed during the look is seen as changed by the debt.
    */
   const localFacts = (agent: string): string => {
@@ -2632,7 +2658,11 @@ export async function runRunner(options: {
     try { shape = localShapeOf(load(), agent); } catch { shape = "unreadable"; }
     return `${digest}|${live.get(agent)?.ending === false}|${stale}|${shape}`;
   };
-  const localOwed = (agent: string, was: string): Owed => ({ kind: "local", changed: () => localFacts(agent) !== was });
+  const engineSlot = (): number => Math.floor(Date.now() / ENGINE_RECHECK.ms);
+  const localOwed = (agent: string, was: string, slot: number, step: HandoffStep): Owed => {
+    const probed = probedEngine(step);
+    return { kind: "local", changed: () => localFacts(agent) !== was || (probed && engineSlot() !== slot) };
+  };
   /**
    * The refusals this side sets from those facts, and only those: a `native_export_failed` or an import failure is never retried by this (the
    * owner's withdrawal is its way out), and another party's block is waited out by the store's notification. They are cleared by the same look
@@ -2641,6 +2671,9 @@ export async function runRunner(options: {
   const LOCAL_BLOCKS: ReadonlySet<string> = new Set([
     "scope_unsupported", "scope_unproven", "profile_unverified", "source_profile_unbound", "profile_mismatch",
     "dest_profile_unbound", "dest_profile_unverified", "dest_local_unverified", "dest_build_unknown",
+    // Facts of this machine's configuration files and checkouts (`localShapeOf`: stat of both, and a bounded re-look for what stat cannot see).
+    "config_mismatch", "config_unverifiable", "workspace_unsynced", "workspace_unpushed", "workspace_branch", "workspace_unavailable", "workspace_plan_mismatch",
+    "dest_config_unverifiable", "dest_workspace_unavailable",
   ]);
   const ownLocalBlock = (step: HandoffStep, side: "dest" | "source"): boolean =>
     (step.state === "blocked" && (LOCAL_BLOCKS.has(step.reason) || (side === "dest" && step.reason.startsWith("serve_")))) ||
@@ -2654,12 +2687,14 @@ export async function runRunner(options: {
     // child, claim a row or feed between the observation of `drained` and the export's own final asks of fenced and quiet.
     const look = async (): Promise<DrainStep> => {
       const was = localFacts(request.agent);
+      const slot = engineSlot();
       const step = await drainSource(world, request.id);
       if (step.state !== "drained") return step;
       const exported = await exportSource(handoff, { fenced: agent => moveFences.has(agent), quiet: agent => world.quiet(agent) }, request.id);
       // `step.seen` is the row the drain read, before the export decided anything: what the export read later, or the other side committed
       // meanwhile, is not taken for seen.
-      const owed: Owed | null = exported.state === "waiting" && !quietly.has(exported.reason) ? { kind: "store" } : ownLocalBlock(exported, "source") ? localOwed(request.agent, was) : null;
+      const owed: Owed | null = exported.state === "waiting" && !quietly.has(exported.reason) ? { kind: "store" }
+        : ownLocalBlock(exported, "source") || probedEngine(exported) ? localOwed(request.agent, was, slot, exported) : null;
       return stepOf(exported, owed, step.seen);
     };
     if (!it) return await look();
@@ -2677,6 +2712,7 @@ export async function runRunner(options: {
   const driveDestination = async (request: { id: string; agent: string }): Promise<DrainStep> => {
     // What this look decides from is observed first: the local facts, then the row. Neither is read again to say what the look has seen.
     const was = localFacts(request.agent);
+    const slot = engineSlot();
     const move = await readMove(store, request.id);
     if (!move) return { state: "ended", why: "unknown-move", owed: null, seen: null };
     const seen = digestOf(move);
@@ -2687,10 +2723,16 @@ export async function runRunner(options: {
       case "registry_written": step = await serveDestination(serveWorld, move.id); break;
       default: step = handoffWaiting(`stage:${move.stage}`);
     }
-    if (step.state === "waiting" && step.detail?.owed === "local") return stepOf(step, localOwed(move.agent, was), seen);
-    // Only the preflight's and the serve's refusals of this machine's own facts are looked at again when those facts change: an import that failed
-    // is never retried by this, and the owner's withdrawal is still its way out.
-    if (move.stage !== "source_released" && move.stage !== "importing" && ownLocalBlock(step, "dest")) return stepOf(step, localOwed(move.agent, was), seen);
+    if (step.state === "waiting" && step.detail?.owed === "local") return stepOf(step, localOwed(move.agent, was, slot, step), seen);
+    // A preflight that was recorded is made from this machine's configuration files and checkouts, and the source compares what it recorded: while the
+    // move still waits for the source's release, a change of those facts (or the bounded re-look) records it again, so a repair here reaches the source.
+    if (move.stage === "waiting" && step.state === "done") return stepOf(step, localOwed(move.agent, was, slot, step), seen);
+    // Only the preflight's and the serve's refusals of this machine's own facts, and of a probe of the engine (again by the clock, `ENGINE_RECHECK`),
+    // are looked at again when those facts change: an import that failed is never retried by this, and the owner's withdrawal is still its way out.
+    if (move.stage !== "source_released" && move.stage !== "importing" && (ownLocalBlock(step, "dest") || probedEngine(step))) return stepOf(step, localOwed(move.agent, was, slot, step), seen);
+    // The refusals the import's fresh observations make from this machine's files and checkouts (`destGate`) are looked at again when those change
+    // (or after the bounded re-look): the import itself is still never retried by this, only the gate that stands before it.
+    if ((move.stage === "source_released" || move.stage === "importing") && step.state === "blocked" && DEST_GATE_CODES.has(step.reason)) return stepOf(step, localOwed(move.agent, was, slot, step), seen);
     const poll = step.state === "waiting" && !step.reason.startsWith("stage:") && !quietly.has(step.reason);
     return stepOf(step, poll ? { kind: "store" } : null, seen);
   };

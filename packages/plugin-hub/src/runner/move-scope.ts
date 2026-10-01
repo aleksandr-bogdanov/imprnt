@@ -1,48 +1,40 @@
-import { readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readdirSync, realpathSync, statSync } from "node:fs";
+import { join, relative, resolve, isAbsolute } from "node:path";
 import { DEFAULT_INSTRUCTION_FILES, vaultRootOf } from "../adapters/instructions.ts";
 import { boxContextFor } from "../box/index.ts";
-import { listAgents, listPeople, listRepositories, zoneRepositoryFor } from "../registry/entries.ts";
+import { listAgents, listPeople } from "../registry/entries.ts";
 import { exportGenerationOf, type MoveRow } from "../store/moves.ts";
 import { errnoOf } from "../transfer/workspace.ts";
 import type { Registry } from "../registry/load.ts";
 import type { ScopeProof, ScopeRefusal } from "./move-handoff.ts";
+import { RECHECK, signatureOf, workspacePlanOf, workspaceShapeOf } from "./move-workspace.ts";
 
 /**
- * WHAT A NATIVE MOVE CARRIES, and the dependencies it refuses to leave behind unproven.
+ * WHAT A MOVE CARRIES AND WHAT IT ONLY VERIFIES, and the dependencies it refuses to leave behind unproven.
  *
- * The move carries ONE thing: the engine's own session (the transcript of the native session, nothing else in its directory). A conversation
- * of an agent whose person declares a repository, a vault or a shared-zone checkout may depend on files that this move does not carry. A
- * repository's working copy can hold files the agent edited and never committed, or a checkout at a revision the other machine does not have;
- * the transfer library can carry such a working copy (`transfer/repos.ts`, `transfer/materialize.ts`), but nothing in the hub yet says which
- * repositories a conversation depends on, snapshots them into the move's bounded blobs, verifies them at the destination under the same
- * receipt discipline, or clears them at a withdrawal. A vault and the zone travel by the hub's git sync (`sync/run.ts`), which commits what
- * the agents filed and pushes and pulls it on a schedule, in its own process, and which nothing here awaits, bounds or reads back: a
- * periodic sync that has not run, has not finished or has stopped on a rebase it could not resolve leaves the destination without what the
- * conversation filed, and nothing in the registry or in a note says otherwise. Each of those is therefore a refusal, made BEFORE anything is
- * read, stored or released (`scope_unsupported` of the source), and never a proof that "nothing else is needed" that nobody established.
+ * The move CARRIES one thing: the engine's own session (the transcript of the native session, nothing else in its directory). A conversation of
+ * an agent whose person declares repositories, a vault or a shared-zone checkout depends on files that this move does not carry, and it does
+ * not pretend to. Where every declared repository is kept in step by the hub's own sync on BOTH machines, the move VERIFIES them (`move-workspace.ts`):
+ * clean and on one exact commit at the source, clean and at exactly that commit at the destination, each under the sync's lock, with what stays
+ * behind (ignored files, credential-shaped untracked ones) counted. The configuration the launch reads is compared too (`move-config.ts`). Anything
+ * that cannot be verified is refused here, BEFORE anything is read, stored or released (`scope_unsupported` of the source), and never a proof
+ * that "nothing else is needed" that nobody established.
  *
  * THE RULE, from the registry and from a look at THIS machine's own files (metadata only: names, never a file's content):
  * - the agent must be in the registry, of the person the move names;
- * - the person declares no repository other than the zone checkout (`workspace_carriage_required`, naming the repositories);
- * - the person declares no vault and no zone checkout (`dependency_unverified`, naming `vault` and/or `zone`). There is no owner acknowledgement
- *   of either: the refusal clears only when the registry no longer declares the dependency (or, later, when a module that snapshots or
- *   awaits the sync and verifies the result at the destination exists and answers with a proof; this file does not guess that module's shape);
- * - THE PERSON'S OWN TREE is looked at, because an absent declaration says nothing about what is in it. A person that declares no vault works
- *   in its tree (`vaultRootOf`), the launch binds it writable (`boxContextFor`'s `tree`), and nothing syncs or carries it. Its top-level
- *   entries are listed (names only, bounded): none, or none but the hub's own `sessions` and `chatlog` directories where the tree is the
- *   person's state root, is the only answer that passes. Any other entry is local content this move does not carry
- *   (`workspace_carriage_required`, with the count and never a name); a tree that cannot be looked at is `dependency_unverified` naming `tree`;
- * - THE DEFAULT INSTRUCTION FILES (`CLAUDE.md`, `CLAUDE.local.md` of the vault root, which an ordinary launch appends to the agent's system
- *   prompt when the person names no list) are part of what the agent runs under, and nothing compares their content between machines (the
- *   profile holds names, and never a digest of a file). One that exists here is `dependency_unverified` naming `instruction:<name>`, and one
- *   that exists at the destination is the destination's own refusal (`defaultInstructionsOf`, asked by its preflight). Their content is never
- *   read, hashed or exported by this file. The triage master's launch reads no instruction file, so neither is asked about it.
- * A person that clears all of these gets the proof below, which says exactly that and nothing more.
+ * - the person's declared repositories are planned (`workspacePlanOf`): each listed by an enabled sync entry of both machines, at most 16, a
+ *   vault covered by one of them, a checkout inside another provably a separate one. A repository the sync of either machine does not keep in
+ *   step is `repository_unsynced`, and a vault nothing covers is `dependency_unverified` naming `vault`. The registry is the way out;
+ * - THE PERSON'S OWN TREE is looked at, because the registry says nothing about what is in it. Its top-level entries are listed (names only,
+ *   bounded) and each must be covered: the hub's own `sessions` and `chatlog` directories where the tree is the person's state root, the
+ *   default instruction files (their content is part of the compared configuration), or something whose real path lies inside a planned
+ *   repository. Any other entry is local content nothing carries or verifies (`workspace_carriage_required`, with the count and never a
+ *   name); a tree that cannot be looked at is `dependency_unverified` naming `tree`.
+ * A person that clears all of these gets the proof below, which says exactly that and nothing more: `native+workspace` when repositories are
+ * verified, `native-only` when none is declared.
  *
- * WHAT THIS DOES NOT DO: carry any of it. A conversation whose person has a repository, a vault, a zone checkout, a tree with files in it or
- * a default instruction file is not moved by this runtime; that is the workspace slice's, and the move says so by name instead of pretending.
- * The content of the files the agent's configuration points at is the profile's gate (`move-profile.ts`), not this file's.
+ * WHAT THIS DOES NOT DO: carry any file. Ignored files, untracked credential-shaped files and everything outside a planned repository stay on the
+ * source's machine, and the move says so by name instead of pretending.
  *
  * THE LOOK IS INJECTABLE (`ScopeFs`) so that a test can stand for any state of a tree without writing one; the default reads the real file
  * system, and it is what the runner calls. `generation` binds the proof to the drain it was asked for, as `exportSource` requires.
@@ -58,6 +50,8 @@ export type Look =
 export interface ScopeFs {
   /** What `path` is, following links as a launch does. Never a file's content. A throw is `unreadable`. */
   look(path: string): Look;
+  /** The real path of `path`, or null when it has none. Absent, nothing is known to lie inside a repository. */
+  real?(path: string): string | null;
 }
 
 /** How many names of one directory are listed: past it the rest is not looked at and is counted as content. */
@@ -75,6 +69,9 @@ export const realScopeFs: ScopeFs = {
       return errnoOf(error) === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" };
     }
   },
+  real(path) {
+    try { return realpathSync(path); } catch { return null; }
+  },
 };
 
 /**
@@ -88,8 +85,8 @@ const HUB_STATE = new Set(["sessions", "chatlog"]);
 /**
  * The default instruction files an ordinary launch of `agentId` would read HERE, by name, or null when that cannot be told. The names the
  * launch itself uses (`DEFAULT_INSTRUCTION_FILES`) at the root it uses (`vaultRootOf` of the box's tree), judged as `existsSync` judges them
- * (anything at the path is a file the launch tries to read, a directory included). Empty when the person names its own list (the profile holds
- * that as `person.instructions`) and for the triage master, which reads none. The content is never read.
+ * (anything at the path is a file the launch tries to read, a directory included). Empty when the person names its own list and for the triage
+ * master, which reads none. The content is never read here (`move-config.ts` compares it).
  */
 export function defaultInstructionsOf(registry: Registry, agentId: string, fs: ScopeFs = realScopeFs): string[] | null {
   const agent = listAgents(registry).find(one => one.id === agentId);
@@ -103,27 +100,56 @@ export function defaultInstructionsOf(registry: Registry, agentId: string, fs: S
 }
 
 /**
- * What `scopeOf` and `defaultInstructionsOf` look at on this machine, as one comparable text: the default instruction files that exist and the top
- * level of the person's tree (names, bounded, never a content; the text stays in this process and is only compared with itself later). A refusal
- * made from these is looked at again when it changes, which is all this says: whether the refusal still holds is those functions' answer.
+ * The files whose content the compared configuration is made of and that the registry names or the launch looks for by name (settings, MCP,
+ * fragment, the person's instruction list, the default instruction files), by stat: one comparable text. A file EDITED changes it; a file that an
+ * instruction file imports is not named here, so while any such file exists a bounded re-look is part of the text (`RECHECK`, as for a worktree).
  */
-export function localShapeOf(registry: Registry, agentId: string, fs: ScopeFs = realScopeFs): string {
+function configShapeOf(registry: Registry, agentId: string, now: number): string | null {
+  const agent = listAgents(registry).find(one => one.id === agentId);
+  if (!agent || agent.role === "triage") return null;
+  const person = listPeople(registry).find(one => one.id === agent.person);
+  const tree = boxContextFor(registry, agentId).tree;
+  const defaults = person?.instructions !== undefined || tree === "" ? [] : DEFAULT_INSTRUCTION_FILES.map(name => join(vaultRootOf(person, tree), name));
+  const files = [agent.settings, agent.mcp, agent.fragment, person?.settings, person?.mcp, ...(person?.instructions ?? []), ...defaults]
+    .filter((one): one is string => typeof one === "string" && one !== "");
+  const signatures = files.map(signatureOf);
+  return JSON.stringify({ signatures, ...(signatures.some(one => one !== "-") ? { at: Math.floor(now / RECHECK.ms) } : {}) });
+}
+
+/**
+ * What `scopeOf` and `defaultInstructionsOf` look at on this machine, and what a refusal made from them waits on, as one comparable text: the
+ * default instruction files that exist, the top level of the person's tree (names, bounded, never a content), the stat of the configuration
+ * files, and the stat of the person's checkouts with a bounded re-look (`workspaceShapeOf`). The text stays in this process and is only
+ * compared with itself later: a refusal made from these is looked at again when it changes, which is all this says. Nothing is hashed, no git
+ * and no engine is started.
+ */
+export function localShapeOf(registry: Registry, agentId: string, fs: ScopeFs = realScopeFs, now: number = Date.now()): string {
   const tree = boxContextFor(registry, agentId).tree;
   const seen = tree === "" ? null : fs.look(tree);
+  const agent = listAgents(registry).find(one => one.id === agentId);
   return JSON.stringify({
     instructions: defaultInstructionsOf(registry, agentId, fs),
     tree: seen === null ? null : seen.kind === "directory" ? { names: [...seen.names].sort(), more: seen.more } : seen.kind,
+    config: configShapeOf(registry, agentId, now),
+    workspace: agent ? workspaceShapeOf(registry, agent.person, now) : null,
   });
 }
 
-/** What the person's tree holds that nothing carries: its state absent, empty, or the count of what is there. Null: it cannot be looked at. */
+/** What the person's tree holds that nothing carries or verifies: its state absent, empty, or the count of what is there. Null: it cannot be looked at. */
 type Tree = { state: "absent" | "empty" | "hub-state" } | { state: "content"; entries: number; capped: boolean } | null;
 
+const within = (root: string, path: string): boolean => {
+  const part = relative(root, path);
+  return part === "" || (!isAbsolute(part) && part !== ".." && !part.startsWith("../"));
+};
+
 /**
- * `reported` are the default instruction files this look already names on their own (`defaultInstructionsOf`): they are not counted twice. A
- * file of that name that is NOT reported (the person names its own list, or the agent is the triage master) is an ordinary entry here.
+ * `reported` are the default instruction files, whose content the compared configuration covers: they are not counted. `roots` are the planned
+ * repositories' paths: an entry whose real path lies inside one is covered by that repository's own verification (the files git ignores in it
+ * are counted there and are not carried). A file of a default name that is NOT reported (the person names its own list, or the agent is the
+ * triage master) is an ordinary entry here.
  */
-function treeOf(registry: Registry, agentId: string, fs: ScopeFs, reported: readonly string[]): Tree {
+function treeOf(registry: Registry, agentId: string, fs: ScopeFs, reported: readonly string[], roots: readonly string[]): Tree {
   const box = boxContextFor(registry, agentId);
   if (box.tree === "") return null;
   const seen = fs.look(box.tree);
@@ -132,7 +158,12 @@ function treeOf(registry: Registry, agentId: string, fs: ScopeFs, reported: read
   // An absent state root proves nothing about who owns the tree: only a defined, non-empty one that IS the tree does.
   const stateRoot = box.stateRoot;
   const hubOwned = typeof stateRoot === "string" && stateRoot !== "" && resolve(stateRoot) === resolve(box.tree);
-  const others = seen.names.filter(name => !(hubOwned && HUB_STATE.has(name)) && !reported.includes(name));
+  const real = roots.map(root => fs.real?.(root)).filter((one): one is string => typeof one === "string");
+  const covered = (name: string): boolean => {
+    const at = real.length === 0 ? null : fs.real?.(join(box.tree, name)) ?? null;
+    return at !== null && real.some(root => within(root, at));
+  };
+  const others = seen.names.filter(name => !(hubOwned && HUB_STATE.has(name)) && !reported.includes(name) && !covered(name));
   if (others.length > 0 || seen.more) return { state: "content", entries: others.length, capped: seen.more };
   return { state: hubOwned && seen.names.some(name => HUB_STATE.has(name)) ? "hub-state" : "empty" };
 }
@@ -146,35 +177,22 @@ export function scopeOf(registry: Registry, move: MoveRow, fs: ScopeFs = realSco
   if (generation === null) return null;
   const agent = listAgents(registry).find(one => one.id === move.agent);
   if (!agent || agent.person !== move.person) return { refused: "agent_not_in_registry" };
-  const repositories = listRepositories(registry).filter(one => one.person === agent.person && one.zone !== true);
-  const person = listPeople(registry).find(one => one.id === agent.person);
-  const synced = [
-    ...(typeof person?.vault === "string" && person.vault !== "" ? ["vault"] : []),
-    ...(zoneRepositoryFor(registry, agent.person) !== null ? ["zone"] : []),
-  ];
-  if (repositories.length > 0) {
-    return {
-      refused: "workspace_carriage_required",
-      detail: { repositories: repositories.map(one => one.id).sort().slice(0, 8), count: repositories.length, ...(synced.length > 0 ? { dependencies: synced } : {}) },
-    };
-  }
-  if (synced.length > 0) return { refused: "dependency_unverified", detail: { dependencies: synced } };
+  const look = workspacePlanOf(registry, agent.person, { source: move.source_machine, dest: move.dest_machine });
+  if (look.kind === "refused") return { refused: look.refused, ...(look.detail ? { detail: look.detail } : {}) };
+  const repositories = look.kind === "plan" ? look.plan.repos : [];
 
-  // Nothing is declared, which proves nothing about what is there: the tree and the default instruction files are looked at, here, now.
+  // The default instruction files are named by the compared configuration, so they are not a refusal of their own: only the tree's other entries are looked at here.
   const instructions = defaultInstructionsOf(registry, agent.id, fs);
-  const tree = treeOf(registry, agent.id, fs, instructions ?? []);
-  const unverified = [...(tree === null ? ["tree"] : []), ...(instructions === null ? ["instructions"] : instructions.map(name => `instruction:${name}`))];
+  const tree = treeOf(registry, agent.id, fs, instructions ?? [], repositories.map(one => one.path));
   if (tree !== null && tree.state === "content") {
-    return {
-      refused: "workspace_carriage_required",
-      detail: { local_tree: { entries: tree.entries, ...(tree.capped ? { capped: true } : {}) }, ...(unverified.length > 0 ? { dependencies: unverified } : {}) },
-    };
+    return { refused: "workspace_carriage_required", detail: { local_tree: { entries: tree.entries, ...(tree.capped ? { capped: true } : {}) } } };
   }
-  if (tree === null || unverified.length > 0) return { refused: "dependency_unverified", detail: { dependencies: unverified } };
+  if (tree === null) return { refused: "dependency_unverified", detail: { dependencies: ["tree"] } };
   // The basis is kept in the sealed manifest and `scopeProven` refuses one over 256 characters: no path, no name of anything found.
   return {
-    move: move.id, conversation: move.conversation_id, agent: move.agent, generation, carries: "native-only",
-    basis: `registry and local look: no repository, vault or shared-zone checkout is declared, the person's tree ${SAYS[tree.state]}, ` +
-      `${agent.role === "triage" ? "the launch reads no instruction file" : "no default instruction file exists"}; only the session's transcript is carried`,
+    move: move.id, conversation: move.conversation_id, agent: move.agent, generation, carries: repositories.length > 0 ? "native+workspace" : "native-only",
+    basis: repositories.length > 0
+      ? `registry and local look: ${repositories.length} repositories synced on both machines are verified at the handoff, not carried; the tree outside them ${SAYS[tree.state]}; only the transcript is carried`
+      : `registry and local look: no repository, vault or shared-zone checkout is declared, the person's tree ${SAYS[tree.state]}; only the session's transcript is carried`,
   };
 }

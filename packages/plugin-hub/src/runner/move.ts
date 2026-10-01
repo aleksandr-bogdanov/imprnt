@@ -879,7 +879,9 @@ export async function watchMoves(
       if (step.state === "ended") { debts.delete(id); settled.delete(id); }
       else {
         if (step.owed) debts.set(id, step.owed); else debts.delete(id);
-        if (step.owed === null && step.seen !== null) settled.set(id, step.seen); else settled.delete(id);
+        // A destination's look that stands on this machine's own facts (a recorded preflight, a refusal of a file or a checkout here) is settled on the
+        // row it read too: the debt it keeps wakes it when those facts change (`schedule`), and a notification of the same row asks nothing.
+        if (step.seen !== null && (step.owed === null || (role === "dest" && step.owed.kind === "local"))) settled.set(id, step.seen); else settled.delete(id);
       }
       if (closed || !dirty.has(id)) return;
     }
@@ -888,7 +890,9 @@ export async function watchMoves(
   const schedule = (row: MoveRow, role: "source" | "dest" = "source"): void => {
     const id = row.id;
     if (running.has(id)) { dirty.add(id); return; }
-    if (!debts.has(id) && settled.get(id) === digestOf(row)) return;
+    // A row already looked at is not looked at again, unless the look owes the STORE an answer, or owes it to facts of this machine and those moved.
+    const debt = debts.get(id);
+    if (settled.get(id) === digestOf(row) && (!debt || (debt.kind === "local" && !debt.changed()))) return;
     const before = byAgent.get(row.agent) ?? Promise.resolve();
     const one: Promise<void> = before.then(() => (closed ? undefined : consume(id, row.agent, role)))
       .catch((error: Error) => { report(error); debts.set(id, { kind: "store" }); settled.delete(id); })

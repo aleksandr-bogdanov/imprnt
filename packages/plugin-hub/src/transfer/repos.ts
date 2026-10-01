@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readlinkSync, realpathSync, type Stats } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import { PROGRAM_KEYS } from "../sync/run.ts";
 import {
   assertLimits, assertPath, buildBundle, comparePaths, sha256Hex, TransferError, verifyBundle,
@@ -207,9 +208,18 @@ export interface GitCall {
    * Only the repository's own config (and the command line) is left to speak.
    */
   isolated?: true;
+  /** One ignore file (an absolute path) git reads for `core.excludesFile`: the account's own global ignores, which isolation would otherwise drop. A path is all it carries. */
+  excludes?: string;
+  /**
+   * Compare the working tree with the index the way git does by default, whatever the repository's own config says: every stat field counts
+   * (`core.checkStat=default`, `core.trustctime=true`) and so do the executable bit and the link type (`core.fileMode`, `core.symlinks`). A
+   * checkout configured to skip any of them reads as DIRT here, never as clean. Only a status that is given as proof of "clean" asks for it.
+   */
+  exact?: true;
 }
 
-const ISOLATED_CONFIG = ["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.logAllRefUpdates=false", "-c", "pack.writeBitmaps=false"];
+const ISOLATED_CONFIG =["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.logAllRefUpdates=false", "-c", "pack.writeBitmaps=false"];
+const EXACT_CONFIG = ["-c", "core.checkStat=default", "-c", "core.trustctime=true", "-c", "core.fileMode=true", "-c", "core.symlinks=true"];
 const ISOLATED_ENV: Record<string, string> = {
   GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_ATTR_NOSYSTEM: "1", HOME: "/dev/null", XDG_CONFIG_HOME: "/dev/null",
 };
@@ -223,7 +233,8 @@ export async function runGit(repo: string, args: string[], maxBytes: number, lab
   const child = (() => {
     try {
       return Bun.spawn(["git", "-C", repo, "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-        "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never", ...(call.isolated ? ISOLATED_CONFIG : []), ...args],
+        "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never", ...(call.isolated ? ISOLATED_CONFIG : []),
+        ...(call.exact ? EXACT_CONFIG : []), ...(call.excludes ? ["-c", `core.excludesFile=${call.excludes}`] : []), ...args],
       { env: call.isolated ? { ...gitEnv(), ...ISOLATED_ENV } : gitEnv(), stdin: call.stdin ?? "ignore", stdout: "pipe", stderr: "ignore" });
     } catch { throw new TransferError("repo-git-failed", "spawn"); }
   })();
@@ -490,6 +501,17 @@ function secretPath(rel: string): boolean {
 const OPERATION_STATE = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG", "sequencer"];
 
 /**
+ * `ls-files -v` tags a skip-worktree (sparse) entry `S` and an assume-unchanged one in lower case: in both the index does not vouch for the
+ * working tree (git itself would call a changed file clean), and neither is a state a snapshot or a clean proof can describe truthfully.
+ * Refused as `repo-index-flags`, naming the first path. Metadata only: no file is read and the index is not written.
+ */
+async function assertIndexFlags(root: string, max: number, call: GitCall): Promise<void> {
+  for (const one of records(await runGit(root, ["ls-files", "-v", "-z"], max, "ls-files-flags", call))) {
+    if (one[0] === "S" || (one[0] >= "a" && one[0] <= "z")) throw new TransferError("repo-index-flags", one.slice(2));
+  }
+}
+
+/**
  * Snapshot one repository without changing it: where HEAD is, what the index
  * holds, and every path whose index or working-tree state is not HEAD's, each
  * with its modes and hashes, staged-against-working differences included.
@@ -587,11 +609,7 @@ export async function snapshotRepo(options: RepoSnapshotOptions): Promise<RepoSn
   const { entries: index, conflicted } = parseIndex(await git(["ls-files", "-s", "-z"], "ls-files"));
   if (conflicted !== null) throw new TransferError("repo-conflict", conflicted);
   for (const one of [...head, ...index]) if (one[1].mode === "160000") throw new TransferError("repo-submodule", one[0]);
-  // `-v` tags a skip-worktree (sparse) entry `S` and an assume-unchanged one in lower case: in both the index does not
-  // vouch for the working tree, and neither is a state this snapshot can describe truthfully.
-  for (const one of records(await git(["ls-files", "-v", "-z"], "ls-files-flags"))) {
-    if (one[0] === "S" || (one[0] >= "a" && one[0] <= "z")) throw new TransferError("repo-index-flags", one.slice(2));
-  }
+  await assertIndexFlags(root, limits.maxGitOutputBytes, call);
   // An intent-to-add entry reads as a staged empty blob, and so does a file really staged empty: only the index file's
   // own flags tell them apart. They are read only when some entry is the empty blob, from bytes bound to the index
   // hash taken at the start, so an ordinary repository never depends on this parse.
@@ -726,4 +744,230 @@ export async function requireLocalRevision(options: { repo: string; revision: st
     if (error instanceof TransferError && error.code === "repo-git-failed") throw new TransferError("repo-revision-missing", options.revision);
     throw error;
   }
+}
+
+// ---------------------------------------------------------------------------
+// the state of a checkout, read without reading its files
+
+/*
+ * What a move needs to know of a checkout is whether it is clean at one exact commit, and nothing of that needs a file's bytes hashed by
+ * this library: git's own `status` answers from its index (it reads a file only where the stat data says it may have changed), so a large
+ * clean tree costs one command. The answer is not a snapshot and carries nothing. It is asked under the same refusals as `snapshotRepo`: the
+ * repository's own config is checked first, every call is isolated, and what git prints is never in an error.
+ *
+ * Git answers "clean" from its index, so a state the index cannot vouch for would make a changed file read as clean. Before a clean answer is
+ * given the checkout is therefore refused, by metadata alone (two listings and the index file's own header and extensions, all bounded, none
+ * writing and no file's bytes hashed), when it holds: an assume-unchanged or skip-worktree entry (`repo-index-flags`), a split or sparse index or
+ * an index version this reader does not know (`repo-index-state`), or a gitlink (`repo-submodule`) that is not exactly a declared nested checkout.
+ * A listing or index that does not fit its bound is refused (`repo-git-output`, `limit-scan-bytes`), never read in part. THE BOUND IS A NAMED LIMIT,
+ * NOT A REWRITE: the two index listings (`ls-files -v`, `ls-files -s`) share the caller's output bound, so a checkout of more than about 15 to 20
+ * thousand tracked files does not fit a 1 MiB bound and is refused as `repo-git-output` (a caller that cannot tell it from dirt says `too-large`),
+ * clean or not. The flags and gitlinks are not read from the index file's own bytes to avoid it.
+ *
+ * What "clean" means is pinned, not inherited from the checkout's config: the status is asked with every stat field compared (`core.checkStat=default`,
+ * `core.trustctime=true`), the executable bit (`core.fileMode=true`) and the link type (`core.symlinks=true`), so a checkout that is configured to
+ * overlook any of them (a content edit that keeps size and mtime, a lost exec bit, a link that became a file) reads as dirt and never as clean.
+ *
+ * A TRACKED LINK is refused unless it can be shown to stay inside this checkout's own root (`assertLinkInside`): by metadata only (`lstat` and
+ * `readlink`, hop by hop), and no target's content is read or exported. Absolute targets, links that leave the root at any hop, links into a `.git`
+ * directory, dangling links, cycles and links through a file are named (`repo-symlink-outside`, `repo-symlink-unresolved`). A link into ANOTHER
+ * declared checkout is refused as well: nothing here binds what the other machine's link resolves into. The target of an allowed link may be
+ * ignored content of the checkout, which is counted and reported as not carried like any ignored file. The snapshot's own link contract is unchanged.
+ *
+ * The ignore files are the ones the sync reads: the checkout's own `core.excludesFile`, when its config sets one, otherwise the account's global
+ * one (`readCall`). A path that a `~` in the checkout's own setting names is not expanded under isolation, so such a file reads as dirt.
+ */
+
+/** The most the index file of a checkout may weigh for a clean answer (it is read twice over: its size is charged double). */
+const INDEX_PROBE_BYTES = 64 << 20;
+
+/** The account's own global ignore file, which an isolated call would not read: without it a file the account ignores everywhere is untracked here and dirt there. */
+async function globalExcludes(): Promise<string | null> {
+  try {
+    const child = Bun.spawn(["git", "config", "--global", "--type=path", "--get", "core.excludesFile"], { env: gitEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+    const text = (await new Response(child.stdout).text()).trim();
+    if (await child.exited === 0 && isAbsolute(text)) return text;
+  } catch { /* git's own default below */ }
+  const fallback = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "git", "ignore");
+  return existsSync(fallback) ? fallback : null;
+}
+
+/** Whether the checkout's OWN config names an ignore file: git then reads that one, as the sync does, and no global file is put over it. */
+async function ownExcludes(root: string, max: number): Promise<boolean> {
+  try { await runGit(root, ["config", "--get", "core.excludesFile"], max, "excludes", { isolated: true }); return true; } catch (error) {
+    if (error instanceof TransferError && error.code === "repo-git-failed" && error.path === "excludes") return false;
+    throw error;
+  }
+}
+
+async function readCall(root: string, max: number, exact = false): Promise<GitCall> {
+  const excludes = (await ownExcludes(root, max)) ? null : await globalExcludes();
+  return { isolated: true, ...(exact ? { exact: true as const } : {}), ...(excludes ? { excludes } : {}) };
+}
+
+/** The most links one tracked link's resolution follows before it is called a cycle. */
+const LINK_HOPS = 40;
+
+/**
+ * A tracked link, resolved by hand from the checkout's real root with `lstat` and `readlink` only, and refused unless every hop stays inside the
+ * root: no absolute target, no `..` above the root, no `.git` component, nothing missing, no cycle, no step through a file. Each link in the chain
+ * is followed as the kernel would (a link on the way to the link itself included), so a path that is inside lexically and leaves through a link
+ * is refused, and so is one that leaves and comes back. Nothing is read from a target.
+ */
+function assertLinkInside(root: string, rel: string): void {
+  const outside = () => new TransferError("repo-symlink-outside", rel);
+  const unresolved = () => new TransferError("repo-symlink-unresolved", rel);
+  const pending = rel.split("/");
+  let at = root;
+  let directory = true;
+  let hops = 0;
+  while (pending.length > 0) {
+    const part = pending.shift()!;
+    if (part === "" || part === ".") continue;
+    if (!directory) throw unresolved();
+    if (part === ".git") throw outside();
+    if (part === "..") {
+      if (at === root) throw outside();
+      at = dirname(at);
+      continue;
+    }
+    const next = join(at, part);
+    let stat: Stats;
+    try { stat = lstatSync(next); } catch { throw unresolved(); }
+    if (!stat.isSymbolicLink()) { at = next; directory = stat.isDirectory(); continue; }
+    if (++hops > LINK_HOPS) throw unresolved();
+    let text: string;
+    try { text = readlinkSync(next); } catch { throw unresolved(); }
+    if (text === "" || isAbsolute(text)) throw outside();
+    pending.unshift(...text.split("/"));
+  }
+}
+
+/** The top level of `repo` and its common git directory, after the refusals every read here makes first. */
+async function safeCheckout(repo: string, maxBytes: number): Promise<{ root: string; gitDir: string; commonDir: string }> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new TransferError("limits-invalid");
+  const root = resolveRoot(repo);
+  const call: GitCall = { isolated: true };
+  let top: string;
+  try { top = realpathSync((await runGit(root, ["rev-parse", "--show-toplevel"], maxBytes, "toplevel", call)).toString("utf8").trim()); } catch (error) {
+    if (error instanceof TransferError) throw error;
+    throw new TransferError("repo-not-toplevel");
+  }
+  if (top !== root) throw new TransferError("repo-not-toplevel");
+  await assertSafeConfig(root, maxBytes, call);
+  const path = async (args: string[], label: string) => realpathSync((await runGit(root, ["rev-parse", ...args], maxBytes, label, call)).toString("utf8").trim());
+  return { root, gitDir: await path(["--absolute-git-dir"], "git-dir"), commonDir: await path(["--path-format=absolute", "--git-common-dir"], "common-dir") };
+}
+
+/** The real path of a checkout's common git directory: what the sync keys its lock on (`syncLockKey`). */
+export async function commonDirOf(options: { repo: string; maxGitOutputBytes: number }): Promise<string> {
+  return (await safeCheckout(options.repo, options.maxGitOutputBytes)).commonDir;
+}
+
+export interface RepoState {
+  head: string;
+  /** Null for a detached HEAD. */
+  branch: string | null;
+  /** The git directory entry that says an operation is half done (a rebase, a merge), or null. */
+  operation: string | null;
+  /** Tracked paths whose index or working tree differs from HEAD, and conflicted ones. */
+  changed: number;
+  conflicted: number;
+  /** Untracked paths that are neither a declared nested checkout nor credential-shaped. Any of these is dirt. */
+  untracked: number;
+  /** Untracked paths left alone for their credential-shaped names: not dirt, and never carried by anything. */
+  withheld: number;
+  /** The `nested` entries the checkout holds as an untracked directory, which are set aside: exactly those names, nothing wider. */
+  nested: string[];
+}
+
+/**
+ * Where HEAD is and whether the checkout is clean. `nested` are repository-relative directories the caller has proved are separate checkouts
+ * covered on their own (`move-workspace.ts`): an untracked directory is set aside only when its name is exactly one of them, and any other
+ * untracked directory (an undeclared nested repository) is dirt. Untracked files are listed one by one, so none hides inside a directory.
+ */
+export async function repoState(options: { repo: string; maxGitOutputBytes: number; nested?: readonly string[] }): Promise<RepoState> {
+  const max = options.maxGitOutputBytes;
+  const { root, gitDir } = await safeCheckout(options.repo, max);
+  const operation = OPERATION_STATE.find(name => existsSync(join(gitDir, name))) ?? null;
+  const listed = await runGit(root, ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all", "--no-renames"], max, "status", await readCall(root, max, true));
+  const state: RepoState = { head: "", branch: null, operation, changed: 0, conflicted: 0, untracked: 0, withheld: 0, nested: [] };
+  let unborn = false;
+  for (const one of records(listed)) {
+    if (one.startsWith("# branch.oid ")) { const oid = one.slice(13); unborn = oid === "(initial)"; state.head = oid; }
+    else if (one.startsWith("# branch.head ")) { const name = one.slice(14); state.branch = name === "(detached)" ? null : name; }
+    else if (one.startsWith("1 ") || one.startsWith("2 ")) state.changed += 1;
+    else if (one.startsWith("u ")) state.conflicted += 1;
+    else if (one.startsWith("? ")) {
+      const path = one.slice(2);
+      if (path.endsWith("/") && options.nested?.includes(path.slice(0, -1))) state.nested.push(path.slice(0, -1));
+      else if (!path.endsWith("/") && secretPath(path)) state.withheld += 1;
+      else state.untracked += 1;
+    }
+  }
+  if (unborn) throw new TransferError("repo-head-unborn");
+  if (!OID.test(state.head)) throw new TransferError("repo-git-failed", "status");
+
+  // What status said is only as true as the index that backs it: look at that before a clean answer is given.
+  const call: GitCall = { isolated: true };
+  await assertIndexFlags(root, max, call);
+  for (const one of records(await runGit(root, ["ls-files", "-s", "-z"], max, "ls-files", call))) {
+    const tab = one.indexOf("\t");
+    if (tab > 0 && one.startsWith("160000 ") && !options.nested?.includes(one.slice(tab + 1))) throw new TransferError("repo-submodule", one.slice(tab + 1));
+    // A link's own bytes are the index's; where it POINTS is what a move would be vouching for.
+    if (tab > 0 && one.startsWith("120000 ")) assertLinkInside(root, one.slice(tab + 1));
+  }
+  // The sparse and split markers are extensions of the index file, and an entry's flags are bits of it: only its own bytes say them.
+  intentToAddPaths(readStable(gitDir, "index", { retain: true, scan: { limit: INDEX_PROBE_BYTES, used: 0 } }).bytes!, state.head.length === 64 ? "sha256" : "sha1");
+  return state;
+}
+
+/** How many ignored entries the checkout holds (a wholly ignored directory counts as one), or null when there are more than one output budget lists. Never carried by anything. */
+export async function ignoredCount(options: { repo: string; maxGitOutputBytes: number }): Promise<number | null> {
+  // The count is optional, so a budget the checkout's own refusals (its config listing) do not fit in is the same "cannot count" as a listing that does not: nothing is listed then. Any other refusal still stands.
+  try {
+    const { root } = await safeCheckout(options.repo, options.maxGitOutputBytes);
+    return records(await runGit(root, ["ls-files", "-o", "-i", "--exclude-standard", "--directory", "-z"], options.maxGitOutputBytes, "ignored", await readCall(root, options.maxGitOutputBytes))).length;
+  } catch (error) {
+    if (error instanceof TransferError && error.code === "repo-git-output") return null;
+    throw error;
+  }
+}
+
+/** The commit a ref names in this checkout (a name under `refs/` only), or null when there is none. */
+export async function revisionOf(options: { repo: string; ref: string; maxGitOutputBytes: number }): Promise<string | null> {
+  if (!/^refs\/[A-Za-z0-9._/-]{1,200}$/.test(options.ref) || options.ref.includes("..")) throw new TransferError("repo-invalid");
+  const { root } = await safeCheckout(options.repo, options.maxGitOutputBytes);
+  try {
+    const found = (await runGit(root, ["rev-parse", "--verify", "--quiet", `${options.ref}^{commit}`], options.maxGitOutputBytes, "ref", { isolated: true })).toString("utf8").trim();
+    return OID.test(found) ? found : null;
+  } catch (error) {
+    if (error instanceof TransferError && error.code === "repo-git-failed" && error.path === "ref") return null;
+    throw error;
+  }
+}
+
+/** `head` against `revision`: the same commit, `ahead` (head contains revision), `behind` (revision contains head), `divergent`, or `missing` (the revision is not in this object store). Nothing is fetched. */
+export type CommitRelation = "same" | "ahead" | "behind" | "divergent" | "missing";
+
+export async function relationOf(options: { repo: string; head: string; revision: string; maxGitOutputBytes: number }): Promise<CommitRelation> {
+  if (!OID.test(options.head) || !OID.test(options.revision)) throw new TransferError("repo-revision-invalid");
+  const max = options.maxGitOutputBytes;
+  const { root } = await safeCheckout(options.repo, max);
+  const call: GitCall = { isolated: true };
+  // Both commits are known to exist when the last two commands run, so a failure of one of them is git's exit 1: not an ancestor.
+  const refused = (error: unknown, label: string) => error instanceof TransferError && error.code === "repo-git-failed" && error.path === label;
+  try { await runGit(root, ["cat-file", "-e", `${options.revision}^{commit}`], max, "revision", call); } catch (error) {
+    if (refused(error, "revision")) return "missing";
+    throw error;
+  }
+  if (options.head === options.revision) return "same";
+  const ancestor = async (older: string, newer: string): Promise<boolean> => {
+    try { await runGit(root, ["merge-base", "--is-ancestor", older, newer], max, "ancestor", call); return true; } catch (error) {
+      if (refused(error, "ancestor")) return false;
+      throw error;
+    }
+  };
+  if (await ancestor(options.revision, options.head)) return "ahead";
+  return (await ancestor(options.head, options.revision)) ? "behind" : "divergent";
 }

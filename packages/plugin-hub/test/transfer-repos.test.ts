@@ -9,14 +9,15 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
-  appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync,
-  writeFileSync,
+  appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync,
+  utimesSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { contentKey, sha256Hex, TransferError, verifyBundle } from "../src/transfer/bundle.ts";
 import {
-  INDEX_BLOB_PREFIX, metadataDigestOf, requireLocalRevision, snapshotRepo, verifySnapshot, type RepoLimits, type RepoSnapshotOptions,
+  INDEX_BLOB_PREFIX, commonDirOf, ignoredCount, metadataDigestOf, relationOf, repoState, requireLocalRevision, revisionOf, snapshotRepo, verifySnapshot,
+  type RepoLimits, type RepoSnapshotOptions,
 } from "../src/transfer/repos.ts";
 import { fixtureGit } from "./helpers/rollout-git.ts";
 
@@ -547,4 +548,362 @@ test("a revision the destination does not hold blocks by name and is never fetch
   }
   fixtureGit(local, "config", "core.fsmonitor", "/bin/true");
   expect(await need(held)).toMatchObject({ code: "repo-unsafe-config" });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The state of a checkout, read without a snapshot (what a move verifies before it trusts a repository)
+// ---------------------------------------------------------------------------------------------------------------------
+
+const MAX = LIM.maxGitOutputBytes;
+const stateOf = (repo: string, nested?: string[]) => repoState({ repo, maxGitOutputBytes: MAX, ...(nested ? { nested } : {}) });
+
+test("a checkout's state is read with no snapshot and no write: clean, edited, untracked, credential-shaped, ignored and nested are told apart", async () => {
+  const repo = baseRepo();
+  const indexBefore = sha256Hex(readFileSync(join(repo, ".git/index")));
+  expect(await stateOf(repo)).toMatchObject({ head: fixtureGit(repo, "rev-parse", "HEAD"), branch: "main", operation: null, changed: 0, conflicted: 0, untracked: 0, withheld: 0, nested: [] });
+
+  // Ignored files are not dirt, and are counted apart: they are never claimed carried.
+  put(repo, "ignored.log", "noise\n");
+  expect(await stateOf(repo)).toMatchObject({ untracked: 0 });
+  expect(await ignoredCount({ repo, maxGitOutputBytes: MAX })).toBe(1);
+  // An untracked credential-shaped file is left alone, by name, and is not dirt.
+  put(repo, ".env", "KEY=1\n");
+  expect(await stateOf(repo)).toMatchObject({ untracked: 0, withheld: 1, changed: 0 });
+  // Anything else untracked is dirt, and so is an edit, a staged change and a deletion.
+  put(repo, "new.txt", "n\n");
+  expect(await stateOf(repo)).toMatchObject({ untracked: 1, withheld: 1 });
+  rmSync(join(repo, "new.txt"));
+  put(repo, "a.txt", "edited\n");
+  expect(await stateOf(repo)).toMatchObject({ changed: 1, untracked: 0 });
+  // Nothing of the reads above wrote the index, however many times it was asked.
+  expect(sha256Hex(readFileSync(join(repo, ".git/index")))).toBe(indexBefore);
+  fixtureGit(repo, "add", "a.txt");
+  expect(await stateOf(repo)).toMatchObject({ changed: 1 });
+  rmSync(join(repo, "gone.txt"));
+  expect(await stateOf(repo)).toMatchObject({ changed: 2 });
+  fixtureGit(repo, "checkout", "-q", "HEAD", "--", "a.txt", "gone.txt");
+  expect(await stateOf(repo)).toMatchObject({ changed: 0, untracked: 0 });
+});
+
+test("a nested checkout is set aside only by its exact declared name; any other untracked directory, or a file beside it, is dirt", async () => {
+  const repo = baseRepo();
+  const inner = join(repo, "vault", "zone");
+  mkdirSync(inner, { recursive: true });
+  fixtureGit(inner, "init", "--initial-branch=main");
+  put(inner, "z.txt", "zone\n");
+  fixtureGit(inner, "add", ".");
+  fixtureGit(inner, "commit", "-m", "zone");
+
+  expect(await stateOf(repo), "undeclared").toMatchObject({ untracked: 1, nested: [] });
+  expect(await stateOf(repo, ["vault/zone"])).toMatchObject({ untracked: 0, nested: ["vault/zone"] });
+  // Neither a parent nor a sibling name stands for it: no broad skip.
+  expect(await stateOf(repo, ["vault"])).toMatchObject({ untracked: 1, nested: [] });
+  expect(await stateOf(repo, ["vault/zone2", "zone"])).toMatchObject({ untracked: 1, nested: [] });
+  // A file next to it in the same parent is listed on its own and is dirt, however the nested name is declared.
+  put(repo, "vault/note.md", "filed\n");
+  expect(await stateOf(repo, ["vault/zone"])).toMatchObject({ untracked: 1, nested: ["vault/zone"] });
+  // The nested checkout's own dirt is not this repository's: it is verified as its own repository.
+  put(inner, "dirty.txt", "d\n");
+  expect(await stateOf(repo, ["vault/zone"])).toMatchObject({ untracked: 1 });
+  expect(await stateOf(inner)).toMatchObject({ untracked: 1 });
+});
+
+test("a checkout whose index cannot vouch for its files is refused before it is called clean: assume-unchanged and skip-worktree entries hiding an edit, sparse and split indexes", async () => {
+  // git's own status calls an edit under either flag clean, which is exactly what a clean proof must not take on trust.
+  const assumed = baseRepo();
+  fixtureGit(assumed, "update-index", "--assume-unchanged", "a.txt");
+  put(assumed, "a.txt", "edited behind the index's back\n");
+  expect(fixtureGit(assumed, "status", "--porcelain"), "git itself says clean").toBe("");
+  expect(await caught(() => stateOf(assumed))).toMatchObject({ code: "repo-index-flags", path: "a.txt" });
+  // With the flag cleared the same edit is seen as dirt.
+  fixtureGit(assumed, "update-index", "--no-assume-unchanged", "a.txt");
+  expect(await stateOf(assumed)).toMatchObject({ changed: 1 });
+
+  const skipped = baseRepo();
+  fixtureGit(skipped, "update-index", "--skip-worktree", "dir/c.txt");
+  put(skipped, "dir/c.txt", "edited under skip-worktree\n");
+  expect(fixtureGit(skipped, "status", "--porcelain"), "git itself says clean").toBe("");
+  expect(await caught(() => stateOf(skipped))).toMatchObject({ code: "repo-index-flags", path: "dir/c.txt" });
+  // The flag on an UNCHANGED file is refused as well: a clean answer is not given for an index that no longer vouches. (git's own pathspec
+  // skips a skip-worktree entry, so `checkout HEAD -- path` cannot restore it: HEAD's bytes are written back by hand, with the flag left set.)
+  put(skipped, "dir/c.txt", "c\n")
+  expect(fixtureGit(skipped, "ls-files", "-v", "dir/c.txt"), "the flag is still set").toBe("S dir/c.txt");
+  expect(await caught(() => stateOf(skipped))).toMatchObject({ code: "repo-index-flags" });
+
+  // A sparse checkout is skip-worktree entries for everything outside the cone.
+  const sparse = baseRepo();
+  put(sparse, "other/x.txt", "outside the cone\n");
+  fixtureGit(sparse, "add", "other/x.txt");
+  fixtureGit(sparse, "commit", "-m", "another directory");
+  fixtureGit(sparse, "sparse-checkout", "set", "--cone", "dir");
+  expect(existsSync(join(sparse, "other/x.txt")), "left the working tree").toBe(false);
+  expect(fixtureGit(sparse, "status", "--porcelain"), "git itself says clean").toBe("");
+  expect(await caught(() => stateOf(sparse))).toMatchObject({ code: "repo-index-flags" });
+
+  // A split index keeps its entries in a second file: the one this reader sees is not all of it, so nothing is inferred.
+  const split = baseRepo();
+  fixtureGit(split, "update-index", "--split-index");
+  expect(await caught(() => stateOf(split))).toMatchObject({ code: "repo-index-state" });
+  fixtureGit(split, "update-index", "--no-split-index");
+  expect(await stateOf(split)).toMatchObject({ changed: 0, untracked: 0 });
+
+  // None of the looks wrote the index.
+  const indexBefore = sha256Hex(readFileSync(join(assumed, ".git/index")));
+  await stateOf(assumed);
+  expect(sha256Hex(readFileSync(join(assumed, ".git/index")))).toBe(indexBefore);
+});
+
+test("a gitlink or submodule is refused by the state read unless it is exactly a declared nested checkout; a clean tracked link is as the snapshot has it", async () => {
+  const repo = baseRepo();
+  const inner = join(repo, "vault", "zone");
+  mkdirSync(inner, { recursive: true });
+  fixtureGit(inner, "init", "--initial-branch=main");
+  put(inner, "z.txt", "zone\n");
+  fixtureGit(inner, "add", ".");
+  fixtureGit(inner, "commit", "-m", "zone");
+  fixtureGit(repo, "add", "vault/zone");
+  fixtureGit(repo, "commit", "-m", "records the zone as a gitlink");
+
+  expect(await caught(() => stateOf(repo)), "undeclared").toMatchObject({ code: "repo-submodule", path: "vault/zone" });
+  expect(await caught(() => stateOf(repo, ["vault"])), "a parent name is not it").toMatchObject({ code: "repo-submodule" });
+  expect(await caught(() => stateOf(repo, ["vault/zone2"])), "nor a sibling").toMatchObject({ code: "repo-submodule" });
+  expect(await stateOf(repo, ["vault/zone"])).toMatchObject({ changed: 0, untracked: 0 });
+
+  const linked = baseRepo();
+  symlinkSync("a.txt", join(linked, "link"));
+  fixtureGit(linked, "add", "link");
+  fixtureGit(linked, "commit", "-m", "a link");
+  expect(await stateOf(linked), "left as HEAD has it").toMatchObject({ changed: 0, untracked: 0 });
+  rmSync(join(linked, "link"));
+  symlinkSync("b.sh", join(linked, "link"));
+  expect(await stateOf(linked), "a changed link is dirt").toMatchObject({ changed: 1 });
+});
+
+/** A link committed at `name` pointing at `target` exactly as written. */
+function trackLink(repo: string, name: string, target: string): void {
+  mkdirSync(dirname(join(repo, name)), { recursive: true });
+  symlinkSync(target, join(repo, name));
+  fixtureGit(repo, "add", name);
+  fixtureGit(repo, "commit", "-m", `link ${name}`);
+}
+const refusal = async (repo: string, nested?: string[]) => {
+  const error = await caught(() => stateOf(repo, nested));
+  return error ? { code: error.code, path: error.path } : null;
+};
+
+test("a tracked link is supported only when it provably stays inside its own checkout: an outside link, a lexically-inside chain that leaves, an absolute one, a dangling one and a cycle are named, and nothing outside is touched", async () => {
+  const outside = scratch();
+  put(outside, "secret.md", "outside content\n");
+
+  // Supported: a link inside the checkout, to a file, up a directory, to a directory, and a chain of links.
+  const safe = baseRepo();
+  trackLink(safe, "link", "a.txt");
+  trackLink(safe, "dir/up", "../a.txt");
+  trackLink(safe, "docs", "dir");
+  trackLink(safe, "chain", "link");
+  trackLink(safe, "deep", "docs/c.txt");
+  expect(await stateOf(safe), "every link stays inside").toMatchObject({ changed: 0, untracked: 0 });
+
+  // The common vault: a link to a folder elsewhere on the machine, absolute or relative.
+  const absolute = baseRepo();
+  trackLink(absolute, "Projects", outside);
+  expect(await refusal(absolute)).toEqual({ code: "repo-symlink-outside", path: "Projects" });
+  const relativeOut = baseRepo();
+  trackLink(relativeOut, "Projects", relative(relativeOut, outside));
+  expect(await refusal(relativeOut)).toEqual({ code: "repo-symlink-outside", path: "Projects" });
+
+  // An absolute target is refused even when it names a file inside the checkout (the path is this machine's), and a target that does not exist
+  // is refused as outside, not as missing: nothing beyond the checkout's own root was looked at.
+  const absoluteInside = baseRepo();
+  trackLink(absoluteInside, "abs", join(absoluteInside, "a.txt"));
+  expect(await refusal(absoluteInside)).toEqual({ code: "repo-symlink-outside", path: "abs" });
+  const nowhere = baseRepo();
+  trackLink(nowhere, "gone", join(outside, "does", "not", "exist"));
+  expect(await refusal(nowhere)).toEqual({ code: "repo-symlink-outside", path: "gone" });
+  chmodSync(outside, 0);
+  try { expect(await refusal(absolute), "an outside directory nobody can read is not read").toEqual({ code: "repo-symlink-outside", path: "Projects" }); } finally { chmodSync(outside, 0o755); }
+
+  // Lexically inside, resolving outside: `a-via` reads as a file under the checkout, but goes through `z-hop`, which leaves it.
+  const chained = baseRepo();
+  trackLink(chained, "z-hop", relative(chained, outside));
+  trackLink(chained, "a-via", "z-hop/secret.md");
+  expect(await refusal(chained)).toEqual({ code: "repo-symlink-outside", path: "a-via" });
+  // ... and a path that leaves through a link and comes back is refused at the hop that left.
+  const back = baseRepo();
+  trackLink(back, "z-out", "..");
+  trackLink(back, "a-back", `z-out/${relative(dirname(back), back)}/a.txt`);
+  expect(await refusal(back)).toEqual({ code: "repo-symlink-outside", path: "a-back" });
+  // `..` past the top is refused with no link in the way, and so is the checkout's own git directory.
+  const above = baseRepo();
+  trackLink(above, "dir/x", "../../anything");
+  expect(await refusal(above)).toEqual({ code: "repo-symlink-outside", path: "dir/x" });
+  const git = baseRepo();
+  trackLink(git, "g", ".git/config");
+  expect(await refusal(git)).toEqual({ code: "repo-symlink-outside", path: "g" });
+
+  // Dangling, cyclic and through-a-file links cannot be resolved, so they are not vouched for.
+  const dangling = baseRepo();
+  trackLink(dangling, "dangling", "nowhere.md");
+  expect(await refusal(dangling)).toEqual({ code: "repo-symlink-unresolved", path: "dangling" });
+  const cycle = baseRepo();
+  trackLink(cycle, "c1", "c2");
+  trackLink(cycle, "c2", "c1");
+  expect(await refusal(cycle)).toEqual({ code: "repo-symlink-unresolved", path: "c1" });
+  const file = baseRepo();
+  trackLink(file, "f", "a.txt/x");
+  expect(await refusal(file)).toEqual({ code: "repo-symlink-unresolved", path: "f" });
+
+  // A link into a declared nested checkout is inside this one's root; a link into another repository outside it is not.
+  const outer = baseRepo();
+  const inner = join(outer, "vault", "zone");
+  mkdirSync(inner, { recursive: true });
+  fixtureGit(inner, "init", "--initial-branch=main");
+  put(inner, "z.txt", "zone\n");
+  fixtureGit(inner, "add", ".");
+  fixtureGit(inner, "commit", "-m", "zone");
+  trackLink(outer, "zl", "vault/zone/z.txt");
+  expect(await stateOf(outer, ["vault/zone"])).toMatchObject({ changed: 0, untracked: 0 });
+  const sibling = baseRepo();
+  trackLink(outer, "sibling", relative(outer, sibling));
+  expect(await refusal(outer, ["vault/zone"])).toEqual({ code: "repo-symlink-outside", path: "sibling" });
+});
+
+test("clean is asked with git's defaults pinned: a checkout configured to overlook the executable bit, the link type or a stat field does not read as clean", async () => {
+  // The executable bit.
+  const mode = baseRepo();
+  fixtureGit(mode, "config", "core.fileMode", "false");
+  chmodSync(join(mode, "b.sh"), 0o644);
+  expect(fixtureGit(mode, "status", "--porcelain"), "git, as the checkout configures it, says clean").toBe("");
+  expect(await stateOf(mode)).toMatchObject({ changed: 1 });
+
+  // The link type: a regular file holding a link's text, which `core.symlinks=false` takes for the link.
+  const links = baseRepo();
+  trackLink(links, "link", "a.txt");
+  fixtureGit(links, "config", "core.symlinks", "false");
+  rmSync(join(links, "link"));
+  writeFileSync(join(links, "link"), "a.txt");
+  expect(await stateOf(links)).toMatchObject({ changed: 1 });
+
+  // A same-size edit that keeps the file's mtime changes only its ctime, which `core.checkStat=minimal` and `core.trustctime=false` do not look at.
+  const stat = baseRepo();
+  const edited = join(stat, "a.txt");
+  utimesSync(edited, new Date("2020-01-01T00:00:00Z"), new Date("2020-01-01T00:00:00Z"));
+  fixtureGit(stat, "update-index", "--refresh");
+  fixtureGit(stat, "config", "core.checkStat", "minimal");
+  fixtureGit(stat, "config", "core.trustctime", "false");
+  // git compares times in whole seconds: the edit must not land in the second the index was refreshed in.
+  await Bun.sleep(1100);
+  const before = statSync(edited);
+  writeFileSync(edited, "ONE\n");
+  utimesSync(edited, before.atime, before.mtime);
+  expect(await stateOf(stat), "the content changed behind the stat fields the checkout looks at").toMatchObject({ changed: 1 });
+});
+
+test("the checkout's own core.excludesFile is the ignore file the state read uses, as the sync's git does; the account's global one is only the fallback", async () => {
+  const repo = baseRepo();
+  const home = process.env.HOME!;
+  put(home, "global-ignore", "*.global\n");
+  writeFileSync(join(home, ".gitconfig"), `[core]\n\texcludesFile = ${join(home, "global-ignore")}\n`);
+  try {
+    put(repo, "x.global", "g\n");
+    expect(await stateOf(repo), "no setting of its own: the global file").toMatchObject({ untracked: 0 });
+    expect(await ignoredCount({ repo, maxGitOutputBytes: MAX })).toBe(1);
+
+    const local = join(scratch(), "local-ignore");
+    writeFileSync(local, "*.local\n");
+    fixtureGit(repo, "config", "core.excludesFile", local);
+    put(repo, "a.local", "l\n");
+    put(repo, "b.local", "l\n");
+    // git itself, with the global setting overridden by the checkout's, ignores the two .local files and sees the .global one as new.
+    expect(await stateOf(repo)).toMatchObject({ untracked: 1 });
+    expect(await ignoredCount({ repo, maxGitOutputBytes: MAX })).toBe(2);
+  } finally { rmSync(join(home, ".gitconfig")); }
+});
+
+test("an operation half done and a conflict are named; a program-starting config is refused before status runs", async () => {
+  const repo = baseRepo();
+  fixtureGit(repo, "checkout", "-q", "-b", "topic");
+  put(repo, "a.txt", "topic\n");
+  fixtureGit(repo, "commit", "-qam", "topic change");
+  fixtureGit(repo, "checkout", "-q", "main");
+  put(repo, "a.txt", "main\n");
+  fixtureGit(repo, "commit", "-qam", "main change");
+  expect(() => fixtureGit(repo, "merge", "topic")).toThrow();
+  expect(await stateOf(repo)).toMatchObject({ operation: "MERGE_HEAD", conflicted: 1 });
+
+  const unsafe = baseRepo();
+  fixtureGit(unsafe, "config", "core.fsmonitor", "/bin/true");
+  expect(await caught(() => stateOf(unsafe))).toMatchObject({ code: "repo-unsafe-config" });
+  expect(await caught(() => ignoredCount({ repo: unsafe, maxGitOutputBytes: MAX }))).toMatchObject({ code: "repo-unsafe-config" });
+  expect(await caught(() => stateOf(scratch()))).toMatchObject({ code: "repo-git-failed" });
+  const fresh = scratch();
+  fixtureGit(fresh, "init", "--initial-branch=main");
+  expect(await caught(() => stateOf(fresh))).toMatchObject({ code: "repo-head-unborn" });
+});
+
+test("a status that does not fit its output budget is refused, never read in part; the ignored count says when it cannot count", async () => {
+  const repo = baseRepo();
+  for (let n = 0; n < 40; n++) put(repo, `ignored-${n}.log`, "x\n");
+  put(repo, ".gitignore", "ignored*.log\n");
+  fixtureGit(repo, "add", ".gitignore");
+  fixtureGit(repo, "commit", "-m", "ignore");
+  expect(await ignoredCount({ repo, maxGitOutputBytes: MAX })).toBe(40);
+  expect(await ignoredCount({ repo, maxGitOutputBytes: 300 }), "more than the budget lists").toBeNull();
+  for (let n = 0; n < 40; n++) put(repo, `untracked-${n}.txt`, "x\n");
+  expect(await caught(() => repoState({ repo, maxGitOutputBytes: 400 }))).toMatchObject({ code: "repo-git-output" });
+});
+
+test("the account's own global ignores are honoured by the state read, as the sync honours them", async () => {
+  const repo = baseRepo();
+  const home = process.env.HOME!;
+  put(home, "global-ignore", ".DS_Store\n");
+  writeFileSync(join(home, ".gitconfig"), `[core]\n\texcludesFile = ${join(home, "global-ignore")}\n`);
+  try {
+    put(repo, ".DS_Store", "finder\n");
+    expect(await stateOf(repo)).toMatchObject({ untracked: 0 });
+    expect(await ignoredCount({ repo, maxGitOutputBytes: MAX })).toBe(1);
+  } finally { rmSync(join(home, ".gitconfig")); }
+  expect(await stateOf(repo), "without that config it is untracked").toMatchObject({ untracked: 1 });
+});
+
+test("relationOf tells the same commit, ahead, behind, divergent and an absent one apart, and fetches nothing", async () => {
+  const upstream = baseRepo();
+  const local = join(scratch(), "local");
+  fixtureGit(upstream, "clone", "-q", upstream, local);
+  const base = fixtureGit(local, "rev-parse", "HEAD");
+  const relation = (head: string, revision: string, repo = local) => relationOf({ repo, head, revision, maxGitOutputBytes: MAX });
+  expect(await relation(base, base)).toBe("same");
+
+  put(local, "own.txt", "own\n");
+  fixtureGit(local, "add", "own.txt");
+  fixtureGit(local, "commit", "-m", "own");
+  const own = fixtureGit(local, "rev-parse", "HEAD");
+  expect(await relation(own, base), "head contains the revision").toBe("ahead");
+  expect(await relation(base, own), "the revision contains head").toBe("behind");
+
+  fixtureGit(local, "checkout", "-q", "-b", "side", base);
+  put(local, "side.txt", "side\n");
+  fixtureGit(local, "add", "side.txt");
+  fixtureGit(local, "commit", "-m", "side");
+  const side = fixtureGit(local, "rev-parse", "HEAD");
+  expect(await relation(own, side)).toBe("divergent");
+
+  put(upstream, "later.txt", "later\n");
+  fixtureGit(upstream, "add", "later.txt");
+  fixtureGit(upstream, "commit", "-m", "later");
+  const later = fixtureGit(upstream, "rev-parse", "HEAD");
+  expect(await relation(own, later), "not in this object store").toBe("missing");
+  expect(existsSync(join(local, ".git/FETCH_HEAD"))).toBe(false);
+  expect(await caught(() => relation("main", base))).toMatchObject({ code: "repo-revision-invalid" });
+});
+
+test("a ref resolves to its commit or to nothing, a ref name that is not one is refused, and the common git directory is the real one", async () => {
+  const repo = baseRepo();
+  const head = fixtureGit(repo, "rev-parse", "HEAD");
+  expect(await revisionOf({ repo, ref: "refs/heads/main", maxGitOutputBytes: MAX })).toBe(head);
+  expect(await revisionOf({ repo, ref: "refs/remotes/origin/main", maxGitOutputBytes: MAX })).toBeNull();
+  for (const bad of ["main", "refs/heads/../x", "refs/heads/a b", "--help"]) {
+    expect(await caught(() => revisionOf({ repo, ref: bad, maxGitOutputBytes: MAX })), bad).toMatchObject({ code: "repo-invalid" });
+  }
+  expect(await commonDirOf({ repo, maxGitOutputBytes: MAX })).toBe(realpathSync(join(repo, ".git")));
 });

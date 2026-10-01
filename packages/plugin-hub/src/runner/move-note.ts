@@ -4,6 +4,7 @@ import { MoveNoteRefused } from "../store/conversations.ts";
 import { copiesOf, pendingNotesOf, readMove, type MoveNotice, type MoveRow } from "../store/moves.ts";
 import { nativeSideOf } from "./move-export.ts";
 import { isRecord, sha256 } from "./move-handoff.ts";
+import { sealedRepositories } from "./move-workspace.ts";
 
 /**
  * THE RELOCATION NOTE: what the model is told, once, with the first real input after its conversation moved.
@@ -26,9 +27,55 @@ import { isRecord, sha256 } from "./move-handoff.ts";
  */
 export const NOTE_VERSION = 1;
 
+/**
+ * Version 2 is the note of a move whose manifest sealed `workspace` or `config` (`move-export.ts`): it says what was VERIFIED (repositories at an exact
+ * commit, the launch configuration compared) as well as what moved. It is chosen by the manifest alone, so a move sealed before it existed keeps
+ * version 1, byte for byte, and the digest the store holds for it still matches. Neither text ever carries a path, a value or a prompt.
+ */
+export const NOTE_VERSION_VERIFIED = 2;
+
 const pathOf = (side: NativeSide | null): string | null => (side ? side.cwd : null);
 
+function relocationNoteVerified(move: MoveRow): string {
+  const carried = move.manifest?.native_export;
+  const was = pathOf(nativeSideOf(isRecord(carried) ? carried.from : null));
+  const now = pathOf(nativeSideOf(move.dest_facts?.native));
+  const lines = [
+    `[hub] RELOCATION NOTE ${NOTE_VERSION_VERIFIED}, begin. The hub moved this conversation from machine ${move.source_machine} (runner ${move.source_runner}) to machine ${move.dest_machine} (runner ${move.dest_runner}).`,
+    `It is the same conversation in the same native session (${move.native_session}); nothing was started fresh and nothing was replayed.`,
+  ];
+  if (was !== null && now !== null) {
+    lines.push(
+      `Your working directory changed from ${was} to ${now}. Absolute paths earlier in this conversation's transcript name the old machine and directory: they were NOT rewritten, ` +
+      `so do not assume a file at an old absolute path exists here, and use the paths you are given now.`,
+    );
+  } else {
+    lines.push("The engine had not started this conversation before it moved, so there is no earlier transcript and no old directory.");
+  }
+  const repositories = sealedRepositories(move.manifest?.workspace);
+  if (repositories) {
+    lines.push(
+      "These repositories were verified and NOT carried: each was clean on its declared branch at exactly the commit named, on the old machine when it was handed off and here, under the hub's sync lock, right before the session was imported:",
+      ...repositories.map(one => `- ${one.id}: commit ${one.head.slice(0, 12)} on branch ${one.branch}; not carried: ${one.ignored === null ? "many" : one.ignored} ignored entries and ${one.withheld} untracked credential-shaped files stayed on the old machine.`),
+    );
+  } else {
+    lines.push("No repository, vault or shared-zone checkout is declared for this conversation, so none was verified.");
+  }
+  if (isRecord(move.manifest?.config)) {
+    lines.push(
+      "The effective launch configuration (settings, MCP servers and instructions, each as it is read for a launch) was compared between the two machines when the move was handed off, again before the import and again when this machine began serving, and was equal each time. " +
+      "Not compared, and each machine's own: the engine login and the hub's own tool server.",
+    );
+  }
+  lines.push(
+    "Only the session's transcript moved. Nothing else of the old machine did (no file outside the repositories above, no ignored file, no other file of its tree), so do not assume that anything else filed or edited there is available here.",
+    "[hub] RELOCATION NOTE, end. This is not a request: take it into account and answer the message that follows.",
+  );
+  return lines.join("\n");
+}
+
 export function relocationNote(move: MoveRow): string {
+  if (isRecord(move.manifest?.workspace) || isRecord(move.manifest?.config)) return relocationNoteVerified(move);
   const carried = move.manifest?.native_export;
   const was = pathOf(nativeSideOf(isRecord(carried) ? carried.from : null));
   const now = pathOf(nativeSideOf(move.dest_facts?.native));

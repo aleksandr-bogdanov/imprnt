@@ -1,8 +1,9 @@
 import { agentsFor } from "../registry/entries.ts";
 import type { Registry } from "../registry/load.ts";
 import { readMove, serveMove, unblockMove, type LoadedEvidence } from "../store/moves.ts";
+import { configDifference } from "./move-config.ts";
 import {
-  done, isRecord, raise, sameJson, sayOnce, sha256, waiting, who,
+  done, isRecord, raise, sameJson, sayOnce, sha256, stableText, waiting, who,
   type HandoffStep, type HandoffWorld,
 } from "./move-handoff.ts";
 import { moveNotice, noteDigestOf } from "./move-note.ts";
@@ -32,7 +33,7 @@ import { profileDifference, profileOf } from "./move-profile.ts";
 /** The block codes this side sets at serve and clears itself. */
 export const SERVE_CODES: ReadonlySet<string> = new Set([
   "serve_binding_mismatch", "serve_profile_mismatch", "serve_capabilities_changed", "serve_loaded_mismatch", "serve_placement_changed",
-  "serve_import_unavailable", "serve_loaded_invalid",
+  "serve_import_unavailable", "serve_loaded_invalid", "serve_config_changed", "serve_config_unverifiable",
 ]);
 
 /** What a serve needs beyond the handoff's world: the registry as loaded, whether the agent's loop is up, and the person's language. */
@@ -42,13 +43,6 @@ export interface ServeWorld extends HandoffWorld {
   /** A loop for the agent is running on this runner, on a registry this runner measured current. */
   serving(agent: string): boolean;
   language(person: string): "en" | "ru";
-}
-
-/** A value's identity as text, whatever order its keys came in. */
-function stableText(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableText).join(",")}]`;
-  if (isRecord(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableText(value[key])}`).join(",")}}`;
-  return JSON.stringify(value) ?? "null";
 }
 
 const BLOCKS: Record<string, string> = {
@@ -78,8 +72,15 @@ export async function serveDestination(w: ServeWorld, id: string): Promise<Hando
   const entry = agentsFor(seen.registry, { runner: w.runner }).find(one => one.id === move.agent);
   const profile = profileOf(seen.registry, move.agent);
   const build = await w.build(move.agent);
+  // THE EFFECTIVE CONFIGURATION the move sealed is read again from the registry just loaded, as a launch here would read it. A launch's
+  // inputs are no longer compared by the preflight alone: whatever changed since the import (a file edited, an import appearing) is refused
+  // here, by section name, and clears when the facts change. A manifest that sealed none (an older one) has nothing to compare, unless the destination
+  // recorded its configuration for the move (`dest_facts.effective`): then nothing was sealed that it could be compared with, and that is refused (`not-sealed`).
+  const sealed = move.manifest.config;
+  const unsealed = sealed === undefined && isRecord(move.dest_facts.effective);
+  const config = sealed !== undefined && w.effectiveConfig ? w.effectiveConfig(move, seen.registry) : undefined;
 
-  const fingerprint = sha256(stableText({ digest: seen.digest, profile, capabilities: build?.capabilities ?? null, present: entry !== undefined }));
+  const fingerprint = sha256(stableText({ digest: seen.digest, profile, capabilities: build?.capabilities ?? null, present: entry !== undefined, config: config ?? null }));
   if (block && !storeNote) {
     if (isRecord(block.detail) && block.detail.fp === fingerprint) return waiting("blocked", { by: "dest", code: block.code });
     await unblockMove(w.store, id, who(w), block.code);
@@ -91,6 +92,13 @@ export async function serveDestination(w: ServeWorld, id: string): Promise<Hando
   if (differs.length > 0) return raise(w, id, "serve_profile_mismatch", { sections: differs.slice(0, 16), fp: fingerprint });
   if (!sameJson(build.capabilities, move.dest_facts.capabilities)) {
     return raise(w, id, "serve_capabilities_changed", { recorded: String((move.dest_facts.capabilities as { version?: unknown }).version ?? "unknown"), now: build.version, fp: fingerprint });
+  }
+  if (unsealed) return raise(w, id, "serve_config_unverifiable", { reason: "not-sealed", fp: fingerprint });
+  if (sealed !== undefined) {
+    const why = !w.effectiveConfig ? "no-verifier" : !config ? "registry" : "unverifiable" in config ? config.unverifiable : null;
+    if (why !== null) return raise(w, id, "serve_config_unverifiable", { reason: why, fp: fingerprint });
+    const changed = configDifference(sealed, config);
+    if (changed.length > 0) return raise(w, id, "serve_config_changed", { sections: changed.slice(0, 16), fp: fingerprint });
   }
 
   const loaded: LoadedEvidence = {

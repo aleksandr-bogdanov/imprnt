@@ -7,9 +7,12 @@
 // the registry editor, judged inside its lock, and states a receipt only for a file that still gives the agent the recorded profile (conflict,
 // changed profile, unrelated edit: named blocks and a refreshed receipt); the relocation note is composed from the move alone, hashes to what serve
 // declared (and says only that the transcript moved: it promises no sync), rides a feed through the store's own journal and is acknowledged only on evidence that
-// the attempt was received; a dependency the move does not carry or verify (a repository, a vault, a shared-zone checkout, a file found in the person's own
-// tree, a default instruction file at the source or the destination) and a configuration file the launch reads and nothing compares are named
-// refusals BEFORE anything is read or stored (no acknowledgement clears one), and a profile the destination recorded that is not the source's is one too;
+// the attempt was received; a dependency the move neither carries nor verifies (a repository either machine's sync does not keep in step, a vault nothing
+// covers, a file found in the person's own tree) and, where a world compares nothing, a configuration file the launch reads, are named refusals BEFORE
+// anything is read or stored (no acknowledgement clears one), and a profile the destination recorded that is not the source's is one too; where the
+// runner's own modules are bound (`bindReal`) the effective launch configuration is compared exactly (a changed noncredential env value is a named
+// mismatch, a drift before the import or the serve is a named block) and the declared repositories are verified under the sync's lock (a dirty, ahead or
+// behind destination is a named block that clears when it is repaired, never repaired by the move);
 // the watch looks at a destination's moves without placing a fence and removes the copies the store owes a cleanup from `copiesDueForCleanup`; and a
 // REAL runner whose destination is offline waits (no export, no fallback, no second child, the queued input untouched), exports once the
 // destination has recorded its preflight, and keeps the native session id (also across a withdrawal, where it resumes the same id).
@@ -26,17 +29,21 @@ import { startCluster, until, type Cluster } from "./helpers/cluster.ts"
 import { CHAT, DOOR, PERSON, insertInbound, stageHub, withLaunchTree } from "./helpers/hub-fixture.ts"
 import { DST, OWNER, SRC, moveStage, sha, type MoveFixture } from "./helpers/move-store-stage.ts"
 import { Crash, PROVEN, drainOnly, fakePort, handoffWorld, lockChain, type Fake, type Locks } from "./helpers/move-handoff-stage.ts"
-import { writeRegistry, type AgentSpec, type PersonSpec, type RepositorySpec, type ZoneSpec } from "./helpers/registry.ts"
+import { stageHousehold, type Household } from "./helpers/move-workspace-stage.ts"
+import { writeRegistry, type AgentSpec, type PersonSpec, type RepositorySpec, type RunSpec, type ZoneSpec } from "./helpers/registry.ts"
 import { registerMoves, type RegistryMovesContext } from "../src/hub/moves.ts"
 import { listAgents } from "../src/registry/entries.ts"
 import { Registry, loadRegistry, registryDigest } from "../src/registry/load.ts"
+import { configDifference, configDriftOf, effectiveConfigOf } from "../src/runner/move-config.ts"
 import { exportSource } from "../src/runner/move-export.ts"
 import { cleanupCopies, importDestination, prepareDestination } from "../src/runner/move-import.ts"
 import { importedBy, moveNotice, noteBlock, notesOwedTo, noteDigestOf, relocationNote } from "../src/runner/move-note.ts"
 import { configReferences, profileDifference, profileOf } from "../src/runner/move-profile.ts"
-import { who, type ScopeProof } from "../src/runner/move-handoff.ts"
+import { sha256, stableText, who, type ScopeProof } from "../src/runner/move-handoff.ts"
 import { defaultInstructionsOf, scopeOf, type Look, type ScopeFs } from "../src/runner/move-scope.ts"
 import { serveDestination, type ServeWorld } from "../src/runner/move-serve.ts"
+import { RECHECK, observeDest, observeSource, workspaceFactsOf } from "../src/runner/move-workspace.ts"
+import { syncLockKey } from "../src/sync/run.ts"
 import { createFences, watchMoves, type DrainStep, type MoveWatch } from "../src/runner/move.ts"
 import { runRunner } from "../src/runner/run.ts"
 import { MoveNoteRefused, markFeedIntent, markProgress } from "../src/store/conversations.ts"
@@ -72,6 +79,8 @@ interface MoveRegistryOptions {
   person?: Record<string, unknown>
   agent?: Record<string, unknown>
   zone?: ZoneSpec
+  /** More `[[run]]` entries: the sync entries of a household. */
+  run?: RunSpec[]
 }
 function writeMoveRegistry(dir: string, agent: string, options: MoveRegistryOptions = {}): string {
   return writeRegistry(dir, {
@@ -85,6 +94,7 @@ function writeMoveRegistry(dir: string, agent: string, options: MoveRegistryOpti
       { id: SRC.runner, kind: "runner", machine: SRC.machine, schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 512 },
       { id: DST.runner, kind: "runner", machine: DST.machine, schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 512 },
       { id: "runner-third", kind: "runner", machine: SRC.machine, schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 512 },
+      ...(options.run ?? []),
     ],
     ...(options.repositories ? { repositories: options.repositories } : {}),
     ...(options.zone ? { zone: options.zone } : {}),
@@ -99,7 +109,7 @@ interface Rig { s: MoveFixture; t: TopicRow; move: MoveRow; agent: string; dir: 
  * A started conversation of an agent the registry file names, a move requested, both runners registered, a native port both sides share, and
  * the worlds bound to that registry: the destination's profile and the source's are what the file says, and the scope is the file's.
  */
-async function rig(options: { registry?: Parameters<typeof writeMoveRegistry>[2] } = {}): Promise<Rig> {
+async function rig(options: { registry?: Parameters<typeof writeMoveRegistry>[2]; real?: boolean } = {}): Promise<Rig> {
   const s = await stage()
   await s.fleet()
   const agent = `t-${crypto.randomUUID()}`
@@ -115,7 +125,34 @@ async function rig(options: { registry?: Parameters<typeof writeMoveRegistry>[2]
   src.w.scope = row => scopeOf(loadRegistry(file), row)
   src.w.sourceProfile = row => profileOf(loadRegistry(file), row.agent)
   dst.w.profile = row => ({ move: row.id, agent: row.agent, runner: row.dest_runner, machine: row.dest_machine, profile: profileOf(loadRegistry(file), row.agent)!, basis: "test: the registry file" })
-  return { s, t, move, agent, dir, file, locks, fake, src, dst }
+  const made: Rig = { s, t, move, agent, dir, file, locks, fake, src, dst }
+  if (options.real) bindReal(made)
+  return made
+}
+
+/**
+ * The worlds of a rig bound to the runner's own modules, each side reading the registry file as ITS machine does (its tree, its placements): the
+ * effective launch configuration, the declared repositories looked at under the sync's lock, and the scope. What `run.ts` supplies, without a runner.
+ */
+function bindReal(r: Rig): void {
+  const view = (machine: string) => loadRegistry(r.file, { machine })
+  const storeUrl = r.s.tool.url
+  const configOf = (machine: string) => (row: MoveRow, registry?: unknown) => effectiveConfigOf((registry as Registry | undefined) ?? view(machine), row.agent, row.id)
+  r.src.w.effectiveConfig = configOf(SRC.machine)
+  r.dst.w.effectiveConfig = configOf(DST.machine)
+  r.src.w.workspaceFacts = row => workspaceFactsOf(view(SRC.machine), row)
+  r.dst.w.workspaceFacts = row => workspaceFactsOf(view(DST.machine), row)
+  r.src.w.sourceWorkspace = row => observeSource({ registry: view(SRC.machine), storeUrl }, row)
+  r.dst.w.destWorkspace = row => observeDest({ registry: view(DST.machine), storeUrl }, row)
+  r.src.w.scope = row => scopeOf(view(SRC.machine), row)
+  r.src.w.sourceProfile = row => profileOf(view(SRC.machine), row.agent)
+}
+
+/** A rig whose person has the synthetic household (`stageHousehold`): a vault with the shared zone and a project inside it, kept in step on both machines. */
+async function householdRig(extra: MoveRegistryOptions = {}): Promise<Rig & { h: Household }> {
+  const h = stageHousehold(scratch())
+  const r = await rig({ real: true, registry: { person: h.registry.person, repositories: h.registry.repositories, zone: h.registry.zone, run: h.registry.run, ...extra } })
+  return { ...r, h }
 }
 
 /** The preflight, the drain, the export, the import and the activation: the move at `activated`, the gate still open. */
@@ -134,7 +171,7 @@ const hubOf = (r: Rig, machine = "pi"): RegistryMovesContext => ({ store: r.s.hu
 /** What the destination's runner hands the serve: the file as it stands, read once, and an agent that is (or is not) up. */
 const serveOf = (r: Rig, over: Partial<ServeWorld> = {}): ServeWorld => ({
   ...r.dst.w,
-  loaded: () => ({ digest: registryDigest(r.file), registry: loadRegistry(r.file) }),
+  loaded: () => ({ digest: registryDigest(r.file), registry: loadRegistry(r.file, { machine: DST.machine }) }),
   serving: () => true,
   language: () => "en",
   ...over,
@@ -414,15 +451,15 @@ test("RT-6: the import of a move records what a resumed turn is checked against,
 // what the move does not carry, and a profile that is not the source's
 // ---------------------------------------------------------------------------------------------------------------------
 
-test("RT-7: a repository the move does not carry is refused BEFORE anything is read, stored or released, by name; the refusal clears when the dependency is gone", async () => {
+test("RT-7: a repository neither machine's sync keeps in step is refused BEFORE anything is read, stored or released, by name; the refusal clears when the dependency is gone", async () => {
   const dir = scratch()
   const repository: RepositorySpec = { id: "work", person: "p1", path: join(dir, "work"), remote: "origin", branch: "main" }
   const r = await rig({ registry: { repositories: [repository] } })
   expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done" })
   await drainOnly(r.s, r.move)
 
-  expect(scopeOf(loadRegistry(r.file), await r.s.reread(r.move))).toMatchObject({ refused: "workspace_carriage_required", detail: { repositories: ["work"], count: 1 } })
-  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "blocked", reason: "scope_unsupported", detail: { reason: "workspace_carriage_required", repositories: ["work"] } })
+  expect(scopeOf(loadRegistry(r.file), await r.s.reread(r.move))).toMatchObject({ refused: "repository_unsynced", detail: { repositories: ["work"], machine: SRC.machine } })
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "blocked", reason: "scope_unsupported", detail: { reason: "repository_unsynced", repositories: ["work"] } })
   expect(r.fake.log.exports, "nothing was read").toBe(0)
   expect(await r.s.count("move_blob where move_id = $1", r.move.id), "nothing was stored").toBe(0)
   expect(await r.s.reread(r.move)).toMatchObject({ stage: "waiting", manifest: null, block: { code: "scope_unsupported", by: "source" } })
@@ -453,13 +490,13 @@ test("RT-8: a destination profile that is not the source's is refused by section
   expect(profileDifference({ version: 1 }, { version: 2 })).toEqual(["version"])
 })
 
-test("RT-7b: a vault or a shared zone is a dependency nothing here proves: refused by name BEFORE anything is read, stored or released, nothing acknowledges it, and a person that declares none is not held", async () => {
+test("RT-7b: a vault no declared repository covers, and a zone or project no sync keeps in step, are refused by name BEFORE anything is read, stored or released, nothing acknowledges them, and a person that declares none is not held", async () => {
   const r = await rig()
   expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done" })
   await drainOnly(r.s, r.move)
   const vault = join(r.dir, "p1", "keep")
 
-  // A vault: the hub's git sync is the only thing that would bring what the agent filed there, and nothing here awaits it, bounds it or reads it back.
+  // A vault no declared repository covers: nothing keeps what the agent filed there in step, and nothing here could verify it.
   writeMoveRegistry(r.dir, r.agent, { person: { vault } })
   expect(scopeOf(loadRegistry(r.file), await r.s.reread(r.move))).toEqual({ refused: "dependency_unverified", detail: { dependencies: ["vault"] } })
   expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "blocked", reason: "scope_unsupported", detail: { reason: "dependency_unverified", dependencies: ["vault"] } })
@@ -470,17 +507,16 @@ test("RT-7b: a vault or a shared zone is a dependency nothing here proves: refus
   expect(await r.s.count("move_blob where move_id = $1", r.move.id), "nothing was stored").toBe(0)
   expect(await r.s.reread(r.move)).toMatchObject({ stage: "waiting", manifest: null, block: { code: "scope_unsupported", by: "source" } })
 
-  // A zone checkout (always inside a vault) is named beside it.
+  // A zone checkout (always inside a vault) that no sync keeps in step is named, and so is a project beside it: nothing is skipped.
   const zoned = {
     person: { vault }, zone: { mount: "zone", remote: "origin", url: "file:///srv/zone.git" },
     repositories: [{ id: "zone", person: "p1", path: join(vault, "vault", "zone"), remote: "origin", branch: "main", zone: true }],
   }
   writeMoveRegistry(r.dir, r.agent, zoned)
-  expect(scopeOf(loadRegistry(r.file), await r.s.reread(r.move))).toEqual({ refused: "dependency_unverified", detail: { dependencies: ["vault", "zone"] } })
-  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "blocked", reason: "scope_unsupported", detail: { dependencies: ["vault", "zone"] } })
-  // A repository beside them is the workspace refusal, and names the synced dependencies too.
+  expect(scopeOf(loadRegistry(r.file), await r.s.reread(r.move))).toEqual({ refused: "repository_unsynced", detail: { repositories: ["zone"], machine: SRC.machine } })
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "blocked", reason: "scope_unsupported", detail: { reason: "repository_unsynced", repositories: ["zone"] } })
   writeMoveRegistry(r.dir, r.agent, { ...zoned, repositories: [...zoned.repositories, { id: "work", person: "p1", path: join(r.dir, "work"), remote: "origin", branch: "main" }] })
-  expect(scopeOf(loadRegistry(r.file), await r.s.reread(r.move))).toMatchObject({ refused: "workspace_carriage_required", detail: { repositories: ["work"], count: 1, dependencies: ["vault", "zone"] } })
+  expect(scopeOf(loadRegistry(r.file), await r.s.reread(r.move))).toEqual({ refused: "repository_unsynced", detail: { repositories: ["work", "zone"], machine: SRC.machine } })
   expect(r.fake.log.exports).toBe(0)
 
   // The registry no longer declares any of them: the source's own block clears and it releases, with a proof that says only what is known.
@@ -565,7 +601,7 @@ test("RT-7d: a tree that cannot be looked at, or whose listing was cut, is never
   expect(proofOf(scopeOf(loadRegistry(r.file), row, looking({}))).basis, "and an absent one is a proof").toContain("the person's tree is absent")
 })
 
-test("RT-7e: the default instruction files the launch would read are a named gate on the source: found by name, never read or exported, and not asked about for a person that lists its own or for the triage master", async () => {
+test("RT-7e: the default instruction files the launch would read are no scope refusal (their content is part of the compared configuration), are found by name where a gate still asks, and are ordinary entries for a person that lists its own", async () => {
   const r = await rig()
   expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done" })
   await drainOnly(r.s, r.move)
@@ -574,18 +610,12 @@ test("RT-7e: the default instruction files the launch would read are a named gat
   mkdirSync(tree)
   const scope = async () => scopeOf(loadRegistry(r.file), await r.s.reread(r.move))
 
+  // They are neither counted as content nor named: what they say is compared where the configuration is (`move-config.ts`), never exported.
   writeFileSync(join(tree, "CLAUDE.md"), `standing rules ${secret}`)
-  expect(await scope()).toEqual({ refused: "dependency_unverified", detail: { dependencies: ["instruction:CLAUDE.md"] } })
   writeFileSync(join(tree, "CLAUDE.local.md"), "private rules")
-  const both = await scope()
-  expect(both).toEqual({ refused: "dependency_unverified", detail: { dependencies: ["instruction:CLAUDE.md", "instruction:CLAUDE.local.md"] } })
-  expect(JSON.stringify(both), "names only: never a content or a path").not.toMatch(/sk-test|private rules|standing rules|\//)
-  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({
-    state: "blocked", reason: "scope_unsupported", detail: { reason: "dependency_unverified", dependencies: ["instruction:CLAUDE.md", "instruction:CLAUDE.local.md"] },
-  })
-  expect(r.fake.log.exports, "nothing was read").toBe(0)
-  expect(await r.s.count("move_blob where move_id = $1", r.move.id), "nothing was stored").toBe(0)
-  expect(await r.s.reread(r.move)).toMatchObject({ stage: "waiting", manifest: null, block: { code: "scope_unsupported", by: "source" } })
+  const proof = proofOf(await scope())
+  expect(proof.carries).toBe("native-only")
+  expect(JSON.stringify(proof), "no content, no name of a file").not.toMatch(/sk-test|private rules|standing rules|CLAUDE/)
 
   // What counts as there is what `existsSync` counts: anything at the path, a directory or a file the look failed on included.
   const registry = loadRegistry(r.file)
@@ -606,12 +636,10 @@ test("RT-7e: the default instruction files the launch would read are a named gat
   writeMoveRegistry(r.dir, r.agent, { agent: { role: "triage" } })
   expect(defaultInstructionsOf(loadRegistry(r.file), r.agent, looking({ [at]: { kind: "file" } }))).toEqual([])
 
-  // Gone from the tree: the source's own block clears and it releases, with a proof that says what was looked at.
+  // With the default files back, the source's scope proof stands and it releases (a world that compares the configuration says more: RT-14).
   writeMoveRegistry(r.dir, r.agent)
-  rmSync(join(tree, "CLAUDE.md"))
-  rmSync(join(tree, "CLAUDE.local.md"))
   expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "done", reason: "released" })
-  expect(await r.s.reread(r.move)).toMatchObject({ stage: "source_released", block: null, manifest: { scope: { basis: expect.stringContaining("no default instruction file exists") } } })
+  expect(await r.s.reread(r.move)).toMatchObject({ stage: "source_released", block: null, manifest: { scope: { carries: "native-only", basis: expect.stringContaining("the person's tree is empty") } } })
 })
 
 test("RT-7f: the destination does not record a preflight while a default instruction file would be read there (by name, never a path or content), cannot-tell is the same refusal, and the block clears when the file is gone", async () => {
@@ -635,7 +663,7 @@ test("RT-7f: the destination does not record a preflight while a default instruc
   expect(await unsure.s.reread(unsure.move)).toMatchObject({ dest_ready_at: null, dest_facts: null })
 })
 
-test("RT-8b: configuration the launch reads is named and held on both sides, never compared, read or leaked; an agent whose launch reads none is not held", async () => {
+test("RT-8b: where a world compares nothing, configuration the launch reads is named and held on both sides, never read or leaked; an agent whose launch reads none is not held (the world that compares is RT-13)", async () => {
   const r = await rig()
   const secret = "sk-test-secret-0123456789"
   const files = { settings: join(r.dir, "agent-settings.json"), fragment: join(r.dir, "fragment.md"), mcp: join(r.dir, "person-mcp.json"), rules: join(r.dir, "rules.md") }
@@ -801,20 +829,26 @@ const RUNNER_PI = SRC.runner
  * own, and the shared fake native port as the adapter's session. The scripted adapter answers capabilities with a build version, which is what the
  * export's fresh read of the engine asks for.
  */
-async function stageRunner() {
+async function stageRunner(options: { household?: Household } = {}) {
   const agent = `t-${crypto.randomUUID()}`
   const capabilities = { stableSession: true, safeResume: false, delegationDisabled: false, version: "9.9.1" }
+  const h = options.household
   // The person has a real EMPTY tree (`withLaunchTree`): the scope look refuses a person whose tree it cannot look at, whatever the destination has
   // recorded. The child stays plain (`unboxed`): what is under test is the move's order of events, not the box (`box-worn.test.ts`).
+  // With a household the person's tree is the household's vault on each machine, and both machines' syncs are declared.
   const it = await stageHub(cluster, {
     adapter: { child: true, group: true, unboxed: true, capabilities },
-    machines: [{ id: "pi", os: "linux" }],
+    machines: h ? [{ id: "pi", os: "linux" }, { id: "mac", os: "macos" }] : [{ id: "pi", os: "linux" }],
     hub: { tick_seconds: 1 },
     run: [
       { id: DOOR, kind: "door", machine: "pi", platform: "fake", person: PERSON, token_file: "/dev/null", schedule: "always", memory_limit_mb: 192 },
       { id: RUNNER_PI, kind: "runner", machine: "pi", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 512 },
+      ...(h?.registry.run ?? []),
     ],
-    registry: base => ({ ...withLaunchTree(base), agents: [{ id: agent, person: PERSON, preset: "daily", chat: CHAT, door: DOOR, runner: RUNNER_PI }] }),
+    registry: base => {
+      const planted = { ...withLaunchTree(base), agents: [{ id: agent, person: PERSON, preset: "daily", chat: CHAT, door: DOOR, runner: RUNNER_PI }] }
+      return h ? { ...planted, people: [{ id: PERSON, ...h.registry.person } as PersonSpec], repositories: h.registry.repositories, ...(h.registry.zone ? { zone: h.registry.zone } : {}) } : planted
+    },
   })
   staged.push(it)
   const s = await moveStage(cluster, track, { database: it.db })
@@ -854,8 +888,11 @@ test("RT-12: a REAL source runner: the fed turn completes, queued input is untou
   await s.register(DST, "dst-1")
   const profile = profileOf(loadRegistry(it.registryFile, { machine: "pi" }), agent)!
   const native = await s.nativeOf(move)
+  // ... and the effective launch configuration it would run with, which the real source runner compares with its own before it releases.
+  const effective = effectiveConfigOf(loadRegistry(it.registryFile, { machine: "pi" }), agent, move.id)
+  if ("unverifiable" in effective) throw new Error(`the staged agent's configuration cannot be told: ${effective.unverifiable}`)
   expect(await destReady(s.tool, move.id, s.sideOf(move, "dest"), {
-    profile, capabilities, native: { version: "9.9.2", os: "darwin", cwd: "/srv/hub/dest-session", project_dir: "-srv-hub-dest-session" },
+    profile, capabilities, effective, native: { version: "9.9.2", os: "darwin", cwd: "/srv/hub/dest-session", project_dir: "-srv-hub-dest-session" },
   })).toBe("ready")
   await until("the move was exported and released", async () => (await readMove(s.tool, move.id))!.stage === "source_released", 30_000, async () => JSON.stringify(await readMove(s.tool, move.id)))
 
@@ -864,6 +901,8 @@ test("RT-12: a REAL source runner: the fed turn completes, queued input is untou
   expect(released.manifest!.native, "the native id is the conversation's own").toMatchObject({ native_session: native })
   expect(released.manifest!.files).toHaveLength(1)
   expect(released.manifest!.scope, "the proof sealed is the runner's own look at the person's real tree").toMatchObject({ carries: "native-only", basis: expect.stringContaining("the person's tree is empty") })
+  expect(released.manifest!.config, "and the configuration it compared with the destination's, as digests").toMatchObject({ version: 1, sections: effective.sections })
+  expect(released.manifest!.workspace, "no repository is declared, so none is sealed").toBeUndefined()
   expect(released.block).toBeNull()
   expect(await s.count("move_blob where move_id = $1", move.id)).toBe(1)
   expect((await it.read.ledger({ stream: "runner", kind: "move.released" })), "said once").toHaveLength(1)
@@ -878,4 +917,386 @@ test("RT-12: a REAL source runner: the fed turn completes, queued input is untou
   expect(it.scripted.starts().length).toBe(2)
   expect(it.scripted.starts()[1].session, "resumed under the same native id").toEqual({ id: native, resume: true })
   expect(Number((await it.read.sql("select count(*)::int as n from execution where inbound_id = 'q2'"))[0].n), "fed exactly once").toBe(1)
+}, SLOW)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the effective configuration, compared exactly, and checked again before the import and at the serve
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** One MCP server written where each machine has its file (the person's `mcp`, placed per machine): the same server, with the env each machine says. */
+function mcpPair(env: { pi: Record<string, string>; mac: Record<string, string> }) {
+  const base = scratch()
+  mkdirSync(join(base, "p1-mac"))
+  const files = { pi: join(base, "mcp-pi.json"), mac: join(base, "mcp-mac.json") }
+  const write = (machine: "pi" | "mac", values: Record<string, string>) =>
+    writeFileSync(files[machine], JSON.stringify({ mcpServers: { files: { command: "node", args: ["server.js"], env: values } } }))
+  write("pi", env.pi)
+  write("mac", env.mac)
+  return { write, files, person: { mcp: files.pi, on: { mac: { tree: join(base, "p1-mac"), mcp: files.mac } } } }
+}
+
+test("RT-13: the effective configuration is compared exactly: a changed NONCREDENTIAL env value is a named mismatch that stops the release before anything is read, and the owner's repair is recorded and released with no value in anything stored", async () => {
+  const marker = "verbose-marker-0123456789"
+  const m = mcpPair({ pi: { LOG_LEVEL: "info" }, mac: { LOG_LEVEL: marker } })
+  const r = await rig({ real: true, registry: { person: m.person } })
+  expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "ready" })
+  expect((await r.s.reread(r.move)).dest_facts).toMatchObject({ effective: { version: 1, excluded: ["login", "hub-tool-server"] } })
+  await drainOnly(r.s, r.move)
+
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "blocked", reason: "config_mismatch", detail: { sections: ["mcp:files"] } })
+  expect(r.fake.log.exports, "nothing was read").toBe(0)
+  expect(await r.s.count("move_blob where move_id = $1", r.move.id), "nothing was stored").toBe(0)
+  const blocked = await r.s.reread(r.move)
+  expect(blocked).toMatchObject({ stage: "waiting", manifest: null, block: { code: "config_mismatch", by: "source" } })
+  expect(JSON.stringify(blocked), "a section name, and no value").not.toContain(marker)
+
+  // The owner aligns the destination's file; the destination records its preflight again; the source's next look releases.
+  m.write("mac", { LOG_LEVEL: "info" })
+  expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "ready" })
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "done", reason: "released" })
+  const released = await r.s.reread(r.move)
+  expect(released).toMatchObject({ stage: "source_released", block: null, manifest: { config: { version: 1 } } })
+  expect(configDifference(released.manifest!.config, released.dest_facts!.effective)).toEqual([])
+  expect(JSON.stringify(released)).not.toContain(marker)
+
+  // Between the release and the import the destination's file drifts again: the import is refused by section, nothing is staged, and it goes on once the file is right.
+  m.write("mac", { LOG_LEVEL: marker })
+  expect(await importDestination(r.dst.w, r.move.id)).toMatchObject({ state: "blocked", reason: "dest_config_changed", detail: { sections: ["mcp:files"] } })
+  expect(r.fake.log.writes, "nothing was staged").toBe(0)
+  expect(await r.s.reread(r.move)).toMatchObject({ stage: "source_released", block: { code: "dest_config_changed", by: "dest" } })
+  m.write("mac", { LOG_LEVEL: "info" })
+  expect(await importDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "activated" })
+  expect((await r.s.reread(r.move)).block, "the destination's own block cleared when its look passed").toBeNull()
+}, SLOW)
+
+test("RT-14: a configuration that drifts after the import is refused at the serve by section, stays while the same facts are read (no write loop), and the gate opens only when it is what the move compared", async () => {
+  const m = mcpPair({ pi: { LOG_LEVEL: "info" }, mac: { LOG_LEVEL: "info" } })
+  const r = await rig({ real: true, registry: { person: m.person } })
+  await toActivated(r)
+  await registerMoves(hubOf(r))
+  expect((await r.s.reread(r.move)).stage).toBe("registry_written")
+
+  m.write("mac", { LOG_LEVEL: "debug" })
+  expect(await serveDestination(serveOf(r), r.move.id)).toMatchObject({ state: "blocked", reason: "serve_config_changed", detail: { sections: ["mcp:files"] } })
+  const blocked = await r.s.reread(r.move)
+  expect(blocked).toMatchObject({ stage: "registry_written", block: { code: "serve_config_changed", by: "dest" } })
+  expect(await openGates(r), "the gate stays shut").toEqual([gateOf(r)])
+  expect(await serveDestination(serveOf(r), r.move.id), "the same facts again").toMatchObject({ state: "waiting", reason: "blocked" })
+  expect((await r.s.reread(r.move)).updated_at.getTime(), "and no write").toBe(blocked.updated_at.getTime())
+
+  // A configuration that cannot be read as a launch reads it is refused too, by code; restored, the move is served and the block is gone.
+  writeFileSync(m.files.mac, "{ not json")
+  expect(await serveDestination(serveOf(r), r.move.id)).toMatchObject({ state: "blocked", reason: "serve_config_unverifiable", detail: { reason: "config_invalid" } })
+  m.write("mac", { LOG_LEVEL: "info" })
+  expect(await serveDestination(serveOf(r), r.move.id)).toMatchObject({ state: "done", reason: "active" })
+  expect((await r.s.reread(r.move)).block).toBeNull()
+  expect(await openGates(r)).toEqual([])
+}, SLOW)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the declared repositories, verified at the source and at the destination
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("RT-15: the household's repositories are verified end to end: a dirty source waits for its sync, the destination is refused behind, dirty and ahead (and left exactly as it was), and a repaired one imports; the note says what was verified", async () => {
+  const r = await householdRig()
+  const proj = r.h.checkouts.proj
+  expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "ready" })
+  expect((await r.s.reread(r.move)).dest_facts).toMatchObject({ effective: { version: 1 }, workspace: { version: 1, repositories: 3 } })
+  await drainOnly(r.s, r.move)
+
+  // The agent filed a note and the sync has not committed it: a named wait, before anything is read, stored or released.
+  r.h.put(proj.src, "notes/filed.md", "filed by the agent\n")
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "blocked", reason: "workspace_unsynced", detail: { repository: "proj", reason: "dirty", untracked: 1 } })
+  expect(r.fake.log.exports, "nothing was read").toBe(0)
+  expect(await r.s.count("move_blob where move_id = $1", r.move.id), "nothing was stored").toBe(0)
+  expect(await r.s.reread(r.move)).toMatchObject({ stage: "waiting", manifest: null, block: { code: "workspace_unsynced", by: "source" } })
+
+  // The sync commits and pushes; the same look releases, sealing the commits it saw.
+  r.h.git(proj.src, "add", "-A")
+  r.h.git(proj.src, "commit", "-m", "hub sync")
+  r.h.push(proj.src)
+  const sealedHead = r.h.head(proj.src)
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "done", reason: "released" })
+  const sealed = await r.s.reread(r.move)
+  expect(sealed.block).toBeNull()
+  expect(sealed.manifest).toMatchObject({ scope: { carries: "native+workspace" }, config: { version: 1 }, workspace: { version: 1, generation: Number(sealed.export_generation) } })
+  const repos = (sealed.manifest!.workspace as { repos: { id: string; head: string; branch: string }[] }).repos
+  expect(repos.map(one => one.id)).toEqual(["proj", "vault", "zone"])
+  expect(repos.find(one => one.id === "proj")).toMatchObject({ head: sealedHead, branch: "main" })
+  expect(JSON.stringify(sealed.manifest), "no path in what was sealed").not.toContain(r.dir)
+
+  // The destination has not pulled: the commit is not in its object store. Named, nothing is staged, nothing is fetched.
+  expect(await importDestination(r.dst.w, r.move.id)).toMatchObject({ state: "blocked", reason: "dest_workspace_behind", detail: { repository: "proj", why: "revision-missing" } })
+  expect(r.fake.log.writes, "nothing was staged").toBe(0)
+  expect(await r.s.reread(r.move)).toMatchObject({ stage: "source_released", block: { code: "dest_workspace_behind", by: "dest" } })
+
+  // Its sync pulls, and then the destination's OWN edit is in the way: dirt is never taken for the source's content, never committed, reset or cleaned.
+  r.h.pull(proj.dst)
+  r.h.put(proj.dst, "mine.md", "mine\n")
+  expect(await importDestination(r.dst.w, r.move.id)).toMatchObject({ state: "blocked", reason: "dest_workspace_dirty", detail: { repository: "proj", untracked: 1 } })
+  expect(r.h.git(proj.dst, "status", "--porcelain")).toBe("?? mine.md")
+  rmSync(join(proj.dst, "mine.md"))
+
+  // A destination commit on top of the sealed one is a descendant, which proves nothing about the source's content: ahead, and not reset.
+  const own = r.h.commit(proj.dst, "notes/own.md", "own\n", "own")
+  expect(await importDestination(r.dst.w, r.move.id)).toMatchObject({ state: "blocked", reason: "dest_workspace_ahead", detail: { repository: "proj" } })
+  expect(r.h.head(proj.dst)).toBe(own)
+  expect(r.fake.log.writes).toBe(0)
+  r.h.git(proj.dst, "reset", "-q", "--hard", sealedHead)
+
+  // Repaired by whoever owns it: the same look imports and activates, and the destination's block is gone.
+  expect(await importDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "activated" })
+  expect(await r.s.reread(r.move)).toMatchObject({ stage: "activated", block: null })
+  expect(r.fake.log.imports).toHaveLength(1)
+
+  await registerMoves(hubOf(r))
+  expect(await serveDestination(serveOf(r), r.move.id)).toMatchObject({ state: "done", reason: "active" })
+  const served = await r.s.reread(r.move)
+  const body = relocationNote(served)
+  expect(body).toContain("RELOCATION NOTE 2")
+  expect(body).toContain(`- proj: commit ${sealedHead.slice(0, 12)} on branch main`)
+  expect(body).toContain("verified and NOT carried")
+  expect(body).toContain("was compared between the two machines")
+  expect(body, "no path, no content").not.toContain(r.dir)
+  expect(sha(body), "what serve declared is the digest of exactly these words").toBe(served.note_digest!)
+  expect(relocationNote(await readMove(r.s.tool, r.move.id) as MoveRow), "and a later composer writes the same words").toBe(body)
+}, SLOW)
+
+test("RT-16: a move sealed before the verified note existed keeps its version 1 words and the digest the store holds for them", async () => {
+  const r = await rig()
+  const active = await toActive(r)
+  expect(active.manifest!.workspace).toBeUndefined()
+  expect(active.manifest!.config).toBeUndefined()
+  const was = (active.manifest!.native_export as { from: { cwd: string } }).from.cwd
+  const now = (active.dest_facts!.native as { cwd: string }).cwd
+  // The wording of version 1, frozen here as it was when it was first declared at serve.
+  const v1 = [
+    `[hub] RELOCATION NOTE 1, begin. The hub moved this conversation from machine ${active.source_machine} (runner ${active.source_runner}) to machine ${active.dest_machine} (runner ${active.dest_runner}).`,
+    `It is the same conversation in the same native session (${active.native_session}); nothing was started fresh and nothing was replayed.`,
+    `Your working directory changed from ${was} to ${now}. Absolute paths earlier in this conversation's transcript name the old machine and directory: they were NOT rewritten, so do not assume a file at an old absolute path exists here, and use the paths you are given now.`,
+    "Only the session's transcript moved. The hub did not carry, sync or verify anything else of the old machine (no vault or shared-zone file, no repository working copy, no other file of its tree), so do not assume that anything filed or edited there is available here.",
+    "[hub] RELOCATION NOTE, end. This is not a request: take it into account and answer the message that follows.",
+  ].join("\n")
+  expect(relocationNote(active)).toBe(v1)
+  expect(noteDigestOf(active)).toBe(sha(v1))
+  expect(active.note_digest, "the digest the store already holds").toBe(sha(v1))
+})
+
+// ---------------------------------------------------------------------------------------------------------------------
+// a REAL source runner repairs from the checkouts themselves
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("RT-17: a REAL source runner sees the repair of its checkouts with no notification: a file removed deep in a worktree (no git file moves) and then a commit and push, and the release seals the commits it observed", async () => {
+  const h = stageHousehold(scratch())
+  const wasRecheck = RECHECK.ms
+  RECHECK.ms = 300
+  try {
+    const { it, s, t, agent, fake, capabilities } = await stageRunner({ household: h })
+    await until("the resident child was started", () => it.scripted.starts().length === 1, 30_000)
+    // A child that was only LAUNCHED is the source's `native_state_launched` gate, which comes before any repository is looked at. The conversation is
+    // carried only once the engine has taken a message under its id, so a real turn is fed and completed through the runner before the request.
+    await insertInbound(cluster, it.db, { id: "q1", body: "a turn that completes before the move", agent })
+    await until("q1 was fed", () => it.scripted.fed().length === 1, 30_000)
+    await until("the reply landed", async () => (await it.read.outbox()).length === 1, 30_000)
+    expect((await it.read.sql("select state from execution where inbound_id = 'q1'"))[0].state, "the fed turn completed").toBe("completed")
+    await until("the engine took the message under the conversation's id", async () => {
+      const [row] = await it.read.sql("select native_state from conversation where agent = $1", [agent])
+      return row?.native_state === "started" || row?.native_state === "verified"
+    }, 30_000)
+    await s.adopt(SRC)
+    // Two kinds of dirt: an untracked file deep in the project, and an edit of a tracked file in the vault that the sync has not committed.
+    h.put(h.checkouts.proj.src, "notes/deep/filed.md", "an untracked file, deep in a project\n")
+    h.put(h.checkouts.vault.src, "notes/start.md", "edited and not yet committed by the sync\n")
+    const move = await s.request(t)
+    await until("the move is drained", async () => (await readMove(s.tool, move.id))!.drain !== null, 30_000)
+
+    // The destination records its preflight: the source's own profile and configuration, and the plan of this household on the destination machine.
+    await s.register(DST, "dst-1")
+    const view = (machine: string) => loadRegistry(it.registryFile, { machine })
+    const row = (await readMove(s.tool, move.id))!
+    const effective = effectiveConfigOf(view("mac"), agent, move.id)
+    const workspace = workspaceFactsOf(view("mac"), row)
+    if ("unverifiable" in effective || workspace === null || "refused" in workspace) throw new Error(`the destination cannot take the household: ${JSON.stringify([effective, workspace])}`)
+    expect(await destReady(s.tool, move.id, s.sideOf(move, "dest"), {
+      profile: profileOf(view("pi"), agent)!, capabilities, effective, workspace: { version: 1, ...workspace },
+      native: { version: "9.9.2", os: "darwin", cwd: "/srv/hub/dest-session", project_dir: "-srv-hub-dest-session" },
+    })).toBe("ready")
+
+    const dump = async () => JSON.stringify(await readMove(s.tool, move.id))
+    await until("the source named the project's dirt", async () => (await readMove(s.tool, move.id))!.block?.code === "workspace_unsynced", 30_000, dump)
+    expect((await readMove(s.tool, move.id))!.block).toMatchObject({ by: "source", detail: { repository: "proj", reason: "dirty", untracked: 1 } })
+    expect(fake.log.exports, "nothing was read").toBe(0)
+    expect(await s.count("move_blob where move_id = $1", move.id)).toBe(0)
+
+    // REPAIR ONE: the file is removed. No git file changes (the project's top level and its index stand as they were); only the bounded re-look can see it.
+    rmSync(join(h.checkouts.proj.src, "notes", "deep"), { recursive: true })
+    await until("the source moved on to the vault's dirt", async () => (await readMove(s.tool, move.id))!.block?.detail?.repository === "vault", 30_000, dump)
+    expect((await readMove(s.tool, move.id))!.block).toMatchObject({ code: "workspace_unsynced", detail: { repository: "vault", reason: "dirty", changed: 1 } })
+    expect(fake.log.exports).toBe(0)
+
+    // REPAIR TWO: the sync commits and pushes. The index, the branch and the remote-tracking ref move, which the tick sees by stat.
+    h.git(h.checkouts.vault.src, "add", "notes/start.md")
+    h.git(h.checkouts.vault.src, "commit", "-m", "hub sync")
+    h.push(h.checkouts.vault.src)
+    await until("the move was exported and released", async () => (await readMove(s.tool, move.id))!.stage === "source_released", 30_000, dump)
+    const released = (await readMove(s.tool, move.id))!
+    expect(released.block).toBeNull()
+    expect(released.manifest!.files, "the started conversation's transcript is the one blob").toHaveLength(1)
+    expect(fake.log.exports, "read once, by the release and not before").toBe(1)
+    const repos = (released.manifest!.workspace as { repos: { id: string; head: string }[] }).repos
+    expect(repos.find(one => one.id === "vault")!.head, "the commit the repair left").toBe(h.head(h.checkouts.vault.src))
+    expect(repos.find(one => one.id === "proj")!.head).toBe(h.head(h.checkouts.proj.src))
+    expect(released.manifest).toMatchObject({ scope: { carries: "native+workspace" }, config: { version: 1 } })
+    expect(it.scripted.starts().length, "no second child, no fresh session").toBe(1)
+  } finally { RECHECK.ms = wasRecheck }
+}, SLOW)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// runners of two builds, and what a seal is bound to
+// ---------------------------------------------------------------------------------------------------------------------
+
+test("RT-18: a destination that recorded its configuration never imports a manifest that sealed none (a source of an older build): refused before anything is staged, and the serve and the first launch do not take it for compared; a move neither side compared keeps the old gates", async () => {
+  const r = await rig({ real: true })
+  expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "ready" })
+  expect((await r.s.reread(r.move)).dest_facts).toMatchObject({ effective: { version: 1 } })
+  await drainOnly(r.s, r.move)
+  // The source is of a build that compares no configuration: it releases without sealing any.
+  delete r.src.w.effectiveConfig
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "done", reason: "released" })
+  expect((await r.s.reread(r.move)).manifest!.config, "nothing was sealed").toBeUndefined()
+
+  expect(await importDestination(r.dst.w, r.move.id)).toMatchObject({ state: "blocked", reason: "dest_config_unverifiable", detail: { reason: "not-sealed" } })
+  expect(r.fake.log.writes, "nothing was staged").toBe(0)
+  expect(await r.s.reread(r.move)).toMatchObject({ stage: "source_released", block: { code: "dest_config_unverifiable", by: "dest" } })
+  expect(await importDestination(r.dst.w, r.move.id), "and it stays refused: no file of this side makes it pass").toMatchObject({ state: "blocked", reason: "dest_config_unverifiable" })
+
+  // THE SERVE: a move that reached it with the destination's configuration recorded and none sealed (it was not imported by this gate) is refused.
+  const legacy = await rig()
+  await toActivated(legacy)
+  await registerMoves(hubOf(legacy))
+  const effective = effectiveConfigOf(loadRegistry(legacy.file, { machine: DST.machine }), legacy.agent, legacy.move.id)
+  await legacy.s.su`update topic_move set dest_facts = dest_facts || ${JSON.stringify({ effective })}::text::jsonb where id = ${legacy.move.id}`
+  expect(await serveDestination(serveOf(legacy), legacy.move.id)).toMatchObject({ state: "blocked", reason: "serve_config_unverifiable", detail: { reason: "not-sealed" } })
+  expect(await openGates(legacy), "the gate stays shut").toEqual([gateOf(legacy)])
+
+  // THE FIRST LAUNCH: the answer for the same row, and for the row of a move neither side compared (which keeps its old gates: no refusal).
+  const real = await rig({ real: true })
+  const active = await toActive(real)
+  const here = loadRegistry(real.file, { machine: DST.machine })
+  expect(configDriftOf(here, real.agent, active), "a sealed configuration that is still the file's").toBeNull()
+  const { config: _sealed, ...bare } = active.manifest!
+  expect(configDriftOf(here, real.agent, { ...active, manifest: bare }), "recorded by the destination and not sealed").toBe("config-unverifiable:not-sealed")
+  const { effective: _recorded, ...unrecorded } = active.dest_facts!
+  expect(configDriftOf(here, real.agent, { ...active, manifest: bare, dest_facts: unrecorded }), "neither recorded nor sealed").toBeNull()
+}, SLOW)
+
+test("RT-19: the repositories are sealed with the profile of the facts the LAST look read and only while the plan observed is the one the destination recorded; facts that moved during the look end it with nothing sealed", async () => {
+  const r = await householdRig()
+  expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "ready" })
+  const first = (await r.s.reread(r.move)).dest_facts!.profile
+  await drainOnly(r.s, r.move)
+
+  // The destination records another plan while the file is read, and the source's registry says the same: the repositories were observed under the old one.
+  const srcFacts = r.src.w.workspaceFacts!
+  const dstFacts = r.dst.w.workspaceFacts!
+  const planned = (was: typeof srcFacts, plan: string): typeof srcFacts => row => { const mine = was(row); return mine !== null && !("refused" in mine) ? { ...mine, plan } : mine }
+  r.src.knobs.duringBuild = async () => {
+    r.src.knobs.duringBuild = null
+    r.src.w.workspaceFacts = planned(srcFacts, "e".repeat(64))
+    r.dst.w.workspaceFacts = planned(dstFacts, "e".repeat(64))
+    expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "ready" })
+  }
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "waiting", reason: "dest-facts-changed" })
+  expect(await r.s.reread(r.move), "nothing was sealed").toMatchObject({ stage: "waiting", manifest: null })
+  r.src.w.workspaceFacts = srcFacts
+  r.dst.w.workspaceFacts = dstFacts
+  expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "ready" })
+
+  // The destination records another profile while the file is read, and the source's own profile is the same: the seal binds THAT one.
+  const tweak = (profile: Record<string, unknown>) => ({ ...profile, preset: { ...(profile.preset as Record<string, unknown>), effort: "high" } })
+  const boundWas = r.dst.w.profile
+  const sourceWas = r.src.w.sourceProfile!
+  r.src.knobs.duringBuild = async () => {
+    r.src.knobs.duringBuild = null
+    r.dst.w.profile = row => { const bound = boundWas(row); return bound && { ...bound, profile: tweak(bound.profile) } }
+    r.src.w.sourceProfile = row => { const mine = sourceWas(row); return mine && tweak(mine) }
+    expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "ready" })
+  }
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "done", reason: "released" })
+  const sealed = await r.s.reread(r.move)
+  const profile = (sealed.manifest!.workspace as { profile: string }).profile
+  expect(sha256(stableText(sealed.dest_facts!.profile)), "the profile the destination holds at the release").toBe(profile)
+  expect(profile, "and not the first look's").not.toBe(sha256(stableText(first)))
+  expect(await importDestination(r.dst.w, r.move.id), "so the destination's own check of it passes").toMatchObject({ state: "done", reason: "activated" })
+}, SLOW)
+
+test("RT-20: the repositories observed are sealed only while the source's own registry still names those checkouts: a placement moved A to B during the look releases nothing of A's, frees A's lock, and the next look observes B", async () => {
+  const root = scratch()
+  const h = stageHousehold(root, ["proj"])
+  const proj = h.checkouts.proj
+  // The person's tree is empty and holds neither checkout, so a placement can move without the launch tree or the configuration changing.
+  const tree = { pi: join(root, "tree-pi"), mac: join(root, "tree-mac") }
+  mkdirSync(tree.pi)
+  mkdirSync(tree.mac)
+  const registryAt = (path: string): MoveRegistryOptions => ({
+    person: { tree: tree.pi, on: { mac: { tree: tree.mac } } }, repositories: h.registry.repositories.map(one => ({ ...one, path })), run: h.registry.run,
+  })
+  // B is another checkout of the same remote: the same id, branch and nesting at another source path, left dirty.
+  const other = join(root, "pi", "proj-b")
+  h.git(root, "clone", "-q", proj.remote, other)
+  h.put(other, "notes/stray.md", "B's own, not committed\n")
+
+  const r = await rig({ real: true, registry: registryAt(proj.src) })
+  const view = () => loadRegistry(r.file, { machine: SRC.machine })
+  const rootsOf = (row: MoveRow) => (workspaceFactsOf(view(), row) as { roots: string }).roots
+  const rootsA = rootsOf(r.move)
+  expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "done", reason: "ready" })
+  await drainOnly(r.s, r.move)
+
+  // Whether the sync's lock of a checkout is free right now (and it is left free).
+  const free = async (repo: string): Promise<boolean> => {
+    const connection = await r.s.tool.sql.reserve()
+    try {
+      const key = syncLockKey(SRC.machine, realpathSync(join(repo, ".git")))
+      const [row] = await connection`select pg_try_advisory_lock(hashtextextended(${key}, 0)) as held`
+      if (row.held) await connection`select pg_advisory_unlock(hashtextextended(${key}, 0))`
+      return row.held as boolean
+    } finally { connection.release() }
+  }
+  const sealedHead = h.head(proj.src)
+
+  // A is observed clean at its commit and locked; the placement moves to B while the native build is awaited. Nothing else of the source changes.
+  r.src.knobs.duringBuild = async () => {
+    r.src.knobs.duringBuild = null
+    expect(await free(proj.src), "A's sync lock is held by the observation").toBe(false)
+    writeMoveRegistry(r.dir, r.agent, registryAt(other))
+  }
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "waiting", reason: "workspace-moved" })
+  expect(rootsOf(r.move), "the source's registry names other roots now").not.toBe(rootsA)
+  expect(await r.s.reread(r.move), "nothing was sealed and nothing released").toMatchObject({ stage: "waiting", manifest: null, block: null })
+  expect(await free(proj.src), "A's lock went with the look").toBe(true)
+  expect(r.fake.log.exports).toBe(1)
+  // The transcript was stored under the drain's generation before the refusal: it stays, and the session is the conversation's own.
+  expect(await r.s.count("move_blob where move_id = $1", r.move.id)).toBe(1)
+
+  // The next look observes B and locks it: B's dirt is named, and nothing is read for it.
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "blocked", reason: "workspace_unsynced", detail: { repository: "proj", reason: "dirty", untracked: 1 } })
+  expect(await r.s.reread(r.move)).toMatchObject({ stage: "waiting", manifest: null, block: { code: "workspace_unsynced", by: "source" } })
+  expect(r.fake.log.exports, "not read again for a checkout that is not as a move needs").toBe(1)
+  expect(await free(other), "B's lock was taken and freed by that look").toBe(true)
+
+  // B is repaired by its sync: the same look seals what IT observed, B's commit and not A's, with the stored transcript replayed.
+  h.git(other, "add", "-A")
+  h.git(other, "commit", "-m", "hub sync")
+  h.push(other)
+  const bHead = h.head(other)
+  expect(bHead).not.toBe(sealedHead)
+  expect(await exportSource(r.src.w, PROVEN, r.move.id)).toMatchObject({ state: "done", reason: "released" })
+  const released = await r.s.reread(r.move)
+  expect(released).toMatchObject({ stage: "source_released", block: null })
+  expect(released.manifest!.workspace).toMatchObject({ roots: rootsOf(released), repos: [{ id: "proj", head: bHead, branch: "main" }] })
+  expect((released.manifest!.workspace as { roots: string }).roots).not.toBe(rootsA)
+  expect(released.manifest!.native!.native_session, "the conversation's own session, not a new one").toBe(released.native_session)
+  expect(await r.s.count("move_blob where move_id = $1", r.move.id), "one blob, replayed").toBe(1)
+  expect(await free(other)).toBe(true)
 }, SLOW)
