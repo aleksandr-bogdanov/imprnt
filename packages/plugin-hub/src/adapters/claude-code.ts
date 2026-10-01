@@ -1,4 +1,5 @@
 import { alive, groupAlive, groupOf, groupPresence, observeTree, presence } from "../os/tree.ts";
+import { claudeSession } from "./claude-session.ts";
 import {
   FeedNotWritten,
   type Adapter,
@@ -608,6 +609,7 @@ async function open(options: Parameters<Adapter["start"]>[0]): Promise<AdapterSe
 
 export const claudeCode: Adapter = {
   name: "claude-code",
+  session: claudeSession,
   // Read off what the installed CLI says about itself and off the list of builds
   // somebody validated, and never assumed from documentation: a flag the help
   // does not name is a capability the launch does not have.
