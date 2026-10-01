@@ -113,6 +113,9 @@ export interface WaitSidecar {
   health: Record<string, unknown> | null;
   outage: Record<string, unknown> | null;
   runnerLive: boolean;
+  /** The destination and the source machine of this agent's open move, whose gate holds an unclaimed message; null when it has none. */
+  moveDest: string | null;
+  moveSource: string | null;
 }
 
 /**
@@ -136,20 +139,24 @@ export async function readOpenTurnsWithWait(
              (select data from state_row where sheet = 'agent_health' and id = ${where.agent}) as health,
              (select data from state_row where sheet = 'outage' and id = ${where.credential ?? ""}) as outage,
              exists (select 1 from pg_stat_activity
-                      where datname = current_database() and application_name = ${where.runner}) as runner_live
+                      where datname = current_database() and application_name = ${where.runner}) as runner_live,
+             (select dest_machine from topic_move
+               where agent = ${where.agent} and stage not in ('active', 'withdrawn') limit 1) as move_dest,
+             (select source_machine from topic_move
+               where agent = ${where.agent} and stage not in ('active', 'withdrawn') limit 1) as move_source
     )
     select i.id, i.person, i.agent, i.received_at, i.state, i.claimed_by,
            i.media_state, i.media_done_at, i.reported_at,
            (select h.cause from replay_hold h where h.inbound_id = i.id and h.state <> 'released') as hold_cause,
            (select h.state from replay_hold h where h.inbound_id = i.id and h.state <> 'released') as hold_state,
-           f.wait, f.health, f.outage, f.runner_live
+           f.wait, f.health, f.outage, f.runner_live, f.move_dest, f.move_source
     from facts f
     left join inbound i on i.agent = ${where.agent}
       and i.kind in ('human', 'report')
       and i.state in ('received', 'acked', 'started')
     order by i.received_at, i.id`) as unknown as (OpenTurnRow & {
     wait: Record<string, unknown> | null; health: Record<string, unknown> | null;
-    outage: Record<string, unknown> | null; runner_live: boolean;
+    outage: Record<string, unknown> | null; runner_live: boolean; move_dest: string | null; move_source: string | null;
   })[];
   const first = rows[0];
   const sidecar: WaitSidecar = {
@@ -157,10 +164,12 @@ export async function readOpenTurnsWithWait(
     health: first?.health ?? null,
     outage: where.credential === null ? null : first?.outage ?? null,
     runnerLive: Boolean(first?.runner_live),
+    moveDest: first?.move_dest ?? null,
+    moveSource: first?.move_source ?? null,
   };
   // The left join yields one row of facts with no message when nothing is open.
   return {
-    rows: rows.filter(row => row.id !== null).map(({ wait: _w, health: _h, outage: _o, runner_live: _l, ...row }) => row as OpenTurnRow),
+    rows: rows.filter(row => row.id !== null).map(({ wait: _w, health: _h, outage: _o, runner_live: _l, move_dest: _d, move_source: _s, ...row }) => row as OpenTurnRow),
     sidecar,
   };
 }

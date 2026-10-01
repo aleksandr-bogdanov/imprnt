@@ -1,4 +1,5 @@
 import type { NativeImport, NativeSide } from "../adapters/types.ts";
+import { moveActiveNotice } from "../door/move-lines.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { MoveNoteRefused } from "../store/conversations.ts";
 import { copiesOf, pendingNotesOf, readMove, type MoveNotice, type MoveRow } from "../store/moves.ts";
@@ -101,11 +102,13 @@ export function relocationNote(move: MoveRow): string {
 /** The digest `serveMove` declares for a move's note: the sha256 of the body's UTF-8 bytes, as the store computes it. */
 export const noteDigestOf = (move: MoveRow): string => sha256(relocationNote(move));
 
-/** The owner's notice that the move went through, in the person's language; sent through the outbox, once, under the move's own key. */
-export function moveNotice(move: MoveRow, language: "en" | "ru"): MoveNotice | null {
-  const body = language === "ru"
-    ? `${move.agent} теперь работает на машине ${move.dest_machine}. Разговор продолжается там, в той же сессии.`
-    : `${move.agent} now runs on ${move.dest_machine}. The conversation continues there, in the same session.`;
+/**
+ * The owner's notice that the move went through, in the person's language; sent through the outbox, once, under the move's own key. It
+ * is the door's line (`moveActiveNotice`) and names the chat by its mention or its name, never by the agent's own id; `label.inTopic` says
+ * whether the route it goes to is the topic's own chat. A topic that cannot be read gets the generic label.
+ */
+export function moveNotice(move: MoveRow, language: "en" | "ru", label: { platform: string; name: string; chat: string | null; inTopic: boolean }): MoveNotice | null {
+  const body = moveActiveNotice(language, { platform: label.platform, name: label.name, agent: move.agent, chat: label.chat, source: move.source_machine, dest: move.dest_machine, inTopic: label.inTopic });
   return { body, person: move.person, agent: move.agent, route: move.route };
 }
 

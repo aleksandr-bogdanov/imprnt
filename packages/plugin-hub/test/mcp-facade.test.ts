@@ -233,6 +233,11 @@ test("over the socket: the engine's stdio server is bound to the launch, holds n
     expect(schema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen", "move"])
     expect(schema.properties.move_decision.additionalProperties).toBe(false)
     expect(schema.properties.move_decision.properties.choice.enum).toEqual(["withdraw", "continue"])
+    // The model is told the owner's own chat answers a waiting move through the door's commands, and that a move is not held back for want of a General.
+    const described = String(listed.result.tools[0].description)
+    expect(described).toContain("/move withdraw <move-id>")
+    expect(described).toContain("/move seen")
+    expect(described).not.toMatch(/only started when General/)
 
     const inspected = await talk.call({ id: 3, method: "tools/call", params: { name: "hub_topic", arguments: { action: "inspect" } } })
     expect(inspected.result.isError).toBeUndefined()

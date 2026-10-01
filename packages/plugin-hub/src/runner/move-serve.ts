@@ -1,6 +1,7 @@
-import { agentsFor } from "../registry/entries.ts";
+import { agentsFor, platformOf } from "../registry/entries.ts";
 import type { Registry } from "../registry/load.ts";
 import { readMove, serveMove, unblockMove, type LoadedEvidence } from "../store/moves.ts";
+import { readTopic } from "../store/topics.ts";
 import { configDifference } from "./move-config.ts";
 import {
   done, isRecord, raise, sameJson, sayOnce, sha256, stableText, waiting, who,
@@ -105,7 +106,11 @@ export async function serveDestination(w: ServeWorld, id: string): Promise<Hando
     agent: move.agent, runner: w.runner, machine: w.machine, placement_generation: move.dest_generation, digest: seen.digest,
     profile, capabilities: build.capabilities, imported: { generation: move.import_generation, manifest_digest: move.manifest.digest },
   };
-  const answer = await serveMove(w.store, id, who(w), loaded, { digest: noteDigestOf(move) }, moveNotice(move, w.language(move.person)));
+  // The notice names the chat the person knows, never the agent's id: the topic is read here, and one that cannot be read is the generic label.
+  const topic = await readTopic(w.store, move.topic_id);
+  const label = topic === null ? { platform: "discord", name: "", chat: null, inTopic: false }
+    : { platform: platformOf(seen.registry, topic.door), name: topic.display_name, chat: topic.chat, inTopic: move.route !== null && move.route.door === topic.door && move.route.chat === topic.chat };
+  const answer = await serveMove(w.store, id, who(w), loaded, { digest: noteDigestOf(move) }, moveNotice(move, w.language(move.person), label));
   switch (answer) {
     case "active":
       await w.say("move.served", { move: id, generation: move.import_generation, digest: seen.digest.slice(0, 16) });

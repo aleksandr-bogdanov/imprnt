@@ -17,7 +17,7 @@ import { loadRegistry } from "../src/registry/load.ts"
 import { ToolError } from "../src/mcp/contracts.ts"
 import { callTool, type McpBinding } from "../src/mcp/handlers.ts"
 import { activateProtocol } from "../src/store/conversations.ts"
-import { blockMove, readMove } from "../src/store/moves.ts"
+import { blockMove, readMove, unblockMove } from "../src/store/moves.ts"
 import { readTopic, rebindLegacyTopic, type TopicRow } from "../src/store/topics.ts"
 
 let cluster: Cluster
@@ -189,15 +189,20 @@ test("a move without a named destination is refused even when a default machine 
   expect(await call(t.s, t.general, moveOf(t, { destination_machine: "mac" }), { key: "again", said })).toMatchObject({ status: "accepted" })
 })
 
-test("a destination with no running runner, a store that is not at protocol 4, and a chat that is not active are each refused by name", async () => {
+// One staged topic per test: each stage is closed after its test, so none of them holds connections while the next is built.
+test("a destination with no running runner is refused by name", async () => {
   const stopped = await staged({ stage: { runner: { [RUNNER_MAC]: { enabled: false } } } })
   expect(await call(stopped.s, stopped.general, moveOf(stopped, { destination_machine: "mac" }))).toMatchObject({ status: "failed", cause: "execution_machine_has_no_runner" })
   await nothingLeft(stopped.s)
+})
 
+test("a store that is not at protocol 4 refuses a move by name", async () => {
   const inactive = await staged({ protocol: false })
   expect(await call(inactive.s, inactive.general, moveOf(inactive, { destination_machine: "mac" }))).toMatchObject({ status: "failed", cause: "move_unavailable" })
   await nothingLeft(inactive.s)
+})
 
+test("a chat that is not active refuses a move by name", async () => {
   const archiving = await staged()
   expect(await call(archiving.s, archiving.general, { action: "archive", topic_id: archiving.topic.id })).toMatchObject({ status: "stopping" })
   const refused = await call(archiving.s, archiving.general, moveOf(archiving, { destination_machine: "mac" }))
@@ -271,43 +276,96 @@ test("what the owner reads is in their language, and a move whose source was nev
   expect(await openGates(t.s, t.topic.agent_id)).toEqual([])
 })
 
-test("only the topic's own chat or General may ask, a worker may not, and a move is refused before it is made when there is no usable independent General to follow and withdraw it", async () => {
-  const t = await staged({ other: true, generalLive: false })
+test("only the topic's own chat or General may ask, and a worker may not", async () => {
+  const t = await staged({ other: true })
   const other = await t.s.binding("p1-other")
   const worker: McpBinding = { ...t.general, kind: "worker" }
   expect(await call(t.s, other, moveOf(t, { destination_machine: "mac" }))).toMatchObject({ status: "failed", cause: "not_permitted" })
   expect(await code(call(t.s, worker, moveOf(t, { destination_machine: "mac" })))).toBe("not_owner_conversation")
   await nothingLeft(t.s)
-
-  // General's runner has no session on the store: General is not shown to be usable, so no move is made, and the refusal says why and whose limit it is.
-  const offline = await call(t.s, t.own, { action: "move", destination_machine: "mac" })
-  expect(offline).toMatchObject({ status: "failed", cause: "withdraw_path_missing", reason: "general_runner_offline" })
-  expect(String(offline.status_message)).toContain("limit of the current version and not a decision of the owner")
-  expect(String(offline.status_message)).not.toMatch(/not allowed|forbidden|disallow/i)
-  expect(String(offline.owner_status)).toContain("limit of the current version")
-  await nothingLeft(t.s)
-
-  // General itself cannot be the chat that follows its own move: there would be no other chat to withdraw it from.
-  await online(t.s, RUNNER_PI)
-  const itself = await call(t.s, t.general, { action: "move", destination_machine: "mac" })
-  expect(itself).toMatchObject({ status: "failed", cause: "withdraw_path_missing", reason: "general_is_the_topic" })
-  expect(String(itself.status_message)).toContain("limit of the current version")
-  await nothingLeft(t.s)
-  // With General's runner connected, the very same request from the topic's own chat is made.
+  // The same request from the topic's own chat is made, and nothing about another chat was needed.
   expect(await call(t.s, t.own, { action: "move", destination_machine: "mac" })).toMatchObject({ status: "accepted", stage: "move_requested" })
 })
 
-test("a person with no General configured gets the same named limit, and a General that is usable lets the same request through", async () => {
+test("General moves itself: asked in its own chat, the move is made, its gate is placed, and the owner is told the door's commands", async () => {
   const t = await staged()
-  // The registry now names no General (a registry edit after the chat was made).
-  t.s.rewrite({ person: { general: undefined }, withoutGeneralAgent: true })
-  const refused = await call(t.s, t.own, { action: "move", destination_machine: "mac" })
-  expect(refused).toMatchObject({ status: "failed", cause: "withdraw_path_missing", reason: "no_general" })
-  await nothingLeft(t.s)
-  // Put back, and the request that was refused is accepted: the limit was about General and nothing else.
-  t.s.rewrite({})
-  expect(await call(t.s, t.own, { action: "move", destination_machine: "mac" })).toMatchObject({ status: "accepted", stage: "move_requested" })
-  expect(await count(t.s, "topic_move")).toBe(1)
+  const reply = await call(t.s, t.general, { action: "move", destination_machine: "mac" })
+  expect(reply).toMatchObject({ status: "accepted", stage: "move_requested" })
+  const [row] = rows(await moves(t.s))
+  expect(row).toMatchObject({ agent: GENERAL, stage: "waiting", dest_machine: "mac", requested_by: OWNER })
+  expect(await openGates(t.s, GENERAL)).toEqual([`move:${row.id}`])
+  // Said in General's own chat about General itself, "this chat" is General's: the line is the door's to answer, with no other chat to point at.
+  expect(String(reply.owner_status)).toContain("/move")
+  expect(String(reply.owner_status)).not.toMatch(/General \(|in General/)
+  expect(reply.move).toMatchObject({ from: "pi", to: "mac", actions: ["withdraw"] })
+  // It is withdrawn through the very same store routine as any other chat's.
+  const generalTopic = (await t.s.admin`select id from topic where agent_id = ${GENERAL}`)[0].id as string
+  expect(await call(t.s, t.general, { action: "move", topic_id: generalTopic, move_decision: { choice: "withdraw" } })).toMatchObject({ status: "complete", stage: "withdrawn" })
+  expect(await openGates(t.s, GENERAL)).toEqual([])
+})
+
+// Each cause is a test of its own. Every staged topic holds a database, a handful of sessions and a stage of the hub, and they are all closed after
+// the test (`afterEach`); one test that staged all of them would hold them open together and exhaust the server's connection slots, which is a fixture
+// that does not clean up and not a limit to raise.
+const OWNER_B = "200000000000000001"
+type GeneralCase = { name: string; arrange: (t: Stage) => Promise<void>; over?: Over }
+const GENERAL_CASES: GeneralCase[] = [
+  // The registry names no General at all.
+  { name: "no General", arrange: async t => { t.s.rewrite({ person: { general: undefined }, withoutGeneralAgent: true }) } },
+  // General's runner has no session on the store.
+  { name: "General's runner offline", over: { generalLive: false }, arrange: async () => {} },
+  // The door the chats are behind has no session on the store.
+  { name: "door offline", over: { doorLive: false }, arrange: async () => {} },
+  // General is configured asleep.
+  { name: "General asleep", arrange: async t => { t.s.rewrite({ agents: [agentOf(t.topic), { ...generalAgent(DOOR, t.s.general), sleeping: true }], withoutGeneralAgent: true }) } },
+  // General is behind another door, which the registry keeps stopped, and the owner has no sender there.
+  { name: "General's door off and the owner not on it", arrange: async t => {
+    t.s.rewrite({ person: { allowed_senders: { [DOOR]: [OWNER] } }, moreDoors: ["door-b"], moreDoor: { "door-b": { enabled: false } }, withoutGeneralAgent: true,
+      agents: [agentOf(t.topic), generalAgent("door-b", t.s.general)] })
+    await generalAdoptedBehind(t.s, "door-b")
+  } },
+  // General is behind another door that has no session at all, and the owner's id there is another one.
+  { name: "General's door offline", arrange: async t => {
+    t.s.rewrite({ person: { allowed_senders: { [DOOR]: [OWNER], "door-b": [OWNER_B] } }, moreDoors: ["door-b"], withoutGeneralAgent: true,
+      agents: [agentOf(t.topic), generalAgent("door-b", t.s.general)] })
+    await generalAdoptedBehind(t.s, "door-b")
+  } },
+  // General's own agent is gated by a move of its own.
+  { name: "General itself moving", arrange: async t => {
+    expect(await call(t.s, t.general, { action: "move", destination_machine: "mac" })).toMatchObject({ status: "accepted" })
+  } },
+  // General's chat is archived.
+  { name: "General archived", arrange: async t => {
+    expect(await call(t.s, t.general, { action: "archive", topic_id: GENERAL })).toMatchObject({ status: "stopping" })
+    await t.s.admin`update topic set lifecycle = 'archived' where agent_id = ${GENERAL}`
+  } },
+]
+for (const one of GENERAL_CASES) {
+  test(`with ${one.name}, the topic's own chat's move is accepted, places the gate, and says the door's commands, as no cause that used to refuse it for want of a usable General does`, async () => {
+    const t = await staged(one.over ?? {})
+    await one.arrange(t)
+    const before = await count(t.s, "claim_gate", "cause = 'move'")
+    const reply = await call(t.s, t.own, { action: "move", destination_machine: "mac" })
+    expect(reply).toMatchObject({ status: "accepted", stage: "move_requested" })
+    expect(reply.cause).toBeUndefined()
+    expect(await openGates(t.s, t.topic.agent_id)).toHaveLength(1)
+    expect(await count(t.s, "claim_gate", "cause = 'move'")).toBe(before + 1)
+    // The owner reads where it can be followed and withdrawn: this chat, by the door's commands (the withdrawal names the move), and never another chat that may be unusable.
+    // "General itself moving" has already made a move of General's own, so the topic's move is the one that names this topic and its agent, not the first row.
+    const made = rows(await moves(t.s)).find(row => row.topic_id === t.topic.id && row.agent === t.topic.agent_id)
+    expect(made, "the topic's own move was made").toMatchObject({ topic_id: t.topic.id, agent: t.topic.agent_id, stage: "waiting", dest_machine: "mac" })
+    expect(String(reply.owner_status)).toContain(`/move withdraw ${made?.id}`)
+    expect(String(reply.owner_status)).not.toContain("General")
+  })
+}
+
+test("the same request from General about another topic has a neutral line: it does not say \"this chat\" and offers no command to send here", async () => {
+  const t = await staged()
+  const neutral = await call(t.s, t.general, moveOf(t, { destination_machine: "mac" }))
+  expect(neutral).toMatchObject({ status: "accepted", stage: "move_requested" })
+  expect(String(neutral.owner_status)).toContain(`<#${t.topic.chat}>`)
+  expect(String(neutral.owner_status)).not.toContain("this chat")
+  expect(String(neutral.owner_status)).not.toMatch(/\/move/)
 })
 
 test("the same destination again is the request already being true, another destination is refused and never re-targets, and an open move is told apart from anything else going on", async () => {
@@ -536,36 +594,52 @@ async function generalAdoptedBehind(s: TopicsStage, door: string) {
   expect(await readTopic(s.as("hub_hub"), (await s.admin`select id from topic where agent_id = ${GENERAL}`)[0].id)).toMatchObject({ door, chat: s.general, origin: "legacy", lifecycle: "active" })
 }
 
-test("asked in the topic's own chat, a move names General as where to check on it and to withdraw it, claims no control in the chat that is gated, and sends nothing of its own", async () => {
+test("asked in the topic's own chat, a move names the door's commands for following and withdrawing it, whatever becomes of General, and sends nothing of its own", async () => {
   const t = await staged()
   const sent = await count(t.s, "outbox")
   const reply = await call(t.s, t.own, { action: "move", destination_machine: "mac" })
   expect(reply).toMatchObject({ status: "accepted", stage: "move_requested" })
-  const general = `General (<#${t.s.general}>)`
-  // The owner reads where it can be asked, with General's own reference and not a generic instruction, and the model reads the same.
-  expect(String(reply.owner_status)).toContain("this chat takes no new message")
-  expect(String(reply.owner_status)).toContain(`ask about the move in ${general}`)
-  expect(String(reply.owner_status)).toContain(`You can withdraw the move in ${general}`)
-  expect(String(reply.owner_status)).not.toContain("You can withdraw the move, and")
-  expect(String(reply.status_message)).toContain(`in ${general}`)
+  // The owner reads the commands this chat answers itself, and the model reads the same.
+  const [made] = rows(await moves(t.s))
+  expect(String(reply.owner_status)).toContain("Send /move here to see where it stands")
+  expect(String(reply.owner_status)).toContain(`by sending /move withdraw ${made.id} here`)
+  expect(String(reply.owner_status)).not.toContain("General")
+  expect(String(reply.status_message)).toContain(`/move withdraw ${made.id}`)
   expect(reply.move).toMatchObject({ actions: ["withdraw"] })
-  // Inspected in the same chat it says the same, and in General's own chat there is nothing to point at.
+  // Inspected in the same chat it says the same, and in General's own chat it is a line for the model to relay: no command is pointed at.
   const inside = await callTool(t.own, "hub_topic", { action: "inspect", topic_id: t.topic.id }) as Record<string, unknown>
-  expect(String(inside.owner_status)).toContain(`in ${general}`)
-  expect(String((await inspectOf(t)).owner_status)).not.toContain("General")
+  expect(String(inside.owner_status)).toContain(`/move withdraw ${made.id}`)
+  expect(String((await inspectOf(t)).owner_status)).not.toMatch(/General|\/move/)
   // Nothing was said or queued on the way: the answer is the tool's, and there is no unsolicited message.
   expect(await count(t.s, "outbox")).toBe(sent)
 
-  // General's chat is archived while the move waits: no chat is left to ask in, and the gated chat is not said to be one.
+  // General's chat is archived while the move waits: that changes nothing about what the owner can do in the chat being moved.
   expect(await call(t.s, t.general, { action: "archive", topic_id: GENERAL })).toMatchObject({ status: "stopping" })
-  const none = await callTool(t.own, "hub_topic", { action: "inspect", topic_id: t.topic.id }) as Record<string, unknown>
-  expect(String(none.owner_status)).toContain("no General chat is shown to be usable")
-  expect(String(none.owner_status)).not.toContain("You can withdraw")
-  expect(none.move).toMatchObject({ actions: [] })
+  const after = await callTool(t.own, "hub_topic", { action: "inspect", topic_id: t.topic.id }) as Record<string, unknown>
+  expect(String(after.owner_status)).toContain(`by sending /move withdraw ${made.id} here`)
+  expect(String(after.owner_status)).not.toContain("General")
+  expect(after.move).toMatchObject({ actions: ["withdraw"] })
 })
 
-test("on a platform with no mention, an adopted chat is 'this chat' only where the line is delivered in it and the chat being moved in General's, in both languages and in the notice that falls back to General", async () => {
-  for (const language of ["en", "ru"] as const) {
+test("the structured reading the model gets names the block and its family, and the owner's words never carry the block's code", async () => {
+  const t = await staged()
+  await call(t.s, t.own, { action: "move", destination_machine: "mac" })
+  const [made] = rows(await moves(t.s))
+  for (const [codeName, family] of [["workspace_unpushed", "source_workspace"], ["config_mismatch", "config_differs"]] as const) {
+    expect(await blockMove(t.fix.tool, String(made.id), { runner: RUNNER_PI, incarnation: "src-1" }, codeName, { sections: ["x"] })).toBe("blocked")
+    const standing = await inspectOf(t)
+    expect(standing).toMatchObject({ status: "queued", stage: "blocked", cause: family })
+    expect(standing.move).toMatchObject({ family, block: { code: codeName, family } })
+    expect(String(standing.owner_status)).not.toContain(codeName)
+    expect(String(standing.owner_status)).not.toContain("has not shown that everything of this chat has stopped")
+    expect(await unblockMove(t.fix.tool, String(made.id), { runner: RUNNER_PI, incarnation: "src-1" }, codeName)).toBe("cleared")
+  }
+  expect((await inspectOf(t)).move).not.toHaveProperty("block")
+})
+
+// One language per test, so each stage (and General's second door) is closed before the next is built.
+for (const language of ["en", "ru"] as const) {
+  test(`on a platform with no mention, an adopted chat is 'this chat' only where the line is delivered in it and the chat being moved in General's, in ${language} and in the notice that falls back to General`, async () => {
     const HERE = language === "en" ? "“this chat”" : "«этот чат»"
     const MOVED = language === "en" ? "“the chat being moved”" : "«переносимый чат»"
     const t = await staged()
@@ -594,21 +668,23 @@ test("on a platform with no mention, an adopted chat is 'this chat' only where t
     expect(String(seen.owner_status), language).toContain(MOVED)
     expect(String(seen.owner_status), language).not.toContain(HERE)
     clean(seen.owner_status)
-    // Inspected in the chat itself, where it is "this chat" and General is named by what it is.
+    // Inspected in the chat itself, where it is "this chat" and the door's own commands are what it points at, in the person's language.
     const inside = await callTool(t.own, "hub_topic", { action: "inspect", topic_id: t.topic.id }) as Record<string, unknown>
     expect(String(inside.owner_status), language).toContain(HERE)
-    expect(String(inside.owner_status), language).toContain("General")
+    const [opened] = rows(await moves(t.s))
+    expect(String(inside.owner_status), language).toContain(`${language === "en" ? "/move withdraw" : "/перенос отозвать"} ${opened.id}`)
+    expect(String(inside.owner_status), language).not.toContain("General")
     expect(String(inside.owner_status), language).not.toContain(MOVED)
     clean(inside.owner_status)
 
     // What production does: the chat's own turn, the one answering the owner, is a running attempt, so a withdrawal said in the chat itself is refused as
-    // still finishing, nothing is recorded, the move stands, and the owner is pointed to General.
+    // still finishing, nothing is recorded, the move stands, and the owner is told to send the door's command again.
     await plant(t.s, t.topic, `turn-${language}`, "running")
     const inTopic = await t.s.said("never mind", { agent: t.own.agent, door: DOOR, chat: t.topic.chat!, sender: OWNER })
     const calls = await moveCalls(t.s)
     const refused = await call(t.s, t.own, moveOf(t, { move_decision: { choice: "withdraw" } }), { said: inTopic })
     expect(refused, language).toMatchObject({ status: "failed", cause: "turn_still_finishing" })
-    expect(String(refused.owner_status), language).toContain(language === "en" ? "ask again in General once it has ended" : "попросите снова в General")
+    expect(String(refused.owner_status), language).toContain(language === "en" ? `send /move withdraw ${opened.id} here again once it has ended` : `отправьте /перенос отозвать ${opened.id} здесь ещё раз`)
     clean(refused.owner_status)
     expect(await moveCalls(t.s), language).toBe(calls)
     expect(await count(t.s, "source_consumption", `source_id = '${inTopic}'`), language).toBe(0)
@@ -629,145 +705,20 @@ test("on a platform with no mention, an adopted chat is 'this chat' only where t
     expect(String(notice.body), language).toContain(MOVED)
     expect(String(notice.body), language).not.toContain(HERE)
     clean(notice.body)
-  }
-})
+  })
+}
 
-test("General's door decides who may follow a move: another door's General is reached by the person's configured route there, the exact sender is required on its own door, and a stranger is neither", async () => {
+test("the evidence a move is asked with is still the owner's: a stranger's message, or the id the owner has on another door, never starts a move, and a refusal spends nothing", async () => {
   const t = await staged()
   const OWNER_B = "200000000000000001"
-  // Both doors are connected, each under its own id: General's door is measured, and not taken as live because the registry declares it.
-  await doorOnline(t.s, "door-b")
-  // General is behind door-b in the registry, and its topic has been adopted there: a coherent edit, and not a stale binding.
-  const at = async (allowed: Record<string, string[]>) => {
-    t.s.rewrite({ person: { allowed_senders: allowed }, moreDoors: ["door-b"], withoutGeneralAgent: true, agents: [agentOf(t.topic), generalAgent("door-b", t.s.general)] })
-    await generalAdoptedBehind(t.s, "door-b")
-  }
-  const ask = async (said?: string) => await call(t.s, t.own, { action: "move", destination_machine: "mac" }, said === undefined ? {} : { said })
-
-  // The person has no sender on General's door at all: that is the cause, named, and nothing was started.
-  await at({ [DOOR]: [OWNER] })
-  const nobody = await ask()
-  expect(nobody).toMatchObject({ status: "failed", cause: "withdraw_path_missing", reason: "owner_not_in_general" })
-  expect(String(nobody.status_message)).toContain("no sender configured on the door of your General chat")
-  expect(String(nobody.status_message)).toContain("Configure this person's sender for General's door in the registry, then ask again")
-  expect(String(nobody.status_message)).not.toMatch(/Ask as someone|someone who is|not allowed|forbidden|disallow/i)
-  await nothingLeft(t.s)
-
-  await at({ [DOOR]: [OWNER], "door-b": [OWNER_B] })
-  // A stranger is never let in by a list that exists somewhere: not on the topic's own door, not on General's.
+  const ask = async (said: string) => await call(t.s, t.own, { action: "move", destination_machine: "mac" }, { said })
+  // Not on the topic's own door, and not by another door's id read as this door's.
   expect(await code(ask(await t.s.said("move it", { agent: t.own.agent, sender: STRANGER })))).toBe("source_invalid")
   expect(await code(ask(await t.s.said("move it", { agent: t.own.agent, door: "door-b", sender: STRANGER })))).toBe("source_invalid")
-  // The id the owner has on the other door is not an id on this one.
   expect(await code(ask(await t.s.said("move it", { agent: t.own.agent, sender: OWNER_B })))).toBe("source_invalid")
   await nothingLeft(t.s)
-
-  // The owner, on the topic's own door, while General is behind another door: their id is not compared with General's list, and the move is made.
-  const made = await ask()
-  expect(made).toMatchObject({ status: "accepted", stage: "move_requested" })
+  expect(await ask(await t.s.said("move it", { agent: t.own.agent }))).toMatchObject({ status: "accepted", stage: "move_requested" })
   expect(rows(await moves(t.s))).toMatchObject([{ requested_by: OWNER, stage: "waiting" }])
-  // The withdrawal is asked in General, which is now behind door-b: the owner's message there is the one stored on that door, from the id the owner has there.
-  const withdrawal = await t.s.said("never mind", { agent: GENERAL, door: "door-b", chat: t.s.general, sender: OWNER_B })
-  expect(await call(t.s, t.general, moveOf(t, { move_decision: { choice: "withdraw" } }), { said: withdrawal })).toMatchObject({ status: "complete", stage: "withdrawn" })
-
-  // The owner's own id on General's door, asking from General: the exact sender is allowed there.
-  const there = await t.s.said("to the mac", { agent: GENERAL, door: "door-b", chat: t.s.general, sender: OWNER_B })
-  expect(await call(t.s, t.general, moveOf(t, { destination_machine: "mac" }), { said: there })).toMatchObject({ status: "accepted", stage: "move_requested" })
-  expect(rows(await moves(t.s)).map(row => row.requested_by)).toEqual([OWNER, OWNER_B])
-})
-
-test("a General whose registry entry moved to another door but whose topic still stands on the old one is a stale binding: refused as changed, nothing is started, and the door adopting it is what makes it usable", async () => {
-  const t = await staged()
-  const OWNER_B = "200000000000000001"
-  t.s.rewrite({
-    person: { allowed_senders: { [DOOR]: [OWNER], "door-b": [OWNER_B] } }, moreDoors: ["door-b"], withoutGeneralAgent: true,
-    agents: [agentOf(t.topic), generalAgent("door-b", t.s.general)],
-  })
-  const ask = async () => await call(t.s, t.own, { action: "move", destination_machine: "mac" })
-  // The registry says door-b and the store still says the door General was linked on: the real binding no longer holds, and it is never taken on the registry's word alone.
-  expect(await readTopic(t.s.as("hub_hub"), (await t.s.admin`select id from topic where agent_id = ${GENERAL}`)[0].id)).toMatchObject({ door: DOOR, origin: "legacy" })
-  const stale = await ask()
-  expect(stale).toMatchObject({ status: "failed", cause: "withdraw_path_missing", reason: "general_binding_changed" })
-  expect(String(stale.owner_status)).toContain("no longer binds your General")
-  await nothingLeft(t.s)
-  // The same from General's own chat on its new door: the sender is right and the binding is still not.
-  const inGeneral = await t.s.said("to the mac", { agent: GENERAL, door: "door-b", chat: t.s.general, sender: OWNER_B })
-  expect(await call(t.s, t.general, moveOf(t, { destination_machine: "mac" }), { said: inGeneral })).toMatchObject({ status: "failed", reason: "general_binding_changed" })
-  await nothingLeft(t.s)
-
-  // Once the door has adopted General there (and is connected, as a door that adopts is), the same request is made.
-  await generalAdoptedBehind(t.s, "door-b")
-  await doorOnline(t.s, "door-b")
-  expect(await ask()).toMatchObject({ status: "accepted", stage: "move_requested" })
-})
-
-test("a General known to be unable to answer now is refused before a move is made, whether it is asleep, its independent door is stopped or its door is not connected, and restoring it lets the same unspent request through", async () => {
-  const OWNER_B = "200000000000000001"
-  const cases = [
-    // The runner serves other agents and is connected; General itself is configured asleep.
-    { name: "asleep", reason: "general_asleep", en: "Wake it, then ask again", ru: "Разбудите его и попросите снова", sleeping: true, off: false, connected: true },
-    // The door is connected, and it is the registry that keeps it stopped.
-    { name: "stopped", reason: "general_door_off", en: "Enable it, then ask again", ru: "Включите её и попросите снова", sleeping: false, off: true, connected: true },
-    // The door is enabled and nothing has a session on the store under its id.
-    { name: "not connected", reason: "general_door_offline", en: "Bring it online and ask again", ru: "Подключите её и попросите снова", sleeping: false, off: false, connected: false },
-  ]
-  for (const one of cases) {
-    // The topic is behind DOOR (connected) and General behind its own door-b, with the owner's own id there: nothing is compared across the two doors.
-    const t = await staged({ stage: { person: { language: "ru" } } })
-    const registry = (broken: { sleeping: boolean; off: boolean }) => t.s.rewrite({
-      person: { language: "ru", allowed_senders: { [DOOR]: [OWNER], "door-b": [OWNER_B] } }, moreDoors: ["door-b"], withoutGeneralAgent: true,
-      moreDoor: { "door-b": broken.off ? { enabled: false } : {} },
-      agents: [agentOf(t.topic), { ...generalAgent("door-b", t.s.general), ...(broken.sleeping ? { sleeping: true } : {}) }],
-    })
-    registry({ sleeping: one.sleeping, off: one.off })
-    await generalAdoptedBehind(t.s, "door-b")
-    if (one.connected) await doorOnline(t.s, "door-b")
-
-    // One request, one message and one key, asked again unchanged after the cause is put right.
-    const said = await t.s.said("move it", { agent: t.own.agent })
-    const ask = () => call(t.s, t.own, { action: "move", destination_machine: "mac" }, { key: "one-request", said })
-    const refused = await ask()
-    expect(refused, one.name).toMatchObject({ status: "failed", cause: "withdraw_path_missing", reason: one.reason })
-    expect(String(refused.status_message), one.name).toContain(one.en)
-    expect(String(refused.status_message), one.name).toContain("limit of the current version and not a decision of the owner")
-    expect(String(refused.owner_status), one.name).toContain(one.ru)
-    // Nothing is left: no invocation, no move, no gate, and the owner's message is not spent.
-    await nothingLeft(t.s)
-    expect(await count(t.s, "source_consumption", `source_id = '${said}'`), one.name).toBe(0)
-    expect(await openGates(t.s, t.topic.agent_id), one.name).toEqual([])
-
-    // Put the missing condition back, and the very same request is made.
-    if (one.connected) registry({ sleeping: false, off: false })
-    else await doorOnline(t.s, "door-b")
-    expect(await ask(), one.name).toMatchObject({ status: "accepted", stage: "move_requested" })
-    expect(rows(await moves(t.s)), one.name).toMatchObject([{ requested_by: OWNER, stage: "waiting" }])
-    expect(await count(t.s, "source_consumption", `source_id = '${said}'`), one.name).toBe(1)
-    expect(await openGates(t.s, t.topic.agent_id), one.name).toHaveLength(1)
-  }
-})
-
-test("a General that is being archived or is archived is refused as not open, with the cause in both languages and no reopen that cannot be asked for", async () => {
-  const t = await staged({ stage: { person: { language: "ru" } } })
-  // General archives itself: the chat is being archived, and then archived.
-  expect(await call(t.s, t.general, { action: "archive", topic_id: GENERAL })).toMatchObject({ status: "stopping" })
-  const archiving = await call(t.s, t.own, { action: "move", destination_machine: "mac" })
-  expect(archiving).toMatchObject({ status: "failed", cause: "withdraw_path_missing", reason: "general_not_open", general_state: "archiving" })
-  expect(String(archiving.status_message)).toContain("being archived")
-  expect(String(archiving.status_message)).toContain("limit of the current version and not a decision of the owner")
-  expect(String(archiving.owner_status)).toContain("архивируется")
-  expect(String(archiving.owner_status)).toContain("ограничение текущей версии")
-  await nothingLeft(t.s)
-
-  await t.s.admin`update topic set lifecycle = 'archived' where agent_id = ${GENERAL}`
-  const archived = await call(t.s, t.own, { action: "move", destination_machine: "mac" })
-  expect(archived).toMatchObject({ status: "failed", cause: "withdraw_path_missing", reason: "general_not_open", general_state: "archived" })
-  expect(String(archived.status_message)).toContain("is archived")
-  expect(String(archived.status_message)).toContain("cannot be asked for through me from another chat")
-  expect(String(archived.status_message)).not.toMatch(/Reopen it|reopen it/)
-  expect(String(archived.owner_status)).toContain("в архиве")
-  await nothingLeft(t.s)
-  // The ordinary case is still the ordinary case: with a General that is open, the same request is made.
-  const open = await staged()
-  expect(await call(open.s, open.own, { action: "move", destination_machine: "mac" })).toMatchObject({ status: "accepted", stage: "move_requested" })
 })
 
 test("an attempt the runner lost track of is unresolved and not 'still finishing': status and refusals agree, say to restore the source's report, and neither promise an ending nor release or replay anything", async () => {
@@ -850,7 +801,7 @@ test("a healthy owned attempt on a source that is not connected is unresolved to
   expect(await call(t.s, t.general, moveOf(t, { move_decision: { choice: "withdraw" } }))).toMatchObject({ status: "failed", cause: "turn_still_finishing" })
 })
 
-test("a block only the other side can clear is queued even while the owner could withdraw, and a block the owner can clear is waiting for them", async () => {
+test("a block only the other side can clear is queued even while the owner could withdraw", async () => {
   const t = await staged()
   await call(t.s, t.own, { action: "move", destination_machine: "mac" })
   const [made] = rows(await moves(t.s))
@@ -860,8 +811,9 @@ test("a block only the other side can clear is queued even while the owner could
   expect(blocked).toMatchObject({ status: "queued", stage: "blocked", cause: "registry" })
   expect((blocked.move as { actions: string[] }).actions).toEqual(["withdraw"])
   expect(String(blocked.owner_status)).toContain("It stays on hold until that is sorted out there")
+})
 
-  // One the owner clears (a source that was never known) is waiting for the owner, as before.
+test("a block the owner can clear (a source that was never known) is waiting for the owner", async () => {
   const unknown = await staged({ source: false })
   expect(await call(unknown.s, unknown.own, { action: "move", destination_machine: "mac" })).toMatchObject({ status: "waiting_owner", stage: "blocked", cause: "owner_unknown" })
 })

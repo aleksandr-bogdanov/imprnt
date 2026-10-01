@@ -46,8 +46,10 @@ export const TOOLS = [
       "move: the owner's explicit request needs no confirmation and carries request_key and source_message_ids. It takes exactly one of " +
       "destination_machine (the machine the owner NAMED: there is no default and none is chosen for them) or move_decision. " +
       "A move gates the topic's agent; the turn already being answered finishes, nothing new is handled on the old machine, and a " +
-      "destination that is offline is waited for. The owner asks for it from the topic's own chat or from General, and a move is only " +
-      "started when General can still show where it stands and withdraw it. " +
+      "destination that is offline is waited for. The owner asks for it from the topic's own chat or from General. While it waits, the " +
+      "owner can type /move in that chat to see where it stands, and the exact /move withdraw <move-id> command (a bare /move withdraw only " +
+      "shows the status) and the exact /move seen command that the status shows to withdraw it or to acknowledge an interruption; " +
+      "General can also inspect, withdraw or continue it. " +
       "move_decision {choice: withdraw} cancels a move that has not reached activation. It is refused while a turn of that agent is still " +
       "finishing: ask again after it ended. " +
       "move_decision {choice: continue, attempt_id, expected_recovery_revision} only records that the owner saw the interruption inspect " +

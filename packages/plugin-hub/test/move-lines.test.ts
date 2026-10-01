@@ -7,7 +7,10 @@
 
 import { expect, test } from "bun:test"
 import { MOVE_FAMILIES, CLEARED_BY, SCOPE_REASONS, STORE_CODES, moveFamilyOf, type MoveFamily } from "../src/mcp/move-status.ts"
-import { moveActions, moveRefusalLine, moveStatusLine, moveWithdrawnNotice, type MoveLineFacts } from "../src/door/move-lines.ts"
+import {
+  MOVE_COMMANDS, moveActions, moveActiveNotice, moveDoorRefusalLine, moveRefusalLine, moveSeenLine, moveStatusLine, moveWithdrawnNotice, seenCommand, withdrawCommand,
+  type MoveDoorKind, type MoveLineFacts,
+} from "../src/door/move-lines.ts"
 import { MACHINERY_LINES, type Language } from "../src/door/lines.ts"
 import { HUB_CODES } from "../src/hub/moves.ts"
 import { EXPORT_CODES } from "../src/runner/move-export.ts"
@@ -17,10 +20,15 @@ import { SERVE_CODES } from "../src/runner/move-serve.ts"
 import { MOVE_STAGES } from "../src/store/moves.ts"
 
 const LANGUAGES: Language[] = ["en", "ru"]
+/** The internal id of a move's gate or chat line (`move:<id>`). A command the owner is told to send (`/move`, `/move: it shows ...`) is not one. */
+const INTERNAL_MOVE_ID = /(?<![/\w])move:/i
 const EVERY_CODE = [...new Set([...HUB_CODES, ...EXPORT_CODES, ...SERVE_CODES, ...PREFLIGHT_CODES, BLOCK, ...Object.keys(STORE_CODES), ...SCOPE_REASONS])].sort()
 
+/** A move's id, as a line may carry it only inside the exact withdrawal command. */
+const MOVE = "mv-7c1e"
+
 const facts = (over: Partial<MoveLineFacts> = {}): MoveLineFacts => ({
-  family: null, stage: "waiting", platform: "discord", name: "coffee", chat: "1000000002", source: "pi", dest: "mac",
+  move: MOVE, family: null, stage: "waiting", platform: "discord", name: "coffee", chat: "1000000002", source: "pi", dest: "mac",
   destLive: true, sourceLive: true, finishing: false, withdrawable: true, chatState: "open", ...over,
 })
 /** What can be said about a family at the stage it is raised at: the registry and serve families are raised after activation. */
@@ -47,7 +55,27 @@ test("every code the runtime, the hub and the store name lands in a named family
   expect(moveFamilyOf({ code: "native_build_unknown", by: "source" })).toBe("engine_session")
   expect(moveFamilyOf({ code: "native_dest_refused", by: "source" })).toBe("engine_session")
   for (const code of HUB_CODES) expect(moveFamilyOf({ code, by: "hub" }), code).toBe("registry")
-  for (const code of SERVE_CODES) expect(moveFamilyOf({ code, by: "dest" }), code).toBe("loaded_mismatch")
+  // A serve block about the configuration is the person's settings and not a mismatch of what was loaded.
+  for (const code of SERVE_CODES) expect(moveFamilyOf({ code, by: "dest" }), code).toBe(code.startsWith("serve_config_") ? "config_differs" : "loaded_mismatch")
+})
+
+test("the workspace and configuration blocks of the handoff are the owner's own to fix, in families of their own and never the source's 'has not shown it stopped'", () => {
+  const table: Record<string, MoveFamily> = {
+    config_mismatch: "config_differs", config_unverifiable: "config_differs", dest_config_changed: "config_differs",
+    dest_config_unverifiable: "config_differs", serve_config_changed: "config_differs", serve_config_unverifiable: "config_differs",
+    workspace_unsynced: "source_workspace", workspace_unpushed: "source_workspace", workspace_branch: "source_workspace",
+    workspace_unavailable: "source_workspace", workspace_plan_mismatch: "source_workspace",
+    dest_workspace_moved: "destination_workspace", dest_workspace_busy: "destination_workspace", dest_workspace_branch: "destination_workspace",
+    dest_workspace_dirty: "destination_workspace", dest_workspace_behind: "destination_workspace", dest_workspace_ahead: "destination_workspace",
+    dest_workspace_divergent: "destination_workspace", dest_workspace_unavailable: "destination_workspace",
+    repository_unsynced: "workspace_not_carried", too_many_repositories: "workspace_not_carried",
+    nested_repository_unproven: "workspace_not_carried", not_a_checkout: "workspace_not_carried",
+  }
+  for (const [code, family] of Object.entries(table)) {
+    // Whoever raised it and wherever it was exported from, the family is by the code.
+    for (const by of ["source", "dest", "hub", "store", undefined]) expect(moveFamilyOf({ code, by }), `${code} by ${by}`).toBe(family)
+  }
+  for (const family of ["config_differs", "source_workspace", "destination_workspace"] as const) expect(CLEARED_BY[family]).toBe("side")
 })
 
 test("a code nobody classified is read by its prefix, then by the side that set it, and `other` is the last resort and still a family", () => {
@@ -75,7 +103,8 @@ test("every family has words in both languages, its own, and none of them is a c
       expect(text.length, `${family} ${language}`).toBeGreaterThan(40)
       seen.set(`${language}:${family}`, text)
       for (const code of EVERY_CODE) expect(text, `${family} ${language} says ${code}`).not.toContain(code)
-      expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}|\bmove:|topic-move|operation|execution|attempt_id/i)
+      expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}|topic-move|operation|execution|attempt_id/i)
+      expect(text).not.toMatch(INTERNAL_MOVE_ID)
       // Nothing is promised to clear itself or to be retried.
       expect(text).not.toMatch(/\b(will|shall) (retry|try again|resume|continue by itself|fix itself)|automatically/i)
       expect(text).not.toMatch(/автоматическ|повторит(ся)? сам|будет повторен/i)
@@ -89,6 +118,154 @@ test("every family has words in both languages, its own, and none of them is a c
   expect(moveStatusLine("en", forFamily("source_unproven"))).toContain("<#1000000002>")
   expect(moveStatusLine("en", forFamily("source_unproven"))).toContain("pi")
   expect(moveStatusLine("en", forFamily("source_unproven", { platform: "telegram" }))).toContain("coffee")
+})
+
+test("every family, in both languages and wherever it is said, is made of its own words with no slot, code or id, never names General, and the files-and-settings families say what has to be true without advising that anything be thrown away", () => {
+  const ACTION: Partial<Record<MoveFamily, Record<Language, string>>> = {
+    source_workspace: { en: "each declared repository has to be clean, on its declared branch and pushed", ru: "каждый объявленный репозиторий должен быть чистым, на своей ветке и отправленным" },
+    destination_workspace: { en: "clean and at exactly the handed-off commit", ru: "чистым и ровно на переданном коммите" },
+    config_differs: { en: "the same on pi and mac", ru: "одинаковыми на pi и mac" },
+    workspace_not_carried: { en: "Declare the repositories it uses, with sync enabled on both machines", ru: "Объявите репозитории, которые он использует, с включённой синхронизацией на обеих машинах" },
+  }
+  const destructive = /discard|delete|remove|wipe|reset|overwrit|throw away|erase|сброс|удал|сотр|стер|отбро/i
+  for (const family of MOVE_FAMILIES) {
+    for (const language of LANGUAGES) {
+      for (const inTopic of [false, true]) {
+        const text = moveStatusLine(language, forFamily(family, { inTopic }))
+        const where = `${family} ${language} inTopic=${inTopic}`
+        expect(text, where).not.toMatch(/[{}]|\bt-[0-9a-f]|[0-9a-f]{8}-[0-9a-f]{4}/)
+        expect(text, where).not.toMatch(INTERNAL_MOVE_ID)
+        for (const code of EVERY_CODE) expect(text, `${where} says ${code}`).not.toContain(code)
+        expect(text, where).not.toMatch(/General/i)
+        const action = ACTION[family]?.[language]
+        if (action !== undefined) {
+          expect(text, where).toContain(action)
+          // What has to be true is said without any step that costs the owner their work, and without a replay.
+          expect(text, where).not.toMatch(destructive)
+          expect(text, where).not.toMatch(/\bresume|\breplay|возобнов|повторно запу/i)
+        }
+      }
+    }
+  }
+  // These four are told what to make true and no longer the generic "stays on hold until that is sorted out there".
+  for (const family of Object.keys(ACTION) as MoveFamily[]) expect(moveStatusLine("en", forFamily(family))).not.toContain("until that is sorted out there")
+  expect(moveStatusLine("en", forFamily("registry"))).toContain("until that is sorted out there")
+  // The configuration is named by what is compared and what is not, and no value of it is shown.
+  expect(moveStatusLine("en", forFamily("config_differs"))).toContain("the engine login and the hub's own server are not compared")
+  expect(moveStatusLine("en", forFamily("config_differs"))).toContain("no values are shown here")
+})
+
+test("said in the topic's own chat a move names the door's commands in the person's language, and offers each only where it really works", () => {
+  const withdraw = { en: `by sending /move withdraw ${MOVE} here`, ru: `отправив /перенос отозвать ${MOVE} здесь` }
+  expect(withdrawCommand("en", MOVE)).toBe(`/move withdraw ${MOVE}`)
+  expect(withdrawCommand("ru", MOVE)).toBe(`/перенос отозвать ${MOVE}`)
+  for (const language of LANGUAGES) {
+    const cmd = MOVE_COMMANDS[language]
+    const here = moveStatusLine(language, facts({ inTopic: true }))
+    expect(here, language).toContain(`${cmd.status} `)
+    expect(here, language).toContain(withdraw[language])
+    // The id is in the exact command and nowhere else, and the bare withdrawal is never what is offered.
+    expect(here.split(MOVE), language).toHaveLength(2)
+    expect(here, language).not.toContain(`${cmd.withdraw} ${language === "en" ? "here" : "здесь"}`)
+    // Said anywhere else the owner is not pointed at a command: that chat is where they already are, and the id is not said at all.
+    expect(moveStatusLine(language, facts()), language).not.toMatch(/\/move|\/перенос/)
+    for (const stage of MOVE_STAGES) expect(moveStatusLine(language, facts({ stage })), `${language} ${stage}`).not.toContain(MOVE)
+    for (const family of MOVE_FAMILIES) expect(moveStatusLine(language, forFamily(family)), `${language} ${family}`).not.toContain(MOVE)
+    // A move past the point of withdrawal, and a turn still finishing, never show the withdrawal command.
+    expect(moveStatusLine(language, facts({ stage: "activated", withdrawable: false, inTopic: true })), language).not.toContain(cmd.withdraw)
+    expect(moveStatusLine(language, facts({ finishing: true, inTopic: true })), language).not.toContain(cmd.withdraw)
+    expect(moveStatusLine(language, facts({ unresolved: true, inTopic: true })), language).not.toContain(cmd.withdraw)
+  }
+  // Where the held messages are answered is never promised to be the destination while the move can still be withdrawn.
+  expect(moveStatusLine("en", facts({ inTopic: true }))).toContain("on mac if it goes through, on pi if it is withdrawn")
+  expect(moveStatusLine("ru", facts({ inTopic: true }))).toContain("на mac, если перенос состоится, и на pi, если его отозвать")
+  const past = moveStatusLine("en", facts({ stage: "activated", withdrawable: false, inTopic: true }))
+  expect(past).toContain("answered after it ends: on mac.")
+  expect(past).not.toContain("if it is withdrawn")
+  // A move that has ended says nothing about a gate.
+  expect(moveStatusLine("en", facts({ stage: "withdrawn", withdrawable: false, inTopic: true }))).not.toContain("messages here are kept")
+})
+
+test("the acknowledgement is shown only at an interruption with no turn held, and only as the exact command for the attempt and revision that were shown", () => {
+  const failure = { attempt: "att-9", revision: 4 }
+  expect(seenCommand("en", failure)).toBe("/move seen att-9 4")
+  expect(seenCommand("ru", failure)).toBe("/перенос принято att-9 4")
+  const waitingOwner = facts({ stage: "awaiting_owner", inTopic: true, failure })
+  expect(moveActions(waitingOwner)).toEqual(["continue", "withdraw"])
+  expect(moveStatusLine("en", waitingOwner)).toContain("Send /move seen att-9 4 here and the move goes back to waiting")
+  expect(moveStatusLine("ru", waitingOwner)).toContain("Напишите /перенос принято att-9 4 здесь")
+  expect(moveStatusLine("en", waitingOwner)).toContain("that does not continue the interrupted work, which stays held")
+  // Never bare: with no interruption known there is no command to show, and no other stage shows one.
+  expect(moveStatusLine("en", facts({ stage: "awaiting_owner", inTopic: true }))).not.toContain("/move seen")
+  for (const stage of MOVE_STAGES.filter(one => one !== "awaiting_owner")) expect(moveStatusLine("en", facts({ stage, inTopic: true, failure })), stage).not.toContain("/move seen")
+  // A turn that is owned refuses it, so it is not offered: the line says to send the command again once the turn is over.
+  for (const held of [{ finishing: true }, { unresolved: true }]) {
+    const text = moveStatusLine("en", facts({ stage: "awaiting_owner", inTopic: true, failure, ...held }))
+    expect(text).not.toContain("/move seen")
+  }
+  expect(moveStatusLine("en", facts({ stage: "awaiting_owner", inTopic: true, failure, finishing: true }))).toContain("the command is then sent here again")
+  // Said anywhere else the model is asked, and the attempt is not in the words the owner reads.
+  const elsewhere = moveStatusLine("en", facts({ stage: "awaiting_owner", failure }))
+  expect(elsewhere).toContain("Tell me you have seen it")
+  expect(elsewhere).not.toContain("att-9")
+})
+
+test("the notice that a move went through is the door's own line, names the chat and never the agent, and says 'this chat' only where it lands in that chat", () => {
+  const AGENT = "p1-coffee"
+  for (const language of LANGUAGES) {
+    const named = { platform: "discord", name: "coffee", agent: AGENT, chat: "1000000002", source: "pi", dest: "mac" }
+    const text = moveActiveNotice(language, named)
+    expect(text.startsWith(`${MACHINERY_LINES[language]} `), language).toBe(true)
+    expect(text).toContain("<#1000000002>")
+    expect(text).toContain("mac")
+    expect(text).not.toContain(AGENT)
+    const adopted = { platform: "telegram", name: AGENT, agent: AGENT, chat: null, source: "pi", dest: "mac" }
+    const HERE = language === "en" ? "“this chat”" : "«этот чат»"
+    const MOVED = language === "en" ? "“the chat being moved”" : "«переносимый чат»"
+    expect(moveActiveNotice(language, { ...adopted, inTopic: true })).toContain(HERE)
+    expect(moveActiveNotice(language, adopted)).toContain(MOVED)
+    expect(moveActiveNotice(language, adopted)).not.toContain(HERE)
+    expect(moveActiveNotice(language, adopted)).not.toContain(AGENT)
+    expect(moveActiveNotice(language, { ...adopted, inTopic: true })).not.toContain(AGENT)
+  }
+  expect(moveActiveNotice("en", { platform: "discord", name: "coffee", chat: "1", dest: "mac" })).toContain("now runs on mac. Same conversation and history; messages that waited are answered there.")
+})
+
+test("what the door answers to a command that is not a standing says that nothing was changed, is the door's own line, and offers only what works", () => {
+  // The leak check itself: an internal id is caught wherever it sits, the command the owner is told to send is not.
+  for (const leak of ["move:3f2a", "gate move:3f2a", "(move:fake:1:7001)", "topic-move:3f2a"]) expect(leak).toMatch(INTERNAL_MOVE_ID)
+  for (const command of ["Send /move: it shows", "Send /move, it shows", "/move: it", "Отправьте /перенос: там"]) expect(command).not.toMatch(INTERNAL_MOVE_ID)
+  const kinds: MoveDoorKind[] = ["none", "usage", "older_message", "other_move", "before_interruption", "message_conflict", "other_interruption", "nothing_to_acknowledge"]
+  for (const language of LANGUAGES) {
+    for (const kind of kinds) {
+      const text = moveDoorRefusalLine(language, kind)
+      expect(text.startsWith(`${MACHINERY_LINES[language]} `), `${kind} ${language}`).toBe(true)
+      expect(text, `${kind} ${language}`).not.toMatch(/[{}]|[0-9a-f]{8}-[0-9a-f]{4}|withdraw_path/)
+      expect(text, `${kind} ${language}`).not.toMatch(INTERNAL_MOVE_ID)
+    }
+    // A stale or retargeted answer sends the owner to the standing for the exact command, and says nothing was recorded.
+    expect(moveDoorRefusalLine(language, "other_interruption")).toContain(MOVE_COMMANDS[language].status)
+    expect(moveDoorRefusalLine(language, "older_message")).toContain(MOVE_COMMANDS[language].status)
+    expect(moveDoorRefusalLine(language, "other_move")).toContain(MOVE_COMMANDS[language].status)
+    expect(moveDoorRefusalLine(language, "usage")).toContain(`${MOVE_COMMANDS[language].seen} <`)
+    // The usage names the move in the withdrawal, as a placeholder and never as the bare words.
+    expect(moveDoorRefusalLine(language, "usage")).toContain(`${MOVE_COMMANDS[language].withdraw} <`)
+  }
+  expect(moveDoorRefusalLine("en", "older_message")).toContain("nothing was changed")
+  expect(moveDoorRefusalLine("en", "other_move")).toContain("nothing was changed")
+  expect(moveDoorRefusalLine("en", "other_interruption")).toContain("nothing was recorded")
+  for (const language of LANGUAGES) {
+    const seen = moveSeenLine(language, "waiting", "STANDING")
+    expect(seen.startsWith(`${MACHINERY_LINES[language]} `)).toBe(true)
+    expect(seen).toContain("STANDING")
+  }
+  expect(moveSeenLine("en", "waiting", "")).toContain("the interrupted work was not resumed, released or replayed")
+  expect(moveSeenLine("en", "replay", "")).toContain("already acknowledged")
+  expect(moveSeenLine("en", "awaiting_owner", "")).toContain("another interruption now stands")
+  // Words about an older interruption, answered after the move stopped on a newer one: nothing is recorded, and the line never says the move is waiting again.
+  expect(moveSeenLine("en", "superseded", "S")).toContain("nothing was recorded now")
+  expect(moveSeenLine("en", "superseded", "S")).not.toContain("back to waiting")
+  expect(moveSeenLine("ru", "superseded", "S")).not.toContain("вернулся к ожиданию")
 })
 
 test("every stage reads, in both languages, with no raw state name or id", () => {
@@ -182,40 +359,46 @@ test("the withdrawal notice is the door's own line in the person's language, nam
     expect(text).toContain("<#1000000002>")
     expect(text).toContain("pi")
     expect(text).toContain("mac")
-    expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}|\bmove:|operation|execution/i)
+    expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}|operation|execution/i)
+    expect(text).not.toMatch(INTERNAL_MOVE_ID)
   }
   expect(moveWithdrawnNotice("en", v)).toContain("Interrupted work, if there is any, still waits for your choice.")
   expect(moveWithdrawnNotice("en", { ...v, platform: "telegram", chat: null })).toContain("coffee")
 })
 
-test("every refusal line says nothing was done, offers nothing that is not open, and puts the recovery-route limit on the version and not on the owner", () => {
-  const v = { platform: "discord", name: "coffee", chat: "1000000002", source: "pi", dest: "mac", requested: "pi" }
+test("every refusal line says nothing was done and offers nothing that is not open, and one said in the topic's own chat names the exact command to send again", () => {
+  const v = { move: MOVE, platform: "discord", name: "coffee", chat: "1000000002", source: "pi", dest: "mac", requested: "pi" }
   for (const language of LANGUAGES) {
-    for (const kind of ["turn_finishing", "too_late", "recovery_route", "other_destination"] as const) {
+    for (const kind of ["turn_finishing", "too_late", "other_destination"] as const) {
       const text = moveRefusalLine(language, kind, v)
       expect(text.length, `${kind} ${language}`).toBeGreaterThan(30)
-      expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}|\bmove:|operation|execution|withdraw_path_missing/i)
+      expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}|operation|execution|withdraw_path_missing/i)
+      expect(text).not.toMatch(INTERNAL_MOVE_ID)
+      // Said anywhere but in the topic's own chat, the id is not said at all.
+      expect(text, `${kind} ${language}`).not.toContain(MOVE)
     }
   }
-  const route = moveRefusalLine("en", "recovery_route", v)
-  expect(route).toContain("limit of the current version")
-  expect(route).toContain("not a decision of yours")
-  expect(route).not.toMatch(/not allowed|forbidden|disallow|you may not/i)
+  expect(moveRefusalLine("en", "turn_finishing", { ...v, inTopic: true })).toContain(`send /move withdraw ${MOVE} here again once it has ended`)
+  expect(moveRefusalLine("ru", "turn_finishing", { ...v, inTopic: true })).toContain(`отправьте /перенос отозвать ${MOVE} здесь ещё раз`)
+  // An acknowledgement refused the same way names its own exact command, and never the withdrawal's.
+  const retry = "/move seen att-1 3"
+  expect(moveRefusalLine("en", "turn_finishing", { ...v, inTopic: true, retry })).toContain(`send ${retry} here again once it has ended`)
+  expect(moveRefusalLine("en", "turn_finishing", { ...v, inTopic: true, retry })).not.toContain("/move withdraw")
+  expect(moveRefusalLine("en", "turn_finishing", v)).toContain("ask again once it has ended")
   expect(moveRefusalLine("en", "turn_finishing", v)).toContain("nothing is retried")
   expect(moveRefusalLine("en", "too_late", v)).not.toMatch(/ask again|try again|reopen/i)
   expect(moveRefusalLine("en", "other_destination", v)).toContain("not to pi")
   expect(moveRefusalLine("en", "other_destination", v)).toContain("mac")
 })
 
-const REFUSALS = ["turn_finishing", "turn_unresolved", "too_late", "recovery_route", "other_destination"] as const
+const REFUSALS = ["turn_finishing", "turn_unresolved", "too_late", "other_destination"] as const
 
 test("a chat whose only name is its agent's own id is 'this chat' only in a line delivered in that chat, and the chat being moved anywhere else; a name somebody gave it and a Discord mention are said as they are, and no line carries the id", () => {
   const AGENT = "p1-coffee"
   const HERE: Record<Language, string> = { en: "“this chat”", ru: "«этот чат»" }
   const MOVED: Record<Language, string> = { en: "“the chat being moved”", ru: "«переносимый чат»" }
   // An adopted chat on a platform with no mention: its display name was the agent's id.
-  const adopted = { platform: "telegram", name: AGENT, agent: AGENT, chat: null, source: "pi", dest: "mac" }
-  const general = { platform: "telegram", chat: "7" }
+  const adopted = { move: MOVE, platform: "telegram", name: AGENT, agent: AGENT, chat: null, source: "pi", dest: "mac" }
   for (const language of LANGUAGES) {
     // Said anywhere but in the topic's own chat (General's inspect, withdraw and continue, a request made from General, a notice that fell back to General).
     const elsewhere = [
@@ -231,9 +414,9 @@ test("a chat whose only name is its agent's own id is 'this chat' only in a line
     }
     // Delivered in the topic's own chat: that chat is "this chat".
     const inTopic = [
-      ...MOVE_FAMILIES.map(family => moveStatusLine(language, forFamily(family, { ...adopted, inTopic: true, general }))),
-      ...MOVE_STAGES.map(stage => moveStatusLine(language, facts({ ...adopted, stage, withdrawable: stage === "waiting", inTopic: true, general }))),
-      ...REFUSALS.map(kind => moveRefusalLine(language, kind, { ...adopted, requested: "venus", inTopic: true, general })),
+      ...MOVE_FAMILIES.map(family => moveStatusLine(language, forFamily(family, { ...adopted, inTopic: true }))),
+      ...MOVE_STAGES.map(stage => moveStatusLine(language, facts({ ...adopted, stage, withdrawable: stage === "waiting", inTopic: true }))),
+      ...REFUSALS.map(kind => moveRefusalLine(language, kind, { ...adopted, requested: "venus", inTopic: true })),
       moveWithdrawnNotice(language, { ...adopted, inTopic: true }),
     ]
     for (const line of inTopic) {
@@ -245,9 +428,9 @@ test("a chat whose only name is its agent's own id is 'this chat' only in a line
   // A name somebody gave the chat is the name, and an empty name is not said as nothing.
   expect(moveStatusLine("en", facts({ platform: "telegram", agent: AGENT, name: "coffee", chat: null }))).toContain("coffee")
   expect(moveStatusLine("en", facts({ platform: "telegram", agent: AGENT, name: "coffee", chat: null }))).not.toContain(MOVED.en)
-  expect(moveStatusLine("en", facts({ platform: "telegram", agent: AGENT, name: "coffee", chat: null, inTopic: true, general }))).toContain("coffee")
+  expect(moveStatusLine("en", facts({ platform: "telegram", agent: AGENT, name: "coffee", chat: null, inTopic: true }))).toContain("coffee")
   expect(moveStatusLine("ru", facts({ platform: "telegram", agent: AGENT, name: "  ", chat: null }))).toContain(MOVED.ru)
-  expect(moveStatusLine("ru", facts({ platform: "telegram", agent: AGENT, name: "  ", chat: null, inTopic: true, general }))).toContain(HERE.ru)
+  expect(moveStatusLine("ru", facts({ platform: "telegram", agent: AGENT, name: "  ", chat: null, inTopic: true }))).toContain(HERE.ru)
   // Where the platform has a mention the mention is said, and the id never is, whatever the name.
   const mention = moveStatusLine("en", facts({ platform: "discord", agent: AGENT, name: AGENT, chat: "1000000002" }))
   expect(mention).toContain("<#1000000002>")

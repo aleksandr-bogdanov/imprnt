@@ -68,7 +68,7 @@ export function clockLine(language: Language, stamp: string, seconds: number): s
  * new kind of silence cannot hide behind a vague sentence.
  */
 export const WAIT_REASONS = [
-  "previous", "slots", "memory", "starting", "harvest", "retry", "login", "window", "off", "runner-down", "working", "unknown",
+  "previous", "slots", "memory", "starting", "harvest", "retry", "login", "window", "off", "moving", "runner-down", "working", "unknown",
 ] as const;
 export type WaitReason = (typeof WAIT_REASONS)[number];
 
@@ -83,6 +83,8 @@ const WAIT: Record<Language, Record<WaitReason, string>> = {
     login: "the model login was refused. Someone needs to sign in again.",
     window: "the plan's usage window is used up. It resumes {date}.",
     off: "this agent is switched off on the board.",
+    // Never says where the message is answered as if it were settled: a move that is withdrawn is answered on the machine the chat is on now.
+    moving: "this chat is being moved to {machine}; your message is kept and answered after the move ends: on {machine} if it goes through, on {source} if it is withdrawn. Send /move to see where it stands: it shows the exact command to withdraw it.",
     "runner-down": "the runner {runner} is down, or the machine that runs this agent is offline.",
     // Said of a claim in the store, so it names what is RECORDED and never
     // claims a live process: the store cannot say the loop is still there.
@@ -99,6 +101,7 @@ const WAIT: Record<Language, Record<WaitReason, string>> = {
     login: "вход в модель отклонён, нужно войти заново.",
     window: "лимит тарифа исчерпан, продолжу {date}.",
     off: "этот агент выключен на панели.",
+    moving: "этот чат переносится на {machine}; сообщение сохранено и будет обработано после переноса: на {machine}, если он состоится, и на {source}, если его отозвать. Напишите /перенос, чтобы узнать, где перенос: там точная команда, чтобы отозвать его.",
     "runner-down": "раннер {runner} не работает, или машина этого агента выключена.",
     working: "сообщение принято, ответа пока не записано.",
     unknown: "причина неизвестна. Состояние: {state}.",

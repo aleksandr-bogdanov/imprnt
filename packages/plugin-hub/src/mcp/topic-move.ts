@@ -1,5 +1,6 @@
-import { moveRefusalLine, moveStatusLine, moveWithdrawnNotice, recoveryReasonLine, type MoveLineFacts, type MoveRefusalKind } from "../door/move-lines.ts";
-import { languageOf, listAgents } from "../registry/entries.ts";
+import type { Language } from "../door/lines.ts";
+import { moveRefusalLine, moveStatusLine, moveWithdrawnNotice, seenCommand, type MoveLineFacts, type MoveRefusalKind } from "../door/move-lines.ts";
+import { languageOf, listAgents, platformOf } from "../registry/entries.ts";
 import type { Registry } from "../registry/load.ts";
 import { resolveMoveDestination, type ResolvedDestination } from "../registry/topics.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -10,8 +11,9 @@ import { attentionFor } from "../store/topic-attention.ts";
 import { runnerLive, type TopicRow } from "../store/topics.ts";
 import { HUB_TOPIC, type MoveRequest, type ToolReply } from "./contracts.ts";
 import type { McpBinding } from "./handlers.ts";
-import { generalFor, lineContext, platformOf, type LineContext } from "./move-general.ts";
-import { moveStanding, topicFor, turnReading, type MoveStanding } from "./topic-actions.ts";
+import { lineContext, type LineContext } from "./move-general.ts";
+import { moveStanding, turnReading, type MoveStanding } from "./move-standing.ts";
+import { topicFor } from "./topic-actions.ts";
 import { Undo, operationFor, refusal, requireMaster, runRequest } from "./requests.ts";
 
 /**
@@ -33,15 +35,11 @@ import { Undo, operationFor, refusal, requireMaster, runRequest } from "./reques
  * not the destination is up, and the turn already fed finishes. Nothing here retries, queues a later attempt or falls back to another
  * machine, and no reply says it will.
  *
- * TEMPORARY LIMIT (`withdraw_path_missing`), THE ASSISTANT'S AND NOT THE OWNER'S. While a move waits, its agent takes no new turn, so
- * the moved chat cannot answer a "where is it" or "withdraw" itself: they can only be asked of another chat of the person, and the only
- * one the minimal supported path has is General. A move is therefore refused BEFORE it is made when there is no General that is
- * shown to be usable and independent of the topic being moved (General itself included). That is a limit of this implementation,
- * and the refusal says so, with the real cause and the real next step (`recoveryReasonLine`); it is not a ruling that General may not
- * be moved. A door path that answers while the agent is gated is the integration work that can remove it. WHO MAY USE GENERAL is
- * decided on the door each id belongs to (`senderReachesGeneral`): the cited message's own door and sender come from the stored
- * message, never from the call, and ids of two doors are never compared. A line said in the topic's own chat names that General as
- * where to check on and withdraw the move (`lineContext`), because that chat takes nothing once the turn being answered has ended.
+ * NO OTHER CHAT IS NEEDED TO FOLLOW A MOVE. While a move waits its agent takes no new turn, so the moved chat cannot ask its model where
+ * the move stands; the owner's own chat answers instead through the door's deterministic commands (`door/move-command.ts`: `/move`,
+ * `/move withdraw <move-id>`, `/move seen <attempt> <revision>`), which call the SAME store routines through the two helpers below
+ * (`withdrawOpen`, `acknowledgeOpen`) and are accepted whether or not General, the agent or its runner can run. So a move is never
+ * refused for want of a General, and General can move itself.
  *
  * `continue` IS NOT `resume`. It records that the owner saw the failure it was shown (the attempt and the revision) and returns the
  * move to waiting. It releases no hold, authorizes nothing to be fed and replays nothing; the interrupted work is decided
@@ -78,17 +76,18 @@ function callerRoute(registry: Registry, binding: McpBinding): { door: string; c
 /** The facts a sentence is made from, for a move that is not (or no longer) open and so has no standing. */
 function plainFacts(registry: Registry, topic: TopicRow, move: MoveRow, where: LineContext, over: Partial<MoveLineFacts>): MoveLineFacts {
   return {
-    family: null, stage: move.stage, platform: platformOf(registry, topic.door), name: topic.display_name, agent: topic.agent_id, chat: topic.chat,
+    move: move.id, family: null, stage: move.stage, platform: platformOf(registry, topic.door), name: topic.display_name, agent: topic.agent_id, chat: topic.chat,
     source: move.source_machine, dest: move.dest_machine, destLive: true, sourceLive: true, finishing: false,
     withdrawable: WITHDRAWABLE_STAGES.includes(move.stage), inTopic: where.inTopic, ...over,
   };
 }
 
-/** What a refusal line is made from, and where it is said: in the topic's own chat or elsewhere, and the General it may point at. */
-const refusalFacts = (registry: Registry, topic: TopicRow, move: MoveRow, where: LineContext, more: { requested?: string; sourceLive?: boolean } = {}) =>
-  ({ platform: platformOf(registry, topic.door), name: topic.display_name, agent: topic.agent_id, chat: topic.chat, source: move.source_machine, dest: move.dest_machine,
-    inTopic: where.inTopic, ...(where.general === undefined ? {} : { general: where.general }),
-    ...(more.requested === undefined ? {} : { requested: more.requested }), ...(more.sourceLive === undefined ? {} : { sourceLive: more.sourceLive }) });
+/** What a refusal line is made from, and where it is said: in the topic's own chat or elsewhere, and the exact command to send again there. */
+const refusalFacts = (registry: Registry, topic: TopicRow, move: MoveRow, where: LineContext, more: { requested?: string; sourceLive?: boolean; retry?: string } = {}) =>
+  ({ move: move.id, platform: platformOf(registry, topic.door), name: topic.display_name, agent: topic.agent_id, chat: topic.chat, source: move.source_machine, dest: move.dest_machine,
+    inTopic: where.inTopic,
+    ...(more.requested === undefined ? {} : { requested: more.requested }), ...(more.sourceLive === undefined ? {} : { sourceLive: more.sourceLive }),
+    ...(more.retry === undefined ? {} : { retry: more.retry }) });
 
 /**
  * What an owned attempt of the agent is, for the refusal of a withdrawal or an answer: the store refuses both the same way for a
@@ -117,7 +116,7 @@ const recordedAs = (standing: MoveStanding, stage: string): Pick<ToolReply, "sta
 /** A move is open for this topic and the request cannot start another: the same destination is the request already being true, another is a refusal. */
 async function answerOpenMove(tx: StoreLike, binding: McpBinding, topic: TopicRow, open: MoveRow, wanted: ResolvedDestination): Promise<ToolReply> {
   const registry = binding.registry();
-  const where = await lineContext(tx, binding, topic);
+  const where = lineContext(binding, topic);
   const standing = await moveStanding(tx, registry, topic, open, where);
   if (open.dest_runner === wanted.runner && open.dest_machine === wanted.machine) {
     return {
@@ -162,21 +161,6 @@ async function ask(binding: McpBinding, request: MoveRequest): Promise<ToolReply
       // A move that is already open is answered before anything is measured: the request is what the store already holds, or it is another.
       const standing = await openMoveOfTopic(tx, topic.id);
       if (standing !== null) return await answerOpenMove(tx, binding, topic, standing, wanted);
-      // The sender is the cited message's, on the door that message was read on: General's allowed senders are compared only on General's own door.
-      const general = await generalFor(tx, registry, topic, { door: owner.door, sender: owner.sender });
-      if (!general.ok) {
-        const said = { platform: platformOf(registry, topic.door), name: topic.display_name, agent: topic.agent_id, chat: topic.chat, source: topic.machine, dest: wanted.machine,
-          inTopic: binding.agent === topic.agent_id, cause: general.cause };
-        return {
-          ...refused(topic.id, "withdraw_path_missing",
-            "A move is not supported here yet for this chat, and nothing was started: while it waits, the chat's agent takes no new turn, so the owner could not " +
-              "ask it where the move stands or to withdraw it, and the current version can only do that from a General chat that is shown to be usable and " +
-              `independent of this one. ${recoveryReasonLine("en", general.cause)} This is a limit of the current version and not a decision of the owner.`,
-            moveRefusalLine(languageOf(registry, binding.person), "recovery_route", said)),
-          reason: general.cause.reason,
-          ...(general.cause.state === undefined ? {} : { general_state: general.cause.state }),
-        };
-      }
       const operation = operationFor(binding, request);
       const asked = await requestMove(tx, {
         operation, topic: topic.id, destRunner: wanted.runner, destMachine: wanted.machine, by: owner.sender, route: callerRoute(registry, binding),
@@ -185,7 +169,7 @@ async function ask(binding: McpBinding, request: MoveRequest): Promise<ToolReply
       switch (asked.answer) {
         case "requested":
         case "replay": {
-          const now = await moveStanding(tx, registry, topic, asked.move!, await lineContext(tx, binding, topic));
+          const now = await moveStanding(tx, registry, topic, asked.move!, lineContext(binding, topic));
           return {
             operation_id: operation, object_id: topic.id, revision: topic.lifecycle_generation, ...recordedAs(now, "move_requested"),
             ...(now.cause === undefined ? {} : { cause: now.cause }),
@@ -247,9 +231,8 @@ async function madeAt(tx: StoreLike, move: MoveRow): Promise<string> {
  * General, and nowhere else. Null when there is nowhere to say it that is another chat: the reply this call gives is then the
  * only word of it, and no other chat is chosen.
  */
-async function withdrawnNotice(tx: StoreLike, binding: McpBinding, topic: TopicRow, move: MoveRow, here: { door: string; chat: string } | null): Promise<MoveNotice | null> {
-  const registry = binding.registry();
-  const there = await attentionFor(tx, registry, { person: binding.person, origin: move.route });
+async function withdrawnNotice(tx: StoreLike, registry: Registry, person: string, topic: TopicRow, move: MoveRow, here: { door: string; chat: string } | null): Promise<MoveNotice | null> {
+  const there = await attentionFor(tx, registry, { person, origin: move.route });
   if (!there.ok || (here !== null && there.route.door === here.door && there.route.chat === here.chat)) return null;
   return {
     // "This chat" is said only where the notice really lands in the topic's own chat; the fallback to General (or any other route) names the chat being moved.
@@ -257,8 +240,103 @@ async function withdrawnNotice(tx: StoreLike, binding: McpBinding, topic: TopicR
       platform: there.platform, name: topic.display_name, agent: topic.agent_id, chat: topic.chat, source: move.source_machine, dest: move.dest_machine,
       inTopic: there.route.door === topic.door && there.route.chat === topic.chat,
     }),
-    person: binding.person, agent: there.agent, route: there.route,
+    person, agent: there.agent, route: there.route,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// the decisions, shared by the hub tool and by the door's own commands
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * WHO IS DECIDING AND WHERE: what the two decisions below need from whoever asks, whether that is the hub tool (the binding's person, the
+ * owner's cited message as `by`) or the door (the allow-listed sender of the command). `evidence` is what the store records with the decision
+ * for a withdrawal; for an acknowledgement it is only bounded and checked, because the routine keeps no copy of it.
+ */
+export interface DecisionCaller {
+  registry: Registry;
+  person: string;
+  /** The sender the owner is recorded as. */
+  by: string;
+  /** The chat the decision is made from, so that the notice never goes back to it. */
+  here: { door: string; chat: string } | null;
+  /** The line is delivered in the topic's own chat. */
+  inTopic: boolean;
+  language: Language;
+  evidence: Record<string, unknown>;
+}
+
+export type WithdrawOpenAnswer = "withdrawn" | "replay" | "too-late" | "turn_finishing" | "turn_unresolved" | "withdraw-invalid" | "unknown-move";
+
+/**
+ * The store's withdrawal of ONE named move and what each of its answers means for the owner. The move is the caller's, already read
+ * and bound by the caller to the owner's words; nothing here reads another. `owner` is the person's words, with no marker (a caller that says
+ * it as the door's adds its own) and is empty when the answer has none (`withdraw-invalid`, `unknown-move`). `noticed` is whether a notice
+ * for another chat was queued with the withdrawal.
+ */
+export async function withdrawOpen(tx: StoreLike, caller: DecisionCaller, topic: TopicRow, move: MoveRow): Promise<{ answer: WithdrawOpenAnswer; owner: string; noticed: boolean }> {
+  const notice = await withdrawnNotice(tx, caller.registry, caller.person, topic, move, caller.here);
+  const answer = await withdrawMove(tx, move.id, caller.by, { route: caller.here, notice, evidence: caller.evidence });
+  const where: LineContext = { inTopic: caller.inTopic };
+  const refusing = (kind: MoveRefusalKind, more: { sourceLive?: boolean } = {}) => moveRefusalLine(caller.language, kind, refusalFacts(caller.registry, topic, move, where, more));
+  const said = (kind: WithdrawOpenAnswer, owner: string) => ({ answer: kind, owner, noticed: notice !== null });
+  switch (answer) {
+    case "withdrawn":
+    case "replay":
+      return said(answer === "replay" ? "replay" : "withdrawn", moveStatusLine(caller.language, plainFacts(caller.registry, topic, move, where, { stage: "withdrawn" })));
+    case "too-late":
+      return said("too-late", refusing("too_late"));
+    case "execution-unresolved": {
+      // The store refuses the same way for both; the owner is told which it is. Either way nothing was recorded, nothing is retried, and nothing is released.
+      const turn = await ownedTurn(tx, move);
+      return turn.unresolved ? said("turn_unresolved", refusing("turn_unresolved", { sourceLive: turn.sourceLive })) : said("turn_finishing", refusing("turn_finishing"));
+    }
+    case "withdraw-invalid":
+      return said("withdraw-invalid", "");
+    case "unknown-move":
+      return said("unknown-move", "");
+    default:
+      return answer satisfies never;
+  }
+}
+
+export type AcknowledgeOpenAnswer = "waiting" | "replay" | "awaiting_owner" | "stale" | "turn_finishing" | "turn_unresolved" | "stage" | "continue-invalid" | "terminal" | "unknown-move";
+
+/**
+ * The store's acknowledgement of ONE named move's interruption, bound to the attempt and the recovery revision the owner was shown: the
+ * routine answers `stale` for anything else, so a newer failure is never acknowledged by words about an older one. `standing` is the
+ * move's reading after an answer that left it open (`waiting`, `replay`, `awaiting_owner`). It records that the owner SAW the interruption and
+ * nothing else: no hold is released and nothing is fed or replayed.
+ */
+export async function acknowledgeOpen(tx: StoreLike, caller: DecisionCaller, topic: TopicRow, move: MoveRow, failure: { execution: string; revision: number }):
+  Promise<{ answer: AcknowledgeOpenAnswer; owner: string; standing: MoveStanding | null }> {
+  const answer = await continueMove(tx, move.id, caller.by, failure, caller.evidence);
+  const where: LineContext = { inTopic: caller.inTopic };
+  const retry = seenCommand(caller.language, { attempt: failure.execution, revision: failure.revision });
+  const stood = async (): Promise<MoveStanding> => await moveStanding(tx, caller.registry, topic, (await readMove(tx, move.id)) ?? move, where);
+  const said = (kind: AcknowledgeOpenAnswer, owner: string, standing: MoveStanding | null = null) => ({ answer: kind, owner, standing });
+  switch (answer) {
+    case "waiting":
+    case "replay":
+    case "awaiting_owner": {
+      const standing = await stood();
+      return said(answer, standing.owner_status, standing);
+    }
+    case "ownership-unresolved": {
+      const turn = await ownedTurn(tx, move);
+      return turn.unresolved
+        ? said("turn_unresolved", moveRefusalLine(caller.language, "turn_unresolved", refusalFacts(caller.registry, topic, move, where, { sourceLive: turn.sourceLive, retry })))
+        : said("turn_finishing", moveRefusalLine(caller.language, "turn_finishing", refusalFacts(caller.registry, topic, move, where, { retry })));
+    }
+    case "stale":
+    case "stage":
+    case "continue-invalid":
+    case "terminal":
+    case "unknown-move":
+      return said(answer, "");
+    default:
+      return answer satisfies never;
+  }
 }
 
 async function withdraw(binding: McpBinding, request: MoveRequest): Promise<ToolReply> {
@@ -269,46 +347,40 @@ async function withdraw(binding: McpBinding, request: MoveRequest): Promise<Tool
     open: tx => openForDecision(tx, binding, request, "the move it withdraws", madeAt),
     async apply(tx, { topic, move }, owner) {
       const registry = binding.registry();
-      const language = languageOf(registry, binding.person);
-      const here = callerRoute(registry, binding);
-      const notice = await withdrawnNotice(tx, binding, topic, move, here);
-      const answer = await withdrawMove(tx, move.id, owner.sender, {
-        route: here, notice, evidence: { request_key: request.request_key, messages: request.source_message_ids, conversation: binding.conversation },
-      });
+      const caller: DecisionCaller = {
+        registry, person: binding.person, by: owner.sender, here: callerRoute(registry, binding), inTopic: lineContext(binding, topic).inTopic,
+        language: languageOf(registry, binding.person), evidence: { request_key: request.request_key, messages: request.source_message_ids, conversation: binding.conversation },
+      };
+      const done = await withdrawOpen(tx, caller, topic, move);
       const base = { operation_id: move.operation_id, object_id: topic.id, revision: topic.lifecycle_generation };
-      const where = await lineContext(tx, binding, topic);
-      const refusing = (kind: MoveRefusalKind, more: { sourceLive?: boolean } = {}) => moveRefusalLine(language, kind, refusalFacts(registry, topic, move, where, more));
-      switch (answer) {
+      switch (done.answer) {
         case "withdrawn":
         case "replay":
           return {
             ...base, status: "complete", stage: "withdrawn",
             status_message: `Withdrawn. The move to ${move.dest_machine} is cancelled, the chat's agent handles new messages on ${move.source_machine} again, and its history is kept. ` +
               "Interrupted work, if there is any, is still held until the owner decides about it with resume: withdrawing released nothing of it. " +
-              (notice === null ? "No other chat was told: this reply is the word of it." : "The chat the move was asked in is told once."),
-            owner_status: moveStatusLine(language, plainFacts(registry, topic, move, where, { stage: "withdrawn" })),
+              (done.noticed ? "The chat the move was asked in is told once." : "No other chat was told: this reply is the word of it."),
+            owner_status: done.owner,
           };
         case "too-late":
           return refused(topic.id, "too_late",
-            `The move is already past activation: it finishes on ${move.dest_machine} and cannot be withdrawn, and nothing is to be retried.`, refusing("too_late"));
-        case "execution-unresolved": {
-          // The store refuses the same way for both; the owner is told which it is. Either way nothing was recorded, nothing is retried, and nothing is released.
-          const turn = await ownedTurn(tx, move);
-          return turn.unresolved
-            ? refused(topic.id, "turn_unresolved",
-              `An attempt of this chat's agent on ${move.source_machine} is unresolved (the runner lost track of it, or ${move.source_machine} is not connected), so the move cannot be withdrawn. ` +
-                `Nothing was recorded and nothing is retried or released: ${move.source_machine} has to be connected and report on it first, and nothing here promises how it ends.`,
-              refusing("turn_unresolved", { sourceLive: turn.sourceLive }))
-            : refused(topic.id, "turn_still_finishing",
-              `A turn of this chat's agent on ${move.source_machine} is still finishing, so the move cannot be withdrawn this instant. Nothing was recorded and nothing is retried: ` +
-                "if the owner still wants it withdrawn, ask again once that turn has ended.", refusing("turn_finishing"));
-        }
+            `The move is already past activation: it finishes on ${move.dest_machine} and cannot be withdrawn, and nothing is to be retried.`, done.owner);
+        case "turn_unresolved":
+          return refused(topic.id, "turn_unresolved",
+            `An attempt of this chat's agent on ${move.source_machine} is unresolved (the runner lost track of it, or ${move.source_machine} is not connected), so the move cannot be withdrawn. ` +
+              `Nothing was recorded and nothing is retried or released: ${move.source_machine} has to be connected and report on it first, and nothing here promises how it ends.`,
+            done.owner);
+        case "turn_finishing":
+          return refused(topic.id, "turn_still_finishing",
+            `A turn of this chat's agent on ${move.source_machine} is still finishing, so the move cannot be withdrawn this instant. Nothing was recorded and nothing is retried: ` +
+              "if the owner still wants it withdrawn, ask again once that turn has ended.", done.owner);
         case "withdraw-invalid":
           return refused(topic.id, "withdraw_invalid", "the store could not take this withdrawal as asked, and nothing was recorded");
         case "unknown-move":
           return noOpenMove(topic);
         default:
-          return answer satisfies never;
+          return done.answer satisfies never;
       }
     },
   });
@@ -328,40 +400,35 @@ async function acknowledge(binding: McpBinding, request: MoveRequest): Promise<T
     open: tx => openForDecision(tx, binding, request, "the interruption it answers", async (_tx, move) => move.failure?.since ?? null),
     async apply(tx, { topic, move }, owner) {
       const registry = binding.registry();
-      const language = languageOf(registry, binding.person);
-      const answer = await continueMove(tx, move.id, owner.sender, { execution: decision.attempt_id, revision: decision.expected_recovery_revision },
-        { request_key: request.request_key, messages: request.source_message_ids, conversation: binding.conversation });
+      const caller: DecisionCaller = {
+        registry, person: binding.person, by: owner.sender, here: callerRoute(registry, binding), inTopic: lineContext(binding, topic).inTopic,
+        language: languageOf(registry, binding.person), evidence: { request_key: request.request_key, messages: request.source_message_ids, conversation: binding.conversation },
+      };
+      const done = await acknowledgeOpen(tx, caller, topic, move, { execution: decision.attempt_id, revision: decision.expected_recovery_revision });
       const base = { operation_id: move.operation_id, object_id: topic.id, revision: topic.lifecycle_generation };
       const NOT_RESUMED = "This recorded only that the owner saw the interruption: it did not resume, release or replay the interrupted work, which stays held and is decided separately with resume.";
-      const where = await lineContext(tx, binding, topic);
-      const stood = async (): Promise<MoveStanding> => await moveStanding(tx, registry, topic, (await readMove(tx, move.id)) ?? move, where);
-      switch (answer) {
+      const standing = done.standing;
+      switch (done.answer) {
         case "waiting":
-        case "replay": {
-          const standing = await stood();
-          return { ...base, status: "accepted", stage: "failure_acknowledged", ...(standing.cause === undefined ? {} : { cause: standing.cause }),
-            status_message: `${answer === "replay" ? "That interruption was already acknowledged." : "Recorded."} The move is back to waiting. ${NOT_RESUMED} ${standing.message}`,
-            owner_status: standing.owner_status, move: standing.move };
-        }
-        case "awaiting_owner": {
-          const standing = await stood();
+        case "replay":
+          return { ...base, status: "accepted", stage: "failure_acknowledged", ...(standing!.cause === undefined ? {} : { cause: standing!.cause }),
+            status_message: `${done.answer === "replay" ? "That interruption was already acknowledged." : "Recorded."} The move is back to waiting. ${NOT_RESUMED} ${standing!.message}`,
+            owner_status: standing!.owner_status, move: standing!.move };
+        case "awaiting_owner":
           return { ...base, status: "waiting_owner", stage: "awaiting_owner",
-            status_message: `Recorded, but another interruption now stands and the move is paused again. ${NOT_RESUMED} ${standing.message}`,
-            owner_status: standing.owner_status, move: standing.move };
-        }
+            status_message: `Recorded, but another interruption now stands and the move is paused again. ${NOT_RESUMED} ${standing!.message}`,
+            owner_status: standing!.owner_status, move: standing!.move };
         case "stale":
           return refused(topic.id, "stale_revision", "what the move stopped on is not the interruption that was cited: inspect the topic again, read move.failure, and ask the owner again");
-        case "ownership-unresolved": {
-          const turn = await ownedTurn(tx, move);
-          return turn.unresolved
-            ? refused(topic.id, "turn_unresolved",
-              `An attempt of this chat's agent on ${move.source_machine} is unresolved (the runner lost track of it, or ${move.source_machine} is not connected), so this cannot be recorded. ` +
-                `Nothing was recorded and nothing is retried or released: ${move.source_machine} has to be connected and report on it first, and nothing here promises how it ends.`,
-              moveRefusalLine(language, "turn_unresolved", refusalFacts(registry, topic, move, where, { sourceLive: turn.sourceLive })))
-            : refused(topic.id, "turn_still_finishing",
-              `A turn of this chat's agent on ${move.source_machine} is still finishing, so this cannot be recorded this instant. Nothing was recorded and nothing is retried: ask again once that turn has ended.`,
-              moveRefusalLine(language, "turn_finishing", refusalFacts(registry, topic, move, where)));
-        }
+        case "turn_unresolved":
+          return refused(topic.id, "turn_unresolved",
+            `An attempt of this chat's agent on ${move.source_machine} is unresolved (the runner lost track of it, or ${move.source_machine} is not connected), so this cannot be recorded. ` +
+              `Nothing was recorded and nothing is retried or released: ${move.source_machine} has to be connected and report on it first, and nothing here promises how it ends.`,
+            done.owner);
+        case "turn_finishing":
+          return refused(topic.id, "turn_still_finishing",
+            `A turn of this chat's agent on ${move.source_machine} is still finishing, so this cannot be recorded this instant. Nothing was recorded and nothing is retried: ask again once that turn has ended.`,
+            done.owner);
         case "stage":
           return refused(topic.id, "nothing_to_decide", "this move is not waiting on an interruption, so there is nothing to acknowledge");
         case "continue-invalid":
@@ -370,7 +437,7 @@ async function acknowledge(binding: McpBinding, request: MoveRequest): Promise<T
         case "unknown-move":
           return noOpenMove(topic);
         default:
-          return answer satisfies never;
+          return done.answer satisfies never;
       }
     },
   });

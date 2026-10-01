@@ -317,6 +317,11 @@ export function languageOf(registry: unknown, personId: string): "en" | "ru" {
   return (person?.language ?? DEFAULT_LANGUAGE) as "en" | "ru";
 }
 
+/** The platform a door speaks, as the registry says it (Discord when it says none). */
+export function platformOf(registry: Registry, door: string): string {
+  return ((registry.data.run ?? []) as { id: string; platform?: string }[]).find((one) => one.id === door)?.platform ?? "discord";
+}
+
 /**
  * Where a notice about this agent goes and how it is written: its door and
  * chat, the platform that door speaks, and its person's language. Everything a

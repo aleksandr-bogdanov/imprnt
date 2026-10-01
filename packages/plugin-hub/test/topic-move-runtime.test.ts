@@ -392,7 +392,7 @@ test("RT-4: the note is composed from the move alone, hashes to the digest serve
     agent: written.agent, runner: written.dest_runner, machine: written.dest_machine, placement_generation: written.dest_generation!,
     digest: String(written.registry_receipt!.digest), profile: written.dest_facts!.profile as Record<string, unknown>,
     capabilities: written.dest_facts!.capabilities as Record<string, unknown>, imported: { generation: written.import_generation, manifest_digest: written.manifest!.digest },
-  }, { digest: foreign }, moveNotice(written, "en"))).toBe("active")
+  }, { digest: foreign }, moveNotice(written, "en", { platform: "discord", name: "coffee", chat: "1000000002", inTopic: false }))).toBe("active")
   const served = await other.s.reread(other.move)
   expect(served).toMatchObject({ stage: "active", note_state: "pending", note_digest: foreign })
   const refused = await notesOwedTo(other.s.tool, other.agent, other.move.conversation_id).catch(error => error)

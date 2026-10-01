@@ -25,6 +25,9 @@ export interface WaitFacts {
   sleeping: boolean;
   runner: string;
   runnerLive: boolean;
+  /** The destination and the source of this agent's open move, which gates its unclaimed messages. Null when it has none. */
+  moveDest: string | null;
+  moveSource: string | null;
   now: number;
 }
 
@@ -52,6 +55,8 @@ function minute(iso: string): string {
 export function waitReason(f: WaitFacts): WaitVerdict {
   const wait: AgentWait | null = f.wait;
   if (f.sleeping) return { kind: "off", values: {} };
+  // A message the move's gate holds is not claimed by anything: it waits for the move, and a runner that is down is a second fact the move already explains.
+  if (f.moveDest && f.row.claimed_by === null) return { kind: "moving", values: { machine: f.moveDest, source: f.moveSource ?? "" } };
   if (!f.runnerLive) return { kind: "runner-down", values: { runner: f.runner } };
   if (f.outage?.cause === "login") return { kind: "login", values: {} };
   if (f.outage?.cause === "window") return { kind: "window", values: { date: minute(f.outage.retry_at) } };
@@ -110,6 +115,8 @@ export function waitFacts(sidecar: WaitSidecar, input: {
     sleeping,
     runner: agent.runner,
     runnerLive: sidecar.runnerLive,
+    moveDest: sidecar.moveDest,
+    moveSource: sidecar.moveSource,
     now: input.now ?? Date.now(),
   };
 }
