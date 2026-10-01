@@ -52,6 +52,8 @@ async function deleted(s: TopicsStage): Promise<TopicRow> {
   await s.topicPass()
   await hub(s, "pi")
   await hub(s, "mac")
+  await s.topicPass()
+  await hub(s, "pi")
   const [row] = await s.admin`select stage from topic_deletion where topic_id = ${topic.id}`
   expect(row.stage).toBe("active_deleted")
   return topic

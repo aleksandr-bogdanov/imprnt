@@ -88,6 +88,9 @@ export interface RunSpec {
   dump_argv?: string[];
   upload_argv?: string[];
   readback_argv?: string[];
+  /** The two optional commands that give the destination a finite retention: list every copy, expire one. */
+  list_argv?: string[];
+  expire_argv?: string[];
   /** Where the copy goes. The argvs receive it and code never parses it. */
   destination?: string;
   /** The Discord server a door resolves a channel name against. */
@@ -533,6 +536,8 @@ function renderRegistry(spec: RegistrySpec): string {
       dump_argv: entry.dump_argv,
       upload_argv: entry.upload_argv,
       readback_argv: entry.readback_argv,
+      list_argv: entry.list_argv,
+      expire_argv: entry.expire_argv,
       repositories: entry.repositories,
       source: entry.source,
       agent: entry.agent,

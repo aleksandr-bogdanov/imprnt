@@ -37,10 +37,15 @@ function tombstoneOf(raw: unknown): ManifestTombstone {
     || !Number.isSafeInteger(one.deletion_generation) || (one.deletion_generation as number) < 1) {
     throw new ManifestMalformed("a tombstone is missing what it is identified by");
   }
+  const locations = one.worker_locations ?? [];
+  if (!Array.isArray(locations) || locations.some(item => !item || !isText(item.agent) || !isText(item.conversation))
+      || one.workers.some(id => !locations.some(item => item.conversation === id))) {
+    throw new ManifestMalformed("worker conversation locations are incomplete");
+  }
   return {
     topic_id: one.topic_id, person: String(one.person ?? ""), agent_id: one.agent_id, conversation_id: one.conversation_id, origin: one.origin,
     door: String(one.door ?? ""), chat: typeof one.chat === "string" ? one.chat : null, machine: String(one.machine ?? ""), runner: String(one.runner ?? ""),
-    workers: [...one.workers], deletion_id: one.deletion_id, deletion_generation: one.deletion_generation as number, active_deleted: one.active_deleted === true,
+    workers: [...one.workers], worker_locations: locations, deletion_id: one.deletion_id, deletion_generation: one.deletion_generation as number, active_deleted: one.active_deleted === true,
   };
 }
 
@@ -71,6 +76,7 @@ export function mergeManifests(a: ErasureManifest | null, b: ErasureManifest | n
     if (standing === undefined) { byTopic.set(one.topic_id, one); continue; }
     const later = one.deletion_generation >= standing.deletion_generation ? one : standing;
     byTopic.set(one.topic_id, { ...later, active_deleted: one.active_deleted || standing.active_deleted,
+      worker_locations: [...new Map([...(standing.worker_locations ?? []), ...(one.worker_locations ?? [])].map(item => [item.conversation, item])).values()],
       workers: [...new Set([...standing.workers, ...one.workers])].sort() });
   }
   return {
@@ -89,11 +95,10 @@ export function readLocalManifest(stateDir: string): ErasureManifest | null {
 
 /**
  * Keep this machine's copy current: the store's manifest merged with what the copy already holds, written whole through a rename.
- * A copy that cannot be read is replaced by the store's alone only when the store has been read, and never made smaller.
+ * An unreadable existing copy holds the operation; a stale store must not replace it.
  */
 export function writeLocalManifest(stateDir: string, fromStore: ErasureManifest): ErasureManifest {
-  let standing: ErasureManifest | null = null;
-  try { standing = readLocalManifest(stateDir); } catch { standing = null; }
+  const standing = readLocalManifest(stateDir);
   const merged = mergeManifests(standing, fromStore);
   const file = join(stateDir, CONTROL_MANIFEST_FILE);
   const text = renderManifest(merged);
@@ -127,7 +132,9 @@ export function registryViolations(registry: Registry, manifest: ErasureManifest
 
 export type RestoreVerdict =
   | { serve: true; apply: ErasureManifest }
-  | { serve: false; reason: "current_manifest_unverified" | "snapshot_manifest_malformed" | "registry_binds_deleted"; detail: string };
+  | { serve: false; reason: "current_manifest_unverified" | "snapshot_manifest_malformed" | "registry_binds_deleted"; detail: string;
+      /** For `registry_binds_deleted`: the agents of the registry that were deleted, and which of them are named by their own id (those can be removed). */
+      violations?: RegistryViolation[] };
 
 /**
  * Whether a restored store may serve, and what has to be applied to it first. `current` is the latest manifest from a source that
@@ -146,7 +153,7 @@ export function restoreBarrier(input: { current: ErasureManifest | null; snapsho
   if (input.registry !== null) {
     const violations = registryViolations(input.registry, apply);
     if (violations.length > 0) {
-      return { serve: false, reason: "registry_binds_deleted",
+      return { serve: false, reason: "registry_binds_deleted", violations,
         detail: `the registry names ${violations.map(one => one.agent).join(", ")}, which were deleted: remove them before anything is served` };
     }
   }

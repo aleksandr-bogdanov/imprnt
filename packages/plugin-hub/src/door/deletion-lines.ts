@@ -85,6 +85,7 @@ const PLACE: Record<ReceiptClass, { en: string; ru: string }> = {
   inbox_media: { en: "attachments", ru: "вложения" },
   engine_state: { en: "the agent's session files", ru: "файлы сессий агента" },
   move_copy: { en: "a copy kept by a machine move", ru: "копия, оставшаяся от переноса" },
+  harvest_stage: { en: "notes staged for the vault", ru: "заметки, подготовленные для хранилища" },
   platform_chat: { en: "the chat on the platform", ru: "чат на платформе" },
   platform_message: { en: "a message outside the chat", ru: "сообщение вне чата" },
   backup_generation: { en: "an earlier backup copy", ru: "более ранняя резервная копия" },

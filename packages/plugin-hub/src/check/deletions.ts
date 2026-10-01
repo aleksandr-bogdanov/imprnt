@@ -1,6 +1,6 @@
 import { placeOf } from "../door/deletion-lines.ts";
 import type { StoreLike } from "../store/connect.ts";
-import { confirmedDeletions, receiptsOf } from "../store/deletions.ts";
+import { confirmedDeletions, deletionSchemaReady, receiptsOf } from "../store/deletions.ts";
 import { findingId, type Finding } from "./finding.ts";
 
 /**
@@ -18,12 +18,15 @@ export const QUIESCE_GRACE_MS = 10 * 60 * 1000;
 
 export async function deletionFindings(args: { store: StoreLike; machine: string; now: Date; doors: ReadonlySet<string> }): Promise<Finding[]> {
   const findings: Finding[] = [];
+  // A store that has not been migrated to 017 has deleted nothing, and none of the tables below: the runners say it is behind, by name.
+  if (!(await deletionSchemaReady(args.store))) return findings;
   const rows = (await confirmedDeletions(args.store)).filter(one => args.doors.has(one.door));
   const stamps = (await args.store.sql`select id, updated_at, confirmed_at from topic_deletion where stage <> 'superseded'`) as unknown as
     { id: string; updated_at: Date; confirmed_at: Date | null }[];
   const at = new Map(stamps.map(one => [one.id, one]));
   let unconfigured = 0;
   let unverified = 0;
+  let blocked = 0;
   for (const deletion of rows) {
     const subject = deletion.id;
     const waited = args.now.getTime() - new Date(at.get(deletion.id)?.confirmed_at ?? args.now).getTime();
@@ -57,6 +60,7 @@ export async function deletionFindings(args: { store: StoreLike; machine: string
     }
     if (deletion.retention_state === "not_configured") unconfigured += 1;
     if (deletion.retention_state === "retention_unverified") unverified += 1;
+    if (deletion.retention_state === "retention_blocked") blocked += 1;
   }
   if (unconfigured > 0) {
     findings.push({
@@ -69,7 +73,14 @@ export async function deletionFindings(args: { store: StoreLike; machine: string
     findings.push({
       id: findingId(args.machine, "backup-retention-unverified"), kind: "backup-retention-unverified", subject: "hub.backup_retention_days", machine: args.machine,
       says: `${unverified} deleted topic${unverified === 1 ? "" : "s"} ${unverified === 1 ? "is" : "are"} counted against a configured backup retention that the backup destination cannot verify or carry out: earlier copies remain until removed by hand`,
-      fix: "remove earlier backup copies older than the configured days at the destination yourself, or give the backup entry a destination that can list and expire its copies",
+      fix: "remove earlier backup copies older than the configured days at the destination yourself, or declare list_argv and expire_argv on the backup entry, with an upload that gives each copy a place of its own ({generation}), so that the job can enumerate and expire them",
+    });
+  }
+  if (blocked > 0) {
+    findings.push({
+      id: findingId(args.machine, "backup-retention-blocked"), kind: "backup-retention-blocked", subject: "hub.backup_retention_days", machine: args.machine,
+      says: `${blocked} deleted topic${blocked === 1 ? "" : "s"} ${blocked === 1 ? "has" : "have"} an earlier backup copy that is past the configured retention and that the destination did not remove (its expiry command failed, or the copy is still listed after it)`,
+      fix: "look at the backup-retention failure in the diary, make the destination's expire command work or remove the copy by hand; the next backup run asks again",
     });
   }
   return findings;

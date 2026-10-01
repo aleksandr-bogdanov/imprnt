@@ -55,6 +55,7 @@ create table topic_tombstone (
   machine              text not null,
   runner               text not null,
   worker_conversations jsonb not null default '[]'::jsonb check (jsonb_typeof(worker_conversations) = 'array'),
+  worker_locations jsonb not null default '[]'::jsonb check (jsonb_typeof(worker_locations) = 'array'),
   deletion_id          text not null check (deletion_id <> ''),
   deletion_generation  integer not null check (deletion_generation >= 1),
   confirmed_at         timestamptz not null default now(),
@@ -183,7 +184,7 @@ create trigger topic_deletion_notify
 create table erasure_receipt (
   deletion_id text not null references topic_deletion (id),
   class       text not null check (class in ('postgres_active', 'registry_binding', 'chatlog', 'inbox_media', 'engine_state', 'move_copy',
-                                              'platform_chat', 'platform_message', 'backup_generation')),
+                                              'harvest_stage', 'platform_chat', 'platform_message', 'backup_generation')),
   location    text not null check (location <> ''),
   machine     text not null default '',
   historical  boolean not null default false,
@@ -381,15 +382,27 @@ language sql immutable as $$
     when 'turn_progress' then id_in = any (inbound_in)
     when 'door_progress' then id_in = any (inbound_in) or data_in ->> 'agent' = agent_in
     when 'control' then data_in ->> 'agent' = agent_in
+    when 'sender_denied' then data_in ->> 'agent' = agent_in
     else false end, false)
 $$;
 
--- The Hub-generated messages a topic left somewhere else: the previews of its creation and its councils' status lines.
-create function hub_erasure_linked_effects(topic_in text, councils_in text[]) returns setof public.platform_effect
+-- The confirmations whose frozen payload carries the topic's own words: the preview of its creation, and the council proposals its
+-- agent made (asked, approved or not: a proposal holds the question and the context). The deletion's own confirmation is not one.
+create function hub_erasure_confirmations(topic_in text, agent_in text, councils_in text[]) returns setof text
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select cf.id from public.confirmation cf
+   where (cf.operation_kind = 'topic.create' and cf.payload ->> 'topic_id' = topic_in)
+      or (cf.operation_kind = 'council.start'
+          and (cf.payload -> 'master' ->> 'agent' = agent_in
+               or cf.operation_id in (select c.operation_id from public.council c where c.id = any (councils_in))))
+$$;
+
+-- The Hub-generated messages a topic left somewhere else: the previews of its creation and its councils' proposals, and its councils'
+-- status lines. Read BEFORE the councils and the confirmations are removed, because it finds them through those rows.
+create function hub_erasure_linked_effects(topic_in text, agent_in text, councils_in text[]) returns setof public.platform_effect
 language sql stable security definer set search_path = pg_catalog, public as $$
   select e.* from public.platform_effect e
-   where e.owner_ref in (select 'confirmation:' || cf.id from public.confirmation cf
-                          where cf.operation_kind = 'topic.create' and cf.payload ->> 'topic_id' = topic_in)
+   where e.owner_ref in (select 'confirmation:' || x from public.hub_erasure_confirmations(topic_in, agent_in, councils_in) x)
       or e.key in (select c.status_effect_key from public.council c where c.id = any (councils_in))
 $$;
 
@@ -419,7 +432,7 @@ begin
     'moves', cardinality(s.moves),
     'move_copies', (select count(*) from public.move_copy where move_id = any (s.moves) and state not in ('removed', 'superseded')),
     'effects_in_chat', (select count(*) from public.platform_effect e where chat_in is not null and e.door = door_in and e.chat = chat_in),
-    'messages_elsewhere', (select count(*) from public.hub_erasure_linked_effects(topic_in, s.councils) e
+    'messages_elsewhere', (select count(*) from public.hub_erasure_linked_effects(topic_in, agent_in, s.councils) e
                             where e.platform_id is not null and not (e.door = door_in and coalesce(e.chat = chat_in, false)))
   );
 end $$;
@@ -506,6 +519,7 @@ declare
   hashed text;
   tid text;
 begin
+  perform pg_advisory_xact_lock(682151, 1);
   select * into c from public.confirmation where id = confirmation_in;
   if not found then
     raise exception 'deletion-approval-unknown: there is no confirmation %', confirmation_in;
@@ -544,9 +558,10 @@ begin
     perform public.hub_identity_reserve('conversation', one, 'deleted', jsonb_build_object('deletion', d.id));
   end loop;
   insert into public.topic_tombstone (topic_id, person, agent_id, conversation_id, origin, door, chat, machine, runner,
-                                      worker_conversations, deletion_id, deletion_generation)
+                                      worker_conversations, worker_locations, deletion_id, deletion_generation)
   values (t.id, t.person, t.agent_id, t.conversation_id, t.origin, t.door, t.chat, t.machine, t.runner,
-          to_jsonb(array(select x from unnest(s.conversations) x where x <> t.conversation_id)), d.id, gen);
+          to_jsonb(array(select x from unnest(s.conversations) x where x <> t.conversation_id)),
+          coalesce((select jsonb_agg(jsonb_build_object('agent', worker_row.agent, 'conversation', worker_row.id)) from public.conversation worker_row where worker_row.id = any(s.conversations) and worker_row.id <> t.conversation_id), '[]'::jsonb), d.id, gen);
 
   -- THE RECEIPTS, written before anything that names a location is erased.
   insert into public.erasure_receipt (deletion_id, class, location, machine)
@@ -557,12 +572,12 @@ begin
   end if;
   insert into public.erasure_receipt (deletion_id, class, location, machine, detail)
   select d.id, 'platform_message', e.chat || '/' || e.platform_id, '', jsonb_build_object('door', e.door, 'chat', e.chat, 'message', e.platform_id)
-    from public.hub_erasure_linked_effects(t.id, s.councils) e
+    from public.hub_erasure_linked_effects(t.id, t.agent_id, s.councils) e
    where e.platform_id is not null and not (e.door = t.door and coalesce(e.chat = t.chat, false))
   on conflict do nothing;
   for one in select jsonb_array_elements_text(d.preview -> 'machines') loop
     insert into public.erasure_receipt (deletion_id, class, location, machine)
-    values (d.id, 'chatlog', t.agent_id, one), (d.id, 'engine_state', t.agent_id, one)
+    values (d.id, 'chatlog', t.agent_id, one), (d.id, 'engine_state', t.agent_id, one), (d.id, 'harvest_stage', t.agent_id, one)
     on conflict do nothing;
     for rec in select c2.agent, c2.id from public.conversation c2
                 where c2.id = any (s.conversations) and c2.id <> t.conversation_id loop
@@ -576,9 +591,19 @@ begin
       values (d.id, 'inbox_media', hashed, one) on conflict do nothing;
     end loop;
   end loop;
+  -- A movement copy's location is the one the movement manifest names (016): `<state>/<person>/sessions/<agent>/<conversation>` on the
+  -- copy's machine, for the destination's staged import and the source's retained session alike. The paths the copy's own evidence
+  -- recorded are kept here, because the evidence goes with the move: they are what the machine checks the derived location against.
   insert into public.erasure_receipt (deletion_id, class, location, machine, detail)
-  select d.id, 'move_copy', mc.staging_id, mc.machine, jsonb_build_object('kind', mc.kind, 'state', mc.state, 'conversation', mc.conversation_id)
-    from public.move_copy mc where mc.move_id = any (s.moves) and mc.state not in ('removed', 'superseded')
+  select d.id, 'move_copy', mc.staging_id, mc.machine,
+         jsonb_build_object('kind', mc.kind, 'state', mc.state, 'conversation', mc.conversation_id, 'agent', m.agent,
+           'recorded', to_jsonb(array(select distinct p from unnest(array[
+              mc.evidence -> 'promote_intent' ->> 'session_dir',
+              mc.evidence -> 'promoted' -> 'receipt' ->> 'destination',
+              mc.evidence -> 'failure' -> 'detail' -> 'receipt' ->> 'destination',
+              mc.evidence -> 'promoted' -> 'to' ->> 'cwd']) p where p is not null and char_length(p) <= 512)))
+    from public.move_copy mc join public.topic_move m on m.id = mc.move_id
+   where mc.move_id = any (s.moves) and mc.state not in ('removed', 'superseded')
   on conflict do nothing;
 
   -- THE GATES, in ascending agent order and before the stops that go with them: nothing new of this topic's is claimed.
@@ -655,6 +680,14 @@ begin
   delete from public.conversation_entry where conversation_id = any (s.conversations);
   get diagnostics n = row_count; counts := counts || jsonb_build_object('conversation_entries', n);
 
+  -- The messages and the frozen proposals are found THROUGH the councils and the confirmations, so they go before either does.
+  delete from public.platform_effect e
+   where (k.chat is not null and e.door = k.door and e.chat = k.chat)
+      or e.key in (select l.key from public.hub_erasure_linked_effects(k.topic_id, k.agent_id, s.councils) l);
+  get diagnostics n = row_count; counts := counts || jsonb_build_object('platform_effects', n);
+  delete from public.confirmation cf where cf.id in (select x from public.hub_erasure_confirmations(k.topic_id, k.agent_id, s.councils) x);
+  get diagnostics n = row_count; counts := counts || jsonb_build_object('confirmations', n);
+
   delete from public.council_event where council_id = any (s.councils);
   delete from public.round_member where council_id = any (s.councils);
   delete from public.council_round where council_id = any (s.councils);
@@ -681,12 +714,6 @@ begin
   delete from public.conversation where id = any (s.conversations);
   get diagnostics n = row_count; counts := counts || jsonb_build_object('conversations', n);
 
-  delete from public.platform_effect e
-   where (k.chat is not null and e.door = k.door and e.chat = k.chat)
-      or e.key in (select l.key from public.hub_erasure_linked_effects(k.topic_id, s.councils) l);
-  get diagnostics n = row_count; counts := counts || jsonb_build_object('platform_effects', n);
-  delete from public.confirmation cf where cf.operation_kind = 'topic.create' and cf.payload ->> 'topic_id' = k.topic_id;
-  get diagnostics n = row_count; counts := counts || jsonb_build_object('confirmations', n);
   delete from public.state_row r
    where public.hub_erasure_owns_row(r.sheet, r.id, r.data, k.agent_id, k.person, k.door, k.chat, s.inbound);
   get diagnostics n = row_count; counts := counts || jsonb_build_object('state_rows', n);
@@ -956,7 +983,7 @@ language sql stable security definer set search_path = pg_catalog, public as $$
     'tombstones', coalesce((select jsonb_agg(jsonb_build_object(
         'topic_id', k.topic_id, 'person', k.person, 'agent_id', k.agent_id, 'conversation_id', k.conversation_id,
         'origin', k.origin, 'door', k.door, 'chat', k.chat, 'machine', k.machine, 'runner', k.runner,
-        'workers', k.worker_conversations, 'deletion_id', k.deletion_id, 'deletion_generation', k.deletion_generation,
+        'workers', k.worker_conversations, 'worker_locations', k.worker_locations, 'deletion_id', k.deletion_id, 'deletion_generation', k.deletion_generation,
         'active_deleted', k.active_deleted_at is not null) order by k.deletion_generation, k.topic_id)
       from public.topic_tombstone k), '[]'::jsonb))
 $$;
@@ -974,6 +1001,10 @@ declare
   purged integer := 0;
   left_over bigint;
   top_gen integer;
+  s public.erasure_sets;
+  known boolean;
+  fresh jsonb := '[]'::jsonb;
+  inbox jsonb := '[]'::jsonb;
 begin
   if manifest_in is null or coalesce(jsonb_typeof(manifest_in), '') <> 'object' or manifest_in ->> 'version' is distinct from '1'
      or coalesce(jsonb_typeof(manifest_in -> 'tombstones'), '') <> 'array' or coalesce(jsonb_typeof(manifest_in -> 'generation'), '') <> 'number' then
@@ -992,14 +1023,31 @@ begin
     for w in select jsonb_array_elements_text(one -> 'workers') loop
       perform public.hub_identity_reserve('conversation', w, 'deleted', jsonb_build_object('deletion', one ->> 'deletion_id', 'by', 'manifest'));
     end loop;
+    known := exists (select 1 from public.topic_tombstone k where k.topic_id = one ->> 'topic_id');
     insert into public.topic_tombstone (topic_id, person, agent_id, conversation_id, origin, door, chat, machine, runner,
-                                        worker_conversations, deletion_id, deletion_generation, active_deleted_at)
+                                        worker_conversations, worker_locations, deletion_id, deletion_generation, active_deleted_at)
     values (one ->> 'topic_id', coalesce(one ->> 'person', ''), one ->> 'agent_id', one ->> 'conversation_id', one ->> 'origin',
             coalesce(one ->> 'door', ''), one ->> 'chat', coalesce(one ->> 'machine', ''), coalesce(one ->> 'runner', ''),
-            one -> 'workers', one ->> 'deletion_id', (one ->> 'deletion_generation')::integer,
+            one -> 'workers', coalesce(one -> 'worker_locations', '[]'::jsonb), one ->> 'deletion_id', (one ->> 'deletion_generation')::integer,
             case when one ->> 'active_deleted' = 'true' then now() end)
     on conflict do nothing;
     tombstones := tombstones + 1;
+    if not known then
+      fresh := fresh || to_jsonb(one ->> 'topic_id');
+    end if;
+    -- A deletion this very store is carrying out, and has not yet shown the agent stopped, is erased by its own routine and only once
+    -- the stops are shown: a manifest (this store's own included) never erases ahead of them.
+    if exists (select 1 from public.topic_deletion x where x.id = one ->> 'deletion_id' and x.stage in ('quiescing', 'deleting_active', 'failed')) then
+      continue;
+    end if;
+    -- The attachment folders of the inputs this store still holds are named by a hash of the input's id, which goes with the input:
+    -- they are read here, before the erasure, and handed back, so the machine that restored can remove them.
+    s := public.hub_erasure_sets(one ->> 'agent_id', one ->> 'conversation_id', one -> 'workers');
+    inbox := inbox || coalesce((select jsonb_agg(jsonb_build_object('person', coalesce(one ->> 'person', ''),
+                                  'digest', encode(sha256(convert_to(i.id, 'UTF8')), 'hex')))
+                                  from public.inbound i
+                                 where i.id = any (s.inbound)
+                                   and (i.media_state is not null or exists (select 1 from public.media m where m.inbound_id = i.id))), '[]'::jsonb);
     perform public.hub_erase_scope(one ->> 'topic_id');
     select public.hub_erasure_remaining(one ->> 'topic_id') into left_over;
     purged := purged + 1;
@@ -1009,7 +1057,8 @@ begin
   end loop;
   top_gen := (manifest_in ->> 'generation')::integer;
   update public.erasure_control set generation = greatest(generation, top_gen), updated_at = now();
-  return jsonb_build_object('tombstones', tombstones, 'applied', purged, 'generation', (select e.generation from public.erasure_control e));
+  return jsonb_build_object('tombstones', tombstones, 'applied', purged, 'generation', (select e.generation from public.erasure_control e),
+                            'created', fresh, 'inbox', inbox);
 end $$;
 
 -- ---------------------------------------------------------------------------------------------------------------------
@@ -1018,7 +1067,8 @@ end $$;
 
 revoke all on function hub_erasure_sets(text, text, jsonb) from public;
 revoke all on function hub_erasure_owns_row(text, text, jsonb, text, text, text, text, text[]) from public;
-revoke all on function hub_erasure_linked_effects(text, text[]) from public;
+revoke all on function hub_erasure_confirmations(text, text, text[]) from public;
+revoke all on function hub_erasure_linked_effects(text, text, text[]) from public;
 revoke all on function hub_deletion_inventory(text, text, jsonb, text, text, text, text) from public;
 revoke all on function hub_deletion_request(text, text, text, text, jsonb, integer, jsonb, jsonb) from public;
 revoke all on function hub_deletion_confirm(text) from public;

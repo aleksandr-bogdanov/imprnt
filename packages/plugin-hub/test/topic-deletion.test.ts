@@ -33,6 +33,8 @@ const REQUEST = "Compare the two vendors, and keep it short."
 const count = async (s: TopicsStage, table: string, where = "true") =>
   Number((await s.admin.unsafe(`select count(*)::int as n from ${table} where ${where}`))[0].n)
 const sha = (text: string) => createHash("sha256").update(text).digest("hex")
+/** A statement as a real promise: a bare postgres query is lazy, and `expect(...).rejects` would wait for one that never ran. */
+const attempt = async (query: PromiseLike<unknown>): Promise<void> => { await query }
 
 /** A topic taken all the way: asked for, confirmed by the owner's check, made, bound and announced. */
 async function bound(s: TopicsStage, over: Record<string, unknown> = {}): Promise<TopicRow> {
@@ -244,8 +246,8 @@ test("identities are never used again: a recreated chat of the same name is a ne
   await finish(s)
   expect(await count(s, "topic", `id = '${topic.id}'`)).toBe(0)
   // A late input for the deleted agent is refused at the insert, by name.
-  await expect(s.admin`insert into inbound (id, person, agent, body, kind) values ('late-1', ${PERSON}, ${topic.agent_id}, 'late', 'human')`).rejects.toThrow(/identity-reserved/)
-  await expect(s.admin`insert into conversation (id, person, agent, kind, adapter, native_session) values ('c-late', ${PERSON}, ${topic.agent_id}, 'master', 'synthetic', 'n')`).rejects.toThrow(/identity-reserved/)
+  await expect(attempt(s.admin`insert into inbound (id, person, agent, body, kind) values ('late-1', ${PERSON}, ${topic.agent_id}, 'late', 'human')`)).rejects.toThrow(/identity-reserved/)
+  await expect(attempt(s.admin`insert into conversation (id, person, agent, kind, adapter, native_session) values ('c-late', ${PERSON}, ${topic.agent_id}, 'master', 'synthetic', 'n')`)).rejects.toThrow(/identity-reserved/)
   // An allocation that is handed the deleted identities refuses every one of them.
   await expect(allocateTopic(s.as("hub_hub"), {
     operation: "reuse-1", person: PERSON, door: "door-fake", display_name: "coffee", machine: "pi", runner: RUNNER_PI, preset: "daily", adapter: "synthetic",
@@ -293,18 +295,18 @@ test("a platform that cannot delete is asked for nothing and credited with nothi
 test("the diary stays a diary, and the routines that remove content are not the model's: no deletion without a tombstone, none by a runner", async () => {
   const s = await stageTopics(cluster)
   await s.admin`insert into ledger_event (stream, subject, kind, actor, detail) values ('control', 'diary-row', 'x', 'hub', '{}')`
-  await expect(s.admin`delete from ledger_event where subject = 'diary-row'`).rejects.toThrow(/diary/)
+  await expect(attempt(s.admin`delete from ledger_event where subject = 'diary-row'`)).rejects.toThrow(/diary/)
   // The name that opens the erasure path means nothing without a tombstone for it, whoever sets it.
-  await expect(s.admin.begin(async sql => {
+  await expect(attempt(s.admin.begin(async sql => {
     await sql`select set_config('hub.erasing', 'no-such-deletion', true)`
     await sql`delete from ledger_event where subject = 'diary-row'`
-  })).rejects.toThrow(/diary/)
-  await expect(s.admin`select hub_erase_scope('no-topic')`.then(() => "ran").catch(error => String(error))).resolves.toMatch(/permission|erase-unknown|tombstone/)
+  }))).rejects.toThrow(/diary/)
+  await expect(attempt(s.admin`select hub_erase_scope('no-topic')`)).rejects.toThrow(/permission|erase-unknown|tombstone/)
   const erasers = await s.admin`select p.proname from pg_proc p where p.proname ~ '^hub_(deletion|erase|erasure)'
     and (has_function_privilege('hub_agent', p.oid, 'execute') or (p.proname in ('hub_deletion_erase_active', 'hub_erasure_apply', 'hub_erase_scope') and has_function_privilege('hub_runner', p.oid, 'execute')))`
   expect(erasers.map((row: { proname: string }) => row.proname)).toEqual([])
-  await expect(s.as("hub_runner").sql`select hub_deletion_erase_active('nothing')`).rejects.toThrow(/permission denied/)
-  await expect(s.as("hub_hub").sql`select hub_erase_scope('nothing')`).rejects.toThrow(/permission denied/)
+  await expect(attempt(s.as("hub_runner").sql`select hub_deletion_erase_active('nothing')`)).rejects.toThrow(/permission denied/)
+  await expect(attempt(s.as("hub_hub").sql`select hub_erase_scope('nothing')`)).rejects.toThrow(/permission denied/)
   expect((await s.as("hub_hub").sql`select hub_deletion_erase_active('nothing') as answer`)[0].answer).toBe("unknown-deletion")
   expect((await readErasureManifest(s.as("hub_hub"))).tombstones).toEqual([])
 })

@@ -1,7 +1,7 @@
 import { recordOperationFailure } from "../diagnostics.ts";
 import { retentionStatement } from "../erasure/retention.ts";
 import {
-  deletionsOfDoor, eraseActive, queueDeletionNotice, readDeletion, receiptsOf, recordReceipt, verifyDeletion,
+  deletionSchemaReady, deletionsOfDoor, eraseActive, queueDeletionNotice, readDeletion, receiptsOf, recordReceipt, verifyDeletion,
   type DeletionRow, type ReceiptRow,
 } from "../store/deletions.ts";
 import { attentionFor } from "../store/topic-attention.ts";
@@ -49,6 +49,8 @@ function registryNow(ctx: DeletionContext): unknown | null {
 
 /** Do what is due for every deletion of this door, and say when something is next due (an epoch, or null). A deletion that fails is reported and the others go on. */
 export async function deletionPhase(ctx: DeletionContext): Promise<number | null> {
+  // A store that has not been migrated to 017 has no deletion in it, and none of its tables: nothing is asked of it until it is.
+  if (!(await deletionSchemaReady(ctx.store))) return null;
   let next: number | null = null;
   for (const deletion of await deletionsOfDoor(ctx.store, ctx.door)) {
     if (ctx.stop?.()) break;

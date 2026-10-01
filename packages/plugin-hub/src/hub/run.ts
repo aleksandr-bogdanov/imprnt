@@ -19,6 +19,7 @@ import { recordOperationFailure } from "../diagnostics.ts";
 import { programForKind, transcriberArgv } from "./program.ts";
 import { recordRegistryDigest } from "./digest.ts";
 import { deliverRegistry } from "./distribute.ts";
+import { reconcileErasure } from "../erasure/startup.ts";
 import { runDeletions } from "./deletions.ts";
 import { registerMoves } from "./moves.ts";
 import { bindTopics } from "./topics.ts";
@@ -149,6 +150,9 @@ export async function runHub(options: {
   }
 
   let stopping = false;
+  // Whether this process has swept this machine's disk for what a restore could have brought back (once after a start).
+  let diskSwept = false;
+  let heldFor = "";
   let release: () => void = () => {};
   const stopped = new Promise<"stopped">((resolve) => {
     release = () => resolve("stopped");
@@ -194,6 +198,32 @@ export async function runHub(options: {
     }
     if (delivered === "installed") {
       try { registry = load(); } catch { return; }
+    }
+    // THE ERASURE BARRIER, before anything is installed, started or restarted on this machine: the store is shown to know every deletion
+    // this machine recorded (a store restored from an older copy is brought forward, and what it brought back is erased), a registry copy
+    // that still declares a deleted agent is cleaned or waited for, and this machine's disk is swept once after a start. An explicit
+    // hold (the store cannot be brought forward, the registry cannot be cleaned) starts nothing this tick and says why; a failure of
+    // the check itself is said and does not stop the machine, because it is not an answer about what was deleted.
+    try {
+      const reconciled = await reconcileErasure({ store, registryFile: options.registryFile, machine: options.machine, load, sweepFiles: !diskSwept });
+      if (!reconciled.serve) {
+        // Said when it begins and when its reason changes, not on every tick it lasts.
+        if (heldFor !== `${reconciled.reason}:${reconciled.detail}`) {
+          heldFor = `${reconciled.reason}:${reconciled.detail}`;
+          await recordOperationFailure(store, { operation: "erasure-hold", target: options.machine, error: { code: reconciled.reason, message: reconciled.detail } });
+        }
+        return;
+      }
+      heldFor = "";
+      diskSwept = true;
+      if (reconciled.failed.length > 0) {
+        await recordOperationFailure(store, { operation: "erasure-sweep", target: options.machine,
+          error: { code: "sweep-incomplete", message: `${reconciled.failed.length} restored copy${reconciled.failed.length === 1 ? "" : "ies"} of a deleted topic could not be removed: ${reconciled.failed.slice(0, 5).join("; ")}` } });
+      }
+      if (reconciled.applied > 0 || reconciled.created.length > 0) registry = load();
+    } catch (error) {
+      await recordOperationFailure(store, { operation: "erasure-reconcile", target: options.machine, error });
+      return;
     }
     const entries = runEntriesFor(registry, options.machine);
     // What this machine's copy of the registry is, for the spoke runners that

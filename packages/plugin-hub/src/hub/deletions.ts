@@ -4,7 +4,7 @@ import { RegistryEditRefused, removeEntry } from "../registry/edit.ts";
 import { listAgents, runEntriesFor } from "../registry/entries.ts";
 import { readSetting, type Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
-import { applyErasureManifest, confirmedDeletions, readErasureManifest, receiptsOf, recordReceipt, verifyDeletion, type DeletionRow } from "../store/deletions.ts";
+import { applyErasureManifest, confirmedDeletions, deletionSchemaReady, readErasureManifest, receiptsOf, recordReceipt, verifyDeletion, type DeletionRow } from "../store/deletions.ts";
 import { storeMachineOf } from "./digest.ts";
 
 /**
@@ -40,6 +40,8 @@ const PAST_ERASE = new Set(["verifying_active", "pending_machine", "blocked_scop
 
 /** One pass. The first error is thrown after every deletion had its look. */
 export async function runDeletions(ctx: DeletionPassContext): Promise<void> {
+  // A store that has not been migrated to 017 has deleted nothing, and has none of the tables below: nothing to do until it is.
+  if (!(await deletionSchemaReady(ctx.store))) return;
   const registry = ctx.load();
   const stateDirSetting = readSetting(registry, "hub.state_dir");
   const stateDir = typeof stateDirSetting === "string" && stateDirSetting !== "" ? stateDirSetting : null;
@@ -100,12 +102,18 @@ async function removeFromRegistry(ctx: DeletionPassContext, registry: Registry, 
   return 1;
 }
 
-/** One indexed look for what came back; only a hit applies the manifest again. */
+/**
+ * One indexed look for what came back; only a hit applies the manifest again. A deletion that is still stopping its agent is not
+ * looked at: its rows are there by design until the stops are shown, and its own routine erases them then.
+ */
 async function sweepLate(ctx: DeletionPassContext): Promise<void> {
-  const [row] = await ctx.store.sql`select (
-      exists (select 1 from inbound i join topic_tombstone k on i.agent = k.agent_id)
-      or exists (select 1 from conversation c join topic_tombstone k on c.agent = k.agent_id)
-      or exists (select 1 from execution e join topic_tombstone k on e.agent = k.agent_id)
+  const [row] = await ctx.store.sql`with settled as (
+      select k.agent_id from topic_tombstone k
+       where not exists (select 1 from topic_deletion d where d.id = k.deletion_id and d.stage in ('quiescing', 'deleting_active', 'failed'))
+    ) select (
+      exists (select 1 from inbound i join settled k on i.agent = k.agent_id)
+      or exists (select 1 from conversation c join settled k on c.agent = k.agent_id)
+      or exists (select 1 from execution e join settled k on e.agent = k.agent_id)
     ) as late`;
   if (row.late !== true) return;
   await applyErasureManifest(ctx.store, await readErasureManifest(ctx.store));

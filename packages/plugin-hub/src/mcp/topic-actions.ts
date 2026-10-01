@@ -7,7 +7,7 @@ import { languageOf, listAgents, listRunEntries } from "../registry/entries.ts";
 import { archiveOf, canMakeChats, generalOf, resolveTopicSetup } from "../registry/topics.ts";
 import { ConfirmationRefused, freezeConfirmation, readOperation } from "../store/confirmations.ts";
 import type { StoreLike } from "../store/connect.ts";
-import { deletionOfTopicOrAgent, readDeletion, requestDeletion, type DeletionRow } from "../store/deletions.ts";
+import { DELETION_SCHEMA_VERSION, deletionOfTopicOrAgent, deletionSchemaReady, readDeletion, requestDeletion, type DeletionRow } from "../store/deletions.ts";
 import { EffectTooLong, sanitizeText } from "../store/effects.ts";
 import { openMoveOfTopic } from "../store/moves.ts";
 import {
@@ -350,6 +350,10 @@ export async function deleteTopic(binding: McpBinding, request: DeleteRequest): 
       return { context: topic };
     },
     async apply(tx, topic, owner) {
+      // The store has to carry migration 017 before anything of a deletion is asked of it: a refusal by name, not a missing routine.
+      if (!(await deletionSchemaReady(tx))) {
+        throw new Undo(refusal(topic.id, "schema_not_ready", `the store has not been migrated to schema ${DELETION_SCHEMA_VERSION} yet, so a deletion cannot be asked for: ask the operator to run the database install step`));
+      }
       const registry = binding.registry();
       const me = listAgents(registry).find(one => one.id === binding.agent);
       if (!me || me.door === undefined || me.chat === undefined) {
@@ -433,7 +437,7 @@ export async function inspectTopic(binding: McpBinding, request: InspectRequest)
   const wanted = request.topic_id!;
   const topic = (await readTopic(binding.store, wanted)) ?? (await readTopicByAgent(binding.store, wanted));
   // A topic that was deleted has no row left, only its deletion: what became of it is still asked about, and answered from the store.
-  if (!topic) {
+  if (!topic && (await deletionSchemaReady(binding.store))) {
     const gone = await deletionOfTopicOrAgent(binding.store, wanted);
     if (gone !== null && gone.person === binding.person) {
       const said = deletionWords(gone);

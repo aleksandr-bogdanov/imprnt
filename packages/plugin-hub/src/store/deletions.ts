@@ -64,8 +64,24 @@ export interface ReceiptSummary {
 }
 
 export type ReceiptClass =
-  | "postgres_active" | "registry_binding" | "chatlog" | "inbox_media" | "engine_state" | "move_copy"
+  | "postgres_active" | "registry_binding" | "chatlog" | "inbox_media" | "engine_state" | "move_copy" | "harvest_stage"
   | "platform_chat" | "platform_message" | "backup_generation";
+
+/**
+ * The migration that carries the deletion objects. Code that reads or writes them asks `deletionSchemaReady` first, so that a hub, a
+ * door or a backup started against a store that has not been migrated yet degrades to "nothing was ever deleted here" and never fails
+ * on a missing routine; the one thing it must not do (serve while a machine's own manifest names a deletion the store has never
+ * heard of) is `reconcileErasure`'s, and it holds in that case.
+ */
+export const DELETION_SCHEMA_VERSION = 17;
+
+/** Whether this store has migration 017's objects. Asked of the catalog, so it needs no privilege on `schema_version`. */
+export async function deletionSchemaReady(store: StoreLike): Promise<boolean> {
+  const [row] = await store.sql`select to_regclass('public.topic_tombstone') is not null and to_regclass('public.erasure_control') is not null as ready`;
+  return row.ready === true;
+}
+
+const EMPTY_MANIFEST: ErasureManifest = { version: 1, generation: 0, tombstones: [] };
 
 export type ReceiptState =
   | "pending" | "pending_machine" | "erased" | "unsupported" | "blocked" | "not_applicable"
@@ -185,7 +201,7 @@ export async function recordReceipt(store: StoreLike, deletion: string, receipt:
 }
 
 const RECEIPT_CLASSES: readonly string[] = ["postgres_active", "registry_binding", "chatlog", "inbox_media", "engine_state", "move_copy",
-  "platform_chat", "platform_message", "backup_generation"];
+  "harvest_stage", "platform_chat", "platform_message", "backup_generation"];
 
 export async function receiptsOf(store: StoreLike, deletion: string,
   where: { machine?: string; classes?: readonly ReceiptClass[]; open?: boolean; historical?: boolean } = {}): Promise<ReceiptRow[]> {
@@ -239,6 +255,7 @@ export interface ManifestTombstone {
   machine: string;
   runner: string;
   workers: string[];
+  worker_locations?: { agent: string; conversation: string }[];
   deletion_id: string;
   deletion_generation: number;
   active_deleted: boolean;
@@ -250,13 +267,15 @@ export interface ErasureManifest {
   tombstones: ManifestTombstone[];
 }
 
-/** The content-free control manifest of this store, as of now. */
+/** The content-free control manifest of this store, as of now. A store that has not been migrated has deleted nothing: the empty one. */
 export async function readErasureManifest(store: StoreLike): Promise<ErasureManifest> {
+  if (!(await deletionSchemaReady(store))) return { ...EMPTY_MANIFEST, tombstones: [] };
   const [row] = await store.sql`select hub_erasure_manifest() as manifest`;
   return row.manifest as ErasureManifest;
 }
 
 export async function erasureGeneration(store: StoreLike): Promise<number> {
+  if (!(await deletionSchemaReady(store))) return 0;
   const [row] = await store.sql`select generation from erasure_control`;
   return Number(row.generation);
 }
@@ -267,10 +286,11 @@ export async function erasureGeneration(store: StoreLike): Promise<number> {
  * nothing stands in its way. A held backup is a named failure, never a published copy of what was deleted.
  */
 export async function backupHold(store: StoreLike, machine: string): Promise<string | null> {
+  if (!(await deletionSchemaReady(store))) return null;
   const [row] = await store.sql`select
       (select count(*) from topic_deletion where stage in ('quiescing', 'deleting_active', 'failed')) as unerased,
       (select count(*) from erasure_receipt r join topic_deletion d on d.id = r.deletion_id
-        where r.machine = ${machine} and r.state in ('pending', 'pending_machine') and not r.historical
+        where r.machine = ${machine} and r.state <> 'erased' and r.class in ('chatlog', 'engine_state', 'inbox_media', 'move_copy', 'harvest_stage') and not r.historical
           and d.stage not in ('awaiting_confirmation', 'superseded')) as local`;
   if (Number(row.unerased) > 0) return `${Number(row.unerased)} confirmed deletion${Number(row.unerased) === 1 ? " has" : "s have"} not erased the store's rows yet, so a copy of the store would still hold what was deleted`;
   if (Number(row.local) > 0) return `${Number(row.local)} copy${Number(row.local) === 1 ? "" : "s"} of a deleted topic on ${machine} ${Number(row.local) === 1 ? "is" : "are"} still waiting to be removed, so a copy of its files would still hold what was deleted`;
@@ -282,8 +302,19 @@ export async function backupHold(store: StoreLike, machine: string): Promise<str
  * reserved, the tombstones recorded and whatever of those topics the store holds is erased. A manifest that cannot be read whole
  * is refused and nothing of it is applied.
  */
-export async function applyErasureManifest(store: StoreLike, manifest: ErasureManifest): Promise<{ tombstones: number; applied: number; generation: number }> {
+export interface ApplyResult {
+  tombstones: number;
+  applied: number;
+  generation: number;
+  /** The topics whose tombstone this store had never heard of: what an old copy brought back was removed from it for the first time. */
+  created: string[];
+  /** The attachment folders (by the hash of the input's id) of the inputs it held for these topics, which went with the inputs. */
+  inbox: { person: string; digest: string }[];
+}
+
+export async function applyErasureManifest(store: StoreLike, manifest: ErasureManifest): Promise<ApplyResult> {
   const [row] = await store.sql`select hub_erasure_apply(${JSON.stringify(manifest)}::text::jsonb) as done`;
-  const done = row.done as { tombstones: number; applied: number; generation: number };
-  return { tombstones: Number(done.tombstones), applied: Number(done.applied), generation: Number(done.generation) };
+  const done = row.done as { tombstones: number; applied: number; generation: number; created?: string[]; inbox?: { person: string; digest: string }[] };
+  return { tombstones: Number(done.tombstones), applied: Number(done.applied), generation: Number(done.generation),
+    created: done.created ?? [], inbox: done.inbox ?? [] };
 }

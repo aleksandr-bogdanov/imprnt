@@ -14,8 +14,11 @@ import { relayoutRegistry } from "../registry/relayout.ts";
 import { requestRecovery } from "../hub/control.ts";
 import { readStampMetrics, renderMetrics } from "../metrics/stamps.ts";
 import { checkClean, cliUsage, operation, registryCopy, safeValue, status } from "../door/lines.ts";
+import { restoreCommand } from "./restore.ts";
 
 export async function command(args: string[]): Promise<number> {
+  // `restore` has flags of its own and is read by its own parser (`entry/restore.ts`): it is the barrier a restore runs before serving.
+  if (args[0] === "restore") return await restoreCommand(args.slice(1));
   const [verb, registryFile, target, extra, ...rest] = args;
   const usage = () => { process.stderr.write(cliUsage("en") + "\n"); return 2; };
   if (!registryFile || !["check", "status", "metrics", "install", "recover", "relayout", "registry"].includes(verb) || rest.length) return usage();

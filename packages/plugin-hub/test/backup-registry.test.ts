@@ -216,6 +216,74 @@ test("ROLL-32 {path} and {out} name the one file being read back, so the dump an
   }
 });
 
+// --- retention (IMP-232): the two optional commands that let a destination hold generations, list them and expire one ---------------
+
+/** An entry whose upload and read-back give every copy a place of its own, with the two commands that list and expire them. */
+const GENERATED: Partial<RunSpec> = {
+  upload_argv: ["/opt/example/bin/copy-tool", "--recursive", "{staging}/", "{destination}/{generation}"],
+  readback_argv: ["/opt/example/bin/copy-tool", "{destination}/{generation}/{path}", "{out}"],
+  list_argv: ["/opt/example/bin/copy-tool", "--list", "{destination}"],
+  expire_argv: ["/opt/example/bin/copy-tool", "--remove-tree", "{destination}/{generation}"],
+};
+
+test("IMP-232 a destination that lists and expires its copies, and whose upload gives each one a place of its own, loads and reads back by value", async () => {
+  const entry = await backupOf(write(household(backupSpec(GENERATED))));
+  for (const key of ["upload_argv", "readback_argv", "list_argv", "expire_argv"] as const) expect(entry[key]).toEqual(GENERATED[key]!);
+  // The control: an entry that declares neither is the mirror it always was, and carries no such key.
+  const mirror = await backupOf(write(household(backupSpec())));
+  expect(mirror.list_argv).toBeUndefined();
+  expect(mirror.expire_argv).toBeUndefined();
+});
+
+/** The generated entry with one of its retention commands replaced, or dropped when `argv` is undefined. */
+function generatedWith(key: "list_argv" | "expire_argv", argv: string[] | undefined): Partial<RunSpec> {
+  const copy: Partial<RunSpec> = { ...GENERATED };
+  if (argv === undefined) delete copy[key];
+  else copy[key] = argv;
+  return copy;
+}
+
+test("IMP-232 listing without expiring, or expiring without listing, is half of a policy and refuses naming the one that is there", async () => {
+  for (const [given, missing] of [["list_argv", "expire_argv"], ["expire_argv", "list_argv"]] as const) {
+    const refused = await refusalOf(write(household(backupSpec(generatedWith(missing, undefined)))));
+    expect(refused.key).toBe(`run[0].${given}`);
+    expect(refused.reason).toContain(missing);
+  }
+});
+
+test("IMP-232 a place of its own is both halves of the copy or neither: an upload with {generation} and a read-back without it refuses, and so does the reverse", async () => {
+  const halved: Partial<RunSpec> = { upload_argv: GENERATED.upload_argv, readback_argv: GOOD.readback_argv };
+  const half = await refusalOf(write(household(backupSpec(halved))));
+  expect(half.key).toBe("run[0].readback_argv");
+  const other = await refusalOf(write(household(backupSpec({ readback_argv: GENERATED.readback_argv }))));
+  expect(other.key).toBe("run[0].upload_argv");
+});
+
+test("IMP-232 a destination that lists and expires but whose upload lands every copy on the last one has nothing to expire, and refuses", async () => {
+  const refused = await refusalOf(write(household(backupSpec({ list_argv: GENERATED.list_argv, expire_argv: GENERATED.expire_argv }))));
+  expect(refused.key).toBe("run[0].upload_argv");
+  expect(refused.reason).toContain("{generation}");
+});
+
+test("IMP-232 an expiry command that names no copy refuses, and {generation} means nothing to a dump or a listing", async () => {
+  const noCopy = await refusalOf(write(household(backupSpec(generatedWith("expire_argv", ["/opt/example/bin/copy-tool", "--remove-tree", "{destination}"])))));
+  expect(noCopy.key).toBe("run[0].expire_argv");
+  const dump = await refusalOf(write(household(backupSpec({ ...GENERATED, dump_argv: ["/usr/bin/pg_dump", "{generation}"] }))));
+  expect(dump.key).toBe("run[0].dump_argv");
+  const listing = await refusalOf(write(household(backupSpec(generatedWith("list_argv", ["/opt/example/bin/copy-tool", "--list", "{destination}/{generation}"])))));
+  expect(listing.key).toBe("run[0].list_argv");
+  // A retention command is about the destination, never about the copy on this box, and is held to what the three others are.
+  for (const key of ["list_argv", "expire_argv"] as const) {
+    const staging = await refusalOf(write(household(backupSpec(generatedWith(key, [...GENERATED[key]!, "{staging}"])))));
+    expect(staging.key).toBe(`run[0].${key}`);
+    const relative = await refusalOf(write(household(backupSpec(generatedWith(key, ["./tool", ...GENERATED[key]!.slice(1)])))));
+    expect(relative.key).toBe(`run[0].${key}`);
+    expect(relative.reason).toContain("relative");
+    const password = await refusalOf(write(household(backupSpec(generatedWith(key, [...GENERATED[key]!, "password=hunter2"])))));
+    expect(password.key).toBe(`run[0].${key}`);
+  }
+});
+
 test("ROLL-32 a backup entry with no destination refuses naming run[n].destination, and an empty or non-string one does too", async () => {
   for (const raw of [null, '""', "1", "[]"]) {
     const refused = await refusalOf(withLine("destination", raw));

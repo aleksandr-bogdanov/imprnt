@@ -1,3 +1,4 @@
+import { erasureFence } from "../erasure/startup.ts";
 import { executeHarvest } from "../harvest/execute.ts";
 import { watchControls } from "../hub/control.ts";
 import { prepareReply } from "../door/reply.ts";
@@ -529,6 +530,10 @@ export async function runRunner(options: {
     url: storeUrlFor(first, "hub_runner", options.runner),
   });
   await requireSchema(store);
+  // A store restored from a copy older than a deletion this machine recorded is not served from: the hub brings it forward, and the
+  // manager starts this process again after it.
+  const erasureHold = await erasureFence(store, stateDir);
+  if (erasureHold !== null) { await store.close().catch(() => {}); throw new Error(`erasure-behind: ${erasureHold}`); }
   await sayWhichServer(store, first, options.runner);
 
   let stopping = false;

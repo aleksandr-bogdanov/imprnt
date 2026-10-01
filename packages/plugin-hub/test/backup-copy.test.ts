@@ -139,7 +139,8 @@ landed(`ROLL-32 a copy to another device lands: the staging set is exactly the f
     const { staging } = stage;
 
     // The staging set as a PATH SET, so an addition and an omission both fail.
-    const want = new Set<string>(["dump/hub.sql", "manifest.json"]);
+    // The control manifest (identifiers of what was deleted, no content) is in every copy, so a restore finds what was deleted before it.
+    const want = new Set<string>(["dump/hub.sql", "manifest.json", "erasure-manifest.json"]);
     for (const rel of filesUnder(join(staging, "dump", ".git"))) want.add(`dump/.git/${rel}`);
     const into = (absolute: string) => relative(staging, mirrored(staging, absolute));
     const walked = [stage.secrets.secretsDir.path, stage.secrets.credentialFile.path];

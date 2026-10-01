@@ -994,9 +994,9 @@ test("M1 an upgraded store carries the same gate, stop and claim objects, checks
   const versions = (await upgraded.sql`select version from schema_version order by version`).map((row: any) => Number(row.version))
   expect(versions).toEqual(MIGRATION_FILES.map(([version]) => version))
   // Later steps append to this list, so this step's own number is asserted present, not last of the list: the councils (14)
-  // the topics (15) and the topic movement (16) follow it, in that order.
+  // the topics (15), the topic movement (16) and the topic deletion (17) follow it, in that order.
   expect(versions).toContain(13)
-  expect(versions.slice(-3)).toEqual([14, 15, 16])
+  expect(versions.slice(-4)).toEqual([14, 15, 16, 17])
   expect(versions).toEqual((await fresh.sql`select version from schema_version order by version`).map((row: any) => Number(row.version)))
   // What the step adds to the tables of the step before it is nothing: the rows an upgrade found are the rows it has.
   expect(Number((await upgraded.sql`select count(*)::int as n from inbound`)[0].n)).toBe(1)
