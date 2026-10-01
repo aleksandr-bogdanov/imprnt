@@ -103,10 +103,13 @@ export interface RequestPlan<R extends RequestLike, Context> {
   open?(tx: StoreLike): Promise<{ context: Context; since?: Since }>;
   /**
    * Apply the request, in the same transaction. `owner.sender` is the sender of the
-   * first cited message, or "" when none was cited. A reply whose status is
-   * "failed" is undone as a whole: nothing it wrote is kept and the key is free.
+   * first cited message, or "" when none was cited, and `owner.door` is the door that
+   * message was read on ("" likewise): a sender id means something only on that door.
+   * Both are the stored message's and were checked above, never an argument of the call.
+   * A reply whose status is "failed" is undone as a whole: nothing it wrote is kept and
+   * the key is free.
    */
-  apply(tx: StoreLike, context: Context, owner: { sender: string }): Promise<ToolReply>;
+  apply(tx: StoreLike, context: Context, owner: { sender: string; door: string }): Promise<ToolReply>;
 }
 
 export async function runRequest<R extends RequestLike, Context = undefined>(binding: McpBinding, plan: RequestPlan<R, Context>): Promise<ToolReply> {
@@ -140,6 +143,7 @@ export async function runRequest<R extends RequestLike, Context = undefined>(bin
       // The bound as the database will compare it: text for a moment read from a row (microseconds kept), an ISO string for a `Date`. Null: no bound.
       const bound = opened.since === undefined ? null : typeof opened.since.at === "string" ? opened.since.at : opened.since.at.toISOString();
       let sender = "";
+      let door = "";
       for (const id of request.source_message_ids ?? []) {
         const [row] = (await tx`select id, person, agent, kind, source, received_at <= ${bound}::timestamptz as not_newer from inbound where id = ${id}`) as unknown as
           { id: string; person: string; agent: string; kind: string; source: InboundSource | null; not_newer: boolean | null }[];
@@ -152,6 +156,7 @@ export async function runRequest<R extends RequestLike, Context = undefined>(bin
         if (opened.since && row.not_newer !== false) {
           throw new ToolError("source_invalid", `${id} is older than ${opened.since.what}`);
         }
+        if (sender === "") door = String(row.source.door);
         sender = sender || row.source.sender_id;
         const taken = await tx`insert into source_consumption (source_id, conversation_id, request_key, payload_hash)
           values (${id}, ${binding.conversation}, ${request.request_key}, ${hash})
@@ -163,7 +168,7 @@ export async function runRequest<R extends RequestLike, Context = undefined>(bin
           }
         }
       }
-      const reply = await plan.apply(inside, opened.context, { sender });
+      const reply = await plan.apply(inside, opened.context, { sender, door });
       if (reply.status === "failed") throw new Undo(reply);
       await tx`update tool_invocation set result = ${reply}::jsonb
         where conversation_id = ${binding.conversation} and request_key = ${request.request_key}`;

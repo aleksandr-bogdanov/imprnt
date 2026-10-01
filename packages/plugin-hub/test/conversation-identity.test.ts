@@ -818,7 +818,7 @@ test("protocol 3: a council's job and event are claimable only by a connection t
   const claimed = async () => (await sql`select id from inbound where claimed_by is not null order by id`).map((r: any) => r.id)
   const release = async (id: string) => { await runner.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${id}` }
   const protocol = async () => Number((await sql`select runner_protocol from hub_protocol`)[0].runner_protocol)
-  expect(RUNNER_PROTOCOL).toBe(3)
+  expect(RUNNER_PROTOCOL).toBe(4)
 
   // BEFORE ACTIVATION the store is at 1, and the rule is on the row and not on what is active: a connection that says nothing,
   // or says 2 (a pooled connection's previous borrower's word does not survive its transaction, and this one is a runner of 2's),
@@ -842,8 +842,12 @@ test("protocol 3: a council's job and event are claimable only by a connection t
   await activateProtocol(runner, 2)
   expect(await protocol(), "activating an older protocol is no move").toBe(RUNNER_PROTOCOL)
   for (const id of ["plain", "c-job", "c-event"]) {
-    await expect(claimSaying(runner, null, id), `${id}: says nothing`).rejects.toThrow(/does not speak protocol 3/)
-    await expect(claimSaying(runner, "2", id), `${id}: a runner of 2 claims nothing once 3 is active`).rejects.toThrow(/does not speak protocol 3/)
+    // A row of a council keeps its own refusal for anything that says less than 3; any other row is refused by the global comparison (4 is active).
+    const refusal = id === "plain" ? /does not speak protocol 4/ : /belongs to a council.*does not speak protocol 3/
+    await expect(claimSaying(runner, null, id), `${id}: says nothing`).rejects.toThrow(refusal)
+    await expect(claimSaying(runner, "2", id), `${id}: a runner of 2 claims nothing once 4 is active`).rejects.toThrow(refusal)
+    // A runner of 3, registered and running before 4 was activated, claims nothing new either: the council rule stays at 3, the global comparison is 4.
+    await expect(claimSaying(runner, "3", id), `${id}: a runner of 3 claims nothing once 4 is active`).rejects.toThrow(/does not speak protocol 4/)
   }
   expect(await claimed()).toEqual([])
   expect((await claimNext(runner, { runner: "runner-new", agent: "p1-third", leaseMs: 60_000, resumeOk: true }))?.id).toBe("plain")
@@ -863,7 +867,7 @@ test("protocol 3: a council's job and event are claimable only by a connection t
 
   // THE PROTOCOL ONLY MOVES FORWARD, and only to a value the table knows.
   await expect(runner.sql`update hub_protocol set runner_protocol = 2`.execute()).rejects.toThrow(/only moves forward/)
-  await expect(runner.sql`update hub_protocol set runner_protocol = 4`.execute()).rejects.toThrow(/check constraint/)
+  await expect(runner.sql`update hub_protocol set runner_protocol = 5`.execute()).rejects.toThrow(/check constraint/)
   expect(await protocol()).toBe(RUNNER_PROTOCOL)
 })
 
@@ -919,8 +923,9 @@ test("version skew: a runner of this build refuses a store at migration 13 befor
   expect(await protocol()).toBe(RUNNER_PROTOCOL)
   expect(await everything(), "activation killed, settled, discarded and replayed nothing").toEqual(beforeActivation)
   // From then on the door is shut to every older claim, ordinary rows included, and the agent with the attempt stays blocked for everyone.
-  await expect(claimSaying(runner, null, "plain")).rejects.toThrow(/does not speak protocol 3/)
-  await expect(claimSaying(runner, "2", "plain")).rejects.toThrow(/does not speak protocol 3/)
+  await expect(claimSaying(runner, null, "plain")).rejects.toThrow(/does not speak protocol 4/)
+  await expect(claimSaying(runner, "2", "plain")).rejects.toThrow(/does not speak protocol 4/)
+  await expect(claimSaying(runner, "3", "plain")).rejects.toThrow(/does not speak protocol 4/)
   await expect(runner.sql`insert into runner_incarnation (runner, incarnation, protocol) values ('runner-old', 'x', 2)`.execute()).rejects.toThrow(/does not serve/)
   expect(await claimNext(runner, { runner: "runner-new", agent: "p1-lair", leaseMs: 1000, resumeOk: true }), "the agent with an unresolved attempt takes nothing").toBeNull()
   expect((await claimNext(runner, { runner: "runner-new", agent: "p1-third", leaseMs: 1000, resumeOk: true }))?.id).toBe("plain")
@@ -1069,10 +1074,10 @@ test("the step refuses to land while an old runner may have fed an input, and le
   expect(a.functions).toHaveLength(13)
   expect(a.functions.find(one => one.proname === "hub_council_merge")!.prosrc).toContain("return false")
   expect(a.protocol).toEqual([{ runner_protocol: 1 }])
-  // The protocol table allows the three protocols and is one constraint under one name on both sides.
+  // The protocol table allows the four protocols and is one constraint under one name on both sides.
   const protocolChecks = (a.checks as { t: string; conname: string; d: string }[]).filter(one => one.t === "hub_protocol" && one.d.includes("runner_protocol"))
   expect(protocolChecks.map(one => one.conname)).toEqual(["hub_protocol_runner_protocol_check"])
-  expect(protocolChecks[0].d).toContain("3")
+  expect(protocolChecks[0].d).toContain("4")
   expect(b.functions).toEqual(a.functions)
   expect(b.triggers).toEqual(a.triggers)
   expect(b.columns).toEqual(a.columns)

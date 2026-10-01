@@ -24,7 +24,7 @@
 // fed and acknowledged and no `started` stamp may exist until the loop has
 // actually produced something.
 
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -36,6 +36,7 @@ import type {
   ExitEvidence,
   TurnEnd,
 } from "../../src/adapters/types.ts";
+import { groupOf, groupPresence, presence } from "../../src/os/tree.ts";
 import type { Preset } from "../../src/registry/presets.ts";
 
 /**
@@ -218,6 +219,29 @@ export interface ScriptedOptions {
    * and the agent free for its next row asks for this.
    */
   exitProof?: boolean;
+  /**
+   * With `child`, the real child leads a process group of its own (as `claude-code` asks for, and checked against the process table the
+   * same way), the session reports it (`group()`), the processes under it (`processes()`) and an exit evidence computed from the PROCESS
+   * TABLE: the leader gone, every process recorded under it gone and the group empty, on the `process-group` basis, and a survivor
+   * otherwise. It is what a topic move's drain intent and its `process-group` evidence are made of, so nothing here is scripted.
+   */
+  group?: boolean;
+  /**
+   * With `group`, the child also starts a grandchild in its group that `close()` does NOT end (it signals the leader, as the adapter does),
+   * so the evidence after a close is real survivors. `true` is every child; a list is the children (one-based, in `starts()` order) that
+   * leave one. `kill()` of the child and `reap()` end what the fixture made: the leader through the handle it holds, and the grandchild
+   * through a stop file in a scratch directory the fixture made for this child (see `spawnHolder`): nothing is ever signalled by number.
+   */
+  survivor?: boolean | number[];
+  /** `start` waits, after it has been recorded in `starts()`, until `releaseStart()`: a spawn paused inside the adapter's start. */
+  startGate?: boolean;
+  /**
+   * With `child`, the real child is spawned plain even when the runner hands `start` a boxing hook (`wrapped` in `starts()` still says it did). For
+   * a check of the drain's process groups and survivors under a person that HAS a tree (a move's scope look needs one), which the box would
+   * change on Linux (a pid namespace: a survivor's pid is not the host's; a read-only host: the survivor's scratch directory is not writable)
+   * and which is not what such a check is about: that the child wears the box is `box-worn.test.ts`'s.
+   */
+  unboxed?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +271,9 @@ const os = require("os");
 const parent = process.ppid;
 if (parent === 1 && process.pid !== 2) process.exit(0);
 const file = os.tmpdir() + "/hub-child-" + process.pid + ".grow";
+// The scratch directory the FIXTURE made for this child (only a child that leaves a survivor has one): the stop file in it is the shutdown
+// protocol, so nothing has to signal a process by its number.
+const scratch = process.env.HUB_HOLDER_SCRATCH || "";
 // One line on stdout before anything else: what this child could
 // read of the path it was pointed at. Outside a box it reads it; inside one it
 // does not, and that difference is what "the agent's process wears the box"
@@ -260,12 +287,23 @@ if (probe !== "") {
     process.stdout.write(JSON.stringify({ probe: probe, saw: saw, refused: refused }) + "\\n");
   } catch (e) {}
 }
+// A grandchild in this child's own group that outlives it when only the leader is signalled (HUB_HOLDER_SURVIVOR). Its pid is written
+// in the scratch directory (reporting data for the fixture, never a target), it ends itself when the stop file appears there, and after
+// two minutes whatever happens, so a test that forgets it leaks nothing for long.
+if (process.env.HUB_HOLDER_SURVIVOR === "1" && scratch !== "") {
+  try {
+    const grandchild = require("child_process").spawn(process.execPath,
+      ["-e", "/* hub-child-survivor */ const fs = require('fs'); setTimeout(() => process.exit(0), 120000); setInterval(() => { if (fs.existsSync(process.env.HUB_HOLDER_SCRATCH + '/stop')) process.exit(0); }, 25);"], { stdio: "ignore" });
+    fs.writeFileSync(scratch + "/survivor", String(grandchild.pid));
+  } catch (e) {}
+}
 const CHUNK = 16 * 1024 * 1024;
 const held = [];
 setInterval(() => {
   // A child whose parent went away is a leak, and a suite that leaks one of
   // these leaks the memory it was told to hold.
   if (process.ppid !== parent) process.exit(0);
+  if (scratch !== "" && fs.existsSync(scratch + "/stop")) process.exit(0);
   let want = 0;
   try { want = Number(fs.readFileSync(file, "utf8").trim()) || 0; } catch (e) {}
   while (held.length * 16 < want) {
@@ -291,9 +329,18 @@ export interface HeldChild {
   exited: Promise<number>;
   /** The argv this child was really spawned with, boxed or not. */
   argv: string[];
+  /** The process group this child leads when it was started with `group` and the process table says it does; null otherwise. */
+  group: number | null;
+  /** Whether the leader has exited. */
+  gone(): boolean;
+  /** The grandchildren it started in its group (`survivor`), whether or not they are still there. */
+  survivors(): number[];
   /** What the child reported about `probePath`, once it has said it. */
   boxProbe(): BoxProbe | null;
+  /** Ends the child, its group and what it started: everything this fixture made. */
   kill(): void;
+  /** Ends the leader alone, as the adapter's `close()` does: what it started in its group is left. */
+  leave(): void;
 }
 
 export interface HolderOptions {
@@ -306,6 +353,10 @@ export interface HolderOptions {
   wrap?: (argv: string[]) => string[];
   /** A path the child tries to read at once and reports on stdout. */
   probePath?: string;
+  /** The child leads a process group of its own, checked against the process table. */
+  group?: boolean;
+  /** The child starts a grandchild in its group that outlives it. */
+  survivor?: boolean;
 }
 
 export function spawnHolder(options: HolderOptions = {}): HeldChild {
@@ -313,6 +364,14 @@ export function spawnHolder(options: HolderOptions = {}): HeldChild {
   const argv = typeof options.wrap === "function" ? options.wrap(plain) : plain;
   const wants = typeof options.probePath === "string" && options.probePath !== "";
   let said: BoxProbe | null = null;
+  // A child that leaves a survivor gets a scratch directory of its own, made HERE by the owner of the child and unique to it: the
+  // survivor's pid is written there and the stop file that ends it is, so no file named by a pid in the shared temp dir is ever read
+  // and no process is ever signalled by a number.
+  const scratch = options.survivor ? mkdtempSync(join(tmpdir(), "hub-holder-")) : null;
+  const extra: Record<string, string | undefined> = {
+    ...(wants ? { HUB_BOX_PROBE: options.probePath } : {}),
+    ...(scratch !== null ? { HUB_HOLDER_SURVIVOR: "1", HUB_HOLDER_SCRATCH: scratch } : {}),
+  };
   const proc = Bun.spawn(argv, {
     // The default is UNCHANGED, deliberately: `test/runner-memory.test.ts` and
     // `test/check-peak.test.ts` get exactly the process they have today, and
@@ -320,8 +379,22 @@ export function spawnHolder(options: HolderOptions = {}): HeldChild {
     stdout: wants ? "pipe" : "ignore",
     stderr: "ignore",
     stdin: "ignore",
-    env: wants ? { ...process.env, HUB_BOX_PROBE: options.probePath } : undefined,
+    env: Object.keys(extra).length > 0 ? { ...process.env, ...extra } : undefined,
+    // ASKED FOR AND READ BACK, as `claude-code` does: a child that leads a group of its own, or one that turned out not to.
+    ...(options.group ? ({ detached: true } as object) : {}),
   });
+  const group = options.group && groupOf(proc.pid) === proc.pid ? proc.pid : null;
+  /** What the child reported of its grandchild, for the fixture's reports (`processes()`, `exitEvidence`): never the target of a signal. */
+  const survivors = (): number[] => {
+    if (scratch === null) return [];
+    try {
+      const pid = Number(readFileSync(join(scratch, "survivor"), "utf8").trim());
+      return Number.isInteger(pid) && pid > 1 ? [pid] : [];
+    } catch {
+      return [];
+    }
+  };
+  let cleaned = false;
   if (wants) {
     void (async () => {
       // Read LINE BY LINE as they arrive. The holder never exits, so waiting
@@ -358,8 +431,24 @@ export function spawnHolder(options: HolderOptions = {}): HeldChild {
     pid: proc.pid,
     exited: proc.exited,
     argv: [...argv],
+    group,
+    gone: () => proc.exitCode !== null || proc.signalCode !== null,
+    survivors,
     boxProbe: () => (said ? { ...said } : null),
+    leave() {
+      try { proc.kill(9); } catch { /* already gone */ }
+    },
     kill() {
+      // ONCE: a second call (`close()`, then `reap()`, then the test's own cleanup) finds everything done and touches nothing, so a number
+      // that was freed and taken by somebody else is never the target of anything this fixture does.
+      if (cleaned) return;
+      cleaned = true;
+      // Everything this fixture made, the survivors of a leader that was signalled alone included: the grandchild is told to end by the stop
+      // file only this fixture can write (a process group or a pid is never signalled by its number: whether the number is still ours cannot
+      // be known from the process table once the group could have emptied and been taken again), and the leader is ended through the handle.
+      if (scratch !== null) {
+        try { writeFileSync(join(scratch, "stop"), ""); } catch { /* the directory is gone */ }
+      }
       if (options.wrap && proc.exitCode === null) {
         const table = Bun.spawnSync(["ps", "-axo", "pid=,ppid="], { stdout: "pipe", stderr: "pipe" });
         if (table.exitCode !== 0) throw new Error("fixture process tree could not be read");
@@ -382,6 +471,17 @@ export function spawnHolder(options: HolderOptions = {}): HeldChild {
         rmSync(growFileFor(proc.pid), { force: true });
       } catch {
         // the grow file may never have been written
+      }
+      if (scratch !== null) {
+        // Only LOOKED at, for a bounded time and off the caller's path: the grandchild ends itself within a poll of the stop file (the group
+        // is empty a moment after this returns: a caller that needs it waits for it). The directory goes only once nothing reported under it,
+        // nor the group the leader led, is still there; if something is (a number somebody else holds, say), it is left for the temp dir and
+        // never signalled.
+        const quiet = (): boolean => !survivors().some(one => presence(one) === "present") && (group === null || groupPresence(group) !== "present");
+        void (async () => {
+          for (const until = Date.now() + 5000; Date.now() < until && !quiet();) await Bun.sleep(25);
+          if (quiet()) { try { rmSync(scratch, { recursive: true, force: true }); } catch { /* already gone */ } }
+        })();
       }
     },
   };
@@ -461,6 +561,14 @@ export interface ScriptedAdapter {
    * harvest, and this is what makes that assertable.
    */
   closes(): number[];
+  /** How many `start` calls are paused inside the adapter right now (`startGate`, `holdStart`). */
+  startsHeld(): number;
+  /** Pause (or resume) every `start` from now on; resuming releases the ones that wait. */
+  holdStart(on: boolean): void;
+  /** Resume `start`, and release the ones that wait. */
+  releaseStart(): void;
+  /** End every child this fixture made, with its group and whatever it started: a survivor included. */
+  reap(): void;
   holdReceipt(on: boolean): void;
   sendReceipt(messageId: string): void;
   holdProgress(on: boolean): void;
@@ -532,6 +640,8 @@ export function createScriptedAdapter(
   let gateReceipt = false;
   let gateProgress = false;
   let gateEnd = false;
+  let startHeld = options.startGate === true;
+  const startWaiters: (() => void)[] = [];
 
   // Handlers belong to the session that registered them. A respawn starts a
   // fresh session, and a fixture that kept one shared handler list would report
@@ -646,8 +756,9 @@ export function createScriptedAdapter(
     // handed returns. What it records is the argv it really used, so a check
     // reads the production code's own output at the seam rather than asking
     // the boxing code whether it boxed.
+    const leaves = options.survivor === true || (Array.isArray(options.survivor) && options.survivor.includes(nth));
     const held = options.child
-      ? spawnHolder({ wrap, probePath: options.probePath })
+      ? spawnHolder({ wrap: options.unboxed ? undefined : wrap, probePath: options.probePath, group: options.group === true, survivor: leaves })
       : null;
     if (held) {
       children.push(held);
@@ -682,6 +793,30 @@ export function createScriptedAdapter(
             },
           }
         : {}),
+      // A real child that leads a group of its own says what the PROCESS TABLE says of it, the way `claude-code` does: nothing is scripted.
+      ...(options.group && held
+        ? {
+            group: () => held.group,
+            processes: (): number[] => (held.gone() ? [] : [held.pid, ...held.survivors().filter(one => presence(one) === "present")]),
+            partial: () => false,
+            async exitEvidence(): Promise<ExitEvidence> {
+              const until = Date.now() + 1000;
+              while (Date.now() < until && !(held.gone() && (held.group === null || groupPresence(held.group) === "absent"))) await Bun.sleep(25);
+              const pids = [held.pid, ...held.survivors()];
+              const looked = pids.map(one => [one, presence(one)] as const);
+              const survivors = looked.filter(([, said]) => said === "present").map(([one]) => one);
+              const unknown = looked.filter(([, said]) => said === "unknown").map(([one]) => one);
+              const inGroup = held.group === null ? null : groupPresence(held.group);
+              const leader = held.gone() ? "exited" : "alive";
+              const others = survivors.some(one => one !== held.pid) || (held.gone() && inGroup === "present");
+              const verified = inGroup === "absent" && unknown.length === 0;
+              const descendants = others ? "survivors" : verified ? "none" : "unverified";
+              return { confirmed: leader === "exited" && descendants === "none" && !survivors.includes(held.pid), leader, descendants, pids, survivors, unknown,
+                partial: false, group: held.group, basis: inGroup === "absent" ? "process-group" : "observed-tree",
+                via: "the scripted child's process group and every process recorded under it, looked up again" };
+            },
+          }
+        : {}),
       async feed(message: { id: string; text: string }): Promise<void> {
         fedLog.push({
           id: message.id,
@@ -711,7 +846,8 @@ export function createScriptedAdapter(
         live.progress.length = 0;
         live.end.length = 0;
         turns.delete(live);
-        if (held) { held.kill(); await held.exited; }
+        // With a survivor the leader alone is signalled, as the adapter does, and what it started in its group is left for the evidence to find.
+        if (held) { if (leaves) held.leave(); else held.kill(); await held.exited; }
       },
     };
   };
@@ -738,10 +874,14 @@ export function createScriptedAdapter(
         cwd: where.cwd ?? null,
       });
       opened += 1;
+      const nth = opened;
+      // A start paused INSIDE the adapter, after the runner asked and before any process exists: what a request that arrives meanwhile has
+      // to account for. It is released by `releaseStart`, and the child is made only then.
+      if (startHeld) await new Promise<void>(resolve => startWaiters.push(resolve));
       return openOne(
-        where.session?.id ?? where.sessionId ?? options.sessionId ?? `scripted-session-${opened}`,
+        where.session?.id ?? where.sessionId ?? options.sessionId ?? `scripted-session-${nth}`,
         where.wrap,
-        opened,
+        nth,
       );
     },
   };
@@ -753,6 +893,18 @@ export function createScriptedAdapter(
     fed: () => fedLog.map((f) => ({ ...f })),
     starts: () => startLog.map((s) => ({ ...s })),
     closes: () => [...closeLog],
+    startsHeld: () => startWaiters.length,
+    holdStart(on) {
+      startHeld = on;
+      if (!on) for (const release of startWaiters.splice(0)) release();
+    },
+    releaseStart() {
+      startHeld = false;
+      for (const release of startWaiters.splice(0)) release();
+    },
+    reap() {
+      for (const child of children) child.kill();
+    },
     // A GATE IS THE FIXTURE'S, so releasing one releases every turn this
     // fixture is holding. With one session open that is what it always did.
     // With two, which is a runner serving two agents, it is what lets a check

@@ -40,7 +40,8 @@ export interface AgentSpec {
   chat?: string;
   door?: string;
   runner: string;
-  [key: string]: string | number | undefined;
+  /** Any other key of an agent's entry, `sleeping` among them. */
+  [key: string]: string | number | boolean | undefined;
 }
 
 export interface RateSpec {
@@ -242,7 +243,9 @@ export interface RepositorySpec {
   branch?: string;
   required?: boolean;
   zone?: boolean;
-  [key: string]: string | number | boolean | undefined;
+  /** Where this checkout is on a machine that is not the hub's (`path`, and `remote` or `ssh_command` where they differ). */
+  on?: PlacementSpec;
+  [key: string]: string | number | boolean | PlacementSpec | undefined;
 }
 
 /** The seven a repository entry renders first, in the order the file reads in. */

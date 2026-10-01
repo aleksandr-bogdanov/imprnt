@@ -1,7 +1,8 @@
 import { dlopen, FFIType } from "bun:ffi";
+import { createHash } from "node:crypto";
 import { chmodSync, chownSync, closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { indexLines, loadRegistry, type Registry } from "./load.ts";
+import { indexLines, loadRegistry, RegistryRefused, type Registry } from "./load.ts";
 
 /**
  * The only place the registry is ever written.
@@ -43,15 +44,23 @@ import { indexLines, loadRegistry, type Registry } from "./load.ts";
  * registry to somebody else.
  */
 export class RegistryEditRefused extends Error {
-  /** Which step refused: `path`, `value`, `load`, `diff`, `concurrent`, `owner`, `locked` or `precondition`. */
+  /**
+   * Which step refused: `path`, `value`, `load`, `diff`, `concurrent`, `owner`, `locked` or `precondition`, and for a
+   * whole-file replacement also `authority`, `stale` and `backup`.
+   */
   readonly step: string;
   /** The candidate left behind, when there is one. */
   readonly candidate: string | null;
-  constructor(step: string, message: string, candidate: string | null = null) {
+  /** Where the loader refused a candidate, by line and key, for a caller that must not repeat the loader's own sentence (it can echo a value). */
+  readonly line: number | undefined;
+  readonly key: string | undefined;
+  constructor(step: string, message: string, candidate: string | null = null, where: { line?: number; key?: string } = {}) {
     super(message);
     this.name = "RegistryEditRefused";
     this.step = step;
     this.candidate = candidate;
+    this.line = where.line;
+    this.key = where.key;
   }
 }
 
@@ -83,7 +92,10 @@ export type RegistryPrecondition = (registry: Registry) => { ok: true; present?:
 
 export interface RegistryEditOptions {
   seam?: RegistryEditSeam;
-  /** Only `appendEntry` asks it: the one edit that has to know what it is appending to. */
+  /**
+   * Asked by `appendEntry` (the one edit that has to know what it is appending to) and by `setKey` (a key whose old value decides whether
+   * the new one may be written, like the runner a moved agent is bound to). Judged inside the writer's lock, on the bytes the edit is built from.
+   */
   precondition?: RegistryPrecondition;
 }
 
@@ -296,13 +308,14 @@ function keep(file: string, candidate: string, error: unknown): unknown {
     return error;
   }
   const refused = join(dirname(file), `.${basename(file)}.refused`);
+  const where = { line: error.line, key: error.key };
   try {
     renameSync(candidate, refused);
   } catch {
     rmSync(candidate, { force: true });
-    return new RegistryEditRefused(error.step, error.message, null);
+    return new RegistryEditRefused(error.step, error.message, null, where);
   }
-  return new RegistryEditRefused(error.step, error.message, refused);
+  return new RegistryEditRefused(error.step, error.message, refused, where);
 }
 
 /**
@@ -346,6 +359,10 @@ export async function setKey(file: string, entryPath: string, key: string, value
   options: RegistryEditOptions = {}): Promise<RegistryEditResult> {
   return await locked(file, async live => {
     const read = readLive(live);
+    // Judged on the bytes this edit is built from, under the lock, before anything is prepared (the same contract as `appendEntry`).
+    const verdict = options.precondition?.(read.registry);
+    if (verdict && !verdict.ok) throw new RegistryEditRefused("precondition", verdict.reason);
+    if (verdict?.ok && verdict.present) return { changed: false };
     const { before, data } = read;
     const lines = before.split("\n");
     await options.seam?.afterRead?.(file);
@@ -433,5 +450,120 @@ export async function rewriteRegistry(file: string, render: (data: Record<string
     const read = readLive(live);
     await options.seam?.afterRead?.(file);
     return await apply(file, live, read, render(read.data), before => before, options);
+  });
+}
+
+export interface RegistryReplaceOptions {
+  /**
+   * The sha256 of the bytes the live file must hold. Judged INSIDE the lock, on the bytes that are about to be replaced, and again at the
+   * last moment before the rename, so a copy that was looked at outside the lock and then edited is never written over.
+   */
+  expect: string;
+  /** The machine the candidate is loaded for: it is judged as the machine that will read it reads it. */
+  machine?: string;
+  seam?: RegistryEditSeam;
+  /** Asked of the registry the candidate loads as, inside the lock: a reason refuses the replacement (step `authority`). It must not carry a value out of the file. */
+  accept?: (registry: Registry) => string | null;
+  /**
+   * Asked inside the lock, after every other check and just before the last read-back: whether what authorised this replacement still stands
+   * (the caller's own store, so a newer state published while this waited for the lock is not written over by an older one). False refuses (step `stale`).
+   */
+  fresh?: () => Promise<boolean>;
+  /**
+   * Handed the exact bytes about to be replaced (read inside the lock) and the path of the file that holds them, before the rename. A throw refuses
+   * the replacement (step `backup`) and nothing is replaced: the caller that keeps a copy of what it overwrites is held to keeping it.
+   */
+  preserve?: (previous: Buffer, live: string) => void | Promise<void>;
+}
+
+const sha256Of = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
+
+/** Steps whose candidate says nothing a person needs, so it is removed rather than kept beside the registry. */
+const NOTHING_TO_KEEP = new Set(["concurrent", "stale", "backup", "precondition"]);
+
+/**
+ * The whole file replaced by exactly these bytes, and nothing else changed about it: the one edit that is not about a line. It is how a copy of
+ * the registry is delivered to a machine that reads a copy.
+ *
+ * THE PROOF IS BYTE IDENTITY. The candidate is loaded for the machine that will read it (a file that does not load THERE, a placement file
+ * that is missing on that machine, is refused and kept as `.refused`, exactly as an edit's candidate is), and the bytes read back from the
+ * candidate must hash to the bytes asked for. There is no structure to compare, because the intended file IS the bytes.
+ *
+ * COMPARE-AND-SWAP ON THE LIVE BYTES. The replacement is made only when the live file still holds the bytes `expect` names, checked under the
+ * lock before a candidate exists and read again at the last moment before the rename. A hand edit lands in between and is refused as
+ * `concurrent`, and the edit survives. Bytes already equal to the wanted ones are `changed: false`.
+ *
+ * Nothing in a refusal repeats the loader's sentence, which can quote a value from the file: a refusal carries the line and the key.
+ */
+export async function replaceRegistry(file: string, bytes: Buffer, options: RegistryReplaceOptions): Promise<RegistryEditResult> {
+  return await locked(file, async live => {
+    const previous = readFileSync(live);
+    const wanted = sha256Of(bytes);
+    const was = sha256Of(previous);
+    if (was === wanted) return { changed: false };
+    if (was !== options.expect) {
+      throw new RegistryEditRefused("precondition", `${file} is not the file this replacement was asked about, so it was left alone`);
+    }
+    await options.seam?.afterRead?.(file);
+    const candidate = join(dirname(live), `.${basename(live)}.candidate-${crypto.randomUUID().slice(0, 8)}`);
+    const had = statSync(live);
+    const mode = had.mode & 0o777;
+    writeFileSync(candidate, bytes, { mode });
+    try {
+      chmodSync(candidate, mode);
+      const made = statSync(candidate);
+      if (made.uid !== had.uid || made.gid !== had.gid) {
+        try {
+          chownSync(candidate, had.uid, had.gid);
+        } catch {
+          throw new RegistryEditRefused("owner",
+            `${file} belongs to user ${had.uid} and group ${had.gid}, and this process cannot give a new file that ` +
+            `owner, so the replacement was not made rather than hand the registry to somebody else`, candidate);
+        }
+      }
+      await options.seam?.beforeValidate?.(candidate);
+      let loaded: Registry;
+      try {
+        loaded = loadRegistry(candidate, { machine: options.machine });
+      } catch (error) {
+        const at = error instanceof RegistryRefused ? { line: error.line, key: error.key } : {};
+        throw new RegistryEditRefused("load",
+          `the registry this would put in place does not load here${"line" in at ? ` (line ${at.line})` : ""}`, candidate, at);
+      }
+      const why = options.accept?.(loaded) ?? null;
+      if (why !== null) throw new RegistryEditRefused("authority", why, candidate);
+      if (sha256Of(readFileSync(candidate)) !== wanted) {
+        throw new RegistryEditRefused("diff", `the candidate is not the bytes that were asked for, so ${file} was left alone`, candidate);
+      }
+      await options.seam?.beforeRename?.(candidate);
+      if (options.preserve) {
+        try {
+          await options.preserve(previous, live);
+        } catch {
+          throw new RegistryEditRefused("backup", `the bytes of ${file} could not be kept, so it was not replaced`, candidate);
+        }
+      }
+      if (options.fresh && !(await options.fresh())) {
+        throw new RegistryEditRefused("stale", `what authorised replacing ${file} no longer stands, so it was left alone`, candidate);
+      }
+      // READ AGAIN, at the last moment: after the backup and after the caller's own freshness question, which are the two things that wait.
+      if (sha256Of(readFileSync(live)) !== was) {
+        throw new RegistryEditRefused("concurrent",
+          `${file} changed while it was being replaced, so the replacement was dropped rather than written over it`, candidate);
+      }
+      await options.seam?.afterCheck?.(candidate);
+      const handle = openSync(candidate, "r+");
+      try { fsyncSync(handle); } finally { closeSync(handle); }
+      renameSync(candidate, live);
+    } catch (error) {
+      if (error instanceof RegistryEditRefused && NOTHING_TO_KEEP.has(error.step)) {
+        rmSync(candidate, { force: true });
+        throw new RegistryEditRefused(error.step, error.message, null, { line: error.line, key: error.key });
+      }
+      throw keep(live, candidate, error);
+    }
+    const directory = openSync(dirname(live), "r");
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+    return { changed: true };
   });
 }

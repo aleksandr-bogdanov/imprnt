@@ -9,7 +9,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 import { join } from "node:path"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"
 import { CHAT, DOOR, PERSON, stageHub } from "./helpers/hub-fixture.ts"
-import { ToolError } from "../src/mcp/contracts.ts"
+import { ToolError, readTopicRequest } from "../src/mcp/contracts.ts"
 import { callTool, type McpBinding } from "../src/mcp/handlers.ts"
 import { bindFacade } from "../src/runner/ipc.ts"
 import { endAttempt } from "../src/runner/execution.ts"
@@ -228,9 +228,16 @@ test("over the socket: the engine's stdio server is bound to the launch, holds n
     expect(listed.result.tools[1].inputSchema.additionalProperties).toBe(false)
     const schema = listed.result.tools[0].inputSchema
     expect(schema.additionalProperties).toBe(false)
-    expect(Object.keys(schema.properties).sort()).toEqual(["action", "creation_decision", "expected_revision", "recovery_decision",
-      "request_key", "setup", "source_message_ids", "topic_id"])
-    expect(schema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen"])
+    expect(Object.keys(schema.properties).sort()).toEqual(["action", "creation_decision", "destination_machine", "expected_revision", "move_decision",
+      "recovery_decision", "request_key", "setup", "source_message_ids", "topic_id"])
+    expect(schema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen", "move"])
+    expect(schema.properties.move_decision.additionalProperties).toBe(false)
+    expect(schema.properties.move_decision.properties.choice.enum).toEqual(["withdraw", "continue"])
+    // The model is told the owner's own chat answers a waiting move through the door's commands, and that a move is not held back for want of a General.
+    const described = String(listed.result.tools[0].description)
+    expect(described).toContain("/move withdraw <move-id>")
+    expect(described).toContain("/move seen")
+    expect(described).not.toMatch(/only started when General/)
 
     const inspected = await talk.call({ id: 3, method: "tools/call", params: { name: "hub_topic", arguments: { action: "inspect" } } })
     expect(inspected.result.isError).toBeUndefined()
@@ -260,3 +267,48 @@ test("over the socket: the engine's stdio server is bound to the launch, holds n
     expect(JSON.parse(said)).toMatchObject({ ok: false, error: { code: "invalid_arguments" } })
   } finally { await rogue.close() }
 }, 60_000)
+
+// The reader of `move` is pure: what it accepts is exactly one of a named machine or a decision, with the owner's own words cited.
+const asked = (over: Record<string, unknown> = {}) => ({ action: "move", request_key: "k", source_message_ids: ["m1"], ...over })
+const readCode = (args: unknown): string => {
+  try { readTopicRequest(args); return "read" } catch (error) { return error instanceof ToolError ? error.code : `not a ToolError: ${(error as Error).message}` }
+}
+
+test("move is read strictly: exactly one of a named machine or a decision, the evidence always, and the attempt fields only for continue", () => {
+  expect(readTopicRequest(asked({ destination_machine: "mac" }))).toEqual({ action: "move", request_key: "k", source_message_ids: ["m1"], destination_machine: "mac" })
+  expect(readTopicRequest(asked({ topic_id: "t1", expected_revision: 3, destination_machine: "mac" }))).toMatchObject({ topic_id: "t1", expected_revision: 3 })
+  expect(readTopicRequest(asked({ move_decision: { choice: "withdraw" } }))).toMatchObject({ move_decision: { choice: "withdraw" } })
+  expect(readTopicRequest(asked({ move_decision: { choice: "continue", attempt_id: "a1", expected_recovery_revision: 2 } })))
+    .toMatchObject({ move_decision: { choice: "continue", attempt_id: "a1", expected_recovery_revision: 2 } })
+
+  // Both or neither is refused, and no default machine is read in.
+  expect(readCode(asked())).toBe("invalid_arguments")
+  expect(readCode(asked({ destination_machine: "mac", move_decision: { choice: "withdraw" } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ destination_machine: "" }))).toBe("invalid_arguments")
+  expect(readCode(asked({ destination_machine: "x".repeat(101) }))).toBe("invalid_arguments")
+  expect(readCode(asked({ destination_machine: 7 }))).toBe("invalid_arguments")
+
+  // The evidence is required, as it is for archive: a move is the owner's explicit request.
+  expect(readCode({ action: "move", source_message_ids: ["m1"], destination_machine: "mac" })).toBe("invalid_arguments")
+  expect(readCode({ action: "move", request_key: "k", destination_machine: "mac" })).toBe("invalid_arguments")
+  expect(readCode(asked({ source_message_ids: [], destination_machine: "mac" }))).toBe("invalid_arguments")
+
+  // A withdrawal takes no attempt fields; a continue needs both, and nothing else is a choice.
+  expect(readCode(asked({ move_decision: { choice: "withdraw", attempt_id: "a1" } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ move_decision: { choice: "withdraw", expected_recovery_revision: 1 } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ move_decision: { choice: "continue" } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ move_decision: { choice: "continue", attempt_id: "a1" } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ move_decision: { choice: "continue", expected_recovery_revision: 1 } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ move_decision: { choice: "continue", attempt_id: "a1", expected_recovery_revision: 0 } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ move_decision: { choice: "continue", attempt_id: "", expected_recovery_revision: 1 } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ move_decision: { choice: "keep_held", attempt_id: "a1", expected_recovery_revision: 1 } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ move_decision: { choice: "continue", attempt_id: "a1", expected_recovery_revision: 1, by: "p1" } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ move_decision: "withdraw" }))).toBe("invalid_arguments")
+
+  // The keys of a move are the move's own: no other action reads them, and a move reads none of the others'.
+  expect(readCode({ action: "archive", request_key: "k", source_message_ids: ["m1"], destination_machine: "mac" })).toBe("invalid_arguments")
+  expect(readCode({ action: "reopen", request_key: "k", source_message_ids: ["m1"], move_decision: { choice: "withdraw" } })).toBe("invalid_arguments")
+  expect(readCode(asked({ destination_machine: "mac", recovery_decision: { attempt_id: "a", expected_recovery_revision: 1, choice: "continue" } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ destination_machine: "mac", setup: { chat_name: "x", initial_request: "y" } }))).toBe("invalid_arguments")
+  expect(readCode(asked({ destination_machine: "mac", person: "p2" }))).toBe("invalid_arguments")
+})

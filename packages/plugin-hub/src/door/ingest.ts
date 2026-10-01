@@ -15,6 +15,7 @@ import { recordDeniedSender } from "./denied.ts";
 import { parseCouncil, requestDispatch, parseDispatch } from "./dispatch.ts";
 import { parseAgentCommand, requestAgentLifecycle, type ResolvedRef } from "./agentctl.ts";
 import { agentAccepted, agentRefused, agentUsage, controlUsage, dispatchAccepted, dispatchRefused, dispatchUsage, holdChoiceLine, holdUsage, recoveryAccepted, recoveryRefused, emptyMessageLine, mediaFailed, mediaKind, voicePending } from "./lines.ts";
+import { answerMoveCommand, parseMoveCommand } from "./move-command.ts";
 import { parseHoldChoice, requestHoldChoice } from "./recovery.ts";
 import { holdContextOf } from "../recovery/holds.ts";
 import { saveMedia, type SavedMedia } from "./media.ts";
@@ -104,6 +105,28 @@ export async function acceptBatch(options: {
       }, skipBad);
       try { await platform.post({ chat: agent.chat, text }); }
       catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
+      continue;
+    }
+    // `/move`, `/move withdraw <move-id>` and `/move seen <attempt> <revision>` (and `/перенос ...`): the owner's own chat answers a waiting move through the
+    // door, whether or not the gated agent, General or any runner can run. Never enqueued, so never given to a model and never replayed. The decision
+    // is bound by a receipt, written before anything is applied, to the message's own id and to the one move (or none) it was about (`door/move-command.ts`); a
+    // withdrawal names its move, and a bare `/move withdraw` only reads the status; the reply is written once per outcome class, so a redelivered
+    // batch says nothing twice, and a command refused first and applied later says the new thing.
+    const moving = parseMoveCommand(message.text);
+    if (moving !== null) {
+      const id = `move:${inboundId(platform.name, message.chat, message.platform_message_id)}`;
+      await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id, at: message.at, direction: "in", from: agent.person, text: message.text,
+      }, skipBad);
+      const answer = await answerMoveCommand(store, { registry, person: agent.person, door, chat: agent.chat, agent: agent.id, sender,
+        message: id, at: message.at, command: moving });
+      const fresh = await appendChatLineOnce({ stateDir, person: agent.person, agent: agent.id }, {
+        id: `${id}:notice:${answer.key}`, at: message.at, direction: "out", from: door, text: answer.text,
+      }, skipBad);
+      if (fresh) {
+        try { await platform.post({ chat: agent.chat, text: answer.text }); }
+        catch (error) { await recordOperationFailure(store, { operation: "post", target: `${door}/${agent.chat}`, error, actor: "door" }); }
+      }
       continue;
     }
     const asked = parseDispatch(message.text);

@@ -612,10 +612,10 @@ test("an adopted master that was never a topic is linked once and keeps its conv
   expect(findings.map(one => [one.kind, one.subject])).toContainEqual(["reserved-identity-in-registry", "p1-tea"])
 })
 
-test("the deliberate limits of this step are refused by name and offered nowhere: move, delete and stop are not actions of this tool yet, and nothing here erases", async () => {
+test("the deliberate limits of this step are refused by name and offered nowhere: delete and stop are not actions of this tool yet, and nothing here erases", async () => {
   const s = await stageTopics(cluster)
   const master = await s.binding()
-  for (const action of ["move", "delete", "stop"]) {
+  for (const action of ["delete", "stop"]) {
     expect(await code(s.ask(master, { action, topic_id: "x" }))).toBe("unsupported_action")
   }
   // The tool has no deletion of any kind, and nothing here made a topic to erase.

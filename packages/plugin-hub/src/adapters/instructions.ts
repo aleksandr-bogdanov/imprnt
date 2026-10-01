@@ -51,8 +51,11 @@ export function vaultRootOf(person: PersonEntry | undefined, tree: string): stri
  */
 export function instructionFiles(person: PersonEntry | undefined, root: string): string[] {
   if (person?.instructions) return [...person.instructions];
-  return ["CLAUDE.md", "CLAUDE.local.md"].map(name => join(root, name)).filter(file => existsSync(file));
+  return DEFAULT_INSTRUCTION_FILES.map(name => join(root, name)).filter(file => existsSync(file));
 }
+
+/** The names an ordinary launch looks for in the vault root when its person declares no list: the one place the default is spelled. */
+export const DEFAULT_INSTRUCTION_FILES: readonly string[] = ["CLAUDE.md", "CLAUDE.local.md"];
 
 /**
  * Where instruction text may come from. The runner reads these files outside

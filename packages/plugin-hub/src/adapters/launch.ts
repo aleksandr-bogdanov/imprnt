@@ -152,20 +152,19 @@ function jsonFile(file: string | undefined, fallback: Record<string, unknown>): 
   return value as Record<string, unknown>;
 }
 
-export async function makeLoopLaunch(input: LoopLaunchInput) {
-  if (input.preset.adapter !== "claude-code") throw new Error("loop-configuration-unsupported");
-  if (!input.box) throw new Error("box-required");
-  if (!statSync(input.box.tree).isDirectory()) throw new Error("box-tree-unavailable");
-  if (!["ordinary", "harvest", "triage"].includes(input.purpose)) throw new Error("invalid-configuration");
-  const credential = input.credential ?? credentialSource(input.registry, input.agent.preset);
-  validateCredentialSource(credential);
-  const ordinary = input.purpose === "ordinary";
-  // An agent's own settings and MCP servers replace its person's, and an
-  // agent that names neither, which is every agent made from a chat, starts
-  // with the person's.
+type ConfigInput = Pick<LoopLaunchInput, "registry" | "agent" | "purpose">;
+
+/**
+ * The settings a launch passes. An agent's own settings file replaces its
+ * person's, and an agent that names none, which is every agent made from a
+ * chat, starts with the person's. Only an ordinary launch has any, and only
+ * permissions. These three functions are what a launch is made from and what
+ * `effectiveLaunchConfig` reads, so a comparison of two machines' launches
+ * looks at what the launch would really use.
+ */
+export function effectiveSettings(input: ConfigInput): Record<string, unknown> {
   const person = personOf(input.registry, input.agent.person);
-  const settingsFile = input.agent.settings ?? person?.settings;
-  const settings = ordinary ? jsonFile(settingsFile, {}) : {};
+  const settings = input.purpose === "ordinary" ? jsonFile(input.agent.settings ?? person?.settings, {}) : {};
   if (Object.keys(settings).some(key => key !== "permissions")) throw new Error("invalid-settings-configuration");
   if (settings.permissions !== undefined) {
     const permissions = settings.permissions as Record<string, unknown>;
@@ -175,14 +174,68 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
       throw new Error("invalid-settings-permissions");
     }
   }
+  return settings;
+}
+
+/**
+ * The MCP configuration a launch passes: the agent's own file or else its
+ * person's, and the file it was read from. `hubMcp` says the launch will add
+ * the hub's own server beside them, which a file naming a server `hub` forbids.
+ */
+export function effectiveMcp(input: ConfigInput & { hubMcp: boolean }): { mcp: Record<string, unknown>; mcpFile: string | undefined } {
+  const ordinary = input.purpose === "ordinary";
+  const person = personOf(input.registry, input.agent.person);
   const mcp = ordinary ? jsonFile(input.agent.mcp ?? person?.mcp, { mcpServers: {} }) : { mcpServers: {} };
   if (!mcp.mcpServers || typeof mcp.mcpServers !== "object" || Array.isArray(mcp.mcpServers)) {
     throw new Error("invalid-mcp-configuration");
   }
-  const mcpFile = ordinary ? input.agent.mcp ?? person?.mcp : undefined;
   if (input.hubMcp && (!ordinary || (mcp.mcpServers as Record<string, unknown>).hub !== undefined)) {
     throw new Error("invalid-mcp-configuration");
   }
+  return { mcp, mcpFile: ordinary ? input.agent.mcp ?? person?.mcp : undefined };
+}
+
+/**
+ * The appended system prompt of an ordinary launch and every file it was made
+ * from (null for any other launch). The fragment must be readable. Nothing the
+ * box hides from the agent may reach it through its prompt: every secret, the
+ * login it runs on included (`credentialFile`), and every other person's tree
+ * and state. Imports reach only inside the person's vault, and files the
+ * registry itself names are the owner's hand and may sit anywhere not forbidden.
+ */
+export function effectivePrompt(input: ConfigInput & { box: BoxContext; credentialFile?: string }): { text: string; reads: string[] } | null {
+  if (input.purpose !== "ordinary") return null;
+  const person = personOf(input.registry, input.agent.person);
+  const fragment = input.agent.fragment;
+  if (fragment) accessSync(fragment, constants.R_OK);
+  const ambient = process.env.HOME;
+  const forbidden = [...(input.box.secretPaths ?? []), ...(input.credentialFile ? [input.credentialFile] : []), ...input.box.otherTrees, ...(input.box.otherStateRoots ?? []),
+    ...(ambient ? [join(ambient, ".claude", ".credentials.json")] : [])];
+  const root = vaultRootOf(person, input.box.tree);
+  return assemblePrompt({ files: instructionFiles(person, root), fragment, home: ambient, forbidden, inside: [root], trusted: person?.instructions ?? [] });
+}
+
+/**
+ * What a launch of this agent would read, computed with no box, no write and
+ * no login read: the three above, with the same precedence and the same thrown
+ * errors. The hub's own tool server is added by the runner at launch and is not
+ * a file, so it is not here.
+ */
+export function effectiveLaunchConfig(input: ConfigInput & { box: BoxContext; credentialFile?: string; hubMcp: boolean }) {
+  return { settings: effectiveSettings(input), ...effectiveMcp(input), prompt: effectivePrompt(input) };
+}
+
+export async function makeLoopLaunch(input: LoopLaunchInput) {
+  if (input.preset.adapter !== "claude-code") throw new Error("loop-configuration-unsupported");
+  if (!input.box) throw new Error("box-required");
+  if (!statSync(input.box.tree).isDirectory()) throw new Error("box-tree-unavailable");
+  if (!["ordinary", "harvest", "triage"].includes(input.purpose)) throw new Error("invalid-configuration");
+  const credential = input.credential ?? credentialSource(input.registry, input.agent.preset);
+  validateCredentialSource(credential);
+  const ordinary = input.purpose === "ordinary";
+  const person = personOf(input.registry, input.agent.person);
+  const settings = effectiveSettings(input);
+  const { mcp, mcpFile } = effectiveMcp({ ...input, hubMcp: Boolean(input.hubMcp) });
   const named = (tool: string) => tool.split("(")[0].trim();
   if (ordinary && [...(input.agent.tools ?? []), ...(input.toolProfile ?? [])].some(tool => NATIVE_DELEGATION_TOOLS.includes(named(tool)))) {
     throw new Error("native-delegation-configured");
@@ -203,21 +256,11 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
       throw new Error(`tool-profile-unvalidated: ${outside.join(", ")} not validated on claude ${input.buildVersion ?? "this build"}`);
     }
   }
-  const fragment = ordinary ? input.agent.fragment : undefined;
-  if (fragment) accessSync(fragment, constants.R_OK);
   const ambient = process.env.HOME;
   const root = vaultRootOf(person, input.box.tree);
   // Read before the box is built, because every file it reads, imports
   // included, is a path the box has to let the launch reach.
-  // Nothing the box hides from the agent may reach it through its prompt:
-  // every secret, the login it runs on included, and every other person's
-  // tree and state.
-  const forbidden = [...(input.box.secretPaths ?? []), credential.file, ...input.box.otherTrees, ...(input.box.otherStateRoots ?? []),
-    ...(ambient ? [join(ambient, ".claude", ".credentials.json")] : [])];
-  // Imports reach only inside the person's vault. Files the registry itself
-  // names are the owner's hand and may sit anywhere not forbidden.
-  const prompt = ordinary ? assemblePrompt({ files: instructionFiles(person, root), fragment, home: ambient, forbidden,
-    inside: [root], trusted: person?.instructions ?? [] }) : null;
+  const prompt = effectivePrompt({ ...input, credentialFile: credential.file });
   // The box masks every credential file, and this launch keeps the one login its
   // loop runs on. Every other one, bot tokens and any other model login alike,
   // stays masked. The launched login's own directory is bound writable because

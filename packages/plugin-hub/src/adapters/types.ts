@@ -1,4 +1,6 @@
 import type { Preset } from "../registry/presets.ts";
+import type { Bundle, BundleLimits } from "../transfer/bundle.ts";
+import type { StageReceipt } from "../transfer/workspace.ts";
 import type { LoopLaunchInput, LoopProbeOptions } from "./launch.ts";
 
 /**
@@ -221,6 +223,143 @@ export interface CapabilityContext {
   probe?: LoopProbeOptions;
 }
 
+/*
+ * Moving a loop's own session between two machines: what the engine keeps on
+ * disk for a conversation, taken from one session directory and put into
+ * another, with nothing about the bytes interpreted or rewritten.
+ *
+ * This is the engine's half of a move and only that. It starts no model, reads
+ * no login, touches no store and has no delivery policy: when to export, when
+ * to import, when a move counts as done and what happens to a message while a
+ * refusal stands are the caller's. Every method is synchronous and none retries
+ * or falls back to a fresh session; a refusal is a `NativeRefusal` (or the
+ * transfer library's own `TransferError`, passed through unchanged) and leaves
+ * the caller's input as it was.
+ *
+ * The caller serialises every call on one session directory, and supplies the
+ * `version` of the build that will actually run there.
+ */
+
+/** One end of a move, as the engine sees it. */
+export interface NativeSide {
+  /** The engine build, exactly as `capabilities` reports it. */
+  version: string;
+  os: "darwin" | "linux";
+  /** The realpath of the session directory: the engine's working directory. */
+  cwd: string;
+  /** The name of the engine's per-directory folder for `cwd`, observed at the source and applied at the destination. */
+  project_dir: string;
+}
+
+/** One carried file. `path` is relative to the session directory. */
+export interface NativeFile { path: string; sha256: string; size: number; mode: number }
+
+/** What an export says it carried. Its canonical JSON is what `NativeExport.digest` is the sha256 of. */
+export interface NativeManifest {
+  version: 1;
+  adapter: string;
+  native_session: string;
+  /** The name of the locator rule the source's table entry applied to check what it observed. */
+  rule: string;
+  from: NativeSide;
+  /** Source-relative, in the source's own layout. Exactly one today: the session's transcript. */
+  files: NativeFile[];
+}
+
+export interface NativeExport {
+  manifest: NativeManifest;
+  /** sha256 of the manifest's canonical JSON (`native_manifest_digest`). */
+  digest: string;
+  /** Class `native`, in the source's layout: the transcript bytes as they were read. */
+  bundle: Bundle;
+}
+
+export interface NativeImport {
+  native_manifest_digest: string;
+  /** The destination's side: applied by the destination's rule, not observed from the engine. */
+  to: NativeSide;
+  /** The digest of the bundle as staged (its path is the destination's), not of the source's. */
+  bundle_digest: string;
+  transcript: NativeFile;
+  receipt: StageReceipt;
+  /** True when a complete stage of this same operation and bundle was already there (a retry), and nothing was written. */
+  reused: boolean;
+}
+
+export type NativeCode =
+  /** The engine build, on this host, is not one whose layout somebody measured. */
+  | "native_build_unvalidated"
+  /** Both builds are measured, but a move between this pair of host and build never was. */
+  | "native_pair_unvalidated"
+  | "native_session_invalid"
+  | "native_transcript_missing"
+  | "native_locator_ambiguous"
+  /** What the source's engine wrote is not where its build's rule says it would. */
+  | "native_locator_rule_mismatch"
+  /** Something beside the transcript is in the session's engine directory, and nobody measured that a move without it resumes. Names it. */
+  | "native_side_state_unsupported"
+  /** The destination's working directory is outside the subset of paths the rule was measured on. */
+  | "native_locator_unsupported_path"
+  | "native_dest_session_collision"
+  | "native_export_mismatch"
+  /** After a resumed turn, the session directory is not what a resume of this transcript is measured to leave. */
+  | "native_resume_unverified";
+
+/** A named refusal of a native session move. `path` is the one path at fault, relative to the session directory when it is one. */
+export class NativeRefusal extends Error {
+  readonly code: NativeCode;
+  readonly path?: string;
+
+  constructor(code: NativeCode, path?: string) {
+    super(code);
+    this.name = "NativeRefusal";
+    this.code = code;
+    if (path !== undefined) this.path = path;
+  }
+}
+
+export interface NativeSessionPort {
+  /**
+   * PURE: where this host's measured build would place a session at `sessionDir`, by the very rule `importSession` applies (one
+   * shared helper), so a preflight and the import cannot drift. It resolves the deepest existing ancestor of `sessionDir` and writes,
+   * creates and opens nothing. Refuses with `native_build_unvalidated`, `native_locator_unsupported_path` or `destination-invalid`.
+   */
+  destination(input: { sessionDir: string; version: string }): NativeSide;
+  /**
+   * PURE: the measured move between two builds, with the evidence the table holds for it. `from` and `to` are `os:version`. Refuses
+   * with `native_build_unvalidated` (either end) or `native_pair_unvalidated` (two measured builds nobody moved between).
+   */
+  portability(input: { from: { os: string; version: string }; to: { os: string; version: string } }):
+    { adapter: string; from: string; to: string; evidence: string };
+  /** Read the one transcript of `nativeSession` under `sessionDir/config`, and nothing else in it. The caller has proved the source quiet. */
+  exportSession(input: { sessionDir: string; nativeSession: string; version: string; limits: BundleLimits }): NativeExport;
+  /**
+   * Put an export's transcript into `sessionDir`, which must not exist (or hold only a complete stage of this same
+   * operation and bundle, which is a crash retry and writes nothing). Serialised per conversation by the caller; nothing
+   * here is atomic beyond what the transfer library's staging says of itself. The caller compares `digest` with its own
+   * authoritative record of the export (the port only checks that the manifest matches the digest it came with), and
+   * recovers a stage interrupted before its marker said complete (no receipt, so a collision here): an integration gate.
+   */
+  importSession(input: {
+    manifest: unknown; digest: string; bundle: Bundle; sessionDir: string; version: string; operation: string; limits: BundleLimits;
+  }): NativeImport;
+  /**
+   * Remove what `importSession` staged, by the library's receipt and only what it made. A file marker cannot tell a
+   * session nothing has launched from one that has: the caller serialises this with every other use of the
+   * directory and MUST have proved there was no activation and no live child before it asks. The library stops for a
+   * recorded file that changed, but not for a directory or the root that gained entries: it may remove the unchanged
+   * transcript, its empty directories and the marker, and only then fail with `stage-ambiguous`, leaving no record.
+   */
+  discardImport(receipt: StageReceipt): void;
+  /**
+   * After the first resumed turn of the imported session: whether the directory is what the measured resume left.
+   * A conservative check for the one layout that was measured (the resumed transcript kept the imported bytes as its
+   * prefix and was longer), not a proof about long or compacted sessions. A transcript that has not grown is refused.
+   * Throws `native_resume_unverified` and nothing else changes.
+   */
+  checkResumed(input: { sessionDir: string; imported: NativeImport; nativeSession: string; reportedSessionId: string | null; limits: BundleLimits }): void;
+}
+
 export interface Adapter {
   readonly name: string;
   /**
@@ -229,6 +368,11 @@ export interface Adapter {
    * it must not start a model.
    */
   capabilities?(context: CapabilityContext): Promise<AdapterCapabilities>;
+  /**
+   * Moving this engine's own session between machines, or absent when the
+   * engine has none this hub can move. Never used to start a model.
+   */
+  session?: NativeSessionPort;
   /**
    * Everything about a launch that is this engine's own: the configuration it
    * is given, the tools it is left with, the servers it is told about, the

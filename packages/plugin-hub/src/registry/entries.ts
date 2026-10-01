@@ -317,6 +317,11 @@ export function languageOf(registry: unknown, personId: string): "en" | "ru" {
   return (person?.language ?? DEFAULT_LANGUAGE) as "en" | "ru";
 }
 
+/** The platform a door speaks, as the registry says it (Discord when it says none). */
+export function platformOf(registry: Registry, door: string): string {
+  return ((registry.data.run ?? []) as { id: string; platform?: string }[]).find((one) => one.id === door)?.platform ?? "discord";
+}
+
 /**
  * Where a notice about this agent goes and how it is written: its door and
  * chat, the platform that door speaks, and its person's language. Everything a
@@ -389,6 +394,12 @@ export function senderAllowed(registry: unknown, personId: string, door: string,
   const person = loaded(registry, "senderAllowed").people.find(one => one.id === personId);
   const senders = person?.allowed_senders;
   return senders && Object.hasOwn(senders, door) ? senders[door].includes(sender) : false;
+}
+
+/** The senders this person allows on one door: a sender id means something only on the door it was read on, so these are that door's and no other's. */
+export function allowedSendersOn(registry: unknown, personId: string, door: string): string[] {
+  const senders = loaded(registry, "allowedSendersOn").people.find(one => one.id === personId)?.allowed_senders;
+  return senders && Object.hasOwn(senders, door) ? [...senders[door]] : [];
 }
 
 export function runnerLimitsFor(registry: unknown, runnerId: string) {

@@ -1,7 +1,7 @@
 import { lineOrigin, renderTailLines, validLine, type ChatLine } from "../chatlog.ts";
 import { CLOCK_STREAM } from "../door/clock.ts";
 import { clockLine, waitReasonLine, type Language } from "../door/lines.ts";
-import { isDemand, isRecoveryCommand, SLICE_MAX_DAYS, type SliceLine } from "../harvest/slice.ts";
+import { isDemand, isMoveCommand, isRecoveryCommand, SLICE_MAX_DAYS, type SliceLine } from "../harvest/slice.ts";
 import { languageOf, listAgents } from "../registry/entries.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { mediaPathMap, rewriteMediaPaths } from "../store/media.ts";
@@ -285,7 +285,8 @@ export async function deriveSlice(
         line.origin === undefined &&
         (line.from === args.person || line.from === args.agent) &&
         !isDemand(line.text) &&
-        !isRecoveryCommand(line.text)
+        !isRecoveryCommand(line.text) &&
+        !isMoveCommand(line.text)
       );
     })
     .map((line) => ({

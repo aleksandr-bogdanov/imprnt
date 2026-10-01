@@ -6,6 +6,7 @@ import { archiveOf, canMakeChats, generalOf, resolveTopicSetup } from "../regist
 import { ConfirmationRefused, freezeConfirmation, readOperation } from "../store/confirmations.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { EffectTooLong, sanitizeText } from "../store/effects.ts";
+import { openMoveOfTopic } from "../store/moves.ts";
 import {
   IdentityReserved, allocateTopic, attentionGapsOf, decideCreation, linkLegacyTopic, readTopic, readTopicByAgent, requestTransition, reviseTopic,
   runnerLive, type TopicRow, type TopicSetup,
@@ -15,11 +16,13 @@ import {
   HUB_TOPIC, type ArchiveRequest, type CreateRequest, type InspectRequest, type LifecycleRequest, type ReopenRequest, type ToolReply,
 } from "./contracts.ts";
 import type { McpBinding } from "./handlers.ts";
+import { lineContext } from "./move-general.ts";
+import { moveStanding } from "./move-standing.ts";
 import { Undo, operationFor, refusal, requireMaster, runRequest } from "./requests.ts";
 
 /**
  * The hub tool's topic chat actions: `create`, `archive`, `reopen`, and what `inspect` says of a
- * topic. Each is a few lines around `runRequest`, which owns the request key, the owner's own
+ * topic (`move` is `topic-move.ts`, which asks `topicFor` of this file and `moveStanding` of `move-standing.ts`). Each is a few lines around `runRequest`, which owns the request key, the owner's own
  * messages as evidence and the answer that is recorded once; what is here is what a topic's
  * request means.
  *
@@ -203,7 +206,7 @@ async function decideOnCreation(binding: McpBinding, request: CreateRequest): Pr
  * conversation it already has: that is what "legacy master linkage" is, and a reserved identity
  * is refused there too.
  */
-async function topicFor(tx: StoreLike, binding: McpBinding, named: string | undefined): Promise<TopicRow> {
+export async function topicFor(tx: StoreLike, binding: McpBinding, named: string | undefined): Promise<TopicRow> {
   const registry = binding.registry();
   const wanted = named ?? binding.agent;
   let topic = (await readTopic(tx, wanted)) ?? (await readTopicByAgent(tx, wanted));
@@ -290,6 +293,13 @@ export const archiveTopic = (binding: McpBinding, request: ArchiveRequest): Prom
 export const reopenTopic = (binding: McpBinding, request: ReopenRequest): Promise<ToolReply> => lifecycle(binding, request);
 
 // ---------------------------------------------------------------------------------------------
+// where an open move stands
+// ---------------------------------------------------------------------------------------------
+
+// `moveStanding` (the one reading of an open move) and `turnReading` live in `./move-standing.ts`, so the door can read them without this tool.
+export { moveStanding, turnReading, type MoveStanding, type TurnReading } from "./move-standing.ts";
+
+// ---------------------------------------------------------------------------------------------
 // inspect
 // ---------------------------------------------------------------------------------------------
 
@@ -298,6 +308,17 @@ export async function inspectTopic(binding: McpBinding, request: InspectRequest)
   const wanted = request.topic_id!;
   const topic = (await readTopic(binding.store, wanted)) ?? (await readTopicByAgent(binding.store, wanted));
   if (!topic || topic.person !== binding.person) return refusal(wanted, "unknown_topic", "no topic chat of this person has that id");
+  // An open move wins over every waiting word below: those name the machine the topic is bound to, which is the one it is leaving.
+  const open = await openMoveOfTopic(binding.store, topic.id);
+  if (open !== null) {
+    const standing = await moveStanding(binding.store, binding.registry(), topic, open, lineContext(binding, topic));
+    return {
+      operation_id: open.operation_id, object_id: topic.id, revision: topic.lifecycle_generation, status: standing.status, stage: standing.stage,
+      ...(standing.cause === undefined ? {} : { cause: standing.cause }), status_message: standing.message, owner_status: standing.owner_status,
+      topic: { chat: topic.display_name, execution_machine: topic.machine, moving_to: open.dest_machine, agent: topic.agent_id, lifecycle: topic.lifecycle, created_by: topic.origin },
+      move: standing.move,
+    } as ToolReply;
+  }
   const revision = topic.create_state === "previewed" && topic.operation_id !== null
     ? (await readOperation(binding.store, topic.operation_id)).at(-1)?.revision ?? null : topic.lifecycle_generation;
   // WHERE THE FIRST MESSAGE OF A CHAT THE HUB MADE STANDS, and nothing about whether its agent runs now. A runner's

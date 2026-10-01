@@ -66,6 +66,15 @@ export function isRecoveryCommand(text: string): boolean {
 }
 
 /**
+ * The owner's move command, `/move` or `/перенос` (with `withdraw`/`отозвать` and a move id, or `seen`/`принято`, after it), the way the door
+ * recognises one (`door/move-command.ts` reads the same prefix): the verb at the very start of the message, in any case, followed by
+ * whitespace or by nothing. The door answers it itself and never gives it to the agent, so the slice drops it as it drops a recovery command.
+ */
+export function isMoveCommand(text: string): boolean {
+  return /^\/(move|перенос)(?:\s|$)/i.test(String(text ?? ""));
+}
+
+/**
  * The same rule as above, built from the phrase table the door's own sentences
  * read, so the verb has one spelling and the usage line cannot ask for a
  * command the recognizer will not take.
@@ -179,7 +188,7 @@ function walk(
  */
 function spoken(line: SliceLine, person: string, agent: string): boolean {
   return (line.from === person || line.from === agent) && !isDemand(line.text) &&
-    !isRecoveryCommand(line.text) && !isDispatchCommand(line.text) &&
+    !isRecoveryCommand(line.text) && !isMoveCommand(line.text) && !isDispatchCommand(line.text) &&
     !isCouncilCommand(line.text) && !isAgentCommand(line.text);
 }
 

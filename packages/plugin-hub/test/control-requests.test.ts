@@ -360,9 +360,9 @@ test("H3 the tools the model is offered are unchanged, and an action nobody regi
   try {
     expect(TOOLS.map(tool => tool.name)).toEqual(["hub_topic", "hub_council"])
     expect(TOOLS[0].inputSchema.additionalProperties).toBe(false)
-    expect(Object.keys(TOOLS[0].inputSchema.properties).sort()).toEqual(["action", "creation_decision", "expected_revision", "recovery_decision",
-      "request_key", "setup", "source_message_ids", "topic_id"])
-    expect(TOOLS[0].inputSchema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen"])
+    expect(Object.keys(TOOLS[0].inputSchema.properties).sort()).toEqual(["action", "creation_decision", "destination_machine", "expected_revision", "move_decision",
+      "recovery_decision", "request_key", "setup", "source_message_ids", "topic_id"])
+    expect(TOOLS[0].inputSchema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen", "move"])
     expect(TOOLS[1].inputSchema.additionalProperties).toBe(false)
     expect(TOOLS[1].inputSchema.properties.action.enum).toEqual(["start", "continue", "inspect", "stop"])
     // Nothing that is not listed is offered, and what is asked for anyway is refused by name, before anything is looked at.
@@ -994,9 +994,9 @@ test("M1 an upgraded store carries the same gate, stop and claim objects, checks
   const versions = (await upgraded.sql`select version from schema_version order by version`).map((row: any) => Number(row.version))
   expect(versions).toEqual(MIGRATION_FILES.map(([version]) => version))
   // Later steps append to this list, so this step's own number is asserted present, not last of the list: the councils (14)
-  // and the topics (15) follow it, in that order.
+  // the topics (15) and the topic movement (16) follow it, in that order.
   expect(versions).toContain(13)
-  expect(versions.slice(-2)).toEqual([14, 15])
+  expect(versions.slice(-3)).toEqual([14, 15, 16])
   expect(versions).toEqual((await fresh.sql`select version from schema_version order by version`).map((row: any) => Number(row.version)))
   // What the step adds to the tables of the step before it is nothing: the rows an upgrade found are the rows it has.
   expect(Number((await upgraded.sql`select count(*)::int as n from inbound`)[0].n)).toBe(1)
@@ -1010,14 +1010,16 @@ test("M2 the fresh schema carries the migration, byte for byte, and its version,
   expect(schema.includes(`${migration}\ninsert into schema_version (version) values (13);\n`)).toBe(true)
   expect(MIGRATION_FILES).toContainEqual([13, "013-execution-controls.sql"])
   expect(MIGRATION_FILES.map(([version]) => version).slice(0, 13)).toEqual(Array.from({ length: 13 }, (_, i) => i + 1))
-  // The councils (14) follow it whole and are followed by the topics (15), which end the fresh schema, in the order they migrate.
+  // The councils (14) follow it whole, then the topics (15), then the topic movement (16), which ends the fresh schema, in the order they migrate.
   const councils = readFileSync(hubPath("src/store/migrations/014-councils.sql"), "utf8")
   const topics = readFileSync(hubPath("src/store/migrations/015-topics.sql"), "utf8")
+  const moves = readFileSync(hubPath("src/store/migrations/016-topic-move.sql"), "utf8")
   const at = (text: string) => schema.indexOf(text)
   expect(at(`${councils}\ninsert into schema_version (version) values (14);\n`)).toBeGreaterThan(at(`${migration}\ninsert into schema_version (version) values (13);\n`))
-  expect(schema.endsWith(`${topics}\ninsert into schema_version (version) values (15);\n`)).toBe(true)
   expect(at(`${topics}\ninsert into schema_version (version) values (15);\n`)).toBeGreaterThan(at(`${councils}\ninsert into schema_version (version) values (14);\n`))
-  expect(MIGRATION_FILES.slice(-2)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"]])
+  expect(at(`${moves}\ninsert into schema_version (version) values (16);\n`)).toBeGreaterThan(at(`${topics}\ninsert into schema_version (version) values (15);\n`))
+  expect(schema.endsWith(`${moves}\ninsert into schema_version (version) values (16);\n`)).toBe(true)
+  expect(MIGRATION_FILES.slice(-3)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"], [16, "016-topic-move.sql"]])
 })
 
 // ---------------------------------------------------------------------------

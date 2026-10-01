@@ -16,10 +16,12 @@ import { startCluster, until, type Cluster } from "./helpers/cluster.ts"
 import { AGENT, CHAT, DOOR, PERSON, RUNNER, chatLogLines, insertInbound, stageHub, superStore } from "./helpers/hub-fixture.ts"
 import { runDoor } from "../src/door/run.ts"
 import { WAIT_REASONS, clockLine, waitReasonLine, waitReasonText } from "../src/door/lines.ts"
-import { credentialKeyOf, waitReason, type WaitFacts } from "../src/door/reason.ts"
+import { credentialKeyOf, waitFacts, waitReason, type WaitFacts } from "../src/door/reason.ts"
 import { readUnexplainedWaits, unexplainedFindings } from "../src/check/waits.ts"
 import { loadRegistry } from "../src/registry/load.ts"
-import type { OpenTurnRow } from "../src/store/turns.ts"
+import { withdrawMove } from "../src/store/moves.ts"
+import { readOpenTurnsWithWait, type OpenTurnRow } from "../src/store/turns.ts"
+import { moveStage } from "./helpers/move-store-stage.ts"
 
 let cluster: Cluster
 beforeAll(async () => { cluster = await startCluster() })
@@ -37,13 +39,14 @@ function row(fields: Partial<OpenTurnRow> = {}): OpenTurnRow {
 
 function facts(fields: Partial<WaitFacts> = {}): WaitFacts {
   const it = row()
-  return { row: it, stamp: "acked", open: [it], wait: null, health: null, outage: null, sleeping: false, runner: RUNNER, runnerLive: true, now: NOW, ...fields }
+  return { row: it, stamp: "acked", open: [it], wait: null, health: null, outage: null, sleeping: false, runner: RUNNER, runnerLive: true,
+    moveDest: null, moveSource: null, now: NOW, ...fields }
 }
 
 test("every reason has a sentence in both languages, and an unknown key falls back to the unknown sentence", () => {
   for (const reason of WAIT_REASONS) {
     for (const language of ["en", "ru"] as const) {
-      const line = waitReasonLine(language, reason, { count: 2, holders: "a, b", cause: "x", seconds: 5, date: "d", runner: "r", state: "s" })
+      const line = waitReasonLine(language, reason, { count: 2, holders: "a, b", cause: "x", seconds: 5, date: "d", runner: "r", state: "s", machine: "mac", source: "pi" })
       expect(line.startsWith(language === "ru" ? "[дверь] " : "[door] ")).toBe(true)
       expect(line, `${reason} in ${language} has every slot filled`).not.toMatch(/\{\w+\}/)
     }
@@ -83,6 +86,71 @@ test("the precedence: switched off, then the runner down, then the credential's 
   expect(found[0].says).toContain("received/unclaimed")
   expect(found[0].fix).toContain(`imprnt-hub-${RUNNER}`)
 })
+
+test("a message the move's gate holds says so: the move outranks a runner that is down, a switched-off agent outranks the move, and a claimed row is not held by it", () => {
+  const moving = { moveDest: "mac", moveSource: "pi" }
+  expect(waitReason(facts(moving))).toEqual({ kind: "moving", values: { machine: "mac", source: "pi" } })
+  // The runner being down is a second fact the move already explains, and a switched-off agent explains everything after it.
+  expect(waitReason(facts({ ...moving, runnerLive: false })).kind).toBe("moving")
+  expect(waitReason(facts({ ...moving, runnerLive: false, sleeping: true })).kind).toBe("off")
+  // A row somebody already claimed is not waiting on the gate (the gate holds only what was not yet taken).
+  const claimed = row({ state: "started", claimed_by: RUNNER })
+  expect(waitReason(facts({ ...moving, row: claimed, open: [claimed], stamp: "answered" })).kind).toBe("working")
+  // The sentence names the machine it goes to and the one it stays on, never promises the destination alone, and sends the owner to the door's status,
+  // which shows the exact withdrawal command: it never offers the bare words (they only read the status) and carries no id of the move.
+  const en = waitReasonLine("en", "moving", { machine: "mac", source: "pi" })
+  expect(en).toContain("being moved to mac")
+  expect(en).toContain("on mac if it goes through, on pi if it is withdrawn")
+  expect(en).toContain("Send /move to see where it stands: it shows the exact command to withdraw it")
+  expect(en).not.toContain("/move withdraw")
+  const ru = waitReasonLine("ru", "moving", { machine: "mac", source: "pi" })
+  expect(ru).toContain("Напишите /перенос, чтобы узнать, где перенос: там точная команда, чтобы отозвать его")
+  expect(ru).not.toContain("/перенос отозвать")
+  expect(en).not.toContain("unknown")
+})
+
+test("the door's own read of a held message carries the agent's open move from the store, reads as `moving` and not `unknown`, and lets go of a move that was withdrawn", async () => {
+  const mine: { close(): Promise<void> }[] = []
+  const fix = await moveStage(cluster, sql => { mine.push(sql); return sql })
+  try {
+    await fix.fleet()
+    const topic = await fix.topic("coffee")
+    await fix.inbound("m-held", topic.agent_id)
+    const read = () => readOpenTurnsWithWait(fix.door, { agent: topic.agent_id, runner: "runner-pi", credential: null })
+    const reason = async () => {
+      const seen = await read()
+      return waitReason(waitFacts(seen.sidecar, { registry: {}, agent: { id: topic.agent_id, preset: "daily", runner: "runner-pi" } as never, row: seen.rows[0], stamp: "acked", open: seen.rows }))
+    }
+    // The runner's liveness is the store's own reading of a session named for it. Nothing here has connected as `runner-pi`, so with no move the
+    // reason is the runner being down, and that is the baseline: the read is not "unknown" until a runner of that name really is on the store.
+    expect((await read()).sidecar).toMatchObject({ moveDest: null, moveSource: null, runnerLive: false })
+    expect(await reason()).toEqual({ kind: "runner-down", values: { runner: "runner-pi" } })
+    // (`fix.as` tracks the session, so the cleanup below closes it even if this test stops before it disconnects on purpose.)
+    const live = fix.as("hub_runner").sql as unknown as { unsafe(query: string, values?: unknown[]): Promise<unknown>; close(): Promise<void> }
+    await live.unsafe("select set_config('application_name', $1, false)", ["runner-pi"])
+    expect((await read()).sidecar).toMatchObject({ moveDest: null, moveSource: null, runnerLive: true })
+    expect((await reason()).kind).toBe("unknown")
+
+    const move = await fix.request(topic)
+    expect((await read()).sidecar).toMatchObject({ moveDest: "mac", moveSource: "pi", runnerLive: true })
+    expect(await reason()).toEqual({ kind: "moving", values: { machine: "mac", source: "pi" } })
+    // Another agent's move holds nothing of this one's.
+    const other = await fix.topic("tea")
+    await fix.inbound("m-other", other.agent_id)
+    expect((await readOpenTurnsWithWait(fix.door, { agent: other.agent_id, runner: "runner-pi", credential: null })).sidecar.moveDest).toBeNull()
+
+    // The runner really disconnects while the move stands: the move still outranks the runner being down, as the precedence says.
+    await live.close()
+    await until("the store no longer sees runner-pi", async () => !(await read()).sidecar.runnerLive, 10_000)
+    expect((await read()).sidecar).toMatchObject({ moveDest: "mac", moveSource: "pi", runnerLive: false })
+    expect(await reason()).toEqual({ kind: "moving", values: { machine: "mac", source: "pi" } })
+
+    // Withdrawn, the gate lets go: the reason is the runner's being down again, not the move and not unknown.
+    expect(await withdrawMove(fix.door, move.id, "owner")).toBe("withdrawn")
+    expect((await read()).sidecar).toMatchObject({ moveDest: null, moveSource: null, runnerLive: false })
+    expect(await reason()).toEqual({ kind: "runner-down", values: { runner: "runner-pi" } })
+  } finally { for (const one of mine) await one.close().catch(() => {}) }
+}, 60_000)
 
 /** A staged door whose acked clock is one second, with the fixture sender allowed. */
 async function stage(language: "en" | "ru") {

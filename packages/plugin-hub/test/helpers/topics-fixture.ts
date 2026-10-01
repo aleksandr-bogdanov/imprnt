@@ -46,6 +46,8 @@ export interface TopicsOptions {
    * that puts an agent behind another door needs one). The topic task of one is run with `topicPass({ door })`.
    */
   moreDoors?: string[];
+  /** Changes to one of those further doors' entries, by its id (`enabled: false` for a door the household keeps stopped). */
+  moreDoor?: Record<string, Partial<RunSpec>>;
   /** Agents beyond General. */
   agents?: AgentSpec[];
   /** Leave the General agent out of the file altogether (a person who has no such chat; pair it with `person: { general: undefined }`). */
@@ -69,7 +71,7 @@ export interface TopicsStage extends EffectsStage {
   /** Write the registry again with these changes, and load it from now on. */
   rewrite(options: TopicsOptions): Registry;
   /** The owner said something in a chat, as the door would have written it. Returns the inbound row's id. */
-  said(text: string, over?: { agent?: string; chat?: string; sender?: string }): Promise<string>;
+  said(text: string, over?: { agent?: string; chat?: string; sender?: string; door?: string }): Promise<string>;
   /** The master conversation of an agent, as the runner binds it for the tool. */
   binding(agent?: string): Promise<McpBinding>;
   /** One call of the hub tool as that master, citing a fresh message of the owner's. */
@@ -132,7 +134,7 @@ export async function stageTopics(cluster: Cluster, options: TopicsOptions = {})
         { id: DOOR, kind: "door", machine: "pi", platform: "discord", person: PERSON, token_file: "/dev/null", schedule: "always",
           memory_limit_mb: 192, guild: base.fake.guild, archive_category: archive, archive_readonly_roles: [everyone], ...over.door },
         ...(over.moreDoors ?? []).map((id): RunSpec => ({ id, kind: "door", machine: "pi", platform: "discord", person: PERSON, token_file: "/dev/null",
-          schedule: "always", memory_limit_mb: 192, guild: base.fake.guild, archive_category: archive, archive_readonly_roles: [everyone], ...over.door })),
+          schedule: "always", memory_limit_mb: 192, guild: base.fake.guild, archive_category: archive, archive_readonly_roles: [everyone], ...over.door, ...over.moreDoor?.[id] })),
         { id: RUNNER_PI, kind: "runner", machine: "pi", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048, ...over.runner?.[RUNNER_PI] },
         { id: RUNNER_MAC, kind: "runner", machine: "mac", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048, ...over.runner?.[RUNNER_MAC] },
       ],
@@ -156,7 +158,7 @@ export async function stageTopics(cluster: Cluster, options: TopicsOptions = {})
     async said(text, over = {}) {
       const id = `owner-${++counter}`;
       await base.admin`insert into inbound (id, person, agent, body, kind, source) values (${id}, ${PERSON}, ${over.agent ?? GENERAL}, ${text}, 'human',
-        ${{ log_id: id, at: new Date().toISOString(), door: DOOR, chat: over.chat ?? general, sender_id: over.sender ?? OWNER, text }}::jsonb)`;
+        ${{ log_id: id, at: new Date().toISOString(), door: over.door ?? DOOR, chat: over.chat ?? general, sender_id: over.sender ?? OWNER, text }}::jsonb)`;
       return id;
     },
     async binding(agent = GENERAL) {
