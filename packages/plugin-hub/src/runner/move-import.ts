@@ -7,16 +7,18 @@ import {
   readBlobs, readMove, type DestFacts, type MoveBlob, type MoveCopyRow, type MoveRow,
 } from "../store/moves.ts";
 import { nativeSideOf } from "./move-export.ts";
+import { profileUnverified } from "./move-profile.ts";
 import {
-  COPY_EVIDENCE_LIMIT, FAILURE_DETAIL_LIMIT, MOVE_NATIVE_LIMITS, blocked, clearOwn, clip, done, failureRecord, fitsLifetime, isHex64, isRecord, jsonbBytes,
+  COPY_EVIDENCE_LIMIT, FAILURE_DETAIL_LIMIT, MOVE_NATIVE_LIMITS, blocked, clearOwn, clip, done, failureRecord, fitsLifetime, isCurrent, isHex64, isRecord, jsonbBytes,
   lifetimeBytes, raise, removalReport, sameJson, sayOnce, waiting, who,
   type HandoffStep, type HandoffWorld, type ProfileBinding, type Removal,
 } from "./move-handoff.ts";
 
 /**
  * The destination's half of one native handoff: preflight (`prepareDestination`), the exclusive import and activation
- * (`importDestination`) and the removal of copies the store owes a cleanup (`cleanupCopies`). Nothing is wired to call any of them
- * (see `move-handoff.ts`). It never serves, never composes a relocation note and never touches the registry.
+ * (`importDestination`) and the removal of copies the store owes a cleanup (`cleanupCopies`). The runner's watch calls them
+ * (`run.ts`). It never serves, never composes a relocation note and never touches the registry (`move-serve.ts` and `hub/moves.ts` are the
+ * steps after activation).
  *
  * EVERY WRITE TO A SESSION DIRECTORY IS UNDER `w.exclusive(conversation)`, TAKEN ONCE. `importDestination` and `cleanupCopies` take it
  * themselves and are called from outside it; what they need to do inside it is done by `...Locked` functions that demand the `Held`
@@ -53,7 +55,7 @@ import {
 
 /** The block codes this side sets at preflight and clears itself. */
 export const PREFLIGHT_CODES: ReadonlySet<string> = new Set([
-  "dest_profile_unbound", "dest_build_unknown", "dest_facts_invalid", "native_port_missing", "native_destination_invalid",
+  "dest_profile_unbound", "dest_profile_unverified", "dest_local_unverified", "dest_build_unknown", "dest_facts_invalid", "native_port_missing", "native_destination_invalid",
   "native_build_unvalidated", "native_locator_unsupported_path",
 ]);
 
@@ -110,6 +112,16 @@ export async function prepareDestination(w: HandoffWorld, id: string): Promise<H
 
   const bound = w.profile(move);
   if (!profileBound(bound, move, w)) return raise(w, id, "dest_profile_unbound", { reason: bound ? "mismatch" : "missing" });
+  // A profile that holds a reference to configuration whose content nothing compares is not a binding this side records (see `move-profile.ts`):
+  // named by reference, never by path or value, and cleared only when the registry no longer points the agent at the file.
+  const unverified = profileUnverified(bound.profile);
+  if (unverified.length > 0) return raise(w, id, "dest_profile_unverified", { references: unverified });
+  // The default instruction files this machine's launch would read are a fact of THIS machine and nothing compares them with the source's:
+  // named by file (never a path or a content), and cleared only when they are no longer there or the agent no longer reads them.
+  if (w.localInstructions) {
+    const present = w.localInstructions(move);
+    if (present === null || present.length > 0) return raise(w, id, "dest_local_unverified", { references: present === null ? ["instructions"] : present.map(name => `instruction:${name}`) });
+  }
   const build = await w.build(move.agent);
   if (!build) return raise(w, id, "dest_build_unknown", {});
   const checkpoint = await checkpointOf(w.store, move.conversation_id);
@@ -426,6 +438,8 @@ async function importLocked(w: HandoffWorld, held: Held, id: string): Promise<Ha
     // recorded by an earlier version) is held to it too, and refused before anything is written.
     const over = overBudget(w, copy, copy.evidence, planned.plan, null);
     if (over !== null) return fail(copy, "native_evidence_budget", { why: "lifecycle", bytes: over, limit: COPY_EVIDENCE_LIMIT });
+    // The store's word under the lock, immediately before the stage is made: a process that was replaced while it waited writes nothing.
+    if (planned.plan.native && !(await isCurrent(w))) return waiting("incarnation-not-current");
     const imported = planned.plan.native ? await importNative(w, held, id, copy, planned.plan.native) : { evidence: planned.plan.ceiling.promoted, receipt: null };
     if (!("evidence" in imported)) return imported;
     // From here a stage exists and `imported.receipt` is the only thing that names it: every way out below that is not the step
@@ -529,12 +543,19 @@ type Cleaned = { outcome: "removed" | "left"; reason: string };
  * location stays `cleanup-pending`) and said once. A retained source copy is never touched. Errors that are not refusals are
  * collected and the first is thrown after every copy had its look.
  */
-export async function cleanupCopies(w: HandoffWorld): Promise<void> {
+export async function cleanupCopies(w: HandoffWorld): Promise<number> {
   let failed: { error: unknown } | null = null;
+  // The destination copies this pass left owed (a guard that stands, a refused discard, an error): what a caller that polls (the runner's
+  // watch) keeps looking at. A retained SOURCE copy is never touched here and is not counted: it would be owed for good.
+  let left = 0;
   for (const due of await copiesDueForCleanup(w.store, w.runner)) {
-    try { await underLock(w, due.conversation_id, held => cleanupLocked(w, held, due)); } catch (error) { failed ??= { error }; }
+    try {
+      const cleaned = await underLock(w, due.conversation_id, held => cleanupLocked(w, held, due));
+      if (cleaned.outcome === "left" && due.kind === "dest_import" && cleaned.reason !== "not-due") left += 1;
+    } catch (error) { failed ??= { error }; left += 1; }
   }
   if (failed) throw failed.error;
+  return left;
 }
 
 /** The copies due at the location `held` covers, cleaned without asking the lock again. */
@@ -552,6 +573,8 @@ const LIVE_ELSEWHERE = new Set(["removed", "superseded", "cleanup_due"]);
  * same questions as one a later pass makes, never `idle` alone. Null when none stands in the way. The caller holds the lock.
  */
 async function removalBlocker(w: HandoffWorld, move: MoveRow, copy: MoveCopyRow): Promise<{ reason: string; detail?: Record<string, unknown> } | null> {
+  // The same authority the launch and the import ask under this lock: only the runner's CURRENT incarnation removes anything.
+  if (!(await isCurrent(w))) return { reason: "incarnation-not-current" };
   if (move.activated_at !== null) return { reason: "activated" };
   const [placed] = (await w.store.sql`select machine from conversation where id = ${copy.conversation_id}`) as unknown as { machine: string | null }[];
   if (!placed || (placed.machine ?? move.source_machine) === w.machine) return { reason: "placed-here" };

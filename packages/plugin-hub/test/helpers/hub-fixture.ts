@@ -966,3 +966,25 @@ export async function stageSpoke(
     },
   });
 }
+
+/**
+ * The registry of a stage whose default person has a REAL, EMPTY launch tree, for a check that moves a conversation. The move's scope look asks
+ * the registry where the person's tree is (`boxContextFor`: `tree` is "" for a person that declares none, and that is a tree nothing can look at,
+ * so both the source's scope and the destination's default-instruction look refuse it by name) and then looks at the directory itself. The tree is
+ * made under the stage's own scratch dir, beside the state root and never inside it, so it is empty (it proves the "nothing else is carried"
+ * answer on a real directory, with no file faked) and goes with the stage. A person this registry already declares keeps every other key.
+ *
+ * NOTE what a tree means to a runner: an agent whose person has one is launched inside the box (`sessionBox`), so a scripted child is a real
+ * process under `sandbox-exec` or `bwrap` of the host that runs the check.
+ */
+export function withLaunchTree(base: RegistrySpec): RegistrySpec {
+  const tree = join(String(base.hub?.state_dir ?? ""), "trees", PERSON);
+  mkdirSync(tree, { recursive: true });
+  const people = base.people ?? [];
+  return {
+    ...base,
+    people: people.some((one) => one.id === PERSON)
+      ? people.map((one) => (one.id === PERSON ? { ...one, tree } : one))
+      : [...people, { id: PERSON, tree }],
+  };
+}

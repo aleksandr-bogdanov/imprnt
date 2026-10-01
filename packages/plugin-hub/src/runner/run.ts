@@ -6,7 +6,7 @@ import { accessSync, constants, statSync } from "node:fs";
 import { join } from "node:path";
 import { bootId, descendantsOf } from "../os/tree.ts";
 import { adapterFor, loopLaunch } from "../adapters/index.ts";
-import { AdapterMissing, FeedNotWritten, type Adapter, type AdapterSession, type ExitEvidence, type TurnEnd } from "../adapters/types.ts";
+import { AdapterMissing, FeedNotWritten, NativeRefusal, type Adapter, type AdapterSession, type ExitEvidence, type TurnEnd } from "../adapters/types.ts";
 import { credentialSource, type HubMcpServer } from "../adapters/launch.ts";
 import { boxContextFor } from "../box/index.ts";
 import { readTail, withBackground } from "../chatlog.ts";
@@ -35,7 +35,7 @@ import {
   listRunEntries,
   noticeRoute,
 } from "../registry/entries.ts";
-import { entryMachine, loadRegistry, readSetting, type AgentEntry, type Registry } from "../registry/load.ts";
+import { entryMachine, loadRegistry, readSetting, registryDigest, type AgentEntry, type Registry } from "../registry/load.ts";
 import { registryStanding } from "../hub/digest.ts";
 import { materializeMedia, rewriteMediaPaths } from "../store/media.ts";
 import { waitRecorder, type AgentWait } from "./waiting.ts";
@@ -49,7 +49,7 @@ import {
   type WindowThresholds,
 } from "../registry/presets.ts";
 import { openStore, type Store } from "../store/connect.ts";
-import { readMove } from "../store/moves.ts";
+import { noteDelivered, readMove } from "../store/moves.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
@@ -109,6 +109,7 @@ import {
   SpawnFenced,
   createFences,
   createLedger,
+  digestOf,
   drainSource,
   handBackFeed,
   placementOf,
@@ -118,7 +119,15 @@ import {
   type DrainStep,
   type DrainWorld,
   type MoveWatch,
+  type Owed,
 } from "./move.ts";
+import { exportSource } from "./move-export.ts";
+import { MOVE_NATIVE_LIMITS, waiting as handoffWaiting, type EngineBuild, type HandoffStep, type HandoffWorld } from "./move-handoff.ts";
+import { cleanupCopies, importDestination, prepareDestination } from "./move-import.ts";
+import { importedBy, noteBlock, notesOwedTo, type CarriedNote } from "./move-note.ts";
+import { profileOf } from "./move-profile.ts";
+import { defaultInstructionsOf, localShapeOf, scopeOf } from "./move-scope.ts";
+import { serveDestination, type ServeWorld } from "./move-serve.ts";
 import {
   clearOutage,
   classifyRefusal,
@@ -270,6 +279,11 @@ interface OpenTurn {
    * the sheet again, so the row that cleanup clears is not made anew.
    */
   sealed: boolean;
+  /**
+   * The turn carries a relocation note, so it is the first on a moved conversation and its resume is not yet verified: no progress sheet is written
+   * while it runs (the door would post a line for a turn that may then be refused), and the one write it makes is the last, after the check passed.
+   */
+  held: boolean;
   finish(end: TurnEnd): void;
 }
 
@@ -450,6 +464,14 @@ async function sayWhichServer(
 }
 
 /**
+ * WHERE A CONVERSATION'S SESSION LIVES ON THIS MACHINE: the one rule, used by the launch below and by a move's export, import and cleanup
+ * (`move-export.ts`, `move-import.ts`), so that what a handoff writes or removes is the directory a launch would use and never another.
+ */
+export function sessionDirFor(stateDir: string, person: string, agent: string, conversation: string): string {
+  return join(stateDir, person, "sessions", agent, conversation);
+}
+
+/**
  * Configuration and filesystem work happen only when a session starts.
  *
  * THE SESSION DIRECTORY BELONGS TO THE CONVERSATION and not to the child: the
@@ -464,7 +486,7 @@ async function launchFor(registry: Registry, agent: AgentEntry, presetName: stri
   const credential = credentialOfPreset(registry, presetName);
   return loopLaunch({ registry, agent, preset: getPreset(registry, presetName), purpose,
     ...(credential ? { credential: credentialSource(registry, presetName) } : {}),
-    sessionDir: join(stateDir, agent.person, "sessions", agent.id, conversation.id),
+    sessionDir: sessionDirFor(stateDir, agent.person, agent.id, conversation.id),
     box: boxContextFor(registry, agent.id),
     ...(hubMcp ? { hubMcp } : {}),
   });
@@ -534,6 +556,19 @@ export async function runRunner(options: {
   const moveFences = createFences();
   const children = createLedger();
   let moves: MoveWatch | undefined;
+  /**
+   * ONE CHAIN PER CONVERSATION ID, shared by everything on this process that writes or removes the conversation's session directory: the
+   * launch of a child (`spawn`), a move's import and the removal of an import's copy (`move-import.ts`). NOT re-entrant (a call from inside
+   * its own callback waits for itself): each caller takes it once. A failure of one callback is its caller's and never stops the chain.
+   */
+  const exclusiveTails = new Map<string, Promise<void>>();
+  const exclusive = <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+    const run = (exclusiveTails.get(key) ?? Promise.resolve()).then(() => fn());
+    const tail = run.then(() => undefined, () => undefined);
+    exclusiveTails.set(key, tail);
+    void tail.then(() => { if (exclusiveTails.get(key) === tail) exclusiveTails.delete(key); });
+    return run;
+  };
   // The protocol is activated BEFORE this incarnation is registered as current: a
   // store that still holds inputs a runner of protocol 1 may have fed refuses it by
   // name, and a runner that could not start must not have fenced the one that can.
@@ -1002,7 +1037,7 @@ export async function runRunner(options: {
      */
     const flushProgress = (open: OpenTurn): void => {
       if (open.flushTimer !== null) { clearTimeout(open.flushTimer); open.flushTimer = null; }
-      if (turn !== open || open.sealed || !open.started || !open.unwritten) return;
+      if (turn !== open || open.sealed || open.held || !open.started || !open.unwritten) return;
       open.unwritten = false;
       // Only the sign-of-life stamp, as a write for a text event moves: a tool start that
       // follows is still written on its own cadence, with the attempt's evidence.
@@ -1027,7 +1062,7 @@ export async function runRunner(options: {
     };
     /** The sheet write of a turn, unless the error cleanup has begun: it clears the row and nothing may write it again. */
     const writeSheet = (open: OpenTurn): void => {
-      if (!open.sealed) write(() => writeProgress(store, progressOf(open)));
+      if (!open.sealed && !open.held) write(() => writeProgress(store, progressOf(open)));
     };
     /**
      * The error cleanup's first act, before any await. The timer goes and no callback that is
@@ -1111,6 +1146,52 @@ export async function runRunner(options: {
     };
 
     /**
+     * THE FIRST REAL TURN OF A MOVED CONVERSATION, once it ended without a refusal: the resumed session is verified and the relocation notes the
+     * attempt carried are acknowledged. It consumes the turn that REALLY ran under the imported session: no model is started for it, nothing
+     * is replayed and no fresh session ever takes its place.
+     *
+     * THE CHECK (`NativeSessionPort.checkResumed`, of the LAST move of the chain: the import in this machine's directory) is made from what the
+     * destination's own copy recorded when it promoted. A refusal (`native_resume_unverified`: the transcript is not the imported bytes plus a
+     * turn, another transcript appeared, the id the engine reported is not the conversation's) is THROWN from here into `oneTurn`, so the existing
+     * path takes it: the attempt, which was fed, ends with the evidence there is and its input is HELD for the owner (`closeAttempt`), exactly
+     * as for any turn that must not be trusted. The notes stay owed (nothing was acknowledged), so the next real input carries them again and is
+     * checked again. A started conversation whose copy carries no complete record of its import has nothing to check against, and that is the same
+     * refusal (the diary says why): a resume that cannot be verified is never acknowledged as one.
+     *
+     * IT IS MADE BEFORE ANYTHING THE TURN'S END WOULD SHOW (the totals of the progress line, the outage and window readings, the reply's journal
+     * and settle), so a refusal leaves the owner no line that says the turn completed and no reply to answer from an unverified session. A turn
+     * that carries a note writes no progress sheet while it runs either (`OpenTurn.held`): the door has no line for it before this check. What
+     * the engine itself streamed to its own transcript cannot be taken back, and is not claimed to be.
+     *
+     * THE ACKNOWLEDGEMENT is the store's (`noteDelivered`): on evidence that the attempt that carried the notes was received (the state it is in
+     * now), for exactly the notes it carried, with the bodies it carried; never on a queue or a send. A refusal or an error of it leaves the
+     * notes owed (a repeated note is conservative) and never fails the turn.
+     */
+    const finishMoveNotes = async (attempt: ExecutionRow, notes: CarriedNote[], reported: string | null): Promise<void> => {
+      const last = await readMove(store, notes[notes.length - 1].move);
+      if (last && last.dest_runner === options.runner && last.dest_machine === machine && last.snapshot?.native_state !== "new") {
+        const imported = await importedBy(store, last);
+        if (imported === null) {
+          await sayMove("move.resume-unverified", { move: last.id, execution: attempt.id, why: "no-import-record" });
+          throw new NativeRefusal("native_resume_unverified");
+        }
+        const port = options.adapters[last.adapter]?.session;
+        if (!port) throw new NativeRefusal("native_resume_unverified");
+        port.checkResumed({
+          sessionDir: sessionDirFor(stateDir, last.person, last.agent, last.conversation_id), imported, nativeSession: last.native_session,
+          reportedSessionId: reported, limits: MOVE_NATIVE_LIMITS,
+        });
+        await sayMove("move.resume-verified", { move: last.id, execution: attempt.id });
+      } else if (last && last.snapshot?.native_state !== "new") {
+        // Not this runner's import (a chain whose last move went elsewhere): nothing here can check it, and the diary says so.
+        await sayMove("move.resume-unchecked", { move: last.id, execution: attempt.id, why: "not-destination" });
+      }
+      let answer = "error";
+      try { answer = await noteDelivered(store, { execution: attempt.id, notes: notes.map(({ move, body }) => ({ move, body })) }); } catch { /* left owed */ }
+      if (answer !== "delivered" && answer !== "replay") await sayMove("move.note-unacknowledged", { execution: attempt.id, moves: notes.map(one => one.move), answer });
+    };
+
+    /**
      * ONE MODEL TURN FOR ONE CLAIMED INPUT. `message.text` is the input as the conversation records it
      * (and as the attempt's digest was taken over it), and it is never changed here. `about.background`
      * is the chat history a fresh master child is owed: it is added to what the ENGINE is handed
@@ -1120,8 +1201,10 @@ export async function runRunner(options: {
      */
     const oneTurn = async (
       message: { id: string; text: string },
-      about: { preset: Preset; registry: Registry; source?: InboundSource | null; kind?: string; background?: string },
+      about: { preset: Preset; registry: Registry; source?: InboundSource | null; kind?: string; background?: string; notes?: CarriedNote[] },
     ): Promise<void> => {
+      // The relocation notes this feed carries (`move-note.ts`): the WHOLE chain the store owes the conversation, composed by `notesOwedTo`.
+      const notes = about.notes ?? [];
       let finish: (end: TurnEnd) => void = () => {};
       const ended = new Promise<TurnEnd>((resolve) => {
         finish = resolve;
@@ -1142,6 +1225,7 @@ export async function runRunner(options: {
         unwritten: false,
         flushTimer: null,
         sealed: false,
+        held: notes.length > 0,
         finish,
       };
       const opened = turn;
@@ -1164,14 +1248,18 @@ export async function runRunner(options: {
       const priorFeed = handed;
       // WHAT THE ENGINE IS HANDED: the input, behind the background when there is one.
       const background = about.background ?? "";
-      const wire = background === "" ? message.text : withBackground(background, message.text);
+      // The notes go ahead of the input, on the wire only: never the conversation's own entry and never part of the attempt's digest. The
+      // store records them in the conversation when it acknowledges their delivery (`finishMoveNotes`).
+      const bare = background === "" ? message.text : withBackground(background, message.text);
+      const wire = notes.length === 0 ? bare : `${noteBlock(notes)}\n\n${bare}`;
       // COMMITTED BEFORE THE FIRST BYTE, with the input as the conversation's
       // own entry (the RAW input: `message.text`, never `wire`), and fenced by the claim, the
       // incarnation and the placement. From here a crash, an exit or a killed child is uncertain:
       // the engine may have done any of it, and nothing feeds it again. The history that rides
       // with it is named in the same commit, so an attempt that carried it says so.
       await markFeedIntent(store, own.attempt, message.text, "input",
-        background === "" ? undefined : { kind: "chat-tail", digest: taskDigest(background), chars: background.length });
+        background === "" ? undefined : { kind: "chat-tail", digest: taskDigest(background), chars: background.length },
+        notes.length === 0 ? undefined : notes.map(({ move, digest }) => ({ move, digest })));
       handed = true;
       // From here the engine may have the history, so it is not owed again to this session.
       contextOwed = false;
@@ -1311,6 +1399,12 @@ export async function runRunner(options: {
         return;
       }
 
+      // THE FIRST REAL TURN AFTER A MOVE: the resumed session is checked once and the notes it carried are acknowledged (see `finishMoveNotes`).
+      // It is the first thing a turn that ended without a refusal does, so a refused check is thrown before the totals are written, before a
+      // reading is acted on, and before a reply is journaled or settled: the input is held (`closeAttempt`) with nothing that says it was answered.
+      // The writes of this turn have all landed (`writes`, above), including the receipt the acknowledgement rests on.
+      if (own.attempt && notes.length > 0) await finishMoveNotes(own.attempt, notes, end.session_id ?? own.session?.reportedSessionId ?? null);
+
       // The last write of the open turn: the totals, before the settle that takes the row
       // away, so the door's own line ends with them (L6). It goes in HERE and
       // not beside the settle on purpose: the write commits and announces
@@ -1444,7 +1538,18 @@ export async function runRunner(options: {
       const record = children.starting(agent.id, { conversation: conversation.id, nativeSession: plan?.id ?? null, placement: conversation.placement_generation });
       const seen = { invoked: false };
       try {
-        await startChild(preset, registry, conversation, plan, record, seen);
+        // THE LAUNCH IS SERIALIZED WITH EVERY OTHER WRITER OF THIS CONVERSATION'S SESSION DIRECTORY (a move's import, the removal of an import's
+        // copy: `exclusive`), and it is asked the store's word under that lock before it writes anything there: this incarnation is still the
+        // runner's current one, and the conversation is still placed on this machine at the generation this attempt was opened for. The record
+        // above was made before the wait, so a request that arrives meanwhile finds a child being started and the drain waits for it.
+        await exclusive(conversation.id, async () => {
+          const [now] = (await store.sql`select c.machine as machine, c.placement_generation as generation, r.incarnation as current
+            from conversation c left join runner_incarnation r on r.runner = ${options.runner} where c.id = ${conversation.id}`) as unknown as
+            { machine: string | null; generation: number | string; current: string | null }[];
+          if (!now || now.current !== incarnation || Number(now.generation) !== Number(conversation.placement_generation)
+              || (now.machine !== null && now.machine !== machine)) throw new SpawnFenced(agent.id, moveFences.get(agent.id)?.move ?? null);
+          await startChild(preset, registry, conversation, plan, record, seen);
+        });
       } catch (error) {
         if (record.phase === "starting") { if (seen.invoked) children.lost(record); else children.abandon(record); }
         throw error;
@@ -2241,7 +2346,10 @@ export async function runRunner(options: {
           // (claimed, so still waiting) is left out of it. It is background for the engine and only that: `text`
           // stays the input the conversation records and the attempt's digest names.
           const background = contextOwed ? await readBackground(registry) : "";
-          await oneTurn({ id: row.id, text }, { preset, registry, source: row.source, kind: row.kind, background });
+          // THE RELOCATION NOTES a moved conversation still owes its next real input (never a job's): composed here, before the feed, from what the
+          // store owes. A note that cannot be composed as declared is `MoveNoteRefused`, handed back below like any feed the move refused.
+          const notes = row.kind === "job" ? [] : await notesOwedTo(store, agent.id, conversation.id);
+          await oneTurn({ id: row.id, text }, { preset, registry, source: row.source, kind: row.kind, background, notes });
         } catch (error) {
           // A MOVE WAS REQUESTED BEFORE THIS ATTEMPT'S FIRST FEED (`MoveGated`, or a fence placed after the attempt was opened:
           // `SpawnFenced`): it is handed back, not failed. It must not reach the catch below, which would close the child before any
@@ -2441,17 +2549,150 @@ export async function runRunner(options: {
       if (gating && gating.stage === "waiting" && gating.source_runner === options.runner) await settleSet(world, gating);
     } catch { /* best effort: the children are still owed in the ledger */ }
   };
+  /**
+   * THE HANDOFF'S VIEW OF THIS PROCESS (`./move-handoff.ts`), what `exportSource`, `prepareDestination`, `importDestination` and `cleanupCopies`
+   * are handed. Every fact is read when it is asked and none is remembered:
+   * - `build` is a FRESH read of the engine (never the capability cache): its version is what the adapter's measured tables are keyed by;
+   * - `sessionDir` is the launch's own rule for THIS machine (`sessionDirFor`);
+   * - `scope` is the registry's answer, with a look at this machine's own tree and default instruction files, for what the move carries
+   *   (`move-scope.ts`): a proof, or the named refusal of a dependency it does not carry or cannot verify; `localInstructions` is the same look
+   *   for the destination's preflight;
+   * - `profile` is the destination's binding (this runner's registry, which must be the one measured current), `sourceProfile` the same profile
+   *   as the source reads it (`move-profile.ts`);
+   * - `exclusive` is the chain the launch (`spawn`) takes too;
+   * - `idle` is the ledger's and the loop's: no live session, no child owed an account of, no loop still closing.
+   */
+  const freshBuild = async (agentId: string): Promise<EngineBuild | null> => {
+    try {
+      const registry = load();
+      const agent = listAgents(registry).find(one => one.id === agentId);
+      if (!agent) return null;
+      const adapter = options.adapters[getPreset(registry, agent.preset).adapter];
+      if (!adapter?.capabilities) return null;
+      const caps = await adapter.capabilities({ registry, agent, preset: agent.preset });
+      if (typeof caps?.version !== "string" || caps.version === "") return null;
+      return { version: caps.version, capabilities: JSON.parse(JSON.stringify(caps)) as Record<string, unknown> };
+    } catch { return null; }
+  };
+  const handoff: HandoffWorld = {
+    store,
+    runner: options.runner,
+    incarnation,
+    machine,
+    port: adapter => options.adapters[adapter]?.session ?? null,
+    build: freshBuild,
+    sessionDir: move => sessionDirFor(stateDir, move.person, move.agent, move.conversation_id),
+    scope: move => { try { return scopeOf(load(), move); } catch { return null; } },
+    profile: move => {
+      if (stale) return null;
+      try {
+        const profile = profileOf(load(), move.agent);
+        return profile ? { move: move.id, agent: move.agent, runner: options.runner, machine, profile, basis: "this runner's registry: the agent's entry without its runner, and its preset" } : null;
+      } catch { return null; }
+    },
+    sourceProfile: move => { try { return profileOf(load(), move.agent); } catch { return null; } },
+    localInstructions: move => { try { return defaultInstructionsOf(load(), move.agent); } catch { return null; } },
+    exclusive,
+    idle: agent => !live.get(agent)?.session && children.of(agent).length === 0 && !ending.has(agent),
+    say: sayMove,
+  };
+  /** What the destination's serve is handed beyond that: the registry file read once, whether the agent is up here, the person's language. */
+  const serveWorld: ServeWorld = {
+    ...handoff,
+    loaded: () => {
+      try {
+        const digest = registryDigest(options.registryFile);
+        const registry = load();
+        return registryDigest(options.registryFile) === digest ? { digest, registry } : null;
+      } catch { return null; }
+    },
+    serving: agent => !stale && live.get(agent)?.ending === false,
+    language: person => { try { return languageOf(load(), person); } catch { return "en"; } },
+  };
+
+  /**
+   * What a handoff step is to the watch: the move as the look READ it before deciding (`seen`: never read again after the look's awaits, which
+   * would take a change the other side committed meanwhile for one already looked at), and who owes the next look (the store's notification, a
+   * poll, or this machine's own facts).
+   */
+  const quietly = new Set(["dest-not-ready", "blocked", "released", "block-occupied"]);
+  const stepOf = (step: HandoffStep, owed: Owed | null, seen: string | null): DrainStep => ({ state: "waiting", why: step.reason, owed, seen });
+  /**
+   * WHAT A REFUSAL FROM FACTS OF THIS MACHINE WAITS ON: the registry's bytes and whether this copy is measured current, whether the agent's loop is
+   * up, and the default instruction files and top level of the person's tree (`localShapeOf`: names, never a content). No move row changes when one
+   * of them does, so no notification comes; the tick compares (`Owed` `local`, nothing is asked of the store or of the engine until it differs).
+   * The engine's build is NOT here: reading it asks the engine, which is not done on a tick, and a block made from it (`dest_build_unknown`,
+   * `serve_capabilities_changed`) is looked at again by what else changes, a notification or a restart, and never by a guess that it moved.
+   * Taken BEFORE the look decides, so a fact that changed during the look is seen as changed by the debt.
+   */
+  const localFacts = (agent: string): string => {
+    let digest = "";
+    try { digest = registryDigest(options.registryFile); } catch { /* unreadable is a state too */ }
+    let shape = "";
+    try { shape = localShapeOf(load(), agent); } catch { shape = "unreadable"; }
+    return `${digest}|${live.get(agent)?.ending === false}|${stale}|${shape}`;
+  };
+  const localOwed = (agent: string, was: string): Owed => ({ kind: "local", changed: () => localFacts(agent) !== was });
+  /**
+   * The refusals this side sets from those facts, and only those: a `native_export_failed` or an import failure is never retried by this (the
+   * owner's withdrawal is its way out), and another party's block is waited out by the store's notification. They are cleared by the same look
+   * that sets them (`clearOwn`, only once its own proof succeeds), so a debt here is a re-look and never a clearing.
+   */
+  const LOCAL_BLOCKS: ReadonlySet<string> = new Set([
+    "scope_unsupported", "scope_unproven", "profile_unverified", "source_profile_unbound", "profile_mismatch",
+    "dest_profile_unbound", "dest_profile_unverified", "dest_local_unverified", "dest_build_unknown",
+  ]);
+  const ownLocalBlock = (step: HandoffStep, side: "dest" | "source"): boolean =>
+    (step.state === "blocked" && (LOCAL_BLOCKS.has(step.reason) || (side === "dest" && step.reason.startsWith("serve_")))) ||
+    (side === "dest" && step.state === "waiting" && step.reason === "blocked" && step.detail?.by === "dest");
   /** One look at one move: in the agent's own loop when it has one, and here when it has none (nothing can start a child for a fenced agent). */
   const driveMove = async (request: { id: string; agent: string }): Promise<DrainStep> => {
     const it = live.get(request.agent);
     // A loop that was dropped is still closing what it holds: no look runs beside it. `drop` asks the watch to look again once it is over.
     if (!it && ending.has(request.agent)) return { state: "waiting", why: "loop-ending", owed: { kind: "store" }, seen: null };
-    if (!it) return await drainSource(world, request.id);
-    try { return await inLoop(it, () => drainSource(world, request.id)); }
+    // THE EXPORT IS PART OF THE SAME LOOK THAT SAW THE DRAIN COMPLETE: in the loop's own job (or here with no loop), so nothing can start a
+    // child, claim a row or feed between the observation of `drained` and the export's own final asks of fenced and quiet.
+    const look = async (): Promise<DrainStep> => {
+      const was = localFacts(request.agent);
+      const step = await drainSource(world, request.id);
+      if (step.state !== "drained") return step;
+      const exported = await exportSource(handoff, { fenced: agent => moveFences.has(agent), quiet: agent => world.quiet(agent) }, request.id);
+      // `step.seen` is the row the drain read, before the export decided anything: what the export read later, or the other side committed
+      // meanwhile, is not taken for seen.
+      const owed: Owed | null = exported.state === "waiting" && !quietly.has(exported.reason) ? { kind: "store" } : ownLocalBlock(exported, "source") ? localOwed(request.agent, was) : null;
+      return stepOf(exported, owed, step.seen);
+    };
+    if (!it) return await look();
+    try { return await inLoop(it, look); }
     catch (error) {
       if ((error as { loopEnded?: boolean }).loopEnded) return { state: "waiting", why: "loop-ended", owed: { kind: "store" }, seen: null };
       throw error;
     }
+  };
+  /**
+   * One look at one move of which this runner is the DESTINATION: its preflight while the move waits, the import and the activation after the
+   * source released, nothing while the hub writes the registry (the hub's notification brings the next look), and the serve once the receipt
+   * is in. Nothing here falls back to anything: a destination that is not up never looks, and the move waits.
+   */
+  const driveDestination = async (request: { id: string; agent: string }): Promise<DrainStep> => {
+    // What this look decides from is observed first: the local facts, then the row. Neither is read again to say what the look has seen.
+    const was = localFacts(request.agent);
+    const move = await readMove(store, request.id);
+    if (!move) return { state: "ended", why: "unknown-move", owed: null, seen: null };
+    const seen = digestOf(move);
+    let step: HandoffStep;
+    switch (move.stage) {
+      case "waiting": step = await prepareDestination(handoff, move.id); break;
+      case "source_released": case "importing": step = await importDestination(handoff, move.id); break;
+      case "registry_written": step = await serveDestination(serveWorld, move.id); break;
+      default: step = handoffWaiting(`stage:${move.stage}`);
+    }
+    if (step.state === "waiting" && step.detail?.owed === "local") return stepOf(step, localOwed(move.agent, was), seen);
+    // Only the preflight's and the serve's refusals of this machine's own facts are looked at again when those facts change: an import that failed
+    // is never retried by this, and the owner's withdrawal is still its way out.
+    if (move.stage !== "source_released" && move.stage !== "importing" && ownLocalBlock(step, "dest")) return stepOf(step, localOwed(move.agent, was), seen);
+    const poll = step.state === "waiting" && !step.reason.startsWith("stage:") && !quietly.has(step.reason);
+    return stepOf(step, poll ? { kind: "store" } : null, seen);
   };
 
   const serve = (agent: AgentEntry): void => {
@@ -2617,6 +2858,7 @@ export async function runRunner(options: {
   // for migration 16 before anything was opened).
   try {
     moves = await watchMoves(store, { runner: options.runner, machine, fences: moveFences, drive: driveMove,
+      driveDest: driveDestination, cleanup: () => cleanupCopies(handoff),
       lifted: agent => live.get(agent)?.nudge(), say: sayMove });
   } catch (error) { await store.close().catch(() => {}); throw error; }
   for (const agent of agentsFor(first, { runner: options.runner })) {

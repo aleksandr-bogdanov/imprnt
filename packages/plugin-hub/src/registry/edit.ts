@@ -83,7 +83,10 @@ export type RegistryPrecondition = (registry: Registry) => { ok: true; present?:
 
 export interface RegistryEditOptions {
   seam?: RegistryEditSeam;
-  /** Only `appendEntry` asks it: the one edit that has to know what it is appending to. */
+  /**
+   * Asked by `appendEntry` (the one edit that has to know what it is appending to) and by `setKey` (a key whose old value decides whether
+   * the new one may be written, like the runner a moved agent is bound to). Judged inside the writer's lock, on the bytes the edit is built from.
+   */
   precondition?: RegistryPrecondition;
 }
 
@@ -346,6 +349,10 @@ export async function setKey(file: string, entryPath: string, key: string, value
   options: RegistryEditOptions = {}): Promise<RegistryEditResult> {
   return await locked(file, async live => {
     const read = readLive(live);
+    // Judged on the bytes this edit is built from, under the lock, before anything is prepared (the same contract as `appendEntry`).
+    const verdict = options.precondition?.(read.registry);
+    if (verdict && !verdict.ok) throw new RegistryEditRefused("precondition", verdict.reason);
+    if (verdict?.ok && verdict.present) return { changed: false };
     const { before, data } = read;
     const lines = before.split("\n");
     await options.seam?.afterRead?.(file);

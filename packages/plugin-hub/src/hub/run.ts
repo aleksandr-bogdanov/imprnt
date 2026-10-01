@@ -18,6 +18,7 @@ import { mayReach, RUN_RECOVERY_KINDS, watchControls } from "./control.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { programForKind, transcriberArgv } from "./program.ts";
 import { recordRegistryDigest } from "./digest.ts";
+import { registerMoves } from "./moves.ts";
 import { bindTopics } from "./topics.ts";
 import { identityReserved, readTopicByAgent, readTopicByChat, rebindLegacyTopic, type TopicRow } from "../store/topics.ts";
 
@@ -192,6 +193,10 @@ export async function runHub(options: {
     // machine each was made for. A pass that could not bind one is said in the diary and the tick goes on.
     try { await bindTopics({ store, registryFile: options.registryFile, machine: options.machine, load }); }
     catch (error) { await recordOperationFailure(store, { operation: "topic-bind", target: options.machine, error }); }
+    // The moves that were activated: the agent's runner key written into the registry (through the editor, under its lock) and the receipt of
+    // exactly that registry given to the store. Only the store machine's hub does it; a pass that could not is said and the tick goes on.
+    try { await registerMoves({ store, registryFile: options.registryFile, machine: options.machine, load, say }); }
+    catch (error) { await recordOperationFailure(store, { operation: "move-registry", target: options.machine, error }); }
     const started = new Set<string>();
     // An entry whose install failed this tick has already said so, and loading
     // or starting below would only make the manager fail again on the same file.

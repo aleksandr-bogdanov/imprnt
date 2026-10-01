@@ -11,9 +11,9 @@
 
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
 import { startCluster, until, type Cluster } from "./helpers/cluster.ts"
-import { OWNER, SRC, moveStage } from "./helpers/move-store-stage.ts"
-import { createFences, watchMoves, type DrainStep, type Fences, type MoveWatch } from "../src/runner/move.ts"
-import { withdrawMove } from "../src/store/moves.ts"
+import { DST, FACTS, OWNER, SRC, moveStage, sha } from "./helpers/move-store-stage.ts"
+import { createFences, digestOf, watchMoves, type DrainStep, type Fences, type MoveWatch } from "../src/runner/move.ts"
+import { destReady, readMove, refreshRegistryReceipt, withdrawMove } from "../src/store/moves.ts"
 
 let cluster: Cluster
 const mine: { close(): Promise<void> }[] = []
@@ -87,6 +87,61 @@ test("a request is heard by its notification alone, and a withdrawal lifts the f
   // A later, explicit request is a new fence: the first one did not outlive its move.
   const again = await s.request(t, "again")
   await until("the new request was heard", () => seen.fences.get(t.agent_id)?.move === again.id, 10_000)
+})
+
+test("the destination's preflight is heard by the source: a look that settled with nothing owed (`dest-not-ready`) is made again when the facts are recorded or replaced, and not when the same ones are said again", async () => {
+  const s = await stage()
+  await s.fleet({ destination: false })
+  const t = await s.topic()
+  const move = await s.request(t)
+  const seen = recorder()
+  // What the runner's export leaves while the destination has recorded nothing: no debt, and the move as the look saw it.
+  await watching(s, seen, async request => {
+    seen.driven.push(request.id)
+    const row = await readMove(s.tool, request.id)
+    return { state: "waiting", why: "dest-not-ready", owed: null, seen: row ? digestOf(row) : null }
+  })
+  await until("the move was looked at", () => seen.driven.length >= 1, 10_000)
+  await Bun.sleep(300)
+  const settled = seen.driven.length
+  await Bun.sleep(300)
+  expect(seen.driven.length, "a look that settled is not made again while nothing changes").toBe(settled)
+
+  // The destination comes up and records its preflight: no stage and no block changes, and the source must still hear it.
+  await s.register(DST, "dst-1")
+  const dest = s.sideOf(move, "dest")
+  expect(await destReady(s.tool, move.id, dest, FACTS)).toBe("ready")
+  await until("the recorded preflight was heard", () => seen.driven.length === settled + 1, 10_000)
+
+  // A second preflight replaces the facts (the source may be blocked on the first): heard as well.
+  const replaced = { ...FACTS, capabilities: { ...FACTS.capabilities, mcp: false } }
+  expect(await destReady(s.tool, move.id, dest, replaced)).toBe("ready")
+  await until("the replaced preflight was heard", () => seen.driven.length === settled + 2, 10_000)
+
+  // The same facts again write nothing, so nothing is heard.
+  expect(await destReady(s.tool, move.id, dest, replaced)).toBe("replay")
+  await Bun.sleep(500)
+  expect(seen.driven.length, "a replay is not a change").toBe(settled + 2)
+})
+
+test("a refreshed registry receipt is heard (no stage, block or preflight changes with it), and the same receipt said again is `unchanged` and writes nothing", async () => {
+  const s = await stage()
+  await s.fleet()
+  const t = await s.topic()
+  const move = await s.request(t)
+  const registered = await s.reach(move, "registry_written")
+  const seen = recorder()
+  await watching(s, seen)
+  await until("the move was looked at", () => seen.driven.length >= 1, 10_000)
+  await Bun.sleep(500)
+  const settled = seen.driven.length
+
+  const next = s.receiptOf(registered, sha("registry-2"))
+  expect(await refreshRegistryReceipt(s.hub, move.id, next)).toBe("refreshed")
+  await until("the refreshed receipt was heard", () => seen.driven.length === settled + 1, 10_000)
+  expect(await refreshRegistryReceipt(s.hub, move.id, next)).toBe("unchanged")
+  await Bun.sleep(500)
+  expect(seen.driven.length, "an unchanged receipt is not a change").toBe(settled + 1)
 })
 
 test("a move that WENT THROUGH is not lifted by leaving the list of open moves: the source stays fenced until the store places the conversation here again, at a later generation", async () => {

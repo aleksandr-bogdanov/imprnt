@@ -4,14 +4,15 @@ import {
   checkpointOf, exportGenerationOf, putBlob, readMove, releaseSource, type MoveCheckpoint, type MoveManifest, type MoveRow,
 } from "../store/moves.ts";
 import {
-  MOVE_NATIVE_LIMITS, clearOwn, clip, done, isHex64, isRecord, raise, sameJson, sayOnce, waiting, who,
+  MOVE_NATIVE_LIMITS, clearOwn, clip, done, isHex64, isRecord, jsonbBytes, raise, sameJson, sayOnce, waiting, who,
   type HandoffStep, type HandoffWorld, type ProvenDrain, type ScopeProof,
 } from "./move-handoff.ts";
+import { profileDifference, profileUnverified } from "./move-profile.ts";
 
 /**
  * The source's half of one native handoff: a drain the store says is complete, then the transcript exported, stored under the
- * drain's export generation and sealed with `releaseSource`. Nothing is wired to call it (see `move-handoff.ts`); it takes what it
- * cannot know as arguments.
+ * drain's export generation and sealed with `releaseSource`. The runner calls it from the same serialized look that saw `drained`
+ * (`run.ts`, `driveMove`); it takes what it cannot know as arguments (`move-handoff.ts`).
  *
  * WHAT IT TRUSTS: the store's `move.drain` (this incarnation completed it, for this export generation) and the caller's `ProvenDrain`
  * (fenced and quiet). It does not look at how the drain was proved and does not call the drain.
@@ -25,7 +26,9 @@ import {
  * `scope_unproven`. What is sealed is the proof the LAST ask returned, never one remembered from the first.
  *
  * WHAT IT CARRIES: the native session and NOTHING ELSE. `w.scope` must prove that is all the conversation needs; without that proof
- * the export is refused (`scope_unproven`) before anything is read, and the proof is kept in the sealed manifest. A conversation
+ * the export is refused (`scope_unproven`) before anything is read, and the proof is kept in the sealed manifest. A dependency the registry
+ * declares and nothing here carries or verifies (a repository, a vault, a shared-zone checkout) is `scope_unsupported`, and a configuration
+ * file the agent's launch reads and nothing compares is `profile_unverified`: both before anything is read, both without any acknowledgement. A conversation
  * the engine never started (`native_state` new) has no file and is sealed with an EMPTY manifest, never one blob. A conversation
  * the engine only LAUNCHED (`native_state` launched) is neither: see `stateGate`.
  *
@@ -42,7 +45,7 @@ import {
  */
 
 export const EXPORT_CODES: ReadonlySet<string> = new Set([
-  "scope_unproven", "native_port_missing", "native_build_unknown", "native_dest_facts_missing", "native_dest_refused", "native_export_changed",
+  "scope_unproven", "scope_unsupported", "profile_unverified", "profile_mismatch", "source_profile_unbound", "native_port_missing", "native_build_unknown", "native_dest_facts_missing", "native_dest_refused", "native_export_changed",
   "native_export_rejected", "native_export_failed", "native_state_launched", "native_state_unsupported",
   // The adapter's refusals that can come from reading and describing a source (the destination's own are its to raise).
   "native_build_unvalidated", "native_pair_unvalidated", "native_session_invalid", "native_transcript_missing", "native_locator_ambiguous",
@@ -173,8 +176,28 @@ async function finalLook(w: HandoffWorld, drain: ProvenDrain, id: string, expect
   if (move.block && !(move.block.by === "source" && EXPORT_CODES.has(move.block.code))) return waiting("blocked", { by: move.block.by, code: move.block.code });
 
   const supplied = w.scope(move);
+  // A dependency this move does not carry is named and refused HERE, before anything is read, stored or released (see `ScopeRefusal`).
+  if (supplied && "refused" in supplied) {
+    const detail = supplied.detail !== undefined && jsonbBytes(supplied.detail) <= 1500 ? supplied.detail : {};
+    return raise(w, id, "scope_unsupported", { reason: clip(supplied.refused), ...detail });
+  }
   const scope = scopeProven(supplied, move, generation);
   if (!scope) return raise(w, id, "scope_unproven", { reason: supplied ? "mismatch" : "missing" });
+  if (w.sourceProfile) {
+    const mine = w.sourceProfile(move);
+    // THE CONTENT OF THE FILES THE LAUNCH READS is compared by nothing (see `move-profile.ts`), so a profile that holds such a reference is a
+    // refusal HERE, whatever the destination has or has not recorded: named by reference (never a path or a value), before anything is read,
+    // stored or released. Nothing acknowledges it away; it clears when the registry no longer points the agent at the file.
+    const unverified = mine ? profileUnverified(mine) : [];
+    if (unverified.length > 0) return raise(w, id, "profile_unverified", { references: unverified });
+    // THE PROFILE THE DESTINATION RECORDED must be the one this agent runs under here: compared by section, never by value. Asked only once
+    // the destination has recorded one (`dest_ready_at`): until then the move waits for it, as it always did.
+    if (move.dest_facts !== null) {
+      if (!mine) return raise(w, id, "source_profile_unbound", {});
+      const differs = profileDifference(mine, move.dest_facts.profile);
+      if (differs.length > 0) return raise(w, id, "profile_mismatch", { sections: differs.slice(0, 16) });
+    }
+  }
   return { move, generation, scope };
 }
 
@@ -191,9 +214,11 @@ export async function exportSource(w: HandoffWorld, drain: ProvenDrain, id: stri
 
   const checkpoint = await checkpointOf(w.store, move.conversation_id);
   if (!checkpoint) return waiting("conversation-missing");
+  // A destination that has recorded nothing (offline, not yet started, an old runner) is WAITED for, whatever else is true of the conversation:
+  // no gate of the engine's state is raised against a move that cannot go on anyway, and nothing falls back.
+  if (move.dest_ready_at === null) return waiting("dest-not-ready");
   const gated = stateGate(w, id, checkpoint);
   if (gated) return gated;
-  if (move.dest_ready_at === null) return waiting("dest-not-ready");
 
   let exported: Exported | HandoffStep;
   try { exported = await exportNative(w, move, checkpoint, generation); } catch (error) { return refuse(w, id, error); }

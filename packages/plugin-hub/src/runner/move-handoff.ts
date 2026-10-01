@@ -9,11 +9,12 @@ import { MOVE_MAX_FILE_BYTES, blockMove, unblockMove, type MoveRow } from "../st
  * an injection contract and nothing more: `move-export.ts` and `move-import.ts` call the store and the native port, and every
  * fact they cannot know themselves is a member of `HandoffWorld` or an argument, never a default.
  *
- * NOTHING HERE IS WIRED. No runner, watch or activation caller exists for these functions yet, and none may be added before the
- * source's drain is accepted (its proof is an ARGUMENT of `exportSource`, `ProvenDrain`), the registry/serve step that follows
- * activation exists (an activated move cannot be withdrawn), and the relocation note is handled. The functions decide nothing about
- * retrying, falling back to a fresh session or choosing between owners: every refusal is a named block or a `waiting` answer, and the
- * owner's withdrawal is the only way out of a block.
+ * THE RUNNER (`run.ts`) SUPPLIES THE WORLD AND CALLS THESE: `exportSource` from the same serialized look that saw `drained` (its proof is an
+ * ARGUMENT, `ProvenDrain`, from that look's own fence and quiet), `prepareDestination` and `importDestination` from the watch for a move
+ * whose destination it is, and `cleanupCopies` on every read pass of the watch. After activation the hub's registry step
+ * (`hub/moves.ts`) and the destination's serve (`move-serve.ts`) finish the move. The functions decide nothing about retrying, falling back
+ * to a fresh session or choosing between owners: every refusal is a named block or a `waiting` answer, and the owner's withdrawal is the only
+ * way out of a block.
  *
  * WHAT THE CALLER MUST SUPPLY, and what each missing piece makes the handoff do:
  * - `exclusive`: one in-process chain per conversation id, NOT re-entrant (a call from inside the callback of the same key waits for
@@ -21,10 +22,15 @@ import { MOVE_MAX_FILE_BYTES, blockMove, unblockMove, type MoveRow } from "../st
  * - `build`: a FRESH read of the engine build (never a cache): the version is what the adapter's tables are keyed by.
  * - `scope` (source): the proof that what leaves is exactly the native session. Absent, not about this move or not bound to the
  *   export generation standing now, the export is refused (`scope_unproven`): nothing here knows whether a conversation depends on a
- *   workspace or a repository, and this slice carries neither. `materializeRepo` and `dependency_unverified` are the workspace
- *   slice's. It is a function of the move row it is given and is called again on a fresh row at every re-check.
+ *   workspace or a repository, and this slice carries neither. A dependency the caller names and nothing here carries or verifies is a
+ *   `ScopeRefusal` (`scope_unsupported`); the runner's (`move-scope.ts`) names a declared repository, vault or zone, files found in the
+ *   person's own tree and a default instruction file, and never reads that the absence of a declaration means there is nothing.
+ *   `materializeRepo` and a proof of a verified sync or snapshot are the workspace slice's. It is a
+ *   function of the move row it is given and is called again on a fresh row at every re-check.
  * - `profile` (destination): an explicit binding of the destination's profile to this move. There is no default and no
- *   derivation: absent or not about this move, the preflight is refused (`dest_profile_unbound`).
+ *   derivation: absent or not about this move, the preflight is refused (`dest_profile_unbound`). A profile that lists configuration
+ *   references nothing compares (`move-profile.ts`, `unverified`) is refused by name on both sides (`dest_profile_unverified`,
+ *   `profile_unverified`).
  * - `idle`: no live session and no ledger record of the agent in this incarnation. It gates every removal of a destination copy.
  */
 
@@ -53,7 +59,14 @@ export interface EngineBuild { version: string; capabilities: Record<string, unk
  */
 export interface ScopeProof { move: string; conversation: string; agent: string; generation: number; carries: "native-only"; basis: string }
 
-/** The destination's profile for this move, supplied. `basis` says where the caller got it; this slice compares it with nothing. */
+/**
+ * The caller's answer that the conversation depends on something this move does not carry (a repository's working copy, say): the export
+ * is refused BEFORE anything is read, stored or released, and the owner reads `refused` (a code-like word) and `detail` (names, never contents)
+ * in the source's block `scope_unsupported`. It is a named refusal and never a fallback: the move waits for the owner to withdraw it.
+ */
+export interface ScopeRefusal { refused: string; detail?: Record<string, unknown> }
+
+/** The destination's profile for this move, supplied. `basis` says where the caller got it; the preflight records it and the source compares it by section. */
 export interface ProfileBinding { move: string; agent: string; runner: string; machine: string; profile: Record<string, unknown>; basis: string }
 
 /**
@@ -80,8 +93,23 @@ export interface HandoffWorld {
    * (`lifetimeBytes`); the adapter bounds the real path it resolves to, not this string. One whose import cannot fit is refused by name.
    */
   sessionDir(move: MoveRow): string;
-  scope(move: MoveRow): ScopeProof | null;
+  scope(move: MoveRow): ScopeProof | ScopeRefusal | null;
   profile(move: MoveRow): ProfileBinding | null;
+  /**
+   * The SOURCE's own profile of the agent, in the form `profile` binds for the destination (`move-profile.ts`). When supplied, the export asks
+   * it again at every look and refuses a destination whose recorded profile is not equal (`profile_mismatch`, naming the sections, never their
+   * values); null is `source_profile_unbound`. Optional only so that a caller with no registry (a test of the store half) can leave it out: the
+   * runner always supplies it.
+   */
+  sourceProfile?(move: MoveRow): Record<string, unknown> | null;
+  /**
+   * DESTINATION: the default instruction files (`CLAUDE.md`, `CLAUDE.local.md` of the vault root) the agent's launch would read ON THIS
+   * MACHINE, by name (`defaultInstructionsOf`, `move-scope.ts`): their presence is a fact of the machine, so it cannot be a section of the
+   * machine-neutral profile the hub and the serve compare. Nothing compares their content (it is never read), so one that exists is the
+   * preflight's refusal `dest_local_unverified`, and `null` (it cannot be told) is that refusal too. Optional only so that a caller with no
+   * file system (a test of the store half) can leave it out: the runner always supplies it.
+   */
+  localInstructions?(move: MoveRow): string[] | null;
   /** Non-re-entrant, per conversation id. */
   exclusive<T>(conversation: string, fn: () => Promise<T>): Promise<T>;
   idle(agent: string): boolean;
@@ -90,6 +118,17 @@ export interface HandoffWorld {
 }
 
 export const who = (w: HandoffWorld) => ({ runner: w.runner, incarnation: w.incarnation });
+
+/**
+ * THE STORE'S WORD, NOW, that this process is still the runner's current incarnation. Asked under the conversation's lock right before anything
+ * physical happens to its session directory (a stage written by an import, a stage discarded by a cleanup), exactly as the launch asks it under the
+ * same lock (`run.ts`, `spawn`): a process that was replaced while it waited for the lock writes and removes nothing. The store checks the
+ * same thing at every step it records, but a physical act happens between two steps.
+ */
+export async function isCurrent(w: HandoffWorld): Promise<boolean> {
+  const [row] = (await w.store.sql`select incarnation from runner_incarnation where runner = ${w.runner}`) as unknown as { incarnation: string }[];
+  return row !== undefined && row.incarnation === w.incarnation;
+}
 
 /** Say a thing once per world, so a look that repeats on every notification does not repeat itself in the log. */
 const said = new WeakMap<HandoffWorld, Set<string>>();

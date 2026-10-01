@@ -20,7 +20,7 @@
 
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
 import { startCluster, until, type Cluster } from "./helpers/cluster.ts"
-import { CHAT, DOOR, PERSON, insertInbound, stageHub, type StagedHub } from "./helpers/hub-fixture.ts"
+import { CHAT, DOOR, PERSON, insertInbound, stageHub, withLaunchTree, type StagedHub } from "./helpers/hub-fixture.ts"
 import { OWNER, SRC, moveStage, type MoveFixture } from "./helpers/move-store-stage.ts"
 import { childGone, spawnHolder, type ScriptedOptions } from "./helpers/scripted-adapter.ts"
 import { bootId } from "../src/os/tree.ts"
@@ -54,9 +54,12 @@ interface Staged { it: StagedHub; s: MoveFixture; t: TopicRow; agent: string }
 async function stageSource(options: { adapter?: ScriptedOptions; mode?: "resident" | "on-demand"; idle?: number; tick?: number } = {}): Promise<Staged> {
   const agent = `t-${crypto.randomUUID()}`
   // ONE declared machine, the Pi, which is the runner's: what `hub_move_request` freezes as the source's machine is what the runner
-  // registered, and the destination (`runner-mac` on `mac`) is only a name the store records. No person tree, so no box wraps the child.
+  // registered, and the destination (`runner-mac` on `mac`) is only a name the store records. The person has a real EMPTY tree (`withLaunchTree`):
+  // the move's scope look refuses a person with no tree it can look at, so without one every drain here would be followed by that refusal. A person
+  // with a tree is launched in the box, and the children here stay plain (`unboxed`): what is asserted is their process groups and survivors, and
+  // the box's pid namespace and read-only host (Linux) would change both without being what is under test.
   const it = await stageHub(cluster, {
-    adapter: { child: true, group: true, ...(options.adapter ?? {}) },
+    adapter: { child: true, group: true, unboxed: true, ...(options.adapter ?? {}) },
     machines: [{ id: "pi", os: "linux" }],
     hub: { tick_seconds: options.tick ?? 1 },
     run: [
@@ -64,7 +67,7 @@ async function stageSource(options: { adapter?: ScriptedOptions; mode?: "residen
       { id: RUNNER_PI, kind: "runner", machine: "pi", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 512 },
     ],
     registry: base => ({
-      ...base,
+      ...withLaunchTree(base),
       agents: [{ id: agent, person: PERSON, preset: "daily", chat: CHAT, door: DOOR, runner: RUNNER_PI,
         ...(options.mode ? { mode: options.mode } : {}), ...(options.idle ? { idle_seconds: options.idle } : {}) }],
     }),
@@ -94,6 +97,12 @@ const drainedAndCleared = (st: Staged, move: { id: string }) => async () => {
   return row.drain !== null && row.block === null
 }
 const describeMove = (st: Staged, move: { id: string }) => async () => JSON.stringify(await readMove(st.s.tool, move.id))
+/**
+ * The move's block once the runner has had time to look again after the drain (two ticks of the default one second). The export look runs after
+ * the drain commits and, with a destination that has recorded nothing, WAITS for it without a block; a block it writes (a refused scope, a
+ * profile) lands a moment after `drain` does, so a read taken at the instant the drain is seen can pass before it is written.
+ */
+const blockAfterSettle = async (st: Staged, move: { id: string }) => { await Bun.sleep(2500); return (await readMove(st.s.tool, move.id))!.block }
 
 test("a turn that was already fed finishes untouched when the move is requested; then the child is closed under an intent and the move is drained, with no other row fed, claimed or started", async () => {
   const st = await stageSource()
@@ -124,6 +133,7 @@ test("a turn that was already fed finishes untouched when the move is requested;
   expect(done.drain_intents[0]).toMatchObject({ incarnation: await incarnationOf(st), machine: "pi", group: child.group, leader: child.pid })
   expect(done.drain_resolutions.map(one => one.basis)).toEqual(["process-group"])
   expect(done.block).toBeNull()
+  expect(await blockAfterSettle(st, move), "and the export look that follows the drain writes none: the person's empty tree is a proof, the destination is waited for").toBeNull()
   expect(childGone(child.pid)).toBe(true)
   expect(it.scripted.fed().map(one => one.id), "no other row was fed").toEqual(["q1"])
   expect(it.scripted.starts().length, "and nothing was started again").toBe(1)
@@ -230,6 +240,7 @@ test("an idle on-demand child that the idle timer closed and PROVED gone is acco
   const cleared = (await readMove(dirty.s.tool, second.id))!
   expect(cleared.drain, "drained on evidence, not by the block going away").not.toBeNull()
   expect(cleared.block).toBeNull()
+  expect(await blockAfterSettle(dirty, second), "and it stays cleared: nothing the source writes after the drain replaces it").toBeNull()
 }, SLOW)
 
 test("a conversation the store places on another machine is not an error to retry: no child, no refusal, no health row, one diary line; a later placement HERE lifts the fence and the queued row is fed", async () => {
@@ -332,6 +343,7 @@ test("an older child closed WITHOUT proof (a recovery) and a current one: the ru
   const cleared = (await readMove(s.tool, move.id))!
   expect(cleared.drain, "drained on evidence, not by the block going away").not.toBeNull()
   expect(cleared.block).toBeNull()
+  expect(await blockAfterSettle(st, move), "and it stays cleared: nothing the source writes after the drain replaces it").toBeNull()
 }, SLOW)
 
 test("a predecessor of the same boot that wrote only PART of its set (an older child it never wrote down is still running): the successor certifies nothing and signals nothing, and a withdrawal ends it with the queued row fed once", async () => {

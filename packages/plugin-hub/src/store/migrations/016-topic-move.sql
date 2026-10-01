@@ -272,7 +272,10 @@ create trigger topic_move_rules
   before update on topic_move
   for each row execute function hub_guard_topic_move();
 
--- The runners of a move, and the hub, hear about it at the commit (payload: the runner, or `hub`).
+-- The runners of a move, and the hub, hear about it at the commit (payload: the runner, or `hub`). The destination's preflight
+-- (`dest_ready_at`, written with its facts by `hub_move_dest_ready`, again whenever it replaces them) is heard too: the source
+-- that found nothing recorded waits for exactly that, owing nobody a poll, and no stage or block changes when it is recorded. So is a
+-- refreshed registry receipt (`hub_move_registry_refresh`): the destination that waits for the registry to be the receipt's is told, not polled.
 create function hub_notify_move() returns trigger
 language plpgsql as $$
 begin
@@ -282,7 +285,7 @@ begin
   return null;
 end $$;
 create trigger topic_move_notify
-  after insert or update of stage, block on topic_move
+  after insert or update of stage, block, dest_ready_at, registry_receipt on topic_move
   for each row execute function hub_notify_move();
 
 -- ---------------------------------------------------------------------------------------------------------------------

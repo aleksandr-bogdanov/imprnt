@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { AdapterSession, ExitEvidence } from "../adapters/types.ts";
 import { safeValue } from "../door/lines.ts";
 import { bootMoved, groupPresence, presence } from "../os/tree.ts";
@@ -315,14 +315,21 @@ export function finalIntentOf(rec: ChildRecord, move: string, here: Here): Drain
 // The drain
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** What the runner's tick has to look at again: the store owes an answer, or local evidence may move (read nothing until it does). */
+/**
+ * What the runner's tick has to look at again: the store owes an answer, or local evidence may move (read nothing until it does): a process
+ * (the drain's) or the facts of this machine a refusal was made from (the registry's bytes, the tree, the default instruction files).
+ */
 export type Owed = { kind: "store" } | { kind: "local"; changed(): boolean };
 
 export interface DrainStep {
   state: "drained" | "waiting" | "ended";
   why: string;
   owed: Owed | null;
-  /** The move as this look left it, so a notification of what this look itself wrote is not looked at again. */
+  /**
+   * The move as this look READ it before it decided (never re-read after its awaits): a change committed meanwhile, by the other side, differs
+   * from it and is looked at. What this look itself wrote differs from it too, and is looked at ONCE more: every write repeated on facts that did
+   * not change is a no-op, so that look writes nothing and ends on the row it read.
+   */
   seen: string | null;
 }
 
@@ -342,7 +349,9 @@ export interface DrainWorld {
   say(kind: string, detail: Record<string, unknown>): Promise<void>;
 }
 
-const digestOf = (move: MoveRow): string => `${move.stage}|${move.updated_at.getTime()}`;
+/** The row as one look read it: its stage and time, and a hash of every column, because two commits of one stage can share a millisecond. */
+export const digestOf = (move: MoveRow): string =>
+  `${move.stage}|${move.updated_at.getTime()}|${createHash("sha256").update(JSON.stringify(move)).digest("hex").slice(0, 16)}`;
 
 interface Item { kind: "intent" | "owner" | "seal"; id: string; incarnation: string | null; boot: string | null; unknown?: boolean; intent?: DrainIntent & { incarnation: string } }
 
@@ -814,6 +823,13 @@ export interface MoveWatch {
  * working marks it dirty and it looks again before it finishes. A move whose row did not change since a look that left nothing
  * owed is not looked at again, so what a look itself wrote does not make it look at its own writes. Closing waits for every
  * consumer, and a consumer that waits for an agent's loop is released by the loop ending.
+ *
+ * THE DESTINATION'S SIDE is the same watch with another consumer: a move of which this runner is the DESTINATION is looked at by `driveDest`
+ * (preflight, import, serve) under the same one-consumer-per-move rule and the same chain per agent, and it places NO fence (the destination
+ * serves nothing until the registry says so and the store releases the gate). And on every read pass (the first read, a notification, a
+ * listener opened again) `cleanup` runs once on a chain of its own: the copies the store owes this runner a removal of are listed by
+ * `copiesDueForCleanup`, never by the open moves, because `movesOfRunner` leaves a withdrawn move out. While it leaves a copy owed the tick
+ * reads again; a pass that finds nothing owed asks nothing more.
  */
 export async function watchMoves(
   store: StoreLike,
@@ -823,6 +839,10 @@ export async function watchMoves(
     fences: Fences;
     /** Look at one move once: in the agent's loop when it has one. */
     drive(request: { id: string; agent: string }): Promise<DrainStep>;
+    /** Look at one move of which this runner is the destination, once. Absent: the destination's moves are not looked at. */
+    driveDest?(request: { id: string; agent: string }): Promise<DrainStep>;
+    /** Remove what the store owes this runner a removal of; the number of copies it left owed (a pass that left none asks nothing more). */
+    cleanup?(): Promise<number>;
     /** A fence was lifted: whoever waits on it looks again. */
     lifted(agent: string): void;
     say(kind: string, detail: Record<string, unknown>): Promise<void>;
@@ -852,10 +872,10 @@ export async function watchMoves(
     await at.say(kind, detail);
   };
 
-  const consume = async (id: string, agent: string): Promise<void> => {
+  const consume = async (id: string, agent: string, role: "source" | "dest"): Promise<void> => {
     for (;;) {
       dirty.delete(id);
-      const step = await at.drive({ id, agent });
+      const step = role === "dest" ? await at.driveDest!({ id, agent }) : await at.drive({ id, agent });
       if (step.state === "ended") { debts.delete(id); settled.delete(id); }
       else {
         if (step.owed) debts.set(id, step.owed); else debts.delete(id);
@@ -865,12 +885,12 @@ export async function watchMoves(
     }
   };
 
-  const schedule = (row: MoveRow): void => {
+  const schedule = (row: MoveRow, role: "source" | "dest" = "source"): void => {
     const id = row.id;
     if (running.has(id)) { dirty.add(id); return; }
     if (!debts.has(id) && settled.get(id) === digestOf(row)) return;
     const before = byAgent.get(row.agent) ?? Promise.resolve();
-    const one: Promise<void> = before.then(() => (closed ? undefined : consume(id, row.agent)))
+    const one: Promise<void> = before.then(() => (closed ? undefined : consume(id, row.agent, role)))
       .catch((error: Error) => { report(error); debts.set(id, { kind: "store" }); settled.delete(id); })
       .finally(() => {
         running.delete(id);
@@ -893,7 +913,7 @@ export async function watchMoves(
    * conversation HERE again at a later generation (a move back): a registry that still lists the agent here cannot start it.
    */
   const reconcile = async (open: Set<string>): Promise<void> => {
-    for (const id of [...debts.keys()]) if (!open.has(id)) debts.delete(id);
+    for (const id of [...debts.keys()]) if (id !== CLEANUP && !open.has(id)) debts.delete(id);
     for (const id of [...settled.keys()]) if (!open.has(id)) settled.delete(id);
     for (const fence of at.fences.all()) {
       if (fence.kind === "move" && fence.move !== null && open.has(fence.move)) continue;
@@ -914,20 +934,41 @@ export async function watchMoves(
     }
   };
 
+  /** The debt the cleanup sweep leaves while a copy it could not remove is still owed: not a move's id, so the reconcile leaves it alone. */
+  const CLEANUP = "cleanup:copies";
+  let sweeping: Promise<void> = Promise.resolve();
+  /** One cleanup per read pass, on a chain of its own (never behind a move's look, never beside another sweep). */
+  const sweep = (): void => {
+    if (!at.cleanup) return;
+    sweeping = sweeping.then(async () => {
+      if (closed) return;
+      try {
+        const left = await at.cleanup!();
+        if (left > 0) debts.set(CLEANUP, { kind: "store" }); else debts.delete(CLEANUP);
+      } catch (error) { report(error as Error); debts.set(CLEANUP, { kind: "store" }); }
+    });
+  };
+
   const drain = async (): Promise<void> => {
     const rows = await movesOfRunner(store, at.runner);
     const mine = rows.filter(row => row.source_runner === at.runner);
+    // A move of which this runner is the destination and not the source (the two are never one runner: the store refuses a same-machine move).
+    const incoming = at.driveDest ? rows.filter(row => row.dest_runner === at.runner && row.source_runner !== at.runner) : [];
     // THE FENCES ARE PLACED HERE, from the read and before anything below is awaited: nothing the runner starts after this read
     // (and nothing it served before the first read, because the runner opens this watch before it serves) can start a child for them.
     const fresh = mine.filter(row => at.fences.get(row.agent)?.move !== row.id);
     for (const row of mine) at.fences.set({ agent: row.agent, move: row.id, kind: "move", stage: row.stage, after: null });
     for (const row of mine) schedule(row);
+    for (const row of incoming) schedule(row, "dest");
+    sweep();
     // Said once per move, after the fence is up: it is what a person (or a check) reads to know this runner has the move.
     for (const row of fresh) {
       try { await once(`fenced:${row.id}`, "move.fenced", { agent: row.agent, move: row.id, stage: row.stage }); }
       catch (error) { report(error as Error); }
     }
-    await reconcile(new Set(mine.map(row => row.id)));
+    // The moves the debts and settled looks are kept for are every open one this runner looks at, as source or as destination; the FENCES are
+    // judged from the source's own moves only (`reconcile` reads `at.fences`, and a destination places none).
+    await reconcile(new Set([...mine, ...incoming].map(row => row.id)));
   };
 
   const wake = (): void => {
@@ -972,6 +1013,7 @@ export async function watchMoves(
       await listener?.close();
       await work;
       await Promise.allSettled([...running.values()]);
+      await sweeping;
     },
   };
 }

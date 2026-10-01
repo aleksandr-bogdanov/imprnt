@@ -235,6 +235,13 @@ export interface ScriptedOptions {
   survivor?: boolean | number[];
   /** `start` waits, after it has been recorded in `starts()`, until `releaseStart()`: a spawn paused inside the adapter's start. */
   startGate?: boolean;
+  /**
+   * With `child`, the real child is spawned plain even when the runner hands `start` a boxing hook (`wrapped` in `starts()` still says it did). For
+   * a check of the drain's process groups and survivors under a person that HAS a tree (a move's scope look needs one), which the box would
+   * change on Linux (a pid namespace: a survivor's pid is not the host's; a read-only host: the survivor's scratch directory is not writable)
+   * and which is not what such a check is about: that the child wears the box is `box-worn.test.ts`'s.
+   */
+  unboxed?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,7 +758,7 @@ export function createScriptedAdapter(
     // the boxing code whether it boxed.
     const leaves = options.survivor === true || (Array.isArray(options.survivor) && options.survivor.includes(nth));
     const held = options.child
-      ? spawnHolder({ wrap, probePath: options.probePath, group: options.group === true, survivor: leaves })
+      ? spawnHolder({ wrap: options.unboxed ? undefined : wrap, probePath: options.probePath, group: options.group === true, survivor: leaves })
       : null;
     if (held) {
       children.push(held);
