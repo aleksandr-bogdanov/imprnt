@@ -27,7 +27,10 @@ export { RUNNER_PROTOCOL };
  * The migrations this runner needs. A runner ahead of its schema does not serve, and says so before it
  * activates a protocol, registers an incarnation, claims a row or hands anything to an engine: a runner
  * of protocol 3 on a store at migration 13 or older has no council tables, no council-aware claim rule
- * and no way to tell a council's job from an ordinary one.
+ * and no way to tell a council's job from an ordinary one, and a runner of protocol 4 on a store at
+ * migration 15 or older has no topic moves: no gate of a move, no drain intent or evidence, no
+ * `hub_move` notification. It is the last check, so the first thing a runner reads of a move is read
+ * from a schema that has them.
  */
 export async function requireSchema(store: StoreLike): Promise<void> {
   const [found] = (await store.sql`select to_regclass('public.execution') is not null
@@ -35,10 +38,19 @@ export async function requireSchema(store: StoreLike): Promise<void> {
       and to_regclass('public.hub_protocol') is not null as present,
     to_regclass('public.council') is not null
       and to_regprocedure('public.hub_council_job(text, text, text, text, jsonb)') is not null
-      and to_regprocedure('public.hub_council_event_put(text, text, integer, text, text, text, text, text, jsonb, jsonb)') is not null as councils`) as unknown as
-    { present: boolean; councils: boolean }[];
+      and to_regprocedure('public.hub_council_event_put(text, text, integer, text, text, text, text, text, jsonb, jsonb)') is not null as councils,
+    to_regclass('public.topic_move') is not null
+      and to_regprocedure('public.hub_move_block(text, text, text, text, jsonb)') is not null
+      and to_regprocedure('public.hub_move_unblock(text, text, text, text)') is not null
+      and to_regprocedure('public.hub_move_drain_intent(text, text, text, jsonb)') is not null
+      and to_regprocedure('public.hub_move_drain_seal(text, text, text, jsonb)') is not null
+      and to_regprocedure('public.hub_move_drain_done(text, text, text, jsonb)') is not null
+      and to_regprocedure('public.hub_move_note_carry(text, jsonb)') is not null
+      and to_regprocedure('public.hub_notify_move()') is not null as moves`) as unknown as
+    { present: boolean; councils: boolean; moves: boolean }[];
   if (!found?.present) throw new Error("schema-behind: apply migration 11 (conversations) before this runner serves");
   if (!found.councils) throw new Error("schema-behind: apply migration 14 (councils) before this runner serves");
+  if (!found.moves) throw new Error("schema-behind: apply migration 16 (topic moves) before this runner serves");
 }
 
 const NONE: AdapterCapabilities = { stableSession: false, safeResume: false, delegationDisabled: false };

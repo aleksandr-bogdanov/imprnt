@@ -115,6 +115,7 @@ create table topic_move (
   failure               jsonb,
   drain_intents         jsonb not null default '[]'::jsonb,
   drain_resolutions     jsonb not null default '[]'::jsonb,
+  drain_sealed          jsonb not null default '[]'::jsonb,
   export_generation     integer not null default 0 check (export_generation >= 0),
   drain                 jsonb,
   snapshot              jsonb,
@@ -140,7 +141,8 @@ create table topic_move (
     and octet_length(coalesce(registry_receipt::text, '')) <= 8192 and octet_length(drain_intents::text) <= 16384
     and octet_length(coalesce(drain::text, '')) <= 8192 and octet_length(preexisting_holds::text) <= 65536
     and octet_length(drain_attempts::text) <= 65536 and octet_length(acknowledged_failures::text) <= 65536
-    and octet_length(source_incarnation::text) <= 2048 and octet_length(drain_resolutions::text) <= 32768)
+    and octet_length(source_incarnation::text) <= 2048 and octet_length(drain_resolutions::text) <= 32768
+    and octet_length(drain_sealed::text) <= 16384)
 );
 -- ONE NON-TERMINAL MOVE PER TOPIC, by the table.
 create unique index topic_move_one_open on topic_move (topic_id) where stage not in ('active', 'withdrawn');
@@ -404,10 +406,22 @@ begin
   return null;
 end $$;
 
+-- Whether an incarnation sealed the set of its intents (`hub_move_drain_seal`): the one fact `hub_move_drain_items` reads about it.
+create function hub_move_drain_sealed(m public.topic_move, inc_in text) returns boolean
+language sql stable as $$
+  select exists (select 1 from jsonb_array_elements(m.drain_sealed) as s(v) where s.v ->> 'incarnation' = inc_in)
+$$;
+
 -- EVERYTHING THAT MUST BE SHOWN GONE BEFORE THE EXPORT, from what the store holds: one item for each drain intent ever recorded,
 -- for the incarnation that was the source's at the request when it recorded none (an unknown one is an item nothing can resolve),
 -- and for the incarnation speaking now when it recorded none. An item carries the boot it belongs to when that is known. The
 -- attempts of the agent are not items: the execution machinery resolves them, and `hub_move_unresolved` says so.
+-- THE SET OF AN INCARNATION'S INTENTS IS COMPLETE ONLY WHEN IT SAYS SO. An incarnation whose intents say `set: 'open'` (the source
+-- runner writes every intent so) has one more item, `kind: 'seal'` with its own incarnation as id, until `hub_move_drain_seal`
+-- records that the intents it wrote are every child it owes an account of. Without it the intents are a prefix of an unknown whole
+-- (a crash between two intent writes, a refused intent): the intents already recorded cannot show the drain is over, and nothing but
+-- the incarnation's own seal (while it is the current one) or a reboot (`boot`, which resolves every item of another boot, a seal
+-- item included) resolves the item. Intents without `set: 'open'` keep the earlier contract: they are the complete account.
 create function hub_move_drain_items(m public.topic_move, inc_in text, boot_in text) returns jsonb
 language plpgsql stable as $$
 declare
@@ -419,6 +433,13 @@ begin
     items := items || jsonb_build_array(jsonb_build_object('kind', 'intent', 'id', intent ->> 'id',
                                                            'incarnation', intent ->> 'incarnation', 'boot_id', intent ->> 'boot_id'));
     owners := owners || (intent ->> 'incarnation');
+  end loop;
+  for intent in select distinct on (e.v ->> 'incarnation') e.v from jsonb_array_elements(m.drain_intents) as e(v)
+                 where e.v ->> 'set' = 'open' order by e.v ->> 'incarnation', e.v ->> 'id' loop
+    if not public.hub_move_drain_sealed(m, intent ->> 'incarnation') then
+      items := items || jsonb_build_array(jsonb_build_object('kind', 'seal', 'id', intent ->> 'incarnation',
+                                                             'incarnation', intent ->> 'incarnation', 'boot_id', intent ->> 'boot_id'));
+    end if;
   end loop;
   if m.source_incarnation ->> 'known' = 'true' then
     if not ((m.source_incarnation ->> 'incarnation') = any (owners)) then
@@ -782,6 +803,9 @@ begin
     return case when same ->> 'incarnation' = inc_in and (same - 'incarnation' - 'at') = (intent_in - 'incarnation' - 'at') then 'replay'
                 else 'intent-invalid' end;
   end if;
+  if public.hub_move_drain_sealed(m, inc_in) then
+    return 'intent-sealed';
+  end if;
   if jsonb_array_length(m.drain_intents) >= 8 then
     return 'intent-limit';
   end if;
@@ -791,6 +815,59 @@ begin
          drain = null, updated_at = now()
    where id = m.id;
   return 'intent';
+end $$;
+
+-- THE INCARNATION SAYS ITS INTENTS ARE ALL OF THEM. An intent that says `set: 'open'` makes the incarnation owe a `seal` item
+-- (`hub_move_drain_items`) until this call: `ids_in` are EXACTLY the ids of the intents this incarnation recorded for the move (the
+-- store compares them with what it holds: no more, no fewer, and at least one), and the call is the incarnation's ASSERTION that it
+-- owes an account of no child but those and that it records no other (a runtime that cannot say so does not call it). Once sealed,
+-- the set takes no further intent (`intent-sealed`), so what was said stays what was said. The seal is not evidence that a child is
+-- gone: it resolves only the incarnation's own `seal` item, never an intent, and the drain still needs every intent resolved. The
+-- current incarnation of the source runner only, in `waiting`, with the boot it registered. `replay` for the same seal again.
+create function hub_move_drain_seal(move_in text, runner_in text, inc_in text, ids_in jsonb) returns text
+language plpgsql security definer set search_path = pg_catalog, public as $$
+declare
+  m public.topic_move%rowtype;
+  boot text;
+  have jsonb;
+  want jsonb;
+begin
+  if not public.hub_move_enter(move_in) then
+    return 'unknown-move';
+  end if;
+  select * into m from public.topic_move where id = move_in;
+  if m.stage in ('active', 'withdrawn') then
+    return 'terminal';
+  end if;
+  if m.stage <> 'waiting' then
+    return 'stage';
+  end if;
+  if runner_in is distinct from m.source_runner or not public.hub_move_runner_current(runner_in, inc_in, m.source_machine) then
+    return 'not-source';
+  end if;
+  if ids_in is null or jsonb_typeof(ids_in) <> 'array' or jsonb_array_length(ids_in) not between 1 and 8
+     or exists (select 1 from jsonb_array_elements(ids_in) as a(v) where jsonb_typeof(a.v) <> 'string') then
+    return 'seal-invalid';
+  end if;
+  boot := public.hub_move_runner_boot(runner_in, inc_in);
+  if coalesce(boot, '') = '' then
+    return 'boot-unknown';
+  end if;
+  select coalesce(jsonb_agg(e.v ->> 'id' order by e.v ->> 'id'), '[]'::jsonb) into have
+    from jsonb_array_elements(m.drain_intents) as e(v) where e.v ->> 'incarnation' = inc_in;
+  select coalesce(jsonb_agg(x.id order by x.id), '[]'::jsonb) into want
+    from (select distinct a.v #>> '{}' as id from jsonb_array_elements(ids_in) as a(v)) as x;
+  if have = '[]'::jsonb or have is distinct from want then
+    return 'seal-mismatch';
+  end if;
+  if public.hub_move_drain_sealed(m, inc_in) then
+    return 'replay';
+  end if;
+  update public.topic_move
+     set drain_sealed = drain_sealed || jsonb_build_array(jsonb_build_object('incarnation', inc_in, 'boot_id', boot, 'intents', want, 'at', now())),
+         updated_at = now()
+   where id = m.id;
+  return 'sealed';
 end $$;
 
 -- THE EVIDENCE THE DRAIN IS OVER, ONE OWNER AT A TIME. The drain is over when EVERY item `hub_move_drain_items` lists is resolved:
@@ -1925,6 +2002,7 @@ revoke all on function hub_move_source_baseline(text, text) from public;
 revoke all on function hub_move_gate_progress(text) from public;
 revoke all on function hub_move_drain_items(public.topic_move, text, text) from public;
 revoke all on function hub_move_drain_pending(public.topic_move, text, text) from public;
+revoke all on function hub_move_drain_sealed(public.topic_move, text) from public;
 revoke all on function hub_move_fail_check(text) from public;
 revoke all on function hub_move_new_failure(public.topic_move) from public;
 revoke all on function hub_move_receipt_ok(public.topic_move, jsonb) from public;
@@ -1934,6 +2012,7 @@ revoke all on function hub_move_block(text, text, text, text, jsonb) from public
 revoke all on function hub_move_unblock(text, text, text, text) from public;
 revoke all on function hub_move_dest_ready(text, text, text, jsonb) from public;
 revoke all on function hub_move_drain_intent(text, text, text, jsonb) from public;
+revoke all on function hub_move_drain_seal(text, text, text, jsonb) from public;
 revoke all on function hub_move_drain_done(text, text, text, jsonb) from public;
 revoke all on function hub_move_check_failure(text) from public;
 revoke all on function hub_move_continue(text, text, text, integer, jsonb) from public;
@@ -1962,6 +2041,7 @@ grant execute on function hub_move_unblock(text, text, text, text) to hub_runner
 -- The runners of the two sides.
 grant execute on function hub_move_dest_ready(text, text, text, jsonb) to hub_runner;
 grant execute on function hub_move_drain_intent(text, text, text, jsonb) to hub_runner;
+grant execute on function hub_move_drain_seal(text, text, text, jsonb) to hub_runner;
 grant execute on function hub_move_drain_done(text, text, text, jsonb) to hub_runner;
 grant execute on function hub_move_blob_put(text, text, text, integer, text, text, integer, bytea) to hub_runner;
 grant execute on function hub_move_source_release(text, text, text, integer, jsonb, jsonb) to hub_runner;

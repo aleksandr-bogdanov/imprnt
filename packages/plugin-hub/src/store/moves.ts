@@ -43,7 +43,8 @@ export interface MoveFailure { inbound: string; execution: string; revision: num
 /**
  * What the source said it was about to close, persisted BEFORE it closes it. `boot_id` is the boot the incarnation REGISTERED
  * (the store refuses another: `boot-mismatch`, and `boot-unknown` when the registration has none); `machine` is the source's;
- * the rest is what was known.
+ * the rest is what was known. `set: "open"` says the incarnation's intents are not yet known to be all of them: the incarnation owes
+ * a `seal` item until `sealDrainIntents` says they are (an intent without it keeps the earlier contract: complete as recorded).
  */
 export interface DrainIntent { id: string; boot_id: string; machine: string; leader?: number | null; group?: number | null; pids?: number[]; [more: string]: unknown }
 
@@ -57,8 +58,11 @@ export type SourceBaseline =
   | { known: true; incarnation: string; boot_id: string | null; machine: string; protocol: number; registered_at: string }
   | { known: false; reason: "unregistered" | "registered-elsewhere"; registered_machine?: string | null };
 
-/** What one accepted piece of drain evidence resolved, kept on the move (`drain_resolutions`): an intent, or an owner incarnation with none. */
-export interface DrainResolution { kind: "intent" | "owner"; id: string; basis: "process-group" | "boot" | "no-child"; via: string; boot_id: string; by: string; at: string }
+/**
+ * What one accepted piece of drain evidence resolved, kept on the move (`drain_resolutions`): an intent, an owner incarnation with none,
+ * or (by a reboot only) the unsealed set of an incarnation that declared its intents open.
+ */
+export interface DrainResolution { kind: "intent" | "owner" | "seal"; id: string; basis: "process-group" | "boot" | "no-child"; via: string; boot_id: string; by: string; at: string }
 
 /** The exit the source ASSERTS, in one of the three bases the store accepts. */
 export type DrainExit =
@@ -149,6 +153,8 @@ export interface MoveRow {
   drain_intents: (DrainIntent & { incarnation: string; at: string })[];
   /** Every piece of drain evidence accepted so far; it is kept across restarts and across later intents (only the same intent again is a replay). */
   drain_resolutions: DrainResolution[];
+  /** The incarnations that said the intents they recorded are every child they owe an account of (`sealDrainIntents`), and which intents. */
+  drain_sealed: { incarnation: string; boot_id: string; intents: string[]; at: string }[];
   /** The export generation the current (or last) drain started; blobs and the seal are bound to it. 0 before any drain completed. */
   export_generation: number;
   /** Set when EVERY owner and intent is resolved, by the incarnation that completed it; null while any is pending or after a new intent. */
@@ -224,7 +230,7 @@ export function moveOf(raw: Record<string, unknown>): MoveRow {
 
 const MOVE_COLUMNS = `id, operation_id, topic_id, agent, person, requested_by, route, evidence, stage, block, source_runner, source_machine,
   dest_runner, dest_machine, conversation_id, adapter, native_session, native_state, source_generation, dest_generation, source_facts,
-  source_incarnation, drain_attempts, preexisting_holds, acknowledged_failures, failure, drain_intents, drain_resolutions, export_generation,
+  source_incarnation, drain_attempts, preexisting_holds, acknowledged_failures, failure, drain_intents, drain_resolutions, drain_sealed, export_generation,
   drain, snapshot, manifest, dest_facts, dest_ready_at,
   import_generation, verification, registry_receipt, note_state, note_digest, note_attempt, created_at, updated_at, source_released_at,
   activated_at, finished_at`;
@@ -391,7 +397,7 @@ export async function destReady(store: StoreLike, move: string, who: { runner: s
   return row.answer as DestReadyAnswer;
 }
 
-export type DrainIntentAnswer = Source | "intent-invalid" | "intent-limit" | "boot-unknown" | "boot-mismatch" | "replay" | "intent";
+export type DrainIntentAnswer = Source | "intent-invalid" | "intent-limit" | "intent-sealed" | "boot-unknown" | "boot-mismatch" | "replay" | "intent";
 
 /**
  * The intent to close the source's child, durable BEFORE anything is closed; its `boot_id` must be the boot the incarnation
@@ -401,6 +407,20 @@ export type DrainIntentAnswer = Source | "intent-invalid" | "intent-limit" | "bo
 export async function recordDrainIntent(store: StoreLike, move: string, who: { runner: string; incarnation: string }, intent: DrainIntent): Promise<DrainIntentAnswer> {
   const [row] = await store.sql`select hub_move_drain_intent(${move}, ${who.runner}, ${who.incarnation}, ${intent}::jsonb) as answer`;
   return row.answer as DrainIntentAnswer;
+}
+
+export type DrainSealAnswer = Source | "seal-invalid" | "seal-mismatch" | "boot-unknown" | "replay" | "sealed";
+
+/**
+ * The incarnation's assertion that the intents it recorded for this move (`ids`, EXACTLY those: the store compares them with what it
+ * holds) are every child it owes an account of and that it records no other. Until it is made, an incarnation whose intents say
+ * `set: "open"` has a `seal` item the drain cannot be certified without, so a prefix of its intents (a crash between two writes, a
+ * refused intent) can never show the drain is over. Sealed, the set takes no further intent (`intent-sealed`). It is not evidence that
+ * any child is gone.
+ */
+export async function sealDrainIntents(store: StoreLike, move: string, who: { runner: string; incarnation: string }, ids: string[]): Promise<DrainSealAnswer> {
+  const [row] = await store.sql`select hub_move_drain_seal(${move}, ${who.runner}, ${who.incarnation}, ${JSON.stringify(ids)}::text::jsonb) as answer`;
+  return row.answer as DrainSealAnswer;
 }
 
 export type DrainDoneAnswer = Source | "evidence-invalid" | "replay" | "busy" | "failure-unacknowledged" | "boot-unknown" | "boot-mismatch"

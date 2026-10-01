@@ -78,8 +78,9 @@ export interface Reach { files?: ScriptedFile[]; started?: boolean; note?: strin
 /** The words the serve of a move declares the digest of (`NOTE`), and what a test hands the delivery. */
 export const NOTE_BODY = "relocation note"
 
-export async function moveStage(cluster: Cluster, track: <T extends { close(): Promise<void> }>(sql: T) => T) {
-  const db = await freshDatabase(cluster)
+/** `database` stages the move on a database that already exists (a staged hub's own), instead of a fresh one. */
+export async function moveStage(cluster: Cluster, track: <T extends { close(): Promise<void> }>(sql: T) => T, options: { database?: string } = {}) {
+  const db = options.database ?? (await freshDatabase(cluster))
   const su = track(cluster.connect(db))
   const as = (role: string): StoreLike => ({ sql: track(cluster.connectAs(role, db)), url: storeUrlAs(cluster.url(db), role) })
   const tool = as("hub_runner")
@@ -98,12 +99,12 @@ export async function moveStage(cluster: Cluster, track: <T extends { close(): P
   })
 
   /** A topic taken to `bound` along the legal road: active, on the source machine and runner, its master conversation `new` at generation 1. */
-  async function topic(name = `topic-${next()}`): Promise<TopicRow> {
+  async function topic(name = `topic-${next()}`, options: { identity?: () => TopicIdentity } = {}): Promise<TopicRow> {
     const operation = `alloc-${name}`
     const made = await allocateTopic(tool, {
       operation, person: "p1", door: "door-d", display_name: name, machine: SRC.machine, runner: SRC.runner, preset: "daily", adapter: "synthetic",
       setup: identity => setupOf(identity, name),
-    })
+    }, options.identity ? { identity: options.identity } : {})
     await su`update topic set create_state = 'confirmed' where id = ${made.id}`
     expect(await createIntent(door, made.id, `attempt-${operation}`)).toBe("intent")
     expect(await channelKnown(door, made.id, `chat-${name}`, { how: "test" })).toBe("channel_known")
@@ -119,6 +120,15 @@ export async function moveStage(cluster: Cluster, track: <T extends { close(): P
   const register = async (runner: Side, incarnation: string, bootId: string | null = FIRST_BOOT[runner.machine] ?? null) => {
     await registerIncarnation(tool, { runner: runner.runner, incarnation, machine: runner.machine, bootId })
     current.set(runner.runner, { incarnation, boot: bootId })
+  }
+  /**
+   * A REAL runner process registered itself: the fixture takes the incarnation and the boot the store holds for it, as they are, and registers
+   * nothing (a registration would replace the process's own and fence it out). The steps that name a side of a move then speak as that incarnation.
+   */
+  const adopt = async (runner: Side) => {
+    const [row] = await su`select incarnation, boot_id from runner_incarnation where runner = ${runner.runner}`
+    if (!row) throw new Error(`${runner.runner} has not registered`)
+    current.set(runner.runner, { incarnation: String(row.incarnation), boot: row.boot_id === null ? null : String(row.boot_id) })
   }
   /** The runner's current incarnation as the store holds it after `register`, and the boot it registered. */
   const sideOf = (move: MoveRow, which: "source" | "dest") => {
@@ -239,7 +249,7 @@ export async function moveStage(cluster: Cluster, track: <T extends { close(): P
   const count = async (sql: string, ...params: unknown[]) => Number(((await su.unsafe(`select count(*)::int as n from ${sql}`, params as never[])) as { n: number }[])[0].n)
 
   return {
-    db, su, tool, door, hub, as, topic, src, dst, register, sideOf, bootOf, fleet, inbound, claim, attempt, fed, request, reread, drain, release, importIt, verificationOf,
+    db, su, tool, door, hub, as, topic, src, dst, register, adopt, sideOf, bootOf, fleet, inbound, claim, attempt, fed, request, reread, drain, release, importIt, verificationOf,
     receiptOf, loadedOf, NOTE, noteOf, notice, reach, openGates, count, nativeOf, next,
   }
 }
