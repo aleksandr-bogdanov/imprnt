@@ -916,6 +916,65 @@ export function cliUsage(language: Language, values: LineValues = {}): string {
   return sentence;
 }
 
+/**
+ * What `imprnt hub registry` says about this machine's copy of the registry. The verdict is translated HERE, in a map of its own, because the
+ * closed list above is pinned and a verdict is a state of one command and not a word any other sentence carries.
+ */
+const REGISTRY_VERDICT: Record<Language, Record<string, string>> = {
+  en: {
+    current: "current: this copy is the one the store machine published",
+    behind: "behind: this is an earlier published version, and the hub here replaces it on its next tick",
+    diverged: "diverged: this copy is not a version the store machine published, and nothing was changed",
+    waiting: "waiting: the store machine has not published bytes this copy can be replaced with",
+    "no-publication": "waiting: the store machine has published nothing yet",
+    authority: "this is the store machine, and its file is the one that is published",
+    single: "one route to the store, so there is no other copy to compare",
+    replaced: "replaced with the published registry",
+    "refused-store-machine": "refused: the store machine's own file is never replaced from a copy",
+    "refused-single-route": "refused: this file has one route to the store and no copy to replace",
+    "refused-digest": "refused: the file is not the one with the digest given, so nothing was changed",
+    "refused-not-diverged": "refused: only a diverged copy is replaced this way, and this one is not",
+    "refused-unverifiable": "refused: the published bytes cannot be checked against what the store machine published",
+    "refused-load": "refused: the published registry does not load on this machine",
+    "refused-owner": "refused: the new file cannot be given the old file's owner",
+    "refused-authority": "refused: the published registry names another store machine",
+    "refused-backup": "refused: the bytes being replaced could not be kept, so nothing was replaced",
+    "refused-busy": "refused: the file changed or is being edited, or the publication moved on, so nothing was replaced",
+    "refused-failed": "refused: the replacement failed and nothing was replaced",
+  },
+  ru: {
+    current: "актуален: эта копия опубликована машиной хранилища",
+    behind: "отстаёт: это более ранняя опубликованная версия, хаб на этой машине заменит её на следующем такте",
+    diverged: "расходится: эта копия не является версией, опубликованной машиной хранилища, ничего не изменено",
+    waiting: "ожидание: машина хранилища не опубликовала байты, которыми можно заменить эту копию",
+    "no-publication": "ожидание: машина хранилища пока ничего не опубликовала",
+    authority: "это машина хранилища, её файл и есть опубликованный",
+    single: "один маршрут к хранилищу, сравнивать не с чем",
+    replaced: "заменён опубликованным реестром",
+    "refused-store-machine": "отклонено: файл самой машины хранилища не заменяют копией",
+    "refused-single-route": "отклонено: в этом файле один маршрут к хранилищу, заменять нечего",
+    "refused-digest": "отклонено: файл не совпадает с указанным хешем, ничего не изменено",
+    "refused-not-diverged": "отклонено: так заменяют только расходящуюся копию, а эта не расходится",
+    "refused-unverifiable": "отклонено: опубликованные байты нельзя сверить с тем, что опубликовала машина хранилища",
+    "refused-load": "отклонено: опубликованный реестр не загружается на этой машине",
+    "refused-owner": "отклонено: новому файлу нельзя передать владельца старого",
+    "refused-authority": "отклонено: опубликованный реестр называет другую машину хранилища",
+    "refused-backup": "отклонено: заменяемые байты сохранить не удалось, ничего не заменено",
+    "refused-busy": "отклонено: файл изменился или редактируется, либо публикация сменилась, ничего не заменено",
+    "refused-failed": "отклонено: замена не удалась, ничего не заменено",
+  },
+};
+
+export function registryCopy(language: Language, values: LineValues = {}): string {
+  const verdict = REGISTRY_VERDICT[language][String(values.verdict)] ?? String(values.verdict);
+  const sentence = interpolate(language, language === "ru"
+    ? "реестр: {machine}: {verdict}. локальный {local}, опубликованный {published}."
+    : "registry: {machine}: {verdict}. local {local}, published {published}.", { ...values, verdict });
+  const kept = safeValue(values.backup);
+  if (kept === "") return sentence;
+  return `${sentence} ${language === "ru" ? `Прежние байты сохранены как ${kept}.` : `The previous bytes are kept as ${kept}.`}`;
+}
+
 export function installPlan(language: Language, values: LineValues): string {
   return interpolate(language, language === "ru"
     ? "установка: пробный запуск для {registry}; изменений нет.\nустановка: стандартная команда {install}; файл pid {pid}, служба {unit}."

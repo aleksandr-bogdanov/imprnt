@@ -327,7 +327,7 @@ export const BACKUP_ARGVS = ["dump_argv", "upload_argv", "readback_argv"] as con
 export const BACKUP_PLACEHOLDERS = ["{staging}", "{destination}", "{path}", "{out}"] as const;
 
 /** A password written into a command line, which every process on the box can read. */
-const PASSWORD_LITERAL = /password\s*=|:\/\/[^/\s]*:[^/\s]*@/i;
+export const PASSWORD_LITERAL = /password\s*=|:\/\/[^/\s]*:[^/\s]*@/i;
 
 /**
  * The kinds a household may not hold down with `enabled = false`.

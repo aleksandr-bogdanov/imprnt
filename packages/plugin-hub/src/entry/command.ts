@@ -1,5 +1,8 @@
-import { loadRegistry } from "../registry/load.ts";
+import { loadRegistry, registryDigest, type Registry } from "../registry/load.ts";
 import { listMachines, listRunEntries } from "../registry/entries.ts";
+import { appendEntry } from "../records/diary.ts";
+import { storeMachineOf } from "../hub/digest.ts";
+import { overrideRegistryCopy, standingOf } from "../hub/distribute.ts";
 import { openStore } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { runCheck } from "../check/run.ts";
@@ -10,16 +13,19 @@ import { runInstall } from "../install/run.ts";
 import { relayoutRegistry } from "../registry/relayout.ts";
 import { requestRecovery } from "../hub/control.ts";
 import { readStampMetrics, renderMetrics } from "../metrics/stamps.ts";
-import { checkClean, cliUsage, operation, safeValue, status } from "../door/lines.ts";
+import { checkClean, cliUsage, operation, registryCopy, safeValue, status } from "../door/lines.ts";
 
 export async function command(args: string[]): Promise<number> {
   const [verb, registryFile, target, extra, ...rest] = args;
   const usage = () => { process.stderr.write(cliUsage("en") + "\n"); return 2; };
-  if (!registryFile || !["check", "status", "metrics", "install", "recover", "relayout"].includes(verb) || rest.length) return usage();
+  if (!registryFile || !["check", "status", "metrics", "install", "recover", "relayout", "registry"].includes(verb) || rest.length) return usage();
   // `check`, `status` and `metrics` take the machine as their target, and
   // `recover` takes it after the piece to recover. A machine says which copy
-  // of the file to read and which route to the store to take.
-  if (!["install", "recover"].includes(verb) && extra || verb === "relayout" && target || verb === "recover" && !/^(agent|door|run):[^:]+$/.test(target ?? "")) return usage();
+  // of the file to read and which route to the store to take. `registry` takes
+  // the machine and, to replace a diverged copy, the full sha256 of the file it
+  // discards.
+  if (!["install", "recover", "registry"].includes(verb) && extra || verb === "relayout" && target || verb === "recover" && !/^(agent|door|run):[^:]+$/.test(target ?? "")) return usage();
+  if (verb === "registry" && (!target || extra !== undefined && !/^[0-9a-f]{64}$/.test(extra))) return usage();
   if (verb === "install" && (target && !["zone", "database", "services", "entry", "--dry"].includes(target) || ["zone", "database", "--dry"].includes(target) && extra || ["services", "entry"].includes(target) && !extra)) return usage();
   try {
     if (verb === "relayout") {
@@ -32,7 +38,7 @@ export async function command(args: string[]): Promise<number> {
     const machines = listMachines(loadRegistry(registryFile));
     const named = verb === "recover" ? extra : verb === "install" ? undefined : target;
     const machine = named ?? (machines.length === 1 ? machines[0].id : undefined);
-    if (["check", "status"].includes(verb) && (!machine || !machines.some(m => m.id === machine))) return usage();
+    if (["check", "status", "registry"].includes(verb) && (!machine || !machines.some(m => m.id === machine))) return usage();
     // A file in which some machine reaches the store by a route of its own
     // has two routes, and a command that opens the store has to be told which
     // one it is on. A file with one route reads as it always did.
@@ -53,6 +59,7 @@ export async function command(args: string[]): Promise<number> {
       for (const row of rows) process.stdout.write(status("en", { ...row, pid: row.pid ?? "unknown" }) + "\n");
       return rows.some(row => row.wanted !== row.seen) ? 1 : 0;
     }
+    if (verb === "registry") return await registryCopyCommand(registryFile, machine!, registry, extra);
     const store = await openStore({ url: storeUrlFor(registry, "hub_hub") });
     try {
       if (verb === "metrics") process.stdout.write(renderMetrics(await readStampMetrics(store)) + "\n");
@@ -71,4 +78,37 @@ export async function command(args: string[]): Promise<number> {
     } finally { await store.close(); }
   } catch (error) { process.stderr.write(safeValue((error as Error).message) + "\n"); return 1; }
 }
+/**
+ * `registry <registry> <machine> [<sha256>]`: where this machine's copy of the registry stands against what the store machine published, and,
+ * given the full digest of the file as it is now, the replacement of a diverged copy. Exit 0 for a current copy (and for a replacement made),
+ * 1 for anything else. Nothing is printed that is not a digest, a name or a fixed sentence.
+ */
+async function registryCopyCommand(registryFile: string, machine: string, registry: Registry, digest: string | undefined): Promise<number> {
+  const local = registryDigest(registryFile);
+  const reference = storeMachineOf(registry);
+  const print = (values: Record<string, unknown>) => process.stdout.write(registryCopy("en", { machine, local: short(local), published: "none", ...values }) + "\n");
+  if (reference === null) { print({ verdict: digest === undefined ? "single" : "refused-single-route" }); return digest === undefined ? 0 : 1; }
+  if (reference === machine) { print({ verdict: digest === undefined ? "authority" : "refused-store-machine" }); return digest === undefined ? 0 : 1; }
+  const store = await openStore({ url: storeUrlFor(registry, "hub_hub") });
+  try {
+    if (digest === undefined) {
+      const standing = await standingOf(store, { registryFile, reference });
+      print({ verdict: standing.verdict, local: short(standing.local), ...("published" in standing ? { published: short(standing.published) } : {}) });
+      return standing.verdict === "current" ? 0 : 1;
+    }
+    const said = await overrideRegistryCopy({
+      store, registryFile, machine, registry, digest,
+      say: async (kind, subject, detail) => { await appendEntry(store, { stream: "machine", subject, kind, actor: "hub", detail }); },
+    });
+    if (said.result === "replaced") {
+      print({ verdict: "replaced", local: short(said.from), published: short(said.to), backup: said.backup });
+      return 0;
+    }
+    print({ verdict: `refused-${said.cause}`, ...(said.local ? { local: short(said.local) } : {}), ...(said.published ? { published: short(said.published) } : {}) });
+    return 1;
+  } finally { await store.close(); }
+}
+
+const short = (digest: string): string => digest.slice(0, 16);
+
 if (import.meta.main) process.exit(await command(process.argv.slice(2)));

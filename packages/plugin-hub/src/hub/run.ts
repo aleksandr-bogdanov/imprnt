@@ -9,7 +9,7 @@ import { listAgents, listMachines, listRunEntries, runEntriesFor, senderAllowed 
 // write different things: one a ledger line, one a block of the registry file.
 import { appendEntry as appendRegistryEntry, removeEntry, setKey } from "../registry/edit.ts";
 import { readSheet, removeRow } from "../records/statesheet.ts";
-import { isAgentId, loadRegistry, readSetting, type RunEntry } from "../registry/load.ts";
+import { isAgentId, loadRegistry, readSetting, type Registry, type RunEntry } from "../registry/load.ts";
 import { openStore, type Store } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { POSTGRES_PEAK_ID, readStorePid, recordPeak, residentIds } from "./peak.ts";
@@ -18,6 +18,7 @@ import { mayReach, RUN_RECOVERY_KINDS, watchControls } from "./control.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { programForKind, transcriberArgv } from "./program.ts";
 import { recordRegistryDigest } from "./digest.ts";
+import { deliverRegistry } from "./distribute.ts";
 import { registerMoves } from "./moves.ts";
 import { bindTopics } from "./topics.ts";
 import { identityReserved, readTopicByAgent, readTopicByChat, rebindLegacyTopic, type TopicRow } from "../store/topics.ts";
@@ -171,7 +172,7 @@ export async function runHub(options: {
   });
 
   const act = async (): Promise<void> => {
-    let registry: unknown;
+    let registry: Registry;
     try {
       registry = load();
     } catch {
@@ -179,6 +180,19 @@ export async function runHub(options: {
       // next tick reads the finished one, and nothing is installed from half a
       // file.
       return;
+    }
+    // The store machine's registry, delivered: its hub publishes the file's exact bytes, and a spoke's hub replaces its copy with them when
+    // the copy is a version the store machine published. It comes BEFORE everything below, so what this tick renders, digests and serves is
+    // the file as it now is, and an install is followed by a reload. Nothing a failure says carries the file's content.
+    let delivered: string = "none";
+    try { delivered = await deliverRegistry({ store, registryFile: options.registryFile, machine: options.machine, registry, load, say }); }
+    catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      await recordOperationFailure(store, { operation: "registry-copy", target: options.machine,
+        error: { code: typeof code === "string" && /^[A-Za-z0-9_]{1,40}$/.test(code) ? code : "operation-failed", message: "the registry delivery step failed" } });
+    }
+    if (delivered === "installed") {
+      try { registry = load(); } catch { return; }
     }
     const entries = runEntriesFor(registry, options.machine);
     // What this machine's copy of the registry is, for the spoke runners that
