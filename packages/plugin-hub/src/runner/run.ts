@@ -49,6 +49,7 @@ import {
   type WindowThresholds,
 } from "../registry/presets.ts";
 import { openStore, type Store } from "../store/connect.ts";
+import { readMove } from "../store/moves.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 import { appendNotice } from "../store/outbox.ts";
 import { openWorkWaiter, type EligibleRow, type Waiter } from "../store/wake.ts";
@@ -59,6 +60,8 @@ import {
   ConversationRefused,
   ExecutionBusy,
   ExecutionNotOwned,
+  MoveGated,
+  MoveNoteRefused,
   activateProtocol,
   conversationFor,
   hasEntry,
@@ -102,6 +105,20 @@ import { councilOfJob, fenceAbandonedClaims, noteJobFailed, sweepAbandonedClaims
 import { admitJob, refuseJob } from "./job.ts";
 import { clearProgress, writeProgress, type TurnProgress } from "./progress.ts";
 import { watchStops } from "./stops.ts";
+import {
+  SpawnFenced,
+  createFences,
+  createLedger,
+  drainSource,
+  handBackFeed,
+  placementOf,
+  settleSet,
+  watchMoves,
+  type ChildRecord,
+  type DrainStep,
+  type DrainWorld,
+  type MoveWatch,
+} from "./move.ts";
 import {
   clearOutage,
   classifyRefusal,
@@ -192,6 +209,19 @@ interface Live {
   } | null;
   /** The hub's tool facade bound to this child's launch, closed with it. */
   facade: FacadeBinding | null;
+  /** The ledger's record of the child `session` is, which stays in the ledger after the session is let go of until the child is shown gone (`./move.ts`). */
+  child: ChildRecord | null;
+  /**
+   * What the move watch has for this loop to do: taken at the top of the loop's own iteration, so it is sequential with the loop's
+   * spawn, claim, feed and idle close and cannot race them. Nothing is queued once the loop is `ending`.
+   */
+  jobs: { run(): Promise<unknown>; resolve(value: unknown): void; reject(error: unknown): void }[];
+  ending: boolean;
+  /** Set by `nudge` and read by the loop's wait before it begins, so a nudge that came between two waits is not lost. */
+  nudging: boolean;
+  /** Resolves when something this loop waits on changed (a job was queued, a fence was lifted); replaced by each `nudge`. */
+  nudged: Promise<void>;
+  nudge(): void;
   leaving: boolean;
   /** Resolves when this agent alone is asked to leave. */
   left: Promise<"stopped">;
@@ -495,6 +525,15 @@ export async function runRunner(options: {
   // machine that started again is the one thing that proves an earlier boot's
   // whole tree gone.
   const here: Here = { machine, boot: bootId() };
+  /**
+   * THE SOURCE'S SIDE OF A TOPIC MOVE (`./move.ts`). The fences are per agent and synchronous: a spawn, a claim and an idle close
+   * of a fenced agent read them in the step that decides. The ledger holds, per agent, every child THIS incarnation may still have
+   * (made before the adapter is asked, kept after it is closed until it is shown gone), which is what a `no-child` assertion and a
+   * drain intent are made from. `moves` is the watch over the store's notifications, opened before anything is served.
+   */
+  const moveFences = createFences();
+  const children = createLedger();
+  let moves: MoveWatch | undefined;
   // The protocol is activated BEFORE this incarnation is registered as current: a
   // store that still holds inputs a runner of protocol 1 may have fed refuses it by
   // name, and a runner that could not start must not have fenced the one that can.
@@ -581,6 +620,48 @@ export async function runRunner(options: {
       return await appendEntry({ ...store, sql: connection as unknown as Store["sql"] }, entry);
     } finally { connection.release(); }
   };
+  /** One diary line about a move, once per thing said: a look that finds the same again says nothing. */
+  const movesSaid = new Set<string>();
+  const sayMove = async (kind: string, detail: Record<string, unknown>): Promise<void> => {
+    const key = `${kind}|${JSON.stringify(detail)}`;
+    if (movesSaid.has(key)) return;
+    movesSaid.add(key);
+    await appendRunnerEntry({ stream: "runner", subject: options.runner, kind, actor: "runner", detail });
+  };
+  /**
+   * THE ONE PLACE A CHILD IS CLOSED, so what becomes of it is never lost with the handle. The ledger's record is marked closing
+   * before the close begins, and closed after it with what the adapter could prove: a close that resolved is not proof, a
+   * session pointer that was cleared is not proof, and a child that was not shown gone stays owed. `strict` rethrows what the
+   * close threw, for the one caller that never swallowed it.
+   */
+  const closeChild = async (record: ChildRecord, how: { strict?: boolean } = {}): Promise<ExitEvidence | null> => {
+    if (record.phase === "closed") return record.exit;
+    const session = record.session;
+    if (!session) return record.exit;
+    children.closing(record);
+    readings.delete(session);
+    let failure: unknown = null;
+    await session.close().catch((error: unknown) => { failure = error ?? new Error("close failed"); });
+    let evidence: ExitEvidence | null = null;
+    try { evidence = session.exitEvidence ? await session.exitEvidence() : null; } catch { evidence = null; }
+    children.closed(record, evidence, failure !== null && evidence === null ? "the close failed and the session gave no exit evidence" : null);
+    if (failure !== null && how.strict) throw failure;
+    return evidence;
+  };
+  /** What the move watch queued for this loop, run by the loop itself at a point where it is holding nothing. */
+  const runMoveJobs = async (own: Live): Promise<void> => {
+    own.nudging = false;
+    while (own.jobs.length > 0) {
+      const job = own.jobs.shift()!;
+      try { job.resolve(await job.run()); } catch (error) { job.reject(error); }
+    }
+  };
+  /** Run `run` inside this agent's loop: queued, the loop woken, and refused at once when the loop is ending. */
+  const inLoop = <T>(it: Live, run: () => Promise<T>): Promise<T> => new Promise<T>((resolve, reject) => {
+    if (it.ending) { reject(Object.assign(new Error("loop-ended"), { loopEnded: true })); return; }
+    it.jobs.push({ run, resolve: resolve as (value: unknown) => void, reject });
+    it.nudge();
+  });
   const admitChild = async (registry: Registry, own: Live, reserve = true): Promise<boolean> => {
     let recorded = false;
     while (!stopping && !own.leaving) {
@@ -630,8 +711,10 @@ export async function runRunner(options: {
       // held by residents still asks again within a tick.
       let wake!: () => void;
       const available = new Promise<void>(resolve => { wake = resolve; capacity.add(wake); });
-      try { await Promise.race([available, stopped, own.left, Bun.sleep(setting(registry, "hub.tick_seconds") * 1000)]); }
+      try { await Promise.race([available, stopped, own.left, own.nudged, Bun.sleep(setting(registry, "hub.tick_seconds") * 1000)]); }
       finally { capacity.delete(wake); }
+      // The loop is holding nothing while it waits for room, so what the move watch has for it is done here, not behind the wait.
+      await runMoveJobs(own);
     }
     if (recorded) await own.noteWait(null);
     return false;
@@ -694,12 +777,17 @@ export async function runRunner(options: {
      */
     let contextOwed = false;
     let effects = { actions: 0, lastAction: "" };
+    /** A move refused an attempt's first feed and the hand-back could not be written yet: done again before anything else the loop does. */
+    let pendingBack: { error: MoveGated | MoveNoteRefused | SpawnFenced; row: EligibleRow } | null = null;
     /** The process tree of the open attempt, recorded so that a crash can be judged against it. */
     const noteTree = async (): Promise<void> => {
       const attempt = own.attempt;
       const tree = own.session?.processes?.() ?? null;
+      const group = own.session?.group?.() ?? null;
+      // What the child is, for the ledger as well as for the attempt: a child closed later without proof is still owed, with this.
+      if (own.child && tree) children.record(own.child, { leader: own.session?.pid ?? null, group, pids: tree, partial: own.session?.partial?.() ?? false });
       if (attempt && tree) {
-        await notePids(store, attempt.id, { leader: own.session?.pid ?? null, pids: tree, group: own.session?.group?.() ?? null,
+        await notePids(store, attempt.id, { leader: own.session?.pid ?? null, pids: tree, group,
           machine: here.machine, bootId: here.boot, partial: own.session?.partial?.() ?? false });
       }
     };
@@ -727,7 +815,11 @@ export async function runRunner(options: {
       if (!attempt) return null;
       let evidence: ExitEvidence | null = null;
       const session = own.session;
-      if (session) {
+      if (session && own.child && own.child.session === session) {
+        await settleFor(own);
+        evidence = await closeChild(own.child);
+        await settleFor(own);
+      } else if (session) {
         readings.delete(session);
         await session.close().catch(() => {});
         evidence = session.exitEvidence ? await session.exitEvidence().catch(() => null) : null;
@@ -752,6 +844,7 @@ export async function runRunner(options: {
     /** The session is finished with: closed by whoever ended the attempt, and forgotten so the next claim starts a new child. */
     const forgetSession = async (): Promise<void> => {
       own.session = null;
+      own.child = null;
       own.conversation = null;
       await own.facade?.close().catch(() => {});
       own.facade = null;
@@ -775,8 +868,8 @@ export async function runRunner(options: {
       if (!retiring) return;
       await retiring.done.catch(() => {});
       if (own.session === retiring.session) {
-        readings.delete(retiring.session);
-        await retiring.session.close().catch(() => {});
+        if (own.child && own.child.session === retiring.session) { await settleFor(own); await closeChild(own.child); await settleFor(own); }
+        else { readings.delete(retiring.session); await retiring.session.close().catch(() => {}); }
         await forgetSession();
       }
       if (own.retiring === retiring) own.retiring = null;
@@ -946,6 +1039,75 @@ export async function runRunner(options: {
       if (!open) return;
       open.sealed = true;
       covered(open);
+    };
+
+    /**
+     * AN ATTEMPT THE MOVE REFUSED BEFORE ITS FIRST FEED GOES BACK (`handBackFeed`, `./move.ts`), ended by the machinery that decides
+     * from what the store holds under its own locks, never from what this loop believes: the claim is released with it, there is no
+     * retry time, no health row and no notice, and the child is left open for the drain, which closes it after its intent. What this
+     * loop keeps of the turn and of the claim is cleared only once that is durable and the writes still queued have landed; a
+     * callback the adapter delivers late finds no turn and writes nothing. If the store cannot be written nothing is cleared (the
+     * loop does it again before anything else), and nothing is closed or retried in its place.
+     */
+    const handBack = async (error: MoveGated | MoveNoteRefused | SpawnFenced, row: EligibleRow): Promise<void> => {
+      sealTurn();
+      await writes;
+      const attempt = own.attempt;
+      // The request is known here before its notification is: the fence goes up now, and the watch reads it as soon as it can.
+      if (error instanceof MoveGated && !moveFences.has(agent.id)) moveFences.set({ agent: agent.id, move: error.move, kind: "move", stage: "waiting", after: null });
+      let ended: { state: string; revision: number | null; observed: boolean } | null = null;
+      if (attempt) {
+        let known: Registry | null = null;
+        try { known = load(); } catch { known = null; }
+        ended = await handBackFeed(store, { error, execution: attempt.id, agent: agent.id, registry: known });
+        if (ended.state === "unknown" || ended.state === "stop_unknown") unresolvedWatch.raise();
+        if (ended.revision !== null) contextWatch.raise();
+        if (ended.state === "journaled") {
+          owesJournal();
+          await settleStored(store, { runner: options.runner, only: attempt.id });
+        }
+      } else {
+        await store.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${row.id} and claimed_by = ${options.runner}`;
+      }
+      if (error instanceof MoveNoteRefused) {
+        // The relocation note this feed was to carry is not the one the store owes: the feed rolled back, the row waits out the usual retry
+        // (a refusal that repeats is a diagnosis, not a loop), and nobody is told the agent is retrying.
+        if (ended === null || ended.state === "failed") {
+          let registry: Registry | null = null;
+          try { registry = load(); } catch { registry = null; }
+          const retryAt = new Date(Date.now() + Number(registry ? readSetting(registry, "runner.task_retry_seconds") ?? 30 : 30) * 1000).toISOString();
+          await store.sql`update inbound set retry_at = ${retryAt}::timestamptz
+            where id = ${row.id} and claimed_by is null and state not in ('answered', 'delivered')`;
+          await putRow(store, "agent_health", agent.id, { status: "retry", cause: `move-note-refused: ${error.answer}`, retry_at: retryAt });
+        }
+        await sayMove("move.note-refused", { agent: agent.id, move: error.move, answer: error.answer, execution: attempt?.id ?? null, state: ended?.state ?? null });
+      } else {
+        await sayMove("move.gated", { agent: agent.id, move: error.move, execution: attempt?.id ?? null,
+          state: ended?.state ?? null, observed: ended?.observed ?? null, revision: ended?.revision ?? null });
+      }
+      // DURABLE. The local record of the turn and of the claim goes only now.
+      turn = null;
+      own.attempt = null;
+      handed = false;
+      pendingContext = [];
+      claimed = null;
+      claimedReturn = null;
+      claimedSeat = null;
+      claimedHuman = false;
+      unreserve();
+      moves?.refresh();
+    };
+    /** The store placed the conversation on another machine, which is not a failure of this agent. */
+    const elsewhere = (error: unknown): boolean => error instanceof ConversationRefused && error.refusal === "conversation elsewhere";
+    /** Fenced from serving it (said once), until the store places it here again at a later generation (`./move.ts`). */
+    const placedElsewhere = async (): Promise<void> => {
+      const placed = await placementOf(store, agent.id);
+      // A move's own fence, and the placement fence a move that went through left, are never replaced by what a refusal says.
+      const held = moveFences.get(agent.id);
+      if (!held || (held.kind === "placed" && held.move === null)) {
+        moveFences.set({ agent: agent.id, move: null, kind: "placed", stage: "placed", after: placed?.generation ?? 0 });
+      }
+      await sayMove("conversation.elsewhere", { agent: agent.id, machine: placed?.machine ?? null, runner: placed?.runner ?? null, generation: placed?.generation ?? null });
     };
 
     /**
@@ -1269,10 +1431,37 @@ export async function runRunner(options: {
       return { id: conversation.native_session, resume: conversation.native_state !== "new" };
     };
 
+    /**
+     * THE FENCE IS READ IN THE FIRST SYNCHRONOUS STEP, and the child this spawn may make is owed an account of in the same one: a
+     * request that commits while the spawn is in preflight, in admission, in the adapter's start or in the engine's own
+     * initialisation finds the record (the drain waits for it), and one that committed before it throws here, before anything is
+     * reserved, launched or written. There is no await between the check and the record. A spawn that fails before the adapter was
+     * asked made no child; one that fails after it was asked may have, and nothing here can say, so it stays owed.
+     */
     const spawn = async (preset: Preset, registry: Registry, conversation: Conversation, plan: { id: string; resume: boolean } | null): Promise<void> => {
+      const fence = moveFences.get(agent.id);
+      if (fence) throw new SpawnFenced(agent.id, fence.move);
+      const record = children.starting(agent.id, { conversation: conversation.id, nativeSession: plan?.id ?? null, placement: conversation.placement_generation });
+      const seen = { invoked: false };
+      try {
+        await startChild(preset, registry, conversation, plan, record, seen);
+      } catch (error) {
+        if (record.phase === "starting") { if (seen.invoked) children.lost(record); else children.abandon(record); }
+        throw error;
+      }
+    };
+
+    const startChild = async (preset: Preset, registry: Registry, conversation: Conversation, plan: { id: string; resume: boolean } | null,
+      record: ChildRecord, seen: { invoked: boolean }): Promise<void> => {
       preflight(registry, agent);
       const adapter = adapterFor(options.adapters, preset.adapter);
-      if (own.session) { readings.delete(own.session); await own.session.close().catch(() => {}); own.session = null; own.conversation = null; }
+      if (own.session) {
+        if (own.child && own.child.session === own.session) await closeChild(own.child);
+        else { readings.delete(own.session); await own.session.close().catch(() => {}); }
+        own.session = null;
+        own.child = null;
+        own.conversation = null;
+      }
       await own.facade?.close().catch(() => {});
       own.facade = null;
       // The hunt's triage master launches with no tools, whatever its preset
@@ -1295,6 +1484,7 @@ export async function runRunner(options: {
         // between here and the engine's first acknowledgement, the next start
         // knows the id was tried and does not launch it as new.
         if (plan && !plan.resume) await markLaunched(store, conversation.id);
+        seen.invoked = true;
         session = await adapter.start({
           preset,
           sessionId: null,
@@ -1307,6 +1497,8 @@ export async function runRunner(options: {
         throw error;
       }
       own.session = session;
+      children.started(record, session);
+      own.child = record;
       own.conversation = conversation.id;
       own.nativeSession = plan?.id ?? null;
       own.boxed = "wrap" in launch;
@@ -1521,24 +1713,44 @@ export async function runRunner(options: {
       // an interrupted assignment: another process for that conversation is
       // exactly what an unresolved attempt forbids, and what would be started
       // is not what is asked for anyway. The first row it can claim starts it.
+      //
+      // NOR ONE FOR AN AGENT A MOVE GATES OR THE STORE PLACES ELSEWHERE. The move's gate is read here with the rest (the watch had placed its
+      // fence before anything was served, and the fence is read again at the spawn itself), and a conversation the store places on another
+      // machine is refused by `conversationFor` and ends the start without a child, a retry or a finding.
       const [standing] = (await store.sql`select hub_agent_blocked(${agent.id}) as blocked,
         exists (select 1 from replay_hold h join conversation c on c.id = h.conversation_id
-                 where c.agent = ${agent.id} and h.state <> 'released') as held`) as unknown as { blocked: boolean; held: boolean }[];
+                 where c.agent = ${agent.id} and h.state <> 'released') as held,
+        exists (select 1 from claim_gate g where g.state = 'open' and g.scope_kind = 'agent' and g.scope_id = ${agent.id} and g.cause = 'move') as moving`) as unknown as
+        { blocked: boolean; held: boolean; moving: boolean }[];
       if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping && agent.chat !== undefined
-          && !standing.blocked && !standing.held) {
+          && !standing.blocked && !standing.held && !standing.moving && !moveFences.has(agent.id)) {
         if (!await admitChild(initial, own)) return;
         // A copy that fell behind during the admission wait spawns nothing:
         // the reservation goes back and the supervisor serves this agent
         // again once the copy is current.
         await measureRegistry();
         if (stale) { releaseCapacity(); return; }
-        own.reserved = true;
-        await own.noteWait({ kind: "starting" });
-        const eagerPreset = getPreset(initial, agent.preset);
-        const eager = adapterFor(options.adapters, eagerPreset.adapter);
-        const master = await conversationFor(store, { row: { id: agent.id, person: agent.person, agent: agent.id, kind: "human" }, adapter: eagerPreset.adapter, machine });
-        await spawn(eagerPreset, initial, master, await planSession(master, eager, initial, null));
-        await own.noteWait(null);
+        if (moveFences.has(agent.id)) {
+          // A request committed while this waited for room: no child, and the reservation goes back.
+          releaseCapacity();
+        } else {
+          own.reserved = true;
+          await own.noteWait({ kind: "starting" });
+          const eagerPreset = getPreset(initial, agent.preset);
+          const eager = adapterFor(options.adapters, eagerPreset.adapter);
+          const master = await conversationFor(store, { row: { id: agent.id, person: agent.person, agent: agent.id, kind: "human" }, adapter: eagerPreset.adapter, machine })
+            .catch(async (error: unknown): Promise<Conversation | null> => {
+              if (!elsewhere(error)) throw error;
+              await placedElsewhere();
+              return null;
+            });
+          if (master !== null) {
+            try { await spawn(eagerPreset, initial, master, await planSession(master, eager, initial, null)); }
+            catch (error) { if (!(error instanceof SpawnFenced)) throw error; }
+          }
+          unreserve();
+          await own.noteWait(null);
+        }
       }
       // An agent is served the moment its session is up (or at once, when it starts
       // none), and this is where it settles: no model turn stands between the two.
@@ -1564,32 +1776,61 @@ export async function runRunner(options: {
         // A session an accepted stop signalled, whose attempt has since settled with its own result, is
         // finished with: what is queued next is started on a session of its own, never fed to that one.
         if (own.attempt === null && retired()) await dropRetired();
+        // WHAT THE MOVE WATCH HAS FOR THIS LOOP is done here, where the loop holds no attempt, no claim and no child in flight: the
+        // drain closes this loop's child itself, in sequence with everything else the loop does to it.
+        await runMoveJobs(own);
         const registry = load();
+        // An attempt a move refused whose hand-back could not be written is handed back again before anything else: nothing is
+        // claimed, started or closed around it, and a failure waits for the tick.
+        if (pendingBack !== null) {
+          try { await handBack(pendingBack.error, pendingBack.row); pendingBack = null; }
+          catch (error) {
+            process.stderr.write(`move-handback-failed: ${agent.id}: ${safeValue(String((error as Error)?.message ?? error)).slice(0, 300)}\n`);
+            await Promise.race([Bun.sleep(setting(registry, "hub.tick_seconds") * 1000), stopped, own.left, own.nudged]);
+            continue;
+          }
+        }
         agent = listAgents(registry).find(one => one.id === agent.id) ?? agent;
         const lifetime = lifetimeFor(registry, agent.id);
-        if (own.session && (lifetime.sleeping || lifetime.mode === "on-demand" && Date.now() - lastWork >= lifetime.idle_seconds * 1000)) {
-          readings.delete(own.session);
-          await own.session.close();
+        // A FENCED AGENT'S CHILD IS NOT CLOSED BY THE IDLE TIMER: the drain closes it, and only after its intent is durable.
+        if (own.session && !moveFences.has(agent.id)
+            && (lifetime.sleeping || lifetime.mode === "on-demand" && Date.now() - lastWork >= lifetime.idle_seconds * 1000)) {
+          if (own.child && own.child.session === own.session) await closeChild(own.child, { strict: true });
+          else { readings.delete(own.session); await own.session.close(); }
           own.session = null;
+          own.child = null;
           own.conversation = null;
           await own.facade?.close().catch(() => {});
           own.facade = null;
           if (own.reserved) { own.reserved = false; releaseCapacity(); }
         }
         if (lifetime.sleeping || stale) {
-          await Promise.race([Bun.sleep(setting(registry, "hub.tick_seconds") * 1000), stopped, own.left]);
+          await Promise.race([Bun.sleep(setting(registry, "hub.tick_seconds") * 1000), stopped, own.left, own.nudged]);
           continue;
         }
-        const sleep = async (): Promise<void> => {
+        /** Whether the work waiter itself woke it ("notified": a commit for this agent, or a listener that was lost and is open again). */
+        const sleep = async (): Promise<boolean> => {
+          // A job queued or a fence lifted since the loop last looked is seen here, before the wait begins: a nudge is never lost.
+          if (own.nudging || own.jobs.length > 0) { own.nudging = false; return false; }
+          let heard = false;
           await Promise.race([
             waiter!
               .wait(setting(registry, "hub.tick_seconds") * 1000)
-              .catch(() => "timeout" as const),
+              .then(why => { heard = why === "notified"; }, () => {}),
             stopped,
             own.left,
+            own.nudged,
             ...(own.session && !own.killed ? [failedSession(own.session)] : []),
           ]);
+          own.nudging = false;
+          return heard;
         };
+        // A FENCED AGENT CLAIMS NOTHING AND STARTS NOTHING (`./move.ts`): its queued input stays exactly where it is (the store's
+        // gate holds it too), the turn that was already fed has finished by the time the loop is here, and the wait is the loop's
+        // own (a notification, a nudge, the tick), woken when the fence is lifted.
+        // A WITHDRAWAL WHOSE NOTIFICATION THIS RUNNER NEVER HEARD lifts nothing by itself: what the work waiter says (a commit for this
+        // agent, a listener opened again) sends the watch to read the moves, which lifts the fence of a move that was withdrawn.
+        if (moveFences.has(agent.id)) { if (await sleep()) moves?.refresh(); continue; }
 
         // THE WINDOW IS READ HERE AND NOWHERE ELSE: beside the claim,
         // on a wake the runner was already having, and never on a timer of its
@@ -1668,26 +1909,38 @@ export async function runRunner(options: {
         lastResumeOk = resumeOk;
         const connection = await store.sql.reserve();
         let next;
+        let moving = false;
         try {
           // Every path that can pick a row asks the same three questions: is it
           // an interrupted input, does its agent have an attempt whose
           // ownership is unresolved, and does its conversation need a resume
           // this engine has not shown it can do. A lease that ran out answers
           // none of them.
-          [next] = await connection`select id, kind, hub_row_needs_resume(id, agent, kind, source) as needs_resume, exists (
-            select 1 from inbound h where h.agent in (select jsonb_array_elements_text(${JSON.stringify(residentHarvest)}::text::jsonb)) and h.kind = 'harvest'
-              and h.log_ready and h.state not in ('answered', 'delivered') and h.claimed_by is null
-              and (h.retry_at is null or h.retry_at <= now())
-          ) as harvest_waiting from inbound where agent = ${agent.id}
-            and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
-            and (claimed_by is null or claimed_by = ${options.runner}
-                 or (claim_deadline is not null and claim_deadline <= now()))
-            and (retry_at is null or retry_at <= now())
-            and not hub_row_held(id)
-            and not (case when kind = 'harvest' then hub_harvest_blocked(agent, ${options.runner}::text) else hub_agent_blocked(agent) end)
-            and (${resumeOk}::boolean or not hub_row_needs_resume(id, agent, kind, source))
-            order by rank, received_at, id limit 1`;
+          //
+          // THE SAME STATEMENT SAYS WHETHER A MOVE'S GATE IS OPEN on this agent (`moving`, one row whatever the selection finds): a
+          // request whose notification this runner never heard also closes the selection below (the gate is part of `hub_row_held`),
+          // so without it nothing here would ever see the move. It costs no round trip of its own.
+          const [picked] = await connection`select n.id, n.kind, n.needs_resume, n.harvest_waiting, g.moving
+            from (select exists (select 1 from claim_gate gate where gate.state = 'open' and gate.scope_kind = 'agent'
+                                   and gate.scope_id = ${agent.id} and gate.cause = 'move') as moving) g
+            left join lateral (select id, kind, hub_row_needs_resume(id, agent, kind, source) as needs_resume, exists (
+              select 1 from inbound h where h.agent in (select jsonb_array_elements_text(${JSON.stringify(residentHarvest)}::text::jsonb)) and h.kind = 'harvest'
+                and h.log_ready and h.state not in ('answered', 'delivered') and h.claimed_by is null
+                and (h.retry_at is null or h.retry_at <= now())
+            ) as harvest_waiting from inbound where agent = ${agent.id}
+              and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
+              and (claimed_by is null or claimed_by = ${options.runner}
+                   or (claim_deadline is not null and claim_deadline <= now()))
+              and (retry_at is null or retry_at <= now())
+              and not hub_row_held(id)
+              and not (case when kind = 'harvest' then hub_harvest_blocked(agent, ${options.runner}::text) else hub_agent_blocked(agent) end)
+              and (${resumeOk}::boolean or not hub_row_needs_resume(id, agent, kind, source))
+              order by rank, received_at, id limit 1) n on true`;
+          moving = picked.moving === true;
+          next = picked.id === null ? undefined : picked;
         } finally { connection.release(); }
+        // An open gate of a move and no fence here: the request was not heard. The watch reads now (event-driven: only when the select said so).
+        if (moving && !moveFences.has(agent.id)) moves?.refresh();
         // Capacity belongs to this selected row. A later arrival must go
         // through selection and reservation before it can start a child.
         if (!next) { harvestYield = null; await sleep(); continue; }
@@ -1724,6 +1977,8 @@ export async function runRunner(options: {
           if (!await admitChild(registry, own)) break;
           own.reserved = true;
         }
+        // A request that committed while this loop waited for room: nothing is claimed, and the reservation (with no child behind it) goes back.
+        if (moveFences.has(agent.id)) { unreserve(); continue; }
         const extra = next?.kind === "harvest" && own.session !== null;
         if (extra && !await admitChild(registry, own)) break;
         // MEASURED AGAIN HERE, after the admission wait and right before the
@@ -1750,6 +2005,14 @@ export async function runRunner(options: {
           if (extra) releaseCapacity();
           if (!own.session && own.reserved) { own.reserved = false; releaseCapacity(); }
           await sleep();
+          continue;
+        }
+        // A fence placed since the selection (a request that committed, a placement that moved): the claim goes straight back and
+        // nothing is opened, started or fed for it.
+        if (moveFences.has(agent.id)) {
+          await store.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${row.id} and claimed_by = ${options.runner}`;
+          if (extra) releaseCapacity();
+          unreserve();
           continue;
         }
         // THE BRANCH GOES ABOVE THE RESPAWN LINE, and the placement is
@@ -1835,6 +2098,20 @@ export async function runRunner(options: {
         try {
           conversation = await conversationFor(store, { row, adapter: preset.adapter, machine });
         } catch (error) {
+          // THE STORE PLACES THE CONVERSATION ON ANOTHER MACHINE (a move that went through, while a registry that has not caught up still
+          // lists the agent here): not an error to retry and not a failure to tell anyone of. The claim goes back untouched (no retry time,
+          // no health row, no notice), the diary says it once, and the agent is fenced from serving until the store places it here again.
+          // Any other refusal, and one for a row of any other kind, is what it always was.
+          if (elsewhere(error) && row.kind !== "job") {
+            await store.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${row.id} and claimed_by = ${options.runner}`;
+            claimed = null;
+            claimedReturn = null;
+            claimedSeat = null;
+            unreserve();
+            await placedElsewhere();
+            await sleep();
+            continue;
+          }
           if (!(error instanceof ConversationRefused) || row.kind !== "job") throw error;
           await refuseJob(store, { row, refusal: { cause: error.refusal }, registry, runner: options.runner });
           claimed = null;
@@ -1944,24 +2221,41 @@ export async function runRunner(options: {
           claimedReturn = null;
           claimedSeat = null;
           unreserve();
+          // A gate placed after the claim may be a move's, whose notification this loop has not heard yet: the watch reads now.
+          if (error instanceof ExecutionNotOwned && error.reason === "gate") moves?.refresh();
           await sleep();
           continue;
         }
         handed = false;
         effects = { actions: 0, lastAction: "" };
-        if (mustSpawn) {
-          await own.noteWait({ kind: "starting" });
-          await spawn(preset, registry, conversation, plan);
+        try {
+          if (mustSpawn) {
+            await own.noteWait({ kind: "starting" });
+            await spawn(preset, registry, conversation, plan);
+            await own.noteWait(null);
+          }
+          // A session an accepted stop signalled while this attempt was being opened and started is not fed
+          // the input that belongs to it; `oneTurn` asks again right before the first byte.
+          if (retired()) throw Object.assign(new Error("session-retired"), { retired: true });
+          // THE HISTORY A FRESH MASTER CHILD IS OWED RIDES WITH THIS INPUT, and is read now so that this input
+          // (claimed, so still waiting) is left out of it. It is background for the engine and only that: `text`
+          // stays the input the conversation records and the attempt's digest names.
+          const background = contextOwed ? await readBackground(registry) : "";
+          await oneTurn({ id: row.id, text }, { preset, registry, source: row.source, kind: row.kind, background });
+        } catch (error) {
+          // A MOVE WAS REQUESTED BEFORE THIS ATTEMPT'S FIRST FEED (`MoveGated`, or a fence placed after the attempt was opened:
+          // `SpawnFenced`): it is handed back, not failed. It must not reach the catch below, which would close the child before any
+          // intent, set a retry time and a health row, tell the person the agent is retrying, and end the attempt as undelivered over
+          // whatever the store holds. The child stays open for the drain.
+          if (!(error instanceof MoveGated) && !(error instanceof SpawnFenced) && !(error instanceof MoveNoteRefused)) throw error;
           await own.noteWait(null);
+          try { await handBack(error, row); }
+          catch (failure) {
+            pendingBack = { error, row };
+            process.stderr.write(`move-handback-failed: ${agent.id}: ${safeValue(String((failure as Error)?.message ?? failure)).slice(0, 300)}\n`);
+          }
+          continue;
         }
-        // A session an accepted stop signalled while this attempt was being opened and started is not fed
-        // the input that belongs to it; `oneTurn` asks again right before the first byte.
-        if (retired()) throw Object.assign(new Error("session-retired"), { retired: true });
-        // THE HISTORY A FRESH MASTER CHILD IS OWED RIDES WITH THIS INPUT, and is read now so that this input
-        // (claimed, so still waiting) is left out of it. It is background for the engine and only that: `text`
-        // stays the input the conversation records and the attempt's digest names.
-        const background = contextOwed ? await readBackground(registry) : "";
-        await oneTurn({ id: row.id, text }, { preset, registry, source: row.source, kind: row.kind, background });
         claimed = null;
         claimedReturn = null;
         claimedSeat = null;
@@ -2048,9 +2342,17 @@ export async function runRunner(options: {
             ...(error instanceof AdapterMissing ? { adapter: safeValue(error.adapter) } : {}) } });
       });
     } finally {
+      // NOTHING MORE IS QUEUED FOR A LOOP THAT IS ENDING, and what was queued is refused: the move watch that waits for it looks again
+      // (it drains the agent itself once there is no loop).
+      own.ending = true;
+      const endJobs = (): void => { for (const job of own.jobs.splice(0)) job.reject(Object.assign(new Error("loop-ended"), { loopEnded: true })); };
+      endJobs();
       cancelFlush();
       turn = null;
       await writes;
+      // A fenced agent's open child is written down (best effort) before ANYTHING below closes it, the attempt's end included; the set
+      // is settled again after the close (here, in `closeAttempt`, `dropRetired`), which is the only place it can be sealed.
+      await settleFor(own);
       // An attempt still open here was cut off, by the runner stopping, by the
       // agent being dropped or recovered, or by the loop ending under it. It
       // ends with the evidence there is, and its input is held rather than run
@@ -2063,17 +2365,94 @@ export async function runRunner(options: {
       await own.noteWait(null);
       own.settle();
       if (waiter) await waiter.close();
-      if (own.session) { readings.delete(own.session); await own.session.close().catch(() => {}); }
+      if (own.session) {
+        // Closed regardless of what the intent above found: this loop is over (a stop, a drop, an error) and nothing else holds the child.
+        // If the intent could not be written the child is still owed (the ledger keeps it, and the drain records it late), and nothing
+        // here says it is gone.
+        const record = own.child && own.child.session === own.session ? own.child : null;
+        if (record) { await closeChild(record).catch(() => {}); await settleFor(own); }
+        else { readings.delete(own.session); await own.session.close().catch(() => {}); }
+      }
       own.session = null;
+      own.child = null;
       own.conversation = null;
       await own.facade?.close().catch(() => {});
       own.facade = null;
       if (own.reserved) { own.reserved = false; releaseCapacity(); }
       if (live.get(agent.id) === own) live.delete(agent.id);
+      endJobs();
+      // What the loop held is let go of: the watch looks at the agent again, now with no loop.
+      moves?.refresh();
     }
   };
 
   const live = new Map<string, Live>();
+  /** Loops that were dropped from `live` and are still finishing (closing their child, their harvest session, their last writes): nobody else is told the agent is quiet. */
+  const ending = new Map<string, Live>();
+
+  /**
+   * THE DRAIN'S VIEW OF THIS PROCESS (`./move.ts`). `quiet` is the loop holding nothing: no attempt of its own, no stop in flight, no
+   * harvest, and no child being started or closed (the ledger). `close` closes one open child (recording what became of it) and lets go
+   * of it as an idle close does: the session, the conversation, the facade and the reservation. The drain runs inside the agent's loop
+   * when it has one, so nothing else of that loop is running while it does.
+   */
+  const world: DrainWorld = {
+    store,
+    runner: options.runner,
+    incarnation,
+    here,
+    ledger: children,
+    fenced: agent => moveFences.has(agent),
+    quiet: agent => {
+      if (children.busy(agent) || ending.has(agent)) return false;
+      const it = live.get(agent);
+      return !it || (it.attempt === null && it.retiring === null && ![...harvestSessions.values()].includes(it));
+    },
+    async close(record) {
+      const it = live.get(record.agent);
+      await closeChild(record);
+      if (it && it.child === record) {
+        it.session = null;
+        it.child = null;
+        it.conversation = null;
+        await it.facade?.close().catch(() => {});
+        it.facade = null;
+        if (it.reserved) { it.reserved = false; releaseCapacity(); }
+      }
+    },
+    say: sayMove,
+  };
+  /**
+   * AROUND ANY CLOSE THAT IS NOT THE DRAIN'S OWN (an attempt that ended badly, a stop, the loop ending), called BEFORE it and again AFTER
+   * it: the SET of a fenced agent's children is settled (`settleSet`), best effort. Before the close the pre-close intents are written
+   * (the children closed earlier without proof first, the open one last) and the set is NOT sealed, because the child is still open and
+   * the close observes it once more; after the close the final known union (the exit evidence's processes included) is made durable and
+   * only then is the set sealed. The close goes ahead whatever this finds (a stop or a shutdown is not held up by a store that cannot be
+   * written), but what is written down is what a restarted runner finds of its predecessor, and a set that stopped part way (a crash
+   * after the close and before the final write, a final document the store refuses, a failed seal) is never sealed, so the successor
+   * does not take the intents it finds for all there was. What is not written stays in the ledger for as long as this process lives
+   * and is never certified as gone.
+   */
+  const settleFor = async (own: Live): Promise<void> => {
+    const fence = moveFences.get(own.agent.id);
+    if (fence?.kind !== "move" || fence.move === null || children.of(own.agent.id).length === 0) return;
+    try {
+      const gating = await readMove(store, fence.move);
+      if (gating && gating.stage === "waiting" && gating.source_runner === options.runner) await settleSet(world, gating);
+    } catch { /* best effort: the children are still owed in the ledger */ }
+  };
+  /** One look at one move: in the agent's own loop when it has one, and here when it has none (nothing can start a child for a fenced agent). */
+  const driveMove = async (request: { id: string; agent: string }): Promise<DrainStep> => {
+    const it = live.get(request.agent);
+    // A loop that was dropped is still closing what it holds: no look runs beside it. `drop` asks the watch to look again once it is over.
+    if (!it && ending.has(request.agent)) return { state: "waiting", why: "loop-ending", owed: { kind: "store" }, seen: null };
+    if (!it) return await drainSource(world, request.id);
+    try { return await inLoop(it, () => drainSource(world, request.id)); }
+    catch (error) {
+      if ((error as { loopEnded?: boolean }).loopEnded) return { state: "waiting", why: "loop-ended", owed: { kind: "store" }, seen: null };
+      throw error;
+    }
+  };
 
   const serve = (agent: AgentEntry): void => {
     let release: () => void = () => {};
@@ -2084,6 +2463,8 @@ export async function runRunner(options: {
     const serving = new Promise<void>((resolve) => {
       settle = () => resolve();
     });
+    let wakeNudge: () => void = () => {};
+    const freshNudge = () => new Promise<void>((resolve) => { wakeNudge = resolve; });
     const it: Live = {
       agent,
       reserved: false,
@@ -2095,6 +2476,12 @@ export async function runRunner(options: {
       attempt: null,
       retiring: null,
       facade: null,
+      child: null,
+      jobs: [],
+      ending: false,
+      nudging: false,
+      nudged: freshNudge(),
+      nudge() { it.nudging = true; const woken = wakeNudge; it.nudged = freshNudge(); woken(); },
       leaving: false,
       left,
       release,
@@ -2114,11 +2501,24 @@ export async function runRunner(options: {
 
   const drop = async (id: string): Promise<void> => {
     const it = live.get(id);
+    // An agent that leaves this runner's registry (or is recovered) is judged again from the store if it comes back: a placement fence made
+    // from a refusal alone (`move` is null) is forgotten. A move's own fence is never forgotten here, and neither is the placement fence a
+    // move that went through left (it names the move): a harvest never asks the conversation, so only that fence keeps a stale registry
+    // from serving the agent.
+    const fence = moveFences.get(id);
+    if (fence?.kind === "placed" && fence.move === null) moveFences.lift(id);
     if (!it) return;
     live.delete(id);
+    // It stays tracked until it is fully done: `quiet` and `driveMove` see it ending, so the drain never runs beside its close.
+    ending.set(id, it);
     it.leaving = true;
     it.release();
-    await it.done.catch(() => {});
+    try { await it.done.catch(() => {}); }
+    finally {
+      if (ending.get(id) === it) ending.delete(id);
+      // The look that was refused while it ended (and any that was owed) is made now, with no loop left.
+      moves?.refresh();
+    }
   };
 
   /**
@@ -2212,6 +2612,13 @@ export async function runRunner(options: {
       detail: { machine, file: options.registryFile, ...(stale ? { reason: standing.reason } : {}) } });
   };
   await measureRegistry();
+  // THE MOVES THIS RUNNER IS THE SOURCE OF ARE READ, AND THEIR FENCES PLACED, BEFORE ANYTHING IS SERVED: no child is started, no row claimed
+  // and no eager start made for an agent a request already gates. A runner that cannot read them does not serve (the schema was checked
+  // for migration 16 before anything was opened).
+  try {
+    moves = await watchMoves(store, { runner: options.runner, machine, fences: moveFences, drive: driveMove,
+      lifted: agent => live.get(agent)?.nudge(), say: sayMove });
+  } catch (error) { await store.close().catch(() => {}); throw error; }
   for (const agent of agentsFor(first, { runner: options.runner })) {
     if (!stale && Date.now() >= (retries.get(agent.id) ?? 0)) serve(agent);
   }
@@ -2261,6 +2668,9 @@ export async function runRunner(options: {
         // is owed, and not waited for: a stop can take as long as its grace, and the tick goes on. Nothing is
         // read while nothing is owed.
         if (stops?.owed) stops.retry();
+        // A move's drain that is owed another look: the store's answer, or evidence that may have moved on this machine (read by the process
+        // table alone: nothing is read from the store unless it did). Nothing is asked while nothing is owed.
+        if (moves?.owed) moves.tick();
         // A held conversation's native context is measured whether or not any row of it can be claimed
         // (an engine not shown able to resume is filtered out of every claim), so the owner is told what
         // it is waiting for. Only while there is one to measure; a full look that measured them all lowers it.
@@ -2418,8 +2828,10 @@ export async function runRunner(options: {
       release();
       await controls.close();
       await watching.close();
+      // The loops are ending (`release`), and a look that waits for one is released by it ending: closing waits for every consumer.
+      await moves?.close();
       await supervise;
-      await Promise.allSettled([...live.values()].map((it) => it.done));
+      await Promise.allSettled([...live.values(), ...ending.values()].map((it) => it.done));
       // Nobody is measuring any more, so nothing measured is left standing as current.
       await markContextPending(store, options.runner).catch(() => {});
       if (peakBytes > 0) await appendRunnerEntry({ stream: "memory", subject: options.runner,

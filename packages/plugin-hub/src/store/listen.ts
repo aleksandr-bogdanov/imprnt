@@ -145,8 +145,12 @@ export async function listenForWork(options: {
   let step: { resolve: () => void; reject: (error: Error) => void } | null = null;
   let closed = false;
   let ended = false;
+  // True once the LISTEN is acknowledged. A connection that never became a listener has not "gone away": the caller is told by the
+  // rejection of this call, and telling it again through `onLost` made every refused attempt start another reconnect loop.
+  let listening = false;
+  let reported = false;
 
-  const settle = (error?: Error) => {
+  const settle =(error?: Error) => {
     const waiting = step;
     step = null;
     if (!waiting) return;
@@ -217,6 +221,13 @@ export async function listenForWork(options: {
     }
   };
 
+  /** An open listener went away on its own: said once, however many of `error` and `close` the socket delivers. */
+  const lost = () => {
+    if (ended || !listening || reported) return;
+    reported = true;
+    options.onLost?.();
+  };
+
   const socket: Socket = await connect({
     hostname: where.hostname,
     port: where.port,
@@ -227,11 +238,11 @@ export async function listenForWork(options: {
       close() {
         closed = true;
         settle(new ListenRefused("the server closed the notification connection"));
-        if (!ended) options.onLost?.();
+        lost();
       },
       error(_socket, error) {
         settle(new ListenRefused(String(error)));
-        if (!ended) options.onLost?.();
+        lost();
       },
     },
   });
@@ -250,10 +261,12 @@ export async function listenForWork(options: {
     socket.write(startup(where.user, where.database, where.application));
     await ready;
 
-    const listening = reply();
+    const acknowledged = reply();
     socket.write(query(`listen ${options.channel}`));
-    await listening;
+    await acknowledged;
+    listening = true;
   } catch (error) {
+    ended = true;
     socket.end();
     throw error;
   }
