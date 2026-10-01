@@ -279,6 +279,8 @@ export function createFakeDiscord(options: FakeDiscordOptions = {}): FakeDiscord
       const found = reach(hit[1]);
       if (found instanceof Response) return found;
       if (method === "GET") return reply(channelJson(found));
+      // A channel deletion answers with the channel as it was, and from then on every read of it is 404 Unknown Channel, as Discord's is.
+      if (method === "DELETE") { found.exists = false; return reply(channelJson(found)); }
       if (method === "PATCH") {
         // Only what the request carries changes, and `permission_overwrites` REPLACES the whole list, as Discord's does.
         if (body?.parent_id !== undefined) found.parent_id = body.parent_id === null ? null : String(body.parent_id);
@@ -329,6 +331,8 @@ export function createFakeDiscord(options: FakeDiscordOptions = {}): FakeDiscord
       const one = live(found.id, hit[2]);
       if (!one) return refuse(404, 10008, "Unknown Message");
       if (method === "GET") return reply(messageJson(one));
+      // A message deletion answers 204, and the message is gone: the next request for it is 404 Unknown Message.
+      if (method === "DELETE") { one.deleted = true; return reply(null, 204); }
       if (method === "PATCH") {
         if (one.author !== botId) return refuse(403, 50005, "Cannot edit a message authored by another user");
         one.content = normalize(String(body?.content ?? one.content));

@@ -135,6 +135,15 @@ export const SETTING_FIELDS: SettingField[] = [
     what: "how long a runner waits before it tries a credential that refused a turn again",
     required: false,
   },
+  // How many days a historical backup copy may live, counted from the copy's own creation. There is NO default and nothing fills
+  // one in: the owner chooses it, an absent value means no retention is configured, and every deletion says so. 30 days was
+  // proposed in the design and has not been chosen; it is not applied anywhere.
+  {
+    key: "hub.backup_retention_days",
+    type: "integer",
+    what: "how many days after its creation a historical backup copy is allowed to remain, chosen by the owner; absent means none is configured",
+    required: false,
+  },
   // Which binary files a harvested note is a HOUSEHOLD FACT and not a
   // thing for code to guess: one box's is a package build, another's predates
   // the `vault` verb, and the monorepo's own runs under bun with no build step.

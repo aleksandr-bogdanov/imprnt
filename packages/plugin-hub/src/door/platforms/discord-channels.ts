@@ -7,7 +7,8 @@ import type { ChannelInfo, ChannelOverwrite, PlatformAdmin, PlatformRefusalDetai
  * here is held by a rate limit any other request learned, and none of them has a second copy
  * of a header, a timeout or a 429.
  *
- * WHAT THEY WILL NOT DO. Delete a channel. Retry anything: a transport failure on the create
+ * WHAT THEY WILL NOT DO. Delete anything on their own account: `deleteChannel` and `deleteMessage` are called only by a confirmed
+ * topic deletion, and answer gone only on Discord's own word for it. Retry anything: a transport failure on the create
  * carries `sent`, and the caller decides what a request that may have landed means. Guess
  * what "gone" is: only the platform's own answer for an unknown channel is that, and a 403, a
  * 5xx, a rate limit and a body that cannot be read are thrown as what they are.
@@ -15,6 +16,8 @@ import type { ChannelInfo, ChannelOverwrite, PlatformAdmin, PlatformRefusalDetai
 
 /** Discord's error code for a channel that does not exist, the one thing a 404 has to say to mean "gone". */
 const UNKNOWN_CHANNEL = 10003;
+/** The same, for a message. */
+const UNKNOWN_MESSAGE = 10008;
 
 /** Discord's channel types, in the seam's own words. Anything else is a channel and says so. */
 const KINDS: Record<number, string> = { 0: "text", 2: "voice", 4: "category", 5: "announcement", 11: "thread", 12: "thread", 15: "forum" };
@@ -61,7 +64,7 @@ export function readChannelInfo(raw: unknown): ChannelInfo | null {
   };
 }
 
-export function channelAdmin(seam: ChannelSeam): Pick<PlatformAdmin, "readChannel" | "editChannel" | "listChannels" | "createChannel"> {
+export function channelAdmin(seam: ChannelSeam): Pick<PlatformAdmin, "readChannel" | "editChannel" | "listChannels" | "createChannel" | "deleteChannel" | "deleteMessage"> {
   const { api, headers } = seam;
   const signal = (): AbortSignal => AbortSignal.timeout(seam.timeoutMs);
 
@@ -90,8 +93,29 @@ export function channelAdmin(seam: ChannelSeam): Pick<PlatformAdmin, "readChanne
     return channel;
   };
 
+  // THE TWO VERBS THAT DELETE, used by a confirmed topic deletion and by nothing else. "Gone" is only the platform's own answer: the
+  // call deleted it, or the platform names it as unknown. A refusal is thrown, and a request whose answer was lost is thrown with
+  // `sent` on it, so the caller looks again (asking again for something already deleted answers gone).
+  const deleteChannel: NonNullable<PlatformAdmin["deleteChannel"]> = async (chat) => {
+    const answer = await seam.request(`DELETE /channels/${chat}`, `${api}/channels/${encodeURIComponent(chat)}`,
+      { method: "DELETE", headers, signal: signal() }, true);
+    if (answer.ok) return { gone: true, was: "deleted" };
+    const failed = await seam.refusal("a channel deletion", answer);
+    if (failed.status === 404 && failed.discordCode === UNKNOWN_CHANNEL) return { gone: true, was: "already_gone" };
+    throw failed;
+  };
+
+  const deleteMessage: NonNullable<PlatformAdmin["deleteMessage"]> = async ({ chat, id }) => {
+    const answer = await seam.request(`DELETE /channels/${chat}/messages/${id}`,
+      `${api}/channels/${encodeURIComponent(chat)}/messages/${encodeURIComponent(id)}`, { method: "DELETE", headers, signal: signal() }, true);
+    if (answer.ok) return { gone: true, was: "deleted" };
+    const failed = await seam.refusal("a message deletion", answer);
+    if (failed.status === 404 && (failed.discordCode === UNKNOWN_MESSAGE || failed.discordCode === UNKNOWN_CHANNEL)) return { gone: true, was: "already_gone" };
+    throw failed;
+  };
+
   const { guild } = seam;
-  if (guild === undefined) return { readChannel, editChannel };
+  if (guild === undefined) return { readChannel, editChannel, deleteChannel, deleteMessage };
 
   const listChannels: NonNullable<PlatformAdmin["listChannels"]> = async () => {
     const answer = await seam.request(`GET /guilds/${guild}/channels`, `${api}/guilds/${encodeURIComponent(guild)}/channels`,
@@ -121,5 +145,5 @@ export function channelAdmin(seam: ChannelSeam): Pick<PlatformAdmin, "readChanne
     return channel;
   };
 
-  return { readChannel, editChannel, listChannels, createChannel };
+  return { readChannel, editChannel, listChannels, createChannel, deleteChannel, deleteMessage };
 }

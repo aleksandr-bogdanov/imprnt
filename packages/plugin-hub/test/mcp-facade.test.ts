@@ -66,7 +66,7 @@ test("a call names nothing but its arguments: an argument that would name whose 
   expect(await code(callTool(s.binding, "hub_council", { action: "start" }))).toBe("invalid_arguments")
   expect(await code(callTool(s.binding, "hub_council", { action: "start", request_key: "k", authority: { source_message_ids: ["h2"] }, question: "q", person: "p2" }))).toBe("invalid_arguments")
   expect(await code(callTool(s.binding, "not_a_tool", { action: "start" }))).toBe("unknown_tool")
-  expect(await code(callTool(s.binding, "hub_topic", { action: "delete" }))).toBe("unsupported_action")
+  expect(await code(callTool(s.binding, "hub_topic", { action: "erase" }))).toBe("unsupported_action")
   expect(await code(callTool(s.binding, "hub_topic", { action: "resume", request_key: "k", source_message_ids: [], recovery_decision: { attempt_id: "a", expected_recovery_revision: 1, choice: "continue" } }))).toBe("invalid_arguments")
   expect(await code(callTool(s.binding, "hub_topic", { action: "resume", request_key: "k", source_message_ids: ["h2"], recovery_decision: { attempt_id: "a", expected_recovery_revision: 1, choice: "carry-on" } }))).toBe("invalid_arguments")
   // Nothing of the above wrote anything.
@@ -230,7 +230,7 @@ test("over the socket: the engine's stdio server is bound to the launch, holds n
     expect(schema.additionalProperties).toBe(false)
     expect(Object.keys(schema.properties).sort()).toEqual(["action", "creation_decision", "destination_machine", "expected_revision", "move_decision",
       "recovery_decision", "request_key", "setup", "source_message_ids", "topic_id"])
-    expect(schema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen", "move"])
+    expect(schema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen", "move", "delete"])
     expect(schema.properties.move_decision.additionalProperties).toBe(false)
     expect(schema.properties.move_decision.properties.choice.enum).toEqual(["withdraw", "continue"])
     // The model is told the owner's own chat answers a waiting move through the door's commands, and that a move is not held back for want of a General.

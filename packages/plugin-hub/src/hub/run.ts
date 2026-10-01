@@ -19,6 +19,7 @@ import { recordOperationFailure } from "../diagnostics.ts";
 import { programForKind, transcriberArgv } from "./program.ts";
 import { recordRegistryDigest } from "./digest.ts";
 import { deliverRegistry } from "./distribute.ts";
+import { runDeletions } from "./deletions.ts";
 import { registerMoves } from "./moves.ts";
 import { bindTopics } from "./topics.ts";
 import { identityReserved, readTopicByAgent, readTopicByChat, rebindLegacyTopic, type TopicRow } from "../store/topics.ts";
@@ -211,6 +212,11 @@ export async function runHub(options: {
     // exactly that registry given to the store. Only the store machine's hub does it; a pass that could not is said and the tick goes on.
     try { await registerMoves({ store, registryFile: options.registryFile, machine: options.machine, load, say }); }
     catch (error) { await recordOperationFailure(store, { operation: "move-registry", target: options.machine, error }); }
+    // The confirmed topic deletions: the deleted agent taken out of the registry (store machine only), this machine's own copies removed
+    // and reported, this machine's copy of the control manifest kept current, and whatever a restore or a late result brought back
+    // removed again. A pass that could not is said and the tick goes on; a machine that was off does all of it when it next runs.
+    try { await runDeletions({ store, registryFile: options.registryFile, machine: options.machine, load }); }
+    catch (error) { await recordOperationFailure(store, { operation: "topic-delete", target: options.machine, error }); }
     const started = new Set<string>();
     // An entry whose install failed this tick has already said so, and loading
     // or starting below would only make the manager fail again on the same file.

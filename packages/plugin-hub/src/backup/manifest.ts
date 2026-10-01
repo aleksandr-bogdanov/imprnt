@@ -27,6 +27,15 @@ export interface Manifest {
   at: string;
   machine: string;
   files: ManifestEntry[];
+  /**
+   * The erasure generation this copy was assembled under. A copy assembled across two generations is never published, so the number
+   * is the whole truth about which deletions it was assembled after. Absent on a copy that predates deletions.
+   */
+  erasure_generation?: number;
+  /** The retention the owner had configured when this copy was made, in days from `at`, or null when none was. Never a default. */
+  retention_days?: number | null;
+  /** When this copy is due to expire under that retention, counted from `at`, or null. Informational until the destination can enforce it. */
+  expires_at?: string | null;
 }
 
 export function sha256(bytes: Uint8Array): string {

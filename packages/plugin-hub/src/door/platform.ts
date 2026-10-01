@@ -104,6 +104,11 @@ export interface ChannelInfo {
  *    caller's.
  *  * `editChannel` changes the category and/or the overwrites of a channel and nothing else.
  *    Both are a request for the SAME VALUES when asked again, so it is safe to repeat.
+ *  * `deleteChannel` and `deleteMessage` are the two verbs that DELETE, and the confirmed topic deletion's alone: nothing else calls
+ *    them, and a platform that has neither is reported `unsupported` for that copy and never certified erased. Each answers
+ *    `{ gone: true }` only when the platform shows the thing is not there afterwards (it was deleted by this call, or the platform
+ *    names it as already gone, which is a different answer from a refusal). A 403, a 5xx, a rate limit and a body that cannot be
+ *    read are thrown, and are never "gone". Asked again for something already gone, they answer gone: they are safe to repeat.
  */
 export interface PlatformAdmin {
   resolveChat(ref: string): Promise<ChatResolution>;
@@ -112,6 +117,8 @@ export interface PlatformAdmin {
   readChannel?(chat: string): Promise<{ exists: true; channel: ChannelInfo } | { exists: false }>;
   createChannel?(options: { name: string; parent_id?: string | null; topic: string }): Promise<ChannelInfo>;
   editChannel?(options: { chat: string; parent_id?: string | null; permission_overwrites?: ChannelOverwrite[] }): Promise<ChannelInfo>;
+  deleteChannel?(chat: string): Promise<{ gone: true; was: "deleted" | "already_gone" }>;
+  deleteMessage?(options: { chat: string; id: string }): Promise<{ gone: true; was: "deleted" | "already_gone" }>;
 }
 
 /** A message as a read of the chat shows it. */

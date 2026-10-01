@@ -15,6 +15,9 @@ import {
 import { dirname, isAbsolute, join, sep } from "node:path";
 import { recordJobSuccess } from "../check/schedule.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
+import { CONTROL_MANIFEST_FILE, renderManifest as renderControlManifest } from "../erasure/manifest.ts";
+import { RetentionInvalid, accountOf, expiryOf, retentionDaysOf, trackRetention, transportOf } from "../erasure/retention.ts";
+import { backupHold, erasureGeneration, readErasureManifest } from "../store/deletions.ts";
 import { putRow } from "../records/statesheet.ts";
 import {
   backupStagingFor,
@@ -95,6 +98,10 @@ export interface BackupResult {
   committed: boolean;
   /** The declared repositories left out because their remote is off the box. */
   left_out?: string[];
+  /** The erasure generation this copy was assembled under (also in its manifest). */
+  erasure_generation?: number;
+  /** What the owner configured for historical copies, and what the destination can verify of it. Never a default. */
+  retention?: { days: number | null; state: string; reason: string; expires_at: string | null };
 }
 
 /**
@@ -295,6 +302,19 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
       throw new BackupRefused("device", "same device", "the destination is on the staging directory's own filesystem");
     }
 
+    // THE ERASURE BARRIER, before anything is dumped. A copy is never assembled across an erasure generation, and never while a
+    // topic the owner confirmed the deletion of still has its rows, or a file this machine copies, to be removed: the copy is held
+    // and says why, and the next run assembles it from what is left. This is fresh assembly, not a rewrite of an earlier copy.
+    // The retention is the owner's number or none, and a value that is not a day count refuses the copy by name.
+    const held = await backupHold(store, machine);
+    if (held !== null) throw new BackupRefused("barrier", "operation failed", held);
+    const barrier = await readErasureManifest(store);
+    let days: number | null;
+    try { days = retentionDaysOf(registry); } catch (error) {
+      if (error instanceof RetentionInvalid) throw new BackupRefused("stage", "invalid configuration", error.message);
+      throw error;
+    }
+
     // THE DUMP, in its own repository, committed only when it changed. A dump
     // command that exits zero and says nothing is the same failure as an
     // upload that does nothing.
@@ -318,7 +338,7 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
 
     // THE REST, fresh every time. Only what this job put here is cleared, so
     // nothing else that happens to sit beside the dump is ever deleted.
-    for (const own of [FILES_DIR, MANIFEST_FILE, READBACK_DIR]) rmSync(join(staging, own), { recursive: true, force: true });
+    for (const own of [FILES_DIR, MANIFEST_FILE, CONTROL_MANIFEST_FILE, READBACK_DIR]) rmSync(join(staging, own), { recursive: true, force: true });
     const repositories = repositoriesToCopy(registry);
     const left = excludedFromCopy(registry, { stateDir, staging, leftOut: repositories.leftOut });
     const trees: { path: string; required: boolean }[] = [
@@ -352,10 +372,22 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
       taken.push(from);
     }
 
-    // THE MANIFEST, last.
+    // THE CONTROL MANIFEST goes in the copy (identifiers only: no name, no request, no word of any history), so a restore from this
+    // copy finds what was deleted before it. Then the barrier is asked again: a deletion confirmed while the copy was assembled, or
+    // one whose rows are still to go, means this copy was assembled across it, and it is not described or sent.
+    writeFileSync(join(staging, CONTROL_MANIFEST_FILE), renderControlManifest(barrier));
+    const later = await backupHold(store, machine);
+    if (later !== null) throw new BackupRefused("barrier", "operation failed", later);
+    if ((await erasureGeneration(store)) !== barrier.generation) {
+      throw new BackupRefused("barrier", "operation failed", "a deletion was confirmed while the copy was being assembled, so this copy is not published and the next run assembles it again");
+    }
+
+    // THE MANIFEST, last. It carries the generation the copy was assembled under and, when the owner configured one, the date the copy
+    // is due to expire (counted from `at`, never from an upload): informational until the destination can list and expire its copies.
     const at = new Date().toISOString();
     const files = buildManifest(staging);
-    writeFileSync(join(staging, MANIFEST_FILE), renderManifest({ at, machine, files }));
+    const expiresAt = days === null ? null : expiryOf(new Date(at), days).toISOString();
+    writeFileSync(join(staging, MANIFEST_FILE), renderManifest({ at, machine, files, erasure_generation: barrier.generation, retention_days: days, expires_at: expiresAt }));
 
     await run(fill(declared.upload_argv ?? [], { staging, destination }), "upload", "operation failed");
 
@@ -397,7 +429,13 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
     } catch {
       throw new BackupRefused("stamp", "operation failed", "the stamp could not be written");
     }
-    return { ...landed, committed: changed };
+    // The deletions waiting on the account of their earlier copies are given what is known now: with no retention configured they
+    // stay `not_configured`, and with one the destination cannot verify they are `retention_unverified`, with that reason. A failure
+    // here costs the copy nothing: it landed.
+    const account = accountOf({ days, transport: transportOf(declared), until: null });
+    await trackRetention(store, declared).catch(() => 0);
+    return { ...landed, committed: changed, erasure_generation: barrier.generation,
+      retention: { days, state: account.state, reason: account.reason, expires_at: expiresAt } };
   } catch (error) {
     // Anything else is the filesystem refusing the copy, and its errno code is
     // the one part of it that is safe to keep.

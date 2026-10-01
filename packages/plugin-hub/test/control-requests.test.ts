@@ -362,7 +362,7 @@ test("H3 the tools the model is offered are unchanged, and an action nobody regi
     expect(TOOLS[0].inputSchema.additionalProperties).toBe(false)
     expect(Object.keys(TOOLS[0].inputSchema.properties).sort()).toEqual(["action", "creation_decision", "destination_machine", "expected_revision", "move_decision",
       "recovery_decision", "request_key", "setup", "source_message_ids", "topic_id"])
-    expect(TOOLS[0].inputSchema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen", "move"])
+    expect(TOOLS[0].inputSchema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen", "move", "delete"])
     expect(TOOLS[1].inputSchema.additionalProperties).toBe(false)
     expect(TOOLS[1].inputSchema.properties.action.enum).toEqual(["start", "continue", "inspect", "stop"])
     // Nothing that is not listed is offered, and what is asked for anyway is refused by name, before anything is looked at.
@@ -1018,8 +1018,11 @@ test("M2 the fresh schema carries the migration, byte for byte, and its version,
   expect(at(`${councils}\ninsert into schema_version (version) values (14);\n`)).toBeGreaterThan(at(`${migration}\ninsert into schema_version (version) values (13);\n`))
   expect(at(`${topics}\ninsert into schema_version (version) values (15);\n`)).toBeGreaterThan(at(`${councils}\ninsert into schema_version (version) values (14);\n`))
   expect(at(`${moves}\ninsert into schema_version (version) values (16);\n`)).toBeGreaterThan(at(`${topics}\ninsert into schema_version (version) values (15);\n`))
-  expect(schema.endsWith(`${moves}\ninsert into schema_version (version) values (16);\n`)).toBe(true)
-  expect(MIGRATION_FILES.slice(-3)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"], [16, "016-topic-move.sql"]])
+  // The topic deletion (17) follows the movement whole and ends the fresh schema.
+  const deletion = readFileSync(hubPath("src/store/migrations/017-topic-deletion.sql"), "utf8")
+  expect(at(`${deletion}\ninsert into schema_version (version) values (17);\n`)).toBeGreaterThan(at(`${moves}\ninsert into schema_version (version) values (16);\n`))
+  expect(schema.endsWith(`${deletion}\ninsert into schema_version (version) values (17);\n`)).toBe(true)
+  expect(MIGRATION_FILES.slice(-4)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"], [16, "016-topic-move.sql"], [17, "017-topic-deletion.sql"]])
 })
 
 // ---------------------------------------------------------------------------

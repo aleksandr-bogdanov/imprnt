@@ -890,7 +890,7 @@ test("the migration is numbered 016: an upgraded store carries the same objects,
   expect(versions).toEqual((await fresh.sql`select version from schema_version order by version`).map((row: any) => Number(row.version)))
   expect(MIGRATION_FILES).toContainEqual([16, "016-topic-move.sql"])
   const migration = readFileSync(hubPath("src/store/migrations/016-topic-move.sql"), "utf8")
-  expect(readFileSync(hubPath("src/schema.sql"), "utf8").endsWith(`${migration}\ninsert into schema_version (version) values (16);\n`)).toBe(true)
+  expect(readFileSync(hubPath("src/schema.sql"), "utf8").includes(`${migration}\ninsert into schema_version (version) values (16);\n`)).toBe(true)
   // Landing it touched no row that was there, and activated nothing.
   expect(Number((await upgraded.sql`select count(*)::int as n from inbound`)[0].n)).toBe(1)
   expect(Number((await upgraded.sql`select count(*)::int as n from topic_move`)[0].n)).toBe(0)

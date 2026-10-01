@@ -1,10 +1,13 @@
 import { NATIVE_DELEGATION_TOOLS } from "../adapters/launch.ts";
-import { TOPIC_CREATE } from "../door/topic-approval.ts";
+import { deletionConfirmationAsk, deletionPreview } from "../door/deletion-lines.ts";
+import { TOPIC_CREATE, TOPIC_DELETE } from "../door/topic-approval.ts";
 import { topicConfirmationAsk, topicPreview } from "../door/topic-lines.ts";
+import { RetentionInvalid, retentionDaysOf, retentionStatement } from "../erasure/retention.ts";
 import { languageOf, listAgents, listRunEntries } from "../registry/entries.ts";
 import { archiveOf, canMakeChats, generalOf, resolveTopicSetup } from "../registry/topics.ts";
 import { ConfirmationRefused, freezeConfirmation, readOperation } from "../store/confirmations.ts";
 import type { StoreLike } from "../store/connect.ts";
+import { deletionOfTopicOrAgent, readDeletion, requestDeletion, type DeletionRow } from "../store/deletions.ts";
 import { EffectTooLong, sanitizeText } from "../store/effects.ts";
 import { openMoveOfTopic } from "../store/moves.ts";
 import {
@@ -13,7 +16,7 @@ import {
 } from "../store/topics.ts";
 import { servingOf } from "../store/topic-serving.ts";
 import {
-  HUB_TOPIC, type ArchiveRequest, type CreateRequest, type InspectRequest, type LifecycleRequest, type ReopenRequest, type ToolReply,
+  HUB_TOPIC, type ArchiveRequest, type CreateRequest, type DeleteRequest, type InspectRequest, type LifecycleRequest, type ReopenRequest, type ToolReply,
 } from "./contracts.ts";
 import type { McpBinding } from "./handlers.ts";
 import { lineContext } from "./move-general.ts";
@@ -293,6 +296,128 @@ export const archiveTopic = (binding: McpBinding, request: ArchiveRequest): Prom
 export const reopenTopic = (binding: McpBinding, request: ReopenRequest): Promise<ToolReply> => lifecycle(binding, request);
 
 // ---------------------------------------------------------------------------------------------
+// delete
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Where a deletion stands, in the one reply shape and in plain words. It says only what the store holds: a stage the receipts have
+ * not supported is never worded as done, and the earlier backup copies are always said to remain unless the store says they expired.
+ */
+function deletionWords(deletion: DeletionRow): Pick<ToolReply, "status" | "stage"> & { message: string } {
+  const retention = retentionStatement("en", { state: deletion.retention_state, days: deletion.retention_days, until: deletion.backup_retention_until });
+  switch (deletion.stage) {
+    case "awaiting_confirmation":
+      return { status: "awaiting_confirmation", stage: "preview", message: "The scope of the deletion is in the chat, and nothing has been deleted. It is deleted only when the owner reacts to it with the green check." };
+    case "quiescing":
+      return { status: "stopping", stage: "stopping_work", message: "Confirmed. The agent and its delegated work are being stopped, and nothing is erased until each is shown stopped." };
+    case "deleting_active":
+    case "verifying_active":
+      return { status: "running", stage: "erasing", message: "The active history is being removed and each copy is checked." };
+    case "pending_machine":
+      return { status: "running", stage: "waiting_for_machine", message: "The Hub's own records are deleted, but a machine that holds an active copy has not reported it erased, so the deletion is not complete. It is waited for, and nothing says it is done." };
+    case "blocked_scope":
+      return { status: "waiting_owner", stage: "not_everything_erased", message: "The Hub's own records are deleted, but a copy could not be erased by this Hub (the platform does not support it, or it was refused), so the deletion is not complete. Say which." };
+    case "failed":
+      return { status: "failed", stage: "erase_refused", message: "The removal was refused by the store, and nothing half-erased was kept; it is tried again." };
+    case "active_deleted":
+      return { status: "complete", stage: "active_deleted", message: `The topic, its agent and its active history are deleted. Notes already saved in the vault remain. ${retention}` };
+    default:
+      return { status: "failed", stage: "superseded", message: "A newer deletion request replaced this one before it was confirmed." };
+  }
+}
+
+/**
+ * The owner's request to delete a topic chat, its agent and its ACTIVE history. It deletes nothing: it works out what a deletion would
+ * remove (numbers, never a word of the history), which machines may hold copies, and what the configured backup retention is (or that
+ * none is), freezes all of it as a preview in this conversation's chat, and waits. Only the owner's green check on that exact preview,
+ * read by the door and committed with the approval, confirms it. There is no argument, field or action that says "approved".
+ *
+ * WHAT IT NEVER DOES. It does not touch the vault's notes, does not rewrite an earlier backup, and does not run the agent to say
+ * goodbye. A topic that is being set up, moved, archived or reopened is refused until that settles; one already being deleted is not
+ * asked about twice. The same request key twice is one request.
+ */
+export async function deleteTopic(binding: McpBinding, request: DeleteRequest): Promise<ToolReply> {
+  requireMaster(binding, "delete a topic chat");
+  return await runRequest<DeleteRequest, TopicRow>(binding, {
+    tool: HUB_TOPIC,
+    request,
+    object: request.topic_id ?? null,
+    async open(tx) {
+      const topic = await topicFor(tx, binding, request.topic_id);
+      if (request.expected_revision !== undefined && request.expected_revision !== topic.lifecycle_generation) {
+        throw new Undo(refusal(topic.id, "stale_revision", `the topic is at revision ${topic.lifecycle_generation}, and this asked about ${request.expected_revision}`));
+      }
+      return { context: topic };
+    },
+    async apply(tx, topic, owner) {
+      const registry = binding.registry();
+      const me = listAgents(registry).find(one => one.id === binding.agent);
+      if (!me || me.door === undefined || me.chat === undefined) {
+        throw new Undo(refusal(topic.id, "no_chat", "this conversation's agent has no chat in which the scope of a deletion can be shown"));
+      }
+      if (owner.sender === "") throw new Undo(refusal(topic.id, "source_invalid", "the owner's message is what says who confirms"));
+      let days: number | null;
+      try { days = retentionDaysOf(registry); } catch (error) {
+        if (error instanceof RetentionInvalid) throw new Undo(refusal(topic.id, "retention_invalid", error.message));
+        throw error;
+      }
+      // Every machine the registry runs something on may hold an active copy (a chat log, a session, an attachment), including the
+      // one the topic was moved off: the preview names them all, and each one's report is waited for.
+      const machines = [...new Set(listRunEntries(registry).map(one => one.machine).filter((one): one is string => typeof one === "string" && one !== ""))].sort();
+      const operation = operationFor(binding, request);
+      const answer = await requestDeletion(tx, {
+        operation, topic: topic.id, by: owner.sender, source: "tool", retentionDays: days, machines,
+        route: { door: me.door, chat: me.chat },
+        evidence: { request_key: request.request_key, messages: request.source_message_ids, conversation: binding.conversation, label: topic.display_name },
+      });
+      switch (answer) {
+        case "ok":
+        case "replay":
+          break;
+        case "in-progress":
+          throw new Undo(refusal(topic.id, "in_progress", "a deletion, an archive, a reopen or a move of this chat is already under way: ask again when it has finished"));
+        case "not-settled":
+          throw new Undo(refusal(topic.id, "not_settled", `this chat is ${describe(topic)} and is not ready to be deleted`));
+        case "deleted":
+          throw new Undo(refusal(topic.id, "already_deleted", "this chat was already deleted"));
+        default:
+          throw new Undo(refusal(topic.id, "unknown_topic", "no topic chat of this person has that id"));
+      }
+      const deletion = (await readDeletion(tx, operation))!;
+      const base = { operation_id: operation, object_id: topic.id, revision: topic.lifecycle_generation };
+      if (deletion.stage !== "awaiting_confirmation") {
+        const said = deletionWords(deletion);
+        return { ...base, status: said.status, stage: said.stage, status_message: said.message };
+      }
+      const language = languageOf(registry, binding.person);
+      const platform = ((registry.data.run ?? []) as { id: string; platform?: string }[]).find(one => one.id === me.door)?.platform ?? "discord";
+      let frozen: Awaited<ReturnType<typeof freezeConfirmation>>;
+      try {
+        frozen = await freezeConfirmation(tx, {
+          operationId: operation, operationKind: TOPIC_DELETE, person: binding.person, door: me.door, chat: me.chat,
+          ownerSender: owner.sender, payload: deletion.preview,
+          preview: deletionPreview(language, { name: topic.display_name, preview: deletion.preview }),
+          confirmation: deletionConfirmationAsk(language), platform,
+        });
+      } catch (error) {
+        if (error instanceof EffectTooLong) throw new Undo(refusal(topic.id, "request_too_long", "the scope does not fit in a preview message with its confirmation line"));
+        if (error instanceof ConfirmationRefused) throw new Undo(refusal(topic.id, "closed", "this preview cannot be changed any more"));
+        throw error;
+      }
+      return {
+        ...base, revision: frozen.revision, status: "awaiting_confirmation", stage: "preview",
+        status_message: "The scope of the deletion is in this chat, and nothing has been deleted. The chat, its agent and its active history are deleted only when the owner reacts to it with the green check. " +
+          "Tell the owner what it shows: what is removed, the machines that hold copies, that notes saved in the vault stay, and what the earlier backups do.",
+        deletion: {
+          removes: deletion.preview.inventory, machines: deletion.preview.machines,
+          backup_retention: days === null ? { configured: false } : { configured: true, days },
+        },
+      } satisfies ToolReply;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
 // where an open move stands
 // ---------------------------------------------------------------------------------------------
 
@@ -307,7 +432,25 @@ export { moveStanding, turnReading, type MoveStanding, type TurnReading } from "
 export async function inspectTopic(binding: McpBinding, request: InspectRequest): Promise<ToolReply> {
   const wanted = request.topic_id!;
   const topic = (await readTopic(binding.store, wanted)) ?? (await readTopicByAgent(binding.store, wanted));
+  // A topic that was deleted has no row left, only its deletion: what became of it is still asked about, and answered from the store.
+  if (!topic) {
+    const gone = await deletionOfTopicOrAgent(binding.store, wanted);
+    if (gone !== null && gone.person === binding.person) {
+      const said = deletionWords(gone);
+      return { operation_id: gone.id, object_id: gone.topic_id, revision: null, status: said.status, stage: said.stage, status_message: said.message,
+        deletion: { stage: gone.stage, retention_state: gone.retention_state } } as ToolReply;
+    }
+  }
   if (!topic || topic.person !== binding.person) return refusal(wanted, "unknown_topic", "no topic chat of this person has that id");
+  if (topic.lifecycle === "deleting") {
+    const deletion = await deletionOfTopicOrAgent(binding.store, topic.id);
+    if (deletion !== null) {
+      const said = deletionWords(deletion);
+      return { operation_id: deletion.id, object_id: topic.id, revision: topic.lifecycle_generation, status: said.status, stage: said.stage, status_message: said.message,
+        topic: { chat: topic.display_name, execution_machine: topic.machine, agent: topic.agent_id, lifecycle: topic.lifecycle, created_by: topic.origin },
+        deletion: { stage: deletion.stage, retention_state: deletion.retention_state } } as ToolReply;
+    }
+  }
   // An open move wins over every waiting word below: those name the machine the topic is bound to, which is the one it is leaving.
   const open = await openMoveOfTopic(binding.store, topic.id);
   if (open !== null) {
@@ -374,7 +517,8 @@ export async function inspectTopic(binding: McpBinding, request: InspectRequest)
     archived: { status: "complete", stage: "archived", message: "Archived. Its history is kept and it can be reopened." },
     reopening: { status: "accepted", stage: "reopening", message: "Being reopened." },
     channel_missing: { status: "waiting_owner", stage: "channel_missing",
-      message: "The chat was deleted in Discord. Its agent and history are still here, nothing was erased, and it takes no new work. Deleting them is a separate step that is not available yet." },
+      message: "The chat was deleted in Discord. Its agent and history are still here, nothing was erased, and it takes no new work. To delete them the owner asks for it (delete) and confirms the preview with the green check." },
+    deleting: { status: "stopping", stage: "deleting", message: "Being deleted." },
   };
   const said = bound ? lifecycleWords[topic.lifecycle] : words[topic.create_state];
   return {

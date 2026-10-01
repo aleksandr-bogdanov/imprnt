@@ -2,10 +2,10 @@ import { chooseHold, contextOf, contextSentence, effectsLine, holdContextOf, typ
 import type { Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { openHoldsOf } from "../store/conversations.ts";
-import { HUB_COUNCIL, HUB_TOPIC, READERS, ToolError, type ArchiveRequest, type CreateRequest, type InspectRequest, type MoveRequest, type ReopenRequest, type ResumeRequest, type ToolReply } from "./contracts.ts";
+import { HUB_COUNCIL, HUB_TOPIC, READERS, ToolError, type ArchiveRequest, type CreateRequest, type DeleteRequest, type InspectRequest, type MoveRequest, type ReopenRequest, type ResumeRequest, type ToolReply } from "./contracts.ts";
 import { councilHandlers } from "./council.ts";
 import { Undo, refusal, requireMaster, runRequest } from "./requests.ts";
-import { archiveTopic, createTopic, inspectTopic, reopenTopic } from "./topic-actions.ts";
+import { archiveTopic, createTopic, deleteTopic, inspectTopic, reopenTopic } from "./topic-actions.ts";
 import { moveTopic } from "./topic-move.ts";
 
 /**
@@ -43,6 +43,8 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
     reopen: (binding, request: ReopenRequest) => reopenTopic(binding, request),
     // A move has its own file: its request, withdrawal and acknowledgement are three branches of one action.
     move: (binding, request: MoveRequest) => moveTopic(binding, request),
+    // A deletion only ever freezes its scope for the owner's check: nothing in this call erases anything.
+    delete: (binding, request: DeleteRequest) => deleteTopic(binding, request),
   },
   [HUB_COUNCIL]: councilHandlers as unknown as Record<string, Handler>,
 };

@@ -48,10 +48,11 @@ async function scratch(body: string): Promise<string> {
 
 const SHIPPED = "src/registry/registry.example.toml";
 
-// The cutover field is optional in the shipped bootstrap example.
+// The cutover field and the backup retention are optional in the shipped bootstrap example: the second is the owner's choice, so the
+// shipped file carries no value for it (only a comment), and a fixture that needs one supplies it here.
 async function supportedExample(): Promise<string> {
   return (await Bun.file(hubPath(SHIPPED)).text())
-    .replace("[hub]", '[hub]\ncutover_batch = "fixture-batch"');
+    .replace("[hub]", '[hub]\ncutover_batch = "fixture-batch"\nbackup_retention_days = 90');
 }
 
 interface OutOfProcess {
