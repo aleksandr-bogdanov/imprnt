@@ -22,9 +22,13 @@ import type { InboundSource, JobSource } from "./inbound.ts";
  * reached the engine twice. 3 is 2 plus councils: a runner that knows a council's
  * jobs and events, settles them as the council's and never as an ordinary report.
  * Once a store has activated 3, the claim trigger and the incarnation row refuse
- * anything that speaks less, on every connection (migration 014).
+ * anything that speaks less, on every connection (migration 014). 4 is 3 plus topic
+ * moves: a runner that knows a move's gate, its relocation note and its placement
+ * fences. Once 4 is active the claim trigger refuses a runner that says 3, and so
+ * does the incarnation row, including a process that registered at 3 before the
+ * activation (migration 016); a move is only admitted while 4 is active.
  */
-export const RUNNER_PROTOCOL = 3;
+export const RUNNER_PROTOCOL = 4;
 
 /** The states in which an attempt may be running, or may have run and not been shown to have ended. */
 export const UNRESOLVED = ["claimed", "feed_intent", "received", "running", "unknown", "stop_requested", "stop_unknown"] as const;
@@ -78,6 +82,29 @@ export class ConversationRefused extends Error {
   constructor(readonly refusal: "conversation unavailable" | "conversation elsewhere") {
     super(`conversation-refused: ${refusal}`);
     this.name = "ConversationRefused";
+  }
+}
+
+/**
+ * THE FIRST FEED OF AN ATTEMPT WAS REFUSED BECAUSE A TOPIC MOVE WAS REQUESTED BEFORE IT (migration 016). It is not
+ * `ExecutionNotOwned`: the attempt is still this incarnation's, nothing was written (no input entry, no consumed council
+ * event, no state change), and the store can say the input was never given to the engine (`provenUnfed`). The caller hands
+ * the claim back with `provenUnfedEnd` and `endAttempt`, and the row stays queued; it does not open a hold, and nothing is
+ * retried. Uncertain ownership (`ExecutionNotOwned`, a legacy `tail_fed` attempt) is never this.
+ */
+export class MoveGated extends Error {
+  readonly provenUnfed = true as const;
+  constructor(readonly execution: string, readonly agent: string, readonly move: string) {
+    super(`move-gated: ${execution} (${move})`);
+    this.name = "MoveGated";
+  }
+}
+
+/** The relocation note this feed was to carry is not the one the store owes (already delivered, another digest, or not feeding). */
+export class MoveNoteRefused extends Error {
+  constructor(readonly move: string, readonly answer: string) {
+    super(`move-note-refused: ${move} (${answer})`);
+    this.name = "MoveNoteRefused";
   }
 }
 
@@ -413,6 +440,22 @@ export async function noteExecution(store: StoreLike, execution: string, kind: s
  * fences (`endAttempt` holds it or leaves it unknown; nothing here feeds it again).
  * It records no conversation entry (the tail is not the input), and the input's own feed
  * intent then follows on the same attempt, once.
+ *
+ * A TOPIC MOVE'S REQUEST IS ORDERED AGAINST THE FIRST FEED INTENT. The agent's ordering lock (`hub_gate_order`, the one a gate
+ * placement and the opening of an attempt take) is taken in a statement of its own BEFORE any row lock and before the gate is
+ * read, so the read is a fresh snapshot: either the request committed first, and an attempt that is still `claimed` throws
+ * `MoveGated` with nothing written (proven unfed: the row stays queued, no hold is made), or this intent commits first, and
+ * the request finds a fed attempt that it lets finish. Only a gate of cause `move` is asked (an archive stops, it does not
+ * drain, and its behaviour is unchanged), and only an attempt that is still `claimed`: a fed attempt (a legacy `tail_fed`
+ * one included, whose input's own feed follows on the same attempt) is already uncertain and is never called unfed.
+ * The runtime catches `MoveGated` where it calls this, hands the claim back with `provenUnfedEnd` + `endAttempt`, and
+ * does not start the child or write a byte.
+ *
+ * `notes` are the relocation notes this feed carries, the WHOLE ordered chain the conversation still owes (`moves.ts`
+ * `pendingNotesOf`: two completed moves with no real input between them owe two): they are journaled in this same transaction
+ * (which attempt carries which note digests), and are NOT delivered by it. The store fences the carrier against the conversation's
+ * current placement and the moves' ancestry, not against any note's own generation. Delivery is `moves.ts` `noteDelivered`, for
+ * exactly the notes carried, on receipt or completed-result evidence.
  */
 export async function markFeedIntent(
   store: StoreLike,
@@ -420,9 +463,17 @@ export async function markFeedIntent(
   text: string,
   stage: "input" | "tail" = "input",
   context?: { kind: string; digest: string; chars: number },
+  notes?: { move: string; digest: string }[],
 ): Promise<void> {
   await store.sql.begin(async (tx) => {
     const inside = { ...store, sql: tx as unknown as StoreLike["sql"] };
+    await tx`select hub_gate_order(${execution.agent}::text)`;
+    const [gated] = (await tx`select g.operation_id from claim_gate g, execution e, runner_incarnation r
+        where g.state = 'open' and g.scope_kind = 'agent' and g.scope_id = e.agent and g.cause = 'move'
+          and e.id = ${execution.id} and e.state = 'claimed' and e.runner = ${execution.runner} and e.incarnation = ${execution.incarnation}
+          and r.runner = e.runner and r.incarnation = e.incarnation
+        limit 1`) as unknown as { operation_id: string }[];
+    if (gated) throw new MoveGated(execution.id, execution.agent, gated.operation_id.replace(/^move:/, ""));
     const moved = await tx`update execution e set state = 'feed_intent', feed_intent_at = coalesce(e.feed_intent_at, now()),
           evidence = case when ${stage === "tail"}::boolean then e.evidence || ${{ tail_fed: true }}::jsonb else e.evidence end
         from conversation c, runner_incarnation r
@@ -443,10 +494,43 @@ export async function markFeedIntent(
       await recordEntry(inside, { conversation: execution.conversation_id, source: execution.inbound_id, kind: "input", body: text, execution: execution.id });
     }
     await noteExecution(inside, execution.id, "feed.intent", { inbound: execution.inbound_id, digest: execution.input_digest, purpose: stage === "tail" ? "tail" : execution.purpose,
-      ...(context ? { context } : {}) });
+      ...(context ? { context } : {}), ...(notes ? { notes } : {}) });
     // A council's event reaching the master is consumed here, at the one point every input passes; nothing for any other input.
     if (stage === "input") await noteEventFed(inside, execution);
+    if (notes) {
+      const [carried] = (await tx`select hub_move_note_carry(${execution.id}, ${JSON.stringify(notes)}::text::jsonb) as answer`) as unknown as { answer: string }[];
+      if (carried.answer !== "carried") throw new MoveNoteRefused(notes.map(note => note.move).join(","), carried.answer);
+    }
   });
+}
+
+/**
+ * What `endAttempt` (runner/execution.ts) is given to hand back an attempt the move refused. It deliberately does NOT carry
+ * `delivered: false`: that flag would override the attempt's state under `endAttempt`'s own lock and settle it `failed` even when a
+ * feed committed after this helper looked. Without it `endAttempt` classifies the attempt from its state under its execution lock:
+ * still `claimed` it ends `failed` (the row stays queued, no hold), and an attempt that was fed meanwhile, with no exit evidence,
+ * is `unknown` and held, never released.
+ */
+export interface ProvenUnfedEnd { execution: string; evidence: null; cause: string }
+
+/**
+ * THE ONLY WAY A MOVE-GATED FEED IS HANDED BACK. It writes nothing. It re-reads the attempt the `MoveGated` named and returns the
+ * exact arguments for the existing `endAttempt`, and only while the store still shows it unfed: still `claimed`, no feed intent, no
+ * conversation entry written by it. THAT READ IS OBSERVATIONAL ONLY: it is not a lock and not an authority. `endAttempt` decides,
+ * under its own lock and from the attempt's state then: an attempt still `claimed` ends `failed` (its claim is released, no hold is
+ * made, the row stays queued behind the gate, and the agent's slot is freed so the drain can finish); one that is no longer
+ * `claimed` (a feed committed after this read) is uncertain, is held or left `unknown` by the existing machinery, and is NOT
+ * released or made claimable. Null is an attempt the store does not show unfed: the caller must NOT end it this way, and the
+ * existing execution machinery is what resolves it. There is deliberately no function here that clears a `feed_intent`, a
+ * `tail_fed` or an uncertain attempt, and the callers that hold real adapter `FeedNotWritten` evidence are unchanged. A council
+ * member's job would get `endAttempt`'s own `council-failed` gate; a topic master is not a council member, so the runtime does not
+ * route such a row here.
+ */
+export async function provenUnfedEnd(store: StoreLike, gated: MoveGated): Promise<ProvenUnfedEnd | null> {
+  const [still] = (await store.sql`select e.id from execution e
+      where e.id = ${gated.execution} and e.state = 'claimed' and e.feed_intent_at is null
+        and not exists (select 1 from conversation_entry ce where ce.execution_id = e.id)`) as unknown as { id: string }[];
+  return still ? { execution: gated.execution, evidence: null, cause: `move-gated:${gated.move}` } : null;
 }
 
 /** received or running, and only forwards. Zero rows is not an error: a later state already covers it. */
