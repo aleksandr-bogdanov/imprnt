@@ -39,7 +39,13 @@ export type TransferCode =
   | "repo-operation" | "repo-submodule" | "repo-nested" | "repo-symlink" | "repo-index-flags" | "repo-reserved-path"
   | "repo-index-state" | "repo-withheld" | "snapshot-mismatch"
   | "repo-git-failed" | "repo-git-output" | "repo-revision-invalid" | "repo-revision-missing"
-  | "dependency-missing";
+  | "dependency-missing"
+  // materialising a repository. `repo-object-missing` is an object the destination's history, tree or the snapshot's
+  // index needs and cannot supply; `repo-history-unsupported` is a shallow, grafted or object-replaced destination whose
+  // history would not copy faithfully; `limit-object-bytes` and `limit-entries` are the copy's own budgets (pack bytes;
+  // objects and owned directory entries); `materialize-verify` is a written repository that is not the snapshot.
+  | "repo-object-missing" | "repo-object-format" | "repo-branch-invalid" | "repo-history-unsupported"
+  | "limit-object-bytes" | "limit-entries" | "materialize-verify";
 
 export class TransferError extends Error {
   readonly code: TransferCode;

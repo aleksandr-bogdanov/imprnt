@@ -452,13 +452,13 @@ export function captureWorkspace(options: CaptureOptions): CaptureResult {
 const OPERATION = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /** What an object looked like when this operation made it. A field is null when it was not settled then (a file still being written; a directory whose times move as it fills). */
-interface Made { dev: number; ino: number; size: number | null; mtimeMs: number | null; ctimeMs: number | null }
+export interface Made { dev: number; ino: number; size: number | null; mtimeMs: number | null; ctimeMs: number | null }
 
-function madeOf(stat: Stats, complete: boolean): Made {
+export function madeOf(stat: Stats, complete: boolean): Made {
   return { dev: stat.dev, ino: stat.ino, size: complete ? stat.size : null, mtimeMs: complete ? stat.mtimeMs : null, ctimeMs: complete ? stat.ctimeMs : null };
 }
 
-function isMade(stat: Stats, made: Made): boolean {
+export function isMade(stat: Stats, made: Made): boolean {
   return stat.dev === made.dev && stat.ino === made.ino && (made.size === null || stat.size === made.size) &&
     (made.mtimeMs === null || stat.mtimeMs === made.mtimeMs) && (made.ctimeMs === null || stat.ctimeMs === made.ctimeMs);
 }
@@ -694,7 +694,7 @@ interface Owned { files: Map<string, Made | null>; dirs: Map<string, Made | null
  * complete, so a failed write still leaves the file recorded as this
  * operation's.
  */
-function writeExclusive(abs: string, bytes: Uint8Array, mode: number, track: (made: Made | null) => void): Made {
+export function writeExclusive(abs: string, bytes: Uint8Array, mode: number, track: (made: Made | null) => void): Made {
   const fd = openSync(abs, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW, 0o600);
   try {
     try { track(madeOf(fstatSync(fd), false)); } catch { track(null); }

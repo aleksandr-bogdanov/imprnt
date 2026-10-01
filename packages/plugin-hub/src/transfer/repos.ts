@@ -17,13 +17,11 @@ import {
  * What this is not: it does not commit, stage, fetch, reset, check out,
  * rebase, push or take a lock, in the source or anywhere else, and it reaches
  * no network. It does not materialise anything in a destination repository:
- * that orchestration (an isolated worktree or clone from the destination's own
- * object store, the bundle's bytes laid over it, the index rebuilt) is left
- * unimplemented on purpose, because it is where the move's state machine and
- * the adapter's layout meet, and a snapshot that is taken is not a transfer
- * that is usable. `requireLocalRevision` is the one precondition of it that is
- * stable on its own. The git it needs is 2.31 or newer (`--show-scope`,
- * `--path-format`); an older one refuses as `repo-git-failed`.
+ * that is `materialize.ts`, which reads a snapshot and the selected
+ * destination's history and writes a new, self-contained repository.
+ * `requireLocalRevision` is the precondition of it that stands on its own. The
+ * git it needs is 2.31 or newer (`--show-scope`, `--path-format`); an older one
+ * refuses as `repo-git-failed`.
  *
  * How the source is read. The repository's own config is asked first, and a key
  * that would start a program (a filter, a helper, a hook path, a diff or merge
@@ -123,6 +121,8 @@ export interface RepoSnapshotOptions {
   dependencyFiles?: string[];
   /** Called once after every file is read and before the final comparison, where a concurrent writer could strike. Production callers pass nothing; a test passes the writer. */
   observe?: { afterReads?: () => void | Promise<void> };
+  /** Run every git call in `GitCall`'s isolated mode, so no system or global config, attribute file or home takes part in what is read. */
+  isolated?: true;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,16 +193,38 @@ function gitEnv(): Record<string, string> {
 }
 
 /**
+ * What a caller of `runGit` may vary, and nothing else about the command line
+ * or the environment is the caller's: the bytes for standard input, and one
+ * fixed least-authority mode. There is no way to pass a `-c` or an environment
+ * variable, so nothing a caller does can switch the hardening above back on.
+ */
+export interface GitCall {
+  /** Bytes for the command's standard input. Absent, standard input is closed. */
+  stdin?: Uint8Array;
+  /**
+   * The command reads no system or global config, attribute file or home, and
+   * neither garbage-collects, runs maintenance, writes a reflog or a bitmap.
+   * Only the repository's own config (and the command line) is left to speak.
+   */
+  isolated?: true;
+}
+
+const ISOLATED_CONFIG = ["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.logAllRefUpdates=false", "-c", "pack.writeBitmaps=false"];
+const ISOLATED_ENV: Record<string, string> = {
+  GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_ATTR_NOSYSTEM: "1", HOME: "/dev/null", XDG_CONFIG_HOME: "/dev/null",
+};
+
+/**
  * One git call. `label` is a fixed name for the step and is the only thing a
  * failure says: git's own words carry paths and credential-bearing urls.
  * Output past `maxBytes` stops the command.
  */
-async function runGit(repo: string, args: string[], maxBytes: number, label: string): Promise<Buffer> {
+export async function runGit(repo: string, args: string[], maxBytes: number, label: string, call: GitCall = {}): Promise<Buffer> {
   const child = (() => {
     try {
       return Bun.spawn(["git", "-C", repo, "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-        "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never", ...args],
-      { env: gitEnv(), stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+        "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never", ...(call.isolated ? ISOLATED_CONFIG : []), ...args],
+      { env: call.isolated ? { ...gitEnv(), ...ISOLATED_ENV } : gitEnv(), stdin: call.stdin ?? "ignore", stdout: "pipe", stderr: "ignore" });
     } catch { throw new TransferError("repo-git-failed", "spawn"); }
   })();
   const chunks: Uint8Array[] = [];
@@ -223,7 +245,7 @@ async function runGit(repo: string, args: string[], maxBytes: number, label: str
   return Buffer.concat(chunks);
 }
 
-const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+export const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 // The scopes git names a config entry's origin by. Keys always hold a dot and no scope does, so the two never read as each other.
 const CONFIG_SCOPES = new Set(["system", "global", "local", "worktree", "command", "submodule", "unknown"]);
@@ -235,7 +257,7 @@ const CONFIG_SCOPES = new Set(["system", "global", "local", "worktree", "command
  * key with a tab even under `-z` is read too: no key starts with a scope and a
  * tab.) Anything else is a git this reader does not understand, refused.
  */
-function configEntries(buffer: Buffer): { scope: string; key: string }[] {
+export function configEntries(buffer: Buffer): { scope: string; key: string }[] {
   const tokens = buffer.toString("utf8").split("\0");
   if (tokens[tokens.length - 1] === "") tokens.pop();
   const out: { scope: string; key: string }[] = [];
@@ -270,8 +292,8 @@ function redactedKey(key: string): string {
  * never reaches a network. The refusal names the key's section and variable,
  * never a subsection and never a value.
  */
-export async function assertSafeConfig(repo: string, maxBytes: number): Promise<void> {
-  const listed = await runGit(repo, ["config", "--list", "--show-scope", "--name-only", "--no-includes", "-z"], maxBytes, "config");
+export async function assertSafeConfig(repo: string, maxBytes: number, call: GitCall = {}): Promise<void> {
+  const listed = await runGit(repo, ["config", "--list", "--show-scope", "--name-only", "--no-includes", "-z"], maxBytes, "config", call);
   for (const { scope, key } of configEntries(listed)) {
     if (scope !== "local" && scope !== "worktree") continue;
     if (PROGRAM_KEYS.some(pattern => pattern.test(key)) || /^extensions\.partialclone$/i.test(key) || /^remote\..+\.(promisor|partialclonefilter)$/i.test(key)) {
@@ -280,7 +302,7 @@ export async function assertSafeConfig(repo: string, maxBytes: number): Promise<
   }
 }
 
-function blobOid(format: "sha1" | "sha256", bytes: Uint8Array): string {
+export function blobOid(format: "sha1" | "sha256", bytes: Uint8Array): string {
   return createHash(format).update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 }
 
@@ -296,7 +318,7 @@ function repoPath(path: string): string {
 function records(buffer: Buffer): string[] { return buffer.toString("utf8").split("\0").filter(one => one !== ""); }
 
 /** `ls-tree -r -z`: `<mode> <type> <oid>\t<path>`. */
-function parseTree(buffer: Buffer): Map<string, RepoSide> {
+export function parseTree(buffer: Buffer): Map<string, RepoSide> {
   const out = new Map<string, RepoSide>();
   for (const one of records(buffer)) {
     const tab = one.indexOf("\t");
@@ -308,7 +330,7 @@ function parseTree(buffer: Buffer): Map<string, RepoSide> {
 }
 
 /** `ls-files -s -z`: `<mode> <oid> <stage>\t<path>`. A conflicted path has entries at stages 1 to 3 and none at 0. */
-function parseIndex(buffer: Buffer): { entries: Map<string, RepoSide>; conflicted: string | null } {
+export function parseIndex(buffer: Buffer): { entries: Map<string, RepoSide>; conflicted: string | null } {
   const entries = new Map<string, RepoSide>();
   let conflicted: string | null = null;
   for (const one of records(buffer)) {
@@ -513,7 +535,8 @@ export async function snapshotRepo(options: RepoSnapshotOptions): Promise<RepoSn
   }
   const scan: ScanBudget = { limit: limits.maxScanBytes, used: 0 };
   const root = resolveRoot(options.repo);
-  const git = (args: string[], label: string, max = limits.maxGitOutputBytes) => runGit(root, args, max, label);
+  const call: GitCall = options.isolated ? { isolated: true } : {};
+  const git = (args: string[], label: string, max = limits.maxGitOutputBytes) => runGit(root, args, max, label, call);
   const line = async (args: string[], label: string) => (await git(args, label)).toString("utf8").trim();
 
   let top: string;
@@ -522,7 +545,7 @@ export async function snapshotRepo(options: RepoSnapshotOptions): Promise<RepoSn
     throw new TransferError("repo-not-toplevel");
   }
   if (top !== root) throw new TransferError("repo-not-toplevel");
-  await assertSafeConfig(root, limits.maxGitOutputBytes);
+  await assertSafeConfig(root, limits.maxGitOutputBytes, call);
 
   const gitDir = realpathSync(await line(["rev-parse", "--absolute-git-dir"], "git-dir"));
   const commonDir = realpathSync(await line(["rev-parse", "--path-format=absolute", "--git-common-dir"], "common-dir"));
