@@ -319,6 +319,18 @@ export class NativeRefusal extends Error {
 }
 
 export interface NativeSessionPort {
+  /**
+   * PURE: where this host's measured build would place a session at `sessionDir`, by the very rule `importSession` applies (one
+   * shared helper), so a preflight and the import cannot drift. It resolves the deepest existing ancestor of `sessionDir` and writes,
+   * creates and opens nothing. Refuses with `native_build_unvalidated`, `native_locator_unsupported_path` or `destination-invalid`.
+   */
+  destination(input: { sessionDir: string; version: string }): NativeSide;
+  /**
+   * PURE: the measured move between two builds, with the evidence the table holds for it. `from` and `to` are `os:version`. Refuses
+   * with `native_build_unvalidated` (either end) or `native_pair_unvalidated` (two measured builds nobody moved between).
+   */
+  portability(input: { from: { os: string; version: string }; to: { os: string; version: string } }):
+    { adapter: string; from: string; to: string; evidence: string };
   /** Read the one transcript of `nativeSession` under `sessionDir/config`, and nothing else in it. The caller has proved the source quiet. */
   exportSession(input: { sessionDir: string; nativeSession: string; version: string; limits: BundleLimits }): NativeExport;
   /**

@@ -306,6 +306,18 @@ function completeStageOf(dir: string, at: Stats, digest: string, operation: stri
     data.createdRoot === true && isRecord(data.root) && data.root.dev === at.dev && data.root.ino === at.ino;
 }
 
+/**
+ * Where `to` places a session at `sessionDir`: the realpath the engine would run in and the folder it is known to make for it. The one
+ * rule both `destination` (a preflight that writes nothing) and `importSession` apply, so they cannot disagree. Creates nothing.
+ */
+function placeAt(sessionDir: string, to: SessionRule): { cwd: string; projectDir: string } {
+  if (!isAbsolute(sessionDir) || resolve(sessionDir) !== sessionDir) throw new TransferError("destination-invalid");
+  const cwd = resolveFuture(sessionDir);
+  const projectDir = encodeProjectDir(cwd, to);
+  if (projectDir === null) throw new NativeRefusal("native_locator_unsupported_path");
+  return { cwd, projectDir };
+}
+
 /** Undo what THIS call just staged (never a reused stage) and refuse. A discard that cannot finish is its own named refusal and wins. */
 function refuseStaged(staged: StageResult, code: "native_dest_session_collision" | "native_locator_unsupported_path"): never {
   if (!staged.reused) discardStaged({ receipt: staged.receipt });
@@ -412,6 +424,22 @@ export function makeClaudeSessionPort(
   const unsupported = (rel: string) => new NativeRefusal("native_side_state_unsupported", rel);
 
   return {
+    /** Pure: `placeAt` for this host's build. It touches no entry of the disk beyond resolving the existing ancestors of `sessionDir`. */
+    destination({ sessionDir, version }) {
+      const to = buildOf(host.os, version);
+      const { cwd, projectDir } = placeAt(sessionDir, to);
+      return { version: to.version, os: to.os, cwd, project_dir: projectDir } satisfies NativeSide;
+    },
+
+    /** Pure: the table's own pair entry, named by the two builds. A pair nobody moved between (one host's two builds included) is not guessed at. */
+    portability({ from, to }) {
+      const source = buildOf(from.os, from.version);
+      const target = buildOf(to.os, to.version);
+      const key = `${source.os}:${source.version}>${target.os}:${target.version}`;
+      if (!Object.hasOwn(tables.pairs, key)) throw new NativeRefusal("native_pair_unvalidated");
+      return { adapter: ADAPTER, from: `${source.os}:${source.version}`, to: `${target.os}:${target.version}`, evidence: tables.pairs[key].evidence };
+    },
+
     /**
      * Reads only `config/`, and in it only the transcript. Every other entry of the engine directory is classified by
      * `lstat` alone: `.claude.json`, `.credentials.json`, `backups/` and `sessions/` are measured as not needed and are
@@ -516,10 +544,7 @@ export function makeClaudeSessionPort(
       const sourceExpected = encodeProjectDir(manifest.from.cwd, source);
       if (sourceExpected !== null && sourceExpected !== manifest.from.project_dir) throw new NativeRefusal("native_locator_rule_mismatch");
 
-      if (!isAbsolute(sessionDir) || resolve(sessionDir) !== sessionDir) throw new TransferError("destination-invalid");
-      const cwd = resolveFuture(sessionDir);
-      const projectDir = encodeProjectDir(cwd, to);
-      if (projectDir === null) throw new NativeRefusal("native_locator_unsupported_path");
+      const { cwd, projectDir } = placeAt(sessionDir, to);
       const mappedPath = transcriptPath(projectDir, manifest.native_session);
       const mapped = buildBundle([{ path: mappedPath, class: "native", mode: file.mode, bytes }], limits);
 

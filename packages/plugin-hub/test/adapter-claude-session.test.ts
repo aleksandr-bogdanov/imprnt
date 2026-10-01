@@ -599,3 +599,67 @@ test("a check that is handed something other than the import is refused: a path 
   expect(codeOf(i.check(SESSION, { limits: { ...L, maxFiles: 0 } })), "an entry count past the bound is not scanned past").toBe("native_resume_unverified");
   expect(codeOf(i.check())).toBe("none");
 });
+
+// ---------------------------------------------------------------------------
+// the pure preflight a handoff asks before any byte moves
+
+test("destination() answers by the rule importSession applies and creates nothing: the measured subset is accepted, a dot, an underscore, an over-long path and an unknown build are not", () => {
+  const root = scratch();
+  const linux = makeClaudeSessionPort(undefined, { os: "linux" });
+  const darwin = makeClaudeSessionPort(undefined, { os: "darwin" });
+  const entry = VALIDATED_SESSION_BUILDS["linux:2.1.285"];
+
+  // A directory that does not exist yet is answered from its deepest existing ancestor's realpath; nothing is made for the answer.
+  const tidy = join(root, "state-p1", "sessions", "p1-lair", SESSION);
+  const wideLinux = portOf("linux");
+  const side = wideLinux.destination({ sessionDir: tidy, version: PI });
+  const tidyProjectDir = encodeProjectDir(tidy, entryOf("linux"));
+  if (tidyProjectDir === null) throw new Error("the tidy path must encode under the linux entry");
+  expect(side).toEqual({ version: PI, os: "linux", cwd: tidy, project_dir: tidyProjectDir });
+  expect(existsSync(join(root, "state-p1")), "nothing was created").toBe(false);
+  // The same answer is the one the import then acts on.
+  const { out } = exported(scratch());
+  expect(importInto(wideLinux, out, tidy, PI).to).toEqual(side);
+
+  const real = linux.destination({ sessionDir: `/tmp/imprnt-hub-none/p1/sessions/p1-lair/${SESSION}`, version: PI });
+  expect(real).toMatchObject({ version: PI, os: "linux" });
+  expect(real.project_dir).toBe(real.cwd.replaceAll("/", "-"));
+
+  const ask = (port: NativeSessionPort, sessionDir: string, version: string) => codeOf(() => port.destination({ sessionDir, version }));
+  expect(ask(linux, "/tmp/dot.dir/a", PI)).toBe("native_locator_unsupported_path");
+  expect(ask(linux, "/tmp/under_score/a", PI)).toBe("native_locator_unsupported_path");
+  expect(ask(linux, "/tmp/has space/a", PI)).toBe("native_locator_unsupported_path");
+  const ceiling = ceilingOf(entry);
+  expect(ask(linux, `/${"a".repeat(ceiling - 1)}`, PI)).toBe("none");
+  expect(ask(linux, `/${"a".repeat(ceiling)}`, PI)).toBe("native_locator_unsupported_path");
+  expect(ask(linux, "/tmp/a", "2.1.0")).toBe("native_build_unvalidated");
+  expect(ask(linux, "/tmp/a", MAC), "a build the other host measured").toBe("native_build_unvalidated");
+  expect(ask(darwin, "/tmp/a", MAC)).toBe("none");
+  expect(ask(linux, "relative/a", PI)).toBe("destination-invalid");
+  expect(ask(linux, `${root}/x/../a`, PI)).toBe("destination-invalid");
+});
+
+test("portability() is the table's own entry for the pair, from either host, and refuses a pair nobody moved between", () => {
+  const mac = portOf("darwin");
+  const pi = portOf("linux");
+  for (const port of [mac, pi]) {
+    expect(port.portability({ from: { os: "darwin", version: MAC }, to: { os: "linux", version: PI } })).toEqual({
+      adapter: "claude-code", from: `darwin:${MAC}`, to: `linux:${PI}`, evidence: VALIDATED_SESSION_PAIRS[`darwin:${MAC}>linux:${PI}`].evidence,
+    });
+    expect(port.portability({ from: { os: "linux", version: PI }, to: { os: "darwin", version: MAC } }).evidence).toBe(VALIDATED_SESSION_PAIRS[`linux:${PI}>darwin:${MAC}`].evidence);
+  }
+  const ask = (from: { os: string; version: string }, to: { os: string; version: string }) => codeOf(() => mac.portability({ from, to }));
+  expect(ask({ os: "darwin", version: MAC }, { os: "darwin", version: MAC }), "two builds on one host").toBe("native_pair_unvalidated");
+  expect(ask({ os: "linux", version: PI }, { os: "linux", version: PI })).toBe("native_pair_unvalidated");
+  expect(ask({ os: "darwin", version: "2.1.0" }, { os: "linux", version: PI })).toBe("native_build_unvalidated");
+  expect(ask({ os: "darwin", version: MAC }, { os: "linux", version: MAC })).toBe("native_build_unvalidated");
+  expect(ask({ os: "plan9", version: MAC }, { os: "linux", version: PI })).toBe("native_build_unvalidated");
+});
+
+test("G1: with the measured tables a macOS state directory with a dot, the registry's own example, is refused: the gate stays open and nothing here claims it covered", () => {
+  const registryExample = `/Users/owner/.imprnt-hub/p1/sessions/p1-lair/${SESSION}`;
+  expect(codeOf(() => makeClaudeSessionPort(undefined, { os: "darwin" }).destination({ sessionDir: registryExample, version: MAC }))).toBe("native_locator_unsupported_path");
+  // The dot is the whole reason: on the other host's build too, and the same path without it is inside the measured subset.
+  expect(codeOf(() => makeClaudeSessionPort(undefined, { os: "linux" }).destination({ sessionDir: registryExample, version: PI }))).toBe("native_locator_unsupported_path");
+  expect(codeOf(() => makeClaudeSessionPort(undefined, { os: "darwin" }).destination({ sessionDir: registryExample.replace(".imprnt-hub", "imprnt-hub"), version: MAC }))).toBe("none");
+});
