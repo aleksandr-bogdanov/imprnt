@@ -106,6 +106,7 @@ else {
   // commit whatever is staged with a real git of its own, unseen in the log.
   const after=control.after;
   if(code===0 && after && after.verb===verb && here && (!after.arg || args.includes(after.arg))) {
+    if(after.config) Bun.spawnSync([${JSON.stringify(real)},'-C',cwd,'config',...after.config],{stdout:'ignore',stderr:'ignore'});
     if(after.remoteUrl) Bun.spawnSync([${JSON.stringify(real)},'-C',cwd,'config','remote.origin.url',after.remoteUrl],{stdout:'ignore',stderr:'ignore'});
     if(after.remove) unlinkSync(join(cwd,after.remove));
     if(after.commit) Bun.spawnSync([${JSON.stringify(real)},'-C',cwd,'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=p2','-c','user.email=p2@example.invalid','commit','--no-verify','--quiet','-m','second writer'],{stdout:'ignore',stderr:'ignore'});
@@ -118,7 +119,7 @@ say('end',code); process.exit(code);
     // `fail` refuses one verb with `exit` (73) after printing canned `stderr` and `stdout`, or dies of
     // `signal`. `after` acts once that verb has really succeeded, in the repository at `path`.
     control(value: { fail?: string; path?: string; noPush?: boolean; delay?: number; exit?: number; stderr?: string; stdout?: string;
-      signal?: string; after?: { verb: string; arg?: string; remove?: string; commit?: boolean; remoteUrl?: string } }) { writeFileSync(config, JSON.stringify(value)) },
+      signal?: string; after?: { verb: string; arg?: string; remove?: string; commit?: boolean; remoteUrl?: string; config?: [string, string] } }) { writeFileSync(config, JSON.stringify(value)) },
     events(): GitEvent[] { return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) },
     clear() { writeFileSync(log, "") },
   }

@@ -137,8 +137,8 @@ test("ROLL-07 ordered fetch rebase push preserves divergent commits and rejects 
       for (const verb of ["fetch", "push"]) {
         const args = ordered.find(e => e.args.includes(verb))!.args
         expect(args).toContain(realpathSync(r.remote))
-        expect(args.some(a => a === "main" || a === "main:main" || a === "HEAD:main" || a === "HEAD:refs/heads/main")).toBe(true)
-        expect(args.some(a => a === "--force" || a === "-f" || a.startsWith("+"))).toBe(false)
+        expect(args.some(a => verb === "fetch" ? a === "+refs/heads/main:refs/remotes/origin/main" : /^[0-9a-f]+:refs\/heads\/main$/.test(a))).toBe(true)
+        expect(args.some(a => a === "--force" || a === "-f" || verb === "push" && a.startsWith("+"))).toBe(false)
       }
     }
   } finally { await f.stop() }
@@ -986,4 +986,94 @@ test("sync blocks receiver programs under external repository, Claude login, and
     expect((await syncChild(f, git.env)).code).toBe(0)
     expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:local.txt")).toBe("synthetic local change")
   } finally { for (const path of [mcp, probe, ...(scratch ? [scratch] : [])]) rmSync(path, { recursive: true, force: true }); await f.stop() }
+})
+
+test("pinned sync maintains tracking refs only after all pushes, then observeSource accepts the workspace", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0], tracking = "refs/remotes/origin/main"
+    const old = fixtureGit(r.path, "rev-parse", tracking)
+    const wanted = commitChange(r.path)
+    // A URL-only transport really leaves the configured remote's tracking ref stale.
+    fixtureGit(r.path, "fetch", r.remote, "main")
+    fixtureGit(r.path, "push", r.remote, "HEAD:refs/heads/main")
+    expect(fixtureGit(r.path, "rev-parse", tracking)).toBe(old)
+    fixtureGit(f.root, "--git-dir", r.remote, "update-ref", "refs/heads/main", old)
+    const other = f.machine === "mac" ? "pi" : "mac"
+    appendFileSync(f.registryFile, `\n[[machines]]\nid = "${other}"\nos = "${other === "mac" ? "macos" : "linux"}"\n[[run]]\nid = "sync-other"\nkind = "sync"\nmachine = "${other}"\nschedule = "every 5m"\nmemory_limit_mb = 128\nrepositories = ["p1-vault", "p2-vault", "shared"]\n`)
+    const { observeSource } = await import("../src/runner/move-workspace.ts")
+    const move = { person: "p1", source_machine: f.machine, dest_machine: other } as any
+    const ctx = () => ({ registry: loadRegistry(f.registryFile, { machine: f.machine }), storeUrl: cluster.url(f.db) })
+    expect(await observeSource(ctx(), move)).toMatchObject({ ok: false, code: "workspace_unpushed" })
+    // Two destinations: a failure of the second must not mark the current HEAD pushed.
+    fixtureGit(r.path, "config", "--add", "remote.origin.pushurl", r.remote)
+    fixtureGit(r.path, "config", "--add", "remote.origin.pushurl", join(f.root, "absent.git"))
+    const isolated = observeGit(f.root)
+    fixtureGit(r.path, "update-ref", "refs/heads/untouched", old)
+    fixtureGit(r.path, "symbolic-ref", tracking, "refs/heads/untouched")
+    await syncChild(f, isolated.env)
+    const guarded = (await f.read.sheet("sync")).find(row => row.id === f.id)!.data.repositories as { id: string; code?: string }[]
+    expect(guarded.find(repo => repo.id === r.id)?.code).toBe("branch")
+    expect(fixtureGit(r.path, "rev-parse", "refs/heads/untouched")).toBe(old)
+    fixtureGit(r.path, "symbolic-ref", "--delete", tracking)
+    fixtureGit(r.path, "update-ref", tracking, old)
+    expect((await syncChild(f, isolated.env)).code).not.toBe(0)
+    expect(fixtureGit(r.path, "rev-parse", tracking)).toBe(old)
+    fixtureGit(r.path, "config", "--unset-all", "remote.origin.pushurl")
+    expect((await syncChild(f, isolated.env)).code).toBe(0)
+    expect(fixtureGit(r.path, "rev-parse", tracking)).toBe(wanted)
+    const seen = await observeSource(ctx(), move)
+    expect(seen.ok).toBe(true)
+    if (seen.ok) await seen.hold.release()
+  } finally { await f.stop() }
+})
+
+test("sync never invokes a nested gitlink clean filter through status, diff or rebase", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0], nested = join(r.path, "nested"), marker = join(f.root, "nested-filter-ran")
+    mkdirSync(nested)
+    fixtureGit(nested, "init", "--initial-branch=main")
+    writeFileSync(join(nested, ".gitattributes"), "*.txt filter=planted\n")
+    writeFileSync(join(nested, "file.txt"), "base\n")
+    fixtureGit(nested, "add", ".")
+    fixtureGit(nested, "commit", "-m", "nested base")
+    fixtureGit(r.path, "add", "nested")
+    fixtureGit(r.path, "commit", "-m", "gitlink")
+    fixtureGit(nested, "config", "filter.planted.clean", `printf ran > '${marker}'; cat`)
+    writeFileSync(join(nested, "file.txt"), "edit\n")
+    fixtureGit(r.path, "status", "--porcelain")
+    expect(readFileSync(marker, "utf8")).toBe("ran")
+    rmSync(marker)
+    writeFileSync(join(r.path, "pending.txt"), "ordinary pending note\n")
+    commitChange(r.peer, "peer-nested.txt", "divergent peer change\n")
+    fixtureGit(r.peer, "push", "origin", "main")
+    fixtureGit(r.path, "config", "submodule.recurse", "true")
+    fixtureGit(r.path, "config", "fetch.recurseSubmodules", "true")
+    fixtureGit(r.path, "config", "push.recurseSubmodules", "on-demand")
+    const isolated = observeGit(f.root)
+    expect((await syncChild(f, isolated.env)).code).toBe(0)
+    expect(existsSync(marker)).toBe(false)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:pending.txt")).toBe("ordinary pending note")
+    expect(readFileSync(join(nested, "file.txt"), "utf8")).toBe("edit\n")
+  } finally { await f.stop() }
+})
+
+test("sync disables push signing and reports a newly planted program as config refusal", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    fixtureGit(r.path, "config", "push.gpgSign", "true")
+    writeFileSync(join(r.path, "pending.txt"), "note\n")
+    const isolated = observeGit(f.root)
+    isolated.control({ path: realpathSync(r.path), after: { verb: "status", config: ["gpg.ssh.defaultKeyCommand", "echo should-not-run"] } })
+    await syncChild(f, isolated.env)
+    const repos = (await f.read.sheet("sync")).find(row => row.id === f.id)!.data.repositories as { id: string; code?: string; diagnostic?: unknown }[]
+    expect(repos.find(repo => repo.id === r.id)).toMatchObject({ code: "config" })
+    expect(repos.find(repo => repo.id === r.id)?.diagnostic).toBeUndefined()
+    isolated.control({})
+    fixtureGit(r.path, "config", "--unset", "gpg.ssh.defaultKeyCommand")
+    expect((await syncChild(f, isolated.env)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:pending.txt")).toBe("note")
+  } finally { await f.stop() }
 })

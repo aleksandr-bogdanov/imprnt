@@ -32,7 +32,7 @@ async function git(path: string, args: string[], code: string, stage: Stage,
   // Recheck before each command that can invoke repository-configured programs.
   // This narrows the writable-config race; it is not an OS isolation boundary.
   if (["unmerged", "status", "add", "diff", "commit", "fetch", "rebase", "push"].includes(stage) &&
-      await plantsProgram(path, "config") !== null) throw new Error("config");
+      await plantsProgram(path, "config") !== null) throw new ConfigRefusal();
   let child: ReturnType<typeof launch>;
   try { child = launch(path, args, options); } catch (error) {
     throw new GitFailure(code, { stage, reason: "spawn", errno: errnoOf(error) });
@@ -54,7 +54,7 @@ function launch(path: string, args: string[], options: { input?: string; config?
   // `config` is what the registry says for this repository, on the same
   // command line and for the same reason: the owner's hand, not the file's.
   return Bun.spawn(["git", "-C", path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-    "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false",
+    "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "-c", "push.gpgSign=false", "-c", "submodule.recurse=false", "-c", "diff.ignoreSubmodules=all",
     "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never",
     ...(options.config ?? []).flatMap(one => ["-c", one]), ...args],
     { env: process.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), stdout: "pipe", stderr: "pipe" });
@@ -62,7 +62,7 @@ function launch(path: string, args: string[], options: { input?: string; config?
 
 /** The git steps a sync runs, by fixed label. A label is never built from a path or an argument. */
 type Stage = "toplevel" | "common-dir" | "config" | "branch" | "remote" | "git-dir" | "unmerged"
-  | "status" | "add" | "diff" | "commit" | "fetch" | "rebase" | "push";
+  | "status" | "add" | "diff" | "commit" | "fetch" | "rebase" | "push" | "tracking-ref";
 
 /**
  * What a failed step is called. A closed list of names and never git's own
@@ -106,6 +106,10 @@ const SHAPES: { reason: Reason; stage?: Stage; pattern: RegExp }[] = [
 // An empty commit's verdict as git prints it on stdout: at the start of a line,
 // ending at a word boundary.
 const EMPTY_COMMIT_VERDICT = /^(?:nothing (?:added )?to commit|no changes added to commit)\b/im;
+
+class ConfigRefusal extends Error {
+  constructor() { super("config"); }
+}
 
 class GitFailure extends Error {
   diagnostic: SyncDiagnostic;
@@ -334,7 +338,7 @@ async function commitPending(path: string, nested: string[], code: string): Prom
   // handed over literally and on stdin: an excluding pathspec that names an
   // ignored directory makes `add` fail outright, and a vault left for days can
   // hold more changed paths than one command line takes.
-  const entries = (await git(path, ["status", "--porcelain", "-z", "--untracked-files=all", "--", ".", ...nested],
+  const entries = (await git(path, ["status", "--ignore-submodules=all", "--porcelain", "-z", "--untracked-files=all", "--", ".", ...nested],
     code, "status", { raw: true })).split("\0");
   const changed: string[] = [], toAdd: string[] = [];
   for (let n = 0; n < entries.length; n++) {
@@ -360,7 +364,7 @@ async function commitPending(path: string, nested: string[], code: string): Prom
   // rename pairing so both halves of a rename show, and cut down to what
   // status named here.
   const listed = new Set(changed);
-  const paths = (await git(path, ["diff", "--cached", "--no-renames", "--name-only", "-z"], code, "diff", { raw: true }))
+  const paths = (await git(path, ["diff", "--ignore-submodules=all", "--cached", "--no-renames", "--name-only", "-z"], code, "diff", { raw: true }))
     .split("\0").filter(name => listed.has(name));
   if (paths.length === 0) return 0;
   await git(path, ["--literal-pathspecs", "-c", "user.name=imprnt hub", "-c", "user.email=hub@localhost", "-c", "commit.gpgsign=false",
@@ -435,6 +439,13 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           code = "config";
           if (await plantsProgram(path, code) !== null) throw new Error(code);
           code = "branch";
+          const branchRef = `refs/heads/${repo.branch}`;
+          const trackingRef = `refs/remotes/${repo.remote}/${repo.branch}`;
+          await git(path, ["check-ref-format", branchRef], code, "branch");
+          await git(path, ["check-ref-format", trackingRef], code, "branch");
+          // Fetch follows a destination symref; do not let a tracking name point
+          // at a local branch or another namespace before applying the refspec.
+          if (await git(path, ["for-each-ref", "--format=%(symref)", trackingRef], code, "branch")) throw new Error(code);
           if (await git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"], code, "branch") !== repo.branch) throw new Error(code);
           code = "remote";
           if (!(await git(path, ["remote"], code, "remote")).split("\n").includes(repo.remote)) throw new Error(code);
@@ -444,7 +455,7 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           code = "conflict";
           const gitDir = await git(path, ["rev-parse", "--absolute-git-dir"], code, "git-dir");
           if (["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"].some(one => existsSync(join(gitDir, one))) ||
-              await git(path, ["diff", "--name-only", "--diff-filter=U"], code, "unmerged")) throw new Error(code);
+              await git(path, ["diff", "--ignore-submodules=all", "--name-only", "--diff-filter=U"], code, "unmerged")) throw new Error(code);
           code = "commit";
           const nested = nestedIn(path, registry).map(one => `:(exclude,literal)${one}`);
           committed = await commitPending(path, nested, code);
@@ -452,13 +463,21 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           // The registry's own ssh command for this repository, a deploy key
           // above all, rides on the two calls that dial the remote.
           const dial = repo.ssh_command === undefined ? [] : [`core.sshCommand=${repo.ssh_command}`];
-          await git(path, ["fetch", "--", remote.fetch, repo.branch], code, "fetch", { config: dial, discard: true });
+          await git(path, ["fetch", "--no-recurse-submodules", "--", remote.fetch, `+${branchRef}:${trackingRef}`], code, "fetch", { config: dial, discard: true });
+          const fetched = await git(path, ["rev-parse", "--verify", `${trackingRef}^{commit}`], code, "tracking-ref");
           code = "conflict";
           await git(path, ["-c", "rebase.autoStash=false", "rebase", "FETCH_HEAD"], code, "rebase", { discard: true });
           code = "push";
+          // Pin the exact revision sent to every destination. A concurrent HEAD
+          // change must not turn a different commit into apparently pushed work.
+          const pushed = await git(path, ["rev-parse", "--verify", "HEAD^{commit}"], code, "tracking-ref");
           for (const destination of remote.push) {
-            await git(path, ["push", ...(isAbsolute(destination) ? ["--receive-pack=git -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack"] : []), "--", destination, `HEAD:refs/heads/${repo.branch}`], code, "push", { config: dial, discard: true });
+            await git(path, ["push", "--no-recurse-submodules", ...(isAbsolute(destination) ? ["--receive-pack=git -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack"] : []), "--", destination, `${pushed}:${branchRef}`], code, "push", { config: dial, discard: true });
           }
+          // URL transports do not maintain the configured remote's tracking ref.
+          // Advance only after every push succeeds, and never follow a symref or
+          // overwrite a tracking ref changed by another writer since our fetch.
+          await git(path, ["update-ref", "--no-deref", trackingRef, pushed, fetched], code, "tracking-ref");
         } finally {
           try {
             if (locked) await connection`select pg_advisory_unlock(hashtextextended(${syncLockKey(declared.machine, identity)}, 0))`;
@@ -466,6 +485,7 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
         }
         results.push({ id: repo.id, required: repo.required, status: "success", ...(committed ? { committed } : {}) });
       } catch (error) {
+        if (error instanceof ConfigRefusal) code = "config";
         const cause = syncCause("en", code);
         const diagnostic = diagnosisOf(error, code);
         // The streak carries over from the last run's row, so a failure that
