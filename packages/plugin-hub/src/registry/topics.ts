@@ -1,7 +1,8 @@
 import { wantedState } from "../os/diff.ts";
 import type { ReplyRoute } from "../store/outbox.ts";
-import { languageOf, listAgents, listMachines, listRunEntries, noticeRoute } from "./entries.ts";
+import { languageOf, listAgents, listCredentials, listMachines, listRunEntries, noticeRoute } from "./entries.ts";
 import { loaded, type ChatAgent, type Registry, type RunEntry } from "./load.ts";
+import { credentialOfPreset } from "./presets.ts";
 
 /**
  * What the registry says about topic chats, and the two answers built on it that nothing else
@@ -154,6 +155,8 @@ export interface ResolvedSetup {
   preset_from: ChoiceSource;
   adapter: string;
   model: string;
+  /** Present only for a preset on a `model-key` credential: the provider that model is served by. */
+  provider?: string;
 }
 
 /** What Discord accepts of a channel name is more than this; this is what can be shown and passed on whole. */
@@ -207,10 +210,14 @@ export function resolveTopicSetup(registry: unknown, input: {
     return refuse("preset_unknown", `${JSON.stringify(preset.value)} is not a preset this registry defines (${Object.keys(it.presets).join(", ")})`);
   }
   const known = it.presets[preset.value];
+  // A preset on a model key runs the Claude Code engine against another provider, and the
+  // preview says whose. Every other preset reads exactly as it always did.
+  const onModelKey = listCredentials(it).find(one => one.id === credentialOfPreset(it, preset.value))?.kind === "model-key";
   return {
     ok: true, chat_name: name,
     machine: machine.value, machine_from: machine.from, runner: served.runner.id,
     preset: preset.value, preset_from: preset.from, adapter: known.adapter, model: known.model,
+    ...(onModelKey ? { provider: known.provider } : {}),
   };
 }
 

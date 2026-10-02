@@ -192,7 +192,9 @@ export function realProber(options: { fetch?: typeof fetch } = {}): CredentialPr
       // result is on the `voice_health` sheet already, written by real notes.
       // Opening the file still catches the two states that stop every note:
       // a key that is not there and a key file that is empty.
-      if (entry.kind === "api-key") return { ok: true };
+      // A model key is opened the same way and for the same reason: nothing is
+      // sent to the provider from a check, so no paid call is ever made by one.
+      if (entry.kind === "api-key" || entry.kind === "model-key") return { ok: true };
       return unreadable(`${entry.kind} is not a credential kind this hub knows how to open`);
     },
     async secrets(entry) {

@@ -29,6 +29,8 @@ export interface PreviewSetup {
   machine: string;
   adapter: string;
   model: string;
+  /** Set only for a model served by another provider than the engine's own, so the preview never reads as Claude. */
+  provider?: string;
   /** The request or handover, verbatim, and the very text the agent's first input will be. */
   initial_request: string;
   tool_profile?: string[];
@@ -39,7 +41,7 @@ export function topicPreview(language: Language, setup: PreviewSetup): string {
   const head = [
     `${label.chat}: ${setup.chat_name}`,
     `${label.machine}: ${setup.machine}`,
-    `${label.agent}: ${engineLabel(setup.adapter)} (${setup.model})`,
+    `${label.agent}: ${engineLabel(setup.adapter)} (${setup.model}${setup.provider === undefined ? "" : `, ${setup.provider}`})`,
   ].join("\n");
   const tools = setup.tool_profile && setup.tool_profile.length > 0 ? `\n\n${label.tools}: ${setup.tool_profile.join(", ")}` : "";
   return `${head}\n\n${setup.initial_request}${tools}`;
