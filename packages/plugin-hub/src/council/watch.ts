@@ -3,6 +3,8 @@ import { languageOf } from "../registry/entries.ts";
 import { readSetting, type Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readEffect, renderEffect, wantEffect } from "../store/effects.ts";
+import { chatUsable, noteAttention, readTopicByChat } from "../store/topics.ts";
+import { told, councilGapKind } from "./attention.ts";
 import { checkpointMinutes } from "./checkpoint.ts";
 import { generalOf, messageLink } from "./general.ts";
 import {
@@ -64,7 +66,9 @@ async function candidates(store: StoreLike, door: string): Promise<string[]> {
   return rows.map(one => one.id);
 }
 
-async function notice(store: StoreLike, say: { person: string; agent: string; route: { door: string; chat: string }; key: string; body: string; platform: string; language: Language }): Promise<void> {
+interface Line { person: string; agent: string; route: { door: string; chat: string }; key: string; body: string; platform: string; language: Language }
+
+async function notice(store: StoreLike, say: Line): Promise<void> {
   for (const [index, part] of prepareReply(say.body, say.platform, say.language).entries()) {
     await store.sql`select hub_door_notice(${say.person}, ${say.agent}, ${part}, ${index === 0 ? say.key : `${say.key}:part:${index + 1}`},
       ${{ door: say.route.door, chat: say.route.chat }}::jsonb, ${index + 1})`;
@@ -79,7 +83,15 @@ async function masterAttempt(store: StoreLike, council: CouncilRow): Promise<str
   return row?.consumed_attempt ?? "none";
 }
 
-/** `now` is the pass's own clock, the one the snapshot and the card were read at: a duration said in a notice is measured on it too. */
+/**
+ * `now` is the pass's own clock, the one the snapshot and the card were read at: a duration said in a notice is measured on it too.
+ *
+ * A NOTICE IS WRITTEN ONLY TO A PLACE THAT CAN TAKE IT, measured as the topics measure it (`chatUsable`: not archived, being
+ * reopened, gone or being deleted), the council's own chat and General each by itself. A need that has no place left is not
+ * written anywhere: it is kept as a gap on the topic of the council's chat (`attention.ts`) and paid, once, by the topic catch-up
+ * when a place can take it. A need that was said or paid for is never kept, and a need said now clears the gap it left, in the
+ * same transaction. A chat with no topic is a chat nothing can say is unusable, and is written to as it always was.
+ */
 async function attend(store: StoreLike, council: CouncilRow, snapshot: CouncilSnapshot, registry: Registry, language: Language, settings: Settings, now: Date): Promise<void> {
   const route = { door: council.return_route.door, chat: council.return_route.chat };
   const platform = platformOf(registry, route.door);
@@ -88,19 +100,47 @@ async function attend(store: StoreLike, council: CouncilRow, snapshot: CouncilSn
   const effect = await readEffect(store, council.status_effect_key);
   // The link is to the card in the council's own chat, when the platform has links and the card has an id.
   const link = general ? messageLink({ platform, guild: await guildOf(registry, route.door), chat: route.chat, message: effect?.platform_id ?? null }) : null;
+  const ownUsable = await chatUsable(store, route.door, route.chat);
+  const generalUsable = general !== null && await chatUsable(store, general.door, general.chat);
+  const topic = await readTopicByChat(store, route.door, route.chat);
+  const keeps = topic !== null && topic.lifecycle !== "deleting" ? topic.id : null;
+  const mine = { person: council.person, agent: council.return_route.agent, route, platform, language };
 
-  /** Say one need once: the specific line in the council's chat, and a keyed line (with a link) in General, or the routing issue. */
-  const say = async (need: Need, key: string, body: string, options: { origin?: boolean } = {}): Promise<void> => {
-    if (options.origin !== false) {
-      await notice(store, { person: council.person, agent: council.return_route.agent, route, key, body, platform, language });
+  /**
+   * Say one need once: the specific line in the council's chat, and a keyed line (with a link) in General, or the routing issue.
+   * `origin: false` is a need that is General's alone; `general: false` one that is the council's chat's alone.
+   */
+  const say = async (need: Need, key: string, body: string, options: { origin?: boolean; general?: boolean; link?: string | null } = {}): Promise<void> => {
+    const lines: Line[] = [];
+    if (options.origin !== false && ownUsable) lines.push({ ...mine, key, body });
+    if (options.general !== false) {
+      if (general !== null && generalUsable) {
+        lines.push({ person: council.person, agent: general.agent, route: { door: general.door, chat: general.chat }, key: `${key}:general`,
+          body: generalNotice(language, snapshot, need, options.link === undefined ? link : options.link), platform: general.platform, language });
+      } else if (general === null && options.origin !== false && ownUsable) {
+        lines.push({ ...mine, key: `${key}:routing`, body: routingIssue(language, snapshot, need) });
+      }
     }
-    if (general) {
-      await notice(store, { person: council.person, agent: general.agent, route: { door: general.door, chat: general.chat }, key: `${key}:general`,
-        body: generalNotice(language, snapshot, need, link), platform: general.platform, language });
-    } else if (options.origin !== false) {
-      await notice(store, { person: council.person, agent: council.return_route.agent, route, key: `${key}:routing`,
-        body: routingIssue(language, snapshot, need), platform, language });
+    if (keeps === null) {
+      for (const line of lines) await notice(store, line);
+      return;
     }
+    const kind = councilGapKind(need, council.id, key);
+    if (lines.length === 0) {
+      // Nobody is configured to be told by a need that is General's alone and has no General: `check` says so, and nothing is owed.
+      if (options.origin === false && general === null) return;
+      if (await told(store, keeps, key, kind)) return;
+      await noteAttention(store, keeps, kind, general === null ? "general_not_configured" : generalUsable ? "origin_unusable" : "general_unusable");
+      return;
+    }
+    await store.sql.begin(async (sql) => {
+      const tx = { ...store, sql: sql as unknown as StoreLike["sql"] };
+      // The gap is cleared first, which takes the topic's row for as long as this transaction runs: a catch-up for it that is waiting
+      // finds it gone and queues nothing, and one that has already been queued is seen below.
+      await noteAttention(tx, keeps, kind, null);
+      if (await told(tx, keeps, key, kind)) return;
+      for (const line of lines) await notice(tx, line);
+    });
   };
 
   const terminal = TERMINAL_STAGES.includes(snapshot.stage);
@@ -114,12 +154,10 @@ async function attend(store: StoreLike, council: CouncilRow, snapshot: CouncilSn
       if (one.attempt === null) continue;
       if (one.view === "quiet") {
         const since = one.activity_at !== null ? (now.getTime() - Date.parse(one.activity_at)) / 1000 : one.running_seconds ?? 0;
-        await notice(store, { person: council.person, agent: council.return_route.agent, route, key: `council-quiet:${one.participant}:${one.attempt}`,
-          body: quietNotice(language, snapshot, one, Math.max(1, Math.floor(since / 60))), platform, language });
+        await say("quiet", `council-quiet:${one.participant}:${one.attempt}`, quietNotice(language, snapshot, one, Math.max(1, Math.floor(since / 60))), { general: false });
       }
       if ((one.view === "running" || one.view === "quiet") && (one.running_seconds ?? 0) > settings.overrunSeconds) {
-        await notice(store, { person: council.person, agent: council.return_route.agent, route, key: `council-overrun:${one.participant}:${one.attempt}`,
-          body: overrunNotice(language, snapshot, one, Math.floor((one.running_seconds ?? 0) / 60)), platform, language });
+        await say("overrun", `council-overrun:${one.participant}:${one.attempt}`, overrunNotice(language, snapshot, one, Math.floor((one.running_seconds ?? 0) / 60)), { general: false });
       }
     }
     if (snapshot.checkpoint.reached && !snapshot.legacy) {
@@ -139,9 +177,9 @@ async function attend(store: StoreLike, council: CouncilRow, snapshot: CouncilSn
   if (snapshot.waiting?.kind === "legacy_unmerged" && !terminal) {
     await say("legacy_unmerged", `council-legacy:${council.id}`, legacyUnmergedNotice(language, snapshot));
   }
-  if (effect && (effect.state === "failed" || effect.state === "missing") && general) {
-    await notice(store, { person: council.person, agent: general.agent, route: { door: general.door, chat: general.chat }, key: `council-status:${council.id}:${effect.state}:general`,
-      body: generalNotice(language, snapshot, "status_undelivered", null), platform: general.platform, language });
+  if (effect && (effect.state === "failed" || effect.state === "missing")) {
+    // General's alone, and without a link to the card that did not land.
+    await say("status_undelivered", `council-status:${council.id}:${effect.state}`, "", { origin: false, link: null });
   }
 }
 
@@ -176,7 +214,9 @@ export async function projectCouncil(store: StoreLike, id: string, registry: Reg
       const last = council.status_at ? new Date(council.status_at).getTime() : 0;
       const changed = council.status_stage !== key;
       const due = last + (changed ? settings.writeMs : settings.editMs);
-      if (now.getTime() >= due) {
+      // A chat that is known not to take a line is not asked to take an edit: the words wait, and are written once it can.
+      if (!(await chatUsable(store, council.return_route.door, council.return_route.chat))) soon(now.getTime() + settings.editMs);
+      else if (now.getTime() >= due) {
         await wantEffect(store, { key: council.status_effect_key, door: council.return_route.door, chat: council.return_route.chat, owner: council.id, text, platform });
         await patchCouncil(store, council.id, { status_stage: key, status_at: now }, { bump: false });
       } else soon(due);
