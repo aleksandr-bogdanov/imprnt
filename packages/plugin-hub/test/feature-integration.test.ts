@@ -137,8 +137,8 @@ const versionsOf = async (q: any) => (await q`select version from schema_version
 const exists = async (q: any, table: string) => (await q.unsafe(`select to_regclass('public.${table}') is not null as there`))[0].there as boolean
 
 test("I3 the list is whole and ordered, and a store upgraded 013 to 014 to 015 to 016 carries what a fresh one does: both features' routines, fences and grants, nothing of 014 rewritten by 015, and of both only the claim guard and the protocol check touched by 016", async () => {
-  expect(MIGRATION_FILES.map(([version]) => version)).toEqual(whole(17))
-  expect(MIGRATION_FILES.slice(-4)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"], [16, "016-topic-move.sql"], [17, "017-topic-deletion.sql"]])
+  expect(MIGRATION_FILES.map(([version]) => version)).toEqual(whole(MIGRATION_FILES.length))
+  expect(MIGRATION_FILES.slice(13, 17)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"], [16, "016-topic-move.sql"], [17, "017-topic-deletion.sql"]])
 
   // The deployed store: everything through 013, with live work in it.
   const stepped = await rolloutDatabase(cluster, true)
@@ -176,15 +176,15 @@ test("I3 the list is whole and ordered, and a store upgraded 013 to 014 to 015 t
   expect(await versionsOf(stepped.sql)).toEqual(whole(16))
   const after = await shape(stepped.sql)
 
-  // 017 on top, twice: the store is then the one a fresh schema is.
+  // All later migrations, twice: the store is then the one a fresh schema is.
   await migrate(opened())
   await migrate(opened())
-  expect(await versionsOf(stepped.sql)).toEqual(whole(17))
+  expect(await versionsOf(stepped.sql)).toEqual(whole(MIGRATION_FILES.length))
   const upgraded = await shape(stepped.sql)
 
   const fresh = await rolloutDatabase(cluster)
   track(fresh.sql)
-  expect(await versionsOf(fresh.sql)).toEqual(whole(17))
+  expect(await versionsOf(fresh.sql)).toEqual(whole(MIGRATION_FILES.length))
   const born: Shape = await shape(fresh.sql)
   for (const part of Object.keys(born) as (keyof Shape)[]) expect(upgraded[part], `${part}: upgraded and fresh`).toEqual(born[part])
 
