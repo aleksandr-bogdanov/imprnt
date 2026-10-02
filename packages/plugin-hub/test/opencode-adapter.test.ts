@@ -399,3 +399,30 @@ test("ordinary close cleans a surviving tool after the engine leader dies", asyn
   await Promise.all([session.close(), session.close()]);
   expect(alive(pid)).toBe(false);
 }, 15000);
+
+for (const compaction of ["continue", "replay", "summary-only"]) test(`compaction lifecycle: ${compaction} keeps one feed and selects only the continued answer`, async () => {
+  const f = fixture()
+  const session = await begin(f, { compaction, answer: "pre-compaction fragment" })
+  const done = await turn(session, "the original question")
+  expect(done.receipts).toEqual(["message-1"])
+  expect(f.entries().filter(one => one.at === "prompt")).toHaveLength(1)
+  expect(JSON.stringify(done.progress)).not.toContain("PRIVATE COMPACTION SUMMARY")
+  if (compaction === "summary-only") {
+    expect(done.end.refused?.said).toContain("without a correlated continuation answer")
+    expect(done.end.text).toBe("")
+    expect(done.end.usage.input_tokens).toBe(200)
+  } else {
+    expect(done.end.refused).toBeNull()
+    expect(done.end.text).toBe("Complete answer after compaction")
+    expect(done.end.usage).toMatchObject({ input_tokens: 300, output_tokens: 60, cached_input_tokens: 30 })
+  }
+  await session.close()
+}, 30_000)
+
+test("empty continuation never falls back to a fetched pre-compaction fragment", async () => {
+  const f = fixture()
+  const session = await begin(f, { compaction: "continue", emptyContinuation: true, answer: "fragment" })
+  const done = await turn(session, "q")
+  expect(done.end.text).toBe("")
+  await session.close()
+}, 30_000)

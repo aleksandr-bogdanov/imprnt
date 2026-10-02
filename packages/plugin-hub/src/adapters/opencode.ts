@@ -348,7 +348,7 @@ async function open(options: Parameters<Adapter["start"]>[0], settings: { startT
         }
       } catch { /* the stream's own account stands for this message */ }
       infos.push(held);
-      if ((said ?? "") !== "") text = said!;
+      if (!held.summary && (outcome.answerIds?.includes(id) ?? true) && (said ?? "") !== "") text = said!;
     }
     if (text === "") text = outcome.streamed;
     const error = outcome.error ?? infos.find(one => one.error !== null)?.error ?? null;
@@ -358,7 +358,7 @@ async function open(options: Parameters<Adapter["start"]>[0], settings: { startT
     // preset names, so the turn is refused and its text is not posted. A record that names no variant at all
     // proves nothing either way and is not read as a contradiction.
     if (variant !== null) {
-      const applied = [outcome.echoed?.variant ?? null, ...infos.map(one => one.variant)].filter((one): one is string => one !== null);
+      const applied = [outcome.echoed?.variant ?? null, ...infos.filter(one => !one.summary).map(one => one.variant)].filter((one): one is string => one !== null);
       const wrong = applied.find(one => one !== variant);
       if (wrong !== undefined) {
         return refused({ cause: "other", said: `opencode recorded the variant ${wrong} and the preset's effort is ${variant}` }, infos, null);
@@ -366,7 +366,7 @@ async function open(options: Parameters<Adapter["start"]>[0], settings: { startT
     }
     // THE MODEL THAT ANSWERED IS THE BOUND ONE OR THE TURN IS REFUSED. An engine that answered from another
     // provider or model has fallen back to something nobody approved, and its text is not posted.
-    const stray = infos.find(one => (one.providerID !== null && one.providerID !== identity.provider) || (one.modelID !== null && one.modelID !== identity.model));
+    const stray = infos.filter(one => !one.summary).find(one => (one.providerID !== null && one.providerID !== identity.provider) || (one.modelID !== null && one.modelID !== identity.model));
     if (stray) {
       return refused({ cause: "other", said: `opencode answered with ${stray.providerID ?? "?"}/${stray.modelID ?? "?"} and the session is bound to ${identity.provider}/${identity.model}` }, infos, null);
     }
