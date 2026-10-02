@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { recordJobSuccess } from "../check/schedule.ts";
 import { syncCause, syncStuck } from "../door/lines.ts";
 import { prepareReply } from "../door/reply.ts";
@@ -7,8 +7,9 @@ import { recordOperationFailure } from "../door/health.ts";
 import { appendEntry } from "../records/diary.ts";
 import { putRow, readSheet } from "../records/statesheet.ts";
 import { listAgents, listPeople, listRepositories, listRunEntries, noticeRoute, repositoriesFor } from "../registry/entries.ts";
-import { type Registry, type RunEntry } from "../registry/load.ts";
+import { readSetting, type Registry, type RunEntry } from "../registry/load.ts";
 import { openStore, type StoreLike } from "../store/connect.ts";
+import { configEntries } from "./git-config.ts";
 import { storeUrlFor } from "../store/secrets.ts";
 
 /**
@@ -26,6 +27,10 @@ import { storeUrlFor } from "../store/secrets.ts";
  */
 async function git(path: string, args: string[], code: string, stage: Stage,
   options: { input?: string; raw?: boolean; config?: string[]; discard?: boolean } = {}): Promise<string> {
+  // Recheck before each command that can invoke repository-configured programs.
+  // This narrows the writable-config race; it is not an OS isolation boundary.
+  if (["unmerged", "status", "add", "diff", "commit", "fetch", "rebase", "push"].includes(stage) &&
+      await plantsProgram(path, "config") !== null) throw new Error("config");
   let child: ReturnType<typeof launch>;
   try { child = launch(path, args, options); } catch (error) {
     throw new GitFailure(code, { stage, reason: "spawn", errno: errnoOf(error) });
@@ -47,6 +52,7 @@ function launch(path: string, args: string[], options: { input?: string; config?
   // `config` is what the registry says for this repository, on the same
   // command line and for the same reason: the owner's hand, not the file's.
   return Bun.spawn(["git", "-C", path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+    "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false",
     "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never",
     ...(options.config ?? []).flatMap(one => ["-c", one]), ...args],
     { env: process.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), stdout: "pipe", stderr: "pipe" });
@@ -193,6 +199,7 @@ export const PROGRAM_KEYS: RegExp[] = [
   /^core\.(sshcommand|askpass|gitproxy|hookspath|fsmonitor|fsmonitorhookversion|alternaterefscommand|editor|pager|worktree)$/i,
   /^credential\.(.+\.)?helper$/i,
   /^gpg\.(.+\.)?program$/i,
+  /^gpg\.ssh\.defaultkeycommand$/i,
   /^diff\.external$/i,
   /^diff\..+\.(command|textconv)$/i,
   /^merge\..+\.driver$/i,
@@ -215,12 +222,66 @@ export const PROGRAM_KEYS: RegExp[] = [
  * choice. The answer names the key, so the refusal can say what to remove.
  */
 async function plantsProgram(path: string, code: string): Promise<string | null> {
-  const listed = await git(path, ["config", "--list", "--show-scope", "--name-only"], code, "config");
-  for (const line of listed.split("\n")) {
-    const [scope, key = ""] = line.split("\t");
+  const listed = await git(path, ["config", "--list", "--show-scope", "--name-only", "-z"], code, "config", { raw: true });
+  for (const { scope, key } of configEntries(Buffer.from(listed))) {
     if ((scope === "local" || scope === "worktree") && PROGRAM_KEYS.some(pattern => pattern.test(key))) return key;
   }
   return null;
+}
+
+/** Resolve components in filesystem order: symlink/.. is not a lexical parent. */
+function canonical(path: string): string {
+  let at = "/";
+  for (const part of path.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") { at = dirname(at); continue; }
+    const next = join(at, part);
+    try { at = realpathSync(next); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      at = next;
+    }
+  }
+  return at;
+}
+
+/** Local Git URLs are paths or file URLs; scp-style and network URLs are not local. */
+function localRemote(path: string, url: string): string | null {
+  if (url.startsWith("file://")) {
+    // Preserve dot components until filesystem resolution (URL normalizes them).
+    const match = /^file:\/\/[^/]*(\/.*)$/.exec(url);
+    if (!match) throw new Error("remote");
+    return decodeURIComponent(match[1]);
+  }
+  if (/^[^/]+:/.test(url)) return null;
+  return isAbsolute(url) ? url : `${path}/${url}`;
+}
+
+/**
+ * Local receive-pack runs the destination's hooks outside the agent box. A
+ * destination any person can write is therefore forbidden, even via a symlink
+ * or a separate pushurl. Account-owned bare repositories outside those roots
+ * remain valid. get-url expands the account's trusted insteadOf rewrites.
+ */
+async function safeRemotes(path: string, remote: string, registry: Registry, code: string): Promise<{ fetch: string; push: string[] }> {
+  const state = readSetting(registry, "hub.state_dir");
+  const roots = listPeople(registry).flatMap(person => [
+    ...(person.tree ? [person.tree] : []),
+    ...(typeof state === "string" && state ? [join(state, person.id)] : []),
+  ]).map(root => ({ declared: resolve(root), real: canonical(resolve(root)) }));
+  const resolved: string[][] = [];
+  for (const push of [false, true]) {
+    const destinations: string[] = [];
+    const urls = await git(path, ["remote", "get-url", "--all", ...(push ? ["--push"] : []), remote], code, "remote", { raw: true });
+    for (const url of urls.replace(/\n$/, "").split("\n")) {
+      const local = localRemote(path, url);
+      if (local === null) { destinations.push(url); continue; }
+      const real = canonical(local);
+      if (roots.some(root => inside(root.declared, local) || inside(root.real, real))) throw new Error(code);
+      destinations.push(real);
+    }
+    resolved.push(destinations);
+  }
+  return { fetch: resolved[0][0], push: resolved[1] };
 }
 
 /**
@@ -359,6 +420,7 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           if (await git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"], code, "branch") !== repo.branch) throw new Error(code);
           code = "remote";
           if (!(await git(path, ["remote"], code, "remote")).split("\n").includes(repo.remote)) throw new Error(code);
+          const remote = await safeRemotes(path, repo.remote, registry, code);
           // A merge left half done is refused before anything is added: an
           // `add` over conflict markers would commit them as the resolution.
           code = "conflict";
@@ -372,11 +434,13 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           // The registry's own ssh command for this repository, a deploy key
           // above all, rides on the two calls that dial the remote.
           const dial = repo.ssh_command === undefined ? [] : [`core.sshCommand=${repo.ssh_command}`];
-          await git(path, ["fetch", "--", repo.remote, repo.branch], code, "fetch", { config: dial, discard: true });
+          await git(path, ["fetch", "--", remote.fetch, repo.branch], code, "fetch", { config: dial, discard: true });
           code = "conflict";
           await git(path, ["-c", "rebase.autoStash=false", "rebase", "FETCH_HEAD"], code, "rebase", { discard: true });
           code = "push";
-          await git(path, ["push", "--", repo.remote, `HEAD:refs/heads/${repo.branch}`], code, "push", { config: dial, discard: true });
+          for (const destination of remote.push) {
+            await git(path, ["push", ...(isAbsolute(destination) ? ["--receive-pack=git -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack"] : []), "--", destination, `HEAD:refs/heads/${repo.branch}`], code, "push", { config: dial, discard: true });
+          }
         } finally {
           try {
             if (locked) await connection`select pg_advisory_unlock(hashtextextended(${syncLockKey(declared.machine, identity)}, 0))`;

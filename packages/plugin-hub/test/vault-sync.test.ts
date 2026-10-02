@@ -136,7 +136,7 @@ test("ROLL-07 ordered fetch rebase push preserves divergent commits and rejects 
       expect(ordered.map(e => e.args.find(a => ["fetch", "rebase", "push"].includes(a)))).toEqual(["fetch", "rebase", "push"])
       for (const verb of ["fetch", "push"]) {
         const args = ordered.find(e => e.args.includes(verb))!.args
-        expect(args).toContain("origin")
+        expect(args).toContain(realpathSync(r.remote))
         expect(args.some(a => a === "main" || a === "main:main" || a === "HEAD:main" || a === "HEAD:refs/heads/main")).toBe(true)
         expect(args.some(a => a === "--force" || a === "-f" || a.startsWith("+"))).toBe(false)
       }
@@ -601,6 +601,8 @@ test("the sync refuses to commit over an unfinished merge or under a filter prog
     // would call, a remote rewritten into a transport that runs a command, and
     // an include that could say any of them from another file.
     for (const [key, value] of [
+      ["gpg.ssh.defaultKeyCommand", `sh -c 'echo ran > ${marker}'`],
+      ["url./tmp/tab\tbase.insteadOf", "synthetic:"],
       ["core.sshCommand", `sh -c 'echo ran > ${marker}'`],
       ["credential.helper", `!sh -c 'echo ran > ${marker}'`],
       ["diff.planted.textconv", `sh -c 'echo ran > ${marker}'`],
@@ -866,5 +868,75 @@ test("a step that floods stdout and stderr is drained to its end without a stall
     git.control({})
     expect((await syncChild(f, git.env)).code).toBe(0)
     expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:pending.txt")).toBe("an agent's note")
+  } finally { await f.stop() }
+})
+
+test("sync refuses writable local fetch and push remotes including aliases, and preserves trusted bare remotes", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    const planted = join(r.path, "planted.git")
+    fixtureGit(f.root, "clone", "--bare", r.remote, planted)
+    appendFileSync(join(r.path, ".git", "info", "exclude"), "\n/planted.git/\n")
+    const marker = join(f.root, "receive-hook-ran")
+    writeFileSync(join(planted, "hooks", "pre-receive"), `#!/bin/sh\nprintf ran > '${marker}'\n`, { mode: 0o755 })
+    commitChange(r.path)
+    // Reproduce the original boundary failure using only a disposable bare repo:
+    // the caller's hooksPath setting does not suppress the receiver's hook.
+    fixtureGit(r.path, "push", planted, "HEAD:refs/heads/proof")
+    expect(readFileSync(marker, "utf8")).toBe("ran")
+    rmSync(marker)
+    const alias = join(f.root, "remote-alias")
+    symlinkSync(planted, alias)
+    const otherTree = join(f.repos[1].path, "planted.git")
+    fixtureGit(f.root, "clone", "--bare", r.remote, otherTree)
+    appendFileSync(join(f.repos[1].path, ".git", "info", "exclude"), "\n/planted.git/\n")
+    const personState = join(f.stateDir, "p2", "planted.git")
+    mkdirSync(join(f.stateDir, "p2"), { recursive: true })
+    fixtureGit(f.root, "clone", "--bare", r.remote, personState)
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    for (const [mode, target] of [
+      ["fetch", planted], ["fetch", "./planted.git"], ["fetch", `file://${planted}`],
+      ["fetch", alias], ["fetch", `${alias}/../planted.git`], ["push", planted], ["push", alias], ["push", otherTree], ["push", personState],
+    ]) {
+      fixtureGit(r.path, "remote", "set-url", "origin", r.remote)
+      try { fixtureGit(r.path, "config", "--unset-all", "remote.origin.pushurl") } catch { /* first case has none */ }
+      fixtureGit(r.path, "remote", "set-url", ...(mode === "push" ? ["--push"] : []), "origin", target)
+      git.clear()
+      await syncChild(f, git.env)
+      const rows = (await f.read.sheet("sync")).find(one => one.id === f.id)!.data.repositories as { id: string; code?: string }[]
+      expect(rows.find(one => one.id === r.id)?.code).toBe("remote")
+      expect(git.events().some(e => e.cwd === realpathSync(r.path) && e.args.some(a => ["fetch", "push", "add", "commit", "rebase"].includes(a)))).toBe(false)
+      expect(existsSync(marker)).toBe(false)
+    }
+    fixtureGit(r.path, "remote", "set-url", "origin", r.remote)
+    fixtureGit(r.path, "config", "--unset-all", "remote.origin.pushurl")
+    // Even the allowed local receiver gets an explicit hooks override.
+    writeFileSync(join(r.remote, "hooks", "pre-receive"), `#!/bin/sh\nprintf trusted-hook > '${marker}'\n`, { mode: 0o755 })
+    // Changing the remote name's URL after preflight cannot redirect the pinned push.
+    git.control({ path: realpathSync(r.path), after: { verb: "rebase", remoteUrl: planted } })
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:local.txt")).toBe("synthetic local change")
+    expect(existsSync(marker)).toBe(false)
+  } finally { await f.stop() }
+})
+
+test("sync rebase disables repository-requested signing without invoking a signer", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    commitChange(r.path)
+    commitChange(r.peer, "peer-signing.txt", "peer change\n")
+    fixtureGit(r.peer, "push", "origin", "main")
+    fixtureGit(r.path, "config", "commit.gpgsign", "true")
+    fixtureGit(r.path, "config", "gpg.format", "ssh")
+    fixtureGit(r.path, "config", "user.signingkey", join(f.root, "does-not-exist"))
+    const isolated = observeGit(f.root)
+    // Bypass the observation wrapper's own signing defaults: production must disable it.
+    const result = await syncChild(f, { ...isolated.env, PATH: process.env.PATH })
+    expect(result.code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:local.txt")).toBe("synthetic local change")
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:peer-signing.txt")).toBe("peer change")
   } finally { await f.stop() }
 })
