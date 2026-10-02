@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { erasureFence } from "../erasure/startup.ts";
 import { historyHarvestFrom } from "../registry/entries.ts";
@@ -849,7 +850,10 @@ export async function runDoor(options: {
         await store.sql`update outbox set attempts = ${attempts}, retry_at = ${next}::timestamptz,
           failure = '{"kind":"uncertain","code":"send-interrupted","cause":"delivery outcome unknown"}'::jsonb where id = ${chunk.id}`;
         try {
-          await options.platform.post({ chat: route.chat, text: chunk.body });
+          // Stable across retries and process restarts. Discord enforces this only within
+          // its recent-message window; it is not an unlimited exactly-once guarantee.
+          const nonce = createHash("sha256").update(`hub-outbox:${options.door}:${route.chat}:${chunk.id}`).digest("base64url").slice(0, 25);
+          await options.platform.post({ chat: route.chat, text: chunk.body, nonce });
         } catch (error) {
           const failure = classifyPlatformError(error);
           // A limit the platform named is waited out as named, and never sooner than

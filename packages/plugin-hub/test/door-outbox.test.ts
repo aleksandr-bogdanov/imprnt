@@ -299,6 +299,11 @@ test(
 
     const it = await stage();
     await Bun.write(it.registryFile, (await Bun.file(it.registryFile).text()) + "\n[door]\ndelivery_retry_seconds = 1\n");
+    const nonces: (string | undefined)[] = [];
+    const platform = { ...it.fake.platform, post: async (input: { chat: string; text: string; nonce?: string }) => {
+      nonces.push(input.nonce);
+      return await it.fake.platform.post(input);
+    } };
     let handle: { stop(): Promise<void> } | null = null;
     const runner = cluster.connectAs("hub_runner", it.db) as unknown as Conn;
 
@@ -309,7 +314,7 @@ test(
       handle = await (runDoor as Function)({
         door: DOOR,
         registryFile: it.registryFile,
-        platform: it.fake.platform,
+        platform,
       });
       await Bun.sleep(SETTLE_MS);
 
@@ -338,7 +343,9 @@ test(
       expect(it.fake.posts().length).toBe(0);
 
       // Now the platform accepts, and the two facts land together.
+      await handle!.stop();
       it.fake.holdPosts(false);
+      handle = await (runDoor as Function)({ door: DOOR, registryFile: it.registryFile, platform });
       await until(
         "the chunk was marked delivered",
         async () => (await it.read.outbox())[0].delivered_at !== null,
@@ -346,6 +353,9 @@ test(
       );
       await Bun.sleep(1000);
 
+      expect(nonces.length).toBeGreaterThan(1);
+      expect(new Set(nonces).size).toBe(1);
+      expect(nonces[0]).toMatch(/^[A-Za-z0-9_-]{25}$/);
       expect(it.fake.posts().length).toBe(1);
       expect(it.fake.posts()[0].text).toBe(
         "the reply the platform will refuse",

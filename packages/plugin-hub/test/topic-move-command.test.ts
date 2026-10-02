@@ -817,3 +817,23 @@ test("a block the owner can clear (a source that was never known) is waiting for
   const unknown = await staged({ source: false })
   expect(await call(unknown.s, unknown.own, { action: "move", destination_machine: "mac" })).toMatchObject({ status: "waiting_owner", stage: "blocked", cause: "owner_unknown" })
 })
+
+
+test("known retained destination copy refuses a new move before gating; removed copies permit a request", async () => {
+  const t = await staged()
+  await call(t.s, t.own, { action: "move", destination_machine: "mac" })
+  const move = (await moves(t.s))[0]
+  expect(await call(t.s, t.own, { action: "move", move_decision: { choice: "withdraw" } })).toMatchObject({ stage: "withdrawn" })
+  // A durable location claim left by an earlier transfer; no claim about actual remote files.
+  await t.s.admin`insert into move_copy (move_id, machine, kind, generation, state, staging_id, runner, incarnation,
+    conversation_id, native_session, placement_generation)
+    values (${move.id}, 'mac', 'source_session_retained', 1, 'retained_stale', 'earlier-source', ${RUNNER_MAC}, 'old-inc',
+      ${t.topic.conversation_id}, 'old-session', 1)`
+  for (const caller of [t.own, t.general]) {
+    expect(await call(t.s, caller, moveOf(t, { destination_machine: "mac" }))).toMatchObject({ status: "failed", cause: "destination_copy_occupied" })
+  }
+  expect(await count(t.s, "topic_move")).toBe(1)
+  expect(await count(t.s, "claim_gate", "state = 'open'")).toBe(0)
+  await t.s.admin`update move_copy set state = 'removed' where move_id = ${move.id}`
+  expect(await call(t.s, t.own, { action: "move", destination_machine: "mac" })).toMatchObject({ status: "accepted" })
+})
