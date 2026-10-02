@@ -385,3 +385,17 @@ test("the key is handed to the child in its environment and is in nothing the hu
   const all = [f.log, join(f.sessionDir, "opencode", "hub-session.json"), join(f.sessionDir, "instructions.md")].filter(existsSync).map(file => readFileSync(file, "utf8")).join("\n")
   expect(all).not.toContain(f.key)
 }, 30_000)
+
+
+test("ordinary close cleans a surviving tool after the engine leader dies", async () => {
+  const f = fixture();
+  const session = await begin(f, { survivingTool: true });
+  const pid = f.entries().find(one => one.at === "tool-process")!.pid as number;
+  expect(alive(pid)).toBe(true);
+  session.processes?.();
+  process.kill(session.pid!, "SIGKILL");
+  await session.exited;
+  expect(alive(pid)).toBe(true);
+  await Promise.all([session.close(), session.close()]);
+  expect(alive(pid)).toBe(false);
+}, 15000);

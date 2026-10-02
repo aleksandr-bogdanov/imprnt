@@ -342,3 +342,91 @@ test("A10 the card is not edited in a chat known not to take it, and is written 
   expect(written.revision).toBeGreaterThan(start.revision)
   expect(written.wanted_content).toContain("1 of 2 answered")
 })
+
+test("a stale council catch-up cannot queue after deletion starts", async () => {
+  const r = await rig()
+  await r.archive(r.master)
+  await r.archive(r.general)
+  await r.lose()
+  await r.project()
+  const debt = await owed(r, r.master)
+  await r.s.su`update topic set lifecycle = 'deleting' where id = ${r.master.id}`
+  const result = await attentionCatchup(r.s.door, r.master.id, debt.map(({kind, seq}) => ({kind, seq})),
+    {person: PERSON, agent: GENERAL, route: {door: DOOR, chat: GENERAL_CHAT}, key: "unused", body: "must not post"})
+  expect(result).toBe("stale")
+  expect(await caught(r, r.master)).toEqual([])
+  expect(await owed(r, r.master)).toEqual([])
+})
+
+test("a no-route writer waiting on catch-up cannot recreate the need that catch-up paid", async () => {
+  const r = await rig()
+  await r.archive(r.master)
+  await r.archive(r.general)
+  await r.lose()
+  await r.project()
+  const debt = await owed(r, r.master)
+  let watcher!: Promise<number | null>
+  const monitor = track(cluster.connect(r.s.db))
+  await r.s.su.begin(async (sql: StoreLike["sql"]) => {
+    // Catch-up has the topic lock, while the watch still sees both routes archived.
+    await sql`select id from topic where id = ${r.master.id} for update`
+    watcher = r.project({ store: r.restarted() })
+    const until = Date.now() + 5000
+    let blocked = false
+    while (Date.now() < until) {
+      const [waiting] = await monitor`select exists (select 1 from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'
+          and query like '%hub_topic_attention_lock%') as blocked`
+      if (waiting.blocked) { blocked = true; break }
+      await Bun.sleep(10)
+    }
+    expect(blocked, "the no-route writer takes the same topic lock as catch-up").toBe(true)
+    await r.reopen(r.general)
+    expect(await attentionCatchup({ ...r.s.door, sql: sql as unknown as StoreLike["sql"] }, r.master.id,
+      debt.map(({kind, seq}) => ({kind, seq})),
+      {person: PERSON, agent: GENERAL, route: {door: DOOR, chat: GENERAL_CHAT}, key: "unused", body: "paid while watch waited"})).toBe("queued")
+  })
+  await watcher
+  expect(await owed(r, r.master)).toEqual([])
+  await r.catchup()
+  await r.project()
+  expect(await caught(r, r.master)).toHaveLength(1)
+  expect(await said(r)).toEqual([])
+}, 20_000)
+
+for (const change of ['deleting', 'erased'] as const) test(`a direct council notice waiting on the source cannot reach General after it is ${change}`, async () => {
+  const r = await rig()
+  await r.lose()
+  const monitor = track(cluster.connect(r.s.db))
+  let watcher!: Promise<number | null>
+  await r.s.su.begin(async (sql: StoreLike["sql"]) => {
+    await sql`select id from topic where id = ${r.master.id} for update`
+    watcher = r.project({ store: r.restarted() })
+    const until = Date.now() + 5000
+    let blocked = false
+    while (Date.now() < until) {
+      const [waiting] = await monitor`select exists (select 1 from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'
+          and query like '%hub_council_notice_lock%') as blocked`
+      if (waiting.blocked) { blocked = true; break }
+      await Bun.sleep(10)
+    }
+    expect(blocked, 'the direct producer waits for the source topic').toBe(true)
+    if (change === 'deleting') {
+      await sql`update topic set lifecycle = 'deleting' where id = ${r.master.id}`
+    } else {
+      for (const table of ['council_event', 'round_member', 'council_round', 'council_decision', 'council_participant']) {
+        await sql.unsafe(`delete from ${table} where council_id = $1`, [r.id])
+      }
+      await sql`delete from council where id = ${r.id}`
+      await sql`delete from topic_transition where topic_id = ${r.master.id}`
+      await sql`delete from topic_channel_seen where topic_id = ${r.master.id}`
+      await sql`delete from topic where id = ${r.master.id}`
+    }
+  })
+  await watcher
+  expect(await said(r), 'neither the original chat nor General gets the stale notice').toEqual([])
+  // The already-deleting snapshot follows the no-keeps path too.
+  await r.project()
+  expect(await said(r)).toEqual([])
+}, 20_000)

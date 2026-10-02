@@ -2,7 +2,7 @@ import { storeMachineOf } from "../hub/digest.ts";
 import { RegistryEditRefused, removeEntry } from "../registry/edit.ts";
 import { readSetting, type Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
-import { applyErasureManifest, deletionSchemaReady, readErasureManifest, type ApplyResult } from "../store/deletions.ts";
+import { applyErasureManifest, councilNoticeSchemaReady, deletionSchemaReady, readErasureManifest, type ApplyResult } from "../store/deletions.ts";
 import { sweepFromManifest } from "./files.ts";
 import { ManifestMalformed, mergeManifests, readLocalManifest, registryViolations, writeLocalManifest } from "./manifest.ts";
 
@@ -49,9 +49,12 @@ export type ReconcileVerdict =
  * hub): why this process must not start, or null. It starts only against a store that holds every deletion this machine's own copy of
  * the control manifest records. A store that does not (restored from an older copy) is brought forward by the hub's next pass, and the
  * process is started again by the manager after it; nothing of a deleted identity is served in between. A machine with no copy, or a
- * copy that names nothing, has nothing to be held against.
+ * copy that names nothing, has no manifest debt; a store with deletion support still needs the current erasure routines.
  */
 export async function erasureFence(store: StoreLike, stateDir: string | null): Promise<string | null> {
+  if (await deletionSchemaReady(store) && !(await councilNoticeSchemaReady(store))) {
+    return "the store has not been migrated to schema 18 (council notice erasure): migrate it before serving";
+  }
   if (stateDir === null || stateDir === "") return null;
   let local: ReturnType<typeof readLocalManifest>;
   try { local = readLocalManifest(stateDir); } catch (error) {
@@ -91,6 +94,10 @@ export async function reconcileErasure(ctx: ReconcileContext): Promise<Reconcile
         detail: `this machine recorded ${local.tombstones.length} deleted topic${local.tombstones.length === 1 ? "" : "s"}, and the store has not been migrated to hold them: migrate it, so that they are applied before anything is served` };
     }
     return { serve: true, applied: 0, created: [], swept: 0, failed: [], copyUnreadable };
+  }
+
+  if (!(await councilNoticeSchemaReady(ctx.store))) {
+    return { serve: false, reason: "schema_behind", detail: "apply migration 18 (council notice erasure) before serving" };
   }
 
   const fromStore = await readErasureManifest(ctx.store);

@@ -53,14 +53,18 @@ export async function requireSchema(store: StoreLike): Promise<void> {
       and to_regclass('public.erasure_control') is not null
       and to_regprocedure('public.hub_erasure_manifest()') is not null
       and to_regprocedure('public.hub_erasure_apply(jsonb)') is not null
-      and to_regprocedure('public.hub_deletion_erase_active(text)') is not null as deletions`) as unknown as
-    { present: boolean; councils: boolean; moves: boolean; deletions: boolean }[];
+      and to_regprocedure('public.hub_deletion_erase_active(text)') is not null as deletions,
+    to_regprocedure('public.hub_erasure_owns_notice(text, text, text[])') is not null
+      and to_regprocedure('public.hub_topic_attention_lock(text)') is not null
+      and to_regprocedure('public.hub_council_notice_lock(text)') is not null as council_notices`) as unknown as
+    { present: boolean; councils: boolean; moves: boolean; deletions: boolean; council_notices: boolean }[];
   if (!found?.present) throw new Error("schema-behind: apply migration 11 (conversations) before this runner serves");
   if (!found.councils) throw new Error("schema-behind: apply migration 14 (councils) before this runner serves");
   if (!found.moves) throw new Error("schema-behind: apply migration 16 (topic moves) before this runner serves");
   // A topic that was deleted has its identities reserved and its tombstone kept by this migration: a runner serving a store without
   // them could not be told, by that store, that an agent it is handed was deleted.
   if (!found.deletions) throw new Error("schema-behind: apply migration 17 (topic deletion) before this runner serves");
+  if (!found.council_notices) throw new Error("schema-behind: apply migration 18 (council notice erasure) before this runner serves");
 }
 
 const NONE: AdapterCapabilities = { stableSession: false, safeResume: false, delegationDisabled: false };

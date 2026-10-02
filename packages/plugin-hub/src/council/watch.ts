@@ -122,19 +122,30 @@ async function attend(store: StoreLike, council: CouncilRow, snapshot: CouncilSn
       }
     }
     if (keeps === null) {
-      for (const line of lines) await notice(store, line);
+      await store.sql.begin(async sql => {
+        const [current] = await sql`select hub_council_notice_lock(${council.id}) as eligible`;
+        if (!current?.eligible) return;
+        const tx = { ...store, sql: sql as unknown as StoreLike["sql"] };
+        for (const line of lines) await notice(tx, line);
+      });
       return;
     }
     const kind = councilGapKind(need, council.id, key);
     if (lines.length === 0) {
       // Nobody is configured to be told by a need that is General's alone and has no General: `check` says so, and nothing is owed.
       if (options.origin === false && general === null) return;
-      if (await told(store, keeps, key, kind)) return;
-      await noteAttention(store, keeps, kind, general === null ? "general_not_configured" : generalUsable ? "origin_unusable" : "general_unusable");
+      await store.sql.begin(async sql => {
+        const tx = { ...store, sql: sql as unknown as StoreLike["sql"] };
+        const [current] = await sql`select hub_topic_attention_lock(${keeps}) as lifecycle`;
+        if (!current?.lifecycle || current.lifecycle === "deleting" || await told(tx, keeps, key, kind)) return;
+        await noteAttention(tx, keeps, kind, general === null ? "general_not_configured" : generalUsable ? "origin_unusable" : "general_unusable");
+      });
       return;
     }
     await store.sql.begin(async (sql) => {
       const tx = { ...store, sql: sql as unknown as StoreLike["sql"] };
+      const [current] = await sql`select hub_council_notice_lock(${council.id}) as eligible`;
+      if (!current?.eligible) return;
       // The gap is cleared first, which takes the topic's row for as long as this transaction runs: a catch-up for it that is waiting
       // finds it gone and queues nothing, and one that has already been queued is seen below.
       await noteAttention(tx, keeps, kind, null);

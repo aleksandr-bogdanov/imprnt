@@ -198,19 +198,21 @@ async function open(options: Parameters<Adapter["start"]>[0], settings: { startT
   void child.exited.then(code => terminal({ cause: "child-exited", code }));
   const controller = new AbortController();
 
-  const shut = async (): Promise<void> => {
-    if (closed) { await child.exited; return; }
+  // Every exit path shares tree cleanup, even if the leader has already died.
+  let cleanup: ReturnType<typeof watch.stop> | null = null;
+  const stop = (graceMs: number, before?: () => Promise<void>) => {
+    if (cleanup !== null) return cleanup;
     closed = true;
     quiet = true;
-    controller.abort();
-    try { child.kill(); } catch { /* it was already gone */ }
-    // A server that is waiting for a tool to finish is not waited for for ever.
-    const force = setTimeout(() => {
-      try { child.kill("SIGKILL"); } catch { /* gone */ }
-      if (watch.ownGroup !== null) { try { process.kill(-watch.ownGroup, "SIGKILL"); } catch { /* empty */ } }
-    }, 5000);
-    try { await child.exited; } finally { clearTimeout(force); }
+    watch.snapshot();
+    cleanup = (async () => {
+      try { await before?.(); }
+      finally { controller.abort(); }
+      return await watch.stop(graceMs);
+    })();
+    return cleanup;
   };
+  const shut = async (): Promise<void> => { await stop(5000); };
 
   const http: OpenCodeHttp = openCodeHttp(port, password);
   let engineSession = "";
@@ -411,17 +413,9 @@ async function open(options: Parameters<Adapter["start"]>[0], settings: { startT
     group: () => watch.ownGroup,
     exitEvidence: () => watch.exitEvidence(),
     async interrupt({ graceMs }) {
-      // Nothing more is fed, and what the aborted turn ends with is nobody's any more.
-      closed = true;
-      quiet = true;
-      watch.snapshot();
-      if (tracker.open) {
-        await abort();
-        const until = Date.now() + Math.min(graceMs, 2000);
-        while (tracker.open && Date.now() < until) await Bun.sleep(25);
-      }
-      controller.abort();
-      return await watch.stop(graceMs);
+      return await stop(graceMs, async () => {
+        if (tracker.open) await abort();
+      });
     },
     async feed(message) {
       // THE ONLY REJECTIONS THAT SAY NOTHING WAS WRITTEN: nothing has been touched yet. Once the post

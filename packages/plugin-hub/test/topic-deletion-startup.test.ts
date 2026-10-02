@@ -198,6 +198,13 @@ test("a store that has not been migrated to 017 degrades to nothing was deleted,
   expect(await reconcileErasure(context)).toMatchObject({ serve: false, reason: "schema_behind" })
   expect(await erasureFence(hubStore, s.dir)).toContain("has not been migrated")
 
+  // Version 17 can read existing tombstones, but this build must not serve or restore until General notices are covered.
+  await migrate(behind.store(), MIGRATION_FILES.filter(([version]) => version === 17)
+    .map(([version, file]) => ({ version, sql: readFileSync(hubPath(`src/store/migrations/${file}`), "utf8") })))
+  expect(await deletionSchemaReady(hubStore)).toBe(true)
+  expect(await reconcileErasure(context)).toMatchObject({ serve: false, reason: "schema_behind" })
+  expect(await erasureFence(hubStore, s.dir)).toContain("schema 18")
+
   // Migrated, the same store is brought forward by the same call, and the machine serves.
   await migrate(behind.store())
   expect(await deletionSchemaReady(hubStore)).toBe(true)

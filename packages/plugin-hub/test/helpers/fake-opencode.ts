@@ -19,6 +19,10 @@ if (args[0] === "--version") { console.log("opencode 9.9.9"); process.exit(0) }
 const scenario = JSON.parse(process.env.FAKE_OPENCODE ?? "{}") as Record<string, any>
 const logFile = process.env.FAKE_LOG!
 const log = (entry: Record<string, unknown>) => appendFileSync(logFile, JSON.stringify(entry) + "\n")
+if (scenario.survivingTool) {
+  const tool = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  log({ at: "tool-process", pid: tool.pid });
+}
 const port = Number(args[args.indexOf("--port") + 1])
 const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}") as Record<string, any>
 const [provider, ...rest] = String(config.model ?? "").split("/")
