@@ -455,3 +455,13 @@ test("ROLL-32 the shipped staleJobs reports job-no-stamp, then job-stale keyed o
   expect(dispatch.map((one) => one.id)).toEqual([`${machine}/job-stale:${job}`]);
   expect(dispatch[0].id).not.toBe(late[0].id);
 });
+
+// Archive transports can retain history themselves without accepting generation paths.
+test("standalone dump is explicit and boolean, independent of transport generation addressing", async () => {
+  const file = write(household(backupSpec({ standalone_dump: true })));
+  const { loadRegistry } = await import("../src/registry/load.ts");
+  const { listRunEntries } = await import("../src/registry/entries.ts");
+  expect(listRunEntries(loadRegistry(file)).find(e => e.id === ID)?.standalone_dump).toBe(true);
+  const refused = await refusalOf(write(household(backupSpec({ standalone_dump: "true" as any }))));
+  expect(refused.key).toContain("standalone_dump");
+});

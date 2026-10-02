@@ -167,7 +167,7 @@ export interface BackupStage {
    * with an upload and a read-back that carry `{generation}`), and `retention_days` is the owner's number (null takes it out again).
    */
   configure(change: {
-    destination?: string; dump_argv?: string[]; upload_argv?: string[]; readback_argv?: string[];
+    standalone_dump?: boolean; destination?: string; dump_argv?: string[]; upload_argv?: string[]; readback_argv?: string[];
     list_argv?: string[]; expire_argv?: string[]; retention_days?: number | null;
   }): void;
   /** A directory on the staging directory's own device. */
@@ -259,6 +259,7 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
     let secretsDirPath = "";
     let credentialPath = "";
     let retentionDays: number | null = null;
+    let standaloneDump: boolean | undefined;
     const argv: { dump: string[]; upload: string[]; readback: string[]; list?: string[]; expire?: string[] } = {
       dump: options.dump_argv ?? [pgDumpGate().bin, "--dbname", cluster.url(db)],
       // `-f`, because a second copy lands on the first and git writes its
@@ -279,6 +280,7 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
       dump_argv: argv.dump,
       upload_argv: argv.upload,
       readback_argv: argv.readback,
+      standalone_dump: standaloneDump,
       list_argv: argv.list,
       expire_argv: argv.expire,
     });
@@ -429,6 +431,7 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
       calls: () => readCalls(log),
       clearCalls: () => writeFileSync(log, "", "utf8"),
       configure(change) {
+        if (change.standalone_dump !== undefined) standaloneDump = change.standalone_dump;
         if (change.destination !== undefined) destination = change.destination;
         if (change.dump_argv !== undefined) argv.dump = change.dump_argv;
         if (change.upload_argv !== undefined) argv.upload = change.upload_argv;
