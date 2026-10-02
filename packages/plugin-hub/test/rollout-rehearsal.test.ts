@@ -241,8 +241,12 @@ for (const osName of ["linux", "macos"] as const) {
       expect(inbound.source.media).toHaveLength(1)
       const path=inbound.body.match(/\((?:photo|фото) ([^)]+)\)/)![1]
       expect([...readFileSync(path)]).toEqual([11,22,33,44])
-      const ledger=await read.ledger({subject:inbound.id})
-      for(const stamp of ["received","acked","started","answered","delivered"]) expect(ledger.some(r=>r.kind===stamp)).toBe(true)
+      // A platform POST is observable before its delivered stamp transaction commits.
+      const stamps = ["received","acked","started","answered","delivered"]
+      expect(await observe(async()=> {
+        const ledger=await read.ledger({subject:inbound.id})
+        return stamps.every(stamp=>ledger.some(r=>r.kind===stamp))
+      },10000)).toBe(true)
       const lines=Object.values(jsonlBytes(bootstrap.stateDir,i?"p2":"p1",i?"p2-lair":"p1-lair")).join("").trim().split("\n").map(s=>JSON.parse(s))
       expect(lines.filter(l=>l.id===inbound.source.log_id)).toHaveLength(1)
       expect((await read.sheet("door_cursor")).find(r=>r.id===`${manifest.bindings[i].door}/${i?"1000000001":"0000000000"}`)?.data.cursor).toBe("7")
@@ -268,7 +272,7 @@ for (const osName of ["linux", "macos"] as const) {
     // machinery: the chat is told what is held and the command that decides it, and no reply is made up.
     expect(await observe(()=>edges[0].posts().some(p=>/\/(recover|восстановить) p1-lair \S+ 1 continue/.test(p.text)),12000)).toBe(true)
     expect(edges[0].posts().some(p=>p.text==="reply to death during turn")).toBe(false)
-    expect((await read.ledger({subject:"p1-lair"})).some(r=>r.kind==="refused.turn" && Number.isFinite(Date.parse(String(r.detail.retry_at))))).toBe(true)
+    expect(await observe(async()=>(await read.ledger({subject:"p1-lair"})).some(r=>r.kind==="refused.turn" && Number.isFinite(Date.parse(String(r.detail.retry_at)))),10000)).toBe(true)
     expect((await read.sql("select cause, state from replay_hold")).map(r=>[r.cause,r.state])).toEqual([["interrupted","held"]])
     // The command watchdog is in helpers/rollout-command.ts. This recover measured max 269 ms in 29 runs on the Linux box.
     const recovery=await command.run(["recover",registryFile,"agent:p1-lair"])
