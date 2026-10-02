@@ -174,3 +174,56 @@ test("a store restored from a copy that never heard of the deletion is given the
   }, { identity: () => ({ topic_id: topic.id, agent_id: topic.agent_id, conversation_id: topic.conversation_id, native_session: "n", marker: "m" }), tries: 2 }))
     .rejects.toBeInstanceOf(IdentityReserved)
 }, 120_000)
+
+test("General-routed catch-up chunks from an old backup are hidden and erased by the source tombstone", async () => {
+  const { readPendingChunks } = await import("../src/store/outbox.ts")
+  const s = await stageTopics(cluster)
+  const topic = await deleted(s)
+  for (const suffix of ["", ":part:2"]) {
+    await s.admin`insert into outbox (kind, inbound_id, seq_in_reply, body, person, agent, notice_key, route)
+      values ('notice', null, 1, 'RESTORED-COUNCIL-SECRET', ${PERSON}, 'general-survivor',
+        ${`topic:attention-catchup:${topic.id}:council-members_missing-deadbeef0000-cafefeed0000.1${suffix}`},
+        ${{door: DOOR, chat: 'general-chat'}}::jsonb)`
+  }
+  expect(await readPendingChunks(s.as("hub_door"), {agent: 'general-survivor'})).toEqual([])
+  const [before] = await s.admin`select hub_erasure_remaining(${topic.id}) as n`
+  expect(Number(before.n)).toBeGreaterThanOrEqual(2)
+  const manifest = await readErasureManifest(s.as("hub_hub"))
+  await applyErasureManifest(s.as("hub_hub"), manifest)
+  expect(await count(s, 'outbox', "body = 'RESTORED-COUNCIL-SECRET'")).toBe(0)
+})
+
+test("restored direct council notices in General retain source ownership across all split keys", async () => {
+  const { readPendingChunks } = await import("../src/store/outbox.ts")
+  const s = await stageTopics(cluster)
+  const topic = await deleted(s)
+  const council = "restored-council"
+  // An old backup carries the council and participants as well as their undelivered notices.
+  await s.admin`insert into council (id, person, agent, origin_kind, origin, return_route, operation_id,
+      question, lifecycle, checkpoint_deadline, status_effect_key)
+    values (${council}, ${PERSON}, ${topic.agent_id}, 'owner_request', '{}'::jsonb,
+      ${{agent: topic.agent_id, door: DOOR, chat: topic.chat}}::jsonb, 'restored-op',
+      'RESTORED-QUESTION', 'stopped', now(), 'restored-status')`
+  await s.admin`insert into council_participant (id, council_id, ordinal, worker_agent)
+    values ('restored-participant', ${council}, 1, 'restored-worker')`
+  const keys = [
+    ...['missing', 'checkpoint', 'correction', 'master', 'legacy', 'status'].map(kind => `council-${kind}:${council}:condition:general`),
+    ...['quiet', 'overrun'].map(kind => `council-${kind}:restored-participant:attempt`),
+  ].flatMap(key => [key, `${key}:part:2`])
+  const unrelated = [`council-missing:${council}-other:condition:general`, `topic:attention-catchup:${topic.id}-other:gap.1`]
+  for (const key of [...keys, ...unrelated]) {
+    await s.admin`insert into outbox (kind, inbound_id, seq_in_reply, body, person, agent, notice_key, route)
+      values ('notice', null, 1, 'RESTORED-NOTICE', ${PERSON}, 'general-survivor', ${key},
+        ${{door: DOOR, chat: 'general-chat'}}::jsonb)`
+  }
+  expect((await readPendingChunks(s.as("hub_door"), {agent: 'general-survivor'})).map((row: {notice_key: string | null}) => row.notice_key).sort()).toEqual(unrelated.sort())
+  const [inventory] = await s.admin`select hub_deletion_inventory(${topic.agent_id}, ${topic.conversation_id}, '[]'::jsonb,
+    ${PERSON}, ${DOOR}, ${topic.chat}, ${topic.id}) as value`
+  expect(Number(inventory.value.outbox)).toBe(keys.length)
+  const [remaining] = await s.admin`select hub_erasure_remaining(${topic.id}) as n`
+  expect(Number(remaining.n)).toBeGreaterThanOrEqual(keys.length)
+  await applyErasureManifest(s.as("hub_hub"), await readErasureManifest(s.as("hub_hub")))
+  expect((await s.admin`select notice_key from outbox where agent = 'general-survivor'`).map((row: {notice_key: string | null}) => row.notice_key).sort()).toEqual(unrelated.sort())
+  const [after] = await s.admin`select hub_erasure_remaining(${topic.id}) as n`
+  expect(Number(after.n)).toBe(0)
+}, 120_000)

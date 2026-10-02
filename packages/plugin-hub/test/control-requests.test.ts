@@ -996,7 +996,7 @@ test("M1 an upgraded store carries the same gate, stop and claim objects, checks
   // Later steps append to this list, so this step's own number is asserted present, not last of the list: the councils (14)
   // the topics (15), the topic movement (16) and the topic deletion (17) follow it, in that order.
   expect(versions).toContain(13)
-  expect(versions.slice(-4)).toEqual([14, 15, 16, 17])
+  expect(versions.slice(13, 17)).toEqual([14, 15, 16, 17])
   expect(versions).toEqual((await fresh.sql`select version from schema_version order by version`).map((row: any) => Number(row.version)))
   // What the step adds to the tables of the step before it is nothing: the rows an upgrade found are the rows it has.
   expect(Number((await upgraded.sql`select count(*)::int as n from inbound`)[0].n)).toBe(1)
@@ -1010,7 +1010,7 @@ test("M2 the fresh schema carries the migration, byte for byte, and its version,
   expect(schema.includes(`${migration}\ninsert into schema_version (version) values (13);\n`)).toBe(true)
   expect(MIGRATION_FILES).toContainEqual([13, "013-execution-controls.sql"])
   expect(MIGRATION_FILES.map(([version]) => version).slice(0, 13)).toEqual(Array.from({ length: 13 }, (_, i) => i + 1))
-  // The councils (14) follow it whole, then the topics (15), then the topic movement (16), which ends the fresh schema, in the order they migrate.
+  // The councils (14) follow it whole, then the topics (15), then the topic movement (16), in the order they migrate.
   const councils = readFileSync(hubPath("src/store/migrations/014-councils.sql"), "utf8")
   const topics = readFileSync(hubPath("src/store/migrations/015-topics.sql"), "utf8")
   const moves = readFileSync(hubPath("src/store/migrations/016-topic-move.sql"), "utf8")
@@ -1018,11 +1018,11 @@ test("M2 the fresh schema carries the migration, byte for byte, and its version,
   expect(at(`${councils}\ninsert into schema_version (version) values (14);\n`)).toBeGreaterThan(at(`${migration}\ninsert into schema_version (version) values (13);\n`))
   expect(at(`${topics}\ninsert into schema_version (version) values (15);\n`)).toBeGreaterThan(at(`${councils}\ninsert into schema_version (version) values (14);\n`))
   expect(at(`${moves}\ninsert into schema_version (version) values (16);\n`)).toBeGreaterThan(at(`${topics}\ninsert into schema_version (version) values (15);\n`))
-  // The topic deletion (17) follows the movement whole and ends the fresh schema.
+  // The topic deletion (17) follows the movement whole.
   const deletion = readFileSync(hubPath("src/store/migrations/017-topic-deletion.sql"), "utf8")
   expect(at(`${deletion}\ninsert into schema_version (version) values (17);\n`)).toBeGreaterThan(at(`${moves}\ninsert into schema_version (version) values (16);\n`))
-  expect(schema.endsWith(`${deletion}\ninsert into schema_version (version) values (17);\n`)).toBe(true)
-  expect(MIGRATION_FILES.slice(-4)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"], [16, "016-topic-move.sql"], [17, "017-topic-deletion.sql"]])
+  expect(schema).toContain(`${deletion}\ninsert into schema_version (version) values (17);\n`)
+  expect(MIGRATION_FILES.slice(13, 17)).toEqual([[14, "014-councils.sql"], [15, "015-topics.sql"], [16, "016-topic-move.sql"], [17, "017-topic-deletion.sql"]])
 })
 
 // ---------------------------------------------------------------------------

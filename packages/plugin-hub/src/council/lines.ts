@@ -221,7 +221,7 @@ export function legacyUnmergedNotice(language: Language, s: Pick<CouncilSnapshot
     : `The earlier council "${safeValue(s.label)}" has every answer and never wrote its result. None is made on its own: say what to do.`);
 }
 
-export type Need = "members_missing" | "checkpoint" | "master_interrupted" | "stale_answers" | "legacy_unmerged" | "status_undelivered";
+export type Need = "members_missing" | "checkpoint" | "master_interrupted" | "stale_answers" | "legacy_unmerged" | "status_undelivered" | "quiet" | "overrun";
 
 const NEED: Record<Language, Record<Need, string>> = {
   en: {
@@ -231,6 +231,8 @@ const NEED: Record<Language, Record<Need, string>> = {
     stale_answers: "an answer is for an earlier version of the question",
     legacy_unmerged: "an earlier council has every answer and no result",
     status_undelivered: "its status message cannot be shown in its chat",
+    quiet: "a participant showed no output for a while",
+    overrun: "a participant has been on one attempt for a long time",
   },
   ru: {
     members_missing: "участник не ответил",
@@ -239,8 +241,16 @@ const NEED: Record<Language, Record<Need, string>> = {
     stale_answers: "ответ относится к прежней версии вопроса",
     legacy_unmerged: "у прежнего совета есть все ответы, но нет итога",
     status_undelivered: "его сообщение о ходе работы нельзя показать в его чате",
+    quiet: "от участника долго нет вывода",
+    overrun: "участник слишком долго работает над одной попыткой",
   },
 };
+
+/** What a need is, in a clause: the words a catch-up uses for a council need that nobody could be told when it arose. */
+export function needWords(language: Language, need: string): string | null {
+  const known: Record<string, string> = NEED[language];
+  return Object.hasOwn(known, need) ? known[need] : null;
+}
 
 /** The line in General: which council needs the owner, why, and where to go. */
 export function generalNotice(language: Language, s: Pick<CouncilSnapshot, "label">, need: Need, link: string | null): string {

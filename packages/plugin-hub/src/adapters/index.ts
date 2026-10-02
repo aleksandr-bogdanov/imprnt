@@ -1,6 +1,7 @@
 import { AdapterMissing, type Adapter } from "./types.ts";
 import type { LoopLaunchInput, LoopProbeOptions } from "./launch.ts";
 import { claudeCode } from "./claude-code.ts";
+import { openCode } from "./opencode.ts";
 
 /**
  * The one place in the hub where a name maps to a loop. Every other piece takes
@@ -9,6 +10,7 @@ import { claudeCode } from "./claude-code.ts";
  */
 export const ADAPTERS: Record<string, Adapter> = {
   [claudeCode.name]: claudeCode,
+  [openCode.name]: openCode,
 };
 
 export function adapterFor(adapters: Record<string, Adapter>, name: string): Adapter {
@@ -31,7 +33,17 @@ export async function loopLaunch(input: LoopLaunchInput, probe: LoopProbeOptions
 
 export async function checkLoopSource(registry: unknown, presetName: string, probe: LoopProbeOptions = {}) {
   const { getPreset } = await import("../registry/presets.ts");
-  if (getPreset(registry, presetName).adapter !== claudeCode.name) return;
+  const adapter = getPreset(registry, presetName).adapter;
+  if (adapter === openCode.name) {
+    // The key is a model key and the binary answers `--version`. Nothing is dialled and no model runs;
+    // what the build restricts is read back from a running server at launch, never from here.
+    const { credentialSource } = await import("./launch.ts");
+    const own = await import("./opencode-launch.ts");
+    own.readModelKey(credentialSource(registry, presetName));
+    own.probeOpenCodeVersion(probe.bin, probe.timeoutMs);
+    return;
+  }
+  if (adapter !== claudeCode.name) return;
   const { credentialSource, validateCredentialSource, probeLoopCapabilities } = await import("./launch.ts");
   validateCredentialSource(credentialSource(registry, presetName));
   const found = await probeLoopCapabilities(probe.bin, probe.timeoutMs, probe.writePaths);

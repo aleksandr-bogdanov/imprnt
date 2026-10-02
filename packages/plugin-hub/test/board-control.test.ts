@@ -837,9 +837,14 @@ test(
     let hub: Awaited<ReturnType<typeof runHub>> | undefined;
     try {
       hub = await runHub({ registryFile: it.registryFile, machine: MACHINE, os: os.os });
-      expect(await observe(() => os.states.get(RUNNER.id)?.running === true)).toBe(true);
-      const pids = new Map([DOOR.id, RUNNER.id, HUB.id].map((id) => [id, os.pidOf(id)]));
+      // The hub's first pass installs and starts its entries one after another, so the baseline is
+      // taken once every resident has been started, not when the first one the test names has.
+      // Anything counted before that is the startup itself, not something the pause asked for.
+      const residents = [DOOR.id, RUNNER.id, HUB.id];
+      expect(await observe(() => residents.every((id) => os.states.get(id)?.running === true))).toBe(true);
+      const pids = new Map(residents.map((id) => [id, os.pidOf(id)]));
       const settled = os.acting().length;
+      expect(settled).toBe(residents.length);
 
       runner = await runRunner({
         registryFile: it.registryFile,

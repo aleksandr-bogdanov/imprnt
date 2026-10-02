@@ -29,6 +29,8 @@ export interface PreviewSetup {
   machine: string;
   adapter: string;
   model: string;
+  /** Only for a preset on a model key: shown beside the model so that an engine is never read as another provider's. */
+  provider?: string;
   /** The request or handover, verbatim, and the very text the agent's first input will be. */
   initial_request: string;
   tool_profile?: string[];
@@ -39,7 +41,7 @@ export function topicPreview(language: Language, setup: PreviewSetup): string {
   const head = [
     `${label.chat}: ${setup.chat_name}`,
     `${label.machine}: ${setup.machine}`,
-    `${label.agent}: ${engineLabel(setup.adapter)} (${setup.model})`,
+    `${label.agent}: ${engineLabel(setup.adapter)} (${setup.model}${setup.provider === undefined ? "" : `, ${setup.provider}`})`,
   ].join("\n");
   const tools = setup.tool_profile && setup.tool_profile.length > 0 ? `\n\n${label.tools}: ${setup.tool_profile.join(", ")}` : "";
   return `${head}\n\n${setup.initial_request}${tools}`;
@@ -221,6 +223,8 @@ export interface CatchupFacts {
   chat: string | null;
   /** The kinds of notice that could not be told, as they were recorded. */
   kinds: string[];
+  /** What a council in this chat needed to say, in clauses (`needWords`), when it could not be said. */
+  councils?: string[];
   /** Where the topic stands NOW: the matter may have been settled since. */
   state: CatchupState;
 }
@@ -276,7 +280,12 @@ const NOW_RU: Record<CatchupState, string> = {
 export function attentionCatchupNotice(language: Language, v: CatchupFacts): string {
   const chat = chatOf(v.platform, v.name, v.chat);
   const known = language === "ru" ? MISSED_RU : MISSED_EN;
-  const what = v.kinds.map(kind => (Object.hasOwn(known, kind) ? known[kind] : safeValue(kind))).join("; ");
+  const councils = [...new Set(v.councils ?? [])];
+  const said = language === "ru" ? "совету в нём был нужен ваш ответ" : "a council in it needed you";
+  const what = [
+    ...v.kinds.map(kind => (Object.hasOwn(known, kind) ? known[kind] : safeValue(kind))),
+    ...(councils.length > 0 ? [`${said} (${councils.map(one => safeValue(one)).join("; ")})`] : []),
+  ].join("; ");
   const now = (language === "ru" ? NOW_RU : NOW_EN)[v.state];
   return language === "ru"
     ? says(language, `О ${chat} раньше не удалось вам сообщить: ${what}. Это краткая сводка пропущенного, а не само исходное сообщение; она поставлена в очередь сейчас. Сейчас: ${now}.`)

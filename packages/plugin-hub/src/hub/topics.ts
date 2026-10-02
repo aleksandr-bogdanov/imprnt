@@ -132,6 +132,11 @@ export function bindingVerdict(registry: Registry, topic: TopicRow): BindVerdict
   if (preset.adapter !== setup.adapter || preset.model !== setup.model) {
     return refuse("preset_changed", `${CHANGED}: the preset ${topic.preset} now runs ${preset.adapter} (${preset.model}) and ${String(setup.adapter)} (${String(setup.model)}) was approved`);
   }
+  // A setup approved with a provider (a preset on a model key) is approved for THAT provider: the same model
+  // behind another one is a different route for the owner's messages.
+  if (setup.provider !== undefined && preset.provider !== setup.provider) {
+    return refuse("preset_changed", `${CHANGED}: the preset ${topic.preset} now runs on ${preset.provider} and ${setup.provider} was approved`);
+  }
   const runs = listRunEntries(registry);
   const door = runs.find(one => one.id === topic.door && one.kind === "door");
   if (!door) return refuse("door_unknown", "invalid configuration");

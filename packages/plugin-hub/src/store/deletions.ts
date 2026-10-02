@@ -81,6 +81,14 @@ export async function deletionSchemaReady(store: StoreLike): Promise<boolean> {
   return row.ready === true;
 }
 
+/** Migration 018 is required before serving or applying erasure: General notices belong to their source. */
+export async function councilNoticeSchemaReady(store: StoreLike): Promise<boolean> {
+  const [row] = await store.sql`select to_regprocedure('public.hub_erasure_owns_notice(text, text, text[])') is not null
+    and to_regprocedure('public.hub_topic_attention_lock(text)') is not null
+      and to_regprocedure('public.hub_council_notice_lock(text)') is not null as ready`;
+  return row.ready === true;
+}
+
 const EMPTY_MANIFEST: ErasureManifest = { version: 1, generation: 0, tombstones: [] };
 
 export type ReceiptState =
@@ -313,6 +321,7 @@ export interface ApplyResult {
 }
 
 export async function applyErasureManifest(store: StoreLike, manifest: ErasureManifest): Promise<ApplyResult> {
+  if (!(await councilNoticeSchemaReady(store))) throw new Error("schema-behind: apply migration 18 (council notice erasure) before restoring deleted topics");
   const [row] = await store.sql`select hub_erasure_apply(${JSON.stringify(manifest)}::text::jsonb) as done`;
   const done = row.done as { tombstones: number; applied: number; generation: number; created?: string[]; inbox?: { person: string; digest: string }[] };
   return { tombstones: Number(done.tombstones), applied: Number(done.applied), generation: Number(done.generation),

@@ -210,6 +210,21 @@ kind = "api-key"
 file = "/var/lib/imprnt-hub/secrets/sentry.token"
 owner = "p1"
 
+# A model key: the per-token key of ONE provider, for a preset that runs on the
+# OpenCode engine. It is a kind of its own, never an `api-key`, so a watch's key can
+# never be sent to a model host and this one can never be read by a watch, and a
+# Claude preset can never be given it. The file holds the token and nothing else, is
+# read by the runner at launch, handed to the engine as one environment variable and
+# masked from the agent's box. `base_url` is OPTIONAL: absent, the engine's own endpoint
+# for the preset's provider is used; given, it is a plain https origin and the only
+# place the key is sent. `check` opens the file and dials nothing. Nothing here is a
+# default: it is commented out, and a preset uses it only by naming it.
+# [[credentials]]
+# id = "provider-key"
+# kind = "model-key"
+# file = "/var/lib/imprnt-hub/secrets/provider.token"
+# owner = "household"
+
 # A preset is a bundle of settings. Its id is derived from these five, so a
 # changed setting is a different preset and an id is never typed here.
 # The window thresholds are settings here and never numbers in code: at
@@ -240,6 +255,23 @@ credential = "household-claude"
 window_pause_at = 85
 window_notice_at = 95
 window_hold_at = 100
+
+# A preset on the OpenCode engine, commented out because no provider, account or model
+# has been chosen and nothing here is a default. `provider` is the engine's own provider
+# id and `model` the model id under it (`opencode models <provider>` lists them); the
+# session is bound to the pair, and a model-key credential is the one key it is run on.
+# `effort = "default"` sends no variant. Any other effort is sent as the engine's own
+# variant of that name and only if the running engine lists it for the model; otherwise the
+# start is refused by name, never ignored. `paid = "key"` carries no window. A conversation made under this preset is this preset's for good: it
+# is not resumed under another engine, provider or model, and a Claude conversation is
+# not moved onto it.
+# [presets.opencode-daily]
+# adapter = "opencode"
+# model = "<model-id-the-provider-documents>"
+# provider = "<opencode-provider-id>"
+# effort = "default"
+# paid = "key"
+# credential = "provider-key"
 
 # The recognizers this household declares, one table each, and `voice.recognizer`
 # above names the one it uses. A `sherpa-onnx` one runs beside the door on

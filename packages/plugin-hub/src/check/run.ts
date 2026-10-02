@@ -910,7 +910,9 @@ export async function runCheck(options: {
     for (const preset of new Set(mine.map((agent) => agent.preset))) {
       const id = credentialOfPreset(registry, preset);
       const login = id ? listCredentials(registry).find((one) => one.id === id) : undefined;
-      if (login) loginByDir.set(dirname(login.file), login.file);
+      // Only a Claude login is launched un-masked in its directory. A model key is read by the runner and
+      // masked wholesale, so it is not a login its neighbours share a directory with.
+      if (login && login.kind === "claude-login") loginByDir.set(dirname(login.file), login.file);
     }
     const files = new Set([
       ...listCredentials(registry).map((one) => one.file),

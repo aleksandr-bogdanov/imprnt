@@ -197,3 +197,44 @@ test("ROLL-20 ROLL-23 D-172 replies inherit source route and notices pin their c
   expect(await appendNotice(runner, replay)).toBe(false)
   expect((await f.sql`select route from outbox where notice_key = 'synthetic-notice'`)[0].route).toEqual(noticeRoute)
 })
+
+test("migration 18 upgrades council erasure and catch-up identically to a fresh install, and serving waits for it", async () => {
+  const { readFileSync } = await import("node:fs")
+  const { hubPath } = await import("./helpers/cluster.ts")
+  const { MIGRATION_FILES } = await import("../src/store/migrate.ts")
+  const { councilNoticeSchemaReady, deletionSchemaReady, applyErasureManifest } = await import("../src/store/deletions.ts")
+  const { erasureFence } = await import("../src/erasure/startup.ts")
+  const { requireSchema } = await import("../src/runner/execution.ts")
+  const upgraded = await rolloutDatabase(cluster, true)
+  const fresh = await rolloutDatabase(cluster)
+  const migrate = await migrator()
+  const store = { sql: upgraded.sql, url: cluster.url(upgraded.database) } as StoreLike
+  await migrate(store, MIGRATION_FILES.filter(([version]) => version < 18)
+    .map(([version, file]) => ({ version, sql: readFileSync(hubPath(`src/store/migrations/${file}`), "utf8") })))
+  const door = store
+  expect(await deletionSchemaReady(door)).toBe(true)
+  expect(await councilNoticeSchemaReady(door)).toBe(false)
+  expect(await erasureFence(door, null)).toContain("schema 18")
+  await expect(requireSchema(store)).rejects.toThrow("apply migration 18")
+  await expect(applyErasureManifest(store, {version: 1, generation: 0, tombstones: []})).rejects.toThrow("apply migration 18")
+  await migrate(store)
+  await migrate(store)
+  expect(await councilNoticeSchemaReady(door)).toBe(true)
+  expect(await erasureFence(door, null)).toBeNull()
+  await requireSchema(store)
+  const functions = async (sql: StoreLike['sql']) => Array.from(await sql`
+    select p.proname, pg_get_function_identity_arguments(p.oid) as args, p.prosecdef, p.prosrc, p.proconfig,
+      has_function_privilege('hub_door', p.oid, 'execute') as door,
+      has_function_privilege('hub_runner', p.oid, 'execute') as runner,
+      has_function_privilege('hub_hub', p.oid, 'execute') as hub,
+      has_function_privilege('hub_agent', p.oid, 'execute') as agent
+    from pg_proc p where p.proname in ('hub_erasure_owns_notice', 'hub_deletion_inventory', 'hub_erase_scope',
+      'hub_erasure_remaining', 'hub_topic_attention_catchup', 'hub_topic_attention_lock', 'hub_council_notice_lock') order by p.proname`)
+  const installed = await functions(fresh.sql as unknown as StoreLike['sql'])
+  expect(installed).toHaveLength(7)
+  expect(await functions(upgraded.sql as unknown as StoreLike['sql'])).toEqual(installed)
+  expect(installed.every((row: any) => !row.agent)).toBe(true)
+  await upgraded.sql.close()
+  await fresh.sql.close()
+  expect(readFileSync(hubPath('src/schema.sql'), 'utf8')).toContain(readFileSync(hubPath('src/store/migrations/018-council-notice-erasure.sql'), 'utf8').trim())
+})

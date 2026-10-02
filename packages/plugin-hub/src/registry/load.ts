@@ -671,6 +671,26 @@ export interface CredentialEntry {
   kind: string;
   file: string;
   owner: string;
+  /**
+   * Only a `model-key`, and only when the key is for an endpoint the engine does not already name
+   * for its provider: the https origin that key is sent to, and the only place it is.
+   */
+  base_url?: string;
+}
+
+/**
+ * Why an endpoint is not one a model key may be sent to, or null. The key goes out as a bearer
+ * token, so the only endpoint accepted is a plain https origin with a host and no login in it: no
+ * http, no `user:pass@`, no query or fragment.
+ */
+export function modelBaseUrlRefusal(value: unknown): string | null {
+  if (typeof value !== "string" || value === "") return "names no base_url";
+  let url: URL;
+  try { url = new URL(value); } catch { return "has a base_url that is not a URL"; }
+  if (url.protocol !== "https:") return "has a base_url that is not https, and a key is never sent in the clear";
+  if (url.hostname === "" || url.username !== "" || url.password !== "") return "has a base_url with no host or with a login in it";
+  if (url.search !== "" || url.hash !== "") return "has a base_url with a query or a fragment";
+  return null;
 }
 
 const MACHINE_OS = ["linux", "macos"];
@@ -678,8 +698,13 @@ const MACHINE_OS = ["linux", "macos"];
 /** How a preset is paid for, and there is no third way. */
 export const PAID_KINDS = ["plan", "key"] as const;
 
-/** The four credential kinds this hub knows how to open. */
-export const CREDENTIAL_KINDS = ["claude-login", "telegram", "discord", "api-key"] as const;
+/**
+ * The five credential kinds this hub knows how to open. `model-key` is a per-token key an
+ * engine that names its own providers (OpenCode) is handed for ONE provider. It is a kind of its
+ * own, never an `api-key`, so a watch's bearer key can never be sent to a model host or the
+ * reverse, and never a `claude-login`, so no Claude launch can be given one.
+ */
+export const CREDENTIAL_KINDS = ["claude-login", "telegram", "discord", "api-key", "model-key"] as const;
 
 /** The two recognizer providers this hub speaks: one that runs here, one dialled. */
 export const RECOGNIZER_PROVIDERS = ["sherpa-onnx", "deepgram"] as const;
@@ -2275,7 +2300,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       refuse(
         `${where}.kind`,
         here,
-        `${id} is a ${describe(kind)}, and the four kinds this hub opens are ` +
+        `${id} is a ${describe(kind)}, and the kinds this hub opens are ` +
           `${CREDENTIAL_KINDS.join(", ")}`,
       );
     }
@@ -2303,6 +2328,19 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       );
     }
 
+    // A model key may say where it is sent. Absent, the engine's own endpoint for the preset's
+    // provider is used. A URL on any other kind would look as if it did something and change nothing.
+    const baseUrl = entry.base_url;
+    if (kind === "model-key") {
+      if (baseUrl !== undefined) {
+        const why = modelBaseUrlRefusal(baseUrl);
+        if (why !== null) refuse(`${where}.base_url`, lines.get(`${where}.base_url`) ?? here, `${id} ${why}`);
+      }
+    } else if (baseUrl !== undefined) {
+      refuse(`${where}.base_url`, lines.get(`${where}.base_url`) ?? here,
+        `${id} is a ${kind} and carries a base_url, which only a model-key does`);
+    }
+
     // Where this credential's file is on a machine that is not the hub's. A
     // model login there is a file login made for that machine's runner, never
     // a copy of another machine's: a refresh token is single use, and a copy
@@ -2322,6 +2360,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       kind: kind as string,
       file: at as string,
       owner: owner as string,
+      ...(kind === "model-key" && baseUrl !== undefined ? { base_url: baseUrl as string } : {}),
     });
   });
 

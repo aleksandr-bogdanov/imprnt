@@ -111,6 +111,9 @@ export async function readPendingChunks(
     where coalesce(o.agent, i.agent) = ${where.agent}
       and o.delivered_at is null
       and o.delivery_state = 'pending'
+      and (o.kind <> 'notice' or not exists (
+        select 1 from topic_tombstone k where hub_erasure_owns_notice(k.topic_id, o.notice_key,
+          array(select c.id from council c where c.agent = k.agent_id))))
       and not exists (select 1 from outbox earlier
         where (earlier.inbound_id = o.inbound_id or
           (o.kind = 'notice' and earlier.kind = 'notice' and

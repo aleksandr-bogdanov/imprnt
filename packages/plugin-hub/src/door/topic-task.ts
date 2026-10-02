@@ -9,11 +9,13 @@ import { wantEffect } from "../store/effects.ts";
 import { enqueueInbound } from "../store/inbound.ts";
 import { attentionFor } from "../store/topic-attention.ts";
 import { servingOf } from "../store/topic-serving.ts";
+import { councilGapOf, debtOf } from "../council/attention.ts";
+import { needWords } from "../council/lines.ts";
 import {
-  IdentityReserved, adoptNamed, adoptRefused, announceTopic, attentionCatchup, attentionDebtOf, channelKnown, completeTransition, completedTransitions,
+  IdentityReserved, adoptNamed, adoptRefused, announceTopic, attentionCatchup, channelKnown, completeTransition, completedTransitions,
   createFailed, createIntent, createLook, createUnsent, fenceOf, legacyTopics, linkLegacyTopic, markChannelMissing, newestReopenSinceSample, noteAttention,
   observeChannel, openTransitionsOfDoor, readSeen, readTopic, readTopicByAgent, readTopicByChat, rebindLegacyTopic, recordChannel, readTransition,
-  requestTransition, retiredTopicsOfDoor, setTopicStatus, topicsOfDoor, type ChannelSeen, type Lifecycle, type OutboxNotice, type RouteFence,
+  requestTransition, retiredTopicsOfDoor, setTopicStatus, topicsOfDoor, type AttentionDebt, type ChannelSeen, type Lifecycle, type OutboxNotice, type RouteFence,
   type TopicRow, type TopicSetup, type TransitionRow,
 } from "../store/topics.ts";
 import { languageOf, listAgents } from "../registry/entries.ts";
@@ -1223,7 +1225,7 @@ type Caught = "done" | "wait" | "config";
  * is woken by the registry change the door already hears (`door/run.ts`), and nothing polls for it. With no debt this is one
  * statement.
  */
-async function catchupPhase(ctx: TopicsContext, _memory: TopicsMemory): Promise<number | null> {
+export async function catchupPhase(ctx: TopicsContext, _memory: TopicsMemory): Promise<number | null> {
   const owing = (await ctx.store.sql`select id from topic
     where door = ${ctx.door} and jsonb_typeof(create_evidence -> 'attention') = 'object' and create_evidence -> 'attention' <> '{}'::jsonb
     order by created_at, id`) as unknown as { id: string }[];
@@ -1245,18 +1247,40 @@ async function catchupPhase(ctx: TopicsContext, _memory: TopicsMemory): Promise<
   return waiting ? clock(ctx) + Math.max(1, ctx.retrySeconds) * 1000 : null;
 }
 
+/**
+ * A topic's own gaps are paid toward the place it was asked for; a council's (`council/attention.ts`), which the same map keeps,
+ * toward the chat the council answers in, which is this topic's own chat: that is where it was meant to be told. Each is its own
+ * notice with its own key, and a gap of a council that is gone is cleared without one.
+ */
 async function catchUp(ctx: TopicsContext, registry: unknown, topic: TopicRow): Promise<Caught> {
-  const debt = attentionDebtOf(topic);
+  const debt = await debtOf(ctx.store, topic);
+  const council = (one: AttentionDebt): boolean => councilGapOf(one.kind) !== null;
+  const own = topic.chat === null ? null : { door: topic.door, chat: topic.chat };
+  const paid = [
+    await payDebt(ctx, registry, topic, debt.filter(one => !council(one)), originOf(topic)),
+    await payDebt(ctx, registry, topic, debt.filter(council), own),
+  ];
+  return paid.includes("wait") ? "wait" : paid.includes("config") ? "config" : "done";
+}
+
+async function payDebt(ctx: TopicsContext, registry: unknown, topic: TopicRow, debt: AttentionDebt[], origin: { door: string; chat: string } | null): Promise<Caught> {
   if (debt.length === 0) return "done";
-  const route = await attentionFor(ctx.store, registry, { person: topic.person, origin: originOf(topic) });
+  const route = await attentionFor(ctx.store, registry, { person: topic.person, origin });
   if (!route.ok) return route.cause === "general_unusable" ? "wait" : "config";
   const state = catchupStateOf(topic);
+  const kinds: string[] = [];
+  const councils: string[] = [];
+  for (const one of debt) {
+    const words = needWords(route.language, councilGapOf(one.kind)?.need ?? "");
+    if (words === null) kinds.push(one.kind);
+    else councils.push(words);
+  }
   const notice: OutboxNotice = {
     person: topic.person, agent: route.agent, route: route.route,
     // The store names the notice after the occurrences it stands for.
     key: "topic:attention-catchup",
     body: attentionCatchupNotice(route.language, { platform: route.platform, name: topic.display_name,
-      chat: state === "gone" || state === "setting_up" ? null : topic.chat, kinds: debt.map(one => one.kind), state }),
+      chat: state === "gone" || state === "setting_up" ? null : topic.chat, kinds, councils, state }),
   };
   const answer = await attentionCatchup(ctx.store, topic.id, debt.map(({ kind, seq }) => ({ kind, seq })), notice);
   // `stale` is a gap that changed between the read and the lock: nothing was written, and the next look reads it again.
