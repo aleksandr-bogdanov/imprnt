@@ -159,8 +159,16 @@ for(const host of ["linux","darwin"] as const){
       }else{
         // The journal query selects only this check's random owned unit.
         await os.install(files);await os.start(id)
-        const read=()=>Bun.spawnSync(["journalctl","--user","--unit",`imprnt-hub-${id}.service`,"--no-pager","--output=cat"]).stdout.toString()
-        expect(await observe(()=>read().includes(marker))).toBe(true)
+        const query=()=>Bun.spawnSync(["journalctl","--user","--unit",`imprnt-hub-${id}.service`,"--no-pager","--output=cat"])
+        const read=()=>query().stdout.toString()
+        // The line can only exist once the unit's program has run, so the wait is on that program
+        // ending (the manager lists it no more, or no longer running), not on a longer clock:
+        // a slow box is slow to start bun, and the journal is asked once it has finished.
+        const ended=await observe(async()=>{const unit=await os.show(id);return unit===null||!unit.running},30_000)
+        expect(ended,"the unit's program never ended").toBe(true)
+        const found=await observe(()=>read().includes(marker))
+        const last=query()
+        expect(found,`the unit ended but its journal has no marker (journalctl exit ${last.exitCode}, stderr ${last.stderr.toString().trim()}, journal ${JSON.stringify(last.stdout.toString())})`).toBe(true)
         expect(read()).toContain(marker)
       }
     }finally{try{await native.removeAll();expect(native.mine()).toEqual([]);console.log("L15 native diagnostic cleanup completed")}finally{await f.stop()}}

@@ -33,6 +33,8 @@ export interface TopicSetup {
   preset_from: "request" | "door" | "person";
   adapter: string;
   model: string;
+  /** Only for a preset on a model key: whose model it is, frozen with the rest so that a preset changing provider is a changed setup. */
+  provider?: string;
   /** The request or handover, verbatim, and the text of the first input the new agent is given. */
   initial_request: string;
   tool_profile?: string[];

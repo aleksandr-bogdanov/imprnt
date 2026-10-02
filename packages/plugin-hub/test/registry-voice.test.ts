@@ -493,6 +493,7 @@ test(
         "telegram",
         "discord",
         "api-key",
+        "model-key",
       ]);
     }
 

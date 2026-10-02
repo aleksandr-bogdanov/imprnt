@@ -557,6 +557,12 @@ test("RUN-13 a note that gave up counts the shipped clocks from the moment its t
     const first = await firstRow(it)
     expect(await observe(async () => (await it.read.inbound())[0].media_attempts >= 1, 30_000),
       "RUN-13 the note is waiting on a recognizer that is not there").toBe(true)
+    // The attempt is counted before the door says anything, and the line goes out by the door's own delivery,
+    // so a door stopped on the count alone may never have told the person. The door is stopped on the line
+    // itself, which is what the checks below count: this door's one line, and no second from any later one.
+    expect(await observe(async () =>
+      it.edge.posts().some(p => p.chat === P1.chat && p.text === transcriberDown("en", 1)), 30_000),
+      "RUN-13 the person was told the recognizer was not answering before the door stopped").toBe(true)
     await door.stop()
     door = undefined
 

@@ -112,6 +112,7 @@ export async function createTopic(binding: McpBinding, request: CreateRequest): 
         person: binding.person, door: me.door!, chat_name: resolved.chat_name,
         machine: resolved.machine, machine_from: resolved.machine_from, runner: resolved.runner,
         preset: resolved.preset, preset_from: resolved.preset_from, adapter: resolved.adapter, model: resolved.model,
+        ...(resolved.provider === undefined ? {} : { provider: resolved.provider }),
         initial_request: request_text, ...(tools === undefined ? {} : { tool_profile: tools }),
         origin: { door: me.door!, chat: me.chat!, agent: me.id }, requested_by: owner.sender,
       });
@@ -142,7 +143,8 @@ export async function createTopic(binding: McpBinding, request: CreateRequest): 
           operationId: operation, operationKind: TOPIC_CREATE, person: binding.person, door: me.door, chat: me.chat,
           ownerSender: owner.sender, payload: topic.setup,
           preview: topicPreview(language, { chat_name: resolved.chat_name, machine: resolved.machine, adapter: resolved.adapter,
-            model: resolved.model, initial_request: request_text, ...(tools === undefined ? {} : { tool_profile: tools }) }),
+            model: resolved.model, ...(resolved.provider === undefined ? {} : { provider: resolved.provider }),
+            initial_request: request_text, ...(tools === undefined ? {} : { tool_profile: tools }) }),
           confirmation: topicConfirmationAsk(language), platform,
           ...(context.revision === null ? {} : { replace: { revision: context.revision } }),
         });
@@ -160,7 +162,8 @@ export async function createTopic(binding: McpBinding, request: CreateRequest): 
         setup: {
           chat: resolved.chat_name,
           execution_machine: { value: resolved.machine, from: resolved.machine_from },
-          agent: { preset: resolved.preset, from: resolved.preset_from, engine: resolved.adapter, model: resolved.model },
+          agent: { preset: resolved.preset, from: resolved.preset_from, engine: resolved.adapter, model: resolved.model,
+            ...(resolved.provider === undefined ? {} : { provider: resolved.provider }) },
           ...(tools === undefined ? {} : { tools }),
         },
       } satisfies ToolReply;

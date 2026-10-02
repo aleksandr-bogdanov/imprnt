@@ -977,7 +977,14 @@ async function stageDoor(options: { retrySeconds?: number } = {}) {
   const tokenFile = join(dir, "token");
   writeFileSync(tokenFile, "placeholder-token\n", "utf8");
   await Bun.write(it.registryFile, `${await Bun.file(it.registryFile).text()}\n[door]\ndelivery_retry_seconds = ${options.retrySeconds ?? 1}\ndelivery_max_attempts = 3\n`);
-  const platform = discord({ tokenFile, guild: fake.guild, fetch: fake.fetch });
+  // The wall time at which each 429 left the fake: the moment a limit was actually told to the door.
+  const limited: number[] = [];
+  const answering = (async (...asked: Parameters<typeof fetch>) => {
+    const answer = await fake.fetch(...asked);
+    if (answer.status === 429) limited.push(Date.now());
+    return answer;
+  }) as unknown as typeof fetch;
+  const platform = discord({ tokenFile, guild: fake.guild, fetch: answering });
   const runner = { sql: cluster.connectAs("hub_runner", it.db), url: storeUrlAs(cluster.url(it.db), "hub_runner") };
   const work: ConfirmationRow[] = [];
   const start = () => runDoor({ door: DOOR, registryFile: it.registryFile, platform, approvals: hooks(work) });
@@ -986,7 +993,7 @@ async function stageDoor(options: { retrySeconds?: number } = {}) {
     await it.stop();
     rmSync(dir, { recursive: true, force: true });
   };
-  return { it, fake, channel, runner, work, start, stop, tokenFile };
+  return { it, fake, channel, runner, work, start, stop, tokenFile, limited };
 }
 
 test("a synthetic consumer end to end: the runner asks for a status line and a preview, the real door delivers both on the store's own notification, and the owner's check approves once across a restart", async () => {
@@ -1081,8 +1088,12 @@ test("through a real door: an account-wide limit the ordinary reply met holds th
     // The ordinary reply meets the limit first.
     await s.runner.sql.unsafe(`insert into outbox (inbound_id, seq_in_reply, body) values ('m-limit', 1, 'the reply')`);
     await until("the reply met the limit", () => s.fake.requestsTo(post).length === 1, 10_000);
-    const hit = Date.now();
-    await until("the reply's retry was written", async () => (await s.it.read.sql("select retry_at from outbox where inbound_id = 'm-limit'", []))[0]?.retry_at != null, 10_000);
+    // The limit is measured from the moment it was served, not from when this test noticed it. The row carries
+    // the door's own 1 s stamp from before the send until the failure replaces it, so the failure is what is waited for.
+    await until("the reply's retry was written from the limit", async () =>
+      (await s.it.read.sql("select failure->>'code' as code from outbox where inbound_id = 'm-limit'", []))[0]?.code === "http-429", 10_000);
+    expect(s.limited).toHaveLength(1);
+    const hit = s.limited[0] as number;
     const [chunk] = await s.it.read.sql("select attempts, retry_at, delivered_at from outbox where inbound_id = 'm-limit'", []);
     // Waited out as Discord said (2 s), not at the door's own 1 s retry.
     expect(new Date(chunk.retry_at as Date | string).getTime() - hit).toBeGreaterThanOrEqual(1500);
