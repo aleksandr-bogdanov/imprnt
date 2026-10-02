@@ -941,7 +941,7 @@ test("sync rebase disables repository-requested signing without invoking a signe
   } finally { await f.stop() }
 })
 
-test("sync blocks receiver programs under external repository, Claude login, and MCP writable grants", async () => {
+test("mixed SSH fetch and local push still blocks every writable-root class", async () => {
   const f = await syncFixture(cluster)
   const { mkdtempSync } = await import("node:fs")
   const { tmpdir } = await import("node:os")
@@ -957,13 +957,16 @@ test("sync blocks receiver programs under external repository, Claude login, and
     writeFileSync(join(login, ".credentials.json"), "synthetic-not-a-login\n")
     appendFileSync(f.registryFile, `\n[[repositories]]\nid = "external-workspace"\nperson = "p1"\npath = ${JSON.stringify(external)}\nremote = "origin"\nbranch = "main"\nrequired = false\n\n[[credentials]]\nid = "synthetic-claude"\nkind = "claude-login"\nowner = "p1"\nfile = ${JSON.stringify(join(login, ".credentials.json"))}\n`)
     const marker = join(f.root, "alternate-command-ran")
-    const planted = [external, login, mcp, probe, ...(scratch ? [scratch] : [])].map(root => {
+    const personState = join(f.stateDir, "p1")
+    mkdirSync(personState, { recursive: true })
+    const planted = [f.repos[1].path, personState, external, login, mcp, probe, ...(scratch ? [scratch] : [])].map(root => {
       const bare = join(root, "planted.git")
       fixtureGit(f.root, "clone", "--bare", r.remote, bare)
       writeFileSync(join(bare, "objects", "info", "alternates"), join(r.remote, "objects") + "\n")
       fixtureGit(f.root, "--git-dir", bare, "config", "core.alternateRefsCommand", `printf ran > '${marker}'`)
       return bare
     })
+    writeFileSync(f.registryFile, readFileSync(f.registryFile, "utf8").replace('repositories = ["p1-vault", "p2-vault", "shared"]', 'repositories = ["p1-vault"]'))
     commitChange(r.path)
     // Existing receiver hook/fsmonitor overrides cannot stop alternateRefsCommand.
     fixtureGit(r.path, "push", "--receive-pack=git -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack", planted[0], "HEAD:refs/heads/proof")
@@ -973,7 +976,8 @@ test("sync blocks receiver programs under external repository, Claude login, and
     symlinkSync(login, alias)
     const git = observeGit(f.root)
     await seam("src/sync/run.ts")
-    for (const target of [...planted, join(alias, "planted.git"), ...(scratch ? [join(scratch.replace("/private/tmp/", "/tmp/"), "planted.git")] : [])]) {
+    fixtureGit(r.path, "remote", "set-url", "origin", "ssh://fixture.invalid/never-contact.git")
+    for (const target of [...planted, join(alias, "planted.git"), ...(scratch ? [join(scratch.replace("/private/tmp/", "/tmp/"), "planted.git"), "/dev/null"] : [])]) {
       fixtureGit(r.path, "remote", "set-url", "--push", "origin", target)
       git.clear()
       await syncChild(f, git.env)
@@ -982,6 +986,7 @@ test("sync blocks receiver programs under external repository, Claude login, and
       expect(git.events().some(event => event.cwd === realpathSync(r.path) && event.args.some(arg => ["fetch", "push", "add", "commit", "rebase"].includes(arg)))).toBe(false)
       expect(existsSync(marker)).toBe(false)
     }
+    fixtureGit(r.path, "remote", "set-url", "origin", r.remote)
     fixtureGit(r.path, "config", "--unset-all", "remote.origin.pushurl")
     expect((await syncChild(f, git.env)).code).toBe(0)
     expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:local.txt")).toBe("synthetic local change")
@@ -1075,5 +1080,49 @@ test("sync disables push signing and reports a newly planted program as config r
     fixtureGit(r.path, "config", "--unset", "gpg.ssh.defaultKeyCommand")
     expect((await syncChild(f, isolated.env)).code).toBe(0)
     expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:pending.txt")).toBe("note")
+  } finally { await f.stop() }
+})
+
+
+test("SSH-only remotes skip unrelated filesystem roots and remote phase errors stay sanitized", async () => {
+  const f = await syncFixture(cluster)
+  try {
+    const r = f.repos[0]
+    const privateRoot = join(f.root, "private-token-DO-NOT-LOG")
+    symlinkSync(privateRoot, privateRoot)
+    appendFileSync(f.registryFile, `\n[[credentials]]\nid = "unrelated-login"\nkind = "claude-login"\nowner = "p1"\nfile = ${JSON.stringify(join(privateRoot, "credentials.json"))}\n`)
+    writeFileSync(f.registryFile, readFileSync(f.registryFile, "utf8").replace('repositories = ["p1-vault", "p2-vault", "shared"]', 'repositories = ["p1-vault"]'))
+    fixtureGit(r.path, "remote", "set-url", "origin", "ssh://fixture.invalid/never-contact.git")
+    const git = observeGit(f.root)
+    // Stop in the observing shim before any SSH transport starts. Reaching this
+    // phase proves the unrelated cyclic root was never canonicalized.
+    git.control({ fail: "fetch", path: realpathSync(r.path) })
+    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    expect(await repoRow(f, r.id)).toMatchObject({ code: "fetch", diagnostic: { stage: "fetch", exit: 73 } })
+    expect(attempts(git, r.path, "fetch")).toBe(1)
+
+    // A local push still needs every root, even when fetch uses SSH.
+    fixtureGit(r.path, "remote", "set-url", "--push", "origin", r.remote)
+    git.clear()
+    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    expect(await repoRow(f, r.id)).toMatchObject({ code: "remote", diagnostic: {
+      stage: "local", reason: "internal", remote_phase: "writable-roots", exception: "Error", errno: "ELOOP",
+    } })
+    expect(attempts(git, r.path, "fetch")).toBe(0)
+
+    // URL decoding is a different closed phase; neither the URL nor the raw
+    // exception message belongs in the recorded diagnostic or failure detail.
+    fixtureGit(r.path, "remote", "set-url", "--push", "origin", "file:///private/private-token-DO-NOT-LOG/%ZZ")
+    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    const row = await repoRow(f, r.id)
+    expect(row).toMatchObject({ code: "remote", diagnostic: {
+      stage: "local", reason: "internal", remote_phase: "local-push", exception: "URIError", errno: "unknown",
+    } })
+    expect(JSON.stringify(row)).not.toContain("private-token-DO-NOT-LOG")
+    expect(await diaried(f, r.id)).toEqual(row)
+    const detail = await failureCause(f, r.id)
+    expect(detail).toContain("remote_phase=local-push")
+    expect(detail).toContain("exception=URIError")
+    expect(detail).not.toContain("private-token-DO-NOT-LOG")
   } finally { await f.stop() }
 })
