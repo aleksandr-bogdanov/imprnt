@@ -144,6 +144,7 @@ import {
   recordWindow,
   type WindowRow,
 } from "./outage.ts";
+import { routeKey, routeOf, routeRefusal, RouteRefused } from "./native-provider.ts";
 import {
   refuseTurn,
   settleTurn,
@@ -783,6 +784,8 @@ export async function runRunner(options: {
 
   const runAgent = async (agent: AgentEntry, own: Live): Promise<void> => {
     let startedWith = "";
+    /** The route (provider, credential kind, endpoint) the live child was started on: a registry edit can change it without changing the preset's id. */
+    let startedRoute = "";
     let lastWork = Date.now();
     let harvestYield: { row: string; until: number } | null = null;
     let claimed: string | null = null;
@@ -1555,6 +1558,10 @@ export async function runRunner(options: {
             { machine: string | null; generation: number | string; current: string | null }[];
           if (!now || now.current !== incarnation || Number(now.generation) !== Number(conversation.placement_generation)
               || (now.machine !== null && now.machine !== machine)) throw new SpawnFenced(agent.id, moveFences.get(agent.id)?.move ?? null);
+          // THE ROUTE IS ASKED AT THE SPAWN, from the registry this launch reads, and not only where the loop asked it before opening the attempt:
+          // a child that would resume a native session spoken over another route is never started, whichever way the configuration got here.
+          const refused = await routeRefusal(store, conversation.id, routeOf(registry, agent.preset, preset));
+          if (refused) throw new RouteRefused(refused);
           await startChild(preset, registry, conversation, plan, record, seen);
         });
       } catch (error) {
@@ -1618,6 +1625,7 @@ export async function runRunner(options: {
       // it comes back: before the next turn, with the runner never restarting.
       own.killed = false;
       startedWith = presetId(preset);
+      startedRoute = routeKey(routeOf(registry, agent.preset, preset));
       startedProfile = launchProfileOf(registry, agent.id);
 
       session.onReceipt((messageId) => {
@@ -1861,9 +1869,12 @@ export async function runRunner(options: {
           // configuration starts no child here; the first input's launch asks again and starts it once the files are what the move compared.
           const drift = master !== null && master.kind === "master" ? await moveConfigDrift(store, initial, options.runner, agent.id, master.id) : null;
           if (drift) await sayMove("move.note-refused", { agent: agent.id, move: drift.move, answer: drift.answer, execution: null, state: null });
-          else if (master !== null) {
+          else if (master !== null && await routeRefusal(store, master.id, routeOf(initial, agent.preset, eagerPreset))) {
+            // The first input's launch asks again and refuses it by name; no child is started here to resume a session spoken over another route.
+          } else if (master !== null) {
+            // `spawn` asks the route itself, so a configuration that moved since the question above starts no child either.
             try { await spawn(eagerPreset, initial, master, await planSession(master, eager, initial, null)); }
-            catch (error) { if (!(error instanceof SpawnFenced)) throw error; }
+            catch (error) { if (!(error instanceof SpawnFenced) && !(error instanceof RouteRefused)) throw error; }
           }
           unreserve();
           await own.noteWait(null);
@@ -2278,6 +2289,43 @@ export async function runRunner(options: {
           await sleep();
           continue;
         }
+        // A session carries the preset it was started with, so a changed one is
+        // a new child, and so is one whose child the memory watch killed. It is
+        // also bound to ONE conversation: another's input is never fed to it.
+        // The runner process itself never restarts for any of them.
+        // A council's job is fed only to a session that was started under the profile its owner approved (`claimedProfile`): a resident child whose configuration
+        // was another one (started before an edit and reused after it was undone, or the reverse) is replaced, in the same conversation, and never fed the job.
+        // A registry edit can change where the key goes (the credential's endpoint, its kind) without changing the preset's id, so the
+        // ROUTE is part of what a child was started with: a changed one is a new child, which the question below is then asked of.
+        const route = routeOf(registry, agent.preset, preset);
+        const mustSpawn = !own.session || presetId(preset) !== startedWith || startedRoute !== routeKey(route) || own.killed
+          || own.conversation !== conversation.id || holds.length > 0
+          || (claimedProfile !== null && startedProfile !== claimedProfile);
+        // A NEW CHILD RESUMES THE CONVERSATION'S NATIVE SESSION, and that session holds what was said over the route it was last spoken
+        // over: provider, credential kind and endpoint, recorded in the attempt before it launched (`native-provider.ts`). Where the
+        // agent is bound to another route since, the row is refused by name (said once in the diary, then only put back on its retry)
+        // and nothing is launched: the conversation is not quietly handed to a route it was never held with. `spawn` asks the same
+        // question again, at the start of the child itself.
+        const switched = mustSpawn ? await routeRefusal(store, conversation.id, route) : null;
+        if (switched) {
+          const retryAt = new Date(Date.now() + retrySeconds(registry) * 1000).toISOString();
+          if (row.kind === "job") {
+            // A follow-up into a worker conversation is a job like any other: refused by name, said on its route, never tried again.
+            await refuseJob(store, { row, refusal: { cause: "configuration changed", changed: ["route"] }, registry, runner: options.runner });
+          } else if (blockedNoted.has(`${conversation.id}:native-route-changed`)) {
+            await store.sql`update inbound set claimed_by = null, claim_deadline = null, retry_at = ${retryAt} where id = ${row.id} and claimed_by = ${options.runner}`;
+          } else {
+            blockedNoted.add(`${conversation.id}:native-route-changed`);
+            await refuseTurn(store, { inboundId: row.id, runner: options.runner, agent: agent.id, cause: "other", retryAt, kind: "refused.local",
+              said: switched.said.slice(0, SAID_CAP) });
+          }
+          claimed = null;
+          claimedReturn = null;
+          claimedSeat = null;
+          unreserve();
+          if (row.kind !== "job") await sleep();
+          continue;
+        }
         // What the person attached is a file on the door's machine. Served
         // from here, on another machine, the bytes come out of the store into
         // this machine's own inbox first, and the body names them there.
@@ -2305,15 +2353,6 @@ export async function runRunner(options: {
           pendingContext.push({ conversation: conversation.id, source, body: context });
         }
         if (told.length > 0) text = `${told.join("\n\n")}\n\n${text}`;
-        // A session carries the preset it was started with, so a changed one is
-        // a new child, and so is one whose child the memory watch killed. It is
-        // also bound to ONE conversation: another's input is never fed to it.
-        // The runner process itself never restarts for any of them.
-        // A council's job is fed only to a session that was started under the profile its owner approved (`claimedProfile`): a resident child whose configuration
-        // was another one (started before an edit and reused after it was undone, or the reverse) is replaced, in the same conversation, and never fed the job.
-        const mustSpawn = !own.session || presetId(preset) !== startedWith || own.killed
-          || own.conversation !== conversation.id || holds.length > 0
-          || (claimedProfile !== null && startedProfile !== claimedProfile);
         const plan = mustSpawn ? await planSession(conversation, adapter, registry, resumeFrom) : null;
         // THE ATTEMPT IS OWNED BEFORE ANYTHING LAUNCHES. The table allows one
         // that is running or unresolved per conversation, so a second launch is
@@ -2321,7 +2360,10 @@ export async function runRunner(options: {
         // is not evidence that the first process is gone.
         try {
           own.attempt = await openExecution(store, { row, conversation, runner: options.runner, incarnation, digest: taskDigest(text),
-            nativeSession: mustSpawn ? plan?.id ?? null : own.nativeSession, evidence: { machine: here.machine, boot_id: here.boot } });
+            nativeSession: mustSpawn ? plan?.id ?? null : own.nativeSession,
+            // THE ROUTE IS WRITTEN WITH THE ATTEMPT, before anything launches or is fed: it is what the child of this attempt runs on (a
+            // route that differs from the resident child's forced a spawn above), and an interrupted first turn leaves it behind.
+            evidence: { machine: here.machine, boot_id: here.boot, route } });
         } catch (error) {
           // Refused by the fence: another attempt of the agent holds the slot, or
           // this claim, this incarnation or this placement is no longer the current

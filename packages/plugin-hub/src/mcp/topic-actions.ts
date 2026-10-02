@@ -142,7 +142,8 @@ export async function createTopic(binding: McpBinding, request: CreateRequest): 
           operationId: operation, operationKind: TOPIC_CREATE, person: binding.person, door: me.door, chat: me.chat,
           ownerSender: owner.sender, payload: topic.setup,
           preview: topicPreview(language, { chat_name: resolved.chat_name, machine: resolved.machine, adapter: resolved.adapter,
-            model: resolved.model, initial_request: request_text, ...(tools === undefined ? {} : { tool_profile: tools }) }),
+            model: resolved.model, ...(resolved.provider === undefined ? {} : { provider: resolved.provider }),
+            initial_request: request_text, ...(tools === undefined ? {} : { tool_profile: tools }) }),
           confirmation: topicConfirmationAsk(language), platform,
           ...(context.revision === null ? {} : { replace: { revision: context.revision } }),
         });

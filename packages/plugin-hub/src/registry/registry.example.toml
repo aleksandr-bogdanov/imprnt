@@ -210,6 +210,21 @@ kind = "api-key"
 file = "/var/lib/imprnt-hub/secrets/sentry.token"
 owner = "p1"
 
+# A model key: the Claude Code engine run against a provider's own
+# Anthropic-format endpoint, on a key instead of a Claude login. It is a kind of
+# its own, never an `api-key`, so a watch's key can never be sent to a model host
+# and this one can never be read by a watch. `base_url` is required and has to be
+# a plain https origin the provider documents for Claude Code; the key file holds
+# the token and nothing else, is read at launch, and is masked from the agent.
+# `check` opens the file and dials nothing. Nothing here is a default: it is
+# commented out, and a preset uses it only by naming it.
+# [[credentials]]
+# id = "provider-key"
+# kind = "model-key"
+# file = "/var/lib/imprnt-hub/secrets/provider.token"
+# base_url = "https://<host-from-the-provider-docs>/<path>"
+# owner = "household"
+
 # A preset is a bundle of settings. Its id is derived from these five, so a
 # changed setting is a different preset and an id is never typed here.
 # The window thresholds are settings here and never numbers in code: at
@@ -240,6 +255,20 @@ credential = "household-claude"
 window_pause_at = 85
 window_notice_at = 95
 window_hold_at = 100
+
+# A preset on that key. `adapter` stays "claude-code" (it is the same engine),
+# `provider` names who serves the model and shows beside it in a topic preview,
+# and `model` is the provider's own id for it, copied from its documentation.
+# `paid = "key"` has no window, so it carries no window_* setting. It selects
+# nothing until a topic or an agent names it: no default and no door is changed.
+# A conversation started on another preset is not resumed on this one.
+# [presets.provider-chat]
+# adapter = "claude-code"
+# model = "<model-id-from-the-provider-docs>"
+# provider = "<provider-name>"
+# effort = "medium"
+# paid = "key"
+# credential = "provider-key"
 
 # The recognizers this household declares, one table each, and `voice.recognizer`
 # above names the one it uses. A `sherpa-onnx` one runs beside the door on

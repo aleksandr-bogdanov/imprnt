@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { boxCommand, type BoxContext } from "../box/index.ts";
 import { assemblePrompt, instructionFiles, personOf, vaultRootOf } from "./instructions.ts";
 import { listCredentials } from "../registry/entries.ts";
-import type { AgentEntry, CredentialEntry } from "../registry/load.ts";
+import { modelBaseUrlRefusal, type AgentEntry, type CredentialEntry } from "../registry/load.ts";
 import { credentialOfPreset, type Preset } from "../registry/presets.ts";
 
 export function credentialSource(registry: unknown, preset: string): CredentialEntry {
@@ -22,11 +22,25 @@ export function credentialSource(registry: unknown, preset: string): CredentialE
  * use, and a copy that refreshes revokes the login it was copied from.
  */
 export function validateCredentialSource(entry: CredentialEntry): void {
-  if (entry.kind !== "claude-login" || !isAbsolute(entry.file) || basename(entry.file) !== ".credentials.json") {
+  const keyed = entry.kind === "model-key";
+  if (keyed ? !isAbsolute(entry.file) || modelBaseUrlRefusal(entry.base_url) !== null
+    : entry.kind !== "claude-login" || !isAbsolute(entry.file) || basename(entry.file) !== ".credentials.json") {
     throw new Error("credential-source-unsupported");
   }
   accessSync(entry.file, constants.R_OK);
   if (!statSync(entry.file).isFile()) throw new Error("credential-source-unreadable");
+  if (keyed) modelKeyOf(entry);
+}
+
+/**
+ * The key a `model-key` credential holds, read at launch and never kept. It
+ * reaches the child as one environment variable and is in no argv, no file the
+ * hub writes and no message of an error this file throws.
+ */
+function modelKeyOf(entry: CredentialEntry): string {
+  const key = readFileSync(entry.file, "utf8").trim();
+  if (key === "") throw new Error("credential-source-unreadable");
+  return key;
 }
 
 /**
@@ -267,8 +281,12 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   // the model CLI rotates its token in place there, so it is added to the box's
   // write paths rather than left to the read-only host.
   const same = (a: string, b: string) => a === b || existsSync(a) && existsSync(b) && realpathSync(a) === realpathSync(b);
-  const writePaths = [...(input.box.writePaths ?? []), dirname(credential.file), ...(input.hubMcp?.writes ?? [])];
-  const reads = [dirname(credential.file), credential.file, ...(prompt?.reads ?? []), ...(mcpFile ? [mcpFile] : []),
+  // A `model-key` launch runs on a key, not a login: nothing of its directory is
+  // bound writable or readable, because the key reaches the child through its
+  // environment and a bound directory would hand the agent the file as well.
+  const keyed = credential.kind === "model-key";
+  const writePaths = [...(input.box.writePaths ?? []), ...(keyed ? [] : [dirname(credential.file)]), ...(input.hubMcp?.writes ?? [])];
+  const reads = [...(keyed ? [] : [dirname(credential.file), credential.file]), ...(prompt?.reads ?? []), ...(mcpFile ? [mcpFile] : []),
     ...(input.hubMcp?.reads ?? []),
     ...(ambient ? [join(ambient, ".claude", "settings.json"), join(ambient, ".claude", "CLAUDE.md")] : [])];
   // Every other credential file is masked. On Linux a single-file mask is a bind
@@ -280,7 +298,9 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   // a single-file mask, and `check` reports that on Linux. The macOS box denies
   // by path at every access, so a rename lifts nothing there and the file masks
   // stand unchanged.
-  const kept = (input.box.secretPaths ?? []).filter(path => !same(path, credential.file));
+  // A key file stays masked whether or not the box context listed it.
+  const kept = keyed ? [...new Set([...(input.box.secretPaths ?? []), credential.file])]
+    : (input.box.secretPaths ?? []).filter(path => !same(path, credential.file));
   // Every path this launch must be able to reach, which is what a mask is
   // computed against: a directory holding one of these is masked file by file
   // instead of whole.
@@ -302,10 +322,22 @@ export async function makeLoopLaunch(input: LoopLaunchInput) {
   for (const key of ["PATH", "LANG", "LC_ALL", "TZ"]) if (process.env[key]) env[key] = process.env[key];
   Object.assign(env, {
     HOME: home, TMPDIR: scratch, CLAUDE_CONFIG_DIR: config,
-    CLAUDE_SECURESTORAGE_CONFIG_DIR: dirname(credential.file),
+    // A key launch's secure storage is the session's own empty directory, so the
+    // owner's keychain item is neither read nor written and no login is selected.
+    CLAUDE_SECURESTORAGE_CONFIG_DIR: keyed ? config : dirname(credential.file),
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1", CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
     CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   });
+  // The endpoint and the key are set for a `model-key` launch and for no other,
+  // and the tier aliases are all the one model the preset names, so no helper call
+  // goes to a model the provider was never asked about.
+  if (keyed) {
+    Object.assign(env, {
+      ANTHROPIC_BASE_URL: credential.base_url, ANTHROPIC_AUTH_TOKEN: modelKeyOf(credential),
+      ANTHROPIC_DEFAULT_OPUS_MODEL: input.preset.model, ANTHROPIC_DEFAULT_SONNET_MODEL: input.preset.model,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: input.preset.model,
+    });
+  }
   // The loop runs in a clean session directory, so `imprnt recall` and
   // `imprnt ingest` find the person's vault only by being told where it is.
   // Without it an agent answers from an empty memory and files nowhere.
