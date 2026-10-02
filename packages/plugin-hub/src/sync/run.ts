@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { HUB_MCP_TEMP_PREFIX, LOOP_PROBE_TEMP_PREFIX, MAC_WRITABLE_SCRATCH } from "../box/scratch.ts";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { recordJobSuccess } from "../check/schedule.ts";
@@ -6,7 +8,7 @@ import { prepareReply } from "../door/reply.ts";
 import { recordOperationFailure } from "../door/health.ts";
 import { appendEntry } from "../records/diary.ts";
 import { putRow, readSheet } from "../records/statesheet.ts";
-import { listAgents, listPeople, listRepositories, listRunEntries, noticeRoute, repositoriesFor } from "../registry/entries.ts";
+import { listAgents, listCredentials, listPeople, listRepositories, listRunEntries, noticeRoute, repositoriesFor } from "../registry/entries.ts";
 import { readSetting, type Registry, type RunEntry } from "../registry/load.ts";
 import { openStore, type StoreLike } from "../store/connect.ts";
 import { configEntries } from "./git-config.ts";
@@ -264,10 +266,26 @@ function localRemote(path: string, url: string): string | null {
  */
 async function safeRemotes(path: string, remote: string, registry: Registry, code: string): Promise<{ fetch: string; push: string[] }> {
   const state = readSetting(registry, "hub.state_dir");
-  const roots = listPeople(registry).flatMap(person => [
+  // Mirror effective box grants, not just each person's primary tree. Claude
+  // rotates its login in the credential's parent; declared repositories can
+  // live outside that tree. Include inactive declarations conservatively too.
+  const granted = listPeople(registry).flatMap(person => [
     ...(person.tree ? [person.tree] : []),
     ...(typeof state === "string" && state ? [join(state, person.id)] : []),
-  ]).map(root => ({ declared: resolve(root), real: canonical(resolve(root)) }));
+  ]);
+  granted.push(...listRepositories(registry).map(repo => repo.path).filter(Boolean));
+  granted.push(...listCredentials(registry).filter(credential => credential.kind === "claude-login")
+    .map(credential => dirname(credential.file)));
+  if (process.platform === "darwin") granted.push(...MAC_WRITABLE_SCRATCH);
+  const roots = [...new Set(granted)].map(root => ({ declared: resolve(root), real: canonical(resolve(root)) }));
+  const temporary = canonical(tmpdir());
+  // MCP grants only its per-launch directory, not all of tmpdir(). Protect the
+  // namespace without scanning: launches can create new directories at any time.
+  const scratch = (local: string) => {
+    const path = relative(temporary, local);
+    return inside(temporary, local) && [HUB_MCP_TEMP_PREFIX, LOOP_PROBE_TEMP_PREFIX]
+      .some(prefix => path.split("/")[0].startsWith(prefix));
+  };
   const resolved: string[][] = [];
   for (const push of [false, true]) {
     const destinations: string[] = [];
@@ -276,7 +294,7 @@ async function safeRemotes(path: string, remote: string, registry: Registry, cod
       const local = localRemote(path, url);
       if (local === null) { destinations.push(url); continue; }
       const real = canonical(local);
-      if (roots.some(root => inside(root.declared, local) || inside(root.real, real))) throw new Error(code);
+      if (scratch(real) || roots.some(root => inside(root.declared, local) || inside(root.real, real))) throw new Error(code);
       destinations.push(real);
     }
     resolved.push(destinations);

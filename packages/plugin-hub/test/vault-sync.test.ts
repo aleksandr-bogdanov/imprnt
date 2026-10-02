@@ -940,3 +940,50 @@ test("sync rebase disables repository-requested signing without invoking a signe
     expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:peer-signing.txt")).toBe("peer change")
   } finally { await f.stop() }
 })
+
+test("sync blocks receiver programs under external repository, Claude login, and MCP writable grants", async () => {
+  const f = await syncFixture(cluster)
+  const { mkdtempSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const mcp = mkdtempSync(join(tmpdir(), "hub-mcp-sync-proof-"))
+  const probe = mkdtempSync(join(tmpdir(), "hub-loop-capability-sync-proof-"))
+  const scratch = process.platform === "darwin" ? mkdtempSync("/private/tmp/hub-sync-scratch-") : null
+  try {
+    const r = f.repos[0]
+    const external = join(f.root, "external-workspace")
+    const login = join(f.root, "claude-login")
+    mkdirSync(external)
+    mkdirSync(login)
+    writeFileSync(join(login, ".credentials.json"), "synthetic-not-a-login\n")
+    appendFileSync(f.registryFile, `\n[[repositories]]\nid = "external-workspace"\nperson = "p1"\npath = ${JSON.stringify(external)}\nremote = "origin"\nbranch = "main"\nrequired = false\n\n[[credentials]]\nid = "synthetic-claude"\nkind = "claude-login"\nowner = "p1"\nfile = ${JSON.stringify(join(login, ".credentials.json"))}\n`)
+    const marker = join(f.root, "alternate-command-ran")
+    const planted = [external, login, mcp, probe, ...(scratch ? [scratch] : [])].map(root => {
+      const bare = join(root, "planted.git")
+      fixtureGit(f.root, "clone", "--bare", r.remote, bare)
+      writeFileSync(join(bare, "objects", "info", "alternates"), join(r.remote, "objects") + "\n")
+      fixtureGit(f.root, "--git-dir", bare, "config", "core.alternateRefsCommand", `printf ran > '${marker}'`)
+      return bare
+    })
+    commitChange(r.path)
+    // Existing receiver hook/fsmonitor overrides cannot stop alternateRefsCommand.
+    fixtureGit(r.path, "push", "--receive-pack=git -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack", planted[0], "HEAD:refs/heads/proof")
+    expect(readFileSync(marker, "utf8")).toBe("ran")
+    rmSync(marker)
+    const alias = join(f.root, "login-alias")
+    symlinkSync(login, alias)
+    const git = observeGit(f.root)
+    await seam("src/sync/run.ts")
+    for (const target of [...planted, join(alias, "planted.git"), ...(scratch ? [join(scratch.replace("/private/tmp/", "/tmp/"), "planted.git")] : [])]) {
+      fixtureGit(r.path, "remote", "set-url", "--push", "origin", target)
+      git.clear()
+      await syncChild(f, git.env)
+      const repos = (await f.read.sheet("sync")).find(row => row.id === f.id)!.data.repositories as { id: string; code?: string }[]
+      expect(repos.find(repo => repo.id === r.id)?.code).toBe("remote")
+      expect(git.events().some(event => event.cwd === realpathSync(r.path) && event.args.some(arg => ["fetch", "push", "add", "commit", "rebase"].includes(arg)))).toBe(false)
+      expect(existsSync(marker)).toBe(false)
+    }
+    fixtureGit(r.path, "config", "--unset-all", "remote.origin.pushurl")
+    expect((await syncChild(f, git.env)).code).toBe(0)
+    expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:local.txt")).toBe("synthetic local change")
+  } finally { for (const path of [mcp, probe, ...(scratch ? [scratch] : [])]) rmSync(path, { recursive: true, force: true }); await f.stop() }
+})

@@ -1,3 +1,4 @@
+import { MAC_WRITABLE_SCRATCH } from "./scratch.ts";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -285,8 +286,7 @@ function profileText(ctx: BoxContext): string {
     ...macTools().map((path) => `(allow file-read* (subpath "${path}"))`),
     ...(ctx.sessionDir ? [] : MAC_LOGIN).map((path) => `(allow file-read* (subpath "${path}"))`),
     // A scratch directory is not anybody's vault and every tool expects one.
-    '(allow file-read* file-write* (subpath "/private/tmp"))',
-    '(allow file-read* file-write* (subpath "/dev"))',
+    ...MAC_WRITABLE_SCRATCH.map(path => `(allow file-read* file-write* (subpath ${JSON.stringify(path)}))`),
     // MEASURED: the loop does not start without this one, and it grants no
     // path a person's own files are under.
     "(allow file-read-metadata)",
