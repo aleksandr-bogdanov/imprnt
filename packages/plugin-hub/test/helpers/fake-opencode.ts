@@ -91,6 +91,29 @@ async function turn(session: string, text: string, id: string | undefined, varia
   partEvent({ ...part, text: said })
   messages.set(assistant, { info: answered, parts: [{ ...part, text: said }, thought] })
   infoEvent(answered)
+  if (scenario.compaction) {
+    // Shapes and sequence from v1.18.34 compaction.ts, not a paid model call.
+    if (scenario.compaction === "replay") emit({ type: "session.error", properties: { sessionID: session, error: { name: "ContextOverflowError", data: { message: "provider context overflow" } } } })
+    const compact = `msg_c${n}`, summary = `msg_s${n}`, follow = `msg_f${n}`, final = `msg_final${n}`
+    infoEvent(info(compact, session, "user", { model: { providerID: provider, modelID: model }, agent: "build" }))
+    partEvent({ id: `prt_c${n}`, sessionID: session, messageID: compact, type: "compaction", auto: true, overflow: scenario.compaction === "replay" })
+    const summarized = info(summary, session, "assistant", { parentID: compact, summary: true, mode: "compaction", agent: "compaction", providerID: provider, modelID: scenario.summaryModel ?? model, tokens, finish: "stop" })
+    infoEvent(summarized)
+    const summaryPart = { id: `prt_s${n}`, sessionID: session, messageID: summary, type: "text", text: "PRIVATE COMPACTION SUMMARY" }
+    partEvent(summaryPart)
+    messages.set(summary, { info: summarized, parts: [summaryPart] })
+    if (scenario.compaction !== "summary-only") {
+      infoEvent(info(follow, session, "user", { model: { providerID: provider, modelID: model }, agent: "build" }))
+      partEvent({ id: `prt_f${n}`, sessionID: session, messageID: follow, type: "text",
+        ...(scenario.compaction === "replay" ? { text } : { text: "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.", synthetic: true, metadata: { compaction_continue: true } }) })
+      const finalInfo = info(final, session, "assistant", { parentID: follow, providerID: provider, modelID: model, tokens, finish: "stop" })
+      infoEvent(finalInfo)
+      const finalPart = { id: `prt_final${n}`, sessionID: session, messageID: final, type: "text", text: scenario.emptyContinuation ? "" : "Answer after compaction" }
+      partEvent(finalPart)
+      // Read-back has more text than the stream, exercising authoritative settlement.
+      messages.set(final, { info: finalInfo, parts: [{ ...finalPart, text: scenario.emptyContinuation ? "" : "Complete answer after compaction" }] })
+    }
+  }
   idle(session)
 }
 

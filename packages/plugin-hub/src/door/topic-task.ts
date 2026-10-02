@@ -385,6 +385,9 @@ async function createOne(ctx: TopicsContext, memory: TopicsMemory, topic: TopicR
 /** Ask the platform for the channel: the intent is committed first, and this is the only place a channel is ever asked for. */
 async function makeChannel(ctx: TopicsContext, memory: TopicsMemory, topic: TopicRow): Promise<number | null> {
   const now = clock(ctx);
+  const registry = registryNow(ctx);
+  if (registry === null) return now + ctx.retrySeconds * 1000;
+  const parent = topicCategoryOf(registry, ctx.door);
   const attempt = randomUUID();
   if ((await createIntent(ctx.store, topic.id, attempt)) !== "intent") return null;
   const admin = ctx.platform.admin;
@@ -395,8 +398,6 @@ async function makeChannel(ctx: TopicsContext, memory: TopicsMemory, topic: Topi
       body: (language, platform) => topicStepFailedNotice(language, { platform, name: topic.display_name, chat: null, step: "channel", cause }) });
     return null;
   }
-  const registry = registryNow(ctx);
-  const parent = registry === null ? null : topicCategoryOf(registry, ctx.door);
   let channel: ChannelInfo;
   try {
     channel = await admin.createChannel({ name: topic.display_name, parent_id: parent, topic: topic.marker });

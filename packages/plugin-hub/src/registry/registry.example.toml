@@ -578,3 +578,7 @@ zone = true
 
 [install]
 admin_argv = ["sudo", "-n", "-u", "postgres", "psql"]
+
+# For an archival backup transport that already retains each copy, set
+# standalone_dump = true on its [[run]] backup entry to avoid copying the
+# entire Git dump history into every archive. This does not enable expiry.

@@ -982,3 +982,19 @@ test("a chat that is archived, being reopened or gone never publishes that it st
   expect((await topicById(s, topic.id)).lifecycle).toBe("active")
   expect(firstLines(s, topic.chat!)).toEqual(["Started on mac"])
 })
+
+
+test("unreadable registry waits before create intent and retries with the configured category", async () => {
+  const s = await stageTopics(cluster)
+  const category = s.fake.addChannel({ name: "topics", type: 4 })
+  s.rewrite({ door: { topic_category: category } })
+  const { reply } = await confirmed(s)
+  const due = await s.topicPass({ registry: () => { throw new Error("registry edit in progress") } })
+  expect(due).not.toBeNull()
+  expect((await topicOf(s, reply)).create_state).toBe("confirmed")
+  expect(createPosts(s)).toHaveLength(0)
+  await s.topicPass()
+  expect(createPosts(s)).toHaveLength(1)
+  expect(createPosts(s)[0].body).toMatchObject({ parent_id: category })
+  expect((await topicOf(s, reply)).create_state).toBe("channel_known")
+})

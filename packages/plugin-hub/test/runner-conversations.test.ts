@@ -1063,3 +1063,62 @@ test("C2 an engine not shown able to resume filters the conversation out before 
     expect((await it.read.noticeRows()).filter(n => String(n.notice_key).startsWith("context:")).map(n => n.notice_key), "nothing was said twice").toEqual([`context:${attempt.id}:1:safe-resume-unvalidated`])
   } finally { await runner?.stop(); await edge.stop(); await it.stop() }
 }, 120_000)
+
+test("fresh-context owner choice restores an unsafe-resume engine without replaying the original or an already queued continuation", async () => {
+  const { it, edge, start, door, answered, sessionFed } = await stage({ worker: false, caps: { safeResume: false } })
+  let runner: Awaited<ReturnType<typeof runRunner>> | undefined
+  try {
+    runner = await start()
+    edge.hold(m => m.id === "reset-old")
+    await insertInbound(cluster, it.db, { id: "reset-old", body: "unfinished risky work" })
+    expect(await observe(() => Boolean(sessionFed("reset-old")))).toBe(true)
+    const old = sessionFed("reset-old")!
+    edge.hold(() => false)
+    old.fail()
+    expect(await observe(async () => (await rows(it, "select 1 from replay_hold where inbound_id = 'reset-old'")).length === 1)).toBe(true)
+    const [attempt] = await rows(it, "select id, native_session from execution where inbound_id = 'reset-old'") as { id: string; native_session: string }[]
+    const ask = (choice: "continue" | "fresh_context") => requestHoldChoice(door, { registry: loadRegistry(it.registryFile), person: PERSON, door: DOOR, chat: CHAT,
+      sender_id: PERSON, message: `recover:${choice}`, at: new Date().toISOString(), agent: AGENT, attempt: attempt.id, revision: 1, choice })
+    expect(await ask("continue")).toBe("continuing")
+    expect(await ask("fresh_context")).toBe("fresh_context")
+    await insertInbound(cluster, it.db, { id: "reset-new", body: "what happened?" })
+    expect(await answered("reset-new")).toBe(true)
+    const fresh = sessionFed("reset-new")!
+    expect(fresh.loop.starts()[0].session?.id).not.toBe(attempt.native_session)
+    expect(fresh.loop.starts()[0].session?.resume).toBe(false)
+    expect(fresh.fed.find(m => m.id === "reset-new")!.text).toContain("Do not continue unfinished work")
+    expect(edge.sessions.flatMap(r => r.fed).filter(m => m.id === "reset-old")).toHaveLength(1)
+    expect(edge.sessions.flatMap(r => r.fed).filter(m => m.id === "continue:reset-old:1")).toHaveLength(0)
+    expect((await rows(it, "select hub_row_held('reset-old') as held"))[0].held).toBe(true)
+    expect((await rows(it, "select hub_row_held('continue:reset-old:1') as held"))[0].held).toBe(true)
+  } finally { await runner?.stop(); await door.sql.close(); await edge.stop(); await it.stop() }
+}, 60_000)
+
+test("started master engine mismatch reports remedy and parks only master work", async () => {
+  const { it, edge, start, door } = await stage({ worker: false })
+  const sql = cluster.connect(it.db)
+  let runner: Awaited<ReturnType<typeof runRunner>> | undefined
+  try {
+    await sql`insert into conversation (id, person, agent, kind, adapter, machine, native_session, native_state)
+      values ('bound-master', ${PERSON}, ${AGENT}, 'master', 'another-engine', null, 'old-native-session', 'started')`
+    await insertInbound(cluster, it.db, { id: "wrong-engine", body: "fresh message" })
+    runner = await start()
+    await Bun.sleep(2500)
+    expect(edge.sessions).toHaveLength(0)
+    expect(await rows(it, "select id from execution")).toHaveLength(0)
+    expect((await it.read.inbound()).find(r => r.id === "wrong-engine")).toMatchObject({ state: "received", claimed_by: null })
+    expect(await rows(it, "select adapter, native_session from conversation where id = 'bound-master'"))
+      .toEqual([{ adapter: "another-engine", native_session: "old-native-session" }])
+    expect((await it.read.ledger()).filter(r => r.kind === "conversation.engine-mismatch")).toHaveLength(1)
+    const notices = () => it.read.noticeRows().then(rows => rows.filter(r => r.notice_key?.startsWith("engine-mismatch:")))
+    expect(await notices()).toHaveLength(1)
+    expect((await notices())[0].body).toContain("Restore this agent's preset to another-engine")
+    expect((await notices())[0].body).toContain(it.adapterName)
+    await insertJob(cluster, it.db, { id: "independent-job", target: AGENT, task: "independent work" })
+    expect(await observe(async () => (await it.read.inbound()).find(r => r.id === "independent-job")?.state === "answered", 15_000)).toBe(true)
+    expect(edge.sessions.flatMap(s => s.fed).some(m => m.id === "wrong-engine")).toBe(false)
+    expect((await rows(it, "select data from state_row where sheet = 'agent_health' and id = $1", [AGENT]))[0].data)
+      .toMatchObject({ status: "blocked", cause: "conversation.engine-mismatch", bound_engine: "another-engine", configured_engine: it.adapterName })
+    expect(await notices()).toHaveLength(1)
+  } finally { await runner?.stop(); await sql.close(); await door.sql.close(); await edge.stop(); await it.stop() }
+}, 30_000)

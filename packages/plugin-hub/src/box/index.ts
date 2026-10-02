@@ -1,3 +1,4 @@
+import { MAC_WRITABLE_SCRATCH } from "./scratch.ts";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -147,6 +148,12 @@ function hostControlMasks(): string[] {
   ];
 }
 
+/** Host-account credentials are not household-agent credentials. Never inherit them through / . */
+function hostCredentialMasks(): string[] {
+  return [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".config", ".password-store", ".azure", ".gcloud",
+    ".netrc", ".git-credentials", ".npmrc", ".pypirc"].map(name => join(homedir(), name));
+}
+
 /**
  * Every path in this household that holds a secret an agent must not
  * read: the directory the store roles' passwords are in, every door's token
@@ -279,8 +286,7 @@ function profileText(ctx: BoxContext): string {
     ...macTools().map((path) => `(allow file-read* (subpath "${path}"))`),
     ...(ctx.sessionDir ? [] : MAC_LOGIN).map((path) => `(allow file-read* (subpath "${path}"))`),
     // A scratch directory is not anybody's vault and every tool expects one.
-    '(allow file-read* file-write* (subpath "/private/tmp"))',
-    '(allow file-read* file-write* (subpath "/dev"))',
+    ...MAC_WRITABLE_SCRATCH.map(path => `(allow file-read* file-write* (subpath ${JSON.stringify(path)}))`),
     // MEASURED: the loop does not start without this one, and it grants no
     // path a person's own files are under.
     "(allow file-read-metadata)",
@@ -441,6 +447,16 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         // spellings of the socket are one path once the symlink is resolved.
         ...[...new Set(hostControlMasks().filter(existsSync).map(canonical))]
           .flatMap(path => ["--ro-bind", "/dev/null", path]),
+        // Hide the host account's ambient credentials even when an agent can read the host.
+        ...[...new Set(hostCredentialMasks().filter(existsSync).map(canonical))]
+          .flatMap(path => statSync(path).isDirectory() ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path]),
+        // A declared model login or repository beneath a masked directory remains explicitly
+        // granted, without exposing its sibling credentials. Never restore the whole mask root.
+        ...[...new Set([...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])])]
+          .filter(path => existsSync(path) && hostCredentialMasks().filter(existsSync).map(canonical)
+            .some(mask => statSync(mask).isDirectory() && path.startsWith(`${mask}/`)))
+          .flatMap(path => [(ctx.writePaths ?? []).includes(path) &&
+            !(readsOnly(ctx) && (path === ctx.tree || path.startsWith(`${ctx.tree}/`))) ? "--bind" : "--ro-bind", path, path]),
         // Masks come after everything above, so nothing bound later uncovers one.
         ...secretMasks(ctx).flatMap(({ path, directory }) =>
           directory ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path]),

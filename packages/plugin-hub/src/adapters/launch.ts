@@ -1,3 +1,4 @@
+import { LOOP_PROBE_TEMP_PREFIX } from "../box/scratch.ts";
 import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -435,7 +436,7 @@ export function loopCapabilitiesFor(credential: CredentialEntry, probe: LoopProb
 export async function probeLoopCapabilities(bin = "claude", timeoutMs = LOOP_PROBE_TIMEOUT_MS, writePaths: string[] = []) {
   const executable = Bun.which(bin);
   if (!executable) throw new Error("credential-source-unsupported");
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hub-loop-capability-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), LOOP_PROBE_TEMP_PREFIX)));
   try {
     const source = join(root, "login", ".credentials.json");
     mkdirSync(dirname(source));

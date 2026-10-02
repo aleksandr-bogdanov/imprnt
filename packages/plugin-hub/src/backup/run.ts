@@ -296,7 +296,10 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
   // dump's history rides along in every copy, and the destination can hold, list and expire whole generations. If it does not, the copy
   // is the one mirror it always was, and its earlier copies cannot be told apart or expired through this transport.
   const generational = (declared.upload_argv ?? []).some((arg) => arg.includes("{generation}"));
-  const root = generational ? join(staging, GENERATION_DIR) : staging;
+  // A keep-all transport already preserves each archive; do not nest all prior dumps in every copy.
+  // Keep the legacy repository intact beside this clean assembly directory.
+  const standalone = generational || declared.standalone_dump === true;
+  const root = standalone ? join(staging, GENERATION_DIR) : staging;
   // The owner's retention, or none. Read first because the expiry below runs whether or not this copy lands: a failed fresh backup is
   // reported, and is never a reason to keep old history silently. A value that is not a day count refuses the COPY, by name.
   let days: number | null = null;
@@ -352,7 +355,7 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
     const dump = await run(fill(declared.dump_argv ?? [], { staging: root, destination }), "dump", "operation failed", true);
     if (dump.length === 0) throw new BackupRefused("dump", "operation failed", "the dump command wrote nothing");
     let changed = true;
-    if (generational) {
+    if (standalone) {
       // A STANDALONE DUMP in a directory made new for this copy: nothing of an earlier copy is in it, so what an earlier generation
       // held cannot ride along in this one, and the generation can be removed whole.
       rmSync(root, { recursive: true, force: true });

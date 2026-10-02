@@ -5,7 +5,7 @@ import type { Registry } from "../registry/load.ts";
 import { resolveMoveDestination, type ResolvedDestination } from "../registry/topics.ts";
 import type { StoreLike } from "../store/connect.ts";
 import {
-  WITHDRAWABLE_STAGES, continueMove, openMoveOfTopic, readMove, requestMove, withdrawMove, type MoveNotice, type MoveRow,
+  WITHDRAWABLE_STAGES, copiesAtLocation, continueMove, openMoveOfTopic, readMove, requestMove, withdrawMove, type MoveNotice, type MoveRow,
 } from "../store/moves.ts";
 import { attentionFor } from "../store/topic-attention.ts";
 import { runnerLive, type TopicRow } from "../store/topics.ts";
@@ -161,6 +161,15 @@ async function ask(binding: McpBinding, request: MoveRequest): Promise<ToolReply
       // A move that is already open is answered before anything is measured: the request is what the store already holds, or it is another.
       const standing = await openMoveOfTopic(tx, topic.id);
       if (standing !== null) return await answerOpenMove(tx, binding, topic, standing, wanted);
+      // A previous move can still own the native-session location on the destination.
+      // Refuse before gating the source; this does not claim to inspect remote files or retire a copy.
+      if (topic.machine !== wanted.machine && topic.runner !== wanted.runner) {
+        const copies = await copiesAtLocation(tx, { conversation: topic.conversation_id, machine: wanted.machine });
+        if (copies.some(copy => copy.state !== "removed" && copy.state !== "superseded")) {
+          return refused(topic.id, "destination_copy_occupied",
+            `The destination ${wanted.machine} still holds a recorded copy of this conversation from an earlier move. Nothing was started and this chat keeps running here. Returning to that machine is unavailable until the retained copy is safely reconciled; this request does not remove it.`);
+        }
+      }
       const operation = operationFor(binding, request);
       const asked = await requestMove(tx, {
         operation, topic: topic.id, destRunner: wanted.runner, destMachine: wanted.machine, by: owner.sender, route: callerRoute(registry, binding),

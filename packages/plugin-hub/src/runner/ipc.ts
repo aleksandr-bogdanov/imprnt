@@ -1,3 +1,4 @@
+import { HUB_MCP_TEMP_PREFIX } from "../box/scratch.ts";
 import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -27,7 +28,7 @@ const FACADE = new URL("../mcp/server.ts", import.meta.url).pathname;
 export async function bindFacade(binding: McpBinding): Promise<FacadeBinding> {
   // In the temporary directory because a socket path is short-limited and this
   // is the one place both boxes let a process reach, and mode 0700 by `mkdtemp`.
-  const dir = mkdtempSync(join(tmpdir(), "hub-mcp-"));
+  const dir = mkdtempSync(join(tmpdir(), HUB_MCP_TEMP_PREFIX));
   const path = join(dir, "s");
   const token = crypto.randomUUID();
   const connections = new Set<import("node:net").Socket>();

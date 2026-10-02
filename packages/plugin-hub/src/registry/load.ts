@@ -443,6 +443,8 @@ export interface RunEntry {
    * is a string the commands receive and nothing here reads, which is what
    * keeps every provider out of the code.
    */
+  /** Assemble only the current dump; the transport preserves historical copies. */
+  standalone_dump?: boolean;
   dump_argv?: string[];
   upload_argv?: string[];
   readback_argv?: string[];
@@ -1655,6 +1657,9 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     // happens to start, and no placeholder the job would not fill in, because
     // one it does not know would be passed through as a literal.
     if (entry.kind === "backup") {
+      if (entry.standalone_dump !== undefined && typeof entry.standalone_dump !== "boolean") {
+        refuse(`${at}.standalone_dump`, here, `${id} standalone_dump must be a boolean`);
+      }
       if (scheduleSeconds(String(entry.schedule)) === null) {
         refuse(`${at}.schedule`, here,
           `${id} is a backup with schedule ${describe(entry.schedule)}, and a copy runs on a cadence such as hourly ` +
@@ -1829,7 +1834,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
         : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"]
         : entry.kind === "door" ? ["guild", "default_preset", ...TOPIC_DOOR_KEYS]
-        : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS, ...BACKUP_RETENTION_ARGVS]
+        : entry.kind === "backup" ? ["destination", "standalone_dump", ...BACKUP_ARGVS, ...BACKUP_RETENTION_ARGVS]
         : entry.kind === "watch" ? ["source", "person", ...SENTRY_KEYS, ...HUNT_KEYS] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),

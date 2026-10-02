@@ -741,3 +741,24 @@ test("K9 an active council keeps one slot free for its master on the master's ow
     expect(await hold()).toEqual([])
   } finally { await s.close() }
 }, 60_000)
+
+
+test("debate quotes a long answer without splitting an emoji at the jsonb boundary", async () => {
+  const s = await councilStage(cluster, track)
+  try {
+    const { id, jobs: firstJobs, participants } = await begin(s)
+    for (const job of firstJobs) await s.conversationOf(job.id)
+    await answerRound(s, id, "a".repeat(5999) + "😀tail")
+    await s.human("h3")
+    expect(await move(s, id, { kind: "debate_round", source_message_ids: ["h3"], participants,
+      briefs: briefs(participants, "Respond:", [{ participant_id: participants[1] }]) }))
+      .toMatchObject({ status: "running", round: 2 })
+    const jobs = (await s.jobsOf(id)).filter(job => job.source.dispatch.council_round.round === 2)
+    expect(jobs).toHaveLength(2)
+    for (const job of jobs) {
+      expect(job.body).toContain("a".repeat(5999))
+      expect(job.body).not.toContain("😀")
+      expect(job.body.isWellFormed()).toBe(true)
+    }
+  } finally { await s.close() }
+}, 120_000)

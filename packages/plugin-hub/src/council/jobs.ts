@@ -134,5 +134,9 @@ export async function answerOf(store: StoreLike, member: Pick<MemberRow, "inboun
   if (id === null) return null;
   const [row] = (await store.sql`select body from inbound where id = ${id}`) as unknown as { body: string }[];
   if (!row) return null;
-  return row.body.length > ANSWER_CAP ? { text: row.body.slice(0, ANSWER_CAP), truncated: true } : { text: row.body, truncated: false };
+  if (row.body.length <= ANSWER_CAP) return { text: row.body, truncated: false };
+  // Keep a whole UTF-16 pair: quoted answers become jsonb, which rejects a lone surrogate.
+  const end = /[\uD800-\uDBFF]/.test(row.body[ANSWER_CAP - 1]) && /[\uDC00-\uDFFF]/.test(row.body[ANSWER_CAP])
+    ? ANSWER_CAP - 1 : ANSWER_CAP;
+  return { text: row.body.slice(0, end), truncated: true };
 }

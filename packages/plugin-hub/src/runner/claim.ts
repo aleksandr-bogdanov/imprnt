@@ -23,7 +23,9 @@ export async function claimNext(
      * assignment is only claimed when it can, and absent this it is taken to
      * be that it cannot: an unproved capability is not a yes.
      */
-    resumeOk?: boolean },
+    resumeOk?: boolean;
+    /** Exclude only master rows when its bound engine differs from the preset. */
+    masterBlocked?: boolean },
 ): Promise<EligibleRow | null> {
   // The pause is a WHERE clause on the statement the runner already
   // runs, not a second query: at the household's own pause threshold proactive
@@ -47,6 +49,7 @@ export async function claimNext(
        where id = (
          select id from inbound
           where agent = ${who.agent}
+            and (not ${who.masterBlocked ?? false}::boolean or kind in ('job', 'harvest'))
             and log_ready
             and rank <= ${maxRank}
             and state not in ('answered', 'delivered')

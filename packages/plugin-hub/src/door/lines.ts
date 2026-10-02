@@ -610,9 +610,9 @@ export function holdNotice(language: Language, values: LineValues = {}): string 
   const cause = HOLD_CAUSE[language][String(values.cause)] ?? String(values.cause);
   const sentence = interpolate(language, language === "ru"
     ? "{agent}: работа прервана, её входные данные удержаны: {why}. {effects} Ничего не будет запущено повторно, пока вы не решите. "
-      + `Напишите ${verb} {agent} {attempt} {revision} continue, чтобы продолжить, или ${verb} {agent} {attempt} {revision} keep-held, чтобы оставить как есть.`
+      + `Напишите ${verb} {agent} {attempt} {revision} continue, чтобы продолжить, или ${verb} {agent} {attempt} {revision} keep-held, чтобы оставить как есть. После подтверждённого завершения процесса fresh-context явно сбрасывает нативный контекст для новых сообщений; незавершённая работа не продолжается.`
     : "{agent}: a piece of work was interrupted and its input is held: {why}. {effects} Nothing will be run again until you choose. "
-      + `Reply ${verb} {agent} {attempt} {revision} continue to continue it, or ${verb} {agent} {attempt} {revision} keep-held to leave it as it is.`,
+      + `Reply ${verb} {agent} {attempt} {revision} continue to continue it, or ${verb} {agent} {attempt} {revision} keep-held to leave it as it is. After confirmed process exit, fresh-context explicitly discards native context so fresh messages can run; it never continues unfinished work.`,
     { ...values, why: cause });
   return says(language, sentence);
 }
@@ -645,9 +645,9 @@ export function contextNotice(language: Language, values: LineValues = {}): stri
   const why = CONTEXT_WHY[language][String(values.cause)] ?? String(values.cause);
   const sentence = interpolate(language, language === "ru"
     ? "{agent}: разговор ждёт нативный контекст ({why}). Пока его нет, ни новое сообщение, ни продолжение прерванной работы {attempt} не запускаются, и контекст не пересобирается. "
-      + `Ваше решение (${verb} {agent} {attempt} {revision} continue или keep-held) записывается и не теряется: продолжение начнётся само, когда контекст станет доступен.`
+      + `Ваше решение (${verb} {agent} {attempt} {revision} continue или keep-held) записывается и не теряется: продолжение начнётся само, когда контекст станет доступен. Либо выберите fresh-context после подтверждённого завершения процесса: нативный контекст сбрасывается, незавершённая работа не продолжается.`
     : "{agent}: the conversation is waiting for native context ({why}). Until it is available neither a new message nor a continuation of {attempt} starts, and nothing is rebuilt in its place. "
-      + `Your choice (${verb} {agent} {attempt} {revision} continue or keep-held) is still recorded and is not lost: an authorized continuation starts by itself once the context is available.`,
+      + `Your choice (${verb} {agent} {attempt} {revision} continue or keep-held) is still recorded and is not lost: an authorized continuation starts by itself once the context is available. Or choose fresh-context explicitly after confirmed process exit: native context is discarded, and unfinished work is not continued.`,
     { ...values, why });
   return says(language, sentence);
 }
@@ -668,6 +668,9 @@ export function holdChoiceLine(language: Language, values: LineValues = {}): str
   const waiting = (outcome === "continuing" || outcome === "continue_pending") && values.context !== "ready";
   if (waiting) outcome = `${outcome}:context`;
   const en: Record<string, string> = {
+    fresh_context: "recorded: native context was reset after confirmed exit. Fresh messages can run; unfinished work and any queued continuation stay excluded. Nothing was undone.",
+    "move-pending": "not applied: this conversation has an open move or a pending relocation note. Complete or withdraw the open move; a pending note requires a validated native resume and receipt before fresh context is available. Nothing changed.",
+    "ownership-unresolved": "not applied: fresh context requires confirmed process exit and no other active execution. Nothing changed.",
     keep_held: "recorded: {attempt} stays held and nothing is authorized.",
     continue_pending: "recorded: {attempt} will continue once the old attempt is shown to be over. Nothing new starts until then.",
     "continue_pending:context": "recorded: {attempt} will continue once the old attempt is shown to be over and the native context is available ({clause}). Nothing new starts until then.",
@@ -676,9 +679,12 @@ export function holdChoiceLine(language: Language, values: LineValues = {}): str
     "stale-revision": "not applied: what is known about {attempt} changed since that notice. Use the latest one.",
     "unknown-attempt": "not applied: no held attempt {attempt} for {agent}.",
     closed: "not applied: {attempt} is already being continued or is closed.",
-    "invalid-choice": "not applied: the choice is continue or keep-held.",
+    "invalid-choice": "not applied: the choice is continue, keep-held or fresh-context.",
   };
   const ru: Record<string, string> = {
+    fresh_context: "записано: после подтверждённого завершения процесса создан новый контекст. Новые сообщения разрешены; незавершённая работа и её продолжение не повторяются. Изменения не отменены.",
+    "move-pending": "не применено: перенос разговора не завершён или уведомление о переносе ещё не получено. Завершите или отмените открытый перенос; для получения уведомления нужно подтверждённое безопасное продолжение контекста. Ничего не изменено.",
+    "ownership-unresolved": "не применено: нужны подтверждённое завершение процесса и отсутствие другой активной попытки. Ничего не изменено.",
     keep_held: "записано: {attempt} остаётся удержанной, ничего не разрешено.",
     continue_pending: "записано: {attempt} продолжится, когда будет подтверждено, что прежняя попытка закончилась. До тех пор ничего нового не запускается.",
     "continue_pending:context": "записано: {attempt} продолжится, когда будет подтверждено, что прежняя попытка закончилась, и нативный контекст станет доступен ({clause}). До тех пор ничего нового не запускается.",
@@ -687,7 +693,7 @@ export function holdChoiceLine(language: Language, values: LineValues = {}): str
     "stale-revision": "не применено: с того сообщения о {attempt} что-то изменилось. Используйте последнее.",
     "unknown-attempt": "не применено: у {agent} нет удержанной попытки {attempt}.",
     closed: "не применено: {attempt} уже продолжается или закрыта.",
-    "invalid-choice": "не применено: выбор — continue или keep-held.",
+    "invalid-choice": "не применено: выбор — continue, keep-held или fresh-context.",
   };
   const table = language === "ru" ? ru : en;
   return says(language, interpolate(language, table[outcome] ?? table["unknown-attempt"],
@@ -697,8 +703,8 @@ export function holdChoiceLine(language: Language, values: LineValues = {}): str
 export function holdUsage(language: Language, values: LineValues = {}): string {
   const verb = language === "ru" ? "/восстановить" : "/recover";
   const sentence = interpolate(language, language === "ru"
-    ? `${verb} {agent} — перезапуск; ${verb} {agent} {attempt} {revision} continue|keep-held — решение по прерванной работе.`
-    : `${verb} {agent} restarts it; ${verb} {agent} {attempt} {revision} continue|keep-held decides an interrupted piece of work.`, values);
+    ? `${verb} {agent} — перезапуск; ${verb} {agent} {attempt} {revision} continue|keep-held|fresh-context — решение по прерванной работе.`
+    : `${verb} {agent} restarts it; ${verb} {agent} {attempt} {revision} continue|keep-held|fresh-context decides an interrupted piece of work.`, values);
   return says(language, sentence);
 }
 

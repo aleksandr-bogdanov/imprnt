@@ -958,7 +958,7 @@ create table replay_hold (
   state             text not null default 'held'
                       check (state in ('held', 'keep_held', 'continue_pending', 'continuing', 'released')),
   revision          integer not null default 1 check (revision >= 1),
-  choice            text check (choice in ('continue', 'keep_held')),
+  choice            text check (choice in ('continue', 'keep_held', 'fresh_context')),
   chosen_by         text,
   chosen_at         timestamptz,
   evidence          jsonb,
@@ -1036,6 +1036,7 @@ grant select on conversation, conversation_entry, execution, replay_hold,
   tool_invocation, source_consumption, runner_incarnation to hub_door, hub_hub;
 -- The door records an owner's choice through the function below, which it owns.
 grant update on replay_hold to hub_door;
+grant update (native_session, native_state, placement_generation) on conversation to hub_door;
 
 -- The diary lines of this step. `execution` is the runner's; the two the door
 -- writes are the ones its recovery choice function appends.
@@ -1237,14 +1238,47 @@ returns text language plpgsql security definer set search_path = pg_catalog, pub
 declare
   h public.replay_hold%rowtype;
 begin
+  -- Serialize with attempt opening before locking the hold or resetting native state.
+  perform public.hub_gate_order(agent_id);
   select r.* into h from public.replay_hold r
     join public.execution e on e.id = r.execution_id
    where r.execution_id = attempt_id and e.agent = agent_id
    for update of r;
   if not found then return 'unknown-attempt'; end if;
-  if picked not in ('continue', 'keep_held') then return 'invalid-choice'; end if;
+  if picked not in ('continue', 'keep_held', 'fresh_context') then return 'invalid-choice'; end if;
   if h.revision <> expected_revision then return 'stale-revision'; end if;
-  if h.state in ('continuing', 'released') then return 'closed'; end if;
+  if h.state = 'released' then return 'closed'; end if;
+  if picked = 'fresh_context' then
+    -- Move request/checkpoint/note delivery take the same agent ordering lock.
+    -- Resetting the generation here would invalidate their placement ancestry.
+    if exists (select 1 from public.topic_move m where m.conversation_id = h.conversation_id
+      and (m.stage not in ('active', 'withdrawn') or m.note_state = 'pending')) then
+      return 'move-pending';
+    end if;
+    -- A terminal label alone is insufficient: require positive process/descendant
+    -- exit evidence, and exclude another active/uncertain execution of the agent.
+    perform 1 from public.execution e where e.id = attempt_id
+      and e.state in ('interrupted', 'stopped')
+      and e.evidence -> 'exit' ->> 'confirmed' = 'true';
+    if not found or public.hub_agent_blocked(agent_id) then return 'ownership-unresolved'; end if;
+    -- Revoke an earlier queued continuation as part of choosing fresh context.
+    -- A permanent row gate keeps it excluded even though this hold is released.
+    if h.continuation_id is not null then
+      perform public.hub_gate_place('fresh-context:' || attempt_id, 'row', h.continuation_id,
+        'fresh-context', jsonb_build_object('attempt', attempt_id, 'by', who));
+    end if;
+    update public.conversation set native_session = gen_random_uuid()::text,
+      native_state = 'new', placement_generation = placement_generation + 1
+      where id = h.conversation_id;
+    update public.replay_hold set choice = picked, chosen_by = who, chosen_at = now(), evidence = proof,
+      state = 'released', revision = revision + 1, continuation_body = null, native_context = null, updated_at = now()
+      where inbound_id = h.inbound_id;
+    insert into public.ledger_event (stream, subject, kind, actor, detail)
+    values ('execution', attempt_id, 'hold.choice', 'door',
+      jsonb_build_object('choice', picked, 'by', who, 'revision', h.revision, 'inbound', h.inbound_id));
+    return 'fresh_context';
+  end if;
+  if h.state = 'continuing' then return 'closed'; end if;
   update public.replay_hold
      set choice = picked, chosen_by = who, chosen_at = now(), evidence = proof,
          continuation_body = case when picked = 'continue' then body else null end,
@@ -7652,3 +7686,5 @@ revoke all on function hub_council_notice_lock(text) from public;
 grant execute on function hub_council_notice_lock(text) to hub_door, hub_runner, hub_hub;
 
 insert into schema_version (version) values (18);
+
+insert into schema_version (version) values (19);

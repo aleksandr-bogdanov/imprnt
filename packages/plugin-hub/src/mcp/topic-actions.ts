@@ -3,7 +3,7 @@ import { deletionConfirmationAsk, deletionPreview } from "../door/deletion-lines
 import { TOPIC_CREATE, TOPIC_DELETE } from "../door/topic-approval.ts";
 import { topicConfirmationAsk, topicPreview } from "../door/topic-lines.ts";
 import { RetentionInvalid, retentionDaysOf, retentionStatement } from "../erasure/retention.ts";
-import { languageOf, listAgents, listRunEntries } from "../registry/entries.ts";
+import { languageOf, listAgents, listPeople, listRunEntries } from "../registry/entries.ts";
 import { archiveOf, canMakeChats, generalOf, resolveTopicSetup } from "../registry/topics.ts";
 import { ConfirmationRefused, freezeConfirmation, readOperation } from "../store/confirmations.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -353,11 +353,19 @@ export async function deleteTopic(binding: McpBinding, request: DeleteRequest): 
       return { context: topic };
     },
     async apply(tx, topic, owner) {
+      const registry = binding.registry();
+      if (listPeople(registry).some(person => person.general === topic.agent_id)) {
+        throw new Undo(refusal(topic.id, "general_required", "this agent is configured as General: assign another General in the registry before asking to delete this chat"));
+      }
+      const references = listRunEntries(registry).filter(entry => entry.kind === "watch" &&
+        [entry.agent, entry.audit, entry.triage].includes(topic.agent_id));
+      if (references.length > 0) {
+        throw new Undo(refusal(topic.id, "agent_referenced", `this agent is still referenced by ${references.map(entry => entry.id).join(", ")}: update those registry entries before asking to delete this chat`));
+      }
       // The store has to carry migration 017 before anything of a deletion is asked of it: a refusal by name, not a missing routine.
       if (!(await deletionSchemaReady(tx))) {
         throw new Undo(refusal(topic.id, "schema_not_ready", `the store has not been migrated to schema ${DELETION_SCHEMA_VERSION} yet, so a deletion cannot be asked for: ask the operator to run the database install step`));
       }
-      const registry = binding.registry();
       const me = listAgents(registry).find(one => one.id === binding.agent);
       if (!me || me.door === undefined || me.chat === undefined) {
         throw new Undo(refusal(topic.id, "no_chat", "this conversation's agent has no chat in which the scope of a deletion can be shown"));

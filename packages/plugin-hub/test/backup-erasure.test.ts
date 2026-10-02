@@ -250,3 +250,24 @@ landed(`a destination that is asked to expire a copy and still lists it is repor
     await stage.remove()
   }
 }, SLOW)
+
+landed(`keep-all standalone snapshots omit nested history but preserve the legacy repository${gateSuffix(DEVICE)}`, async () => {
+  const stage = await backupStage(cluster)
+  try {
+    const destination = landing(stage)
+    const legacy = join(stage.staging, "dump", ".git", "objects", "legacy-sentinel")
+    mkdirSync(join(stage.staging, "dump", ".git", "objects"), { recursive: true })
+    writeFileSync(legacy, "earlier dump history")
+    stage.configure({ destination, standalone_dump: true })
+    const { result, error } = await copy(stage)
+    expect(error).toBeUndefined()
+    expect(result).toBeDefined()
+    expect(readFileSync(legacy, "utf8")).toBe("earlier dump history")
+    expect(existsSync(join(destination, "dump", "hub.sql"))).toBe(true)
+    expect(existsSync(join(destination, "dump", ".git"))).toBe(false)
+    const manifest = JSON.parse(readFileSync(join(destination, "manifest.json"), "utf8"))
+    expect(JSON.stringify(manifest)).not.toContain("legacy-sentinel")
+    expect(manifest.retention_days).toBeNull()
+    expect(manifest.expires_at).toBeNull()
+  } finally { await stage.remove() }
+}, SLOW)

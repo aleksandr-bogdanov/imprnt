@@ -310,3 +310,13 @@ test("the diary stays a diary, and the routines that remove content are not the 
   expect((await s.as("hub_hub").sql`select hub_deletion_erase_active('nothing') as answer`)[0].answer).toBe("unknown-deletion")
   expect((await readErasureManifest(s.as("hub_hub"))).tombstones).toEqual([])
 })
+
+
+test("General deletion is refused before any preview, deletion row or gate", async () => {
+  const s = await stageTopics(cluster)
+  const master = await s.binding()
+  expect(await s.ask(master, { action: "delete" })).toMatchObject({ status: "failed", cause: "general_required" })
+  expect(Number((await s.admin`select count(*)::int as n from topic_deletion`)[0].n)).toBe(0)
+  expect(Number((await s.admin`select count(*)::int as n from confirmation`)[0].n)).toBe(0)
+  expect(Number((await s.admin`select count(*)::int as n from claim_gate where state = 'open'`)[0].n)).toBe(0)
+})

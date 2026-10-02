@@ -145,6 +145,8 @@ export interface MessageInfo {
   modelID: string | null;
   /** The variant the message records: an assistant's own, or the one on a user message's `model`. */
   variant: string | null;
+  summary?: boolean;
+  finish?: string | null;
   tokens: { input: number | null; output: number | null; cached: number | null };
   error: EngineError | null;
 }
@@ -163,6 +165,8 @@ export function messageInfo(raw: unknown): MessageInfo | null {
     variant: str(info.variant) ?? str(bound?.variant),
     tokens: { input: num(tokens?.input), output: num(tokens?.output), cached: num(obj(tokens?.cache)?.read) },
     error: engineError(info.error),
+    summary: info.summary === true,
+    finish: str(info.finish),
   };
 }
 
@@ -240,6 +244,8 @@ export interface TurnOutcome {
   messages: { id: string; info: MessageInfo }[];
   /** The text the stream carried for the last assistant message that had any. Used only if the message cannot be fetched. */
   streamed: string;
+  /** Only these messages may supply the answer after the latest compaction. */
+  answerIds?: string[];
   error: EngineError | null;
   /** What the engine asked for that the hub never grants (a permission, a question). Either one ends the turn as a refusal. */
   permission: string | null;
@@ -265,7 +271,7 @@ interface SeenPart { message: string; type: string; text: string }
  * then on:
  *   - the receipt is the engine's own `message.updated` for THAT id (a user message). Failing the id
  *     matching, an assistant message that names it as its `parentID` also shows the engine has it. A
- *     second copy of the same text under any other id is the engine not keeping the caller's id, which
+ *     second copy of the same text under any other id outside a verified overflow replay is the engine not keeping the caller's id, which
  *     ends the turn as an error and never as a receipt. Without an id (a caller that has none) the old
  *     rule applies: the first new user message whose text part is exactly what was sent, or the first
  *     new assistant message;
@@ -274,7 +280,8 @@ interface SeenPart { message: string; type: string; text: string }
  *     the same words; a tool's first sight is an `action` and its completion an `action_result` that
  *     carries no text;
  *   - the turn ends on `session.idle` (or a status of `idle`) after the receipt, or at once on
- *     `session.error`, or at once on something the hub never grants. An idle before the receipt is the
+ *     `session.error` (except a recoverable context overflow, held until idle or a verified
+ *     compaction continuation), or at once on something the hub never grants. An idle before the receipt is the
  *     last turn's and is ignored.
  *
  * It decides nothing about the answer. What was said is fetched by the adapter from the
@@ -283,6 +290,12 @@ interface SeenPart { message: string; type: string; text: string }
 export class TurnTracker {
   private phase: "idle" | "fed" = "idle";
   private sent = "";
+  private currentUser: string | null = null;
+  private latestUser: string | null = null;
+  private previousUser = new Map<string, string | null>();
+  private userTexts = new Map<string, string>();
+  private compaction: { id: string; source: string; overflow: boolean; complete: boolean } | null = null;
+  private answerIds = new Set<string>();
   private sentId: string | null = null;
   private candidate: string | null = null;
   private echoed: MessageInfo | null = null;
@@ -295,6 +308,7 @@ export class TurnTracker {
   private early = new Map<string, string>();
   private tools = new Map<string, "started" | "done">();
   private error: EngineError | null = null;
+  private overflow: EngineError | null = null;
   private permission: string | null = null;
   private foreign = new Set<string>();
 
@@ -307,6 +321,12 @@ export class TurnTracker {
     this.phase = "fed";
     this.sent = text;
     this.sentId = messageId;
+    this.currentUser = messageId;
+    this.latestUser = null;
+    this.previousUser.clear();
+    this.userTexts.clear();
+    this.compaction = null;
+    this.answerIds.clear();
     this.candidate = null;
     this.echoed = null;
     this.acknowledged = false;
@@ -316,6 +336,7 @@ export class TurnTracker {
     this.early = new Map();
     this.tools = new Map();
     this.error = null;
+    this.overflow = null;
     this.permission = null;
     this.foreign = new Set();
   }
@@ -358,7 +379,14 @@ export class TurnTracker {
       case "session.error": {
         if (properties.sessionID !== undefined && properties.sessionID !== this.session) return;
         if (this.phase !== "fed") return;
-        this.error = engineError(properties.error) ?? { name: "UnknownError", message: "the engine reported an error", status: null };
+        const reported = engineError(properties.error);
+        // processor.ts publishes ContextOverflowError before returning "compact".
+        // It is terminal only if idle arrives without a verified continuation.
+        if (reported?.name === "ContextOverflowError" && this.acknowledged) {
+          this.overflow = reported;
+          return;
+        }
+        this.error = reported ?? { name: "UnknownError", message: "the engine reported an error", status: null };
         this.finish();
         return;
       }
@@ -394,6 +422,10 @@ export class TurnTracker {
     this.roles.set(info.id, info.role);
     if (this.phase !== "fed" || this.before.has(info.id)) return;
     if (info.role === "user") {
+      if (first) {
+        this.previousUser.set(info.id, this.latestUser);
+        this.latestUser = info.id;
+      }
       if (this.sentId !== null) {
         // The engine's own message for the id the hub chose: it has the prompt.
         if (info.id === this.sentId) { this.echoed = info; this.acknowledge(); }
@@ -401,8 +433,19 @@ export class TurnTracker {
       return;
     }
     if (info.role !== "assistant") return;
-    // An assistant message that answers another user message is not this turn's.
-    if (this.sentId !== null && info.parentID !== null && info.parentID !== this.sentId) return;
+    // v1.18.34 compaction.ts: summaries answer a separate compaction user. They are
+    // accounting/error evidence, never reply text or a receipt for the hub's prompt.
+    if (info.summary) {
+      if (this.compaction?.id !== info.parentID) return;
+      this.assistants.set(info.id, info);
+      this.compaction.complete = Boolean(info.finish) && !info.error;
+      if (info.error) this.error = info.error;
+      return;
+    }
+    if (this.sentId !== null && info.parentID !== null && info.parentID !== this.currentUser) return;
+    if (this.compaction && this.currentUser === this.compaction.source) return;
+    this.answerIds.add(info.id);
+    if (this.compaction?.complete && this.currentUser !== this.compaction.source) this.overflow = null;
     this.assistants.set(info.id, info);
     if (this.sentId === null || info.parentID === this.sentId) this.acknowledge();
   }
@@ -413,7 +456,32 @@ export class TurnTracker {
     if (!message || this.before.has(message)) return;
     const role = this.roles.get(message);
     const text = part.type === "text";
-    if (this.sentId !== null && text && part.text === this.sent && message !== this.sentId && role === "user") {
+    if (role === "user") {
+      if (text && typeof part.text === "string") this.userTexts.set(message, part.text);
+      // Correlation is an uninterrupted chain from the acknowledged hub user, not
+      // permission to absorb every new message in the session.
+      if (part.type === "compaction" && part.auto === true && this.acknowledged &&
+          this.previousUser.get(message) === this.currentUser && this.currentUser !== null) {
+        if (this.compaction?.id !== message) {
+          this.compaction = { id: message, source: this.currentUser, overflow: part.overflow === true, complete: false };
+          this.answerIds.clear();
+        }
+        return;
+      }
+      if (part.type === "compaction" && part.auto === true) {
+        this.error = { name: "CompactionUncorrelated", message: "the engine compacted without an uninterrupted chain from the hub prompt", status: null };
+        this.answerIds.clear();
+        return;
+      }
+      const compact = this.compaction;
+      if (compact?.complete && this.latestUser === message && this.previousUser.get(message) === compact.id && text &&
+          ((part.synthetic === true && obj(part.metadata)?.compaction_continue === true) ||
+           (compact.overflow && part.text === this.userTexts.get(compact.source)))) {
+        this.currentUser = message;
+        return;
+      }
+    }
+    if (this.sentId !== null && text && part.text === this.sent && message !== this.sentId && message !== this.currentUser && role === "user") {
       // The prompt came back as a user message under an id the hub did not choose. Nothing correlates
       // it to the post any more, so it is an error and not a receipt.
       this.error = { name: "MessageIdNotKept", message: "the engine recorded the prompt under another message id than the one the hub chose", status: null };
@@ -425,7 +493,7 @@ export class TurnTracker {
       if (mine && text && part.text === this.sent) this.acknowledge();
       return;
     }
-    if (!this.assistants.has(message)) return;
+    if (!this.answerIds.has(message)) return;
     this.acknowledge();
     const key = str(part.id) ?? str(part.callID) ?? `${message}:${String(part.type)}`;
     if (text) {
@@ -471,7 +539,7 @@ export class TurnTracker {
     if (this.phase !== "fed" || this.before.has(message) || this.roles.get(message) === "user") return;
     const seen = this.parts.get(part);
     if (!seen) { this.early.set(part, (this.early.get(part) ?? "") + delta); return; }
-    if (seen.type !== "text") return;
+    if (seen.type !== "text" || !this.answerIds.has(message)) return;
     seen.text += delta;
     this.sink.progress({ kind: "text", text: delta });
   }
@@ -488,11 +556,15 @@ export class TurnTracker {
 
   private finish(): void {
     const order = [...this.assistants.keys()];
-    const lastWithText = [...order].reverse().find(id => this.streamedBy(id) !== "");
+    const lastWithText = [...order].reverse().find(id => this.answerIds.has(id) && this.streamedBy(id) !== "");
+    if (this.compaction && this.answerIds.size === 0 && !this.error) {
+      this.error = { name: "CompactionIncomplete", message: "the engine compacted the turn without a correlated continuation answer", status: null };
+    }
     const outcome: TurnOutcome = {
       messages: order.map(id => ({ id, info: this.assistants.get(id)! })),
+      answerIds: [...this.answerIds],
       streamed: lastWithText ? this.streamedBy(lastWithText) : "",
-      error: this.error,
+      error: this.error ?? this.overflow,
       permission: this.permission,
       foreign: [...this.foreign],
       echoed: this.echoed,

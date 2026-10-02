@@ -1140,6 +1140,21 @@ export async function runRunner(options: {
       moves?.refresh();
     };
     /** The store placed the conversation on another machine, which is not a failure of this agent. */
+    const [engineHealth] = await store.sql`select data from state_row where sheet = 'agent_health' and id = ${agent.id}
+      and data ->> 'cause' = 'conversation.engine-mismatch'`;
+    let refusedEngine: string | null = typeof engineHealth?.data?.configured_engine === "string" ? engineHealth.data.configured_engine : null;
+    const engineMismatch = async (configured: string, registry: Registry): Promise<void> => {
+      refusedEngine = configured;
+      const [master] = await store.sql`select adapter from conversation where agent = ${agent.id} and kind = 'master'`;
+      const bound = String(master?.adapter ?? "unknown");
+      const cause = `Master conversation is bound to ${bound}, but its preset configures ${configured}. Restore this agent's preset to ${bound}; restarting or fresh_context does not change its engine. Independent jobs and harvests can still run.`;
+      await putRow(store, "agent_health", agent.id, { status: "blocked", cause: "conversation.engine-mismatch", bound_engine: bound, configured_engine: configured, remedy: cause });
+      const said = noticeRoute(registry, agent.id);
+      if (said) await appendNotice(store, { person: agent.person, agent: agent.id, ...said,
+        body: cause, noticeKey: `engine-mismatch:${agent.id}:${bound}:${configured}` });
+      await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: "conversation.engine-mismatch", actor: "runner",
+        detail: { agent: agent.id, bound_engine: bound, configured_engine: configured, remedy: cause } });
+    };
     const elsewhere = (error: unknown): boolean => error instanceof ConversationRefused && error.refusal === "conversation elsewhere";
     /** Fenced from serving it (said once), until the store places it here again at a later generation (`./move.ts`). */
     const placedElsewhere = async (): Promise<void> => {
@@ -1428,7 +1443,7 @@ export async function runRunner(options: {
         await sayCatchUp(about.registry, credential);
       }
 
-      if (unhealthy) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
+      if (unhealthy && refusedEngine === null) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
       // A job's answer is the whole report and reaches no chat, so it is
       // never cut to a platform's size.
       const chunks = about.kind === "job" ? [end.text]
@@ -1852,6 +1867,10 @@ export async function runRunner(options: {
           const eager = adapterFor(options.adapters, eagerPreset.adapter);
           const master = await conversationFor(store, { row: { id: agent.id, person: agent.person, agent: agent.id, kind: "human" }, adapter: eagerPreset.adapter, machine })
             .catch(async (error: unknown): Promise<Conversation | null> => {
+              if (error instanceof ConversationRefused && error.refusal === "conversation engine mismatch") {
+                await engineMismatch(eagerPreset.adapter, initial);
+                return null;
+              }
               if (!elsewhere(error)) throw error;
               await placedElsewhere();
               return null;
@@ -1948,6 +1967,13 @@ export async function runRunner(options: {
         // A WITHDRAWAL WHOSE NOTIFICATION THIS RUNNER NEVER HEARD lifts nothing by itself: what the work waiter says (a commit for this
         // agent, a listener opened again) sends the watch to read the moves, which lifts the fence of a move that was withdrawn.
         if (moveFences.has(agent.id)) { if (await sleep()) moves?.refresh(); continue; }
+        // Park only master work: jobs and harvests own independent contexts.
+        if (refusedEngine !== null && refusedEngine !== getPreset(registry, agent.preset).adapter) {
+          refusedEngine = null;
+          await store.sql`delete from state_row where sheet = 'agent_health' and id = ${agent.id}
+            and data ->> 'cause' = 'conversation.engine-mismatch'`;
+        }
+        const masterBlocked = refusedEngine !== null;
 
         // THE WINDOW IS READ HERE AND NOWHERE ELSE: beside the claim,
         // on a wake the runner was already having, and never on a timer of its
@@ -2046,6 +2072,7 @@ export async function runRunner(options: {
                 and (h.retry_at is null or h.retry_at <= now())
             ) as harvest_waiting from inbound where agent = ${agent.id}
               and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
+              and (not ${masterBlocked}::boolean or kind in ('job', 'harvest'))
               and (claimed_by is null or claimed_by = ${options.runner}
                    or (claim_deadline is not null and claim_deadline <= now()))
               and (retry_at is null or retry_at <= now())
@@ -2117,6 +2144,7 @@ export async function runRunner(options: {
           maxRank,
           rowId: next.id,
           resumeOk,
+          masterBlocked,
         });
         if (!row) {
           if (extra) releaseCapacity();
@@ -2229,6 +2257,13 @@ export async function runRunner(options: {
             await sleep();
             continue;
           }
+          if (error instanceof ConversationRefused && error.refusal === "conversation engine mismatch" && row.kind !== "job") {
+            await engineMismatch(preset.adapter, registry);
+            await store.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${row.id} and claimed_by = ${options.runner}`;
+            claimed = null; claimedReturn = null; claimedSeat = null; unreserve();
+            await sleep();
+            continue;
+          }
           if (!(error instanceof ConversationRefused) || row.kind !== "job") throw error;
           await refuseJob(store, { row, refusal: { cause: error.refusal }, registry, runner: options.runner });
           claimed = null;
@@ -2254,8 +2289,10 @@ export async function runRunner(options: {
         // unfinished. Selection already asked; this is the answer at launch.
         // Where it is no longer yes, the claim goes back and nothing is built
         // from a transcript instead.
-        const holds = next.needs_resume ? await openHoldsOf(store, conversation.id) : [];
-        const resumeFrom = holds.length > 0 ? holds[holds.length - 1].native_session : null;
+        const recoveryHolds = await openHoldsOf(store, conversation.id, true);
+        const holds = recoveryHolds.filter(hold => hold.state !== "released");
+        const resumeFrom = holds.length > 0 && holds[holds.length - 1].native_session === conversation.native_session
+          ? holds[holds.length - 1].native_session : null;
         // A session the engine never acknowledged is not one it can be trusted to
         // resume either, so an uncertain native state blocks like an unvalidated
         // build does. Each block is said once, by name, in the diary.
@@ -2297,10 +2334,12 @@ export async function runRunner(options: {
         // before the feed leaves it untold, and the next fresh turn carries it again.
         const told: string[] = [];
         pendingContext = [];
-        for (const hold of holds.filter(one => one.continuation_id !== row.id)) {
+        for (const hold of recoveryHolds.filter(one => one.continuation_id !== row.id)) {
           const source = `hold:${hold.execution_id}:${hold.revision}`;
           if (await hasEntry(store, conversation.id, source, "recovery")) continue;
-          const context = recoveryContext(hold);
+          const context = hold.state === "released"
+            ? `[Hub recovery context] The owner explicitly chose fresh native context after attempt ${hold.execution_id} ended. Prior native context is unavailable. The interrupted input and its queued continuation remain excluded. Do not continue unfinished work or repeat actions unless the owner gives a new request. Known effects: ${JSON.stringify(hold.effects)}. Nothing was undone.`
+            : recoveryContext(hold);
           told.push(context);
           pendingContext.push({ conversation: conversation.id, source, body: context });
         }
@@ -2312,7 +2351,7 @@ export async function runRunner(options: {
         // A council's job is fed only to a session that was started under the profile its owner approved (`claimedProfile`): a resident child whose configuration
         // was another one (started before an edit and reused after it was undone, or the reverse) is replaced, in the same conversation, and never fed the job.
         const mustSpawn = !own.session || presetId(preset) !== startedWith || own.killed
-          || own.conversation !== conversation.id || holds.length > 0
+          || own.conversation !== conversation.id || (caps.stableSession && own.nativeSession !== conversation.native_session) || holds.length > 0
           || (claimedProfile !== null && startedProfile !== claimedProfile);
         const plan = mustSpawn ? await planSession(conversation, adapter, registry, resumeFrom) : null;
         // THE ATTEMPT IS OWNED BEFORE ANYTHING LAUNCHES. The table allows one

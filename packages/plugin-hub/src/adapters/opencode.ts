@@ -348,7 +348,7 @@ async function open(options: Parameters<Adapter["start"]>[0], settings: { startT
         }
       } catch { /* the stream's own account stands for this message */ }
       infos.push(held);
-      if ((said ?? "") !== "") text = said!;
+      if (!held.summary && (outcome.answerIds?.includes(id) ?? true) && (said ?? "") !== "") text = said!;
     }
     if (text === "") text = outcome.streamed;
     const error = outcome.error ?? infos.find(one => one.error !== null)?.error ?? null;

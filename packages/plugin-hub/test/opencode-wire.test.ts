@@ -357,3 +357,99 @@ test("an effort is a variant of the same name that the engine lists for the mode
   expect(effortRefusal("high", [])).toBe("opencode-effort-unsupported: high (this model's variants: none)")
   expect(effortRefusal("high", null)).toContain("not in the engine's catalogue")
 })
+
+// Pinned source: compaction.ts create/process, prompt.ts runLoop (v1.18.34).
+// The engine creates a compaction user, a summary assistant, then either a marked
+// synthetic user or an overflow replay with new ids and the original text parts.
+function compactTurn(h: ReturnType<typeof harness>, overflow = false, suffix = "") {
+  const c = `compact${suffix}`, a = `summary${suffix}`
+  h.feed(message(c, "user"), part(c, { id: `pc${suffix}`, type: "compaction", auto: true, overflow }),
+    message(a, "assistant", { parentID: c, summary: true, mode: "compaction" }),
+    part(a, { id: `ps${suffix}`, type: "text", text: "PRIVATE SUMMARY" }),
+    message(a, "assistant", { parentID: c, summary: true, finish: "stop" }))
+}
+
+for (const overflow of [false, true]) test(`compaction follows ${overflow ? "overflow replay" : "marked continuation"} without a second receipt`, () => {
+  const h = harness()
+  h.tracker.begin("question", U)
+  h.feed(message(U, "user"), part(U, { type: "text", text: "question" }),
+    message("fragment", "assistant", { parentID: U }), part("fragment", { id: "pf", type: "text", text: "unfinished" }))
+  compactTurn(h, overflow)
+  const followup = { id: "pc", type: "text", text: overflow ? "question" : "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.",
+    ...(overflow ? {} : { synthetic: true, metadata: { compaction_continue: true } }) }
+  h.feed(message("continue", "user"), part("continue", followup), part("continue", followup),
+    message("unrelated", "assistant", { parentID: "foreign-user" }), part("unrelated", { id: "px", type: "text", text: "foreign answer" }),
+    message("answer", "assistant", { parentID: "continue" }), part("answer", { id: "pa", type: "text", text: "complete answer" }), idle)
+  expect(h.log.filter(x => x === "receipt")).toHaveLength(1)
+  expect(h.outcomes[0].error).toBeNull()
+  expect(h.outcomes[0].answerIds).toEqual(["answer"])
+  expect(h.outcomes[0].messages.map(x => x.id)).toEqual(["fragment", "summary", "answer"])
+  expect(h.outcomes[0].streamed).toBe("complete answer")
+  expect(JSON.stringify(h.progress)).not.toContain("PRIVATE SUMMARY")
+  expect(JSON.stringify(h.progress)).not.toContain("foreign answer")
+})
+
+test("summary-only idle refuses instead of settling the fragment or summary", () => {
+  const h = harness()
+  h.tracker.begin("q", U)
+  h.feed(message(U, "user"), message("fragment", "assistant", { parentID: U }), part("fragment", { id: "pf", type: "text", text: "unfinished" }))
+  compactTurn(h)
+  h.feed(idle)
+  expect(h.outcomes[0].error?.name).toBe("CompactionIncomplete")
+  expect(h.outcomes[0].streamed).toBe("")
+  expect(h.outcomes[0].answerIds).toEqual([])
+})
+
+test("an intervening unrelated user breaks the compaction lineage", () => {
+  const h = harness()
+  h.tracker.begin("q", U)
+  h.feed(message(U, "user"), message("foreign", "user"))
+  compactTurn(h)
+  h.feed(message("continue", "user"), part("continue", { type: "text", synthetic: true, metadata: { compaction_continue: true }, text: "continue" }),
+    message("answer", "assistant", { parentID: "continue" }), idle)
+  expect(h.outcomes[0].messages).toEqual([])
+})
+
+test("a failed compaction summary carries its error and never its text", () => {
+  const h = harness()
+  h.tracker.begin("q", U)
+  h.feed(message(U, "user"))
+  compactTurn(h)
+  h.feed(message("summary", "assistant", { parentID: "compact", summary: true, finish: "error", error: { name: "ContextOverflowError", data: { message: "too large" } } }), idle)
+  expect(h.outcomes[0].error?.name).toBe("ContextOverflowError")
+  expect(h.outcomes[0].streamed).toBe("")
+})
+
+test("repeated compactions keep accounting and only the latest continuation is an answer", () => {
+  const h = harness()
+  h.tracker.begin("q", U)
+  h.feed(message(U, "user"), part(U, { type: "text", text: "q" }))
+  for (const suffix of ["1", "2"]) {
+    compactTurn(h, false, suffix)
+    h.feed(message(`continue${suffix}`, "user"), part(`continue${suffix}`, { type: "text", text: "continue", synthetic: true, metadata: { compaction_continue: true } }),
+      message(`answer${suffix}`, "assistant", { parentID: `continue${suffix}` }), part(`answer${suffix}`, { id: `pa${suffix}`, type: "text", text: `answer ${suffix}` }))
+  }
+  h.feed(idle)
+  expect(h.outcomes[0].error).toBeNull()
+  expect(h.outcomes[0].answerIds).toEqual(["answer2"])
+  expect(h.outcomes[0].streamed).toBe("answer 2")
+  expect(h.outcomes[0].messages).toHaveLength(4)
+})
+
+test("unmarked repeated prompt after ordinary compaction still refuses an id change", () => {
+  const h = harness()
+  h.tracker.begin("q", U)
+  h.feed(message(U, "user"), part(U, { type: "text", text: "q" }))
+  compactTurn(h)
+  h.feed(message("unmarked", "user"), part("unmarked", { type: "text", text: "q" }))
+  expect(h.outcomes[0].error?.name).toBe("MessageIdNotKept")
+})
+
+test("context overflow without a verified continuation remains a refusal at idle", () => {
+  const h = harness()
+  h.tracker.begin("q", U)
+  h.feed(message(U, "user"), { type: "session.error", properties: { sessionID: S, error: { name: "ContextOverflowError", data: { message: "overflow" } } } })
+  expect(h.tracker.open).toBe(true)
+  h.feed(idle)
+  expect(h.outcomes[0].error?.name).toBe("ContextOverflowError")
+})

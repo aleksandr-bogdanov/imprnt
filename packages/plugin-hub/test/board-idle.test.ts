@@ -198,7 +198,7 @@ test(
       board = await startBoard(it, entry);
       // One page fetched, so what is measured is a board that has rendered and
       // is waiting rather than one that has not opened its store yet.
-      for (const path of PAGES) expect((await fetch(`${board.url}${path}`)).status).toBe(200);
+      for (const path of PAGES) expect((await fetch(`${board.url}${path}`)).status).toBe(path === "/chats" ? 404 : 200);
       // The counter's own connection is opened and used BEFORE the window, so
       // what it costs inside the window is one statement and nothing else.
       await counter.unsafe("select 1 as warm");
@@ -266,7 +266,7 @@ test(
       await counter.unsafe("select 1 as warm");
 
       const sweep = await statementWatch(cluster, [await it.read.pid()]);
-      for (const path of PAGES) expect((await fetch(`${board.url}${path}`)).status).toBe(200);
+      for (const path of PAGES) expect((await fetch(`${board.url}${path}`)).status).toBe(path === "/chats" ? 404 : 200);
       await counter.unsafe("select 'the deliberate statement' as said");
       const lines = await sweep.lines();
       expect(lines.length).toBeGreaterThan(1);

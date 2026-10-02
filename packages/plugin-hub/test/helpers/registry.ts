@@ -85,6 +85,7 @@ export interface RunSpec {
   residency?: string;
   idle_seconds?: number;
   /** The three argvs an off-box copy runs, each a list of plain arguments. */
+  standalone_dump?: boolean;
   dump_argv?: string[];
   upload_argv?: string[];
   readback_argv?: string[];
@@ -533,6 +534,7 @@ function renderRegistry(spec: RegistrySpec): string {
       archive_category: entry.archive_category,
       archive_readonly_roles: entry.archive_readonly_roles,
       destination: entry.destination,
+      standalone_dump: entry.standalone_dump,
       dump_argv: entry.dump_argv,
       upload_argv: entry.upload_argv,
       readback_argv: entry.readback_argv,
