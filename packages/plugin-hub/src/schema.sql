@@ -7680,3 +7680,5 @@ revoke all on function hub_council_notice_lock(text) from public;
 grant execute on function hub_council_notice_lock(text) to hub_door, hub_runner, hub_hub;
 
 insert into schema_version (version) values (18);
+
+insert into schema_version (version) values (19);
