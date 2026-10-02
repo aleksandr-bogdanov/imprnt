@@ -97,7 +97,7 @@ async function turn(session: string, text: string, id: string | undefined, varia
     const compact = `msg_c${n}`, summary = `msg_s${n}`, follow = `msg_f${n}`, final = `msg_final${n}`
     infoEvent(info(compact, session, "user", { model: { providerID: provider, modelID: model }, agent: "build" }))
     partEvent({ id: `prt_c${n}`, sessionID: session, messageID: compact, type: "compaction", auto: true, overflow: scenario.compaction === "replay" })
-    const summarized = info(summary, session, "assistant", { parentID: compact, summary: true, mode: "compaction", agent: "compaction", providerID: provider, modelID: model, tokens, finish: "stop" })
+    const summarized = info(summary, session, "assistant", { parentID: compact, summary: true, mode: "compaction", agent: "compaction", providerID: provider, modelID: scenario.summaryModel ?? model, tokens, finish: "stop" })
     infoEvent(summarized)
     const summaryPart = { id: `prt_s${n}`, sessionID: session, messageID: summary, type: "text", text: "PRIVATE COMPACTION SUMMARY" }
     partEvent(summaryPart)

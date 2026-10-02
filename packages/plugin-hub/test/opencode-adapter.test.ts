@@ -426,3 +426,13 @@ test("empty continuation never falls back to a fetched pre-compaction fragment",
   expect(done.end.text).toBe("")
   await session.close()
 }, 30_000)
+
+test("compaction summary must also honor the bound model", async () => {
+  const f = fixture()
+  const session = await begin(f, { compaction: "continue", summaryModel: "foreign-summary-model" })
+  const done = await turn(session, "q")
+  expect(done.end.refused?.said).toContain("foreign-summary-model")
+  expect(done.end.text).toBe("")
+  expect(f.entries().filter(one => one.at === "prompt")).toHaveLength(1)
+  await session.close()
+}, 30_000)
