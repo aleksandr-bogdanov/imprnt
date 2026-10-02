@@ -84,6 +84,40 @@ test("a deletion's account of its earlier copies follows the owner's number and 
   // An empty later listing still cannot certify legacy storage.
   expect(await trackRetention(store, GENERATED, { days: 30, outcomes: [] })).toBe(1)
   expect((await state()).retention_state).toBe("retention_unverified")
+
+  // Physical copies are accounted: a destination inventory with a gap (nothing declared, an entry nobody can account for, the old
+  // single-directory copy still there) keeps the enumerated copies from standing for all of them, with the gap named.
+  const clean = { retained: true, unaccounted: 0, legacy: false }
+  for (const gap of [{ ...clean, retained: false }, { ...clean, legacy: true }, { ...clean, unaccounted: 1 }]) {
+    await trackRetention(store, GENERATED, { days: 30, outcomes, inventory: gap })
+    expect((await state()).retention_state).toBe("retention_unverified")
+  }
+  expect(String((await state()).retention_detail.reason)).toContain("1 entry that is not a copy this job made")
+  // Nothing in the inventory it cannot account for, and every copy that is this deletion's history shown gone: only then the word, once.
+  expect(await trackRetention(store, GENERATED, { days: 30, outcomes, inventory: clean })).toBe(1)
+  expect((await state()).retention_state).toBe("historical_copies_expired")
+  expect(await said()).toEqual([])
+  expect(await trackRetention(store, GENERATED, { days: 30, outcomes, inventory: clean })).toBe(0)
+  // The copies it was shown to have are not listed again, and a later pass that finds none does not forget them.
+  expect(await trackRetention(store, GENERATED, { days: 30, outcomes: [], inventory: clean })).toBe(0)
+  expect((await state()).retention_state).toBe("historical_copies_expired")
+  // The box's own legacy dump repository, found again and not yet due, takes it back to a deletion being tracked, with its date.
+  const legacy: Outcome = { id: "staging-dump", state: "pending", expires_at: "2026-11-01T00:00:00.000Z", erasure_generation: null }
+  expect(await trackRetention(store, GENERATED, { days: 30, outcomes: [...outcomes, legacy], inventory: clean })).toBe(1)
+  const again = await state()
+  expect(again.retention_state).toBe("tracking")
+  expect(again.backup_retention_until?.toISOString()).toBe("2026-11-01T00:00:00.000Z")
+  expect((await receiptsOf(store, op, { historical: true })).map(one => `${one.location}:${one.state}`)).toEqual(["20260901T000000Z:expired", "staging-dump:pending"])
+  // The legacy repository shown gone and the inventory clean, but the seal or the local inventory is not certain (a seal that could not be
+  // read, a dump directory nothing accounted for): that is a gap of its own, named, and the word is not given. Certain again, it is.
+  const gone: Outcome = { ...legacy, state: "expired" }
+  const uncertain = ["the legacy archive could not be sealed, read or moved (seal unreadable), so its copies are not accounted for"]
+  expect(await trackRetention(store, GENERATED, { days: 30, outcomes: [...outcomes, gone], inventory: clean, uncertain })).toBe(1)
+  const doubted = await state()
+  expect(doubted.retention_state).toBe("retention_unverified")
+  expect(String(doubted.retention_detail.reason)).toContain("could not be sealed, read or moved")
+  expect(await trackRetention(store, GENERATED, { days: 30, outcomes: [...outcomes, gone], inventory: clean, uncertain: [] })).toBe(1)
+  expect((await state()).retention_state).toBe("historical_copies_expired")
   // The active deletion was complete the whole time: the retention is its own account, and never held it up.
   expect(expired.stage).toBe("active_deleted")
 }, 120_000)

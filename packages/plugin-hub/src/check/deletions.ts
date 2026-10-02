@@ -73,7 +73,7 @@ export async function deletionFindings(args: { store: StoreLike; machine: string
     findings.push({
       id: findingId(args.machine, "backup-retention-unverified"), kind: "backup-retention-unverified", subject: "hub.backup_retention_days", machine: args.machine,
       says: `${unverified} deleted topic${unverified === 1 ? "" : "s"} ${unverified === 1 ? "is" : "are"} counted against a configured backup retention that the backup destination cannot verify or carry out: earlier copies remain until removed by hand`,
-      fix: "remove earlier backup copies older than the configured days at the destination yourself, or declare list_argv and expire_argv on the backup entry, with an upload that gives each copy a place of its own ({generation}), so that the job can enumerate and expire them",
+      fix: "remove earlier backup copies older than the configured days at the destination yourself, or declare list_argv and expire_argv on the backup entry, with an upload that gives each copy a place of its own ({generation}), so that the job can enumerate and expire them; add retained_argv (what the destination still retains, versions and trash included) so removals are verified against it, and seal_argv if the destination still holds its old single-directory copy. The reasons are in the deletion's retention detail",
     });
   }
   if (blocked > 0) {

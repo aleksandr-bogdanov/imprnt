@@ -1,10 +1,11 @@
-import { readFileSync, rmSync, mkdirSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MANIFEST_FILE, readManifest } from "../backup/manifest.ts";
 import type { Language } from "../door/lines.ts";
+import { CONTROL_MANIFEST_FILE } from "./manifest.ts";
 import { BACKUP_PLACEHOLDERS, readSetting, type Registry, type RunEntry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
-import { confirmedDeletions, recordRetention, type DeletionRow, type RetentionState } from "../store/deletions.ts";
+import { confirmedDeletions, receiptsOf, recordRetention, type DeletionRow, type RetentionState } from "../store/deletions.ts";
 
 /**
  * HISTORICAL BACKUP RETENTION: what the owner configured, what the backup destination can actually do, and what a deletion may
@@ -34,8 +35,20 @@ import { confirmedDeletions, recordRetention, type DeletionRow, type RetentionSt
  * WHICH DELETION A COPY IS HISTORY OF is the manifest's own record of the erasure generation it was assembled under: a copy made under
  * an earlier generation than the deletion's (or one that predates generations) can hold what was deleted; a copy made after cannot
  * (a backup is held while a confirmed deletion's rows or files are still to go). Only those are counted against a deletion.
- * A deletion with no such copy found is `tracking` and says so: it is never `historical_copies_expired` from an empty listing, and
- * the legacy single-directory copy a destination already holds is not a generation, so it is never enumerated here.
+ * A deletion with no such copy found is `tracking` and says so: it is never `historical_copies_expired` from an empty listing.
+ *
+ * THE LEGACY MONOLITHIC ARCHIVE (the dump Git repository of the single-directory layout, on this box and as the destination's old
+ * copy) is not a generation and holds every earlier dump, so it is history of EVERY deletion whatever its last manifest says. It is
+ * SEALED once, when the owner's number is first configured with a generation layout: `retention-seal.json` in the staging directory
+ * records the activation and an explicit `expires_at` (activation + days) and is never rewritten, so copying the archive again can
+ * never refresh it; a later, shorter number shortens it and a longer one does not extend it. The box's own repository is removed at
+ * that date and looked for again. The destination's old copy is moved under a generation id by the declared `seal_argv` (and then
+ * ages and expires like any generation, no later than the seal's date); with no `seal_argv` it stays, and says so.
+ *
+ * PHYSICAL COPIES ARE ACCOUNTED, NOT ASSUMED. A removal is believed only when the destination lists the copy no longer AND the declared
+ * `retained_argv` (versions, trash, replicas) no longer holds it. A destination that declares no `retained_argv`, retains entries that
+ * are not copies of this job's, or still holds its old copy, is never called fully expired: its deletions stay `retention_unverified`.
+ * What the Hub cannot enumerate at all (database WAL archives, file-system snapshots) is outside its inventory, and is said to be.
  */
 
 /** The design's proposal. It is not a setting, a default or a policy. */
@@ -90,7 +103,7 @@ export interface TransportVerdict {
   reason: string;
 }
 
-export type TransportEntry = Pick<RunEntry, "id" | "upload_argv" | "readback_argv" | "list_argv" | "expire_argv" | "destination">;
+export type TransportEntry = Pick<RunEntry, "id" | "upload_argv" | "readback_argv" | "list_argv" | "expire_argv" | "retained_argv" | "seal_argv" | "destination">;
 
 /**
  * What the declared backup destination can do about retention. It is supported exactly when the entry declares both commands and its
@@ -134,7 +147,7 @@ export type Exec = (argv: string[], keep: boolean) => Promise<Uint8Array>;
 
 /** A command of the transport that did not do what was asked, by the closed word of the step and never the command's own output. */
 export class TransportFailure extends Error {
-  constructor(readonly step: "list" | "readback" | "expire", detail: string) {
+  constructor(readonly step: "list" | "retained" | "readback" | "expire" | "seal", detail: string) {
     super(`retention-${step}: ${detail}`);
     this.name = "TransportFailure";
   }
@@ -160,14 +173,201 @@ export interface RetentionTransport {
   exec?: Exec;
 }
 
-/** The ids the destination lists, one per line. What is not of the shape a copy gets is counted and left alone. */
-export async function listGenerationIds(t: RetentionTransport): Promise<{ ids: string[]; foreign: number }> {
+/** What a listing printed: the ids of the shape a copy gets, and every other name (counted and left alone, never removed). */
+export interface Listing {
+  ids: string[];
+  others: string[];
+}
+
+async function listNames(t: RetentionTransport, argv: string[], step: "list" | "retained"): Promise<Listing> {
   const exec = t.exec ?? spawnExec;
   let text: string;
-  try { text = new TextDecoder().decode(await exec(fill(t.entry.list_argv ?? [], { destination: t.entry.destination ?? "" }), true)); }
-  catch (error) { throw new TransportFailure("list", (error as Error).message); }
-  const names = text.split("\n").map(line => line.trim()).filter(line => line !== "");
-  return { ids: [...new Set(names.filter(name => GENERATION_ID.test(name)))].sort(), foreign: names.filter(name => !GENERATION_ID.test(name)).length };
+  try { text = new TextDecoder().decode(await exec(fill(argv, { destination: t.entry.destination ?? "" }), true)); }
+  catch (error) { throw new TransportFailure(step, (error as Error).message); }
+  const names = [...new Set(text.split("\n").map(line => line.trim()).filter(line => line !== ""))];
+  return { ids: names.filter(name => GENERATION_ID.test(name)).sort(), others: names.filter(name => !GENERATION_ID.test(name)) };
+}
+
+/** The ids the destination lists, one per line. What is not of the shape a copy gets is counted and left alone. */
+export async function listGenerationIds(t: RetentionTransport): Promise<Listing & { foreign: number }> {
+  const listing = await listNames(t, t.entry.list_argv ?? [], "list");
+  return { ...listing, foreign: listing.others.length };
+}
+
+/** What the destination lists, and, when it declares `retained_argv`, everything it still physically retains (null when it declares none). */
+async function inventoryOf(t: RetentionTransport): Promise<{ list: Listing; held: Listing | null }> {
+  const list = await listGenerationIds(t);
+  return { list, held: Array.isArray(t.entry.retained_argv) ? await listNames(t, t.entry.retained_argv, "retained") : null };
+}
+
+/** The names the single-directory layout put at the top of the destination: their presence is the old monolithic copy, not a generation. */
+export const LEGACY_NAMES: readonly string[] = ["dump", "files", MANIFEST_FILE, CONTROL_MANIFEST_FILE];
+
+/** What the destination was found to retain, beyond the copies that were aged. Without it no deletion is called fully expired. */
+export interface Inventory {
+  /** Whether the destination declares and answered a physical inventory (`retained_argv`): its versions, trash and replicas. */
+  retained: boolean;
+  /** How many entries it retains that are neither a copy of this job's nor the old single-directory copy. */
+  unaccounted: number;
+  /** Whether it still holds the old single-directory copy at its top. */
+  legacy: boolean;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The legacy monolithic archive: sealed once, with an expiry that nothing refreshes
+// ---------------------------------------------------------------------------------------------
+
+/** Where the seal is kept, in the staging directory beside (and never inside) the copy that is uploaded. */
+export const SEAL_FILE = "retention-seal.json";
+/** The id of the dump Git repository on this box (`<staging>/dump`), as an outcome and as a receipt. */
+export const LOCAL_LEGACY_ID = "staging-dump";
+
+export interface Seal {
+  version: 1;
+  /** When the owner's number first applied to this staging directory. */
+  activated_at: string;
+  days: number;
+  /** The explicit expiry of the legacy archive: activation + days. Written once. */
+  expires_at: string;
+  /** The generation id the destination's old copy was moved under, once it was verified to be. */
+  destination_copy: string | null;
+  /**
+   * The id CHOSEN for that move, written before the move command is run and kept until the move is verified. A crash between the command
+   * and the verification leaves the old copy's identity here: the next run looks for this id and never makes another.
+   */
+  pending_copy?: string | null;
+}
+
+/** The seal, or null when none was made. One that cannot be read is an error and is never replaced: a replacement would refresh the expiry. */
+export function readSeal(staging: string): Seal | null {
+  const file = join(staging, SEAL_FILE);
+  if (!existsSync(file)) return null;
+  const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<Seal>;
+  if (parsed.version !== 1 || typeof parsed.activated_at !== "string" || typeof parsed.expires_at !== "string" || Number.isNaN(Date.parse(parsed.expires_at))
+    || Number.isNaN(Date.parse(parsed.activated_at)) || !Number.isSafeInteger(parsed.days) || (parsed.destination_copy !== null && typeof parsed.destination_copy !== "string")
+    || (parsed.pending_copy !== undefined && parsed.pending_copy !== null && !(typeof parsed.pending_copy === "string" && GENERATION_ID.test(parsed.pending_copy)))) {
+    throw new Error("retention-seal-malformed: the seal of the legacy archive is not readable, and is not replaced");
+  }
+  return parsed as Seal;
+}
+
+/** The standing seal, or a new one made now. Never rewrites an existing one, so copying the archive again cannot refresh its expiry. */
+export function registerSeal(staging: string, days: number, now: Date): Seal {
+  const standing = readSeal(staging);
+  if (standing !== null) return standing;
+  const seal: Seal = { version: 1, activated_at: now.toISOString(), days, expires_at: expiryOf(now, days).toISOString(), destination_copy: null };
+  mkdirSync(staging, { recursive: true, mode: 0o700 });
+  writeFileSync(join(staging, SEAL_FILE), `${JSON.stringify(seal, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+  return seal;
+}
+
+/** When the legacy archive expires: the sealed date, or sooner when the owner has since chosen fewer days. Never later. */
+export function sealExpiry(seal: Seal, days: number): Date {
+  return new Date(Math.min(Date.parse(seal.expires_at), expiryOf(new Date(seal.activated_at), days).getTime()));
+}
+
+/** The id the destination's old copy has, or is to have: the verified one, else the one chosen before the move was run. Null before either. */
+export const legacyIdOf = (seal: Seal): string | null => seal.destination_copy ?? seal.pending_copy ?? null;
+
+/** Replace the seal whole and atomically (a torn seal is never replaced, so it must never be torn): a temporary file, flushed, then renamed over it. */
+function writeSeal(staging: string, seal: Seal): void {
+  const file = join(staging, SEAL_FILE);
+  const temporary = `${file}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(seal, null, 2)}\n`, { mode: 0o600 });
+  const descriptor = openSync(temporary, "r+");
+  try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+  renameSync(temporary, file);
+}
+
+/**
+ * Move the destination's old single-directory copy under a generation id of its own, by the declared `seal_argv`, once. It then ages
+ * and expires as a generation (its date is the seal's: see `enforceRetention`). A destination with no `seal_argv`, no old copy, or a
+ * copy already sealed is left as it was.
+ *
+ * THE ID IS CHOSEN AND WRITTEN BEFORE THE MOVE. The command is external and can complete in a process that then dies, and the old copy has
+ * no top-level names afterwards: if its identity were only recorded after the command, a crash between the two would lose it and the id
+ * would be aged as an ordinary generation. So `pending_copy` is in the seal, flushed, before the command runs, and `destination_copy` is
+ * written only when the destination lists the id and no longer shows the old names.
+ *
+ * A RUN THAT FINDS AN INTENT RECONCILES IT, and never chooses another id:
+ *   * old names gone, id listed:     the move happened; it is recorded, and the command is not run again;
+ *   * old names present, id unseen:  the move did not happen (checked, not assumed); the command is run once more with the same id;
+ *   * old names present, id seen:    a partial move; nothing is replayed, and the seal says so (it stays pending for a person);
+ *   * old names gone, id not listed: the old copy cannot be found anywhere; nothing is replayed or replaced, and the seal says so.
+ */
+export async function sealLegacyCopy(t: RetentionTransport, args: { staging: string; seal: Seal; now: Date }): Promise<Seal> {
+  if (args.seal.destination_copy !== null || !Array.isArray(t.entry.seal_argv)) return args.seal;
+  const showsOld = (inventory: { list: Listing; held: Listing | null }): boolean =>
+    [...inventory.list.others, ...(inventory.held?.others ?? [])].some(name => LEGACY_NAMES.includes(name));
+  const before = await inventoryOf(t);
+  let seal = args.seal;
+  let id = seal.pending_copy ?? null;
+  let run = false;
+  if (id === null) {
+    if (!showsOld(before)) return seal;
+    // An id no copy of the destination already has (a copy made in the same second is a copy of its own).
+    let at = args.now;
+    while (before.list.ids.includes(generationIdOf(at)) || before.held?.ids.includes(generationIdOf(at))) at = new Date(at.getTime() + 1000);
+    id = generationIdOf(at);
+    seal = { ...seal, pending_copy: id };
+    writeSeal(args.staging, seal);
+    run = true;
+  } else if (showsOld(before)) {
+    if (before.list.ids.includes(id) || before.held?.ids.includes(id)) {
+      throw new TransportFailure("seal", `the destination shows both its old single-directory copy and the intended id ${id}: a partial move, not replayed`);
+    }
+    run = true;
+  } else if (!before.list.ids.includes(id)) {
+    throw new TransportFailure("seal", `the destination shows neither its old single-directory copy nor the intended id ${id}: it is not replaced by another id`);
+  }
+  let after = before;
+  if (run) {
+    try { await (t.exec ?? spawnExec)(fill(t.entry.seal_argv, { destination: t.entry.destination ?? "", generation: id }), false); }
+    catch (error) { throw new TransportFailure("seal", (error as Error).message); }
+    after = await inventoryOf(t);
+  }
+  if (!after.list.ids.includes(id) || showsOld(after)) {
+    throw new TransportFailure("seal", "the destination does not list the sealed copy, or still shows its old single-directory copy, after the seal command");
+  }
+  const { pending_copy: _chosen, ...rest } = seal;
+  const sealed: Seal = { ...rest, destination_copy: id };
+  writeSeal(args.staging, sealed);
+  return sealed;
+}
+
+/**
+ * Why the legacy archive's state, on this box and at the destination, is not certain, one sentence each. Empty only when the seal was
+ * made and read, the move of the destination's old copy (if any was begun) was carried through, and nothing is left in `<staging>/dump`
+ * that is neither expired nor accounted for as a pending outcome. Any of them means no deletion may be called fully expired.
+ */
+export function legacyUncertainty(args: { staging: string; sealFailure: unknown; local: Outcome | null }): string[] {
+  const reasons: string[] = [];
+  if (args.sealFailure !== null) {
+    const said = (args.sealFailure as { message?: unknown }).message;
+    reasons.push(`the legacy archive could not be sealed, read or moved (${typeof said === "string" ? said.slice(0, 160) : "operation failed"}), so its copies are not accounted for`);
+  }
+  if (args.local === null && existsSync(join(args.staging, "dump"))) {
+    reasons.push("this box still holds a dump directory the legacy handling did not account for");
+  }
+  return reasons;
+}
+
+/**
+ * The dump Git repository on this box (`<staging>/dump`, the one a generation layout no longer sends), as an outcome: pending until the
+ * seal's date, then removed and looked for again. Null when there is none. It is ONLY for a staging directory whose upload gives each
+ * copy a place of its own: under the single-directory layout that repository is the live dump.
+ */
+export function expireLocalLegacy(args: { staging: string; seal: Seal; days: number; now: Date }): Outcome | null {
+  const dir = join(args.staging, "dump");
+  if (!existsSync(join(dir, ".git"))) return null;
+  const expires = sealExpiry(args.seal, args.days);
+  const base = { id: LOCAL_LEGACY_ID, expires_at: expires.toISOString(), erasure_generation: null };
+  if (expires.getTime() > args.now.getTime()) return { ...base, state: "pending" };
+  try { rmSync(dir, { recursive: true, force: true }); }
+  catch (error) { return { ...base, state: "retention_blocked", reason: `the legacy dump repository could not be removed: ${String((error as { code?: unknown }).code ?? "unknown error")}` }; }
+  return existsSync(dir)
+    ? { ...base, state: "retention_blocked", reason: "the legacy dump repository is still on this box after its removal" }
+    : { ...base, state: "expired" };
 }
 
 /** One copy's own manifest, read back from the destination through the declared read-back. A copy that cannot be read has no age. */
@@ -195,26 +395,39 @@ export async function readGeneration(t: RetentionTransport, id: string): Promise
  * than `days` by that creation time, are asked to be removed, one at a time; each is then looked for again. `now` is the clock the age
  * is counted against; a copy dated in the future is not old.
  */
-export async function enforceRetention(t: RetentionTransport, args: { days: number; now: Date }): Promise<{ outcomes: Outcome[]; foreign: number }> {
+export async function enforceRetention(t: RetentionTransport, args: {
+  days: number; now: Date;
+  /** The destination's old copy, moved under `id` by `sealLegacyCopy`, and the explicit date it expires on (the seal's). */
+  sealed?: { id: string; expires_at: Date };
+}): Promise<{ outcomes: Outcome[]; foreign: number; inventory: Inventory }> {
   const exec = t.exec ?? spawnExec;
-  const first = await listGenerationIds(t);
+  const first = await inventoryOf(t);
+  // What the destination retains but no longer lists (a version, trash) is a copy too: it is read, aged and asked for like a listed one.
+  const ids = [...new Set([...first.list.ids, ...(first.held?.ids ?? [])])].sort();
   // One at a time: a destination over the network is asked for one manifest, not for as many as it holds at once.
   const generations: Generation[] = [];
-  for (const id of first.ids) generations.push(await readGeneration(t, id));
+  for (const id of ids) generations.push(await readGeneration(t, id));
   const outcomes = new Map<string, Outcome>();
+  const bases = new Map<string, Omit<Outcome, "state" | "reason">>();
   const due: Generation[] = [];
   for (const one of generations) {
-    if (!one.readable || one.at === null) {
-      outcomes.set(one.id, { id: one.id, state: "retention_unverified", expires_at: null, erasure_generation: null, reason: "its manifest cannot be read, so its age is not known" });
+    const explicit = args.sealed !== undefined && args.sealed.id === one.id ? args.sealed.expires_at : null;
+    const own = one.readable && one.at !== null ? expiryOf(one.at, args.days) : null;
+    if (own === null && explicit === null) {
+      outcomes.set(one.id, { id: one.id, state: "retention_unverified", expires_at: null, erasure_generation: null,
+        reason: first.list.ids.includes(one.id) ? "its manifest cannot be read, so its age is not known"
+          : "the destination retains it outside its listing, and its age is not known" });
       continue;
     }
-    const expires = expiryOf(one.at, args.days);
-    const base = { id: one.id, expires_at: expires.toISOString(), erasure_generation: one.erasure_generation };
+    // The sealed legacy copy holds every earlier dump: it is history of every deletion, whatever generation its last manifest names.
+    const expires = new Date(Math.min(...[own, explicit].filter((date): date is Date => date !== null).map(date => date.getTime())));
+    const base = { id: one.id, expires_at: expires.toISOString(), erasure_generation: explicit === null ? one.erasure_generation : null };
+    bases.set(one.id, base);
     if (expires.getTime() <= args.now.getTime()) due.push(one); else outcomes.set(one.id, { ...base, state: "pending" });
   }
   const asked: string[] = [];
   for (const one of due) {
-    const base = { id: one.id, expires_at: expiryOf(one.at!, args.days).toISOString(), erasure_generation: one.erasure_generation };
+    const base = bases.get(one.id)!;
     try {
       await exec(fill(t.entry.expire_argv ?? [], { destination: t.entry.destination ?? "", generation: one.id }), false);
       asked.push(one.id);
@@ -223,17 +436,28 @@ export async function enforceRetention(t: RetentionTransport, args: { days: numb
       outcomes.set(one.id, { ...base, state: "retention_blocked", reason: `the expiry command failed: ${(error as Error).message.slice(0, 120)}` });
     }
   }
+  let last = first;
   if (asked.length > 0) {
-    // ABSENCE IS THE ANSWER: a removal the destination reported is believed only when it no longer lists the copy.
-    const after = await listGenerationIds(t);
+    // ABSENCE IS THE ANSWER: a removal the destination reported is believed only when it no longer lists the copy and, where it declares
+    // an inventory of what it physically retains, no longer retains it either.
+    last = await inventoryOf(t);
     for (const id of asked) {
       const standing = outcomes.get(id)!;
-      outcomes.set(id, after.ids.includes(id)
-        ? { ...standing, state: "retention_blocked", reason: "the destination still lists the copy after its expiry command" }
-        : { ...standing, state: "expired" });
+      const reason = last.list.ids.includes(id) ? "the destination still lists the copy after its expiry command"
+        : last.held?.ids.includes(id) ? "the destination still retains the copy (a version, trash or replica) after its expiry command" : null;
+      outcomes.set(id, reason === null ? { ...standing, state: "expired" } : { ...standing, state: "retention_blocked", reason });
     }
   }
-  return { outcomes: [...outcomes.values()].sort((a, b) => (a.id < b.id ? -1 : 1)), foreign: first.foreign };
+  const others = [...last.list.others, ...(last.held?.others ?? [])];
+  return {
+    outcomes: [...outcomes.values()].sort((a, b) => (a.id < b.id ? -1 : 1)),
+    foreign: first.list.others.length,
+    inventory: {
+      retained: last.held !== null,
+      unaccounted: (last.held?.others ?? []).filter(name => !LEGACY_NAMES.includes(name)).length,
+      legacy: others.some(name => LEGACY_NAMES.includes(name)),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -267,7 +491,9 @@ export function retentionStatement(language: Language, account: Pick<RetentionAc
   const ru = language === "ru";
   switch (account.state) {
     case "historical_copies_expired":
-      return ru ? "Более ранние резервные копии истекли." : "The earlier backup copies have expired.";
+      return ru
+        ? "Более ранние резервные копии, которые Hub мог перечислить, истекли и проверены; журналы WAL базы данных и снимки файловой системы Hub не отслеживает."
+        : "The earlier backup copies the Hub could inventory have expired and been verified gone; database WAL archives and file-system snapshots are outside what it tracks.";
     case "tracking":
       return date !== null
         ? (ru ? `Более ранние резервные копии истекают до ${date}.` : `Historical backups expire by ${date}.`)
@@ -317,14 +543,34 @@ export function accountForDeletion(deletion: Pick<DeletionRow, "deletion_generat
 }
 
 /**
+ * What stands between the enumerated generations being gone and ALL the historical copies being gone, one sentence each. Empty only when
+ * the destination answered a physical inventory (versions, trash, replicas) that holds nothing it cannot account for and shows no old
+ * single-directory copy. No inventory at all (a caller that did not look) is a gap of its own: nothing is assumed clear.
+ */
+export function inventoryGaps(inventory: Inventory | null | undefined): string[] {
+  if (inventory === null || inventory === undefined) {
+    return ["enumerated generations are tracked, but legacy dump history, destination versions and retained storage have not been inventoried and verified expired"];
+  }
+  const gaps: string[] = [];
+  if (!inventory.retained) gaps.push("the destination declares no retained_argv, so its versions, trash and replicas are not inventoried");
+  if (inventory.unaccounted > 0) gaps.push(`the destination retains ${inventory.unaccounted} entr${inventory.unaccounted === 1 ? "y" : "ies"} that ${inventory.unaccounted === 1 ? "is" : "are"} not a copy this job made`);
+  if (inventory.legacy) gaps.push("the destination still holds its old single-directory copy (declare seal_argv so it is sealed and expired, or move it under a generation id)");
+  return gaps;
+}
+
+/**
  * Give every confirmed deletion the account of its historical copies that the configuration and the transport support now.
  *   * no retention configured: `not_configured`, nothing expires;
  *   * a transport that cannot enumerate and expire: `retention_unverified`, with the reason, and the copies said to remain;
- *   * a transport that can (`outcomes` is what `enforceRetention` found): the copies that are this deletion's history, each as it stands.
+ *   * a transport that can (`outcomes` is what `enforceRetention` found, with the box's own legacy repository among them, and `inventory`
+ *     what the destination physically retains): the copies that are this deletion's history, each as it stands. `historical_copies_expired`
+ *     needs every one expired AND an inventory with no gap (`inventoryGaps`); a gap keeps `retention_unverified`, with the reasons.
  * A deletion whose copies were all verified expired stays so. Returns how many accounts were recorded.
  */
 export async function trackRetention(store: StoreLike, entry: Pick<RunEntry, "id"> & Partial<TransportEntry> | null, input: {
-  days: number | null; outcomes: readonly Outcome[] | null;
+  days: number | null; outcomes: readonly Outcome[] | null; inventory?: Inventory | null;
+  /** Reasons the legacy archive or this box's own inventory is uncertain (`legacyUncertainty`): each is a gap, and no deletion is called fully expired past one. */
+  uncertain?: readonly string[];
 }): Promise<number> {
   const transport = transportOf(entry);
   let recorded = 0;
@@ -342,12 +588,23 @@ export async function trackRetention(store: StoreLike, entry: Pick<RunEntry, "id
       const account = accountOf({ days: input.days, transport, until: deletion.backup_retention_until });
       state = account.state; until = account.until; detail = { reason: account.reason, days: input.days };
     } else {
-      const account = accountForDeletion(deletion, input.outcomes, input.days);
-      state = account.state === "retention_blocked" ? "retention_blocked" : "retention_unverified"; until = account.until; generations = account.generations;
-      detail = { ...account.detail, generation_state: account.state, reason: "enumerated generations are tracked, but legacy dump history, destination versions and retained storage have not been inventoried and verified expired" };
+      let account = accountForDeletion(deletion, input.outcomes, input.days);
+      if (account.detail.copies === 0) {
+        // Copies shown gone on an earlier pass are not listed again, and are not forgotten: a deletion whose every recorded copy is
+        // `expired` stays so, instead of flapping back to "no copy found" the run after the last one went.
+        const earlier = await receiptsOf(store, deletion.id, { historical: true });
+        if (earlier.length > 0 && earlier.every(one => one.state === "expired")) account = { ...account, state: "historical_copies_expired", until: null };
+      }
+      const gaps = [...inventoryGaps(input.inventory), ...(input.uncertain ?? [])];
+      // A gap never lifts a blocked or unverified copy, and never lets enumerated generations stand for all the copies; with none, the
+      // account of the copies is the account of the deletion (a copy still pending is `tracking`, with its date).
+      state = gaps.length === 0 || account.state === "retention_blocked" || account.state === "retention_unverified" ? account.state : "retention_unverified";
+      until = account.until; generations = account.generations;
+      detail = { ...account.detail, generation_state: account.state, reason: gaps.length === 0 ? "every copy this job and the destination's inventory can show is accounted for" : gaps.join("; "),
+        outside_inventory: "database WAL archives and file-system snapshots are not enumerated or expired by the Hub" };
     }
     // A verdict that says what the last one said, with no copy to account for, is not written again.
-    if (generations === undefined && state === deletion.retention_state) continue;
+    if ((generations === undefined || state === "historical_copies_expired") && state === deletion.retention_state) continue;
     const answer = await recordRetention(store, deletion.id, { state, until, detail, ...(generations === undefined ? {} : { generations }) });
     if (answer === "recorded") recorded += 1;
   }

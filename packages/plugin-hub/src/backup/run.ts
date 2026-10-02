@@ -17,7 +17,8 @@ import { recordJobSuccess } from "../check/schedule.ts";
 import { recordOperationFailure } from "../diagnostics.ts";
 import { CONTROL_MANIFEST_FILE, renderManifest as renderControlManifest } from "../erasure/manifest.ts";
 import {
-  RetentionInvalid, accountOf, enforceRetention, expiryOf, fill, generationIdOf, retentionDaysOf, trackRetention, transportOf, type Outcome,
+  RetentionInvalid, accountOf, enforceRetention, expireLocalLegacy, expiryOf, fill, generationIdOf, legacyIdOf, legacyUncertainty, readSeal, registerSeal, retentionDaysOf, sealExpiry, sealLegacyCopy,
+  trackRetention, transportOf, type Inventory, type Outcome, type Seal,
 } from "../erasure/retention.ts";
 import { backupHold, deletionSchemaReady, erasureGeneration, readErasureManifest } from "../store/deletions.ts";
 import { putRow } from "../records/statesheet.ts";
@@ -306,6 +307,7 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
     daysInvalid = error.message;
   }
   let outcomes: Outcome[] | null = null;
+  let inventory: Inventory | null = null;
   const publication = await store.sql.reserve();
   let publicationLocked = false;
   /**
@@ -319,11 +321,44 @@ export async function runBackup(entry: RunEntry, registry: Registry): Promise<Ba
     try {
       // A store that has not been migrated to 017 has no deletion to account for. The expiry is the destination's own and does not need it.
       const accounted = await deletionSchemaReady(store);
-      if (days !== null && transportOf(declared).supported) {
-        mkdirSync(readback, { recursive: true });
-        outcomes = (await enforceRetention({ entry: declared, scratch: readback }, { days, now: new Date() })).outcomes;
+      const supported = transportOf(declared).supported;
+      const now = new Date();
+      // THE LEGACY MONOLITHIC ARCHIVE, sealed once under the owner's number (never without one) and only under the generation layout,
+      // where nothing is added to it any more: the seal fixes its expiry, the destination's old copy is moved under a generation id of its
+      // own so that it expires like one, and this box's own dump repository is removed at the sealed date. A seal that cannot be made or
+      // read stops the legacy handling and is said in the diary; the generations are still aged and expired below, but a seal or a local
+      // inventory that is not certain is a gap: no deletion is called fully expired past it (`legacyUncertainty`).
+      let seal: Seal | null = null;
+      let sealFailure: unknown = null;
+      if (days !== null && generational) {
+        try {
+          seal = registerSeal(staging, days, now);
+          if (supported) {
+            mkdirSync(readback, { recursive: true });
+            seal = await sealLegacyCopy({ entry: declared, scratch: readback }, { staging, seal, now });
+          }
+        } catch (error) {
+          sealFailure = error;
+          // The transport may have moved the archive before failing. Keep its
+          // durable intent identity in this same pass, not only after restart.
+          try { seal = readSeal(staging); } catch { seal = null; }
+        }
       }
-      if (accounted) await trackRetention(store, declared, { days, outcomes });
+      const local = days !== null && seal !== null ? expireLocalLegacy({ staging, seal, days, now }) : null;
+      if (days !== null && supported) {
+        mkdirSync(readback, { recursive: true });
+        // The id the old copy was moved under, or the one chosen for the move before a run that did not finish it: either is the legacy
+        // archive, history of every deletion, and never an ordinary generation.
+        const legacyId = seal === null ? null : legacyIdOf(seal);
+        const sealed = seal !== null && legacyId !== null ? { id: legacyId, expires_at: sealExpiry(seal, days) } : undefined;
+        const enforced = await enforceRetention({ entry: declared, scratch: readback }, { days, now, ...(sealed === undefined ? {} : { sealed }) });
+        outcomes = [...enforced.outcomes, ...(local === null ? [] : [local])];
+        inventory = enforced.inventory;
+      }
+      // Under the single-directory layout `<staging>/dump` is the live dump, not a legacy archive, so nothing there is uncertain.
+      const uncertain = days === null || !generational ? [] : legacyUncertainty({ staging, sealFailure, local });
+      if (accounted) await trackRetention(store, declared, { days, outcomes, inventory, uncertain });
+      if (sealFailure !== null) throw sealFailure;
     } catch (error) {
       const said = error as { step?: unknown; message?: unknown };
       await recordOperationFailure(store, { operation: "backup-retention", target: declared.id,

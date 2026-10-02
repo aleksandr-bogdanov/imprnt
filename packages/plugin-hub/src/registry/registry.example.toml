@@ -37,7 +37,9 @@ imprnt = "imprnt"
 # hub applies none: with no value, every deletion says that no retention is configured. A value is
 # the owner's choice (30 days was only a proposal), and what the backup destination can actually
 # enforce is reported next to it, never assumed. Nothing expires unless the backup entry also
-# declares `list_argv` and `expire_argv` (with `{generation}` in its upload and read-back); see
+# declares `list_argv` and `expire_argv` (with `{generation}` in its upload and read-back); optional
+# `retained_argv` (what the destination still retains: versions, trash) and `seal_argv` (moves its old
+# single-directory copy under `{generation}`) let a deletion be called fully expired. See
 # docs/operations.md, "Backup retention".
 # backup_retention_days = <days>
 
