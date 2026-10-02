@@ -287,7 +287,7 @@ test(
     // shares the machine's network, so a model that decided to press restart,
     // or a page it wrote that a person opened, arrives from one of this
     // machine's own addresses. A person arrives from a phone, which is not one.
-    // So an act from here is refused and a read is not, and the residual is
+    // Acts and private chat reads from here are refused, and the residual is
     // named where the rule is written: an agent on ANOTHER machine of the
     // household is not this, and reader identity is what would answer it.
     const staged = await stage("production");
@@ -300,10 +300,11 @@ test(
       }
       expect(await it.read.sheet("control"), "an act from this machine wrote a row").toEqual([]);
 
-      // A READ IS LEFT ALONE. Every page is a read of the store and the seam,
-      // there is nothing on one an agent could not already see, and a rule that
-      // refused reads would refuse the household's own box its own status.
-      for (const path of ["/", "/people", "/chats", "/usage", "/findings", "/metrics"]) {
+      // Status remains readable; private chat files are not exposed to local agents.
+      for (const path of ["/chats", "/chats/p1/p1-lair", "//chats/p1/p1-lair"]) {
+        expect((await board.get(path)).status, path).toBe(404);
+      }
+      for (const path of ["/", "/people", "/usage", "/findings", "/metrics"]) {
         expect((await board.get(path)).status, path).toBe(200);
       }
     } finally {
@@ -324,6 +325,9 @@ test(
       const answer = await unknown.board.post("/act/restart", { target: RUNNER_ENTRY.id });
       expect(answer.status, "a peer nobody could name").toBe(404);
       expect(await unknown.it.read.sheet("control")).toEqual([]);
+      for (const path of ["/chats", "/chats/p1/p1-lair"]) {
+        expect((await unknown.board.get(path)).status, path).toBe(404);
+      }
     } finally {
       await unknown.stop();
     }
@@ -331,6 +335,8 @@ test(
     try {
       const answer = await staged.board.post("/act/restart", { target: RUNNER_ENTRY.id });
       expect(answer.status).toBe(303);
+      expect((await staged.board.get("/chats")).status).toBe(200);
+      expect((await staged.board.get("/chats/p1/p1-lair")).status).toBe(200);
       const rows = await staged.it.read.sheet("control");
       expect(rows).toHaveLength(1);
       expect(rows[0].data.target_id).toBe(RUNNER_ENTRY.id);

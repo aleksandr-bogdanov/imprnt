@@ -462,9 +462,10 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
    * and this rule does not stop it. That one needs reader identity, which the
    * contract defers.
    *
-   * READS ARE LEFT ALONE. Every page is a read of the store and the seam, an
-   * agent can already see its own household's state, and a rule that refused
-   * reads would refuse this box its own status page.
+   * Chat reads expose other people's private files, so they use this rule too.
+   * Status pages remain readable locally. A browser on this machine cannot
+   * read chats either: without reader identity it cannot be distinguished
+   * from a boxed agent. The owner reads chats from another device.
    */
   const asked = options.peer ?? ((request: Request, server: PeerReader) => server.requestIP(request)?.address ?? null);
   const fromThisMachine = (request: Request, server: PeerReader): boolean =>
@@ -479,6 +480,8 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     const url = new URL(request.url);
     const path = url.pathname;
     if (request.method === "GET") {
+      const parts = path.split("/").filter((one) => one !== "");
+      if (parts[0] === "chats" && fromThisMachine(request, server)) return missing();
       const notice = noticeFrom(url.searchParams);
       if (path === "/") return await machines(notice);
       if (path === "/people") return await people(notice);
@@ -486,7 +489,6 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       if (path === "/metrics") return await metrics(notice);
       if (path === "/usage") return await usage(notice);
       if (path === "/chats") return await chats();
-      const parts = path.split("/").filter((one) => one !== "");
       if (parts.length === 3 && parts[0] === "chats") return await chat(parts, url.searchParams.get("before"));
       return missing();
     }
