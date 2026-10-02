@@ -15,7 +15,7 @@ import { backupStage, deviceGate, filesUnder, gateSuffix, pgDumpGate, type Backu
 import { THIS_MACHINE } from "./helpers/zone-stage.ts"
 import { loadRegistry } from "../src/registry/load.ts"
 import { listRunEntries } from "../src/registry/entries.ts"
-import { generationIdOf } from "../src/erasure/retention.ts"
+import { SEAL_FILE, generationIdOf, registerSeal } from "../src/erasure/retention.ts"
 
 let cluster: Cluster
 beforeAll(async () => { cluster = await startCluster() })
@@ -226,6 +226,61 @@ landed(`a failed fresh copy is no reason to keep expired history: the held copy 
     expect(stage.calls().filter(call => call[0] === "/bin/rm")).toEqual([["/bin/rm", "-rf", join(destination, old)]])
     const [row] = await sql(stage, "select retention_state from topic_deletion where id = 'del-1'") as { retention_state: string }[]
     expect(row.retention_state).toBe("retention_unverified")
+  } finally {
+    await stage.remove()
+  }
+}, SLOW)
+
+landed(`the legacy dump repository on this box expires at its sealed date, and a deletion is called fully expired only once the destination's inventory shows nothing it cannot account for${gateSuffix(DEVICE)}`, async () => {
+  const stage = await backupStage(cluster)
+  try {
+    await plantDeletion(stage, "active_deleted")
+    const destination = landing(stage)
+    const old = oldCopy(destination, 40, 0)
+    // The single-directory layout's repository, still on this box; the owner's number was first applied 40 days ago.
+    mkdirSync(join(stage.staging, "dump", ".git"), { recursive: true })
+    writeFileSync(join(stage.staging, "dump", "hub.sql"), "-- every earlier dump\n")
+    registerSeal(stage.staging, 30, new Date(Date.now() - 40 * 86_400_000))
+    stage.configure({ destination, retention_days: 30, ...generated(stage) })
+    expect((await copy(stage)).error).toBeUndefined()
+    expect(existsSync(join(stage.staging, "dump")), "the legacy repository is past its sealed date").toBe(false)
+    expect(existsSync(join(destination, old))).toBe(false)
+    const row = async () => ((await sql(stage, "select retention_state, retention_detail from topic_deletion where id = 'del-1'")) as { retention_state: string; retention_detail: { reason: string } }[])[0]
+    const receipts = await sql(stage, "select location, state from erasure_receipt where deletion_id = 'del-1' and historical order by location") as { location: string; state: string }[]
+    expect(receipts).toEqual([{ location: old, state: "expired" }, { location: "staging-dump", state: "expired" }])
+    // Every copy it knows of is shown gone, but the destination declares no inventory of what it retains: that is not "expired".
+    expect((await row()).retention_state).toBe("retention_unverified")
+    expect((await row()).retention_detail.reason).toContain("declares no retained_argv")
+
+    // With an inventory that holds nothing it cannot account for, the same copies are enough.
+    stage.configure({ retained_argv: [stage.recorder, "/bin/ls", "{destination}"] })
+    expect((await copy(stage)).error).toBeUndefined()
+    expect((await row()).retention_state).toBe("historical_copies_expired")
+  } finally {
+    await stage.remove()
+  }
+}, SLOW)
+
+landed(`an unreadable seal while the legacy dump repository is still on this box keeps every deletion from being called fully expired, however clean the destination's inventory is${gateSuffix(DEVICE)}`, async () => {
+  const stage = await backupStage(cluster)
+  try {
+    await plantDeletion(stage, "active_deleted")
+    const destination = landing(stage)
+    const old = oldCopy(destination, 40, 0)
+    mkdirSync(join(stage.staging, "dump", ".git"), { recursive: true })
+    writeFileSync(join(stage.staging, "dump", "hub.sql"), "-- every earlier dump\n")
+    // The seal cannot be read, so it is not replaced (that would refresh the date) and the local repository is not dealt with.
+    writeFileSync(join(stage.staging, SEAL_FILE), "{ torn")
+    // Every copy the destination can show is gone and its inventory is clean: the only thing left uncertain is the legacy archive.
+    stage.configure({ destination, retention_days: 30, ...generated(stage), retained_argv: [stage.recorder, "/bin/ls", "{destination}"] })
+    expect((await copy(stage)).error, "the failed legacy handling never costs the copy").toBeUndefined()
+    expect(existsSync(join(destination, old))).toBe(false)
+    expect(existsSync(join(stage.staging, "dump")), "the repository is not removed on a seal that cannot be read").toBe(true)
+    expect(readFileSync(join(stage.staging, SEAL_FILE), "utf8")).toBe("{ torn")
+    const [row] = await sql(stage, "select retention_state, retention_detail from topic_deletion where id = 'del-1'") as { retention_state: string; retention_detail: { reason: string } }[]
+    expect(row.retention_state).toBe("retention_unverified")
+    expect(row.retention_detail.reason).toContain("could not be sealed, read or moved")
+    expect((await failures(stage)).map(one => one.operation)).toEqual(["backup-retention"])
   } finally {
     await stage.remove()
   }

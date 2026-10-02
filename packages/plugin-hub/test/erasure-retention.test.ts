@@ -12,8 +12,8 @@ import {
   CONTROL_MANIFEST_FILE, ManifestMalformed, mergeManifests, parseManifest, readLocalManifest, renderManifest, restoreBarrier, writeLocalManifest,
 } from "../src/erasure/manifest.ts"
 import {
-  GENERATION_ID, PROPOSED_DAYS, RetentionInvalid, accountForDeletion, accountOf, enforceRetention, expiryOf, fill, generationIdOf, retentionDaysOf,
-  retentionStatement, transportOf, type Exec, type Outcome,
+  GENERATION_ID, PROPOSED_DAYS, RetentionInvalid, SEAL_FILE, TransportFailure, accountForDeletion, accountOf, enforceRetention, expireLocalLegacy, expiryOf,
+  fill, generationIdOf, inventoryGaps, legacyIdOf, legacyUncertainty, readSeal, registerSeal, retentionDaysOf, retentionStatement, sealExpiry, sealLegacyCopy, transportOf, type Exec, type Outcome,
 } from "../src/erasure/retention.ts"
 import { loadRegistry } from "../src/registry/load.ts"
 import type { ErasureManifest, ManifestTombstone } from "../src/store/deletions.ts"
@@ -266,4 +266,263 @@ test("restored delegated conversation files are erased without removing a siblin
   expect(sweepFromManifest(dir, control, {}).failed).toEqual([])
   expect(existsSync(removed)).toBe(false)
   expect(readFileSync(join(kept, "transcript"), "utf8")).toBe("keep")
+})
+
+// ---- physical copies: the destination's inventory, the sealed legacy archive, and the repository the box itself still holds ----
+
+/** A destination with an inventory: copies by id, names at its top (the old single-directory layout, or anything else), and a trash that removed copies may go to. */
+function inventoried(initial: Record<string, string | null>, options: { top?: string[]; trash?: string[]; keepInTrash?: boolean; sealDoesNothing?: boolean; legacy?: string | null } = {}) {
+  const held = new Map<string, string | null>(Object.entries(initial))
+  const top = new Set(options.top ?? [])
+  const trash = new Set(options.trash ?? [])
+  const calls: string[][] = []
+  const lines = (names: Iterable<string>): Uint8Array => new TextEncoder().encode(`${[...names].join("\n")}\n`)
+  const exec: Exec = async (argv) => {
+    calls.push(argv)
+    const [tool] = argv
+    if (tool === "/fake/list") return lines([...held.keys(), ...top])
+    if (tool === "/fake/retained") return lines([...held.keys(), ...top, ...trash])
+    if (tool === "/fake/read") {
+      const [, , id, path, out] = argv
+      const text = held.get(id)
+      if (text === undefined || text === null || path !== "manifest.json") throw new Error("not there")
+      writeFileSync(out, text)
+      return new Uint8Array()
+    }
+    if (tool === "/fake/expire") {
+      if (held.delete(argv[2]) && options.keepInTrash) trash.add(argv[2])
+      return new Uint8Array()
+    }
+    if (tool === "/fake/seal") {
+      if (!options.sealDoesNothing) {
+        held.set(argv[2], options.legacy ?? null)
+        for (const name of ["dump", "files", "manifest.json", "erasure-manifest.json"]) top.delete(name)
+      }
+      return new Uint8Array()
+    }
+    throw new Error(`unexpected command ${tool}`)
+  }
+  return { held, trash, calls, exec, asked: (tool: string) => calls.filter(call => call[0] === tool) }
+}
+const INVENTORIED = { ...ENTRY, retained_argv: ["/fake/retained", "{destination}"], seal_argv: ["/fake/seal", "{destination}", "{generation}"] }
+
+test("a removal is believed only when the destination neither lists nor still retains the copy: trash blocks it, and a copy retained outside the listing has no age and is never expired", async () => {
+  const old = { "20260901T000000Z": made("2026-09-01T00:00:00.000Z", 0) }
+  const clean = await enforceRetention({ entry: INVENTORIED, scratch: scratch(), exec: inventoried(old).exec }, { days: 30, now: NOW })
+  expect(clean.outcomes).toMatchObject([{ id: "20260901T000000Z", state: "expired" }])
+  expect(clean.inventory).toEqual({ retained: true, unaccounted: 0, legacy: false })
+
+  const kept = inventoried(old, { keepInTrash: true })
+  const trashed = await enforceRetention({ entry: INVENTORIED, scratch: scratch(), exec: kept.exec }, { days: 30, now: NOW })
+  expect(trashed.outcomes[0]).toMatchObject({ id: "20260901T000000Z", state: "retention_blocked" })
+  expect(trashed.outcomes[0].reason).toContain("still retains the copy")
+  // The next run no longer sees it listed, only retained, and cannot read its manifest there: unverified, and no expiry is asked of a copy with no age.
+  const asked = kept.asked("/fake/expire").length
+  const later = await enforceRetention({ entry: INVENTORIED, scratch: scratch(), exec: kept.exec }, { days: 30, now: NOW })
+  expect(later.outcomes).toMatchObject([{ id: "20260901T000000Z", state: "retention_unverified", expires_at: null }])
+  expect(later.outcomes[0].reason).toContain("outside its listing")
+  expect(kept.asked("/fake/expire")).toHaveLength(asked)
+
+  // A destination that declares no inventory says so, and one that retains what is not a copy of this job's, or still holds its old copy, says that.
+  expect((await enforceRetention({ entry: ENTRY, scratch: scratch(), exec: inventoried(old).exec }, { days: 30, now: NOW })).inventory.retained).toBe(false)
+  const noisy = await enforceRetention({ entry: INVENTORIED, scratch: scratch(), exec: inventoried(old, { top: ["notes.txt", "dump", "manifest.json"] }).exec }, { days: 30, now: NOW })
+  expect(noisy.inventory).toEqual({ retained: true, unaccounted: 1, legacy: true })
+  expect(noisy.foreign).toBe(3)
+})
+
+test("only an inventory with nothing in it that cannot be accounted for lets the copies stand as gone, and every gap is said", () => {
+  expect(inventoryGaps({ retained: true, unaccounted: 0, legacy: false })).toEqual([])
+  expect(inventoryGaps(null)[0]).toContain("have not been inventoried")
+  expect(inventoryGaps(undefined)).toHaveLength(1)
+  expect(inventoryGaps({ retained: false, unaccounted: 0, legacy: false })[0]).toContain("declares no retained_argv")
+  const both = inventoryGaps({ retained: true, unaccounted: 2, legacy: true })
+  expect(both).toHaveLength(2)
+  expect(both.join(" ")).toContain("2 entries that are not a copy this job made")
+  expect(both.join(" ")).toContain("old single-directory copy")
+})
+
+test("the legacy archive is sealed once with an explicit expiry that nothing refreshes: a later activation or a longer number does not move it, a shorter number brings it forward, and an unreadable seal is never replaced", () => {
+  const staging = scratch()
+  const first = registerSeal(staging, 30, new Date("2026-10-02T00:00:00.000Z"))
+  expect(first).toEqual({ version: 1, activated_at: "2026-10-02T00:00:00.000Z", days: 30, expires_at: "2026-11-01T00:00:00.000Z", destination_copy: null })
+  expect(registerSeal(staging, 90, new Date("2027-01-01T00:00:00.000Z"))).toEqual(first)
+  expect(readSeal(staging)).toEqual(first)
+  expect(sealExpiry(first, 90).toISOString()).toBe("2026-11-01T00:00:00.000Z")
+  expect(sealExpiry(first, 7).toISOString()).toBe("2026-10-09T00:00:00.000Z")
+  writeFileSync(join(staging, SEAL_FILE), "{ torn")
+  expect(() => registerSeal(staging, 30, NOW)).toThrow()
+  expect(readFileSync(join(staging, SEAL_FILE), "utf8")).toBe("{ torn")
+})
+
+test("the box's own legacy dump repository is removed at the sealed date and looked for again, and not before; with none there is nothing to expire", () => {
+  const staging = scratch()
+  const seal = registerSeal(staging, 30, new Date("2026-10-02T00:00:00.000Z"))
+  expect(expireLocalLegacy({ staging, seal, days: 30, now: NOW })).toBeNull()
+  mkdirSync(join(staging, "dump", ".git"), { recursive: true })
+  writeFileSync(join(staging, "dump", "hub.sql"), "-- every earlier dump rides in this repository\n")
+  const pending = expireLocalLegacy({ staging, seal, days: 30, now: new Date("2026-10-20T00:00:00.000Z") })
+  expect(pending).toEqual({ id: "staging-dump", state: "pending", expires_at: "2026-11-01T00:00:00.000Z", erasure_generation: null })
+  expect(existsSync(join(staging, "dump"))).toBe(true)
+  // A shorter number from the owner brings the date forward.
+  expect(expireLocalLegacy({ staging, seal, days: 7, now: new Date("2026-10-10T00:00:00.000Z") })).toMatchObject({ state: "expired", expires_at: "2026-10-09T00:00:00.000Z" })
+  expect(existsSync(join(staging, "dump"))).toBe(false)
+  expect(expireLocalLegacy({ staging, seal, days: 7, now: new Date("2026-10-11T00:00:00.000Z") })).toBeNull()
+  expect(existsSync(join(staging, SEAL_FILE))).toBe(true)
+})
+
+test("the destination's old single-directory copy is sealed once under an id of its own, believed only when listed under it and the old names are gone, and then expires as a generation that is history of every deletion", async () => {
+  const staging = scratch()
+  const at = new Date("2026-10-02T00:00:00.000Z")
+  const seal = registerSeal(staging, 30, at)
+  const where = inventoried({}, { top: ["dump", "files", "manifest.json"], legacy: made("2026-09-30T00:00:00.000Z", 3) })
+  const sealed = await sealLegacyCopy({ entry: INVENTORIED, scratch: scratch(), exec: where.exec }, { staging, seal, now: at })
+  expect(sealed.destination_copy).toBe("20261002T000000Z")
+  expect(readSeal(staging)).toEqual(sealed)
+  expect(where.asked("/fake/seal")).toEqual([["/fake/seal", "/dest", "20261002T000000Z"]])
+  // Once: it is not sealed again, and its date stays the one it had.
+  expect(await sealLegacyCopy({ entry: INVENTORIED, scratch: scratch(), exec: where.exec }, { staging, seal: sealed, now: new Date("2026-10-09T00:00:00.000Z") })).toEqual(sealed)
+  expect(where.asked("/fake/seal")).toHaveLength(1)
+  expect(sealed.expires_at).toBe(seal.expires_at)
+
+  const id = sealed.destination_copy!
+  const explicit = { id, expires_at: sealExpiry(sealed, 30) }
+  const early = await enforceRetention({ entry: INVENTORIED, scratch: scratch(), exec: where.exec }, { days: 30, now: NOW, sealed: explicit })
+  // Its own manifest (30 September) is sooner than the seal's date, and names erasure generation 3: it is history of every deletion all the same.
+  expect(early.outcomes).toMatchObject([{ id, state: "pending", expires_at: "2026-10-30T00:00:00.000Z", erasure_generation: null }])
+  expect(early.inventory).toEqual({ retained: true, unaccounted: 0, legacy: false })
+  expect(where.asked("/fake/expire")).toEqual([])
+  const due = await enforceRetention({ entry: INVENTORIED, scratch: scratch(), exec: where.exec }, { days: 30, now: new Date("2026-11-02T00:00:00.000Z"), sealed: explicit })
+  expect(due.outcomes).toMatchObject([{ id, state: "expired" }])
+  expect(where.held.has(id)).toBe(false)
+
+  // A sealed copy whose manifest cannot be read still has the seal's explicit date: it is finite, and not "unverified for ever".
+  const unreadable = inventoried({ [id]: null })
+  const dated = await enforceRetention({ entry: INVENTORIED, scratch: scratch(), exec: unreadable.exec }, { days: 30, now: NOW, sealed: explicit })
+  expect(dated.outcomes).toMatchObject([{ id, state: "pending", expires_at: "2026-11-01T00:00:00.000Z", erasure_generation: null }])
+  const gone = await enforceRetention({ entry: INVENTORIED, scratch: scratch(), exec: unreadable.exec }, { days: 30, now: new Date("2026-11-02T00:00:00.000Z"), sealed: explicit })
+  expect(gone.outcomes).toMatchObject([{ id, state: "expired" }])
+})
+
+test("a seal command that leaves the old names in place is a failed seal and is not recorded; with no seal command or no old copy nothing is asked", async () => {
+  const at = new Date("2026-10-02T00:00:00.000Z")
+  const staging = scratch()
+  const seal = registerSeal(staging, 30, at)
+  const stuck = inventoried({}, { top: ["dump"], sealDoesNothing: true })
+  const refused = sealLegacyCopy({ entry: INVENTORIED, scratch: scratch(), exec: stuck.exec }, { staging, seal, now: at })
+  await expect(refused).rejects.toBeInstanceOf(TransportFailure)
+  await expect(refused).rejects.toMatchObject({ step: "seal" })
+  expect(readSeal(staging)?.destination_copy).toBeNull()
+
+  const unsealable = inventoried({}, { top: ["dump"] })
+  const noCommand = { ...ENTRY, retained_argv: INVENTORIED.retained_argv }
+  expect(await sealLegacyCopy({ entry: noCommand, scratch: scratch(), exec: unsealable.exec }, { staging, seal, now: at })).toEqual(seal)
+  const nothingOld = inventoried({ "20260920T000000Z": made("2026-09-20T00:00:00.000Z", 1) })
+  expect(await sealLegacyCopy({ entry: INVENTORIED, scratch: scratch(), exec: nothingOld.exec }, { staging, seal, now: at })).toEqual(seal)
+  expect([...unsealable.asked("/fake/seal"), ...nothingOld.asked("/fake/seal")]).toEqual([])
+})
+
+// ---- the crash boundary of the move: the id is the old copy's identity, and it is on disk before the command is run ----
+
+/** The seal command's own effect on the destination, then the process dying before anything after it could be written. */
+const dyingAfter = (where: { exec: Exec }): Exec => async (argv, keep) => {
+  const out = await where.exec(argv, keep)
+  if (argv[0] === "/fake/seal") throw new Error("the process died")
+  return out
+}
+
+test("the old copy's id is written before the move is run, and a crash after the command (before it was recorded) is reconciled by the next run under the same id, without a second move", async () => {
+  const staging = scratch()
+  const activated = new Date("2026-10-02T00:00:00.000Z")
+  const seal = registerSeal(staging, 30, activated)
+  const where = inventoried({}, { top: ["dump", "files", "manifest.json"], legacy: made("2026-09-30T00:00:00.000Z", 3) })
+  // The id is in the seal, flushed, at the moment the command is handed it.
+  let onDiskAtTheCommand: string | null | undefined
+  const watched: Exec = async (argv, keep) => {
+    if (argv[0] === "/fake/seal") onDiskAtTheCommand = readSeal(staging)?.pending_copy
+    return where.exec(argv, keep)
+  }
+  await expect(sealLegacyCopy({ entry: INVENTORIED, scratch: scratch(), exec: dyingAfter({ exec: watched }) }, { staging, seal, now: activated })).rejects.toBeInstanceOf(TransportFailure)
+  const id = "20261002T000000Z"
+  expect(onDiskAtTheCommand).toBe(id)
+
+  // The crash: the move happened, the old names are gone, and the seal says only what was chosen. The old copy is not lost to the next run.
+  expect(where.held.has(id)).toBe(true)
+  const crashed = readSeal(staging)!
+  expect(crashed).toMatchObject({ activated_at: seal.activated_at, expires_at: seal.expires_at, destination_copy: null, pending_copy: id })
+  expect(legacyIdOf(crashed)).toBe(id)
+  // Even before it is reconciled, that id is treated as the legacy archive: it has the seal's explicit date and is history of every deletion.
+  const explicit = { id: legacyIdOf(crashed)!, expires_at: sealExpiry(crashed, 30) }
+  const aged = await enforceRetention({ entry: INVENTORIED, scratch: scratch(), exec: where.exec }, { days: 30, now: NOW, sealed: explicit })
+  expect(aged.outcomes).toMatchObject([{ id, state: "pending", expires_at: "2026-10-30T00:00:00.000Z", erasure_generation: null }])
+  expect(aged.inventory.legacy).toBe(false)
+
+  // The next run, a week later: no old names, the id is listed. It is recorded; the command is not run again and no other id is made.
+  const later = new Date("2026-10-09T00:00:00.000Z")
+  const reconciled = await sealLegacyCopy({ entry: INVENTORIED, scratch: scratch(), exec: where.exec }, { staging, seal: crashed, now: later })
+  expect(reconciled).toMatchObject({ destination_copy: id, activated_at: seal.activated_at, expires_at: seal.expires_at })
+  expect("pending_copy" in reconciled).toBe(false)
+  expect(readSeal(staging)).toEqual(reconciled)
+  expect(where.asked("/fake/seal")).toHaveLength(1)
+  expect([...where.held.keys()]).toEqual([id])
+  expect(sealExpiry(reconciled, 90).toISOString()).toBe(seal.expires_at)
+})
+
+test("a crash before the command ran is replayed once under the same id, only after the old names are seen present and the id absent; a partial or an unfindable move is never replayed or replaced", async () => {
+  const activated = new Date("2026-10-02T00:00:00.000Z")
+  const intent = (id: string | null): { staging: string; seal: ReturnType<typeof registerSeal> } => {
+    const staging = scratch()
+    const seal = registerSeal(staging, 30, activated)
+    const chosen = { ...seal, ...(id === null ? {} : { pending_copy: id }) }
+    writeFileSync(join(staging, SEAL_FILE), `${JSON.stringify(chosen)}\n`)
+    return { staging, seal: readSeal(staging)! }
+  }
+  const id = "20261002T000000Z"
+  const later = new Date("2026-10-09T00:00:00.000Z")
+
+  // The intent was written and the process died before the command: the old names are still there and the id is not.
+  const untouched = inventoried({}, { top: ["dump", "files"], legacy: made("2026-09-30T00:00:00.000Z", 3) })
+  const first = intent(id)
+  const replayed = await sealLegacyCopy({ entry: INVENTORIED, scratch: scratch(), exec: untouched.exec }, { ...first, now: later })
+  expect(replayed.destination_copy).toBe(id)
+  expect(untouched.asked("/fake/seal")).toEqual([["/fake/seal", "/dest", id]])
+
+  // Both the old names and the id: a partial move. Nothing is run, nothing is recorded, and the intent stays.
+  const partial = inventoried({ [id]: null }, { top: ["dump"] })
+  const second = intent(id)
+  await expect(sealLegacyCopy({ entry: INVENTORIED, scratch: scratch(), exec: partial.exec }, { ...second, now: later })).rejects.toMatchObject({ step: "seal" })
+  expect(partial.asked("/fake/seal")).toEqual([])
+  expect(readSeal(second.staging)).toMatchObject({ destination_copy: null, pending_copy: id })
+
+  // Neither the old names nor the id: the old copy cannot be found. No fresh id is made, nothing is run, and the intent stays.
+  const missing = inventoried({ "20260920T000000Z": made("2026-09-20T00:00:00.000Z", 1) })
+  const third = intent(id)
+  await expect(sealLegacyCopy({ entry: INVENTORIED, scratch: scratch(), exec: missing.exec }, { ...third, now: later })).rejects.toMatchObject({ step: "seal" })
+  expect(missing.asked("/fake/seal")).toEqual([])
+  expect(readSeal(third.staging)).toMatchObject({ destination_copy: null, pending_copy: id })
+
+  // An intent that is not an id is a seal that cannot be read, and is not replaced.
+  const bad = scratch()
+  registerSeal(bad, 30, activated)
+  writeFileSync(join(bad, SEAL_FILE), JSON.stringify({ ...readSeal(bad), pending_copy: "../etc" }))
+  expect(() => readSeal(bad)).toThrow()
+})
+
+test("a seal or a local inventory that is not certain is a gap of its own: an unreadable seal beside a dump directory, a failed move, or a dump directory nothing accounted for", () => {
+  const staging = scratch()
+  expect(legacyUncertainty({ staging, sealFailure: null, local: null })).toEqual([])
+  // An unreadable seal is a failure, and the box's own dump directory is not accounted for: two reasons, and neither is "expired".
+  mkdirSync(join(staging, "dump", ".git"), { recursive: true })
+  writeFileSync(join(staging, SEAL_FILE), "{ torn")
+  let failure: unknown = null
+  try { registerSeal(staging, 30, NOW) } catch (error) { failure = error }
+  expect(failure).not.toBeNull()
+  const torn = legacyUncertainty({ staging, sealFailure: failure, local: null })
+  expect(torn).toHaveLength(2)
+  expect(torn.join(" ")).toContain("could not be sealed, read or moved")
+  expect(torn.join(" ")).toContain("dump directory the legacy handling did not account for")
+  // A failed move is uncertain even where the local repository was dealt with.
+  const dealt: Outcome = { id: "staging-dump", state: "expired", expires_at: "2026-11-01T00:00:00.000Z", erasure_generation: null }
+  expect(legacyUncertainty({ staging, sealFailure: new TransportFailure("seal", "denied"), local: dealt })).toHaveLength(1)
+  // The local repository accounted for, and no failure: certain.
+  expect(legacyUncertainty({ staging, sealFailure: null, local: { ...dealt, state: "pending" } })).toEqual([])
 })

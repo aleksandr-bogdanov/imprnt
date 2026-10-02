@@ -284,6 +284,34 @@ test("IMP-232 an expiry command that names no copy refuses, and {generation} mea
   }
 });
 
+test("IMP-232 retained_argv and seal_argv ride on a destination that lists and expires: they load by value, and refuse alone, with a copy named in the inventory, or with no place to seal under", async () => {
+  const inventory: Partial<RunSpec> = {
+    ...GENERATED,
+    retained_argv: ["/opt/example/bin/copy-tool", "--list-everything-retained", "{destination}"],
+    seal_argv: ["/opt/example/bin/copy-tool", "--move-old-copy", "{destination}", "{destination}/{generation}"],
+  };
+  const entry = await backupOf(write(household(backupSpec(inventory))));
+  expect(entry.retained_argv).toEqual(inventory.retained_argv!);
+  expect(entry.seal_argv).toEqual(inventory.seal_argv!);
+  // The control: an entry that declares neither carries neither.
+  const plain = await backupOf(write(household(backupSpec(GENERATED))));
+  expect(plain.retained_argv).toBeUndefined();
+  expect(plain.seal_argv).toBeUndefined();
+  // An inventory or a seal of a destination that cannot expire a copy is a promise with nothing behind it.
+  for (const key of ["retained_argv", "seal_argv"] as const) {
+    const lone: Partial<RunSpec> = key === "retained_argv" ? { retained_argv: inventory.retained_argv } : { seal_argv: inventory.seal_argv };
+    const alone = await refusalOf(write(household(backupSpec(lone))));
+    expect(alone.key).toBe(`run[0].${key}`);
+    expect(alone.reason).toContain("list_argv");
+  }
+  const named = await refusalOf(write(household(backupSpec({ ...inventory, retained_argv: ["/opt/example/bin/copy-tool", "--list", "{destination}/{generation}"] }))));
+  expect(named.key).toBe("run[0].retained_argv");
+  const noPlace = await refusalOf(write(household(backupSpec({ ...inventory, seal_argv: ["/opt/example/bin/copy-tool", "--move-old-copy", "{destination}"] }))));
+  expect(noPlace.key).toBe("run[0].seal_argv");
+  const staging = await refusalOf(write(household(backupSpec({ ...inventory, retained_argv: [...inventory.retained_argv!, "{staging}"] }))));
+  expect(staging.key).toBe("run[0].retained_argv");
+});
+
 test("ROLL-32 a backup entry with no destination refuses naming run[n].destination, and an empty or non-string one does too", async () => {
   for (const raw of [null, '""', "1", "[]"]) {
     const refused = await refusalOf(withLine("destination", raw));

@@ -91,6 +91,9 @@ export interface RunSpec {
   /** The two optional commands that give the destination a finite retention: list every copy, expire one. */
   list_argv?: string[];
   expire_argv?: string[];
+  /** Optional, with the two above: the destination's physical inventory, and the one-time seal of its old single-directory copy. */
+  retained_argv?: string[];
+  seal_argv?: string[];
   /** Where the copy goes. The argvs receive it and code never parses it. */
   destination?: string;
   /** The Discord server a door resolves a channel name against. */
@@ -538,6 +541,8 @@ function renderRegistry(spec: RegistrySpec): string {
       readback_argv: entry.readback_argv,
       list_argv: entry.list_argv,
       expire_argv: entry.expire_argv,
+      retained_argv: entry.retained_argv,
+      seal_argv: entry.seal_argv,
       repositories: entry.repositories,
       source: entry.source,
       agent: entry.agent,

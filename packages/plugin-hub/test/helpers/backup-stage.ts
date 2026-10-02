@@ -168,7 +168,7 @@ export interface BackupStage {
    */
   configure(change: {
     destination?: string; dump_argv?: string[]; upload_argv?: string[]; readback_argv?: string[];
-    list_argv?: string[]; expire_argv?: string[]; retention_days?: number | null;
+    list_argv?: string[]; expire_argv?: string[]; retained_argv?: string[]; seal_argv?: string[]; retention_days?: number | null;
   }): void;
   /** A directory on the staging directory's own device. */
   sameDevice(): string;
@@ -259,7 +259,7 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
     let secretsDirPath = "";
     let credentialPath = "";
     let retentionDays: number | null = null;
-    const argv: { dump: string[]; upload: string[]; readback: string[]; list?: string[]; expire?: string[] } = {
+    const argv: { dump: string[]; upload: string[]; readback: string[]; list?: string[]; expire?: string[]; retained?: string[]; seal?: string[] } = {
       dump: options.dump_argv ?? [pgDumpGate().bin, "--dbname", cluster.url(db)],
       // `-f`, because a second copy lands on the first and git writes its
       // objects read-only, which a plain `cp` refuses to overwrite.
@@ -281,6 +281,8 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
       readback_argv: argv.readback,
       list_argv: argv.list,
       expire_argv: argv.expire,
+      retained_argv: argv.retained,
+      seal_argv: argv.seal,
     });
 
     const complete = (from: RegistrySpec): RegistrySpec => ({
@@ -435,6 +437,8 @@ export async function backupStage(cluster: Cluster, options: BackupStageOptions 
         if (change.readback_argv !== undefined) argv.readback = change.readback_argv;
         if (change.list_argv !== undefined) argv.list = change.list_argv;
         if (change.expire_argv !== undefined) argv.expire = change.expire_argv;
+        if (change.retained_argv !== undefined) argv.retained = change.retained_argv;
+        if (change.seal_argv !== undefined) argv.seal = change.seal_argv;
         if (change.retention_days !== undefined) retentionDays = change.retention_days;
         render();
       },

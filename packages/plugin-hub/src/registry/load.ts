@@ -341,6 +341,14 @@ export const BACKUP_ARGVS = ["dump_argv", "upload_argv", "readback_argv"] as con
  */
 export const BACKUP_RETENTION_ARGVS = ["list_argv", "expire_argv"] as const;
 /**
+ * Two more, optional, and only on a destination that already lists and expires: `retained_argv` prints, one per line, the id of every
+ * copy the destination STILL PHYSICALLY RETAINS in any form (the live copies `list_argv` shows, and also versions, trash and replicas
+ * of copies already removed), and is what a removal is checked against; `seal_argv` moves the destination's old single-directory copy
+ * under the id `{generation}` once, so that it becomes a generation that `expire_argv` can remove. Without `retained_argv` the
+ * destination's versions and trash are not inventoried and no deletion is ever called fully expired through it.
+ */
+export const BACKUP_INVENTORY_ARGVS = ["retained_argv", "seal_argv"] as const;
+/**
  * `{generation}` is the copy's own id (the UTC time it was assembled, `20261001T120000Z`). An upload that carries it puts each copy
  * in a place of its own, which is what a destination needs to hold generations at all; a read-back of such an upload carries it too.
  */
@@ -449,6 +457,9 @@ export interface RunEntry {
   /** Optional, and only together: what lets the destination's copies be enumerated and expired (`BACKUP_RETENTION_ARGVS`). */
   list_argv?: string[];
   expire_argv?: string[];
+  /** Optional, and only with the two above: the destination's physical inventory and the one-time seal of its legacy copy (`BACKUP_INVENTORY_ARGVS`). */
+  retained_argv?: string[];
+  seal_argv?: string[];
   destination?: string;
   /**
    * A watch's own: where it reads (`source`, one of `WATCH_SOURCES`), whose
@@ -1635,7 +1646,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
           `${id} is a backup with schedule ${describe(entry.schedule)}, and a copy runs on a cadence such as hourly ` +
             `or every 30m: one that never stops, or that nobody starts, is not an hourly copy`);
       }
-      const checkArgv = (key: (typeof BACKUP_ARGVS)[number] | (typeof BACKUP_RETENTION_ARGVS)[number]): string[] => {
+      const checkArgv = (key: (typeof BACKUP_ARGVS)[number] | (typeof BACKUP_RETENTION_ARGVS)[number] | (typeof BACKUP_INVENTORY_ARGVS)[number]): string[] => {
         const where = `${at}.${key}`;
         const argv = entry[key];
         strings(argv, where, false);
@@ -1647,7 +1658,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
           refuse(where, here,
             `${where} names ${describe(relative)}, a relative path, which is a different file in every directory a process starts in`);
         }
-        const retention = (BACKUP_RETENTION_ARGVS as readonly string[]).includes(key);
+        const retention = (BACKUP_RETENTION_ARGVS as readonly string[]).includes(key) || (BACKUP_INVENTORY_ARGVS as readonly string[]).includes(key);
         for (const token of args.flatMap(arg => arg.match(/\{[A-Za-z_]+\}/g) ?? [])) {
           if (!(BACKUP_PLACEHOLDERS as readonly string[]).includes(token)) {
             refuse(where, here,
@@ -1662,7 +1673,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
             refuse(where, here, `${where} reads {staging}, which is the copy on this box, so it would match whatever the upload did`);
           }
           // What a copy is called belongs to where it goes and to what is read back and expired there, and to nothing else.
-          if (token === "{generation}" && (key === "dump_argv" || key === "list_argv")) {
+          if (token === "{generation}" && (key === "dump_argv" || key === "list_argv" || key === "retained_argv")) {
             refuse(where, here, `${where} carries {generation}, which names one copy and means nothing to a ${key === "dump_argv" ? "dump" : "listing of every copy"}`);
           }
           if (retention && token === "{staging}") {
@@ -1698,6 +1709,16 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         if (!generated(entry.expire_argv as string[])) {
           refuse(`${at}.expire_argv`, here, `${at}.expire_argv has no {generation}, so it names no copy to expire`);
         }
+      }
+      // THE INVENTORY COMMANDS ride on a destination that already lists and expires: a physical inventory or a seal of a destination that
+      // cannot expire a copy would be a promise with nothing behind it.
+      for (const key of BACKUP_INVENTORY_ARGVS) {
+        if (entry[key] === undefined || entry[key] === null) continue;
+        if (given.length !== 2) refuse(`${at}.${key}`, here, `${id} carries ${key} without list_argv and expire_argv, and it only adds to a destination that can list and expire its copies`);
+        checkArgv(key);
+      }
+      if (entry.seal_argv !== undefined && entry.seal_argv !== null && !generated(entry.seal_argv as string[])) {
+        refuse(`${at}.seal_argv`, here, `${at}.seal_argv has no {generation}, so it names no place to seal the old copy under`);
       }
       // THE DESTINATION IS NOT PARSED. It is a value the commands receive and
       // the code never interprets, so a loader that checked its shape would be
@@ -1804,7 +1825,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       ...Object.fromEntries((entry.kind === "board" ? ["bind", "port", "artifacts_port"]
         : entry.kind === "transcriber" ? ["port", "residency", "idle_seconds"]
         : entry.kind === "door" ? ["guild", "default_preset", ...TOPIC_DOOR_KEYS]
-        : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS, ...BACKUP_RETENTION_ARGVS]
+        : entry.kind === "backup" ? ["destination", ...BACKUP_ARGVS, ...BACKUP_RETENTION_ARGVS, ...BACKUP_INVENTORY_ARGVS]
         : entry.kind === "watch" ? ["source", "person", ...SENTRY_KEYS, ...HUNT_KEYS] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
