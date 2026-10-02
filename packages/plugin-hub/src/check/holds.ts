@@ -43,6 +43,6 @@ export function holdFindings(args: { holds: OpenHoldRow[]; machine: string }): F
       (hold.cause === "ownership-unknown" ? `, and no other work of ${hold.agent} starts while it is not known whether the attempt is still running` : "") +
       // Only once the attempt is over does the conversation's native context decide whether anything can run.
       (hold.cause === "ownership-unknown" ? "" : `. ${contextSentence(contextOf(hold.native_context))}`),
-    fix: `in the owner's chat: /recover ${hold.agent} ${hold.execution_id} ${hold.revision} continue, or keep-held`,
+    fix: `in the owner's chat: /recover ${hold.agent} ${hold.execution_id} ${hold.revision} continue, keep-held, or fresh-context (discard native context after confirmed exit; do not continue unfinished work)`,
   }));
 }

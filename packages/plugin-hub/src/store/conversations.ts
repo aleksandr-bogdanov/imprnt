@@ -79,7 +79,7 @@ export interface HoldRow {
 
 /** A conversation the row cannot be given, said by name and never defaulted away. */
 export class ConversationRefused extends Error {
-  constructor(readonly refusal: "conversation unavailable" | "conversation elsewhere") {
+  constructor(readonly refusal: "conversation unavailable" | "conversation elsewhere" | "conversation engine mismatch") {
     super(`conversation-refused: ${refusal}`);
     this.name = "ConversationRefused";
   }
@@ -177,10 +177,12 @@ export async function conversationFor(
 async function place(store: StoreLike, found: Conversation, want: { adapter: string; machine: string }): Promise<Conversation> {
   if (found.machine !== null && found.machine !== want.machine) throw new ConversationRefused("conversation elsewhere");
   if (found.machine === null || found.adapter !== want.adapter) {
-    // A master follows its agent's engine; a worker's engine was checked above.
+    // Only a never-launched conversation can change engines. Check in the write
+    // too, so a concurrent launch cannot turn a stale read into a rebind.
     const [placed] = (await store.sql.unsafe(
-      `update conversation set machine = coalesce(machine, $2), adapter = $3 where id = $1 returning ${COLUMNS}`,
+      `update conversation set machine = coalesce(machine, $2), adapter = $3 where id = $1 and (adapter = $3 or (native_state = 'new' and not exists (select 1 from execution e where e.conversation_id = conversation.id and (e.feed_intent_at is not null or e.state <> 'failed')))) returning ${COLUMNS}`,
       [found.id, want.machine, want.adapter])) as unknown as Conversation[];
+    if (!placed) throw new ConversationRefused("conversation engine mismatch");
     return placed;
   }
   return found;
@@ -683,10 +685,10 @@ export type OpenHold = HoldRow & {
   native_context: unknown;
 };
 
-export async function openHoldsOf(store: StoreLike, conversation: string): Promise<OpenHold[]> {
+export async function openHoldsOf(store: StoreLike, conversation: string, includeFreshContext = false): Promise<OpenHold[]> {
   return (await store.sql`select h.inbound_id, h.execution_id, h.conversation_id, h.cause, h.state, h.revision, h.choice, h.chosen_by,
       h.continuation_id, h.native_context, i.body, e.effects, e.evidence, e.native_session
     from replay_hold h join inbound i on i.id = h.inbound_id join execution e on e.id = h.execution_id
-    where h.conversation_id = ${conversation} and h.state <> 'released'
+    where h.conversation_id = ${conversation} and (h.state <> 'released' or (${includeFreshContext}::boolean and h.choice = 'fresh_context'))
     order by h.created_at, h.inbound_id`) as unknown as OpenHold[];
 }

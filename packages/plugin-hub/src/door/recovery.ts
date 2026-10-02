@@ -4,7 +4,7 @@ import { chooseHold, type HoldChoiceName, type HoldOutcome } from "../recovery/h
 import type { StoreLike } from "../store/connect.ts";
 
 /**
- * `/recover <agent> <attempt> <revision> continue|keep-held`: an owner's choice
+ * `/recover <agent> <attempt> <revision> continue|keep-held|fresh-context`: an owner's choice
  * about ONE interrupted attempt of ONE agent, at the recovery revision the
  * notice named. `/recover <agent>` alone is the plumbing restart and is read
  * elsewhere: it restarts a session and never touches a hold.
@@ -18,6 +18,7 @@ export function parseHoldChoice(text: string): { agent: string; attempt: string;
   const [, agent, attempt, revision, word] = parts;
   const said = word.toLowerCase();
   const choice: HoldChoiceName | null = ["continue", "продолжить"].includes(said) ? "continue"
+    : ["fresh-context", "fresh_context"].includes(said) ? "fresh_context"
     : ["keep-held", "keep_held", "keephold", "оставить"].includes(said) ? "keep_held" : null;
   if (choice === null || !/^[1-9]\d{0,8}$/.test(revision)) return "usage";
   return { agent, attempt, revision: Number(revision), choice };

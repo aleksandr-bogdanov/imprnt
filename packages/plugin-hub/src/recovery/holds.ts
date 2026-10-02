@@ -6,8 +6,8 @@ import type { StoreLike } from "../store/connect.ts";
  * hub's own tool, so the two cannot disagree about what a choice means.
  */
 
-/** The two choices. `continue` authorizes work; `keep_held` records that nothing is authorized. */
-export const HOLD_CHOICES = ["continue", "keep_held"] as const;
+/** fresh_context discards native context only by explicit owner choice; it never continues unfinished work. */
+export const HOLD_CHOICES = ["continue", "keep_held", "fresh_context"] as const;
 export type HoldChoiceName = (typeof HOLD_CHOICES)[number];
 
 /**
@@ -15,7 +15,7 @@ export type HoldChoiceName = (typeof HOLD_CHOICES)[number];
  * acted on: the attempt is not shown to be over, so no continuation exists.
  */
 export type HoldOutcome =
-  | "keep_held" | "continue_pending" | "continuing"
+  | "keep_held" | "continue_pending" | "continuing" | "fresh_context" | "ownership-unresolved"
   | "stale-revision" | "unknown-attempt" | "closed" | "invalid-choice";
 
 /**
@@ -60,7 +60,7 @@ const CONTEXT_WHY: Record<string, string> = {
  */
 export function contextSentence(context: NativeContext): string {
   if (context.state === "unavailable") {
-    return `The conversation is waiting for native context (${context.cause}: ${CONTEXT_WHY[context.cause ?? ""] ?? "unavailable"}). No executor is started, for a new message or for a continuation, until it is available; nothing is rebuilt in its place.`;
+    return `The conversation is waiting for native context (${context.cause}: ${CONTEXT_WHY[context.cause ?? ""] ?? "unavailable"}). No executor is started, for a new message or for a continuation, until it is available; nothing is rebuilt automatically. The owner can explicitly choose fresh_context after confirmed process exit to discard native context and allow fresh messages without continuing unfinished work.`;
   }
   if (context.state === "pending") {
     return "Whether the native context can be resumed is pending verification. No executor is started until it has been checked.";

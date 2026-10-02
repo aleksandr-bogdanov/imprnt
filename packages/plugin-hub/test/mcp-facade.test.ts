@@ -312,3 +312,19 @@ test("move is read strictly: exactly one of a named machine or a decision, the e
   expect(readCode(asked({ destination_machine: "mac", setup: { chat_name: "x", initial_request: "y" } }))).toBe("invalid_arguments")
   expect(readCode(asked({ destination_machine: "mac", person: "p2" }))).toBe("invalid_arguments")
 })
+
+test("fresh_context is an explicit owner-evidenced MCP choice, idempotent and never a continuation", async () => {
+  const s = await staged()
+  try {
+    await s.human("h2")
+    const request = resume({}, { attempt_id: s.attempt.id, choice: "fresh_context" })
+    const result = await callTool(s.binding, "hub_topic", request)
+    expect(result).toMatchObject({ status: "accepted", stage: "fresh_context", revision: 2 })
+    expect(await callTool(s.binding, "hub_topic", request)).toEqual(result)
+    expect((await s.su`select native_session from conversation where id = ${s.conversation.id}`)[0].native_session).not.toBe(s.conversation.native_session)
+    expect(await s.su`select id from inbound where id like 'continue:%'`).toHaveLength(0)
+    expect((await s.su`select hub_row_held('h1') as held`)[0].held).toBe(true)
+    const { parseHoldChoice } = await import("../src/door/recovery.ts")
+    expect(parseHoldChoice(`/recover p1-lair ${s.attempt.id} 1 fresh-context`)).toMatchObject({ choice: "fresh_context", revision: 1 })
+  } finally { await s.store.sql.close(); await s.su.close(); await s.it.stop() }
+})

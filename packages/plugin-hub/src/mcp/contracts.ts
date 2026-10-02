@@ -33,7 +33,7 @@ export const TOOLS = [
       "inspect: lists interrupted attempts with what is known and not known about their effects; with topic_id it says where one topic chat stands. " +
       "resume: records the owner's choice for ONE attempt at the recovery revision inspect showed. It needs request_key and the platform " +
       "message ids in which the owner actually said so; continue queues a new message behind the current turn once the old attempt is " +
-      "shown to be over, and keep_held authorizes nothing. Never use resume on your own initiative. " +
+      "shown to be over, and keep_held authorizes nothing. fresh_context explicitly abandons native context after confirmed process exit, allowing fresh messages without continuing the unfinished assignment. Never use resume on your own initiative. " +
       "create: asks for a new topic chat. It never makes the chat: it freezes the exact preview (Chat, Execution machine, Agent and the message " +
       "the new agent will be given, verbatim) in this conversation's chat, and only the owner's green-check reaction to it creates anything. " +
       "Leave execution_machine or preset out to use the configured defaults, which the preview then shows. To correct a preview, call create " +
@@ -108,7 +108,7 @@ export const TOOLS = [
           properties: {
             attempt_id: { type: "string" },
             expected_recovery_revision: { type: "integer", minimum: 1 },
-            choice: { type: "string", enum: ["continue", "keep_held"] },
+            choice: { type: "string", enum: ["continue", "keep_held", "fresh_context"] },
             continuation_context: { type: "string", maxLength: 4000 },
           },
           required: ["attempt_id", "expected_recovery_revision", "choice"],
@@ -125,7 +125,7 @@ export interface ResumeRequest {
   action: "resume";
   request_key: string;
   source_message_ids: string[];
-  recovery_decision: { attempt_id: string; expected_recovery_revision: number; choice: "continue" | "keep_held"; continuation_context?: string };
+  recovery_decision: { attempt_id: string; expected_recovery_revision: number; choice: "continue" | "keep_held" | "fresh_context"; continuation_context?: string };
 }
 /** What the owner is shown and confirms: exactly these fields, and nothing a model could add. */
 export interface TopicSetupRequest {
@@ -299,7 +299,7 @@ const TOPIC_ACTIONS: { [A in HubTopicRequest["action"]]: ActionReader<Extract<Hu
       const decision = exact(top.recovery_decision, ["attempt_id", "expected_recovery_revision", "choice", "continuation_context"], "recovery_decision");
       if (typeof decision.attempt_id !== "string" || decision.attempt_id === "") refuse("recovery_decision needs attempt_id");
       if (!Number.isSafeInteger(decision.expected_recovery_revision) || (decision.expected_recovery_revision as number) < 1) refuse("recovery_decision needs expected_recovery_revision");
-      if (decision.choice !== "continue" && decision.choice !== "keep_held") refuse("choice is continue or keep_held");
+      if (decision.choice !== "continue" && decision.choice !== "keep_held" && decision.choice !== "fresh_context") refuse("choice is continue, keep_held or fresh_context");
       if (decision.continuation_context !== undefined && (typeof decision.continuation_context !== "string" || decision.continuation_context.length > 4000)) {
         refuse("continuation_context is text of at most 4000 characters");
       }

@@ -1140,6 +1140,7 @@ export async function runRunner(options: {
       moves?.refresh();
     };
     /** The store placed the conversation on another machine, which is not a failure of this agent. */
+    let refusedEngine: string | null = null;
     const elsewhere = (error: unknown): boolean => error instanceof ConversationRefused && error.refusal === "conversation elsewhere";
     /** Fenced from serving it (said once), until the store places it here again at a later generation (`./move.ts`). */
     const placedElsewhere = async (): Promise<void> => {
@@ -1852,6 +1853,11 @@ export async function runRunner(options: {
           const eager = adapterFor(options.adapters, eagerPreset.adapter);
           const master = await conversationFor(store, { row: { id: agent.id, person: agent.person, agent: agent.id, kind: "human" }, adapter: eagerPreset.adapter, machine })
             .catch(async (error: unknown): Promise<Conversation | null> => {
+              if (error instanceof ConversationRefused && error.refusal === "conversation engine mismatch") {
+                refusedEngine = eagerPreset.adapter;
+                await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: "conversation.engine-mismatch", actor: "runner", detail: { agent: agent.id, adapter: eagerPreset.adapter } });
+                return null;
+              }
               if (!elsewhere(error)) throw error;
               await placedElsewhere();
               return null;
@@ -1948,6 +1954,10 @@ export async function runRunner(options: {
         // A WITHDRAWAL WHOSE NOTIFICATION THIS RUNNER NEVER HEARD lifts nothing by itself: what the work waiter says (a commit for this
         // agent, a listener opened again) sends the watch to read the moves, which lifts the fence of a move that was withdrawn.
         if (moveFences.has(agent.id)) { if (await sleep()) moves?.refresh(); continue; }
+        // A named engine refusal parks selection until configuration changes;
+        // do not claim the same input repeatedly or create failed attempts.
+        if (refusedEngine === getPreset(registry, agent.preset).adapter) { await sleep(); continue; }
+        refusedEngine = null;
 
         // THE WINDOW IS READ HERE AND NOWHERE ELSE: beside the claim,
         // on a wake the runner was already having, and never on a timer of its
@@ -2229,6 +2239,17 @@ export async function runRunner(options: {
             await sleep();
             continue;
           }
+          if (error instanceof ConversationRefused && error.refusal === "conversation engine mismatch" && row.kind !== "job") {
+            refusedEngine = preset.adapter;
+            await store.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${row.id} and claimed_by = ${options.runner}`;
+            if (!blockedNoted.has("engine-mismatch")) {
+              blockedNoted.add("engine-mismatch");
+              await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: "conversation.engine-mismatch", actor: "runner", detail: { agent: agent.id, adapter: preset.adapter } });
+            }
+            claimed = null; claimedReturn = null; claimedSeat = null; unreserve();
+            await sleep();
+            continue;
+          }
           if (!(error instanceof ConversationRefused) || row.kind !== "job") throw error;
           await refuseJob(store, { row, refusal: { cause: error.refusal }, registry, runner: options.runner });
           claimed = null;
@@ -2254,8 +2275,10 @@ export async function runRunner(options: {
         // unfinished. Selection already asked; this is the answer at launch.
         // Where it is no longer yes, the claim goes back and nothing is built
         // from a transcript instead.
-        const holds = next.needs_resume ? await openHoldsOf(store, conversation.id) : [];
-        const resumeFrom = holds.length > 0 ? holds[holds.length - 1].native_session : null;
+        const recoveryHolds = await openHoldsOf(store, conversation.id, true);
+        const holds = recoveryHolds.filter(hold => hold.state !== "released");
+        const resumeFrom = holds.length > 0 && holds[holds.length - 1].native_session === conversation.native_session
+          ? holds[holds.length - 1].native_session : null;
         // A session the engine never acknowledged is not one it can be trusted to
         // resume either, so an uncertain native state blocks like an unvalidated
         // build does. Each block is said once, by name, in the diary.
@@ -2297,10 +2320,12 @@ export async function runRunner(options: {
         // before the feed leaves it untold, and the next fresh turn carries it again.
         const told: string[] = [];
         pendingContext = [];
-        for (const hold of holds.filter(one => one.continuation_id !== row.id)) {
+        for (const hold of recoveryHolds.filter(one => one.continuation_id !== row.id)) {
           const source = `hold:${hold.execution_id}:${hold.revision}`;
           if (await hasEntry(store, conversation.id, source, "recovery")) continue;
-          const context = recoveryContext(hold);
+          const context = hold.state === "released"
+            ? `[Hub recovery context] The owner explicitly chose fresh native context after attempt ${hold.execution_id} ended. Prior native context is unavailable. The interrupted input and its queued continuation remain excluded. Do not continue unfinished work or repeat actions unless the owner gives a new request. Known effects: ${JSON.stringify(hold.effects)}. Nothing was undone.`
+            : recoveryContext(hold);
           told.push(context);
           pendingContext.push({ conversation: conversation.id, source, body: context });
         }
@@ -2312,7 +2337,7 @@ export async function runRunner(options: {
         // A council's job is fed only to a session that was started under the profile its owner approved (`claimedProfile`): a resident child whose configuration
         // was another one (started before an edit and reused after it was undone, or the reverse) is replaced, in the same conversation, and never fed the job.
         const mustSpawn = !own.session || presetId(preset) !== startedWith || own.killed
-          || own.conversation !== conversation.id || holds.length > 0
+          || own.conversation !== conversation.id || (caps.stableSession && own.nativeSession !== conversation.native_session) || holds.length > 0
           || (claimedProfile !== null && startedProfile !== claimedProfile);
         const plan = mustSpawn ? await planSession(conversation, adapter, registry, resumeFrom) : null;
         // THE ATTEMPT IS OWNED BEFORE ANYTHING LAUNCHES. The table allows one

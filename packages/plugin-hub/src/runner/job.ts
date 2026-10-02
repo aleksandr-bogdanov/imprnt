@@ -21,7 +21,7 @@ export interface JobRefusal {
    * job is also refused when its worker is no longer the one the owner approved
    * (`configuration changed`, `council/launch.ts`).
    */
-  cause: typeof NOT_APPROVED | typeof COMMAND_ALTERED | "conversation unavailable" | "conversation elsewhere" | "resume unsupported" | "configuration changed";
+  cause: typeof NOT_APPROVED | typeof COMMAND_ALTERED | "conversation unavailable" | "conversation elsewhere" | "conversation engine mismatch" | "resume unsupported" | "configuration changed";
   /** For `configuration changed`: the parts of the accepted profile that differ, by name (never a value). */
   changed?: readonly string[];
 }

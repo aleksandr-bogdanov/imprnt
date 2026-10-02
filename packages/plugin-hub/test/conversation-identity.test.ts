@@ -1087,3 +1087,58 @@ test("the step refuses to land while an old runner may have fed an input, and le
   expect(b.grants).toEqual(a.grants)
   expect(b.protocol).toEqual(a.protocol)
 })
+
+test("fresh context requires confirmed exit, fences stale plans and queued continuations, and never replays the original", async () => {
+  const s = await stage()
+  await s.human("fresh-old")
+  await s.incarnate("runner-a", "one")
+  await s.claim("fresh-old", "runner-a")
+  const conversation = await s.master("fresh-old")
+  const attempt = await openExecution(s.runner, { row: { id: "fresh-old", agent: "p1-lair" }, conversation,
+    runner: "runner-a", incarnation: "one", digest: "old", nativeSession: conversation.native_session })
+  await markFeedIntent(s.runner, attempt, "original work")
+  await endAttempt(s.runner, { execution: attempt.id, evidence: NOT_GONE, cause: "lost" })
+  const ask = (revision: number, choice: "fresh_context" | "continue" = "fresh_context") => chooseHold(s.door,
+    { attempt: attempt.id, agent: "p1-lair", revision, choice, by: "p1", evidence: { source: "test-owner" } })
+  expect(await ask(1)).toBe("ownership-unresolved")
+  expect((await s.master("fresh-old")).native_session).toBe(conversation.native_session)
+  await endAttempt(s.runner, { execution: attempt.id, evidence: GONE, cause: "confirmed" })
+  expect(await ask(1)).toBe("stale-revision")
+  await s.su`update execution set evidence = '{}'::jsonb where id = ${attempt.id}`
+  expect(await ask(2)).toBe("ownership-unresolved") // terminal alone does not prove exit
+  await s.su`update execution set evidence = ${{ exit: GONE }}::jsonb where id = ${attempt.id}`
+  expect(await ask(2, "continue")).toBe("continuing")
+  expect(await ask(2)).toBe("fresh_context")
+  const reset = await s.master("fresh-old")
+  expect(reset.native_session).not.toBe(conversation.native_session)
+  expect(reset.native_state).toBe("new")
+  expect(Number(reset.placement_generation)).toBe(Number(conversation.placement_generation) + 1)
+  expect((await s.su`select hub_row_held('fresh-old') as held`)[0].held).toBe(true)
+  expect((await s.su`select hub_row_held('continue:fresh-old:2') as held`)[0].held).toBe(true)
+  expect(await ask(2)).toBe("stale-revision")
+  expect(await ask(3)).toBe("closed")
+  await s.human("fresh-new")
+  expect(await claimNext(s.runner, { runner: "runner-a", agent: "p1-lair", leaseMs: 60_000, resumeOk: false })).toMatchObject({ id: "fresh-new" })
+  await expect(openExecution(s.runner, { row: { id: "fresh-new", agent: "p1-lair" }, conversation,
+    runner: "runner-a", incarnation: "one", digest: "new", nativeSession: conversation.native_session })).rejects.toBeInstanceOf(ExecutionNotOwned)
+  // Resetting native context is not permission to switch the conversation's engine.
+  await expect(conversationFor(s.runner, { row: { id: "fresh-new", person: "p1", agent: "p1-lair", kind: "human" }, adapter: "opencode", machine: "pi" }))
+    .rejects.toThrow("conversation engine mismatch")
+})
+
+test("a never-launched master may be placed on another engine; a launched master refuses rebinding unchanged", async () => {
+  const s = await stage()
+  await s.human("binding")
+  const initial = await s.master("binding")
+  await s.incarnate("runner-a", "one")
+  await s.claim("binding", "runner-a")
+  const neverFed = await openExecution(s.runner, { row: { id: "binding", agent: "p1-lair" }, conversation: initial,
+    runner: "runner-a", incarnation: "one", digest: "binding", nativeSession: initial.native_session })
+  await endAttempt(s.runner, { execution: neverFed.id, evidence: GONE, cause: "before launch", delivered: false })
+  const want = { row: { id: "binding", person: "p1", agent: "p1-lair", kind: "human" }, adapter: "opencode", machine: "pi" }
+  expect(await conversationFor(s.runner, want)).toMatchObject({ id: initial.id, adapter: "opencode", native_state: "new" })
+  await s.su`update conversation set native_state = 'launched' where id = ${initial.id}`
+  await expect(s.master("binding")).rejects.toThrow("conversation engine mismatch")
+  expect((await s.su`select adapter, native_session, native_state from conversation where id = ${initial.id}`)[0])
+    .toMatchObject({ adapter: "opencode", native_session: initial.native_session, native_state: "launched" })
+})

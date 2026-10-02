@@ -139,6 +139,10 @@ async function replyFor(store: StoreLike, attempt: string, outcome: HoldOutcome,
   // said only when the context was measured usable.
   const context = outcome === "continuing" || outcome === "continue_pending" ? await holdContextOf(store, attempt) : null;
   switch (outcome) {
+    case "fresh_context":
+      return { ...base, status: "accepted", stage: "fresh_context", status_message: "Native context was reset by owner choice. Fresh messages can run; the interrupted input and any queued continuation remain excluded. Unfinished work was not continued." };
+    case "ownership-unresolved":
+      return refusal(attempt, "ownership_unresolved", "Fresh context requires a terminal attempt with confirmed process exit and no other active execution. Nothing changed.");
     case "keep_held":
       return { ...base, status: "accepted", stage: "keep_held", status_message: "Recorded. Nothing is authorized and the input stays held." };
     case "continue_pending":
