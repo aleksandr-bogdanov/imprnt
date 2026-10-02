@@ -1142,3 +1142,43 @@ test("a never-launched master may be placed on another engine; a launched master
   expect((await s.su`select adapter, native_session, native_state from conversation where id = ${initial.id}`)[0])
     .toMatchObject({ adapter: "opencode", native_session: initial.native_session, native_state: "launched" })
 })
+
+for (const move of [{ stage: "waiting", note: null }, { stage: "active", note: "pending" }] as const) {
+  test(`fresh context refuses ${move.stage} move ancestry without changing hold or placement`, async () => {
+    const s = await stage()
+    await s.human("move-held")
+    await s.incarnate("runner-a", "one")
+    await s.claim("move-held", "runner-a")
+    const conversation = await s.master("move-held")
+    const attempt = await openExecution(s.runner, { row: { id: "move-held", agent: "p1-lair" }, conversation,
+      runner: "runner-a", incarnation: "one", digest: "old", nativeSession: conversation.native_session })
+    await markFeedIntent(s.runner, attempt, "original work")
+    await endAttempt(s.runner, { execution: attempt.id, evidence: GONE, cause: "confirmed" })
+    await s.su`insert into topic (id, person, display_name, agent_id, conversation_id, origin, door, machine, runner, preset, marker)
+      values ('topic', 'p1', 'Topic', 'p1-lair', ${conversation.id}, 'legacy', 'discord', 'pi', 'runner-a', 'daily', 'marker')`
+    await s.su`insert into topic_move (id, operation_id, topic_id, agent, person, requested_by, stage,
+      source_runner, source_machine, dest_runner, dest_machine, conversation_id, adapter, native_session, native_state,
+      source_generation, dest_generation, manifest, snapshot, note_state)
+      values ('move', 'operation', 'topic', 'p1-lair', 'p1', 'p1', ${move.stage},
+        'runner-a', 'pi', 'runner-b', 'mac', ${conversation.id}, 'claude-code', ${conversation.native_session}, 'started',
+        1, 2, '{}'::jsonb, '{}'::jsonb, ${move.note})`
+    const before = (await s.su`select * from replay_hold where execution_id = ${attempt.id}`)[0]
+    expect(await chooseHold(s.door, { attempt: attempt.id, agent: 'p1-lair', revision: 1, choice: 'fresh_context', by: 'p1', evidence: {} }))
+      .toBe('move-pending')
+    expect((await s.su`select * from replay_hold where execution_id = ${attempt.id}`)[0]).toEqual(before)
+    expect(await s.master('move-held')).toEqual(conversation)
+  })
+}
+
+test("master mismatch claim filter allows jobs and harvests behind a waiting human", async () => {
+  const s = await stage()
+  await s.human('blocked-master')
+  await s.job('separate-job', 'p1-lair')
+  await s.su`insert into inbound (id, person, agent, body, kind, log_ready) values ('harvest-independent', 'p1', 'p1-lair', 'harvest', 'harvest', true)`
+  const who = { runner: 'runner-a', agent: 'p1-lair', leaseMs: 60_000, masterBlocked: true }
+  expect(await claimNext(s.runner, who)).toMatchObject({ id: 'separate-job' })
+  await s.su`insert into ledger_event (stream, subject, kind, actor) values ('inbound', 'separate-job', 'answered', 'runner')`
+  expect(await claimNext(s.runner, who)).toMatchObject({ id: 'harvest-independent' })
+  await s.su`insert into ledger_event (stream, subject, kind, actor) values ('inbound', 'harvest-independent', 'answered', 'runner')`
+  expect(await claimNext(s.runner, who)).toBeNull()
+})

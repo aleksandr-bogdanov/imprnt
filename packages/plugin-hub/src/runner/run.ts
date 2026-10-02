@@ -1140,7 +1140,21 @@ export async function runRunner(options: {
       moves?.refresh();
     };
     /** The store placed the conversation on another machine, which is not a failure of this agent. */
-    let refusedEngine: string | null = null;
+    const [engineHealth] = await store.sql`select data from state_row where sheet = 'agent_health' and id = ${agent.id}
+      and data ->> 'cause' = 'conversation.engine-mismatch'`;
+    let refusedEngine: string | null = typeof engineHealth?.data?.configured_engine === "string" ? engineHealth.data.configured_engine : null;
+    const engineMismatch = async (configured: string, registry: Registry): Promise<void> => {
+      refusedEngine = configured;
+      const [master] = await store.sql`select adapter from conversation where agent = ${agent.id} and kind = 'master'`;
+      const bound = String(master?.adapter ?? "unknown");
+      const cause = `Master conversation is bound to ${bound}, but its preset configures ${configured}. Restore this agent's preset to ${bound}; restarting or fresh_context does not change its engine. Independent jobs and harvests can still run.`;
+      await putRow(store, "agent_health", agent.id, { status: "blocked", cause: "conversation.engine-mismatch", bound_engine: bound, configured_engine: configured, remedy: cause });
+      const said = noticeRoute(registry, agent.id);
+      if (said) await appendNotice(store, { person: agent.person, agent: agent.id, ...said,
+        body: cause, noticeKey: `engine-mismatch:${agent.id}:${bound}:${configured}` });
+      await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: "conversation.engine-mismatch", actor: "runner",
+        detail: { agent: agent.id, bound_engine: bound, configured_engine: configured, remedy: cause } });
+    };
     const elsewhere = (error: unknown): boolean => error instanceof ConversationRefused && error.refusal === "conversation elsewhere";
     /** Fenced from serving it (said once), until the store places it here again at a later generation (`./move.ts`). */
     const placedElsewhere = async (): Promise<void> => {
@@ -1429,7 +1443,7 @@ export async function runRunner(options: {
         await sayCatchUp(about.registry, credential);
       }
 
-      if (unhealthy) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
+      if (unhealthy && refusedEngine === null) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
       // A job's answer is the whole report and reaches no chat, so it is
       // never cut to a platform's size.
       const chunks = about.kind === "job" ? [end.text]
@@ -1854,8 +1868,7 @@ export async function runRunner(options: {
           const master = await conversationFor(store, { row: { id: agent.id, person: agent.person, agent: agent.id, kind: "human" }, adapter: eagerPreset.adapter, machine })
             .catch(async (error: unknown): Promise<Conversation | null> => {
               if (error instanceof ConversationRefused && error.refusal === "conversation engine mismatch") {
-                refusedEngine = eagerPreset.adapter;
-                await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: "conversation.engine-mismatch", actor: "runner", detail: { agent: agent.id, adapter: eagerPreset.adapter } });
+                await engineMismatch(eagerPreset.adapter, initial);
                 return null;
               }
               if (!elsewhere(error)) throw error;
@@ -1954,10 +1967,13 @@ export async function runRunner(options: {
         // A WITHDRAWAL WHOSE NOTIFICATION THIS RUNNER NEVER HEARD lifts nothing by itself: what the work waiter says (a commit for this
         // agent, a listener opened again) sends the watch to read the moves, which lifts the fence of a move that was withdrawn.
         if (moveFences.has(agent.id)) { if (await sleep()) moves?.refresh(); continue; }
-        // A named engine refusal parks selection until configuration changes;
-        // do not claim the same input repeatedly or create failed attempts.
-        if (refusedEngine === getPreset(registry, agent.preset).adapter) { await sleep(); continue; }
-        refusedEngine = null;
+        // Park only master work: jobs and harvests own independent contexts.
+        if (refusedEngine !== null && refusedEngine !== getPreset(registry, agent.preset).adapter) {
+          refusedEngine = null;
+          await store.sql`delete from state_row where sheet = 'agent_health' and id = ${agent.id}
+            and data ->> 'cause' = 'conversation.engine-mismatch'`;
+        }
+        const masterBlocked = refusedEngine !== null;
 
         // THE WINDOW IS READ HERE AND NOWHERE ELSE: beside the claim,
         // on a wake the runner was already having, and never on a timer of its
@@ -2056,6 +2072,7 @@ export async function runRunner(options: {
                 and (h.retry_at is null or h.retry_at <= now())
             ) as harvest_waiting from inbound where agent = ${agent.id}
               and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
+              and (not ${masterBlocked}::boolean or kind in ('job', 'harvest'))
               and (claimed_by is null or claimed_by = ${options.runner}
                    or (claim_deadline is not null and claim_deadline <= now()))
               and (retry_at is null or retry_at <= now())
@@ -2127,6 +2144,7 @@ export async function runRunner(options: {
           maxRank,
           rowId: next.id,
           resumeOk,
+          masterBlocked,
         });
         if (!row) {
           if (extra) releaseCapacity();
@@ -2240,12 +2258,8 @@ export async function runRunner(options: {
             continue;
           }
           if (error instanceof ConversationRefused && error.refusal === "conversation engine mismatch" && row.kind !== "job") {
-            refusedEngine = preset.adapter;
+            await engineMismatch(preset.adapter, registry);
             await store.sql`update inbound set claimed_by = null, claim_deadline = null where id = ${row.id} and claimed_by = ${options.runner}`;
-            if (!blockedNoted.has("engine-mismatch")) {
-              blockedNoted.add("engine-mismatch");
-              await appendRunnerEntry({ stream: "runner", subject: options.runner, kind: "conversation.engine-mismatch", actor: "runner", detail: { agent: agent.id, adapter: preset.adapter } });
-            }
             claimed = null; claimedReturn = null; claimedSeat = null; unreserve();
             await sleep();
             continue;

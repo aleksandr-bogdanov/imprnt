@@ -22,6 +22,12 @@ begin
   if h.revision <> expected_revision then return 'stale-revision'; end if;
   if h.state = 'released' then return 'closed'; end if;
   if picked = 'fresh_context' then
+    -- Move request/checkpoint/note delivery take the same agent ordering lock.
+    -- Resetting the generation here would invalidate their placement ancestry.
+    if exists (select 1 from public.topic_move m where m.conversation_id = h.conversation_id
+      and (m.stage not in ('active', 'withdrawn') or m.note_state = 'pending')) then
+      return 'move-pending';
+    end if;
     -- A terminal label alone is insufficient: require positive process/descendant
     -- exit evidence, and exclude another active/uncertain execution of the agent.
     perform 1 from public.execution e where e.id = attempt_id

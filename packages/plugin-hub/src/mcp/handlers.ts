@@ -141,6 +141,8 @@ async function replyFor(store: StoreLike, attempt: string, outcome: HoldOutcome,
   switch (outcome) {
     case "fresh_context":
       return { ...base, status: "accepted", stage: "fresh_context", status_message: "Native context was reset by owner choice. Fresh messages can run; the interrupted input and any queued continuation remain excluded. Unfinished work was not continued." };
+    case "move-pending":
+      return refusal(attempt, "move_pending", "Fresh context is unavailable while this conversation has an open move or a pending relocation note. Complete or withdraw the open move; a pending note requires a validated native resume and receipt. Nothing changed.");
     case "ownership-unresolved":
       return refusal(attempt, "ownership_unresolved", "Fresh context requires a terminal attempt with confirmed process exit and no other active execution. Nothing changed.");
     case "keep_held":

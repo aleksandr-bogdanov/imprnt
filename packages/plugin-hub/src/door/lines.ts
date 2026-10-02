@@ -669,6 +669,7 @@ export function holdChoiceLine(language: Language, values: LineValues = {}): str
   if (waiting) outcome = `${outcome}:context`;
   const en: Record<string, string> = {
     fresh_context: "recorded: native context was reset after confirmed exit. Fresh messages can run; unfinished work and any queued continuation stay excluded. Nothing was undone.",
+    "move-pending": "not applied: this conversation has an open move or a pending relocation note. Complete or withdraw the open move; a pending note requires a validated native resume and receipt before fresh context is available. Nothing changed.",
     "ownership-unresolved": "not applied: fresh context requires confirmed process exit and no other active execution. Nothing changed.",
     keep_held: "recorded: {attempt} stays held and nothing is authorized.",
     continue_pending: "recorded: {attempt} will continue once the old attempt is shown to be over. Nothing new starts until then.",
@@ -682,6 +683,7 @@ export function holdChoiceLine(language: Language, values: LineValues = {}): str
   };
   const ru: Record<string, string> = {
     fresh_context: "записано: после подтверждённого завершения процесса создан новый контекст. Новые сообщения разрешены; незавершённая работа и её продолжение не повторяются. Изменения не отменены.",
+    "move-pending": "не применено: перенос разговора не завершён или уведомление о переносе ещё не получено. Завершите или отмените открытый перенос; для получения уведомления нужно подтверждённое безопасное продолжение контекста. Ничего не изменено.",
     "ownership-unresolved": "не применено: нужны подтверждённое завершение процесса и отсутствие другой активной попытки. Ничего не изменено.",
     keep_held: "записано: {attempt} остаётся удержанной, ничего не разрешено.",
     continue_pending: "записано: {attempt} продолжится, когда будет подтверждено, что прежняя попытка закончилась. До тех пор ничего нового не запускается.",

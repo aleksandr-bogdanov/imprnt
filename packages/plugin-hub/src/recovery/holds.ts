@@ -15,7 +15,7 @@ export type HoldChoiceName = (typeof HOLD_CHOICES)[number];
  * acted on: the attempt is not shown to be over, so no continuation exists.
  */
 export type HoldOutcome =
-  | "keep_held" | "continue_pending" | "continuing" | "fresh_context" | "ownership-unresolved"
+  | "keep_held" | "continue_pending" | "continuing" | "fresh_context" | "ownership-unresolved" | "move-pending"
   | "stale-revision" | "unknown-attempt" | "closed" | "invalid-choice";
 
 /**
@@ -60,7 +60,7 @@ const CONTEXT_WHY: Record<string, string> = {
  */
 export function contextSentence(context: NativeContext): string {
   if (context.state === "unavailable") {
-    return `The conversation is waiting for native context (${context.cause}: ${CONTEXT_WHY[context.cause ?? ""] ?? "unavailable"}). No executor is started, for a new message or for a continuation, until it is available; nothing is rebuilt automatically. The owner can explicitly choose fresh_context after confirmed process exit to discard native context and allow fresh messages without continuing unfinished work.`;
+    return `The conversation is waiting for native context (${context.cause}: ${CONTEXT_WHY[context.cause ?? ""] ?? "unavailable"}). No executor is started, for a new message or for a continuation, until it is available; nothing is rebuilt automatically. The owner can explicitly choose fresh_context after confirmed process exit, when no move is open and no relocation note is pending, to discard native context and allow fresh messages without continuing unfinished work.`;
   }
   if (context.state === "pending") {
     return "Whether the native context can be resumed is pending verification. No executor is started until it has been checked.";

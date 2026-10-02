@@ -987,8 +987,15 @@ export async function runCheck(options: {
   // connection inside a command that only reads.
   findings.push(...backupFindings(await readBackupState(options.store), machine, entries));
   for (const row of await readSheet(options.store, "agent_health")) {
-    if (row.data.status !== "retry" || !listAgents(registry).some(agent => agent.id === row.id &&
+    if (!listAgents(registry).some(agent => agent.id === row.id &&
       runEntriesFor(registry, machine).some(entry => entry.id === agent.runner))) continue;
+    if (row.data.status === "blocked" && row.data.cause === "conversation.engine-mismatch") {
+      findings.push({ id: findingId(machine, "conversation-engine-mismatch", row.id), kind: "conversation-engine-mismatch", subject: row.id, machine,
+        says: `Master conversation is bound to ${row.data.bound_engine}, but the preset configures ${row.data.configured_engine}.`,
+        fix: String(row.data.remedy) });
+      continue;
+    }
+    if (row.data.status !== "retry") continue;
     findings.push({ id: findingId(machine, "agent-retry", row.id), kind: "agent-retry", subject: row.id, machine,
       fix: `imprnt hub recover <registry> agent:${row.id}`, says: findingLine("en", { code: "agent-retry", target: row.id, cause: String(row.data.cause ?? "task failed") }) });
   }

@@ -1094,7 +1094,7 @@ test("fresh-context owner choice restores an unsafe-resume engine without replay
   } finally { await runner?.stop(); await door.sql.close(); await edge.stop(); await it.stop() }
 }, 60_000)
 
-test("started master engine mismatch parks selection without launching or opening repeated attempts", async () => {
+test("started master engine mismatch reports remedy and parks only master work", async () => {
   const { it, edge, start, door } = await stage({ worker: false })
   const sql = cluster.connect(it.db)
   let runner: Awaited<ReturnType<typeof runRunner>> | undefined
@@ -1110,5 +1110,15 @@ test("started master engine mismatch parks selection without launching or openin
     expect(await rows(it, "select adapter, native_session from conversation where id = 'bound-master'"))
       .toEqual([{ adapter: "another-engine", native_session: "old-native-session" }])
     expect((await it.read.ledger()).filter(r => r.kind === "conversation.engine-mismatch")).toHaveLength(1)
+    const notices = () => it.read.noticeRows().then(rows => rows.filter(r => r.notice_key?.startsWith("engine-mismatch:")))
+    expect(await notices()).toHaveLength(1)
+    expect((await notices())[0].body).toContain("Restore this agent's preset to another-engine")
+    expect((await notices())[0].body).toContain(it.adapterName)
+    await insertJob(cluster, it.db, { id: "independent-job", target: AGENT, task: "independent work" })
+    expect(await observe(async () => (await it.read.inbound()).find(r => r.id === "independent-job")?.state === "answered", 15_000)).toBe(true)
+    expect(edge.sessions.flatMap(s => s.fed).some(m => m.id === "wrong-engine")).toBe(false)
+    expect((await rows(it, "select data from state_row where sheet = 'agent_health' and id = $1", [AGENT]))[0].data)
+      .toMatchObject({ status: "blocked", cause: "conversation.engine-mismatch", bound_engine: "another-engine", configured_engine: it.adapterName })
+    expect(await notices()).toHaveLength(1)
   } finally { await runner?.stop(); await sql.close(); await door.sql.close(); await edge.stop(); await it.stop() }
 }, 30_000)
