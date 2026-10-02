@@ -226,7 +226,8 @@ test(
         .map((a, i) => (a === "--tmpfs" ? argv[i + 1] : null))
         .filter((a): a is string => a !== null);
       // One --tmpfs per other tree, over that tree.
-      expect(tmpfsAt.filter((path) => !path.startsWith("/run/"))).toEqual([p2.tree]);
+      expect(tmpfsAt).toContain(p2.tree);
+      expect(tmpfsAt).not.toContain(p1.tree);
       // The user runtime directory and the system bus directory are masked too,
       // on a machine that has them. Naming one that is not there would fail
       // every boxed launch, because bwrap cannot make a mount point under the
@@ -323,7 +324,8 @@ test(
           .filter((a): a is string => a !== null && !a.startsWith("/run/"))
           .sort();
         expect(masks).toEqual(
-          [three.trees.person("p2").tree, three.trees.person("p3").tree].sort(),
+          [...tmpfsAt.filter(path => path !== p2.tree && !path.startsWith("/run/")),
+            three.trees.person("p2").tree, three.trees.person("p3").tree].sort(),
         );
       } finally {
         rmSync(three.dir, { recursive: true, force: true });

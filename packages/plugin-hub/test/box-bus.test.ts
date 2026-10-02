@@ -16,7 +16,7 @@
 // so a box that simply broke every command is never mistaken for the fence.
 
 import { test, expect, beforeAll } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
@@ -206,3 +206,34 @@ test.skipIf(!(gate.ok && process.platform === "linux"))(
   },
   120_000,
 );
+
+
+test("Linux masks ambient home credentials while preserving only explicit nested grants", async () => {
+  const { boxCommand } = await seam("src/box/index.ts");
+  const home = mkdtempSync(join(tmpdir(), "hub-home-mask-"));
+  try {
+    for (const name of [".ssh", ".config", ".aws"]) mkdirSync(join(home, name));
+    writeFileSync(join(home, ".netrc"), "synthetic-secret");
+    const login = join(home, ".config", "model-login"); mkdirSync(login);
+    writeFileSync(join(home,".ssh","secret"),"synthetic-private-key");
+    writeFileSync(join(login,"token"),"synthetic-own-model-key");
+    const module = new URL("../src/box/index.ts", import.meta.url).pathname;
+    const script = `import {boxCommand} from ${JSON.stringify(module)}; console.log(JSON.stringify(boxCommand(["/bin/true"],${JSON.stringify({agent:"p-test",person:"p",tree:home,otherTrees:[],writePaths:[login]})},"linux")));`;
+    const child = Bun.spawnSync([process.execPath,"-e",script], {env:{...process.env,HOME:home},stdout:"pipe",stderr:"pipe"});
+    expect(child.exitCode).toBe(0);
+    const {argv} = JSON.parse(child.stdout.toString()) as {argv:string[]};
+    const at = (path: string) => argv.findIndex((v, i) => v === "--tmpfs" && argv[i+1] === realpathSync(path));
+    expect(at(join(home, ".ssh"))).toBeGreaterThan(argv.indexOf("--bind"));
+    expect(at(join(home, ".aws"))).toBeGreaterThan(0);
+    expect(argv.some((v,i)=>v === "--ro-bind" && argv[i+1] === "/dev/null" && argv[i+2] === realpathSync(join(home,".netrc")))).toBe(true);
+    const restored = argv.findLastIndex((v,i)=>v === "--bind" && argv[i+1] === realpathSync(login));
+    expect(restored).toBeGreaterThan(at(join(home, ".config")));
+    if (gate.ok && process.platform === "linux") {
+      const command = argv.slice(0, argv.lastIndexOf("--")+1);
+      const result = Bun.spawnSync([...command,"/bin/sh","-c",'test ! -r "$1/.ssh/secret" && test ! -s "$1/.netrc" && test "$(cat "$2/token")" = synthetic-own-model-key',"probe",realpathSync(home),realpathSync(login)],{stdout:"pipe",stderr:"pipe"});
+      expect(result.exitCode).toBe(0);
+    }
+  } finally {
+    rmSync(home,{recursive:true,force:true});
+  }
+});

@@ -147,6 +147,12 @@ function hostControlMasks(): string[] {
   ];
 }
 
+/** Host-account credentials are not household-agent credentials. Never inherit them through / . */
+function hostCredentialMasks(): string[] {
+  return [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".config", ".password-store", ".azure", ".gcloud",
+    ".netrc", ".git-credentials", ".npmrc", ".pypirc"].map(name => join(homedir(), name));
+}
+
 /**
  * Every path in this household that holds a secret an agent must not
  * read: the directory the store roles' passwords are in, every door's token
@@ -441,6 +447,16 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         // spellings of the socket are one path once the symlink is resolved.
         ...[...new Set(hostControlMasks().filter(existsSync).map(canonical))]
           .flatMap(path => ["--ro-bind", "/dev/null", path]),
+        // Hide the host account's ambient credentials even when an agent can read the host.
+        ...[...new Set(hostCredentialMasks().filter(existsSync).map(canonical))]
+          .flatMap(path => statSync(path).isDirectory() ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path]),
+        // A declared model login or repository beneath a masked directory remains explicitly
+        // granted, without exposing its sibling credentials. Never restore the whole mask root.
+        ...[...new Set([...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])])]
+          .filter(path => existsSync(path) && hostCredentialMasks().filter(existsSync).map(canonical)
+            .some(mask => statSync(mask).isDirectory() && path.startsWith(`${mask}/`)))
+          .flatMap(path => [(ctx.writePaths ?? []).includes(path) &&
+            !(readsOnly(ctx) && (path === ctx.tree || path.startsWith(`${ctx.tree}/`))) ? "--bind" : "--ro-bind", path, path]),
         // Masks come after everything above, so nothing bound later uncovers one.
         ...secretMasks(ctx).flatMap(({ path, directory }) =>
           directory ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path]),
