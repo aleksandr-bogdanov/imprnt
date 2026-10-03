@@ -41,19 +41,24 @@ const files = (upTo: number) => MIGRATION_FILES.filter(([version]) => version <=
 const whole = (through: number) => Array.from({ length: through }, (_, i) => i + 1)
 
 // ---------------------------------------------------------------------------
-// I1-I2. The tool catalog: one facade, two families, one handler table.
+// I1-I2. The tool catalog: one facade, three families, one handler table.
 // ---------------------------------------------------------------------------
 
-test("I1 every action the catalog offers has a handler and nothing else is offered, for both families, and an action nobody built is refused by name", async () => {
+test("I1 every action the catalog offers has a handler and nothing else is offered, for all three families, and an action nobody built is refused by name", async () => {
   const s = await councilStage(cluster, track, { general: true })
   try {
-    expect(TOOLS.map(tool => tool.name)).toEqual(["hub_topic", "hub_council"])
+    expect(TOOLS.map(tool => tool.name)).toEqual(["hub_topic", "hub_council", "hub_outbound"])
     for (const tool of TOOLS) {
       for (const action of tool.inputSchema.properties.action.enum as readonly string[]) {
         // With no other argument a call is refused for what it lacks, or answered: never for having no handler.
         const said = await code(callTool(s.binding(), tool.name, { action }))
         expect(["unsupported_action", "unknown_tool"], `${tool.name} ${action}`).not.toContain(said)
       }
+    }
+    expect(await callTool(s.binding(), "hub_outbound", { action: "inspect" }))
+      .toMatchObject({ status: "complete", stage: "disabled", accounts: [], findings: [] })
+    for (const action of ["approve", "send"]) {
+      expect(await code(callTool(s.binding(), "hub_outbound", { action }))).toBe("invalid_arguments")
     }
     // The actions neither slice built are not listed, and asking anyway is refused before anything is looked at.
     for (const [tool, action] of [["hub_topic", "stop"], ["hub_topic", "erase"], ["hub_council", "move"], ["hub_council", "delete"]] as const) {
@@ -109,15 +114,18 @@ const quoted = (names: readonly string[]) => names.map(name => `'${name}'`).join
 const named = (column: string) => `${column} like 'hub_council%' or ${column} like 'hub_topic%' or ${column} like 'hub_identity%' or ${column} in (${quoted(SHARED)})`
 const ROLES = quoted(["hub_door", "hub_runner", "hub_hub", "hub_agent"])
 
-async function shape(q: any) {
-  const tables = quoted([...COUNCIL_TABLES, ...TOPIC_TABLES])
+async function shape(q: any, latest = false) {
+  // The staged 014/015/016 assertions retain their original slice. The final
+  // upgrade comparison also covers return movement 020 and outbound 021.
+  const tables = quoted([...COUNCIL_TABLES, ...TOPIC_TABLES, ...(latest ? ["topic_move", "move_blob", "move_copy", "outbound_delivery", "outbound_read"] : [])])
+  const routines = (column: string) => latest ? `${named(column)} or ${column} like 'hub_move%' or ${column} like 'hub_guard_move%' or ${column} in ('hub_notify_move', 'hub_guard_topic_move')` : named(column)
   const one = async (query: string) => Array.from(await q.unsafe(query)).map((row: any) => ({ ...row }))
   return {
     functions: await one(`select p.proname, pg_get_function_identity_arguments(p.oid) as args, r.rolname as owner, p.prosecdef, p.prosrc
       from pg_proc p join pg_roles r on r.oid = p.proowner join pg_namespace n on n.oid = p.pronamespace
-      where n.nspname = 'public' and (${named("p.proname")}) order by p.proname, args`),
+      where n.nspname = 'public' and (${routines("p.proname")}) order by p.proname, args`),
     routineGrants: await one(`select routine_name, grantee, privilege_type from information_schema.routine_privileges
-      where routine_schema = 'public' and (${named("routine_name")}) and grantee in (${ROLES}) order by routine_name, grantee, privilege_type`),
+      where routine_schema = 'public' and (${routines("routine_name")}) and grantee in (${ROLES}) order by routine_name, grantee, privilege_type`),
     tableGrants: await one(`select table_name, grantee, privilege_type from information_schema.role_table_grants
       where table_name in (${tables}) and grantee in (${ROLES}) order by table_name, grantee, privilege_type`),
     triggers: await one(`select c.relname as tbl, t.tgname, pg_get_triggerdef(t.oid) as def from pg_trigger t join pg_class c on c.oid = t.tgrelid
@@ -180,12 +188,12 @@ test("I3 the list is whole and ordered, and a store upgraded 013 to 014 to 015 t
   await migrate(opened())
   await migrate(opened())
   expect(await versionsOf(stepped.sql)).toEqual(whole(MIGRATION_FILES.length))
-  const upgraded = await shape(stepped.sql)
+  const upgraded = await shape(stepped.sql, true)
 
   const fresh = await rolloutDatabase(cluster)
   track(fresh.sql)
   expect(await versionsOf(fresh.sql)).toEqual(whole(MIGRATION_FILES.length))
-  const born: Shape = await shape(fresh.sql)
+  const born: Shape = await shape(fresh.sql, true)
   for (const part of Object.keys(born) as (keyof Shape)[]) expect(upgraded[part], `${part}: upgraded and fresh`).toEqual(born[part])
 
   // 016 is additive except the two objects a protocol change has to touch: the claim guard is the one routine of either feature (or

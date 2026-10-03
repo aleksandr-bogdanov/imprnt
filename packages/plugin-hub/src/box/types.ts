@@ -15,6 +15,8 @@ export interface BoxContext {
   sessionDir?: string;
   purpose?: string;
   readPaths?: string[];
+  /** Codex startup synchronizes macOS managed preferences through two read-only OS shared-memory objects. */
+  macosCodexPreferences?: boolean;
   stateRoot?: string;
   otherStateRoots?: string[];
   otherTrees: string[];    // every other declared person's tree

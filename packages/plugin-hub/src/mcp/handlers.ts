@@ -1,3 +1,5 @@
+import { HUB_OUTBOUND } from "./outbound-contract.ts";
+import { outboundTool } from "./outbound.ts";
 import { chooseHold, contextOf, contextSentence, effectsLine, holdContextOf, type HoldOutcome } from "../recovery/holds.ts";
 import type { Registry } from "../registry/load.ts";
 import type { StoreLike } from "../store/connect.ts";
@@ -34,6 +36,7 @@ type Handler = (binding: McpBinding, request: never) => Promise<ToolReply>;
  * and the runner's binding, and nothing a model said names whose call it is.
  */
 const HANDLERS: Record<string, Record<string, Handler>> = {
+  [HUB_OUTBOUND]: { draft: outboundTool, inspect: outboundTool },
   [HUB_TOPIC]: {
     inspect: (binding, request: InspectRequest) => request.topic_id === undefined ? inspect(binding) : inspectTopic(binding, request),
     resume: (binding, request: ResumeRequest) => resume(binding, request),

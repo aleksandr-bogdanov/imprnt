@@ -441,7 +441,7 @@ export async function runSentryWatch(entry: RunEntry, registry: Registry, option
       notice: {
         person: String(entry.person),
         agent: String(entry.agent),
-        // Marked as a watcher's, so both model tails leave the line out.
+        // Kept out of ordinary tails; confirmed delivered notices may be quoted as Sentry reference data.
         route: { ...where.route, origin: "watcher" },
         platform: where.platform,
         language: where.language,

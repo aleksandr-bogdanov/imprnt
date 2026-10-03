@@ -48,11 +48,12 @@ async function scratch(body: string): Promise<string> {
 
 const SHIPPED = "src/registry/registry.example.toml";
 
-// The cutover field and the backup retention are optional in the shipped bootstrap example: the second is the owner's choice, so the
-// shipped file carries no value for it (only a comment), and a fixture that needs one supplies it here.
+// Optional activation/retention fields are deliberately absent from the bootstrap example.
+// Supply explicit synthetic values here to test every declared setting without enabling real accounts.
 async function supportedExample(): Promise<string> {
   return (await Bun.file(hubPath(SHIPPED)).text())
-    .replace("[hub]", '[hub]\ncutover_batch = "fixture-batch"\nbackup_retention_days = 90');
+    .replace("[hub]", '[hub]\ncutover_batch = "fixture-batch"\nbackup_retention_days = 90')
+    + '\n[outbound]\naccounts_file = "/synthetic-private/outbound/accounts.json"\n';
 }
 
 interface OutOfProcess {
@@ -110,7 +111,7 @@ test("[partial] RUN-06 every setting the code reads has a field in the file: the
   expect(typeof loadRegistry).toBe("function");
   expect(typeof readSetting).toBe("function");
 
-  const fields = SETTING_FIELDS as { key: string; type: string }[];
+  const fields = SETTING_FIELDS as { key: string; type: string; required?: boolean }[];
   expect(Array.isArray(fields)).toBe(true);
   expect(fields.length).toBeGreaterThan(0);
 
@@ -130,7 +131,9 @@ test("[partial] RUN-06 every setting the code reads has a field in the file: the
   // one-field catalogue satisfies the check while the file drifts away from it,
   // which is the hole a reader named.
   const shipped = await supportedExample();
-  const leaf = fields[0].key.split(".").pop()!;
+  const required = fields.find(field => field.required !== false)!;
+  expect(required).toBeDefined();
+  const leaf = required.key.split(".").pop()!;
   const lines = shipped.split("\n");
   const drop = lines.findIndex((l) => new RegExp(`^\\s*${leaf}\\s*=`).test(l));
   expect(drop).toBeGreaterThanOrEqual(0);
@@ -230,4 +233,18 @@ test("RUN-07 no behaviour switch on the command line or in an environment variab
   expect(poisoned.argv).toEqual(poisonedArgv);
   // The file's value, not the environment's and not the command line's.
   expect(poisoned.value).toBe(fromFile);
+});
+
+
+test("RUN-06 outbound activation is optional, explicit, typed, and has no ambient default", async () => {
+  const { loadRegistry, readSetting, RegistryRefused } = await seam("src/registry/load.ts");
+  const shipped = await Bun.file(hubPath(SHIPPED)).text();
+  const file = await scratch(shipped);
+  try {
+    expect((readSetting as Function)((loadRegistry as Function)(file), "outbound.accounts_file")).toBeUndefined();
+    await Bun.write(file, shipped + '\n[outbound]\naccounts_file = "/synthetic-private/accounts.json"\n');
+    expect((readSetting as Function)((loadRegistry as Function)(file), "outbound.accounts_file")).toBe("/synthetic-private/accounts.json");
+    await Bun.write(file, shipped + '\n[outbound]\naccounts_file = 42\n');
+    expect(() => (loadRegistry as Function)(file)).toThrow(RegistryRefused as typeof Error);
+  } finally { await rm(dirname(file), { recursive: true, force: true }); }
 });

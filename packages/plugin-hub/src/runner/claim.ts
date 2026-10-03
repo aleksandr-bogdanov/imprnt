@@ -25,7 +25,9 @@ export async function claimNext(
      */
     resumeOk?: boolean;
     /** Exclude only master rows when its bound engine differs from the preset. */
-    masterBlocked?: boolean },
+    masterBlocked?: boolean;
+    ordinaryBlocked?: boolean;
+    harvestBlocked?: boolean },
 ): Promise<EligibleRow | null> {
   // The pause is a WHERE clause on the statement the runner already
   // runs, not a second query: at the household's own pause threshold proactive
@@ -50,6 +52,8 @@ export async function claimNext(
          select id from inbound
           where agent = ${who.agent}
             and (not ${who.masterBlocked ?? false}::boolean or kind in ('job', 'harvest'))
+            and (not ${who.ordinaryBlocked ?? false}::boolean or kind = 'harvest')
+            and (not ${who.harvestBlocked ?? false}::boolean or kind <> 'harvest')
             and log_ready
             and rank <= ${maxRank}
             and state not in ('answered', 'delivered')

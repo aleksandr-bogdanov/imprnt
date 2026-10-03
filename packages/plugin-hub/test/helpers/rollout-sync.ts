@@ -1,5 +1,5 @@
 // Fixture composition and observation only. Git always uses local remotes.
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { stageHub } from "./hub-fixture.ts"
 import { fixtureGit, localRepository } from "./rollout-git.ts"
@@ -41,7 +41,7 @@ export async function syncFixture(cluster: Cluster, options: { chat?: boolean; b
     let base = readFileSync(f.registryFile, "utf8").replace(`id = "${id}"\n`, `id = "${id}"\nrepositories = ["p1-vault", "p2-vault", "shared"]\n`)
     base += repos.slice(0, 2).map(r => `\n[[people]]\nid = "${r.person}"\ntree = ${JSON.stringify(r.path)}\n`).join("")
     const registry = () => {
-      writeFileSync(f.registryFile, base + repos.map(r => `\n[[repositories]]\nid = "${r.id}"\nperson = "${r.person}"\npath = ${JSON.stringify(r.path)}\nremote = "${r.remoteName}"\nbranch = "${r.branch}"\nrequired = ${r.required}\n${(r as { sshCommand?: string }).sshCommand === undefined ? "" : `ssh_command = ${JSON.stringify((r as { sshCommand?: string }).sshCommand)}\n`}`).join(""))
+      writeFileSync(f.registryFile, base + repos.map(r => `\n[[repositories]]\nid = "${r.id}"\nperson = "${r.person}"\npath = ${JSON.stringify(r.path)}\nsync_local_remotes = ${JSON.stringify([realpathSync(r.remote)])}\nremote = "${r.remoteName}"\nbranch = "${r.branch}"\nrequired = ${r.required}\n${(r as { sshCommand?: string }).sshCommand === undefined ? "" : `ssh_command = ${JSON.stringify((r as { sshCommand?: string }).sshCommand)}\n`}`).join(""))
       return loadRegistry(f.registryFile)
     }
     registry()
@@ -69,14 +69,15 @@ export interface GitEvent { pid: number; cwd: string; args: string[]; phase: str
 export function observeGit(root: string) {
   const bin = join(root, `git-bin-${crypto.randomUUID()}`)
   mkdirSync(bin)
-  const log = join(bin, "events.jsonl")
   const config = join(bin, "control.json")
-  const real = Bun.which("git")!
+  const found = Bun.which("git")!
+  const real = process.platform === "darwin" && found === "/usr/bin/git"
+    ? Bun.spawnSync(["/usr/bin/xcrun", "--find", "git"]).stdout.toString().trim() : found
   if (!real) throw new Error("system Git is required")
-  writeFileSync(log, "")
+  const eventName = `hub-sync-test-${crypto.randomUUID()}.jsonl`;
   writeFileSync(config, "{}")
   writeFileSync(join(bin, "git"), `#!${process.execPath}
-import {appendFileSync,readFileSync,realpathSync,unlinkSync,writeFileSync} from 'node:fs';
+import {appendFileSync,readFileSync,realpathSync,unlinkSync,statSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 const args=process.argv.slice(2), pid=process.pid;
 let cwd=process.cwd();
@@ -84,7 +85,9 @@ for(let n=0;n<args.length;n++) if(args[n]==='-C') cwd=resolve(cwd,args[++n]);
 cwd=realpathSync(cwd);
 const control=JSON.parse(readFileSync(${JSON.stringify(config)},'utf8'));
 const verb=args.find(a=>['status','add','diff','commit','fetch','rebase','push'].includes(a));
-const say=(phase,code)=>appendFileSync(${JSON.stringify(log)},JSON.stringify({pid,cwd,args,phase,code,at:Date.now()})+'\\n');
+const dotgit=join(cwd,'.git');
+const gitdir=statSync(dotgit).isDirectory()?dotgit:resolve(cwd,readFileSync(dotgit,'utf8').trim().replace(/^gitdir: /,''));
+const say=(phase,code)=>appendFileSync(join(gitdir,${JSON.stringify(eventName)}),JSON.stringify({pid,cwd,args,phase,code,at:Date.now()})+'\\n');
 const put=(stream,text)=>new Promise(done=>stream.write(text,done));
 const here=!control.path || cwd===control.path;
 say('start');
@@ -122,8 +125,12 @@ say('end',code); process.exit(code);
     // `signal`. `after` acts once that verb has really succeeded, in the repository at `path`.
     control(value: { fail?: string; path?: string; noPush?: boolean; delay?: number; exit?: number; stderr?: string; stdout?: string;
       signal?: string; after?: { verb: string; arg?: string; remove?: string; commit?: boolean; remoteUrl?: string; config?: [string, string]; git?: string[]; write?: [string, string] } }) { writeFileSync(config, JSON.stringify(value)) },
-    events(): GitEvent[] { return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) },
-    clear() { writeFileSync(log, "") },
+    events(): GitEvent[] {
+      // The observer is inside the real sandbox too: write telemetry only in this repository's writable Git metadata.
+      const files = [...new Bun.Glob(`**/${eventName}`).scanSync({ cwd: root, dot: true, absolute: true })];
+      return files.flatMap(file => readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line))).sort((a,b) => a.at-b.at);
+    },
+    clear() { for (const file of new Bun.Glob(`**/${eventName}`).scanSync({ cwd: root, dot: true, absolute: true })) writeFileSync(file, ""); },
   }
 }
 
@@ -163,7 +170,6 @@ export function scheduleProbe(f: SyncFixture, flavour: "systemd" | "launchd") {
   mkdirSync(dir)
   const log = join(dir, "manager.jsonl")
   const bin = join(dir, "manager")
-  writeFileSync(log, "")
   writeFileSync(bin, `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';\nappendFileSync(${JSON.stringify(log)},JSON.stringify(process.argv.slice(2))+'\\n');\n`, { mode: 0o755 })
   const os = flavour === "systemd" ? systemd({ unitDir: dir, bin }) : launchd({ unitDir: dir, bin })
   return {

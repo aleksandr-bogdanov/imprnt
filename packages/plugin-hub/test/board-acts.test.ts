@@ -249,11 +249,11 @@ test(
 
       const rows = await controlRows(it);
       expect(rows).toHaveLength(1);
-      expect(rows[0].data.actor).toBe("board");
+      expect(rows[0].data.actor).toBe("board:test-owner");
       expect(rows[0].data.source).toBe("board");
       expect(rows[0].data.target_kind).toBe("run");
       expect(rows[0].data.target_id).toBe(RUNNER_ENTRY.id);
-      // Honest about what is known: nobody is identified, so no row claims one.
+      // The actor names the authenticated account; no unrelated chat identity is invented.
       expect(rows[0].data.operator).toBeUndefined();
       expect(rows[0].data.chat).toBeUndefined();
 

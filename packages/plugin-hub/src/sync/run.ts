@@ -1,3 +1,4 @@
+import { inSyncIsolation, isolatedGit, grantSyncRemotes, SyncIsolationUnavailable } from "./isolation.ts";
 import { tmpdir } from "node:os";
 import { HUB_MCP_TEMP_PREFIX, LOOP_PROBE_TEMP_PREFIX, MAC_WRITABLE_SCRATCH } from "../box/scratch.ts";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
@@ -17,10 +18,9 @@ import { storeUrlFor } from "../store/secrets.ts";
 /**
  * One git call in a synced repository, with the repository's hooks turned off.
  *
- * The sync runs outside every box, as the household's account, in trees an
- * agent can write, and a hook is a program git runs on the repository's
- * behalf. A hook an agent planted in `.git/hooks` would otherwise run here,
- * unboxed, on the next fetch, rebase or push.
+ * Every Git process and descendant runs inside a sync-specific OS boundary.
+ * Hooks remain disabled and executable repository configuration is refused
+ * early; the sandbox contains configuration planted concurrently afterward.
  *
  * A failure throws a `GitFailure` that carries the step's label, its exit
  * status or signal and a reason from a closed list. What git printed is never
@@ -29,8 +29,8 @@ import { storeUrlFor } from "../store/secrets.ts";
  */
 async function git(path: string, args: string[], code: string, stage: Stage,
   options: { input?: string; raw?: boolean; config?: string[]; discard?: boolean } = {}): Promise<string> {
-  // Recheck before each command that can invoke repository-configured programs.
-  // This narrows the writable-config race; it is not an OS isolation boundary.
+  // Preflight remains an early refusal, not the race boundary. Every command and
+  // descendant is confined by launch(), even if configuration changes after this check.
   if (["unmerged", "status", "add", "diff", "commit", "fetch", "rebase", "push"].includes(stage) &&
       await plantsProgram(path, "config") !== null) throw new ConfigRefusal();
   let child: ReturnType<typeof launch>;
@@ -53,11 +53,12 @@ function launch(path: string, args: string[], options: { input?: string; config?
   // the command line, which outranks anything the repository's config says.
   // `config` is what the registry says for this repository, on the same
   // command line and for the same reason: the owner's hand, not the file's.
-  return Bun.spawn(["git", "-C", path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+  const boxed = isolatedGit(["-C", path, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
     "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "-c", "push.gpgSign=false", "-c", "submodule.recurse=false", "-c", "diff.ignoreSubmodules=all",
     "-c", "protocol.ext.allow=never", "-c", "protocol.fd.allow=never",
-    ...(options.config ?? []).flatMap(one => ["-c", one]), ...args],
-    { env: process.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), stdout: "pipe", stderr: "pipe" });
+    ...(options.config ?? []).flatMap(one => ["-c", one]), ...args]);
+  return Bun.spawn(boxed.argv,
+    { cwd: path, env: boxed.env, stdin: options.input === undefined ? "ignore" : new Blob([options.input]), stdout: "pipe", stderr: "pipe" });
 }
 
 /** The git steps a sync runs, by fixed label. A label is never built from a path or an argument. */
@@ -293,10 +294,10 @@ function localRemote(path: string, url: string): string | null {
 }
 
 /**
- * Local receive-pack runs the destination's hooks outside the agent box. A
- * destination any person can write is therefore forbidden, even via a symlink
- * or a separate pushurl. Account-owned bare repositories outside those roots
- * remain valid. get-url expands the account's trusted insteadOf rewrites.
+ * Local destinations any person can write are forbidden, even via a symlink
+ * or separate pushurl. Passing this structural check does NOT authorize a
+ * sandbox grant: grantSyncRemotes separately requires an exact owner-declared
+ * canonical capability. get-url expands explicitly granted trusted rewrites.
  */
 async function safeRemotes(path: string, remote: string, registry: Registry, code: string): Promise<{ fetch: string; push: string[] }> {
   // SSH-only sync must not touch unrelated local or automounted declarations.
@@ -496,61 +497,65 @@ export async function runSync(entry: RunEntry, registry: Registry, options: { no
         code = "person";
         const person = listPeople(registry).find(one => one.id === repo.person);
         if (!person?.tree || !inside(realpathSync(person.tree), path)) throw new Error(code);
-        code = "path";
-        if (realpathSync(await git(path, ["rev-parse", "--show-toplevel"], code, "toplevel")) !== path) throw new Error(code);
-        const identity = realpathSync(await git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], code, "common-dir"));
-        code = "locked";
-        const key = syncLockKey(declared.machine, identity);
-        if (!held.includes(key)) {
-          const [row] = await connection`select pg_try_advisory_lock(hashtextextended(${key}, 0)) as held`;
-          if (!row.held) throw new Error(code);
-          held.push(key);
-        }
-        code = "config";
-        if (await plantsProgram(path, code) !== null) throw new Error(code);
-        code = "branch";
-        const branchRef = `refs/heads/${repo.branch}`;
-        const trackingRef = `refs/remotes/${repo.remote}/${repo.branch}`;
-        await git(path, ["check-ref-format", branchRef], code, "branch");
-        await git(path, ["check-ref-format", trackingRef], code, "branch");
-        if (await git(path, ["for-each-ref", "--format=%(symref)", trackingRef], code, "branch")) throw new Error(code);
-        const gitDir = await git(path, ["rev-parse", "--absolute-git-dir"], code, "git-dir");
-        let head = await checkoutGuard(path, gitDir, branchRef);
-        const guard = async () => { await checkoutGuard(path, gitDir, branchRef, head); };
-        code = "remote";
-        if (!(await remoteStep("remote-list", () => git(path, ["remote"], code, "remote"))).split("\n").includes(repo.remote)) throw new Error(code);
-        const remote = await safeRemotes(path, repo.remote, registry, code);
-        code = "commit";
-        const nested = nestedIn(path, registry).map(one => `:(exclude,literal)${one}`);
-        committed = await commitPending(path, nested, code, guard);
-        if (committed) {
-          const created = await checkoutGuard(path, gitDir, branchRef);
-          // Our normal commit has exactly the head we checked as its parent.
-          const parent = await git(path, ["rev-list", "--parents", "-n", "1", created], "changed", "tracking-ref");
-          if (parent !== `${created} ${head}`) throw new SyncGuardRefusal("changed");
-          head = created;
-        }
-        code = "fetch";
-        const dial = repo.ssh_command === undefined ? [] : [`core.sshCommand=${repo.ssh_command}`];
-        await guard();
-        await git(path, ["fetch", "--no-recurse-submodules", "--", remote.fetch, `+${branchRef}:${trackingRef}`], code, "fetch", { config: dial, discard: true });
-        const fetched = await git(path, ["rev-parse", "--verify", `${trackingRef}^{commit}`], code, "tracking-ref");
-        code = "conflict";
-        await guard();
-        // FETCH_HEAD is shared mutable state. Rebase only the captured commit.
-        await git(path, ["-c", "rebase.autoStash=false", "rebase", fetched], code, "rebase", { discard: true });
-        head = await checkoutGuard(path, gitDir, branchRef);
-        code = "push";
-        for (const destination of remote.push) {
+        await inSyncIsolation(registry, repo, async () => {
+          code = "path";
+          if (realpathSync(await git(path, ["rev-parse", "--show-toplevel"], code, "toplevel")) !== path) throw new Error(code);
+          const identity = realpathSync(await git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], code, "common-dir"));
+          code = "locked";
+          const key = syncLockKey(declared.machine, identity);
+          if (!held.includes(key)) {
+            const [row] = await connection!`select pg_try_advisory_lock(hashtextextended(${key}, 0)) as held`;
+            if (!row.held) throw new Error(code);
+            held.push(key);
+          }
+          code = "config";
+          if (await plantsProgram(path, code) !== null) throw new Error(code);
+          code = "branch";
+          const branchRef = `refs/heads/${repo.branch}`;
+          const trackingRef = `refs/remotes/${repo.remote}/${repo.branch}`;
+          await git(path, ["check-ref-format", branchRef], code, "branch");
+          await git(path, ["check-ref-format", trackingRef], code, "branch");
+          if (await git(path, ["for-each-ref", "--format=%(symref)", trackingRef], code, "branch")) throw new Error(code);
+          const gitDir = await git(path, ["rev-parse", "--absolute-git-dir"], code, "git-dir");
+          let head = await checkoutGuard(path, gitDir, branchRef);
+          const guard = async () => { await checkoutGuard(path, gitDir, branchRef, head); };
+          code = "remote";
+          if (!(await remoteStep("remote-list", () => git(path, ["remote"], code, "remote"))).split("\n").includes(repo.remote)) throw new Error(code);
+          const remote = await safeRemotes(path, repo.remote, registry, code);
+          grantSyncRemotes(remote.fetch, remote.push);
+          code = "commit";
+          const nested = nestedIn(path, registry).map(one => `:(exclude,literal)${one}`);
+          committed = await commitPending(path, nested, code, guard);
+          if (committed) {
+            const created = await checkoutGuard(path, gitDir, branchRef);
+            // Our normal commit has exactly the head we checked as its parent.
+            const parent = await git(path, ["rev-list", "--parents", "-n", "1", created], "changed", "tracking-ref");
+            if (parent !== `${created} ${head}`) throw new SyncGuardRefusal("changed");
+            head = created;
+          }
+          code = "fetch";
+          const dial = repo.ssh_command === undefined ? [] : [`core.sshCommand=${repo.ssh_command}`];
           await guard();
-          await git(path, ["push", "--no-recurse-submodules", ...(isAbsolute(destination) ? ["--receive-pack=git -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack"] : []), "--", destination, `${head}:${branchRef}`], code, "push", { config: dial, discard: true });
-        }
-        await guard();
-        await git(path, ["update-ref", "--no-deref", trackingRef, head, fetched], code, "tracking-ref");
-        await guard();
+          await git(path, ["fetch", "--no-recurse-submodules", "--", remote.fetch, `+${branchRef}:${trackingRef}`], code, "fetch", { config: dial, discard: true });
+          const fetched = await git(path, ["rev-parse", "--verify", `${trackingRef}^{commit}`], code, "tracking-ref");
+          code = "conflict";
+          await guard();
+          // FETCH_HEAD is shared mutable state. Rebase only the captured commit.
+          await git(path, ["-c", "rebase.autoStash=false", "rebase", fetched], code, "rebase", { discard: true });
+          head = await checkoutGuard(path, gitDir, branchRef);
+          code = "push";
+          for (const destination of remote.push) {
+            await guard();
+            await git(path, ["push", "--no-recurse-submodules", ...(isAbsolute(destination) ? ["--receive-pack=git -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack"] : []), "--", destination, `${head}:${branchRef}`], code, "push", { config: dial, discard: true });
+          }
+          await guard();
+          await git(path, ["update-ref", "--no-deref", trackingRef, head, fetched], code, "tracking-ref");
+          await guard();
+        });
         results.push({ id: repo.id, required: repo.required, status: "success", ...(committed ? { committed } : {}) });
       } catch (error) {
         if (error instanceof ConfigRefusal) code = "config";
+        if (error instanceof SyncIsolationUnavailable) code = "isolation";
         if (error instanceof SyncGuardRefusal) code = error.code;
         const cause = syncCause("en", code);
         const diagnostic = diagnosisOf(error, code);

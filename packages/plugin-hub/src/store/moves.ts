@@ -732,3 +732,10 @@ export async function noteDelivered(store: StoreLike, ack: { execution: string; 
   const [row] = await store.sql`select hub_move_note_delivered(${ack.execution}, ${JSON.stringify(ack.notes)}::text::jsonb) as answer`;
   return row.answer as NoteDeliveredAnswer;
 }
+
+/** Only an immutable, sealed, older source copy can be archived for a return. No disk fact is inferred here. */
+export async function returnableCopy(store: StoreLike, copy: MoveCopyRow, runner: string): Promise<boolean> {
+  const [row] = await store.sql`select hub_move_copy_returnable(${copy.move_id}, ${copy.generation}::integer,
+    ${copy.conversation_id}, ${copy.machine}, ${runner}) as ok`;
+  return row.ok === true;
+}

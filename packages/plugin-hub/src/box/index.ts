@@ -1,7 +1,7 @@
 import { MAC_WRITABLE_SCRATCH } from "./scratch.ts";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { backupStagingFor, listAgents, listCredentials, listPeople, listRepositories, listRunEntries, personOf } from "../registry/entries.ts";
 import { readSetting } from "../registry/load.ts";
 import { localRemotePath } from "../registry/remote.ts";
@@ -60,7 +60,11 @@ const MAC_SYSTEM = [
  * worked" to every probe that matters.
  */
 function macTools(): string[] {
-  return [brewPrefix(), join(homedir(), ".local"), join(homedir(), ".bun")];
+  // The prefix also contains mutable service data (notably Postgres under
+  // var). Only the installed toolchain belongs in an agent's read grants.
+  // Homebrew Node/OpenSSL reads this public configuration before startup.
+  return [...["bin", "opt", "Cellar", "lib", "libexec", "share", "etc/openssl@3", "etc/ca-certificates"].map(path => join(brewPrefix(), path)),
+    join(homedir(), ".local"), join(homedir(), ".bun")];
 }
 
 /**
@@ -163,6 +167,7 @@ function hostCredentialMasks(): string[] {
  * any agent steered by outside content it read.
  */
 function secretPathsOf(registry: unknown): string[] {
+  const outbound = readSetting(registry, "outbound.accounts_file");
   // Every door's token, including a door no agent is served by yet: it is a
   // bot all the same, and a token is masked whether or not it is in use.
   //
@@ -172,6 +177,7 @@ function secretPathsOf(registry: unknown): string[] {
   // logs and inbox plus a dump of every message at once. Under the read-only
   // host on Linux it would otherwise be one read away from every agent.
   return [...new Set([
+    ...(typeof outbound === "string" && isAbsolute(outbound) ? [dirname(outbound)] : []),
     secretsDirOf(registry) ?? "",
     backupStagingFor(registry) ?? "",
     ...listRunEntries(registry).map((one) => typeof one.token_file === "string" ? one.token_file : ""),
@@ -291,6 +297,16 @@ function profileText(ctx: BoxContext): string {
     // path a person's own files are under.
     "(allow file-read-metadata)",
   ];
+  // Codex 0.160.0 calls CoreFoundation preference synchronization before its
+  // initialize response. Both exact objects are required on the measured Mac;
+  // either alone fails. No preference-domain or filesystem access is granted,
+  // and shared-memory writes, notification-center access and host controls stay
+  // under the existing policy. Other adapters receive neither read grant.
+  if (ctx.macosCodexPreferences) {
+    const uid = process.getuid?.();
+    if (!Number.isSafeInteger(uid) || uid! < 0) throw new Error("codex-preference-uid-unavailable");
+    lines.push(`(allow ipc-posix-shm-read-data (ipc-posix-name "apple.cfprefs.${uid}v1" "apple.cfprefs.daemonv1"))`);
+  }
   // State stays readable, but only the isolated session is writable.
   if (ctx.stateRoot) lines.push(`(allow file-read* (subpath ${JSON.stringify(ctx.stateRoot)}))`);
   for (const path of ctx.readPaths ?? []) lines.push(`(allow file-read* (subpath ${JSON.stringify(path)}))`);
@@ -332,12 +348,18 @@ function profileText(ctx: BoxContext): string {
   for (const { path } of secretMasks(ctx)) {
     lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(path)}))`);
   }
+  // Intel Homebrew lives below the system /usr grant. Deny its service data
+  // explicitly on both architectures, including a canonical symlink target.
+  const brewData = join(brewPrefix(), "var");
+  for (const path of new Set([brewData, ...(existsSync(brewData) ? [realpathSync(brewData)] : [])])) {
+    lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(path)}))`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
 function profilePath(ctx: BoxContext): string {
   const mark = new Bun.CryptoHasher("sha256")
-    .update([ctx.agent, ctx.tree, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])].join("|"))
+    .update([ctx.agent, ctx.tree, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ctx.macosCodexPreferences ? "codex-preferences" : "", ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])].join("|"))
     .digest("hex")
     .slice(0, 12);
   return join(tmpdir(), `imprnt-hub-box-${ctx.agent}-${mark}.sb`);

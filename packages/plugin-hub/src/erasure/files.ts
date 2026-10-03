@@ -14,7 +14,8 @@ import { receiptsOf, recordReceipt, type DeletionRow, type ReceiptRow } from "..
  * guessed at. No text scan can prove a model never copied something elsewhere, and none is pretended.
  *
  *   chatlog          `<state>/<person>/chatlog/<agent>/`
- *   engine_state     `<state>/<person>/sessions/<agent>` (the master, whole) and `<state>/<person>/sessions/<agent>/<conversation>` (a worker)
+ *   engine_state     `<state>/<person>/sessions/<agent>` (the master, whole, including return-movement retained archives)
+ *                    and `<state>/<person>/sessions/<agent>/<conversation>` (a worker)
  *   inbox_media      `<state>/<person>/inbox/<sha256 of the input id>/`
  *   harvest_stage    `<state>/<person>/harvest/harvest-<agent>-<until>/`: notes staged for the vault, before they are filed (the filed note is
  *                    the vault's and is never touched). Chosen by the name `stageSlug` gives a harvest row of THIS agent, nothing looser

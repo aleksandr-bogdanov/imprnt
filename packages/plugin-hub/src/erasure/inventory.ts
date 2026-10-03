@@ -11,7 +11,11 @@
  *
  * WHAT IS NOT ON EITHER LIST, BECAUSE IT IS NOT A SHEET: `inbound`, `outbox`, `media`, `ledger_event`, the conversation, execution,
  * council, move and topic tables, the platform effects and the confirmations. Those are tables of their own and `hub_erase_scope`
- * removes them by the ids a tombstone names.
+ * removes them by the ids a tombstone names. Outbound confirmations belong to payload.agent;
+ * delivery rows cascade with those confirmations, and notice routes retain the source agent.
+ * outbound_read is account-wide external findings, with no topic ownership: deleting a topic
+ * does not delete another master's access to that account. Account-wide retention/erasure is
+ * a separate lifecycle and is not claimed by topic deletion.
  */
 
 /** Sheets whose rows belong to a topic, and how the row says so. Every one of them is removed by a deletion. */

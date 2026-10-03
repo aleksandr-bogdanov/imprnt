@@ -99,6 +99,11 @@ test("the active copies that are not rows: movement copies by their recorded loc
   const sessionDir = join(root, "sessions", agent, conversation)
   mkdirSync(join(sessionDir, "config"), { recursive: true })
   writeFileSync(join(sessionDir, "config", "t.jsonl"), "UNIQUE-SECRET-NATIVE\n")
+  // A reconciled return preserves the old bytes under the same managed agent
+  // directory; the master engine_state receipt must erase this sibling too.
+  const retainedArchive = `${sessionDir}-retained-${crypto.randomUUID()}`
+  mkdirSync(join(retainedArchive, "session"), { recursive: true })
+  writeFileSync(join(retainedArchive, "session", "old.jsonl"), "RETAINED-NATIVE-SECRET")
   // A place a copy recorded that is NOT the derived one: it is named, and never touched.
   const elsewhere = join(s.dir, "elsewhere-session")
   mkdirSync(elsewhere)
@@ -145,6 +150,7 @@ test("the active copies that are not rows: movement copies by their recorded loc
 
   // THE SESSION AND THE STAGED NOTES of this topic are gone; another agent's staged notes and the unrelated place the copy recorded are not.
   expect(existsSync(sessionDir)).toBe(false)
+  expect(existsSync(retainedArchive)).toBe(false)
   expect([existsSync(mine), existsSync(other), existsSync(elsewhere)]).toEqual([false, true, true])
   // THE MOVEMENT COPIES: the retained one is shown gone at the location the manifest derives; the destination's recorded another place, so
   // it is blocked by name and nothing was removed at that place.

@@ -588,7 +588,7 @@ test(
       for (const name of modules) {
         const source = readFileSync(join(dir, name), "utf8");
         for (const writer of [
-          "writeFile", "appendFile", "mkdir", "createWriteStream", "rmSync", "Bun.write", "openSync",
+          "writeFile", "appendFile", "mkdir", "createWriteStream", "rmSync", "Bun.write", ...(name === "auth.ts" ? [] : ["openSync"]),
           "O_WRONLY", "O_RDWR", "O_CREAT", "O_APPEND", "O_TRUNC",
         ]) {
           expect(source, `src/board/${name} reaches for ${writer}`).not.toContain(writer);
@@ -683,7 +683,7 @@ test(
 );
 
 test(
-  "the chats page lists every agent's newest line from the files on this machine, and one agent's chat reads newest first, rendered as text, with the older days a plain link away",
+  "the chats page lists the authenticated person's agents' newest lines from the files on this machine, and one agent's chat reads newest first, rendered as text, with the older days a plain link away",
   async () => {
     const staged = await stage();
     try {
@@ -708,15 +708,15 @@ test(
       expect(existsSync(join(stateDir, "p1", "chatlog", "p1-lair", `${newer}.jsonl`))).toBe(true);
 
       // The list: the owner's agent with its newest day and the first eighty
-      // characters of its newest line, escaped; the other person's agent with
-      // nothing said yet; every agent a link.
+      // characters of its newest line, escaped. Another person's agents are
+      // neither listed nor readable with this account.
       const list = await bodyOf(board, "/chats");
       expect(list).toContain('href="/chats/p1/p1-lair"');
-      expect(list).toContain('href="/chats/p2/p2-lair"');
+      expect(list).not.toContain('href="/chats/p2/p2-lair"');
       expect(list).toContain(newer);
       expect(list).toContain("&lt;script&gt;alert(1)&lt;/script&gt; and ```");
       expect(list).not.toMatch(/<script/i);
-      expect(list).toContain("nothing has been said here yet");
+      expect((await board.get("/chats/p2/p2-lair")).status).toBe(404);
 
       // The chat: newest day first, newest line first inside it, and a full
       // page holds the newer day alone with the older day behind a link.
@@ -756,9 +756,8 @@ test(
       expect(behind.indexOf("10:00")).toBeLessThan(behind.indexOf("09:00"));
       expect(behind).not.toContain(">older</a>");
 
-      // An agent with no log directory says so and is not an error.
-      const quiet = await bodyOf(board, "/chats/p2/p2-lair");
-      expect(quiet).toContain("nothing has been said here yet");
+      // Other people's chats stay private even when their log is empty.
+      expect((await board.get("/chats/p2/p2-lair")).status).toBe(404);
 
       // A person or an agent the registry does not declare, and an agent
       // asked for under the wrong person, are the one 404.

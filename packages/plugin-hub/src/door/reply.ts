@@ -6,8 +6,19 @@ export function prepareReply(text: string, platform: string, language: Language)
   const parts: string[] = [];
   for (let start = 0; start < text.length;) {
     let end = Math.min(start + limit, text.length);
+    if (end < text.length) {
+      // Keep complete lines, then words (including ordinary URLs), together.
+      // Include the separator so joining delivered parts reproduces the source.
+      const newline = text.lastIndexOf("\n", end - 1);
+      const space = Math.max(text.lastIndexOf(" ", end - 1), text.lastIndexOf("\t", end - 1));
+      if (newline >= start && text.slice(start, newline + 1).trim()) end = newline + 1;
+      else if (space >= start && text.slice(start, space + 1).trim()) end = space + 1;
+    }
     if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]) && /[\uDC00-\uDFFF]/.test(text[end])) end--;
-    parts.push(text.slice(start, end));
+    // A run of whitespace longer than a platform message cannot be preserved
+    // as separate messages. Omit only such empty chunks, never visible content.
+    const part = text.slice(start, end);
+    if (part.trim()) parts.push(part);
     start = end;
   }
   return parts;

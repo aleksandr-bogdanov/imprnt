@@ -224,7 +224,7 @@ test("over the socket: the engine's stdio server is bound to the launch, holds n
     expect(started.result.serverInfo.name).toBe("hub")
     await talk.notify({ method: "notifications/initialized" })
     const listed = await talk.call({ id: 2, method: "tools/list" })
-    expect(listed.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["hub_topic", "hub_council"])
+    expect(listed.result.tools.map((tool: { name: string }) => tool.name)).toEqual(["hub_topic", "hub_council", "hub_outbound"])
     expect(listed.result.tools[1].inputSchema.additionalProperties).toBe(false)
     const schema = listed.result.tools[0].inputSchema
     expect(schema.additionalProperties).toBe(false)

@@ -11,6 +11,7 @@ import { AdapterMissing, FeedNotWritten, NativeRefusal, type Adapter, type Adapt
 import { credentialSource, type HubMcpServer } from "../adapters/launch.ts";
 import { boxContextFor } from "../box/index.ts";
 import { readTail, withBackground } from "../chatlog.ts";
+import { readSentryContext } from "../chatlog/sentry-context.ts";
 import { deriveTail } from "../chatlog/derive.ts";
 import { SAID_CAP } from "../harvest/parse.ts";
 import { thisOs } from "../os/index.ts";
@@ -29,6 +30,7 @@ import {
 import {
   agentsFor,
   chatStateFor,
+  harvestFor,
   lifetimeFor,
   runnerAdmission,
   languageOf,
@@ -1143,6 +1145,34 @@ export async function runRunner(options: {
     const [engineHealth] = await store.sql`select data from state_row where sheet = 'agent_health' and id = ${agent.id}
       and data ->> 'cause' = 'conversation.engine-mismatch'`;
     let refusedEngine: string | null = typeof engineHealth?.data?.configured_engine === "string" ? engineHealth.data.configured_engine : null;
+    let activationBlocked = false;
+    let activationSignature: string | null = null;
+    const activationBlocks = async (registry: Registry) => {
+      // This is availability metadata, not adapter admission. In particular a
+      // queued council job must validate its approved profile before an unknown
+      // replacement adapter is looked up by the execution path.
+      const ordinary = options.adapters[getPreset(registry, agent.preset).adapter]?.activationBlock;
+      const harvestPreset = harvestFor(registry, agent.person)?.harvester;
+      const harvest = harvestPreset ? options.adapters[getPreset(registry, harvestPreset).adapter]?.activationBlock : undefined;
+      const blocks = [...new Map([ordinary, harvest].filter((one): one is NonNullable<typeof one> => Boolean(one)).map(one => [one.cause, one])).values()];
+      activationBlocked = blocks.length > 0;
+      const signature = JSON.stringify({ preset: agent.preset, harvestPreset, ordinary, harvest });
+      if (signature !== activationSignature) {
+        if (activationBlocked) {
+          const remedy = blocks.map(one => one.remedy).join(" ");
+          await putRow(store, "agent_health", agent.id, { status: "blocked", cause: "configured-engine-unavailable", remedy,
+            ordinary_preset: ordinary ? agent.preset : null, harvest_preset: harvest ? harvestPreset : null,
+            blockers: blocks.map(one => one.cause) });
+          const route = noticeRoute(registry, agent.id);
+          if (route) for (const block of blocks) await appendNotice(store, { person: agent.person, agent: agent.id, ...route,
+            noticeKey: `engine-unavailable:${agent.id}:${block.cause}`, body: `Work using this configured engine, including affected harvests, remains queued. ${block.remedy}` });
+        } else {
+          await store.sql`delete from state_row where sheet = 'agent_health' and id = ${agent.id} and data ->> 'cause' = 'configured-engine-unavailable'`;
+        }
+        activationSignature = signature;
+      }
+      return { ordinary: Boolean(ordinary), harvest: Boolean(harvest) };
+    };
     const engineMismatch = async (configured: string, registry: Registry): Promise<void> => {
       refusedEngine = configured;
       const [master] = await store.sql`select adapter from conversation where agent = ${agent.id} and kind = 'master'`;
@@ -1223,7 +1253,7 @@ export async function runRunner(options: {
      */
     const oneTurn = async (
       message: { id: string; text: string },
-      about: { preset: Preset; registry: Registry; source?: InboundSource | null; kind?: string; background?: string; notes?: CarriedNote[] },
+      about: { preset: Preset; registry: Registry; source?: InboundSource | null; kind?: string; background?: string; sentry?: string; notes?: CarriedNote[] },
     ): Promise<void> => {
       // The relocation notes this feed carries (`move-note.ts`): the WHOLE chain the store owes the conversation, composed by `notesOwedTo`.
       const notes = about.notes ?? [];
@@ -1272,7 +1302,13 @@ export async function runRunner(options: {
       const background = about.background ?? "";
       // The notes go ahead of the input, on the wire only: never the conversation's own entry and never part of the attempt's digest. The
       // store records them in the conversation when it acknowledges their delivery (`finishMoveNotes`).
-      const bare = background === "" ? message.text : withBackground(background, message.text);
+      const sentry = about.sentry ?? "";
+      const input = sentry === "" ? message.text : `${sentry}\n\n${message.text}`;
+      const bare = background === "" ? input : withBackground(background, input);
+      const attachments = [
+        ...(background ? [{ kind: "chat-tail", digest: taskDigest(background), chars: background.length }] : []),
+        ...(sentry ? [{ kind: "sentry-reference", digest: taskDigest(sentry), chars: sentry.length }] : []),
+      ];
       const wire = notes.length === 0 ? bare : `${noteBlock(notes)}\n\n${bare}`;
       // COMMITTED BEFORE THE FIRST BYTE, with the input as the conversation's
       // own entry (the RAW input: `message.text`, never `wire`), and fenced by the claim, the
@@ -1280,7 +1316,7 @@ export async function runRunner(options: {
       // the engine may have done any of it, and nothing feeds it again. The history that rides
       // with it is named in the same commit, so an attempt that carried it says so.
       await markFeedIntent(store, own.attempt, message.text, "input",
-        background === "" ? undefined : { kind: "chat-tail", digest: taskDigest(background), chars: background.length },
+        attachments.length === 0 ? undefined : attachments.length === 1 ? attachments[0] : attachments,
         notes.length === 0 ? undefined : notes.map(({ move, digest }) => ({ move, digest })));
       handed = true;
       // From here the engine may have the history, so it is not owed again to this session.
@@ -1443,7 +1479,7 @@ export async function runRunner(options: {
         await sayCatchUp(about.registry, credential);
       }
 
-      if (unhealthy && refusedEngine === null) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
+      if (unhealthy && refusedEngine === null && !activationBlocked) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
       // A job's answer is the whole report and reaches no chat, so it is
       // never cut to a platform's size.
       const chunks = about.kind === "job" ? [end.text]
@@ -1748,6 +1784,18 @@ export async function runRunner(options: {
       // include what a configured seat's chat said before this job; a resumed
       // session already has what it had.
       contextOwed = agent.chat !== undefined && conversation.kind === "master" && !plan?.resume;
+      // A replacement session resolves only the old child-exit diagnosis. It
+      // proves neither credential recovery nor that held work may be replayed.
+      if (conversation.kind === "master" && refusedEngine === null && !stopping && !own.leaving) {
+        const cleared = await store.sql`delete from state_row
+          where sheet = 'agent_health' and id = ${agent.id}
+            and data->>'status' = 'retry' and data->>'cause' = 'Error: child-exited'
+            and not exists (select 1 from replay_hold h join conversation c on c.id = h.conversation_id
+                            where c.agent = ${agent.id} and h.state <> 'released')
+          returning id`;
+        if (cleared.length) { unhealthy = false; retries.delete(agent.id); }
+      }
+
     };
 
     /**
@@ -1798,6 +1846,7 @@ export async function runRunner(options: {
       waiter = await openWorkWaiter(store, { agent: agent.id });
       const initial = load();
       preflight(initial, agent);
+      const initialBlocks = await activationBlocks(initial);
       // A CLAIM IS NOT A RETRY BARRIER. A council member's job that an earlier loop of this runner (or the process before it) claimed and never got an
       // attempt for is a launch that did not finish, and the claim it left is what this very loop would take again first (`claimNext` takes the runner's
       // own claim back without waiting out a lease). Whether the failure was ever written down does not matter here: the store is asked, and every such
@@ -1850,7 +1899,7 @@ export async function runRunner(options: {
         exists (select 1 from claim_gate g where g.state = 'open' and g.scope_kind = 'agent' and g.scope_id = ${agent.id} and g.cause = 'move') as moving`) as unknown as
         { blocked: boolean; held: boolean; moving: boolean }[];
       if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping && agent.chat !== undefined
-          && !standing.blocked && !standing.held && !standing.moving && !moveFences.has(agent.id)) {
+          && !initialBlocks.ordinary && !standing.blocked && !standing.held && !standing.moving && !moveFences.has(agent.id)) {
         if (!await admitChild(initial, own)) return;
         // A copy that fell behind during the admission wait spawns nothing:
         // the reservation goes back and the supervisor serves this agent
@@ -1974,6 +2023,8 @@ export async function runRunner(options: {
             and data ->> 'cause' = 'conversation.engine-mismatch'`;
         }
         const masterBlocked = refusedEngine !== null;
+        const configuredBlocks = await activationBlocks(registry);
+        if (configuredBlocks.ordinary && (configuredBlocks.harvest || !harvestFor(registry, agent.person))) { await sleep(); continue; }
 
         // THE WINDOW IS READ HERE AND NOWHERE ELSE: beside the claim,
         // on a wake the runner was already having, and never on a timer of its
@@ -2032,6 +2083,8 @@ export async function runRunner(options: {
           for (const one of agentsFor(registry, { runner: options.runner })) {
             const life = lifetimeFor(registry, one.id);
             if (life.mode !== "resident" || life.sleeping) continue;
+            const harvesting = harvestFor(registry, one.person)?.harvester;
+            if (harvesting && options.adapters[getPreset(registry, harvesting).adapter]?.activationBlock) continue;
             const limits = windowThresholds(registry, one.preset);
             if (limits) {
               const key = credentialFor(registry, one);
@@ -2073,6 +2126,8 @@ export async function runRunner(options: {
             ) as harvest_waiting from inbound where agent = ${agent.id}
               and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
               and (not ${masterBlocked}::boolean or kind in ('job', 'harvest'))
+              and (not ${configuredBlocks.ordinary}::boolean or kind = 'harvest')
+              and (not ${configuredBlocks.harvest}::boolean or kind <> 'harvest')
               and (claimed_by is null or claimed_by = ${options.runner}
                    or (claim_deadline is not null and claim_deadline <= now()))
               and (retry_at is null or retry_at <= now())
@@ -2145,6 +2200,8 @@ export async function runRunner(options: {
           rowId: next.id,
           resumeOk,
           masterBlocked,
+          ordinaryBlocked: configuredBlocks.ordinary,
+          harvestBlocked: configuredBlocks.harvest,
         });
         if (!row) {
           if (extra) releaseCapacity();
@@ -2406,11 +2463,16 @@ export async function runRunner(options: {
           // THE HISTORY A FRESH MASTER CHILD IS OWED RIDES WITH THIS INPUT, and is read now so that this input
           // (claimed, so still waiting) is left out of it. It is background for the engine and only that: `text`
           // stays the input the conversation records and the attempt's digest names.
-          const background = contextOwed ? await readBackground(registry) : "";
+          const history = contextOwed ? await readBackground(registry) : "";
+          // Delivered Sentry notices are reference data on every real master chat input,
+          // including native resumes. They never become independent turns or job context.
+          const sentry = conversation.kind === "master" && row.kind === "human" && agent.chat !== undefined
+            ? await readSentryContext(store, { registry, person: agent.person, agent: agent.id, now: new Date(), asOf: new Date(row.received_at) }) : "";
+
           // THE RELOCATION NOTES a moved conversation still owes its next real input (never a job's): composed here, before the feed, from what the
           // store owes. A note that cannot be composed as declared is `MoveNoteRefused`, handed back below like any feed the move refused.
           const notes = row.kind === "job" ? [] : await notesOwedTo(store, agent.id, conversation.id);
-          await oneTurn({ id: row.id, text }, { preset, registry, source: row.source, kind: row.kind, background, notes });
+          await oneTurn({ id: row.id, text }, { preset, registry, source: row.source, kind: row.kind, background: history, sentry, notes });
         } catch (error) {
           // A MOVE WAS REQUESTED BEFORE THIS ATTEMPT'S FIRST FEED (`MoveGated`, or a fence placed after the attempt was opened:
           // `SpawnFenced`): it is handed back, not failed. It must not reach the catch below, which would close the child before any

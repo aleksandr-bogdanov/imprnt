@@ -150,3 +150,27 @@ test("a repository's ssh command is the machine's own: the entry's never follows
   // Not a string: refused by key.
   expect(refusalOf(write(lines({ repo: ['on = { mac = { path = "/Users/owner/vault", ssh_command = 3 } }'] }))).key).toBe("repositories[0].on.mac.ssh_command");
 });
+
+test("sync read grants are absolute and belong to their machine placement", () => {
+  const base = 'sync_read_paths = ["/var/lib/sync/vault-key"]';
+  expect(listRepositories(loadRegistry(write(lines({ repo: [base] }))))[0].sync_read_paths).toEqual(["/var/lib/sync/vault-key"]);
+  const absent = loadRegistry(write(lines({ repo: [base, 'on = { mac = { path = "/Users/owner/vault" } }'] })), { machine: "mac" });
+  expect(listRepositories(absent)[0].sync_read_paths).toBeUndefined();
+  const own = loadRegistry(write(lines({ repo: [base, 'on = { mac = { path = "/Users/owner/vault", sync_read_paths = ["/Users/owner/sync/key"] } }'] })), { machine: "mac" });
+  expect(listRepositories(own)[0].sync_read_paths).toEqual(["/Users/owner/sync/key"]);
+  for (const value of ['["relative/key"]', '"/absolute/key"']) {
+    expect(refusalOf(write(lines({ repo: [`sync_read_paths = ${value}`] }))).key).toBe("repositories[0].sync_read_paths");
+    expect(refusalOf(write(lines({ repo: [`on = { mac = { path = "/Users/owner/vault", sync_read_paths = ${value} } }`] }))).key).toBe("repositories[0].on.mac.sync_read_paths");
+  }
+});
+
+test("local sync capabilities are explicit absolute declarations and do not follow another machine's placement", () => {
+  const base='sync_local_remotes = ["/srv/git/vault.git"]';
+  expect(listRepositories(loadRegistry(write(lines({repo:[base]}))))[0].sync_local_remotes).toEqual(["/srv/git/vault.git"]);
+  const none=loadRegistry(write(lines({repo:[base,'on = { mac = { path = "/Users/owner/vault" } }']})),{machine:"mac"});
+  expect(listRepositories(none)[0].sync_local_remotes).toBeUndefined();
+  const own=loadRegistry(write(lines({repo:[base,'on = { mac = { path = "/Users/owner/vault", sync_local_remotes = ["/srv/mac/vault.git"] } }']})),{machine:"mac"});
+  expect(listRepositories(own)[0].sync_local_remotes).toEqual(["/srv/mac/vault.git"]);
+  expect(refusalOf(write(lines({repo:['sync_local_remotes = ["relative.git"]']}))).key).toBe("repositories[0].sync_local_remotes");
+  expect(refusalOf(write(lines({repo:['on = { mac = { path = "/Users/owner/vault", sync_local_remotes = "bad" } }']}))).key).toBe("repositories[0].on.mac.sync_local_remotes");
+});

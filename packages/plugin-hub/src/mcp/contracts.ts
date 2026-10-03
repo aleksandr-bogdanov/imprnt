@@ -3,18 +3,21 @@
  * Pure: the facade process the engine starts imports only this file, so it
  * carries no database code and no credential of any kind.
  *
- * TWO TOOLS. `hub_topic` has the actions implemented: `inspect` (what is held and what
+ * THREE TOOLS. `hub_topic` has the actions implemented: `inspect` (what is held and what
  * is known about it, or where one topic chat stands), `resume` (the owner's choice about
  * one interrupted attempt), and a topic chat's `create` (which only ever freezes a
  * preview), `archive`, `reopen`, `move` and `delete` (which only ever freezes the scope of a deletion for the owner's check).
  * `hub_council` (`council-contract.ts`) has `start`, `continue`, `inspect` and `stop`. An action that is not implemented (stop
  * of a topic) is not listed, and one that is asked for anyway is refused by name.
  *
+ * `hub_outbound` freezes an exact outbound draft or reads its state/findings; only the door can approve it.
+ *
  * Identity is never an argument. The person, the agent, the conversation and
  * the turn are the runner's own binding of this launch, and a schema that had a
  * field for them would be a field a model could fill.
  */
 
+import { OUTBOUND_TOOL, HUB_OUTBOUND, readOutboundRequest } from "./outbound-contract.ts";
 import { COUNCIL_TOOL, HUB_COUNCIL, readCouncilRequest } from "./council-contract.ts";
 import { ToolError, exact, readRequestKey, readSourceIds, refuse } from "./reading.ts";
 
@@ -118,6 +121,7 @@ export const TOOLS = [
     },
   },
   COUNCIL_TOOL,
+  OUTBOUND_TOOL,
 ] as const;
 
 export interface InspectRequest { action: "inspect"; topic_id?: string }
@@ -334,6 +338,7 @@ export function readTopicRequest(args: unknown): HubTopicRequest {
  * one in the handler table.
  */
 export const READERS: Record<string, (args: unknown) => { action: string }> = {
+  [HUB_OUTBOUND]: readOutboundRequest,
   [HUB_TOPIC]: readTopicRequest,
   [HUB_COUNCIL]: readCouncilRequest,
 };

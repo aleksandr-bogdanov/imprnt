@@ -33,9 +33,22 @@ import { join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
 import { plantTrees } from "./helpers/trees.ts";
 import { writeRegistry, type RegistrySpec } from "./helpers/registry.ts";
+import { boxCommand } from "../src/box/index.ts";
 import { loadRegistry } from "../src/registry/load.ts";
 
 const PROBE = ["/bin/sh", "-c", "echo the command the loop would have run"];
+
+test("macOS installed tool reads exclude Homebrew service data even below /usr/local", () => {
+  const boxed = boxCommand(PROBE, { tree: "/fixture/person", person: "p1", agent: "p1-main", otherTrees: [] }, "darwin");
+  const profile = boxed.profile!.text;
+  const data = /\(deny file-read\* file-write\* \(subpath "([^"]+\/var)"\)\)/.exec(profile)?.[1];
+  expect(data).toBeDefined();
+  const prefix = data!.slice(0, -4);
+  expect(profile).not.toContain(`(allow file-read* (subpath "${prefix}"))`);
+  expect(profile).toContain(`(allow file-read* (subpath "${prefix}/Cellar"))`);
+  expect(profile).toContain(`(allow file-read* (subpath "${prefix}/etc/openssl@3"))`);
+  expect(profile).toContain(`(allow file-read* (subpath "${prefix}/etc/ca-certificates"))`);
+});
 
 // ---------------------------------------------------------------------------
 // Reading a sandbox profile as RULES rather than as text.
@@ -336,3 +349,19 @@ test(
   },
   30_000,
 );
+
+
+test("Codex preference synchronization grants only two exact read-only macOS IPC objects", () => {
+  const ctx = { agent: "worker", person: "p1", tree: "/tmp/own", otherTrees: ["/tmp/other"], sessionDir: "/tmp/session" };
+  const ordinary = boxCommand(["codex"], ctx, "darwin");
+  const codex = boxCommand(["codex"], { ...ctx, macosCodexPreferences: true }, "darwin");
+  expect(ordinary.profile!.text).not.toContain("cfprefs");
+  expect(codex.profile!.path).not.toBe(ordinary.profile!.path);
+  expect(codex.profile!.text.split("\n").filter(line => line.includes("cfprefs"))).toEqual([
+    `(allow ipc-posix-shm-read-data (ipc-posix-name "apple.cfprefs.${process.getuid!()}v1" "apple.cfprefs.daemonv1"))`,
+  ]);
+  expect(codex.profile!.text).not.toContain("user-preference-");
+  expect(codex.profile!.text).not.toContain("ipc-posix-shm-write");
+  expect(codex.profile!.text).toContain("(deny job-creation)");
+  expect(boxCommand(["codex"], { ...ctx, macosCodexPreferences: true }, "linux").argv).toEqual(boxCommand(["codex"], ctx, "linux").argv);
+});

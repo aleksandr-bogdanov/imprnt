@@ -1,6 +1,7 @@
 import { AdapterMissing, type Adapter } from "./types.ts";
 import type { LoopLaunchInput, LoopProbeOptions } from "./launch.ts";
 import { claudeCode } from "./claude-code.ts";
+import { codex } from "./codex.ts";
 import { openCode } from "./opencode.ts";
 
 /**
@@ -11,6 +12,7 @@ import { openCode } from "./opencode.ts";
 export const ADAPTERS: Record<string, Adapter> = {
   [claudeCode.name]: claudeCode,
   [openCode.name]: openCode,
+  [codex.name]: codex,
 };
 
 export function adapterFor(adapters: Record<string, Adapter>, name: string): Adapter {
@@ -34,13 +36,16 @@ export async function loopLaunch(input: LoopLaunchInput, probe: LoopProbeOptions
 export async function checkLoopSource(registry: unknown, presetName: string, probe: LoopProbeOptions = {}) {
   const { getPreset } = await import("../registry/presets.ts");
   const adapter = getPreset(registry, presetName).adapter;
+  if (adapter === codex.name) {
+    const { requireCodexBuild } = await import("./codex-launch.ts");
+    requireCodexBuild(probe.bin, probe.timeoutMs);
+    await codex.capabilities!({ registry, agent: { id: "check", preset: presetName }, preset: presetName, probe });
+    return;
+  }
   if (adapter === openCode.name) {
-    // The key is a model key and the binary answers `--version`. Nothing is dialled and no model runs;
-    // what the build restricts is read back from a running server at launch, never from here.
-    const { credentialSource } = await import("./launch.ts");
-    const own = await import("./opencode-launch.ts");
-    own.readModelKey(credentialSource(registry, presetName));
-    own.probeOpenCodeVersion(probe.bin, probe.timeoutMs);
+    // The production activation prerequisite is checked before any credential
+    // read or version process. The diagnostic harness is not a source-check bypass.
+    await openCode.capabilities!({ registry, agent: { id: "check", preset: presetName }, preset: presetName, probe });
     return;
   }
   if (adapter !== claudeCode.name) return;

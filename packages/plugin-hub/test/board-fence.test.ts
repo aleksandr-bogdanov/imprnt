@@ -11,19 +11,22 @@
 //
 // A request that carries neither `Origin` nor `Sec-Fetch-Site` is not a
 // browser's, and those headers are not what stops it: the peer rule does,
-// asserted in its own test below.
+// authentication rule does, asserted below.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCluster, type Cluster } from "./helpers/cluster.ts";
 import { stageHub, superStore, type StagedHub } from "./helpers/hub-fixture.ts";
-import { freePort, plantedSeam, recordingSeam, serveBoard, type ServedBoard } from "./helpers/board.ts";
+import { BOARD_AUTH, BOARD_READER_AUTH, BOARD_OTHER_AUTH, freePort, plantedSeam, recordingSeam, serveBoard, type ServedBoard } from "./helpers/board.ts";
 import { isLocalAddress } from "../src/net/address.ts";
 import { networkInterfaces } from "node:os";
 import type { RunSpec } from "./helpers/registry.ts";
 import type { Store } from "../src/store/connect.ts";
+import { loadRegistry } from "../src/registry/load.ts";
+import { listRunEntries } from "../src/registry/entries.ts";
+import { boardAuthPath } from "../src/board/auth.ts";
 import { pageMissing } from "../src/door/lines.ts";
 
 const SLOW = 120_000;
@@ -91,7 +94,8 @@ async function stage(peer?: unknown): Promise<Staged> {
   const it = await stageHub(cluster, {
     hub: { tick_seconds: 1 },
     machines: [{ id: HERE, os: HERE_OS }],
-    people: [{ id: "p1", tree: scratchDir("hub-fence-tree-") }],
+    people: [{ id: "p1", tree: scratchDir("hub-fence-tree-") }, { id: "p2", tree: scratchDir("hub-fence-other-") }],
+    agents: [{ id: "p2-lair", person: "p2", preset: "daily", runner: RUNNER_ENTRY.id }],
     run: [DOOR_ENTRY, RUNNER_ENTRY, boardEntry],
   });
   const store = await superStore(cluster, it.db);
@@ -138,7 +142,7 @@ async function raw(
     let text = "";
     const lines = [
       `${method} ${path} HTTP/1.1`,
-      ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
+      ...Object.entries({ authorization: BOARD_AUTH, ...headers }).map(([name, value]) => `${name}: ${value}`),
       ...(method === "POST"
         ? ["content-type: application/x-www-form-urlencoded", `content-length: ${Buffer.byteLength(body)}`]
         : []),
@@ -280,72 +284,42 @@ test(
   SLOW,
 );
 
-test(
-  "an act asked for from this machine is refused, and the same act from another device lands",
-  async () => {
-    // EVERY AGENT ON THIS BOX REACHES THE BOARD FROM THIS BOX. An agent's box
-    // shares the machine's network, so a model that decided to press restart,
-    // or a page it wrote that a person opened, arrives from one of this
-    // machine's own addresses. A person arrives from a phone, which is not one.
-    // Acts and private chat reads from here are refused, and the residual is
-    // named where the rule is written: an agent on ANOTHER machine of the
-    // household is not this, and reader identity is what would answer it.
-    const staged = await stage("production");
+test("authenticated owner access works locally; unauthenticated local, remote and unknown peers cannot read or act", async () => {
+  for (const peer of ["production", () => "192.0.2.10", () => null]) {
+    const s = await stage(peer)
     try {
-      const { board, it } = staged;
-      for (const path of ["/act/restart", "/act/check"]) {
-        const answer = await board.post(path, { target: RUNNER_ENTRY.id });
-        expect(answer.status, path).toBe(404);
-        expect((await answer.text()).trim()).toBe(pageMissing("en"));
+      for (const path of ["/", "/chats", "/chats/p1/p1-lair"]) {
+        expect((await s.board.get(path, { headers: { authorization: "" } })).status).toBe(401)
+        expect((await s.board.get(path)).status).toBe(200)
       }
-      expect(await it.read.sheet("control"), "an act from this machine wrote a row").toEqual([]);
+      const denied = await raw(s.board.port, "POST", "/act/restart", { host: `127.0.0.1:${s.board.port}`, authorization: "" }, `target=${RUNNER_ENTRY.id}`)
+      expect(denied.status).toBe(401)
+      expect(await s.it.read.sheet("control")).toEqual([])
+      expect((await s.board.post("/act/restart", { target: RUNNER_ENTRY.id })).status).toBe(303)
+      expect((await s.it.read.sheet("control"))[0].data.actor).toBe("board:test-owner")
+    } finally { await s.stop() }
+  }
+}, SLOW)
 
-      // Status remains readable; private chat files are not exposed to local agents.
-      for (const path of ["/chats", "/chats/p1/p1-lair", "//chats/p1/p1-lair"]) {
-        expect((await board.get(path)).status, path).toBe(404);
-      }
-      for (const path of ["/", "/people", "/usage", "/findings", "/metrics"]) {
-        expect((await board.get(path)).status, path).toBe(200);
-      }
-    } finally {
-      await staged.stop();
+test("a reader cannot act or inspect operator pages, and all accounts are confined to their own chat files", async () => {
+  const s = await stage()
+  try {
+    const own = await s.board.get("/chats", { headers: { authorization: BOARD_READER_AUTH } })
+    expect(own.status).toBe(200)
+    expect(await own.text()).not.toContain('href="/people"')
+    expect((await s.board.get("/people", { headers: { authorization: BOARD_READER_AUTH } })).status).toBe(404)
+    for (const auth of [BOARD_AUTH, BOARD_READER_AUTH]) {
+      expect((await s.board.get("/chats/p2/p2-lair", { headers: { authorization: auth } })).status).toBe(404)
     }
-  },
-  SLOW,
-);
-
-test(
-  "a peer nothing could resolve is refused too, and a peer on another device acts",
-  async () => {
-    // The control on the rule above, in the same shape: the act lands when it
-    // comes from somewhere that is not this machine, and a peer the server
-    // could not name at all is refused rather than assumed to be a person.
-    const unknown = await stage(() => null);
-    try {
-      const answer = await unknown.board.post("/act/restart", { target: RUNNER_ENTRY.id });
-      expect(answer.status, "a peer nobody could name").toBe(404);
-      expect(await unknown.it.read.sheet("control")).toEqual([]);
-      for (const path of ["/chats", "/chats/p1/p1-lair"]) {
-        expect((await unknown.board.get(path)).status, path).toBe(404);
-      }
-    } finally {
-      await unknown.stop();
+    for (const path of ["/act/restart", "/act/check", "/act/sleeping", "/act/enabled"]) {
+      expect((await raw(s.board.port, "POST", path, { host: `127.0.0.1:${s.board.port}`, authorization: BOARD_READER_AUTH }, `target=${RUNNER_ENTRY.id}`)).status).toBe(404)
     }
-    const staged = await stage(() => "192.0.2.10");
-    try {
-      const answer = await staged.board.post("/act/restart", { target: RUNNER_ENTRY.id });
-      expect(answer.status).toBe(303);
-      expect((await staged.board.get("/chats")).status).toBe(200);
-      expect((await staged.board.get("/chats/p1/p1-lair")).status).toBe(200);
-      const rows = await staged.it.read.sheet("control");
-      expect(rows).toHaveLength(1);
-      expect(rows[0].data.target_id).toBe(RUNNER_ENTRY.id);
-    } finally {
-      await staged.stop();
-    }
-  },
-  SLOW,
-);
+    expect(await s.it.read.sheet("control")).toEqual([])
+    expect((await s.board.get("/chats/p2/p2-lair", { headers: { authorization: BOARD_OTHER_AUTH } })).status).toBe(200)
+    expect((await s.board.get("/chats/p1/p1-lair", { headers: { authorization: BOARD_OTHER_AUTH } })).status).toBe(404)
+    expect((await s.board.post("/act/sleeping", { target: "p2-lair", value: "true" })).status).toBe(404)
+  } finally { await s.stop() }
+}, SLOW)
 
 test("every address this machine holds is this machine, and an address it does not hold is not", () => {
   // The rule reads the machine's own interfaces rather than loopback alone,
@@ -394,3 +368,52 @@ test(
   },
   SLOW,
 );
+
+
+test("credential revocation is immediate; insecure or missing files fail closed without exposing secrets", async () => {
+  const s = await stage()
+  try {
+    const registry = loadRegistry(s.it.registryFile)
+    const file = boardAuthPath(registry, listRunEntries(registry).find(entry => entry.id === "board")!)!
+    const original = readFileSync(file, "utf8")
+    const demoted = JSON.parse(original)
+    demoted.accounts[0].role = "reader"
+    writeFileSync(file, JSON.stringify(demoted))
+    expect((await s.board.get("/")).status).toBe(303)
+    expect((await s.board.post("/act/restart", { target: "runner-test" })).status).toBe(404)
+    const changed = JSON.parse(original)
+    changed.accounts = changed.accounts.filter((account: { id: string }) => account.id !== "test-owner")
+    writeFileSync(file, JSON.stringify(changed))
+    expect((await s.board.get("/")).status).toBe(401)
+    expect((await s.board.get("/chats", { headers: { authorization: BOARD_READER_AUTH } })).status).toBe(200)
+    writeFileSync(file, original)
+    expect((await s.board.get("/")).status).toBe(200)
+    chmodSync(file, 0o644)
+    expect((await s.board.get("/")).status).toBe(503)
+    chmodSync(file, 0o600)
+    writeFileSync(file, "malformed-secret-file-body")
+    const invalid = await s.board.get("/")
+    expect(invalid.status).toBe(503)
+    expect(await invalid.text()).not.toContain("malformed-secret-file-body")
+    rmSync(file)
+    expect((await s.board.get("/")).status).toBe(503)
+  } finally { await s.stop() }
+}, SLOW)
+
+test("credentials are accepted only in Authorization and authenticated pages cannot be cached or embedded cross-origin", async () => {
+  const s = await stage()
+  try {
+    const host = `127.0.0.1:${s.board.port}`
+    for (const headers of [{ authorization: "" }, { authorization: `Basic ${Buffer.from(`test-owner:${"d".repeat(64)}`).toString("base64")}` }, { authorization: "Bearer wrong" }, { authorization: "", cookie: `authorization=${BOARD_AUTH}` },
+      { authorization: "", "x-forwarded-for": "127.0.0.1", "x-user": "test-owner" }] as Record<string, string>[]) {
+      expect((await raw(s.board.port, "GET", "/chats?token=ignored&user=test-owner", { host, ...headers })).status).toBe(401)
+    }
+    expect((await raw(s.board.port, "GET", "/chats", { host, "sec-fetch-site": "same-site" })).status).toBe(404)
+    const allowed = await raw(s.board.port, "GET", "/chats", { host, "sec-fetch-site": "none" })
+    expect(allowed.status).toBe(200)
+    expect(allowed.headers["cache-control"]).toBe("no-store")
+    expect(allowed.headers.vary).toBe("Authorization")
+    expect(allowed.headers["referrer-policy"]).toBe("no-referrer")
+    expect(text(allowed)).not.toContain(BOARD_AUTH)
+  } finally { await s.stop() }
+}, SLOW)

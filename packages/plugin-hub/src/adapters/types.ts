@@ -212,6 +212,9 @@ export interface PreparedLaunch {
   argv?: string[];
   env?: Record<string, string | undefined>;
   credentialId?: string;
+  /** Runner-private accessor for engines with an in-memory authentication RPC.
+   * Never serialize this value into the child environment, argv, config or logs. */
+  privateModelKey?: () => string;
   wrap?: (argv: string[]) => string[];
 }
 
@@ -362,6 +365,8 @@ export interface NativeSessionPort {
 
 export interface Adapter {
   readonly name: string;
+  /** Permanent configured-engine prerequisite, checked before claiming work. */
+  readonly activationBlock?: { cause: string; remedy: string };
   /**
    * What this engine can do, or absent when the adapter says nothing, which the
    * runner reads as "nothing that has to be proved". Asked before a claim, so
@@ -391,6 +396,7 @@ export interface Adapter {
      */
     session?: { id: string; resume: boolean };
     credentialId?: string;
+    privateModelKey?: PreparedLaunch["privateModelKey"];
     cwd?: string;
     argv?: string[];
     env?: Record<string, string | undefined>;

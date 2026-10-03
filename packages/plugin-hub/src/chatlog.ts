@@ -18,8 +18,8 @@ export interface ChatLine {
   /**
    * Set on a line a WATCHER wrote, or a COUNCIL caused. The line is in the
    * log because the person saw it, and it is left out of the tail a session
-   * is fed: an agent with hands never reads watcher text (SPEC section 5),
-   * and the chat's agent reads the seats' answers only inside the merge row
+   * is fed. Delivered Sentry notices have a separate untrusted reference attachment.
+   * The chat's agent reads the seats' answers only inside the merge row
    * it answers as a turn, never as chat it remembers.
    */
   origin?: RowOrigin;

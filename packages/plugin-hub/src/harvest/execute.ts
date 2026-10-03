@@ -47,6 +47,8 @@ export async function executeHarvest(args: {
   const stopped = args.stopped ?? new Promise<"stopped">(() => {});
   const staged = stageDirFor(stateDir, agent.person, row.id);
   const settings = harvestFor(registry, agent.person);
+  const blocked = adapters[getPreset(registry, settings?.harvester ?? agent.preset).adapter]?.activationBlock;
+  if (blocked) throw new Error(`${blocked.cause}: ${blocked.remedy}`);
   const every = Number(readSetting(registry, "runner.task_retry_seconds"));
   /**
    * Every way a harvest ends badly, in one place.
