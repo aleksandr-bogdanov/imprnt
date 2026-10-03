@@ -119,6 +119,16 @@ export function remoteTrust(path: string): string {
   return `-c '${`safe.directory=${path}`.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * The upload-pack/receive-pack program for a granted local remote. Anyone who
+ * can write that repository's config could name hooks, an fsmonitor or an
+ * alternate-refs command for this child; its own command line overrides all
+ * three mechanisms for this child without changing its filesystem grants.
+ */
+export function localRemoteProgram(path: string, service: "upload-pack" | "receive-pack"): string {
+  return `git ${remoteTrust(path)} -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.alternateRefsCommand= ${service}`;
+}
+
 /** Trusted inherited process configuration only; no tokens, sockets, loaders or Git environment overrides enter the child. */
 function environment(scratch: string): Record<string, string> {
   const env: Record<string, string> = {};

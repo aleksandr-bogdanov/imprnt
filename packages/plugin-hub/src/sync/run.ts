@@ -1,4 +1,4 @@
-import { inSyncIsolation, isolatedGit, grantSyncRemotes, remoteTrust, SyncIsolationUnavailable } from "./isolation.ts";
+import { inSyncIsolation, isolatedGit, grantSyncRemotes, localRemoteProgram, SyncIsolationUnavailable } from "./isolation.ts";
 import { tmpdir } from "node:os";
 import { HUB_MCP_TEMP_PREFIX, LOOP_PROBE_TEMP_PREFIX, MAC_WRITABLE_SCRATCH } from "../box/scratch.ts";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
@@ -536,8 +536,8 @@ export async function runSync(entry: RunEntry, registry: Registry, options: { no
           code = "fetch";
           const dial = repo.ssh_command === undefined ? [] : [`core.sshCommand=${repo.ssh_command}`];
           await guard();
-          // A local remote's upload-pack child gets the exact granted trust on its own command line.
-          await git(path, ["fetch", "--no-recurse-submodules", ...(isAbsolute(remote.fetch) ? [`--upload-pack=git ${remoteTrust(remote.fetch)} upload-pack`] : []), "--", remote.fetch, `+${branchRef}:${trackingRef}`], code, "fetch", { config: dial, discard: true });
+          // A local remote's upload-pack/receive-pack child gets exact granted trust and disables hooks, fsmonitor and alternate-ref commands.
+          await git(path, ["fetch", "--no-recurse-submodules", ...(isAbsolute(remote.fetch) ? [`--upload-pack=${localRemoteProgram(remote.fetch, "upload-pack")}`] : []), "--", remote.fetch, `+${branchRef}:${trackingRef}`], code, "fetch", { config: dial, discard: true });
           const fetched = await git(path, ["rev-parse", "--verify", `${trackingRef}^{commit}`], code, "tracking-ref");
           code = "conflict";
           await guard();
@@ -547,7 +547,7 @@ export async function runSync(entry: RunEntry, registry: Registry, options: { no
           code = "push";
           for (const destination of remote.push) {
             await guard();
-            await git(path, ["push", "--no-recurse-submodules", ...(isAbsolute(destination) ? [`--receive-pack=git ${remoteTrust(destination)} -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack`] : []), "--", destination, `${head}:${branchRef}`], code, "push", { config: dial, discard: true });
+            await git(path, ["push", "--no-recurse-submodules", ...(isAbsolute(destination) ? [`--receive-pack=${localRemoteProgram(destination, "receive-pack")}`] : []), "--", destination, `${head}:${branchRef}`], code, "push", { config: dial, discard: true });
           }
           await guard();
           await git(path, ["update-ref", "--no-deref", trackingRef, head, fetched], code, "tracking-ref");
