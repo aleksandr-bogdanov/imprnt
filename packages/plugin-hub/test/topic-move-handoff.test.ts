@@ -1494,3 +1494,19 @@ test("RETURN: stale copy identity cannot authorize archiving another native sess
   expect(readdirSync(dirname(r.srcDir)).filter(name => name.startsWith("src-retained-"))).toHaveLength(0)
   expect(await machineOf(r.s, r.back)).toBe("mac")
 })
+
+for (const point of [null, "move.return-archived"]) test(`RETURN: symlinked state ancestor uses canonical sealed path, including retry ${point}`, async () => {
+  const r = await returnRig()
+  const alias = join(dirname(r.srcDir), "state-alias")
+  symlinkSync(dirname(r.srcDir), alias)
+  r.src.w.sessionDir = () => join(alias, "src")
+  if (point) {
+    r.src.knobs.crashOn = kind => kind === point
+    await expect(importDestination(r.src.w, r.back.id)).rejects.toBeInstanceOf(Crash)
+    r.src.knobs.crashOn = null
+  }
+  expect(await importDestination(r.src.w, r.back.id)).toMatchObject({ reason: "activated" })
+  const source = (await copiesOf(r.s.tool, r.move.id)).find(cp => cp.kind === "source_session_retained")!
+  expect(ev(source).archive_intent.session_dir).toBe(r.srcDir)
+  expect(ev(source).removed).toMatchObject({ removed: "archived", retained: true })
+})

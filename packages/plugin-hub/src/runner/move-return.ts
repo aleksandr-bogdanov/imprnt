@@ -1,5 +1,5 @@
 import { lstatSync, mkdirSync, realpathSync, renameSync, rmdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { NativeRefusal } from "../adapters/types.ts";
 import { TransferError } from "../transfer/bundle.ts";
 import { captureWorkspace, errnoOf } from "../transfer/workspace.ts";
@@ -44,7 +44,10 @@ async function archive(w: HandoffWorld, move: MoveRow, old: MoveRow, copy: MoveC
   const expected = sealed.files[0];
   if (!isRecord(expected) || typeof expected.path !== "string") return waiting("copy-unsealed");
   const digest = old.manifest!.native!.native_manifest_digest;
-  const path = w.sessionDir(move);
+  // Resolve existing ancestors, not the leaf: after a journaled rename the leaf
+  // is absent, and a leaf symlink must still fail directory identity checks.
+  const declared = w.sessionDir(move);
+  const path = join(realpathSync(dirname(declared)), basename(declared));
   if (path !== sealed.from.cwd) throw new NativeRefusal("native_dest_session_collision");
   let intent = copy.evidence.archive_intent as ArchiveIntent | undefined;
   if (!intent) {

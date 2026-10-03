@@ -1224,7 +1224,7 @@ export async function runRunner(options: {
      */
     const oneTurn = async (
       message: { id: string; text: string },
-      about: { preset: Preset; registry: Registry; source?: InboundSource | null; kind?: string; background?: string; notes?: CarriedNote[] },
+      about: { preset: Preset; registry: Registry; source?: InboundSource | null; kind?: string; background?: string; sentry?: string; notes?: CarriedNote[] },
     ): Promise<void> => {
       // The relocation notes this feed carries (`move-note.ts`): the WHOLE chain the store owes the conversation, composed by `notesOwedTo`.
       const notes = about.notes ?? [];
@@ -1273,7 +1273,13 @@ export async function runRunner(options: {
       const background = about.background ?? "";
       // The notes go ahead of the input, on the wire only: never the conversation's own entry and never part of the attempt's digest. The
       // store records them in the conversation when it acknowledges their delivery (`finishMoveNotes`).
-      const bare = background === "" ? message.text : withBackground(background, message.text);
+      const sentry = about.sentry ?? "";
+      const input = sentry === "" ? message.text : `${sentry}\n\n${message.text}`;
+      const bare = background === "" ? input : withBackground(background, input);
+      const attachments = [
+        ...(background ? [{ kind: "chat-tail", digest: taskDigest(background), chars: background.length }] : []),
+        ...(sentry ? [{ kind: "sentry-reference", digest: taskDigest(sentry), chars: sentry.length }] : []),
+      ];
       const wire = notes.length === 0 ? bare : `${noteBlock(notes)}\n\n${bare}`;
       // COMMITTED BEFORE THE FIRST BYTE, with the input as the conversation's
       // own entry (the RAW input: `message.text`, never `wire`), and fenced by the claim, the
@@ -1281,7 +1287,7 @@ export async function runRunner(options: {
       // the engine may have done any of it, and nothing feeds it again. The history that rides
       // with it is named in the same commit, so an attempt that carried it says so.
       await markFeedIntent(store, own.attempt, message.text, "input",
-        background === "" ? undefined : { kind: "chat-tail", digest: taskDigest(background), chars: background.length },
+        attachments.length === 0 ? undefined : attachments.length === 1 ? attachments[0] : attachments,
         notes.length === 0 ? undefined : notes.map(({ move, digest }) => ({ move, digest })));
       handed = true;
       // From here the engine may have the history, so it is not owed again to this session.
@@ -2424,11 +2430,11 @@ export async function runRunner(options: {
           // including native resumes. They never become independent turns or job context.
           const sentry = conversation.kind === "master" && row.kind === "human" && agent.chat !== undefined
             ? await readSentryContext(store, { registry, person: agent.person, agent: agent.id, now: new Date(), asOf: new Date(row.received_at) }) : "";
-          const background = [history, sentry].filter(Boolean).join("\n");
+
           // THE RELOCATION NOTES a moved conversation still owes its next real input (never a job's): composed here, before the feed, from what the
           // store owes. A note that cannot be composed as declared is `MoveNoteRefused`, handed back below like any feed the move refused.
           const notes = row.kind === "job" ? [] : await notesOwedTo(store, agent.id, conversation.id);
-          await oneTurn({ id: row.id, text }, { preset, registry, source: row.source, kind: row.kind, background, notes });
+          await oneTurn({ id: row.id, text }, { preset, registry, source: row.source, kind: row.kind, background: history, sentry, notes });
         } catch (error) {
           // A MOVE WAS REQUESTED BEFORE THIS ATTEMPT'S FIRST FEED (`MoveGated`, or a fence placed after the attempt was opened:
           // `SpawnFenced`): it is handed back, not failed. It must not reach the catch below, which would close the child before any

@@ -105,11 +105,16 @@ test("fresh and ongoing native master turns get delivered digest without standal
       expect(fed.text).toContain("APP-123");
       expect(fed.text.indexOf("APP-123")).toBeLessThan(fed.text.indexOf("APP-456"));
       expect(fed.text).toContain(SENTRY_CONTEXT_RULES);
+      const historyEnd = fed.text.indexOf("[hub] BACKGROUND, end.");
+      expect(fed.text.indexOf(SENTRY_CONTEXT_RULES)).toBeGreaterThan(historyEnd);
       expect(fed.text.endsWith("\n\ninvestigate first one")).toBe(true);
     }
     expect(edge!.sessions).toHaveLength(1);
     expect(edge!.sessions[0].fed).toHaveLength(2);
     const inputs = await s.sql`select body from conversation_entry where kind = 'input' order by seq`;
+    const audits = await s.sql`select detail from ledger_event where stream = 'execution' and kind = 'feed.intent'`;
+    const kinds = audits.flatMap((row: any) => [row.detail.context].flat().filter(Boolean).map((item: any) => item.kind));
+    expect(kinds.filter((kind: string) => kind === "sentry-reference")).toHaveLength(2);
     expect(inputs.map((row: { body: string }) => row.body)).toEqual(["investigate first one", "investigate first one"]);
     await runner.stop();
     runner = await runRunner({ runner: RUNNER, registryFile: s.it.registryFile, adapters: { [s.it.adapterName]: edge.adapter } });

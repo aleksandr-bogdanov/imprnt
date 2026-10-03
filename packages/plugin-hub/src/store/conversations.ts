@@ -464,7 +464,7 @@ export async function markFeedIntent(
   execution: ExecutionRow,
   text: string,
   stage: "input" | "tail" = "input",
-  context?: { kind: string; digest: string; chars: number },
+  context?: { kind: string; digest: string; chars: number } | { kind: string; digest: string; chars: number }[],
   notes?: { move: string; digest: string }[],
 ): Promise<void> {
   await store.sql.begin(async (tx) => {
