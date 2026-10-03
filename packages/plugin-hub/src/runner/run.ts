@@ -126,7 +126,7 @@ import {
 } from "./move.ts";
 import { effectiveConfigOf, moveConfigDrift } from "./move-config.ts";
 import { exportSource } from "./move-export.ts";
-import { ENGINE_RECHECK, MOVE_NATIVE_LIMITS, probedEngine, waiting as handoffWaiting, type EngineBuild, type HandoffStep, type HandoffWorld } from "./move-handoff.ts";
+import { ENGINE_RECHECK, RESUME_CHECK_LIMITS, probedEngine, waiting as handoffWaiting, type EngineBuild, type HandoffStep, type HandoffWorld } from "./move-handoff.ts";
 import { DEST_GATE_CODES, cleanupCopies, importDestination, prepareDestination } from "./move-import.ts";
 import { importedBy, noteBlock, notesOwedTo, type CarriedNote } from "./move-note.ts";
 import { profileOf } from "./move-profile.ts";
@@ -1231,7 +1231,7 @@ export async function runRunner(options: {
         if (!port) throw new NativeRefusal("native_resume_unverified");
         port.checkResumed({
           sessionDir: sessionDirFor(stateDir, last.person, last.agent, last.conversation_id), imported, nativeSession: last.native_session,
-          reportedSessionId: reported, limits: MOVE_NATIVE_LIMITS,
+          reportedSessionId: reported, limits: RESUME_CHECK_LIMITS,
         });
         await sayMove("move.resume-verified", { move: last.id, execution: attempt.id });
       } else if (last && last.snapshot?.native_state !== "new") {

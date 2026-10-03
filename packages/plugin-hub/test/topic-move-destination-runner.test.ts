@@ -32,7 +32,7 @@ import { registerMoves } from "../src/hub/moves.ts"
 import { loadRegistry, registryDigest } from "../src/registry/load.ts"
 import { configDifference, effectiveConfigOf } from "../src/runner/move-config.ts"
 import { exportSource } from "../src/runner/move-export.ts"
-import { ENGINE_RECHECK } from "../src/runner/move-handoff.ts"
+import { ENGINE_RECHECK, RESUME_CHECK_LIMITS } from "../src/runner/move-handoff.ts"
 import { relocationNote } from "../src/runner/move-note.ts"
 import { profileOf } from "../src/runner/move-profile.ts"
 import { scopeOf } from "../src/runner/move-scope.ts"
@@ -259,6 +259,7 @@ test("DR-1: the gate holds an input while the destination's registry is not the 
   expect(r.checks[0]).toMatchObject({ nativeSession: r.native, reportedSessionId: r.native })
   expect(r.checks[0].sessionDir, "the directory checked is the one the import went into").toBe(r.checks[0].imported.to.cwd)
   expect(r.checks[0].imported.transcript.sha256).toBe(active.manifest!.files[0].sha256)
+  expect(r.checks[0].limits, "the resume check walks under its own entry bound, not the one-file move bound").toEqual(RESUME_CHECK_LIMITS)
   expect((await runnerLedger(r, "move.resume-verified")).length).toBe(1)
   expect(await pendingNotesOf(r.s.tool, r.agent)).toEqual([])
   const entries = (await r.s.su`select kind, body from conversation_entry where conversation_id = ${r.move.conversation_id} and source_id = ${`move-note:${r.move.id}`}`) as unknown as { kind: string; body: string }[]

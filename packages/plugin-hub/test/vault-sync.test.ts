@@ -139,6 +139,10 @@ test("ROLL-07 ordered fetch rebase push preserves divergent commits and rejects 
         expect(args).toContain(realpathSync(r.remote))
         expect(args.some(a => verb === "fetch" ? a === "+refs/heads/main:refs/remotes/origin/main" : /^[0-9a-f]+:refs\/heads\/main$/.test(a))).toBe(true)
         expect(args.some(a => a === "--force" || a === "-f" || verb === "push" && a.startsWith("+"))).toBe(false)
+        // The child program trusts exactly this declared remote, never a pattern.
+        const program = args.find(a => a.startsWith(verb === "fetch" ? "--upload-pack=" : "--receive-pack="))!
+        expect(program).toContain(`-c 'safe.directory=${realpathSync(r.remote)}'`)
+        expect(program.match(/safe\.directory=/g)).toHaveLength(1)
       }
     }
   } finally { await f.stop() }

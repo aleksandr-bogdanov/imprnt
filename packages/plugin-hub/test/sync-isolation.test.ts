@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startCluster, type Cluster } from "./helpers/cluster.ts";
-import { syncFixture } from "./helpers/rollout-sync.ts";
+import { commitChange, syncFixture } from "./helpers/rollout-sync.ts";
 import { fixtureGit } from "./helpers/rollout-git.ts";
 import { listRepositories } from "../src/registry/entries.ts";
-import { inSyncIsolation, isolatedGit, grantSyncRemotes } from "../src/sync/isolation.ts";
+import { inSyncIsolation, isolatedGit, grantSyncRemotes, remoteTrust } from "../src/sync/isolation.ts";
 import { runSync } from "../src/sync/run.ts";
 
 let cluster: Cluster;
@@ -117,6 +117,71 @@ test("repository URLs cannot enlarge owner-declared local remote capabilities", 
     await expect(runSync(f.entry(),f.registry())).rejects.toThrow();
     expect(fixtureGit(repo.path,"rev-parse","HEAD")).toBe(before);
   } finally {await f.stop();}
+});
+
+test("only the exact granted local remote is trusted, and that trust reaches its upload-pack and receive-pack child", async () => {
+  const f = await syncFixture(cluster);
+  const ambient = { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "safe.directory", GIT_CONFIG_VALUE_0: "*", GIT_CONFIG_PARAMETERS: "'safe.directory'='*'" };
+  const prior = Object.keys(ambient).map(name => [name, process.env[name]] as const);
+  try {
+    const registry = f.registry(), repo = listRepositories(registry)[0];
+    const path = realpathSync(repo.path), remote = realpathSync(f.repos[0].remote), undeclared = realpathSync(f.repos[1].remote);
+    commitChange(path, "trust.txt", "synthetic trust proof\n");
+    Object.assign(process.env, ambient);
+    await inSyncIsolation(registry, repo, async () => {
+      expect(() => remoteTrust(remote)).toThrow();
+      grantSyncRemotes(remote, [remote]);
+      expect(remoteTrust(remote)).toBe(`-c ${quote(`safe.directory=${remote}`)}`);
+      expect(() => remoteTrust(undeclared)).toThrow();
+      expect(() => remoteTrust(`${remote}/*`)).toThrow();
+      const env = isolatedGit([]).env;
+      for (const name of Object.keys(ambient)) expect(env[name]).toBeUndefined();
+      // Git's ownership-test switch is not stripped by the local transport, so the
+      // child sees a different owner. The outer repository is trusted for itself only.
+      const foreign = async (args: string[]) => {
+        const boxed = isolatedGit(["-C", path, "-c", `safe.directory=${path}`, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args]);
+        const child = Bun.spawn(boxed.argv, { env: { ...boxed.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+        const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+        return { out, err, code };
+      };
+      const upload = `--upload-pack=git ${remoteTrust(remote)} upload-pack`;
+      const receive = `--receive-pack=git ${remoteTrust(remote)} -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack`;
+      // The deployed failure: trust given to the outer Git never reaches the child.
+      // Measured: Linux Git 2.39.5 upload-pack and receive-pack both honor the synthetic
+      // owner switch. Apple Git 2.50.1 upload-pack ignores it (ls-remote/fetch exit 0 even
+      // with no child trust), while its receive-pack still refuses.
+      const uploadHonorsSyntheticOwner = process.platform !== "darwin";
+      for (const args of [["ls-remote", "--", remote], ["fetch", "--", remote, "+refs/heads/main:refs/remotes/origin/main"]]) {
+        const control = await foreign(["-c", `safe.directory=${remote}`, ...args]);
+        if (uploadHonorsSyntheticOwner) {
+          expect(control.code).not.toBe(0);
+          expect(control.err).toContain("dubious ownership");
+        } else {
+          expect(control.code, control.err).toBe(0);
+          expect(control.err).not.toContain("dubious ownership");
+        }
+      }
+      const refused = await foreign(["-c", `safe.directory=${remote}`, "push", "--", remote, "HEAD:refs/heads/untrusted"]);
+      expect(refused.code).not.toBe(0);
+      expect(refused.err).toContain("dubious ownership");
+      const listed = await foreign(["ls-remote", upload, "--", remote]);
+      expect(listed.code, listed.err).toBe(0);
+      const fetched = await foreign(["fetch", "--no-recurse-submodules", upload, "--", remote, "+refs/heads/main:refs/remotes/origin/main"]);
+      expect(fetched.code, fetched.err).toBe(0);
+      const pushed = await foreign(["push", "--no-recurse-submodules", receive, "--", remote, "HEAD:refs/heads/trusted"]);
+      expect(pushed.code, pushed.err).toBe(0);
+      // A replaced or symlinked remote is no longer the granted one.
+      renameSync(remote, `${remote}.moved`); mkdirSync(remote);
+      expect(() => remoteTrust(remote)).toThrow();
+      renameSync(remote, `${remote}.empty`); symlinkSync(`${remote}.moved`, remote);
+      expect(() => remoteTrust(remote)).toThrow();
+    });
+    expect(fixtureGit(f.root, "--git-dir", `${remote}.moved`, "show", "trusted:trust.txt")).toBe("synthetic trust proof");
+    expect(() => fixtureGit(f.root, "--git-dir", `${remote}.moved`, "rev-parse", "--verify", "refs/heads/untrusted")).toThrow();
+  } finally {
+    for (const [name, value] of prior) if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    await f.stop();
+  }
 });
 
 test("root read grants are refused and Mac toolchain access excludes Homebrew private var", async () => {
