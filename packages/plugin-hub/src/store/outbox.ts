@@ -13,8 +13,8 @@ import type { StoreLike } from "./connect.ts";
 /**
  * Where a chunk is delivered, pinned on the row. `origin` marks a notice a
  * WATCHER wrote: it is delivered to the chat and projected into the log like
- * any other, and both model tails leave it out, because an agent with hands
- * never reads watcher text (SPEC section 5). It rides on the route because
+ * any other, and both ordinary model tails leave it out. Delivered Sentry notices
+ * have a separate untrusted reference attachment. It rides on the route because
  * the route is the one column a notice already carries and pins.
  */
 export interface ReplyRoute { door: string; chat: string; origin?: "watcher" }

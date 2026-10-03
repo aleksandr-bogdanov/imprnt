@@ -12,7 +12,8 @@ import type { ReplyRoute } from "../store/outbox.ts";
  *
  * A watch is a program with no hands (SPEC section 5). It fetches, compares
  * with what it saw last time, and writes one notice the door delivers. No
- * model reads what it fetched, and nothing it fetched is ever an instruction:
+ * model runs during the sweep. A delivered Sentry notice may later be quoted as
+ * untrusted reference data; nothing it fetched is ever an instruction:
  * every string is capped and stripped here, on the way into a record or a line.
  */
 
