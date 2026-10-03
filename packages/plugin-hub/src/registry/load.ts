@@ -569,8 +569,10 @@ export interface CredentialPlacement {
 export interface RepositoryPlacement {
   path: string;
   remote?: string;
-  /** The ssh command there, or the empty string for the account's own ssh. */
+  /** The ssh command there, or the empty string for ssh with the sandbox's private HOME. */
   ssh_command?: string;
+  /** Explicit read-only authentication/helper paths available to sandboxed sync. */
+  sync_read_paths?: string[];
 }
 
 /**
@@ -827,6 +829,8 @@ export interface RepositoryEntry {
    * can write that file, and the registry is the owner's hand.
    */
   ssh_command?: string;
+  /** Explicit read-only authentication/helper paths available to sandboxed sync. */
+  sync_read_paths?: string[];
 }
 
 /**
@@ -2703,9 +2707,11 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
       refuse(`${where}.zone`, 0, "zone marks a checkout of the shared zone and is a true or a false");
     if (entry.ssh_command !== undefined && (typeof entry.ssh_command !== "string" || entry.ssh_command.trim() === ""))
       refuse(`${where}.ssh_command`, 0, "ssh_command is the command the sync runs ssh as, a nonempty string");
+    if (entry.sync_read_paths !== undefined && (!Array.isArray(entry.sync_read_paths) || entry.sync_read_paths.some(path => typeof path !== "string" || !isAbsolute(path))))
+      refuse(`${where}.sync_read_paths`, 0, "sync_read_paths must be absolute paths");
     // Where this checkout is on a machine that is not the hub's, so a sync
     // there keeps the vault checkout there in step with its remote.
-    repositoriesOn.set(entry.id as string, placements<RepositoryPlacement>(entry, where, lines.get(where) ?? 0, entry.id, ["path", "remote", "ssh_command"],
+    repositoriesOn.set(entry.id as string, placements<RepositoryPlacement>(entry, where, lines.get(where) ?? 0, entry.id, ["path", "remote", "ssh_command", "sync_read_paths"],
       (table, machine, atOn) => {
         const there = table.path;
         if (typeof there !== "string" || there === "" || !isAbsolute(there)) {
@@ -2723,7 +2729,9 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         if (ssh !== undefined && ssh !== null && typeof ssh !== "string") {
           refuse(`${where}.on.${machine}.ssh_command`, atOn, `${entry.id} on ${machine} has ssh_command ${describe(ssh)}, and it is the command the sync runs ssh as there, or an empty string for none`);
         }
-        return { path: there as string, ...(typeof remote === "string" ? { remote } : {}), ...(typeof ssh === "string" ? { ssh_command: ssh } : {}) };
+        if (table.sync_read_paths !== undefined && (!Array.isArray(table.sync_read_paths) || table.sync_read_paths.some(path => typeof path !== "string" || !isAbsolute(path))))
+          refuse(`${where}.on.${machine}.sync_read_paths`, atOn, "sync_read_paths must be absolute paths");
+        return { ...(table.sync_read_paths === undefined ? {} : { sync_read_paths: table.sync_read_paths as string[] }), path: there as string, ...(typeof remote === "string" ? { remote } : {}), ...(typeof ssh === "string" ? { ssh_command: ssh } : {}) };
       }));
     const { on: _on, ...kept } = entry;
     repositories.push(kept as unknown as RepositoryEntry);
@@ -2877,11 +2885,12 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     if (!there) return repository;
     placed.repositories.push(repository.id);
     // The entry's own ssh command is a path on the hub machine's disk and never
-    // follows the checkout: a placement that names none dials with the
-    // account's own ssh there.
-    const { ssh_command: _ssh, ...rest } = repository;
+    // follows the checkout. A placement must declare its own authentication
+    // paths; absent configuration uses ssh with the sandbox's private HOME.
+    const { ssh_command: _ssh, sync_read_paths: _reads, ...rest } = repository;
     return { ...rest, path: there.path, ...(there.remote === undefined ? {} : { remote: there.remote }),
-      ...(there.ssh_command === undefined || there.ssh_command === "" ? {} : { ssh_command: there.ssh_command }) };
+      ...(there.ssh_command === undefined || there.ssh_command === "" ? {} : { ssh_command: there.ssh_command }),
+      ...(there.sync_read_paths === undefined ? {} : { sync_read_paths: there.sync_read_paths }) };
   });
   return new Registry(file, { ...parsed, hub }, entries, presets, agents, rates, machines, placedPeople, placedCredentials,
     placedRepositories, recognizers, zone, machine, placed);
