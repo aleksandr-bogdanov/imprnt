@@ -52,6 +52,7 @@ const ROLLOUT_DEFAULTS: Record<string, number> = {
 };
 
 export const SETTING_FIELDS: SettingField[] = [
+  { key: "outbound.accounts_file", type: "string", what: "absolute path to private outbound account adapters", required: false },
   {
     key: "hub.tick_seconds",
     type: "integer",

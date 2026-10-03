@@ -1,3 +1,5 @@
+import { outboundApprovals } from "../outbound/delivery.ts";
+import { startOutbound } from "../outbound/task.ts";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { erasureFence } from "../erasure/startup.ts";
@@ -500,6 +502,7 @@ export async function runDoor(options: {
   // The same wake carries the platform-message task's (`effects-task.ts`): its rows are
   // announced on this channel too, with a payload that says so, so that task costs
   // the door no connection of its own.
+  let outbound: ReturnType<typeof startOutbound> | null = null;
   let effects: EffectsTask | null = null;
   // And the council task's (`council/watch.ts`), the same way: `council:<door>` on this channel.
   let council: CouncilWatch | null = null;
@@ -2311,7 +2314,7 @@ export async function runDoor(options: {
   // after them while none is owed.
   effects = startEffects({
     // What acts on an approval is what this door was handed and, always, the topic chat's own.
-    store, platform: options.platform, door: options.door, hooks: { ...topicApprovals(), ...(options.approvals ?? {}) },
+    store, platform: options.platform, door: options.door, hooks: { ...topicApprovals(), ...outboundApprovals(), ...(options.approvals ?? {}) },
     registry: () => registryThisTick(),
     settings: () => {
       const fresh = registryThisTick();
@@ -2326,6 +2329,7 @@ export async function runDoor(options: {
     },
   });
   await effects.ready;
+  if (readSetting(registry, "outbound.accounts_file") !== undefined) outbound = startOutbound(store, () => registryThisTick() as Registry, options.door);
 
   // The council task: keeps each live council's card true and says what needs its owner. Ready means its one
   // connect read (which councils this door has something to say about) is made, in the connect gate's turn; a
@@ -2434,6 +2438,7 @@ export async function runDoor(options: {
       release();
       await supervise;
       await Promise.allSettled([...served.values()].flatMap((it) => [it.done, it.readDone]));
+      await outbound?.stop();
       await topics?.stop();
       await council?.stop();
       await effects?.stop();
