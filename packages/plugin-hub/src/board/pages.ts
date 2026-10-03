@@ -204,6 +204,7 @@ export function peoplePage(args: {
   agentHealth: { id: string; data: Record<string, unknown> }[];
   doorHealth: { id: string; data: Record<string, unknown> }[];
   lifetimes: Record<string, { mode: string; sleeping: boolean }>;
+  controlPerson?: string;
   findings: CheckRow[];
   notice?: string | null;
 }): string {
@@ -229,7 +230,7 @@ export function peoplePage(args: {
           cell(life.sleeping ? "asleep" : "awake"),
           cell(health?.data.status),
           cell(door?.data.status),
-          rawCell(act("/act/sleeping", agent.id, life.sleeping ? "wake" : "pause", life.sleeping ? "false" : "true")),
+          rawCell(args.controlPerson !== undefined && args.controlPerson !== agent.person ? "" : act("/act/sleeping", agent.id, life.sleeping ? "wake" : "pause", life.sleeping ? "false" : "true")),
         ];
       });
       return (
@@ -348,6 +349,7 @@ export function chatsPage(args: {
   people: PersonEntry[];
   agents: AgentEntry[];
   newest: Record<string, ChatNewest | null>;
+  readerOnly?: boolean;
 }): string {
   const body = args.people
     .map((person) => {
@@ -372,6 +374,7 @@ export function chatsPage(args: {
   return page({
     title: "chats",
     here: "/chats",
+    readerOnly: args.readerOnly,
     body: body === "" ? '<p class="empty">this registry declares nobody.</p>' : body,
   });
 }
@@ -388,7 +391,7 @@ function clockOf(at: string): string {
  * line as the time, who said it and what they said, and one plain link to the
  * older days. No button and no form: this page reads and does nothing.
  */
-export function chatPage(args: { person: string; agent: string; chat: ChatPage; before?: string | null }): string {
+export function chatPage(args: { person: string; agent: string; chat: ChatPage; before?: string | null; readerOnly?: boolean }): string {
   const days = args.chat.days.map((day) =>
     `<h2>${escape(day.day)}</h2>\n` +
     day.lines
@@ -407,6 +410,7 @@ export function chatPage(args: { person: string; agent: string; chat: ChatPage; 
   return page({
     title: `${args.agent} chat`,
     here: "/chats",
+    readerOnly: args.readerOnly,
     body: [
       `<p><a href="/chats">every chat</a> · ${escape(args.person)}</p>`,
       empty

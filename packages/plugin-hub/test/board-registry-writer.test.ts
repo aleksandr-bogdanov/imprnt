@@ -17,7 +17,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { hubPath, startCluster, until, type Cluster } from "./helpers/cluster.ts"
 import { stageHub, type StagedHub } from "./helpers/hub-fixture.ts"
-import { freePort, plantedSeam } from "./helpers/board.ts"
+import { BOARD_AUTH, provisionBoardAuth, freePort, plantedSeam } from "./helpers/board.ts"
 import { lineDiff } from "./helpers/registry-fixture.ts"
 import type { RunSpec } from "./helpers/registry.ts"
 import type { OsSeam } from "../src/os/types.ts"
@@ -53,6 +53,7 @@ async function stage(): Promise<{ it: StagedHub; board: RunSpec }> {
     people: [{ id: "p1", tree }],
     run: [DOOR_ENTRY, RUNNER_ENTRY, HUB_ENTRY, board],
   })
+  provisionBoardAuth(it.registryFile, board.id)
   return { it, board }
 }
 
@@ -65,15 +66,15 @@ async function program(it: StagedHub, board: RunSpec, preload?: string) {
   const url = `http://${board.bind}:${board.port}`
   await until("the board answered its first page", async () => {
     if (proc.exitCode !== null) throw new Error(`the board exited ${proc.exitCode}: ${(await said).slice(0, 400)}`)
-    try { return (await fetch(`${url}/`, { redirect: "manual" })).status === 200 } catch { return false }
+    try { return (await fetch(`${url}/`, { redirect: "manual", headers: { authorization: BOARD_AUTH } })).status === 200 } catch { return false }
   }, 30_000)
   return {
     async press(path: string, form: Record<string, string>, headers: Record<string, string> = {}) {
       const answer = await fetch(`${url}${path}`, { method: "POST", redirect: "manual",
-        headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
+        headers: { "content-type": "application/x-www-form-urlencoded", authorization: BOARD_AUTH, ...headers },
         body: new URLSearchParams(form).toString() })
       const location = answer.headers.get("location")
-      const landed = answer.status === 303 && location ? await (await fetch(`${url}${location}`, { redirect: "manual" })).text() : await answer.text()
+      const landed = answer.status === 303 && location ? await (await fetch(`${url}${location}`, { redirect: "manual", headers: { authorization: BOARD_AUTH } })).text() : await answer.text()
       return { status: answer.status, landed }
     },
     async stop() { try { proc.kill(15) } catch { /* already gone */ } await proc.exited.catch(() => {}) },
@@ -136,7 +137,7 @@ test("from another machine, a stop and a pause through the board change exactly 
   } finally { await served?.stop(); await hub?.stop(); await it.stop() }
 }, SLOW)
 
-test("from this machine, or sent by another page, the same presses leave the registry byte for byte as it was", async () => {
+test("without credentials, or sent by another page, the same presses leave the registry byte for byte as it was", async () => {
   const { it, board } = await stage()
   let shipped: Awaited<ReturnType<typeof program>> | undefined
   let elsewhere: Awaited<ReturnType<typeof program>> | undefined
@@ -146,7 +147,7 @@ test("from this machine, or sent by another page, the same presses leave the reg
     shipped = await program(it, board)
     for (const [path, form] of [["/act/enabled", { target: RUNNER_ENTRY.id, value: "false" }],
       ["/act/sleeping", { target: "p1-lair", value: "true" }]] as const) {
-      expect((await shipped.press(path, form)).status, `${path} from this machine`).toBe(404)
+      expect((await shipped.press(path, form, { authorization: "" })).status, `${path} without credentials`).toBe(401)
       expect((await shipped.press(path, form, { "sec-fetch-site": "cross-site" })).status, `${path} from another page`).toBe(404)
     }
     await shipped.stop()

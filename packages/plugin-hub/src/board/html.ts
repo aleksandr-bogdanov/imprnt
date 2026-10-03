@@ -87,6 +87,7 @@ export interface PageFrame {
   body: string;
   /** Where in the nav this page sits. */
   here: string;
+  readerOnly?: boolean;
 }
 
 const NAV: { at: string; name: string }[] = [
@@ -149,7 +150,7 @@ const STYLE = [
 
 /** The whole document. One stylesheet, inline, and no script element at all. */
 export function page(frame: PageFrame): string {
-  const links = NAV.map((one) =>
+  const links = NAV.filter(one => !frame.readerOnly || one.at === "/chats").map((one) =>
     one.at === frame.here
       ? `<strong>${escape(one.name)}</strong>`
       : `<a href="${escape(one.at)}">${escape(one.name)}</a>`,

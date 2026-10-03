@@ -132,3 +132,38 @@ Chinese and API models run through OpenCode (`adapter = "opencode"`); Claude sta
 
 
 Deletion publication and restore safeguards: backup holds a dedicated shared maintenance lock from its final erasure check through publication/read-back; confirmation and erasure take the matching exclusive lock. Failed local purges continue to hold backups. An unreadable local erasure manifest is preserved and blocks startup until independently recovered. Tombstones carry worker agent/conversation paths so a disk restore removes only the deleted worker sessions. Retention may expire recognized generations, but its overall status remains unverified until legacy dump history and retained destination versions are inventoried; generation removal alone never certifies all historical copies erased.
+
+
+## Board accounts (IMP-181)
+
+The board requires a named account for every board page and control, including requests from its own machine. A missing, invalid, or insecure account file returns “Board access is not configured”; there is no unauthenticated fallback. Peer addresses and forwarded identity headers grant no permission.
+
+Keep this HTTP listener on loopback or the household's encrypted tailnet, as the board deployment requires. HTTP Basic is not transport encryption; do not expose it on an unencrypted LAN or public listener. Open the board's exact configured IP address and port, then enter the account id as the browser's username and its token as the password. Never put credentials in a URL, registry value, command argument, or request log. No login cookie or token-bearing redirect is used.
+
+Provision a private JSON file named `<board-entry-id>-board-auth.json` directly inside this machine's `hub.secrets_dir` (default `<hub.state_dir>/secrets`). A board entry may instead use its existing `token_file` field to name another file directly inside that same directory. The directory must be owned by the service account with mode `0700`, and the regular, non-symlink file by the same account with mode `0600`. This entire directory is already masked from every agent box and excluded from backups; a verifier outside it is refused.
+
+```json
+{
+  "version": 1,
+  "accounts": [
+    {
+      "id": "owner-reader",
+      "person": "p1",
+      "role": "reader",
+      "token_sha256": "REPLACE_WITH_64_LOWERCASE_HEX_SHA256_DIGEST"
+    }
+  ]
+}
+```
+
+Each token must be an independently generated, cryptographically random 32-byte value encoded as 64 lowercase hex characters. Keep the token in the owner's password manager; store only its SHA-256 digest in the file. To calculate that digest without putting the token in shell history or arguments, paste it into this hidden prompt:
+
+```sh
+python3 -c 'import getpass, hashlib, re; token = getpass.getpass("Board token: "); assert re.fullmatch("[0-9a-f]{64}", token); print(hashlib.sha256(token.encode()).hexdigest())'
+```
+
+Use unique account ids and tokens. A maximum of 32 accounts is supported. `person` must name a declared person. `reader` can view only that person's chats and has no dashboard/control access. `operator` additionally has household status, usage, findings, check, and shared-service controls; it is a trusted household operator role, not a restricted service role. Its chat reads and direct agent controls are still confined to the named person. Give ordinary readers the reader role. The separate, explicitly enabled artifact listener continues serving published artifacts under its existing policy; board credentials and controls are never moved to that origin.
+
+Rotation, account removal and role changes take effect on the next request: the file is reread, with no timer, cached permission, or service restart. Replace it atomically with another private file in the secrets directory. Removing the file locks the board. Browser Basic credentials may remain cached until the browser session ends; use a private browser window and close it when finished, or revoke the account server-side. There is no misleading application logout button. Authenticated responses are marked `no-store`, and the original host, origin and anti-framing checks remain in force.
+
+Provisioning is an operator step. This development change creates no live credential file and changes no household registry.

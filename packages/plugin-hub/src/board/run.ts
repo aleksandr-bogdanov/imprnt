@@ -23,7 +23,8 @@ import type { OsSeam } from "../os/types.ts";
 import type { StoreLike } from "../store/connect.ts";
 import { readOpenTurns } from "../store/turns.ts";
 import { readVoiceHealth } from "../voice/health.ts";
-import { isLocalAddress, sameAddress } from "../net/address.ts";
+import { sameAddress } from "../net/address.ts";
+import { authenticateBoard, boardSignIn, type BoardViewer } from "./auth.ts";
 import { serveArtifact } from "./artifacts.ts";
 import { readChatNewest, readChatPage, type ChatNewest } from "./chats.ts";
 import { chatPage, chatsPage, findingsPage, machinesPage, metricsPage, peoplePage, usagePage, type CheckRow, type ControlRow } from "./pages.ts";
@@ -41,11 +42,9 @@ import { readUsage, readWindows } from "./usage.ts";
  * a measured property and not a promise: `test/board-idle.test.ts` counts the
  * statements and the processor time.
  *
- * THE BOARD HOLDS NO STATE OF ITS OWN. It opens no file for writing anywhere,
- * samples nothing and keeps no index. Every page is a read of the one store,
- * the OS seam or the chat log files on this machine, which is what makes it
- * acceptable for a reader nobody identified: there is nothing here for an
- * agent's box to mask and nothing an agent could read through it.
+ * Board credentials are private verifier files in the already masked hub
+ * secrets directory. Every request authenticates a named reader or operator;
+ * local and remote peers receive the same identity checks.
  *
  * THE CHATS PAGE IS THE ONE PAGE THAT SHOWS WHAT WAS SAID, by the owner's
  * ruling, and it reads the door's own files on this machine and issues no
@@ -86,12 +85,6 @@ export interface BoardOptions {
    * own, because opening a household's real login from a test is not a test.
    */
   check?: { credentials?: CredentialProber; kernel?: KernelView | null; loopProbe?: LoopProbeOptions };
-  /**
-   * Who a request came from, as an address. The default is the server's own
-   * answer. A check hands in its own, because a check in this runtime IS this
-   * machine and the rule below is about which machine asked.
-   */
-  peer?: (request: Request, server: PeerReader) => string | null;
   now?: () => Date;
 }
 
@@ -240,7 +233,7 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     );
   };
 
-  const people = async (notice: string | null): Promise<Response> => {
+  const people = async (notice: string | null, viewer: BoardViewer): Promise<Response> => {
     const registry = loadRegistry(registryFile);
     const agents = listAgents(registry);
     const openTurns: Record<string, number> = {};
@@ -260,6 +253,7 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
         agentHealth: await sheet("agent_health"),
         doorHealth: await sheet("door_health"),
         lifetimes,
+        controlPerson: viewer.person,
         findings: await findings(),
         notice,
       }),
@@ -272,21 +266,21 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
   /** The state directory the door on this machine writes its logs under. */
   const stateDirOf = (registry: unknown): string => String(readSetting(registry, "hub.state_dir") ?? "");
 
-  const chats = async (): Promise<Response> => {
+  const chats = async (viewer: BoardViewer): Promise<Response> => {
     // This machine's view, so a spoke reads its own state directory.
     const registry = loadRegistry(registryFile, { machine });
-    const people = listPeople(registry);
-    const agents = listAgents(registry);
+    const people = listPeople(registry).filter(one => one.id === viewer.person);
+    const agents = listAgents(registry).filter(one => one.person === viewer.person);
     const stateDir = stateDirOf(registry);
     const newest: Record<string, ChatNewest | null> = {};
     for (const agent of agents) {
       newest[agent.id] = stateDir === "" ? null : readChatNewest({ stateDir, person: agent.person, agent: agent.id });
     }
-    return html(chatsPage({ people, agents, newest }));
+    return html(chatsPage({ people, agents, newest, readerOnly: viewer.role === "reader" }));
   };
 
   /** One agent's chat, or the 404 for a person or an agent the file does not declare. */
-  const chat = async (parts: string[], before: string | null): Promise<Response> => {
+  const chat = async (parts: string[], before: string | null, viewer: BoardViewer): Promise<Response> => {
     let person: string;
     let agent: string;
     try {
@@ -296,13 +290,13 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       return missing();
     }
     const registry = loadRegistry(registryFile, { machine });
-    if (!listPeople(registry).some((one) => one.id === person)) return missing();
+    if (person !== viewer.person || !listPeople(registry).some((one) => one.id === person)) return missing();
     if (!listAgents(registry).some((one) => one.id === agent && one.person === person)) return missing();
     const stateDir = stateDirOf(registry);
     const read = stateDir === ""
       ? { days: [], older: null, exists: false }
       : readChatPage({ stateDir, person, agent, before });
-    return html(chatPage({ person, agent, chat: read, before }));
+    return html(chatPage({ person, agent, chat: read, before, readerOnly: viewer.role === "reader" }));
   };
 
   const usage = async (notice: string | null): Promise<Response> =>
@@ -326,14 +320,14 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     return found?.kind === "door" ? "door" : "run";
   };
 
-  const restart = async (target: string): Promise<Response> => {
+  const restart = async (target: string, viewer: BoardViewer): Promise<Response> => {
     const registry = loadRegistry(registryFile);
     try {
       const row = (await requestRecovery(store, {
         id: crypto.randomUUID(),
         source: "board",
-        // Nobody on this page is identified, and `board` is the true answer.
-        actor: "board",
+        actor: `board:${viewer.id}`,
+        person: viewer.person,
         target_kind: kindOf(registry, target),
         target_id: target,
         registry,
@@ -429,12 +423,12 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
    * only `same-origin` is the board's own page: another port on this address
    * is `same-site`, which is a different origin. `Origin`, where present, must
    * be the board's own, and the `null` a sandboxed frame or a file sends is
-   * not. A request carrying neither is not a browser's, and the peer rule is
-   * what answers that one.
+   * not. Every request also needs a private board credential: origin headers
+   * are a browser fence, never identity.
    */
   const fromAnotherPage = (request: Request, port: number): boolean => {
     const site = request.headers.get("sec-fetch-site");
-    if (site !== null && site !== "same-origin") return true;
+    if (site !== null && site !== "same-origin" && !(request.method === "GET" && site === "none")) return true;
     const origin = request.headers.get("origin");
     if (origin === null) return false;
     let url: URL;
@@ -446,31 +440,6 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     return url.protocol !== "http:" || !isOwn(url.host, port);
   };
 
-  /**
-   * Who asked, and whether that is this machine.
-   *
-   * WHY AN ACT FROM THIS MACHINE IS REFUSED. Every agent in this household
-   * runs in a box that shares this machine's network, so an agent that decided
-   * to restart a runner, or a page it wrote that somebody opened, reaches the
-   * board from one of this machine's own addresses. A person reaches it from
-   * another device on the tailnet. Nobody here is identified, so which machine
-   * asked is the one honest thing a request carries, and it is enough to keep
-   * the household's own agents out of its controls.
-   *
-   * WHAT IT DOES NOT COVER, said plainly: an agent on ANOTHER machine of the
-   * household reaches this board from an address that is not this machine's,
-   * and this rule does not stop it. That one needs reader identity, which the
-   * contract defers.
-   *
-   * Chat reads expose other people's private files, so they use this rule too.
-   * Status pages remain readable locally. A browser on this machine cannot
-   * read chats either: without reader identity it cannot be distinguished
-   * from a boxed agent. The owner reads chats from another device.
-   */
-  const asked = options.peer ?? ((request: Request, server: PeerReader) => server.requestIP(request)?.address ?? null);
-  const fromThisMachine = (request: Request, server: PeerReader): boolean =>
-    isLocalAddress(asked(request, server));
-
   const answer = async (request: Request, server: PeerReader): Promise<Response> => {
     // THE HOST MUST BE THE BOARD'S OWN. A website that rebinds its own name to
     // this address reaches the socket with its own name in the header, and
@@ -479,26 +448,35 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     if (!isOwn(request.headers.get("host"), port)) return missing();
     const url = new URL(request.url);
     const path = url.pathname;
+    if (fromAnotherPage(request, port)) return missing();
+    const registry = loadRegistry(registryFile, { machine });
+    const auth = authenticateBoard(request, registry, entry);
+    if (!auth.configured) return boardSignIn(false);
+    if (!auth.viewer) return boardSignIn(true);
+    const viewer = auth.viewer;
     if (request.method === "GET") {
       const parts = path.split("/").filter((one) => one !== "");
-      if (parts[0] === "chats" && fromThisMachine(request, server)) return missing();
+      if (viewer.role === "reader" && parts[0] !== "chats") {
+        return path === "/" ? new Response(null, { status: 303, headers: { location: "/chats" } }) : missing();
+      }
       const notice = noticeFrom(url.searchParams);
       if (path === "/") return await machines(notice);
-      if (path === "/people") return await people(notice);
+      if (path === "/people") return await people(notice, viewer);
       if (path === "/findings") return await findingsOf(notice);
       if (path === "/metrics") return await metrics(notice);
       if (path === "/usage") return await usage(notice);
-      if (path === "/chats") return await chats();
-      if (parts.length === 3 && parts[0] === "chats") return await chat(parts, url.searchParams.get("before"));
+      if (path === "/chats") return await chats(viewer);
+      if (parts.length === 3 && parts[0] === "chats") return await chat(parts, url.searchParams.get("before"), viewer);
       return missing();
     }
     if (request.method === "POST") {
-      if (fromAnotherPage(request, port)) return missing();
-      if (fromThisMachine(request, server)) return missing();
+      if (viewer.role !== "operator") return missing();
       const form = new URLSearchParams(await request.text());
       const target = form.get("target") ?? "";
+      const targetAgent = listAgents(registry).find(one => one.id === target);
+      if (targetAgent && targetAgent.person !== viewer.person) return missing();
       const value = form.get("value") === "true";
-      if (path === "/act/restart") return await restart(target);
+      if (path === "/act/restart") return await restart(target, viewer);
       if (path === "/act/enabled") {
         // The file refuses this field on the hub and on the board, so a form
         // somebody wrote by hand is answered here rather than by a writer that
@@ -544,8 +522,8 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
    *
    * Bun's own error page carries the message and the stack of whatever threw,
    * with this machine's absolute paths in it, and it is what a server hands out
-   * unless it is told otherwise. A reader here is not identified and is
-   * certainly not an operator. The cause goes to the journal, where the person
+   * unless it is told otherwise. Even an authenticated reader gets no stack
+   * or absolute paths. The cause goes to the journal, where the person
    * who runs the box reads it.
    */
   const failed = (error: Error): Response => {
@@ -558,7 +536,14 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     port: entry.port,
     development: false,
     error: failed,
-    fetch: answer,
+    async fetch(request, server) {
+      const response = await answer(request, server);
+      response.headers.set("cache-control", "no-store");
+      response.headers.set("vary", "Authorization");
+      response.headers.set("referrer-policy", "no-referrer");
+      response.headers.set("x-content-type-options", "nosniff");
+      return response;
+    },
   });
 
   // Read by `answer`, which no request reaches before this line has run.

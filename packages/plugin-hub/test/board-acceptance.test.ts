@@ -79,7 +79,7 @@ const INVENTORY: Row[] = [
   },
   {
     requirement: "RUN-05, the acts and the Forbidden line",
-    observation: "restart through the one shipped verb, stop as a registry field, no board code touching an acting verb, and an act taken only from a person's own device and the board's own page",
+    observation: "restart through the one shipped verb, stop as a registry field, no board code touching an acting verb, and an act taken only from an authenticated operator and the board's own page",
     seams: ["A", "C"],
     evidence: [
       { seam: "A", file: "test/board-acts.test.ts", runs: BOTH },
