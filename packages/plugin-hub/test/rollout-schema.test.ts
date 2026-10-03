@@ -118,7 +118,7 @@ for (const role of ["hub_door", "hub_runner", "hub_agent", "hub_hub"]) {
   })
 }
 
-test("migration 12 lands on an upgraded store as the same effect and confirmation objects, checks and grants a fresh install has, and rerunning it changes nothing", async () => {
+test("migration 12 through current lands on an upgraded store as the same effect and confirmation objects, checks and grants a fresh install has, and rerunning it changes nothing", async () => {
   const upgraded = await rolloutDatabase(cluster, true)
   const fresh = await rolloutDatabase(cluster)
   const migrate = await migrator()
@@ -152,8 +152,11 @@ test("migration 12 lands on an upgraded store as the same effect and confirmatio
   expect(a.functions.map((row: any) => row.proname)).not.toContain("hub_effect_release_edit")
   expect(a.functions).toHaveLength(5)
   expect(a.triggers.map((row: any) => row.tgname)).toEqual([
-    "confirmation_notify", "confirmation_rules", "platform_effect_notify_content", "platform_effect_notify_insert", "platform_effect_rules",
+    "confirmation_notify", "confirmation_rules", "outbound_confirmation_source", "platform_effect_notify_content", "platform_effect_notify_insert", "platform_effect_rules",
   ])
+  // Migration 021 adds source-liveness fencing; require it on both paths, not merely equal absence.
+  expect((a.triggers.find((row: any) => row.tgname === "outbound_confirmation_source") as { d: string } | undefined)?.d)
+    .toContain("BEFORE INSERT OR UPDATE ON public.confirmation FOR EACH ROW EXECUTE FUNCTION hub_outbound_confirmation_guard()");
   expect(a.checks.length).toBeGreaterThan(10)
   expect(b).toEqual(a)
   // What the roles hold, read off the catalog: nobody inserts or deletes, only the door updates, and only its own columns.

@@ -41,19 +41,24 @@ const files = (upTo: number) => MIGRATION_FILES.filter(([version]) => version <=
 const whole = (through: number) => Array.from({ length: through }, (_, i) => i + 1)
 
 // ---------------------------------------------------------------------------
-// I1-I2. The tool catalog: one facade, two families, one handler table.
+// I1-I2. The tool catalog: one facade, three families, one handler table.
 // ---------------------------------------------------------------------------
 
-test("I1 every action the catalog offers has a handler and nothing else is offered, for both families, and an action nobody built is refused by name", async () => {
+test("I1 every action the catalog offers has a handler and nothing else is offered, for all three families, and an action nobody built is refused by name", async () => {
   const s = await councilStage(cluster, track, { general: true })
   try {
-    expect(TOOLS.map(tool => tool.name)).toEqual(["hub_topic", "hub_council"])
+    expect(TOOLS.map(tool => tool.name)).toEqual(["hub_topic", "hub_council", "hub_outbound"])
     for (const tool of TOOLS) {
       for (const action of tool.inputSchema.properties.action.enum as readonly string[]) {
         // With no other argument a call is refused for what it lacks, or answered: never for having no handler.
         const said = await code(callTool(s.binding(), tool.name, { action }))
         expect(["unsupported_action", "unknown_tool"], `${tool.name} ${action}`).not.toContain(said)
       }
+    }
+    expect(await callTool(s.binding(), "hub_outbound", { action: "inspect" }))
+      .toMatchObject({ status: "complete", stage: "disabled", accounts: [], findings: [] })
+    for (const action of ["approve", "send"]) {
+      expect(await code(callTool(s.binding(), "hub_outbound", { action }))).toBe("invalid_arguments")
     }
     // The actions neither slice built are not listed, and asking anyway is refused before anything is looked at.
     for (const [tool, action] of [["hub_topic", "stop"], ["hub_topic", "erase"], ["hub_council", "move"], ["hub_council", "delete"]] as const) {

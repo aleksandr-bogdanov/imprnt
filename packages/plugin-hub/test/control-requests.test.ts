@@ -355,16 +355,23 @@ test("H2b freshness is decided by the database at the microsecond: a message in 
   } finally { await s.close() }
 })
 
-test("H3 the tools the model is offered are unchanged, and an action nobody registered is refused by name", async () => {
+test("H3 the tools the model is offered match the explicit catalog, and an action nobody registered is refused by name", async () => {
   const s = await ownerConversation()
   try {
-    expect(TOOLS.map(tool => tool.name)).toEqual(["hub_topic", "hub_council"])
+    expect(TOOLS.map(tool => tool.name)).toEqual(["hub_topic", "hub_council", "hub_outbound"])
     expect(TOOLS[0].inputSchema.additionalProperties).toBe(false)
     expect(Object.keys(TOOLS[0].inputSchema.properties).sort()).toEqual(["action", "creation_decision", "destination_machine", "expected_revision", "move_decision",
       "recovery_decision", "request_key", "setup", "source_message_ids", "topic_id"])
     expect(TOOLS[0].inputSchema.properties.action.enum).toEqual(["inspect", "resume", "create", "archive", "reopen", "move", "delete"])
     expect(TOOLS[1].inputSchema.additionalProperties).toBe(false)
     expect(TOOLS[1].inputSchema.properties.action.enum).toEqual(["start", "continue", "inspect", "stop"])
+    expect(TOOLS[2].inputSchema.additionalProperties).toBe(false)
+    expect(TOOLS[2].inputSchema.properties.action.enum).toEqual(["draft", "inspect"])
+    // Approval remains an owner reaction, never an executable model action.
+    for (const action of ["approve", "send", "toString"]) {
+      expect(await code(callTool(s.binding, "hub_outbound", { action }))).toBe("invalid_arguments")
+    }
+    expect(await code(callTool(s.binding, "hub_outbound", { action: "inspect", person: "p2" }))).toBe("invalid_arguments")
     // Nothing that is not listed is offered, and what is asked for anyway is refused by name, before anything is looked at.
     expect(await code(callTool(s.binding, "hub_topic", { action: "stop", request_key: "k", source_message_ids: ["h1"] }))).toBe("unsupported_action")
     expect(await code(callTool(s.binding, "hub_topic", { action: "toString" }))).toBe("unsupported_action")
