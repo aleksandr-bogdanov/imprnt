@@ -134,6 +134,7 @@ async function stageBoard(options: { bind?: string; stopped?: boolean } = {}): P
   };
   const it = await stageHub(cluster, {
     machines: [MACHINE],
+    people: [{ id: "p1" }],
     run: [
       {
         id: runnerId,

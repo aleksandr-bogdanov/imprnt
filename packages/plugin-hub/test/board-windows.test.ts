@@ -37,7 +37,7 @@ import {
 } from "./helpers/cluster.ts";
 import { CHAT, DOOR, PERSON, PERSON2, RUNNER, stageHub, superStore, type StagedHub } from "./helpers/hub-fixture.ts";
 import { cpuSeconds } from "./helpers/cpu.ts";
-import { freePort, plantedSeam } from "./helpers/board.ts";
+import { BOARD_AUTH, provisionBoardAuth, freePort, plantedSeam } from "./helpers/board.ts";
 import type { RunSpec } from "./helpers/registry.ts";
 import { runCheck, CHECK_SHEET } from "../src/check/run.ts";
 
@@ -189,25 +189,36 @@ interface BoardProcess {
 }
 
 async function startBoard(it: StagedHub, entry: RunSpec): Promise<BoardProcess> {
+  provisionBoardAuth(it.registryFile, entry.id);
   const proc = Bun.spawn(
     [process.execPath, "run", hubPath("src/entry/board.ts"), it.registryFile, entry.id],
     { cwd: hubPath("."), stdout: "pipe", stderr: "pipe", stdin: "ignore" },
   );
   const url = `http://${entry.bind}:${entry.port}`;
-  const errors = new Response(proc.stderr).text();
-  await until(
-    "the board answered its first page",
-    async () => {
-      if (proc.exitCode !== null) throw new Error(`the board exited: ${(await errors).slice(0, 400)}`);
-      try {
-        return (await fetch(`${url}/`)).status === 200;
-      } catch {
-        return false;
-      }
-    },
-    30_000,
-    async () => `The board said: ${(await errors).slice(0, 600)}`,
-  );
+  let errors = "";
+  const stderr = (async () => {
+    for await (const chunk of proc.stderr) errors += new TextDecoder().decode(chunk);
+  })();
+  try {
+    await until(
+      "the board answered its first page",
+      async () => {
+        if (proc.exitCode !== null) throw new Error(`the board exited: ${errors.slice(0, 400)}`);
+        try {
+          return (await fetch(`${url}/`, { headers: { authorization: BOARD_AUTH } })).status === 200;
+        } catch {
+          return false;
+        }
+      },
+      30_000,
+      async () => `The board said: ${errors.slice(0, 600)}`,
+    );
+  } catch (error) {
+    try { proc.kill(15); } catch { /* already gone */ }
+    await proc.exited;
+    await stderr;
+    throw error;
+  }
   return {
     pid: proc.pid,
     url,
@@ -218,6 +229,7 @@ async function startBoard(it: StagedHub, entry: RunSpec): Promise<BoardProcess> 
         // already gone
       }
       await proc.exited.catch(() => {});
+      await stderr;
     },
   };
 }

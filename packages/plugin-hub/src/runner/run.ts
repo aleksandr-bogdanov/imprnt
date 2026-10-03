@@ -1148,9 +1148,12 @@ export async function runRunner(options: {
     let activationBlocked = false;
     let activationSignature: string | null = null;
     const activationBlocks = async (registry: Registry) => {
-      const ordinary = adapterFor(options.adapters, getPreset(registry, agent.preset).adapter).activationBlock;
+      // This is availability metadata, not adapter admission. In particular a
+      // queued council job must validate its approved profile before an unknown
+      // replacement adapter is looked up by the execution path.
+      const ordinary = options.adapters[getPreset(registry, agent.preset).adapter]?.activationBlock;
       const harvestPreset = harvestFor(registry, agent.person)?.harvester;
-      const harvest = harvestPreset ? adapterFor(options.adapters, getPreset(registry, harvestPreset).adapter).activationBlock : undefined;
+      const harvest = harvestPreset ? options.adapters[getPreset(registry, harvestPreset).adapter]?.activationBlock : undefined;
       const blocks = [...new Map([ordinary, harvest].filter((one): one is NonNullable<typeof one> => Boolean(one)).map(one => [one.cause, one])).values()];
       activationBlocked = blocks.length > 0;
       const signature = JSON.stringify({ preset: agent.preset, harvestPreset, ordinary, harvest });

@@ -8,7 +8,7 @@ import { proveRolloutRunner } from "../live/prove-rollout-runner.ts"
 import { runRunner } from "../src/runner/run.ts"
 import { childGone, residentBytes } from "./helpers/scripted-adapter.ts"
 import { encodeHarvestBody, harvestRowId } from "../src/harvest/row.ts"
-import { loadRegistry } from "../src/registry/load.ts"
+import { loadRegistry, readSetting } from "../src/registry/load.ts"
 
 let cluster: Cluster
 beforeAll(async () => { await proveRolloutRunner(); cluster = await startCluster({ settings: { log_statement: "'all'", log_line_prefix: "'pid=%p '" } }) })
@@ -146,10 +146,18 @@ for (const os of ["linux", "darwin"]) {
       await Bun.sleep(2200)
       sample()
       budget(peakChildren, peak)
+      clearInterval(sampler)
+      // A reserved child may still be starting after the sampling burst. It
+      // owns its input legitimately; only a row with no admitted child is a
+      // capacity waiter. Enter the idle window once all claimed turns reached
+      // the fixture's held feed, without putting the process-tree sampler in
+      // that readiness path.
+      await waitUntil("every admitted fleet turn reached its held feed", async () =>
+        (await it.read.inbound()).every(r => r.claimed_by === null || edge.sessions.some(s => s.fed.some(m => m.id === r.id))),
+        15_000)
       const waiting = (await it.read.inbound()).filter(r => !edge.sessions.some(s => s.fed.some(m => m.id === r.id)))
       expect(waiting.length).toBeGreaterThan(0)
-      expect(waiting.every(r => r.claimed_by === null)).toBe(true)
-      clearInterval(sampler)
+      expect(waiting.every(r => r.claimed_by === null), JSON.stringify(waiting)).toBe(true)
       // Sessions are up before the runner has finished with this burst: every
       // idle agent's loop still reads the window on its next tick and records
       // that it waits for capacity, one `admission.wait` row each, and on a
@@ -168,12 +176,21 @@ for (const os of ["linux", "darwin"]) {
         return served.filter(a => !holding.has(a) && !queued.has(a) && !waiting.has(a))
       }
       await waitUntil("every agent holds a row, has recorded its wait for capacity or has its row queued", async () => (await unsettled()).length === 0, 15_000, async () => `still unsettled: ${(await unsettled()).join(", ")}`)
+      // The fixture emits text on each admitted human turn before holding its
+      // end. That event has a trailing progress write on the hub's cadence;
+      // measuring inside it counts real startup activity as capacity polling.
+      const heldHumans = (await it.read.inbound()).filter(r => r.kind === "human" && r.claimed_by !== null)
+      await waitUntil("held human turns reported their initial text", async () => {
+        const progress = await it.read.sheet("turn_progress")
+        return heldHumans.every(r => progress.some(p => p.id === r.id && p.data.activity === "text"))
+      }, 15_000)
+      await Bun.sleep(Number(readSetting(loadRegistry(it.registryFile), "hub.tick_seconds")) * 1000 + 250)
       // No observer SQL or memory sampler inside this capacity-wait window.
       // The monitor is still free to read native memory on its own tick.
-      await Bun.sleep(250)
       const watch = await statementWatch(cluster, [await it.read.pid()])
       await Bun.sleep(1200)
-      expect(await watch.count(), "D-175 capacity wait must not poll the store").toBe(0)
+      const issued = await watch.lines()
+      expect(issued.length, `D-175 capacity wait must not poll the store: ${issued.join("\n")}`).toBe(0)
       // All capacity observations are outside the shipped protected windows.
       expect((await it.read.ledger()).some(r => JSON.stringify(r.detail).includes("admission"))).toBe(true)
       edge.hold(() => false)
