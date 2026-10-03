@@ -640,7 +640,7 @@ test("the sync refuses to commit over an unfinished merge or under a filter prog
     fixtureGit(r.path, "switch", "--quiet", "main")
     try { fixtureGit(r.path, "merge", "other") } catch { /* stops on the conflict, which is the point */ }
     const before = fixtureGit(r.path, "rev-parse", "HEAD")
-    expect(await code()).toBe("conflict")
+    expect(await code()).toBe("operation")
     expect(fixtureGit(r.path, "rev-parse", "HEAD")).toBe(before)
     expect(readFileSync(join(r.path, "base.txt"), "utf8")).toContain("<<<<<<<")
     // A filter planted while a merge is stopped is still refused as a filter, before any
@@ -656,7 +656,7 @@ test("the sync refuses to commit over an unfinished merge or under a filter prog
   } finally { await f.stop() }
 })
 
-test("three failed runs in a row reach the person in their resident agent's chat, once per streak", async () => {
+test("thirty minutes of failed sync reach the resident chat once per streak, regardless of run count", async () => {
   const f = await syncFixture(cluster, { chat: true, busy: true })
   try {
     const r = f.repos[0]
@@ -669,19 +669,19 @@ test("three failed runs in a row reach the person in their resident agent's chat
     const row = async () => ((await f.read.sheet("sync")).find(one => one.id === f.id)!.data.repositories as
       { id: string; failed_runs?: number }[]).find(one => one.id === r.id)!
     for (let run = 1; run <= 2; run++) {
-      expect((await syncChild(f, git.env)).code).not.toBe(0)
+      expect((await syncChild(f, git.env, f.id, undefined, "2026-10-03T10:00:00.000Z")).code).not.toBe(0)
       expect(await notices(), `run ${run} stays in the journal`).toEqual([])
     }
     expect((await row()).failed_runs).toBe(2)
-    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    expect((await syncChild(f, git.env, f.id, undefined, "2026-10-03T10:30:00.000Z")).code).not.toBe(0)
     const said = await notices()
     expect(said).toHaveLength(1)
     expect(said[0], "the notice goes to the resident agent's chat").toMatchObject({ person: "p1", agent: "p1-lair" })
     expect(String(said[0].body)).toContain(r.id)
-    expect(String(said[0].body)).toContain("3 times in a row")
+    expect(String(said[0].body)).toContain("30 minutes")
     expect(String(said[0].body)).toContain("push failed")
     // A fourth failure is the same streak, and says nothing new.
-    expect((await syncChild(f, git.env)).code).not.toBe(0)
+    expect((await syncChild(f, git.env, f.id, undefined, "2026-10-03T10:30:00.000Z")).code).not.toBe(0)
     expect(await notices()).toHaveLength(1)
     expect((await row()).failed_runs).toBe(4)
     git.control({})
@@ -693,7 +693,7 @@ test("three failed runs in a row reach the person in their resident agent's chat
 // A failed commit step used to record only that it failed. The diagnostic says
 // which git step stopped, how it ended and which known shape its output had,
 // and nothing git printed. The failure itself is unchanged: same code, same
-// cause, still counted, still noticed at the third run, and never retried.
+// cause, still counted, noticed only after thirty minutes, and never retried.
 type Diagnostic = { stage: string; reason: string; exit?: number; signal?: string; errno?: string }
 type RepoRow = { id: string; status: string; code?: string; cause?: string; failed_runs?: number; diagnostic?: Diagnostic }
 const repoRow = async (f: SyncFixture, id: string) =>
@@ -767,17 +767,15 @@ test("a file that vanishes after status, and a second writer that commits the st
     expect((await syncChild(f, git.env)).code).toBe(0)
     expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:after.txt")).toBe("a note that stays")
     expect((await repoRow(f, r.id)).failed_runs).toBeUndefined()
-    // The staged file is committed by somebody else between diff and commit, so the sync's own
-    // commit finds nothing to take. Git says so on stdout and stderr is empty. It is still a failed
-    // run and counts as one: whether that should be a success is a separate decision.
+    // Another writer commits between diff and commit. The new HEAD guard
+    // refuses before sync invokes its own commit, preserving that writer's work.
     writeFileSync(join(r.path, "shared-note.txt"), "a note two writers want\n")
     git.clear()
     git.control({ path: here, after: { verb: "diff", arg: "--cached", commit: true } })
     expect((await syncChild(f, git.env)).code).not.toBe(0)
     expect(fixtureGit(r.path, "log", "-1", "--format=%s")).toBe("second writer")
-    expect(await repoRow(f, r.id)).toMatchObject({ status: "failed", code: "commit", failed_runs: 1,
-      diagnostic: { stage: "commit", reason: "nothing-to-commit", exit: 1 } })
-    expect(attempts(git, r.path, "commit")).toBe(1)
+    expect(await repoRow(f, r.id)).toMatchObject({ status: "failed", code: "changed", failed_runs: 1 })
+    expect(attempts(git, r.path, "commit")).toBe(0)
     // Nothing was lost: the next run pushes the other writer's commit.
     git.control({})
     expect((await syncChild(f, git.env)).code).toBe(0)
@@ -814,7 +812,7 @@ test("canned git failures are sorted into a reason by shape, unrecognised or for
     for (const [index, one] of cases.entries()) {
       git.clear()
       git.control({ ...one.control, path: here })
-      const run = await syncChild(f, git.env)
+      const run = await syncChild(f, git.env, f.id, undefined, new Date(Date.parse("2026-10-03T10:00:00Z") + [0, 10, 30, 35][index] * 60_000).toISOString())
       seen.push(run.out, run.err)
       expect(run.code, one.verb).not.toBe(0)
       const row = await repoRow(f, r.id)
@@ -822,7 +820,7 @@ test("canned git failures are sorted into a reason by shape, unrecognised or for
       expect(row.diagnostic, one.verb).toEqual(one.expected)
       expect(await diaried(f, r.id)).toEqual(row)
       expect(attempts(git, r.path, one.verb), `${one.verb} is attempted once`).toBe(1)
-      expect((await notices()).length, "the existing third-run notice, once per streak").toBe(index < 2 ? 0 : 1)
+      expect((await notices()).length, "the elapsed-time notice, once per streak").toBe(index < 2 ? 0 : 1)
     }
     const [notice] = await notices()
     expect(String(notice.body)).toContain("committing the uncommitted changes failed")
