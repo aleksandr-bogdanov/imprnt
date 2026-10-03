@@ -1,3 +1,4 @@
+import { readSetting } from "../registry/load.ts";
 import { homeOf, approverOf } from "../council/access.ts";
 import { platformOf } from "../council/start.ts";
 import { accountHash, accountConfiguration } from "../outbound/accounts.ts";
@@ -13,6 +14,11 @@ import { operationFor, requireMaster, runRequest, Undo, refusal } from "./reques
 export async function outboundTool(binding: McpBinding, request: OutboundRequest): Promise<ToolReply> {
   requireMaster(binding, "prepare outbound messages");
   const registry = binding.registry();
+  if (readSetting(registry,"outbound.accounts_file") === undefined) {
+    if(request.action === "inspect") return {operation_id:null,object_id:null,revision:null,status:"complete",stage:"disabled",
+      status_message:"Outbound is not configured. No accounts or sending capability are available.",accounts:[],findings:[]};
+    throw new ToolError("not_allowed","outbound is not configured; no draft or send was created");
+  }
   const configured=accountConfiguration(registry);
   const accounts = configured.accounts.filter(a => a.person === binding.person);
   if (request.action === "inspect") {

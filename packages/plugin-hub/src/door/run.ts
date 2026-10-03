@@ -1,3 +1,4 @@
+import { outboundNoticeFence } from "../outbound/fence.ts";
 import { outboundApprovals } from "../outbound/delivery.ts";
 import { startOutbound } from "../outbound/task.ts";
 import { createHash } from "node:crypto";
@@ -569,14 +570,19 @@ export async function runDoor(options: {
     for (const agent of agentsFor(registry, { door: options.door })) {
       for (const chunk of await readPendingChunks(store, { agent: agent.id })) {
         if (chunk.route && chunk.route.door !== options.door) continue;
-        await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
-          id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
-          from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
-          // The same mark the delivery projection writes, so a watcher's line
-          // projected at start is left out of the tail too.
-          ...(lineOrigin(chunk.route?.origin) ? { origin: lineOrigin(chunk.route?.origin) } : {}),
-        }, { skipBad });
-        projected.add(chunk.id);
+        const outbound = chunk.kind === "notice" && String(chunk.notice_key ?? "").startsWith("outbound:");
+        const fenced = outbound ? await outboundNoticeFence(store,chunk.id) : null;
+        if(outbound && !fenced) continue;
+        try {
+          await appendChatLineOnce({ stateDir, person: chunk.person, agent: fenced?.sourceAgent ?? chunk.agent }, {
+            id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
+            from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
+            // The same mark the delivery projection writes, so a watcher's line
+            // projected at start is left out of the tail too.
+            ...(lineOrigin(chunk.route?.origin) ? { origin: lineOrigin(chunk.route?.origin) } : {}),
+          }, { skipBad });
+          projected.add(chunk.id);
+        } finally { await fenced?.release(); }
       }
     }
   } catch {
@@ -810,81 +816,86 @@ export async function runDoor(options: {
           blocked.add(group);
           continue;
         }
-        if (!chunk.route) await store.sql`update outbox set route = ${route}::jsonb where id = ${chunk.id} and route is null`;
-        if (!projected.has(chunk.id)) {
-          await appendChatLineOnce({ stateDir, person: chunk.person, agent: chunk.agent }, {
-            id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
-            from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
-            // A watcher's notice is marked in the log as it is on the row, so
-            // the file tail leaves it out the way the store tail does.
-            ...(lineOrigin(chunk.route?.origin) ? { origin: lineOrigin(chunk.route?.origin) } : {}),
-          }, { skipBad });
-          projected.add(chunk.id);
-        }
-        if (chunk.kind === "reply" && chunk.inbound_id !== null) {
-          const line = own.progress.get(chunk.inbound_id);
-          // With no effects task yet (the first pass of a start runs before it does) nothing could
-          // deliver the card's last content, so waiting would only spend the allowance. The allowance
-          // is a bound on this one wait, for this one chunk: not on the start, and not on a whole answer.
-          if (line && effects !== null) {
-            await Promise.race([line.totals, Bun.sleep(TOTALS_WAIT_MS)]);
-            // A stop or a person change ends the wait too, by resolving the totals: that is no
-            // evidence anything went out, and the reply now belongs to whoever serves next.
-            if (stopping || own.leaving) return;
-          }
-        }
-        const fresh = registryThisTick();
-        const seconds = Number(readSetting(fresh, "door.delivery_retry_seconds"));
-        const attempts = Number(chunk.attempts) + 1;
-        const maxAttempts = Number(readSetting(fresh, "door.delivery_max_attempts"));
-        if (Number(chunk.attempts) >= maxAttempts) {
-          const failure = chunk.failure ?? { kind: "uncertain" as const, code: "send-interrupted", cause: "delivery outcome unknown" };
-          await store.sql`update outbox set delivery_state = 'failed', retry_at = null, failure = ${failure}::jsonb where id = ${chunk.id}`;
-          projected.delete(chunk.id);
-          await recordOperationFailure(store, "post", options.door, route.chat, failure);
-          await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
-            agent, chat: route.chat, health: health.health, key: `delivery-failed:${chunk.id}`, failure, operation: "post", seconds });
-          blocked.add(group);
-          continue;
-        }
-        // If this process dies during the send, restart retains an honest
-        // unknown receipt and the same bounded retry deadline.
-        const next = new Date(Date.now() + seconds * 1000).toISOString();
-        await store.sql`update outbox set attempts = ${attempts}, retry_at = ${next}::timestamptz,
-          failure = '{"kind":"uncertain","code":"send-interrupted","cause":"delivery outcome unknown"}'::jsonb where id = ${chunk.id}`;
+        const outbound = chunk.kind === "notice" && String(chunk.notice_key ?? "").startsWith("outbound:");
+        const fenced = outbound ? await outboundNoticeFence(store,chunk.id) : null;
+        if(outbound && !fenced) continue;
         try {
-          // Stable across retries and process restarts. Discord enforces this only within
-          // its recent-message window; it is not an unlimited exactly-once guarantee.
-          const nonce = createHash("sha256").update(`hub-outbox:${options.door}:${route.chat}:${chunk.id}`).digest("base64url").slice(0, 25);
-          await options.platform.post({ chat: route.chat, text: chunk.body, nonce });
-        } catch (error) {
-          const failure = classifyPlatformError(error);
-          // A limit the platform named is waited out as named, and never sooner than
-          // the retry spacing. A request the platform seam HELD for a limit it already
-          // knew of never left, so it is not an attempt and is not a new failure to
-          // record: the limit that held it was.
-          const limit = error as { retryAfterMs?: unknown; blocked?: unknown } | null;
-          const named = typeof limit?.retryAfterMs === "number" ? limit.retryAfterMs : 0;
-          const held = limit?.blocked === true;
-          const spent = held ? Number(chunk.attempts) : attempts;
-          const terminal = failure.kind === "permanent" || spent >= maxAttempts;
-          // The pre-send durable stamp may itself have waited on storage.
-          // Space retries from the observed failure, not that earlier write.
-          const retry = terminal ? null : new Date(Date.now() + Math.max(seconds * 1000, named)).toISOString();
-          await store.sql`update outbox set attempts = ${spent}, delivery_state = ${terminal ? "failed" : "pending"},
-            retry_at = ${retry}::timestamptz, failure = ${failure}::jsonb where id = ${chunk.id}`;
-          if (terminal) projected.delete(chunk.id);
-          if (!held) await recordOperationFailure(store, "post", options.door, route.chat, failure);
-          if (terminal) await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
-            agent, chat: route.chat, health: health.health, key: `delivery-failed:${chunk.id}`,
-            failure, operation: "post", seconds });
-          else retryAt = Math.min(retryAt ?? Infinity, Date.parse(retry!));
-          blocked.add(group);
-          continue;
-        }
-        await markDelivered(store, chunk.id);
-        projected.delete(chunk.id);
-        if (chunk.inbound_id !== null) posted.add(chunk.inbound_id);
+          if (!chunk.route) await store.sql`update outbox set route = ${route}::jsonb where id = ${chunk.id} and route is null`;
+          if (!projected.has(chunk.id)) {
+            await appendChatLineOnce({ stateDir, person: chunk.person, agent: fenced?.sourceAgent ?? chunk.agent }, {
+              id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
+              from: chunk.kind === "notice" ? options.door : chunk.agent, text: chunk.body,
+              // A watcher's notice is marked in the log as it is on the row, so
+              // the file tail leaves it out the way the store tail does.
+              ...(lineOrigin(chunk.route?.origin) ? { origin: lineOrigin(chunk.route?.origin) } : {}),
+            }, { skipBad });
+            projected.add(chunk.id);
+          }
+          if (chunk.kind === "reply" && chunk.inbound_id !== null) {
+            const line = own.progress.get(chunk.inbound_id);
+            // With no effects task yet (the first pass of a start runs before it does) nothing could
+            // deliver the card's last content, so waiting would only spend the allowance. The allowance
+            // is a bound on this one wait, for this one chunk: not on the start, and not on a whole answer.
+            if (line && effects !== null) {
+              await Promise.race([line.totals, Bun.sleep(TOTALS_WAIT_MS)]);
+              // A stop or a person change ends the wait too, by resolving the totals: that is no
+              // evidence anything went out, and the reply now belongs to whoever serves next.
+              if (stopping || own.leaving) return;
+            }
+          }
+          const fresh = registryThisTick();
+          const seconds = Number(readSetting(fresh, "door.delivery_retry_seconds"));
+          const attempts = Number(chunk.attempts) + 1;
+          const maxAttempts = Number(readSetting(fresh, "door.delivery_max_attempts"));
+          if (Number(chunk.attempts) >= maxAttempts) {
+            const failure = chunk.failure ?? { kind: "uncertain" as const, code: "send-interrupted", cause: "delivery outcome unknown" };
+            await store.sql`update outbox set delivery_state = 'failed', retry_at = null, failure = ${failure}::jsonb where id = ${chunk.id}`;
+            projected.delete(chunk.id);
+            await recordOperationFailure(store, "post", options.door, route.chat, failure);
+            await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
+              agent, chat: route.chat, health: health.health, key: `delivery-failed:${chunk.id}`, failure, operation: "post", seconds });
+            blocked.add(group);
+            continue;
+          }
+          // If this process dies during the send, restart retains an honest
+          // unknown receipt and the same bounded retry deadline.
+          const next = new Date(Date.now() + seconds * 1000).toISOString();
+          await store.sql`update outbox set attempts = ${attempts}, retry_at = ${next}::timestamptz,
+            failure = '{"kind":"uncertain","code":"send-interrupted","cause":"delivery outcome unknown"}'::jsonb where id = ${chunk.id}`;
+          try {
+            // Stable across retries and process restarts. Discord enforces this only within
+            // its recent-message window; it is not an unlimited exactly-once guarantee.
+            const nonce = createHash("sha256").update(`hub-outbox:${options.door}:${route.chat}:${chunk.id}`).digest("base64url").slice(0, 25);
+            await options.platform.post({ chat: route.chat, text: chunk.body, nonce });
+          } catch (error) {
+            const failure = classifyPlatformError(error);
+            // A limit the platform named is waited out as named, and never sooner than
+            // the retry spacing. A request the platform seam HELD for a limit it already
+            // knew of never left, so it is not an attempt and is not a new failure to
+            // record: the limit that held it was.
+            const limit = error as { retryAfterMs?: unknown; blocked?: unknown } | null;
+            const named = typeof limit?.retryAfterMs === "number" ? limit.retryAfterMs : 0;
+            const held = limit?.blocked === true;
+            const spent = held ? Number(chunk.attempts) : attempts;
+            const terminal = failure.kind === "permanent" || spent >= maxAttempts;
+            // The pre-send durable stamp may itself have waited on storage.
+            // Space retries from the observed failure, not that earlier write.
+            const retry = terminal ? null : new Date(Date.now() + Math.max(seconds * 1000, named)).toISOString();
+            await store.sql`update outbox set attempts = ${spent}, delivery_state = ${terminal ? "failed" : "pending"},
+              retry_at = ${retry}::timestamptz, failure = ${failure}::jsonb where id = ${chunk.id}`;
+            if (terminal) projected.delete(chunk.id);
+            if (!held) await recordOperationFailure(store, "post", options.door, route.chat, failure);
+            if (terminal) await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
+              agent, chat: route.chat, health: health.health, key: `delivery-failed:${chunk.id}`,
+              failure, operation: "post", seconds });
+            else retryAt = Math.min(retryAt ?? Infinity, Date.parse(retry!));
+            blocked.add(group);
+            continue;
+          }
+          await markDelivered(store, chunk.id);
+          projected.delete(chunk.id);
+          if (chunk.inbound_id !== null) posted.add(chunk.inbound_id);
+        } finally { await fenced?.release(); }
       }
       for (const id of posted) if (!blocked.has(id)) {
         const [row] = await store.sql`select 1 from outbox where inbound_id = ${id} and delivered_at is null limit 1`;

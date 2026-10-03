@@ -185,3 +185,52 @@ test("held approvals tell the owner once and check reports them; external labels
   expect(rows.some((r:any)=>r.body.includes("@\u200beveryone"))).toBe(true);
   expect(rows.every((r:any)=>!/@(?:everyone|here|[0-9&])/.test(r.body))).toBe(true);
 });
+
+
+for(const platform of ["discord","telegram"]) test(`maximum escaped success notice uses actual ${platform} General route boundaries without resending`,async()=>{
+ const f=await fixture();
+ f.account.identity="@".repeat(1000);writeFileSync(f.config,JSON.stringify([f.account]));
+ const d=await f.draft("max-notice","exact",{target:{...target,label:"@".repeat(2000)}});
+ const row=await approve(f,d.object_id!);
+ await deliverOutbound(f.stage.as("hub_door"),f.registry(),DOOR);expect(f.calls()).toHaveLength(1);
+ await f.stage.admin`delete from outbox where notice_key like ${`outbound:${row.id}:sent%`}`;
+ await f.stage.admin`update outbound_delivery set notified=false where confirmation_id=${row.id}`;
+ writeRegistry(f.root,{hub:{state_dir:f.root},machines:[{id:"test",os:"macos"}],people:[{id:PERSON,general:"p1-general",allowed_senders:{[DOOR]:[OWNER]}} as never],
+  presets:{daily:{adapter:"synthetic",model:"m",provider:"p",effort:"medium",paid:"plan"}},
+  agents:[{id:"p1-lair",person:PERSON,preset:"daily",chat:"100000000000000077",door:DOOR,runner:"runner-test"},
+    {id:"p1-general",person:PERSON,preset:"daily",chat:"100000000000000078",door:"general-door",runner:"runner-test"}],
+  run:[{id:"general-door",kind:"door",machine:"test",platform,person:PERSON,token_file:"/dev/null",schedule:"always",memory_limit_mb:192}] as never});
+ appendFileSync(f.path,`\n[outbound]\naccounts_file = ${JSON.stringify(f.config)}\n`);
+ await deliverOutbound(f.stage.as("hub_door"),f.registry(),DOOR);
+ await deliverOutbound(f.stage.as("hub_door"),f.registry(),DOOR);
+ const parts=await f.stage.admin`select body,notice_key,seq_in_reply,route from outbox where notice_key like ${`outbound:${row.id}:sent%`} order by seq_in_reply`;
+ expect(parts.length).toBeGreaterThan(1);
+ if(platform==="telegram")expect(Math.max(...parts.map((p:any)=>p.body.length))).toBeGreaterThan(2000);
+ for(const [i,p] of parts.entries()){
+  expect(p.body.length).toBeLessThanOrEqual(platform==="discord"?2000:4000);expect(p.body.trim()).not.toBe("");
+  expect(p.notice_key).toBe(`outbound:${row.id}:sent${i ? `:part:${i+1}` : ""}`);
+  expect(p.route).toMatchObject({door:"general-door",chat:"100000000000000078",outbound_confirmation:row.id,outbound_source_agent:"p1-lair"});
+ }
+ expect(parts.map((p:any)=>p.body).join("")).toBe(`Sent the approved message from ${"@\u200b".repeat(1000)} to ${"@\u200b".repeat(2000)}.`);
+ expect(f.calls()).toHaveLength(1);
+ const [state]=await f.stage.admin`select notified from outbound_delivery where confirmation_id=${row.id}`;expect(state.notified).toBe(true);
+});
+
+test("all notice parts and marker commit together; repairing a failed notice transaction never resends externally",async()=>{
+ const f=await fixture();const d=await f.draft("atomic-notice","exact",{target:{...target,label:"x".repeat(2000)}});const row=await approve(f,d.object_id!);
+ await f.stage.admin.unsafe(`create function test_refuse_part() returns trigger language plpgsql as $$ begin if new.notice_key like 'outbound:%' and new.seq_in_reply=2 then raise exception 'synthetic-part-refusal'; end if; return new; end $$; create trigger test_refuse_part before insert on outbox for each row execute function test_refuse_part()`);
+ await expect(deliverOutbound(f.stage.as("hub_door"),f.registry(),DOOR)).rejects.toThrow("synthetic-part-refusal");
+ expect(f.calls()).toHaveLength(1);
+ expect(await f.stage.admin`select id from outbox where notice_key like ${`outbound:${row.id}:sent%`}`).toHaveLength(0);
+ const [state]=await f.stage.admin`select state,notified from outbound_delivery where confirmation_id=${row.id}`;expect(state).toMatchObject({state:"sent",notified:false});
+ await f.stage.admin`drop trigger test_refuse_part on outbox`;
+ await deliverOutbound(f.stage.as("hub_door"),f.registry(),DOOR);
+ expect(f.calls()).toHaveLength(1);
+ expect((await f.stage.admin`select id from outbox where notice_key like ${`outbound:${row.id}:sent%`}`).length).toBeGreaterThan(1);
+});
+
+test("unconfigured outbound inspect names disabled availability and drafting stays refused",async()=>{
+ const f=await fixture();writeFileSync(f.path,readFileSync(f.path,"utf8").split("\n[outbound]")[0]);
+ const result=await callTool(f.binding,"hub_outbound",{action:"inspect"});expect(result.stage).toBe("disabled");
+ await expect(f.draft("disabled")).rejects.toThrow("outbound is not configured");expect(f.calls()).toHaveLength(0);
+});
