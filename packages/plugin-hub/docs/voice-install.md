@@ -33,3 +33,5 @@ Offline boundary checks:
 ```sh
 python3 packages/plugin-hub/test/install-voice.test.py
 ```
+
+Validation includes actual fresh disposable installs on Mac ARM64 with CPython 3.13 and Pi Linux ARM64 with CPython 3.11.2. Both verified downloads and ran the existing backend plus ffmpeg on synthetic silence. Other supported wheel platforms are not runtime-tested by these checks. Existing household runtimes were untouched.
