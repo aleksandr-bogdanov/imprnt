@@ -47,6 +47,7 @@ test("macOS installed tool reads exclude Homebrew service data even below /usr/l
   expect(profile).not.toContain(`(allow file-read* (subpath "${prefix}"))`);
   expect(profile).toContain(`(allow file-read* (subpath "${prefix}/Cellar"))`);
   expect(profile).toContain(`(allow file-read* (subpath "${prefix}/etc/openssl@3"))`);
+  expect(profile).toContain(`(allow file-read* (subpath "${prefix}/etc/ca-certificates"))`);
 });
 
 // ---------------------------------------------------------------------------

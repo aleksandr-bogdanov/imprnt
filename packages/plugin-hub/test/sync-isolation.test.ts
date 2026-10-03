@@ -131,3 +131,31 @@ test("root read grants are refused and Mac toolchain access excludes Homebrew pr
     });
   } finally {await f.stop();}
 });
+
+
+test("Mac sync permits only the measured SSH account lookup service", async () => {
+  if (process.platform !== "darwin") return;
+  const f = await syncFixture(cluster);
+  try {
+    const registry = f.registry(), repo = listRepositories(registry)[0];
+    await inSyncIsolation(registry, repo, async () => {
+      const boxed = isolatedGit([]), profile = boxed.argv[2];
+      const grant = '(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))';
+      expect(profile.split("\n").filter(line => line.includes("mach-lookup"))).toEqual([grant]);
+      expect(profile).toContain("(deny job-creation)");
+      expect(profile).toContain('(allow network-outbound (literal "/private/var/run/mDNSResponder"))');
+      if (existsSync("/opt/homebrew/etc/ca-certificates")) expect(profile).toContain('(allow file-read* (subpath "/opt/homebrew/etc/ca-certificates"))');
+      const initialize = async (policy: string) => {
+        const child = Bun.spawn(["/usr/bin/sandbox-exec", "-p", policy, "/usr/bin/ssh", "-F", "/dev/null", "-G", "fixture.invalid"],
+          { env: boxed.env, stdout: "ignore", stderr: "pipe" });
+        const error = await new Response(child.stderr).text();
+        return { code: await child.exited, error };
+      };
+      // -G evaluates configuration locally; it never connects or reads a private key.
+      expect((await initialize(profile)).code).toBe(0);
+      const denied = await initialize(profile.replace(grant, ""));
+      expect(denied.code).not.toBe(0);
+      expect(denied.error).toContain("No user exists for uid");
+    });
+  } finally { await f.stop(); }
+});

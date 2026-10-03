@@ -113,7 +113,7 @@ export function isolatedGit(args: string[]): { argv: string[]; env: Record<strin
     if (realpathSync(path) !== path || actual.dev !== expected.dev || actual.ino !== expected.ino) throw new SyncIsolationUnavailable();
   }
   const system = process.platform === "darwin"
-    ? ["/usr", "/bin", "/sbin", "/System", "/Library/Developer", "/Library/Apple", "/private/etc", "/private/var/db", "/private/var/select", ...["bin","opt","Cellar","lib","libexec","share","etc/openssl@3"].map(dir=>`/opt/homebrew/${dir}`)]
+    ? ["/usr", "/bin", "/sbin", "/System", "/Library/Developer", "/Library/Apple", "/private/etc", "/private/var/db", "/private/var/select", ...["bin","opt","Cellar","lib","libexec","share","etc/openssl@3", "etc/ca-certificates"].map(dir=>`/opt/homebrew/${dir}`)]
     : ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc/ssl", "/etc/ssh", "/etc/hosts", "/etc/resolv.conf", "/etc/nsswitch.conf", "/etc/passwd", "/etc/group", "/etc/ld.so.cache"];
   const developer = process.platform === "darwin" ? developerGit() : "";
   const tools = [dirname(b.git), dirname(realpathSync(process.execPath)),
@@ -131,6 +131,11 @@ export function isolatedGit(args: string[]): { argv: string[]; env: Record<strin
       '(allow file-read* (literal "/") (subpath "/dev"))', '(allow file-write* (literal "/dev/null"))',
       ...read.map(path => `(allow file-read* ${subpath(path)})`),
       ...write.map(path => `(allow file-read* file-write* ${subpath(path)})`),
+      // OpenSSH resolves the invoking uid through this read-only account lookup service.
+      // Keep other Mach services (including launchd/control services) denied.
+      '(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))',
+      // DNSServiceGetAddrInfo uses this resolver socket; no other Unix socket is exposed.
+      '(allow network-outbound (literal "/private/var/run/mDNSResponder"))',
       "(allow process-exec process-fork sysctl-read)", "(deny job-creation)",
       "(allow network-outbound network-inbound (remote ip))",
       ...b.deny.map(path => `(deny file-read* file-write* ${subpath(path)})`)].join("\n");

@@ -63,7 +63,7 @@ function macTools(): string[] {
   // The prefix also contains mutable service data (notably Postgres under
   // var). Only the installed toolchain belongs in an agent's read grants.
   // Homebrew Node/OpenSSL reads this public configuration before startup.
-  return [...["bin", "opt", "Cellar", "lib", "libexec", "share", "etc/openssl@3"].map(path => join(brewPrefix(), path)),
+  return [...["bin", "opt", "Cellar", "lib", "libexec", "share", "etc/openssl@3", "etc/ca-certificates"].map(path => join(brewPrefix(), path)),
     join(homedir(), ".local"), join(homedir(), ".bun")];
 }
 
