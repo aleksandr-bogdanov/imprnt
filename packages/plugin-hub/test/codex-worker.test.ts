@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { startCluster, type Cluster } from "./helpers/cluster.ts";
-import { stageHub, PERSON, RUNNER } from "./helpers/hub-fixture.ts";
+import { stageHub, insertInbound, PERSON, RUNNER } from "./helpers/hub-fixture.ts";
 import { insertJob } from "./helpers/conversations.ts";
 import { observe, retrySettings } from "./helpers/rollout-runner.ts";
 import { runRunner } from "../src/runner/run.ts";
@@ -21,9 +21,9 @@ test("Codex protocol adapter participates in real Hub worker conversations, repo
     async capabilities() { return { stableSession: true, safeResume: false, delegationDisabled: true }; },
     async start(options) {
       const cwd = join(it.stateDir, "codex-fixture", options.session!.id); mkdirSync(join(cwd, "codex"), { recursive: true });
-      const config = { model: options.preset.model, model_provider: options.preset.provider, agents: { enabled: false }, model_providers: { [options.preset.provider]: { base_url: "http://127.0.0.1:9/v1" } } };
+      const config = { model: options.preset.model, model_provider: options.preset.provider, agents: { enabled: false }, cli_auth_credentials_store: "ephemeral", model_providers: { [options.preset.provider]: { base_url: "http://127.0.0.1:9/v1", requires_openai_auth: true } } };
       const session = await real.start({ ...options, preset: { ...options.preset, effort: "high" }, cwd,
-        argv: [process.execPath, join(import.meta.dir, "helpers/codex-server.ts")], wrap: args => args, env: { PATH: process.env.PATH, HUB_CODEX_CONFIG: JSON.stringify(config) } });
+        argv: [process.execPath, join(import.meta.dir, "helpers/codex-server.ts")], wrap: args => args, privateModelKey: () => "synthetic-codex-key", env: { PATH: process.env.PATH, HUB_CODEX_CONFIG: JSON.stringify(config) } });
       const record = { ...options.session!, gone: false, session }; opened.push(record); void session.exited!.then(() => { record.gone = true; }); return session;
     },
   };
@@ -48,3 +48,36 @@ test("Codex protocol adapter participates in real Hub worker conversations, repo
     expect(attempts.map(row => row.state)).toEqual(["completed", "completed", "completed"]);
   } finally { await runner?.stop(); for (const row of opened) await row.session.close(); await it.stop(); }
 }, 90_000);
+
+test("an eagerly launched Codex master restarts before its first input without an identity deadlock", async () => {
+  const it = await stageHub(cluster); retrySettings(it);
+  const cwd = join(it.stateDir, "codex-master-fixture"); mkdirSync(join(cwd, "codex"), { recursive: true });
+  const real = createCodex({ timeoutMs: 2000 });
+  const opened: { id: string; resume: boolean; session: AdapterSession }[] = [];
+  const adapter: Adapter = {
+    name: it.adapterName,
+    async capabilities() { return { stableSession: true, safeResume: false, delegationDisabled: true }; },
+    async start(options) {
+      const config = { model: options.preset.model, model_provider: options.preset.provider, agents: { enabled: false }, cli_auth_credentials_store: "ephemeral", model_providers: { [options.preset.provider]: { base_url: "http://127.0.0.1:9/v1", requires_openai_auth: true } } };
+      const session = await real.start({ ...options, cwd,
+        argv: [process.execPath, join(import.meta.dir, "helpers/codex-server.ts")], wrap: args => args, privateModelKey: () => "synthetic-codex-key",
+        env: { PATH: process.env.PATH, HUB_CODEX_CONFIG: JSON.stringify(config) } });
+      opened.push({ ...options.session!, session }); return session;
+    },
+  };
+  let runner: Awaited<ReturnType<typeof runRunner>> | undefined;
+  try {
+    runner = await runRunner({ runner: RUNNER, registryFile: it.registryFile, adapters: { [it.adapterName]: adapter } });
+    expect(await observe(() => opened.length === 1)).toBe(true);
+    expect(JSON.parse(readFileSync(join(cwd, "codex/hub-session.json"), "utf8"))).toMatchObject({ sent: false, dirty: false });
+    await runner.stop(); runner = undefined;
+    runner = await runRunner({ runner: RUNNER, registryFile: it.registryFile, adapters: { [it.adapterName]: adapter } });
+    expect(await observe(() => opened.length === 2, 10_000)).toBe(true);
+    expect(opened[1].id).not.toBe(opened[0].id);
+    expect(opened.map(one => one.resume)).toEqual([false, false]);
+    await insertInbound(cluster, it.db, { id: "first-after-restart", body: "first real input" });
+    expect(await observe(async () => (await it.read.inbound()).find(row => row.id === "first-after-restart")?.state === "answered", 15_000)).toBe(true);
+    expect((await it.read.sql("select state from execution")).map(row => row.state)).toEqual(["completed"]);
+    expect((await it.read.outbox()).map(row => row.body).join("")).toContain("first real input");
+  } finally { await runner?.stop(); for (const one of opened) await one.session.close(); await it.stop(); }
+}, 60_000);

@@ -212,6 +212,9 @@ export interface PreparedLaunch {
   argv?: string[];
   env?: Record<string, string | undefined>;
   credentialId?: string;
+  /** Runner-private accessor for engines with an in-memory authentication RPC.
+   * Never serialize this value into the child environment, argv, config or logs. */
+  privateModelKey?: () => string;
   wrap?: (argv: string[]) => string[];
 }
 
@@ -391,6 +394,7 @@ export interface Adapter {
      */
     session?: { id: string; resume: boolean };
     credentialId?: string;
+    privateModelKey?: PreparedLaunch["privateModelKey"];
     cwd?: string;
     argv?: string[];
     env?: Record<string, string | undefined>;

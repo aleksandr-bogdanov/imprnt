@@ -39,7 +39,12 @@ test("Codex launch uses shared boxing/instructions/Hub MCP with isolated config,
   expect(config).toMatchObject({ model: "explicit-model", model_provider: "openai", agents: { enabled: false }, mcp_servers: { hub: { command: process.execPath, args: ["hub-mcp.ts"], required: true } } });
   expect(config.developer_instructions).toContain("shared person instructions");
   expect(config.shell_environment_policy.include_only).not.toContain(CODEX_KEY);
-  expect(launch.env[CODEX_KEY]).toBe(f.key); expect(launch.env.OPENAI_API_KEY).toBeUndefined();
+  expect(launch.env[CODEX_KEY]).toBeUndefined(); expect(launch.env.OPENAI_API_KEY).toBeUndefined();
+  expect(launch.privateModelKey()).toBe(f.key);
+  expect(config.cli_auth_credentials_store).toBe("ephemeral");
+  expect(config.model_providers.openai).toMatchObject({ requires_openai_auth: true });
+  expect(config.model_providers.openai.env_key).toBeUndefined();
+  expect(JSON.stringify(launch)).not.toContain(f.key);
   expect(bytes(launch.cwd)).not.toContain(f.key); expect(launch.argv.join(" ")).not.toContain(f.key);
   expect(launch.env.CODEX_HOME).toBe(join(launch.cwd, "codex")); expect(launch.env.IMPRNT_VAULT).toBe(join(f.tree, "vault"));
 });

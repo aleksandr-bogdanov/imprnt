@@ -13,7 +13,9 @@ for await (const line of lines) {
   const { id, method, params } = JSON.parse(line);
   if (process.env.CODEX_FIXTURE_LOG) appendFileSync(process.env.CODEX_FIXTURE_LOG, JSON.stringify({ method, params }) + "\n");
   if (method === "initialize") answer(id, { userAgent: "codex/0.160.0 (fixture)" });
-  if (method === "config/read") answer(id, { config: mode === "config-drift" ? { ...config, agents: { enabled: true } } : config });
+  if (method === "config/read") answer(id, { config: mode === "config-drift" ? { ...config, agents: { enabled: true } }
+    : mode === "auth-store-drift" ? { ...config, cli_auth_credentials_store: "file" } : config });
+  if (method === "account/login/start") answer(id, { type: "apiKey" });
   if (method === "thread/read") answer(id, { thread: { id: params.threadId, turns: [{ id: "old", status: mode === "unfinished" ? "inProgress" : "completed" }] } });
   if (method === "thread/start" || method === "thread/resume") answer(id, { thread: { id: params.threadId ?? thread }, model: mode === "model-drift" ? "other-model" : params.model, modelProvider: params.modelProvider });
   if (method === "turn/interrupt") answer(id, {});

@@ -5,7 +5,7 @@ import { credentialSource, effectiveMcp, effectivePrompt, effectiveSettings, ses
 import { personOf, vaultRootOf } from "./instructions.ts";
 import { readModelKey } from "./opencode-launch.ts";
 
-import { CODEX_CONFIG, CODEX_KEY } from "./codex-config.ts";
+import { CODEX_CONFIG } from "./codex-config.ts";
 const versions = new Map<string, { stamp: string; version: string }>();
 export function probeCodexVersion(bin = "codex", timeout = 10_000): string {
   const executable = Bun.which(bin);
@@ -69,20 +69,22 @@ export function makeCodexLaunch(input: LoopLaunchInput, bin = "codex") {
   for (const path of [home, codexHome, scratch]) mkdirSync(path, { recursive: true, mode: 0o700 });
   const config = {
     model, model_provider: provider, approval_policy: "never", sandbox_mode: "danger-full-access",
+    cli_auth_credentials_store: "ephemeral",
     agents: { enabled: false }, web_search: "disabled",
     features: { multi_agent: false, multi_agent_v2: false, apps: false, goals: false, hooks: false, plugins: false, remote_plugin: false, shell_snapshot: false },
     allow_login_shell: false,
     memories: { generate_memories: false, use_memories: false },
     shell_environment_policy: { inherit: "none", include_only: ["PATH", "HOME", "TMPDIR", "LANG", "IMPRNT_VAULT"] },
-    model_providers: { [provider]: { name: provider, base_url: endpoint, env_key: CODEX_KEY, wire_api: "responses", requires_openai_auth: false, supports_websockets: false } },
+    model_providers: { [provider]: { name: provider, base_url: endpoint, wire_api: "responses", requires_openai_auth: true, supports_websockets: false } },
     mcp_servers: servers,
     ...(prompt ? { developer_instructions: prompt.text } : {}),
   };
   writeFileSync(join(codexHome, "config.toml"), Object.entries(config).map(([key, value]) => `${key} = ${toml(value)}\n`).join(""), { mode: 0o600 });
   const env: Record<string, string | undefined> = {};
   for (const name of ["PATH", "LANG", "LC_ALL", "TZ"]) if (process.env[name]) env[name] = process.env[name];
-  Object.assign(env, { HOME: home, CODEX_HOME: codexHome, TMPDIR: scratch, [CODEX_KEY]: key, [CODEX_CONFIG]: JSON.stringify(config) });
+  Object.assign(env, { HOME: home, CODEX_HOME: codexHome, TMPDIR: scratch, [CODEX_CONFIG]: JSON.stringify(config) });
   const vault = join(vaultRootOf(personOf(input.registry, input.agent.person), input.box.tree), "vault");
   if (existsSync(vault)) env.IMPRNT_VAULT = vault;
-  return { ...boxed, argv: [bin, "app-server", "--listen", "stdio://", "--strict-config"], env, credentialId: credential.id };
+  return { ...boxed, argv: [bin, "app-server", "--listen", "stdio://", "--strict-config"], env,
+    credentialId: credential.id, privateModelKey: () => key };
 }

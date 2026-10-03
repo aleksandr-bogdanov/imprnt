@@ -38,6 +38,17 @@ import { loadRegistry } from "../src/registry/load.ts";
 
 const PROBE = ["/bin/sh", "-c", "echo the command the loop would have run"];
 
+test("macOS installed tool reads exclude Homebrew service data even below /usr/local", () => {
+  const boxed = boxCommand(PROBE, { tree: "/fixture/person", person: "p1", agent: "p1-main", otherTrees: [] }, "darwin");
+  const profile = boxed.profile!.text;
+  const data = /\(deny file-read\* file-write\* \(subpath "([^"]+\/var)"\)\)/.exec(profile)?.[1];
+  expect(data).toBeDefined();
+  const prefix = data!.slice(0, -4);
+  expect(profile).not.toContain(`(allow file-read* (subpath "${prefix}"))`);
+  expect(profile).toContain(`(allow file-read* (subpath "${prefix}/Cellar"))`);
+  expect(profile).toContain(`(allow file-read* (subpath "${prefix}/etc/openssl@3"))`);
+});
+
 // ---------------------------------------------------------------------------
 // Reading a sandbox profile as RULES rather than as text.
 //

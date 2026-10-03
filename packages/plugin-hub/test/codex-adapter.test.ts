@@ -9,8 +9,8 @@ afterEach(async () => { for (const s of sessions.splice(0)) await s.close(); for
 const adapter = createCodex({ timeoutMs: 2000 });
 function options(mode = "normal") {
   const cwd = mkdtempSync(join(tmpdir(), "hub-codex-test-")); dirs.push(cwd); mkdirSync(join(cwd, "codex"));
-  const config = { model: "explicit-model", model_provider: "provider", agents: { enabled: false }, model_providers: { provider: { base_url: "http://127.0.0.1:9/v1" } } };
-  return { cwd, argv: [process.execPath, join(import.meta.dir, "helpers/codex-server.ts")], wrap: (args: string[]) => args,
+  const config = { model: "explicit-model", model_provider: "provider", agents: { enabled: false }, cli_auth_credentials_store: "ephemeral", model_providers: { provider: { base_url: "http://127.0.0.1:9/v1", requires_openai_auth: true } } };
+  return { cwd, argv: [process.execPath, join(import.meta.dir, "helpers/codex-server.ts")], wrap: (args: string[]) => args, privateModelKey: () => "synthetic-codex-key",
     preset: { adapter: "codex", model: "explicit-model", provider: "provider", effort: "high", paid: "token" },
     session: { id: "hub-job-1", resume: false }, sessionId: "hub-job-1",
     env: { PATH: process.env.PATH, HUB_CODEX_CONFIG: JSON.stringify(config), CODEX_FIXTURE_MODE: mode, CODEX_FIXTURE_LOG: join(cwd, "wire.jsonl") },
@@ -40,6 +40,11 @@ test("Codex maps shared job identity, correlates early events, separates progres
 test("Codex refuses identity/config drift and missing/unfinished mappings without feeding or replacing a conversation", async () => {
   for (const mode of ["config-drift", "model-drift"]) await expect(start(options(mode))).rejects.toThrow();
   await expect(start(options("preferences"))).rejects.toThrow("codex-managed-preferences-unavailable");
+  const insecure = options("auth-store-drift");
+  let keyRead = false;
+  await expect(start({ ...insecure, privateModelKey: () => { keyRead = true; return "synthetic-codex-key"; } })).rejects.toThrow("effective-config-mismatch");
+  expect(keyRead).toBe(false);
+  expect(readFileSync(join(insecure.cwd!, "wire.jsonl"), "utf8")).not.toContain("account/login/start");
   const args = options(); await expect(start({ ...args, session: { id: "hub-job-1", resume: true } })).rejects.toThrow("map-mismatch");
   const s = await start(args), end = next(s); await s.feed({ id: "one", text: "one" }); await end; await s.close();
   await expect(start({ ...args, preset: { ...args.preset, model: "other" } })).rejects.toThrow("identity-mismatch");
@@ -66,4 +71,19 @@ test("Codex explicit stop asks turn/interrupt and retains uncertain turn rather 
   const wire = readFileSync(join(args.cwd!, "wire.jsonl"), "utf8");
   expect(wire).toContain('"method":"turn/interrupt"');
   expect(JSON.parse(readFileSync(join(args.cwd!, "codex/hub-session.json"), "utf8")).dirty).toBe(true);
+});
+
+test("only an unused clean mapping can accept the runner's replacement identity", async () => {
+  const args = options(), first = await start(args);
+  await first.close();
+  const replacement = { ...args, session: { id: "replacement", resume: false } };
+  const second = await start(replacement);
+  expect(JSON.parse(readFileSync(join(args.cwd!, "codex/hub-session.json"), "utf8"))).toMatchObject({ hub: "replacement", dirty: false, sent: false });
+  const end = next(second); await second.feed({ id: "one", text: "one" }); await end; await second.close();
+  await expect(start({ ...args, session: { id: "foreign", resume: false } })).rejects.toThrow("identity-mismatch");
+  const empty = options(), unused = await start(empty); await unused.close();
+  const file = join(empty.cwd!, "codex/hub-session.json");
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), dirty: true }));
+  await expect(start({ ...empty, session: { id: "foreign", resume: false } })).rejects.toThrow("identity-mismatch");
+  await expect(start({ ...empty, session: { id: "foreign", resume: true } })).rejects.toThrow("identity-mismatch");
 });

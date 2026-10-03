@@ -1,7 +1,7 @@
 import { MAC_WRITABLE_SCRATCH } from "./scratch.ts";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { backupStagingFor, listAgents, listCredentials, listPeople, listRepositories, listRunEntries, personOf } from "../registry/entries.ts";
 import { readSetting } from "../registry/load.ts";
 import { localRemotePath } from "../registry/remote.ts";
@@ -60,7 +60,11 @@ const MAC_SYSTEM = [
  * worked" to every probe that matters.
  */
 function macTools(): string[] {
-  return [brewPrefix(), join(homedir(), ".local"), join(homedir(), ".bun")];
+  // The prefix also contains mutable service data (notably Postgres under
+  // var). Only the installed toolchain belongs in an agent's read grants.
+  // Homebrew Node/OpenSSL reads this public configuration before startup.
+  return [...["bin", "opt", "Cellar", "lib", "libexec", "share", "etc/openssl@3"].map(path => join(brewPrefix(), path)),
+    join(homedir(), ".local"), join(homedir(), ".bun")];
 }
 
 /**
@@ -163,6 +167,7 @@ function hostCredentialMasks(): string[] {
  * any agent steered by outside content it read.
  */
 function secretPathsOf(registry: unknown): string[] {
+  const outbound = readSetting(registry, "outbound.accounts_file");
   // Every door's token, including a door no agent is served by yet: it is a
   // bot all the same, and a token is masked whether or not it is in use.
   //
@@ -172,6 +177,7 @@ function secretPathsOf(registry: unknown): string[] {
   // logs and inbox plus a dump of every message at once. Under the read-only
   // host on Linux it would otherwise be one read away from every agent.
   return [...new Set([
+    ...(typeof outbound === "string" && isAbsolute(outbound) ? [dirname(outbound)] : []),
     secretsDirOf(registry) ?? "",
     backupStagingFor(registry) ?? "",
     ...listRunEntries(registry).map((one) => typeof one.token_file === "string" ? one.token_file : ""),
@@ -340,6 +346,12 @@ function profileText(ctx: BoxContext): string {
   // login sits under the login directory the launch grants. The match is by path
   // at every access, so a file replaced by a rename stays denied here.
   for (const { path } of secretMasks(ctx)) {
+    lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(path)}))`);
+  }
+  // Intel Homebrew lives below the system /usr grant. Deny its service data
+  // explicitly on both architectures, including a canonical symlink target.
+  const brewData = join(brewPrefix(), "var");
+  for (const path of new Set([brewData, ...(existsSync(brewData) ? [realpathSync(brewData)] : [])])) {
     lines.push(`(deny file-read* file-write* (subpath ${JSON.stringify(path)}))`);
   }
   return `${lines.join("\n")}\n`;

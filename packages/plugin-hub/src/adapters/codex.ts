@@ -15,19 +15,28 @@ const nullUsage = (): AdapterUsage => ({ input_tokens: null, cached_input_tokens
 
 /** Codex's app-server owns the model/tool loop. The hub drives one thread and one turn at a time. */
 async function open(options: Parameters<Adapter["start"]>[0], timeoutMs: number): Promise<AdapterSession> {
-  if (!options.cwd || !options.argv || !options.env?.[CODEX_CONFIG] || !options.wrap || !options.session) throw new Error("codex-launch-required");
+  if (!options.cwd || !options.argv || !options.env?.[CODEX_CONFIG] || !options.wrap || !options.session || !options.privateModelKey) throw new Error("codex-launch-required");
   const config = JSON.parse(options.env[CODEX_CONFIG]) as Json;
   const model = options.preset.model, provider = options.preset.provider;
   const endpoint = config.model_providers?.[provider]?.base_url;
-  if (config.model !== model || config.model_provider !== provider || typeof endpoint !== "string" || config.agents?.enabled !== false) throw new Error("codex-identity-mismatch");
+  if (config.model !== model || config.model_provider !== provider || typeof endpoint !== "string" || config.agents?.enabled !== false ||
+      config.cli_auth_credentials_store !== "ephemeral" || config.model_providers?.[provider]?.requires_openai_auth !== true ||
+      config.model_providers?.[provider]?.env_key !== undefined) throw new Error("codex-identity-mismatch");
   const effort = options.preset.effort;
   if (typeof effort !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(effort)) throw new Error("codex-effort-unsupported");
   const path = join(options.cwd, "codex", "hub-session.json");
   let saved: Saved | null = null;
   if (existsSync(path)) {
     try { saved = JSON.parse(readFileSync(path, "utf8")) as Saved; } catch { throw new Error("codex-session-map-unreadable"); }
-    if (!saved || saved.version !== 1 || saved.hub !== options.session.id || typeof saved.thread !== "string" || !saved.thread || typeof saved.dirty !== "boolean" || typeof saved.sent !== "boolean" ||
+    if (!saved || saved.version !== 1 || typeof saved.hub !== "string" || !saved.hub || typeof saved.thread !== "string" || !saved.thread || typeof saved.dirty !== "boolean" || typeof saved.sent !== "boolean" ||
         saved.model !== model || saved.provider !== provider || saved.endpoint !== endpoint) throw new Error("codex-session-identity-mismatch");
+    // The runner replaces a launched-but-unacknowledged native ID on restart.
+    // Only our durable pre-input state proves the old thread has no input or
+    // tool effects. A sent/dirty/foreign resume mapping is never discarded.
+    if (saved.hub !== options.session.id) {
+      if (!options.session.resume && !saved.dirty && !saved.sent) saved = null;
+      else throw new Error("codex-session-identity-mismatch");
+    }
   }
   if (options.session.resume ? !saved : saved !== null) throw new Error("codex-session-map-mismatch");
   if (saved?.dirty) throw new Error("codex-resume-unverified");
@@ -144,6 +153,11 @@ async function open(options: Parameters<Adapter["start"]>[0], timeoutMs: number)
     if (read.config?.agents?.enabled !== false || read.config?.model !== model || read.config?.model_provider !== provider ||
         read.config?.model_providers?.[provider]?.base_url !== endpoint || !includesConfig(read.config, config) ||
         JSON.stringify(Object.keys(read.config?.mcp_servers ?? {}).sort()) !== JSON.stringify(Object.keys(config.mcp_servers ?? {}).sort())) throw new Error("codex-effective-config-mismatch");
+    // Only after the engine confirms memory-only credential storage. The key
+    // travels over the private stdio RPC, never a parent-visible environment,
+    // command line, config/auth file or model input. Every restart logs in anew.
+    const login = await rpc("account/login/start", { type: "apiKey", apiKey: options.privateModelKey() });
+    if (login.type !== "apiKey") throw new Error("codex-auth-mode-mismatch");
     if (saved?.sent) {
       const prior = await rpc("thread/read", { threadId: saved.thread, includeTurns: true });
       if (prior.thread?.id !== saved.thread || prior.thread?.turns?.some((turn: Json) => turn.status !== "completed")) throw new Error("codex-resume-unverified");
