@@ -5,7 +5,7 @@ import type { Registry } from "../registry/load.ts";
 import { resolveMoveDestination, type ResolvedDestination } from "../registry/topics.ts";
 import type { StoreLike } from "../store/connect.ts";
 import {
-  WITHDRAWABLE_STAGES, copiesAtLocation, continueMove, openMoveOfTopic, readMove, requestMove, withdrawMove, type MoveNotice, type MoveRow,
+  WITHDRAWABLE_STAGES, returnableCopy, copiesAtLocation, continueMove, openMoveOfTopic, readMove, requestMove, withdrawMove, type MoveNotice, type MoveRow,
 } from "../store/moves.ts";
 import { attentionFor } from "../store/topic-attention.ts";
 import { runnerLive, type TopicRow } from "../store/topics.ts";
@@ -162,10 +162,12 @@ async function ask(binding: McpBinding, request: MoveRequest): Promise<ToolReply
       const standing = await openMoveOfTopic(tx, topic.id);
       if (standing !== null) return await answerOpenMove(tx, binding, topic, standing, wanted);
       // A previous move can still own the native-session location on the destination.
-      // Refuse before gating the source; this does not claim to inspect remote files or retire a copy.
+      // Admit only a sealed older source lineage. The destination still verifies
+      // its actual bytes before archiving; unrelated claims refuse before gating.
       if (topic.machine !== wanted.machine && topic.runner !== wanted.runner) {
         const copies = await copiesAtLocation(tx, { conversation: topic.conversation_id, machine: wanted.machine });
-        if (copies.some(copy => copy.state !== "removed" && copy.state !== "superseded")) {
+        const occupants = copies.filter(copy => copy.state !== "removed" && copy.state !== "superseded");
+        if (occupants.length > 1 || (occupants.length === 1 && !await returnableCopy(tx, occupants[0], wanted.runner))) {
           return refused(topic.id, "destination_copy_occupied",
             `The destination ${wanted.machine} still holds a recorded copy of this conversation from an earlier move. Nothing was started and this chat keeps running here. Returning to that machine is unavailable until the retained copy is safely reconciled; this request does not remove it.`);
         }

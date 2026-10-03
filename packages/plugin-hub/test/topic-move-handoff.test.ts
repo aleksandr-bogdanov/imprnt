@@ -23,7 +23,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFile
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"
-import { FACTS, OWNER, sha, type MoveFixture, moveStage } from "./helpers/move-store-stage.ts"
+import { FACTS, OWNER, SRC, sha, type MoveFixture, moveStage } from "./helpers/move-store-stage.ts"
 import { Crash, FAKE_BYTES, PROVEN, drainOnly, fakeDir, fakePort, handoffWorld, lockChain, type Fake, type Locks } from "./helpers/move-handoff-stage.ts"
 import {
   encodeProjectDir, makeClaudeSessionPort, nativeManifestDigest, VALIDATED_SESSION_BUILDS, VALIDATED_SESSION_PAIRS, type SessionObserve, type SessionRule, type SessionTables,
@@ -32,10 +32,12 @@ import { NativeRefusal, type NativeManifest, type NativeSessionPort } from "../s
 import type { StageReceipt } from "../src/transfer/workspace.ts"
 import { buildBundle, contentKey, STAGE_MARKER, TransferError } from "../src/transfer/bundle.ts"
 import { COPY_EVIDENCE_LIMIT, MOVE_NATIVE_LIMITS, clip, jsonbBytes, lifetimeBytes, removalReport, type ProvenDrain } from "../src/runner/move-handoff.ts"
+import { openCode } from "../src/adapters/opencode.ts"
+import { claimNext } from "../src/runner/claim.ts"
 import { exportSource } from "../src/runner/move-export.ts"
 import { cleanupCopies, importDestination, prepareDestination } from "../src/runner/move-import.ts"
 import {
-  activateMove, blockMove, checkpointOf, copiesAtLocation, copiesOf, copyRemoved, exportGenerationOf, putBlob, releaseSource, unblockMove, withdrawMove, type MoveCopyRow, type MoveRow,
+  returnableCopy, recordRegistryWritten, serveMove, activateMove, blockMove, checkpointOf, copiesAtLocation, copiesOf, copyRemoved, exportGenerationOf, putBlob, releaseSource, unblockMove, withdrawMove, type MoveCopyRow, type MoveRow,
 } from "../src/store/moves.ts"
 
 let cluster: Cluster
@@ -1386,4 +1388,109 @@ test("V4-C2: a real unsupported side-state entry whose legal name ends in an emo
   expect(copy.state).toBe("cleanup_due")
   expect(ev(copy).failure.detail.path).toBe(`config/${"a".repeat(232)}...`)
   expect(ev(copy).failure.detail.written).toBe("unknown")
+})
+
+/** Real transfer library and disposable trees; no claim that a live engine ran. */
+async function returnRig() {
+  const r = await realRig()
+  await atReleased(r)
+  expect(await importDestination(r.dst.w, r.move.id)).toMatchObject({ reason: "activated" })
+  const first = await r.s.reread(r.move)
+  expect(await recordRegistryWritten(r.s.hub, first.id, r.s.receiptOf(first))).toBe("written")
+  expect(await serveMove(r.s.tool, first.id, r.s.dst(), r.s.loadedOf(first, undefined, { capabilities: {} }), r.s.NOTE, r.s.notice(first))).toBe("active")
+  const firstCopy = await destCopy(r.s, first)
+  const later = Buffer.from('{"type":"assistant","n":3,"text":"work on B"}\n')
+  appendFileSync(transcriptAt(r, firstCopy), later)
+  const [topic] = await r.s.su`select * from topic where id = ${first.topic_id}`
+  const retained = (await copiesOf(r.s.tool, r.move.id)).find(cp => cp.kind === "source_session_retained")!
+  expect(await returnableCopy(r.s.door, retained, SRC.runner)).toBe(true)
+  expect(await returnableCopy(r.s.door, { ...retained, generation: retained.generation + 1 }, SRC.runner)).toBe(false)
+  const back = await r.s.request(topic as never, "roundtrip", SRC)
+  await r.s.inbound("queued-return", back.agent)
+  expect(await claimNext(r.s.tool, { runner: back.source_runner, agent: back.agent, leaseMs: 60_000 })).toBeNull()
+  expect(await prepareDestination(r.src.w, back.id)).toMatchObject({ reason: "ready" })
+  await drainOnly(r.s, back)
+  expect(await exportSource(r.dst.w, PROVEN, back.id)).toMatchObject({ reason: "released" })
+  return { ...r, back, bytes: Buffer.concat([TRANSCRIPT, later]) }
+}
+
+test("RETURN: A to B to A archives only its sealed older copy, imports newer native state, and keeps input gated until serve", async () => {
+  const r = await returnRig()
+  expect(await importDestination(r.src.w, r.back.id)).toMatchObject({ reason: "activated" })
+  const back = await r.s.reread(r.back)
+  expect(back.dest_generation).toBe(3)
+  expect(await machineOf(r.s, back)).toBe("pi")
+  const source = (await copiesOf(r.s.tool, r.move.id)).find(cp => cp.kind === "source_session_retained")!
+  expect(source.state).toBe("removed")
+  expect(ev(source).removed).toMatchObject({ removed: "archived", retained: true })
+  const oldManifest = (await r.s.reread(r.move)).manifest!.native_export as NativeManifest
+  const archive = ev(source).archive_intent.archive_dir
+  expect(readFileSync(join(archive, "session", oldManifest.files[0].path))).toEqual(TRANSCRIPT)
+  const newCopy = await destCopy(r.s, back)
+  expect(readFileSync(join(r.srcDir, ev(newCopy).promoted.transcript.path))).toEqual(r.bytes)
+  expect(await r.s.count("execution")).toBe(0)
+  expect(await claimNext(r.s.tool, { runner: back.dest_runner, agent: back.agent, leaseMs: 60_000 })).toBeNull()
+  expect(await recordRegistryWritten(r.s.hub, back.id, r.s.receiptOf(back))).toBe("written")
+  expect(await serveMove(r.s.tool, back.id, r.s.src(), r.s.loadedOf(back, undefined, { capabilities: {} }), r.s.NOTE, r.s.notice(back))).toBe("active")
+  expect(await claimNext(r.s.tool, { runner: back.dest_runner, agent: back.agent, leaseMs: 60_000 })).toMatchObject({ id: "queued-return" })
+  expect(await claimNext(r.s.tool, { runner: back.source_runner, agent: back.agent, leaseMs: 60_000 })).toBeNull()
+})
+
+for (const point of ["move.return-archive-intent", "move.return-archived", "move.return-reconciled"]) test(`RETURN: crash after ${point} resumes without replacing retained bytes`, async () => {
+  const r = await returnRig()
+  r.src.knobs.crashOn = kind => kind === point
+  await expect(importDestination(r.src.w, r.back.id)).rejects.toBeInstanceOf(Crash)
+  r.src.knobs.crashOn = null
+  expect(await importDestination(r.src.w, r.back.id)).toMatchObject({ reason: "activated" })
+  const source = (await copiesOf(r.s.tool, r.move.id)).find(cp => cp.kind === "source_session_retained")!
+  expect(source.state).toBe("removed")
+  expect(readdirSync(dirname(r.srcDir)).filter(name => name.startsWith("src-retained-"))).toHaveLength(1)
+})
+
+test("RETURN: a retained copy with newer transcript bytes refuses without renaming or overwriting it", async () => {
+  const r = await returnRig()
+  const oldManifest = (await r.s.reread(r.move)).manifest!.native_export as NativeManifest
+  const path = join(r.srcDir, oldManifest.files[0].path)
+  appendFileSync(path, "unknown writer\n")
+  const before = readFileSync(path)
+  expect(await importDestination(r.src.w, r.back.id)).toMatchObject({ state: "blocked", reason: "native_retained_copy_conflict" })
+  expect(readFileSync(path)).toEqual(before)
+  expect(readdirSync(dirname(r.srcDir)).filter(name => name.startsWith("src-retained-"))).toHaveLength(0)
+  expect(await machineOf(r.s, r.back)).toBe("mac")
+  expect((await copiesOf(r.s.tool, r.move.id)).find(cp => cp.kind === "source_session_retained")!.state).toBe("retained_stale")
+})
+
+test("RETURN: unrelated archive target is never overwritten after an interrupted intent", async () => {
+  const r = await returnRig()
+  r.src.knobs.crashOn = kind => kind === "move.return-archive-intent"
+  await expect(importDestination(r.src.w, r.back.id)).rejects.toBeInstanceOf(Crash)
+  r.src.knobs.crashOn = null
+  const source = (await copiesOf(r.s.tool, r.move.id)).find(cp => cp.kind === "source_session_retained")!
+  const target = join(ev(source).archive_intent.archive_dir, "session")
+  mkdirSync(target)
+  writeFileSync(join(target, "unrelated"), "keep")
+  expect(await importDestination(r.src.w, r.back.id)).toMatchObject({ state: "blocked", reason: "native_retained_copy_conflict" })
+  expect(readFileSync(join(target, "unrelated"), "utf8")).toBe("keep")
+  expect(existsSync(r.srcDir)).toBe(true)
+  expect(await machineOf(r.s, r.back)).toBe("mac")
+})
+
+test("OpenCode movement without a measured native port refuses before export or import", async () => {
+  const r = await rig()
+  expect(openCode.session).toBeUndefined()
+  r.src.w.port = () => openCode.session ?? null
+  r.dst.w.port = () => openCode.session ?? null
+  expect(await prepareDestination(r.dst.w, r.move.id)).toMatchObject({ state: "blocked", reason: "native_port_missing" })
+  expect(await blobsOf(r.s, r.move)).toBe(0)
+  expect(r.fake.log.imports).toHaveLength(0)
+  expect(await machineOf(r.s, r.move)).toBe("pi")
+})
+
+test("RETURN: stale copy identity cannot authorize archiving another native session", async () => {
+  const r = await returnRig()
+  await r.s.su`update move_copy set native_session = 'unrelated-native-session' where move_id = ${r.move.id} and kind = 'source_session_retained'`
+  expect(await importDestination(r.src.w, r.back.id)).toMatchObject({ state: "waiting", reason: "copy-occupied" })
+  expect(existsSync(r.srcDir)).toBe(true)
+  expect(readdirSync(dirname(r.srcDir)).filter(name => name.startsWith("src-retained-"))).toHaveLength(0)
+  expect(await machineOf(r.s, r.back)).toBe("mac")
 })

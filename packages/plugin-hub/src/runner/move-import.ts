@@ -6,6 +6,7 @@ import {
   MoveBlobsGone, activateMove, advanceImport, beginImport, checkpointOf, copiesAtLocation, copiesDueForCleanup, copiesOf, copyRemoved, destReady, failImport,
   readBlobs, readMove, type DestFacts, type MoveBlob, type MoveCopyRow, type MoveRow,
 } from "../store/moves.ts";
+import { reconcileReturn } from "./move-return.ts";
 import { configDifference } from "./move-config.ts";
 import { nativeSideOf } from "./move-export.ts";
 import { profileUnverified } from "./move-profile.ts";
@@ -453,6 +454,15 @@ async function importLocked(w: HandoffWorld, held: Held, id: string): Promise<Ha
 
 async function importStaged(w: HandoffWorld, held: Held, id: string, move: MoveRow): Promise<HandoffStep> {
   let begun = await beginImport(w.store, id, who(w));
+  if (begun.answer === "copy-occupied" || begun.answer === "cleanup-pending") {
+    const occupants = await copiesAtLocation(w.store, { conversation: move.conversation_id, machine: w.machine });
+    if (occupants.some(copy => copy.kind === "source_session_retained" &&
+        (copy.state === "retained_stale" || (copy.state === "cleanup_due" && copy.evidence.archive_intent)))) {
+      const refusal = await reconcileReturn(w, move);
+      if (refusal) return refusal;
+      begun = await beginImport(w.store, id, who(w));
+    }
+  }
   if (begun.answer === "cleanup-pending") {
     // An earlier copy of this very location is owed its removal. This call holds the conversation's lock already: it cleans up under it.
     await cleanupLocation(w, held);

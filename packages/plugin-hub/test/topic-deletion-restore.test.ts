@@ -7,10 +7,12 @@
 // restored database is in. A second, fresh store plays a database restored from a copy that never heard of the deletion.
 
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { startCluster, type Cluster } from "./helpers/cluster.ts"
 import { closeStages, removeEffectDirs } from "./helpers/effects-fixture.ts"
 import { DOOR, PERSON, RUNNER_PI, stageTopics, type TopicsStage } from "./helpers/topics-fixture.ts"
-import { runRestoreBarrier } from "../src/erasure/restore.ts"
+import { runRestoreBarrier, restoreMachine } from "../src/erasure/restore.ts"
 import { bindTopics } from "../src/hub/topics.ts"
 import { runDeletions } from "../src/hub/deletions.ts"
 import { loadRegistry } from "../src/registry/load.ts"
@@ -115,9 +117,15 @@ test("with the manifest and a clean registry the restore erases what the old cop
   await s.admin`insert into inbound (id, person, agent, body, kind) values ('newer-in-1', ${PERSON}, ${newer.agent_id}, 'NEWER-HISTORY', 'human')`
   await plantOldCopy(s, topic, true)
   const before = await erasureGeneration(s.as("hub_hub"))
+  const archive = join(s.dir, PERSON, "sessions", topic.agent_id, `${topic.conversation_id}-retained-${crypto.randomUUID()}`)
+  mkdirSync(join(archive, "session"), { recursive: true })
+  writeFileSync(join(archive, "session", "old.jsonl"), "restored retained-copy bytes")
 
   const done = await runRestoreBarrier({ store: s.as("hub_hub"), stateDirs: [s.dir], snapshotManifest: null, registry: s.load() })
   expect(done.verdict.serve).toBe(true)
+  if (!done.verdict.serve) throw new Error("restore barrier refused")
+  expect(restoreMachine(s.dir, { manifest: done.verdict.apply, result: done.applied! }).failed).toEqual([])
+  expect(existsSync(archive)).toBe(false)
   expect(done.applied!.tombstones).toBeGreaterThanOrEqual(1)
   expect(await restoredRows(s, topic)).toBe(0)
   expect(await identityReserved(s.as("hub_hub"), "agent", topic.agent_id)).toBe(true)
