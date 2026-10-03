@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { seam } from "./helpers/cluster.ts";
 import { plantTrees } from "./helpers/trees.ts";
 import { writeRegistry, type RegistrySpec } from "./helpers/registry.ts";
+import { boxCommand } from "../src/box/index.ts";
 import { loadRegistry } from "../src/registry/load.ts";
 
 const PROBE = ["/bin/sh", "-c", "echo the command the loop would have run"];
@@ -336,3 +337,19 @@ test(
   },
   30_000,
 );
+
+
+test("Codex preference synchronization grants only two exact read-only macOS IPC objects", () => {
+  const ctx = { agent: "worker", person: "p1", tree: "/tmp/own", otherTrees: ["/tmp/other"], sessionDir: "/tmp/session" };
+  const ordinary = boxCommand(["codex"], ctx, "darwin");
+  const codex = boxCommand(["codex"], { ...ctx, macosCodexPreferences: true }, "darwin");
+  expect(ordinary.profile!.text).not.toContain("cfprefs");
+  expect(codex.profile!.path).not.toBe(ordinary.profile!.path);
+  expect(codex.profile!.text.split("\n").filter(line => line.includes("cfprefs"))).toEqual([
+    `(allow ipc-posix-shm-read-data (ipc-posix-name "apple.cfprefs.${process.getuid!()}v1" "apple.cfprefs.daemonv1"))`,
+  ]);
+  expect(codex.profile!.text).not.toContain("user-preference-");
+  expect(codex.profile!.text).not.toContain("ipc-posix-shm-write");
+  expect(codex.profile!.text).toContain("(deny job-creation)");
+  expect(boxCommand(["codex"], { ...ctx, macosCodexPreferences: true }, "linux").argv).toEqual(boxCommand(["codex"], ctx, "linux").argv);
+});

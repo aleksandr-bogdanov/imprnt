@@ -27,6 +27,13 @@ test("Codex launch uses shared boxing/instructions/Hub MCP with isolated config,
   expect(ADAPTERS.codex.name).toBe("codex");
   expect(launch.argv).toEqual(["codex", "app-server", "--listen", "stdio://", "--strict-config"]);
   expect(typeof launch.wrap).toBe("function");
+  if (process.platform === "darwin") {
+    const profile = readFileSync(join(launch.cwd, "box.sb"), "utf8");
+    expect(profile).toContain(`(allow ipc-posix-shm-read-data (ipc-posix-name "apple.cfprefs.${process.getuid!()}v1" "apple.cfprefs.daemonv1"))`);
+    expect(profile).not.toContain("user-preference-");
+    expect(profile).not.toContain("ipc-posix-shm-write");
+    expect(profile).toContain("(deny job-creation)");
+  }
   const config = JSON.parse(launch.env[CODEX_CONFIG]!);
   expect(Bun.TOML.parse(readFileSync(join(launch.cwd, "codex/config.toml"), "utf8"))).toEqual(config);
   expect(config).toMatchObject({ model: "explicit-model", model_provider: "openai", agents: { enabled: false }, mcp_servers: { hub: { command: process.execPath, args: ["hub-mcp.ts"], required: true } } });

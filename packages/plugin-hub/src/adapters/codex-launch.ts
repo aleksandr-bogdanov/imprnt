@@ -62,7 +62,7 @@ export function makeCodexLaunch(input: LoopLaunchInput, bin = "codex") {
   const parent = dirname(credential.file);
   const needs = [input.box.tree, input.box.stateRoot ?? "", input.sessionDir, ...reads, ...writes].filter(Boolean);
   const mask = process.platform === "linux" && existsSync(parent) && !needs.some(p => p === parent || p.startsWith(parent + "/")) ? parent : credential.file;
-  const boxed = sessionBox({ ...input, box: { ...input.box, writePaths: writes, secretPaths: [...(input.box.secretPaths ?? []), mask] } }, reads);
+  const boxed = sessionBox({ ...input, box: { ...input.box, macosCodexPreferences: true, writePaths: writes, secretPaths: [...(input.box.secretPaths ?? []), mask] } }, reads);
   const home = join(boxed.cwd, "home");
   const codexHome = join(boxed.cwd, "codex");
   const scratch = join(boxed.cwd, "tmp");

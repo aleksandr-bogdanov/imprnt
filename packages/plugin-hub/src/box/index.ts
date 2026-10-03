@@ -291,6 +291,16 @@ function profileText(ctx: BoxContext): string {
     // path a person's own files are under.
     "(allow file-read-metadata)",
   ];
+  // Codex 0.160.0 calls CoreFoundation preference synchronization before its
+  // initialize response. Both exact objects are required on the measured Mac;
+  // either alone fails. No preference-domain or filesystem access is granted,
+  // and shared-memory writes, notification-center access and host controls stay
+  // under the existing policy. Other adapters receive neither read grant.
+  if (ctx.macosCodexPreferences) {
+    const uid = process.getuid?.();
+    if (!Number.isSafeInteger(uid) || uid! < 0) throw new Error("codex-preference-uid-unavailable");
+    lines.push(`(allow ipc-posix-shm-read-data (ipc-posix-name "apple.cfprefs.${uid}v1" "apple.cfprefs.daemonv1"))`);
+  }
   // State stays readable, but only the isolated session is writable.
   if (ctx.stateRoot) lines.push(`(allow file-read* (subpath ${JSON.stringify(ctx.stateRoot)}))`);
   for (const path of ctx.readPaths ?? []) lines.push(`(allow file-read* (subpath ${JSON.stringify(path)}))`);
@@ -337,7 +347,7 @@ function profileText(ctx: BoxContext): string {
 
 function profilePath(ctx: BoxContext): string {
   const mark = new Bun.CryptoHasher("sha256")
-    .update([ctx.agent, ctx.tree, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])].join("|"))
+    .update([ctx.agent, ctx.tree, ctx.stateRoot, ctx.sessionDir, ctx.purpose, ctx.macosCodexPreferences ? "codex-preferences" : "", ...(ctx.otherStateRoots ?? []), ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])].join("|"))
     .digest("hex")
     .slice(0, 12);
   return join(tmpdir(), `imprnt-hub-box-${ctx.agent}-${mark}.sb`);
