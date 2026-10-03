@@ -60,15 +60,16 @@ export async function inSyncIsolation<T>(registry: Registry, repo: RepositoryEnt
   const read = existing(repo.sync_read_paths ?? []);
   if (read.includes("/")) throw new SyncIsolationUnavailable();
   const tree = realpathSync(person.tree);
-  if (!within(tree, realpathSync(repo.path))) throw new SyncIsolationUnavailable();
+  const path = realpathSync(repo.path);
+  if (!within(tree, path)) throw new SyncIsolationUnavailable();
   // A grant is not allowed to expose declared household secrets or another person's tree.
   if ([tree, ...read].some(path => denied.some(secret => within(path, secret) || within(secret, path)))) throw new SyncIsolationUnavailable();
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), "hub-sync-box-")));
   try {
     return await active.run({ scratch, read, write: [tree], deny: denied, git: gitBinary(), localRemotes: repo.sync_local_remotes ?? [], remoteIdentities: new Map() }, async () => {
-      const probe = isolatedGit(["-C", repo.path, "--version"]);
+      const probe = isolatedGit(["-C", path, "--version"]);
       try {
-        const child = Bun.spawn(probe.argv, { cwd: repo.path, env: probe.env, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+        const child = Bun.spawn(probe.argv, { cwd: path, env: probe.env, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
         if (await child.exited !== 0) throw new SyncIsolationUnavailable();
       } catch { throw new SyncIsolationUnavailable(); }
       return await work();

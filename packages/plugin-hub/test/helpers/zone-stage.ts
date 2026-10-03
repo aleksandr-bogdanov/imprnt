@@ -214,11 +214,13 @@ export async function zoneStage(base: string, options: ZoneStageOptions = {}): P
       repositories.push({
         id: person.vaultRepository, person: person.id, path: person.tree,
         remote: "origin", branch: zone.branch, required: true,
+        sync_local_remotes: [realpathSync(join(remotes, `${person.id}-vault-remote.git`))],
       });
       if (!options.withoutZone) {
         repositories.push({
           id: person.zoneRepository, person: person.id, path: person.zonePath,
           remote: "origin", branch: zone.branch, required: true, zone: true,
+          sync_local_remotes: [realpathSync(zone.remote)],
         });
       }
       run.push({

@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, statfsSync } from "node:fs"
+import { existsSync, realpathSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, statfsSync } from "node:fs"
 import { join } from "node:path"
 import { startCluster, seam, hubPath, type Cluster } from "./helpers/cluster.ts"
 import { serviceFixture, serviceOs } from "./helpers/rollout-service.ts"
@@ -126,6 +126,8 @@ for (const osName of ["linux", "macos"] as const) {
     copyFileSync(manifest.candidate, bootstrap.registryFile)
     const registryFile = bootstrap.registryFile
     let text = readFileSync(registryFile,"utf8")
+    // The synthetic owner review grants only the known disposable bare remotes.
+    for (const repo of repos) text = text.replace(`id = "${repo.id}"\n`, `id = "${repo.id}"\nsync_local_remotes = ${JSON.stringify([realpathSync(repo.remote)])}\n`)
     text += "\n[runner]\ntask_retry_seconds = 1\n[door]\ndelivery_retry_seconds = 1\n"
     writeFileSync(registryFile,text)
     let registry = loadRegistry(registryFile)

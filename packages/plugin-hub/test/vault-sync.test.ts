@@ -413,10 +413,15 @@ test("L14 killed sync owner releases repository lock for the next process", asyn
     child.kill("SIGKILL")
     await child.exited
     expect(child.signalCode).toBe("SIGKILL")
-    expect(await observe(() => git.events().some(e => e.phase === "end" && e.args.includes("rebase")), 3500), "orphan Git command finishes before retry").toBe(true)
+    // Linux bubblewrap --die-with-parent terminates the delayed child before
+    // it can report an end event. Mac lets the already-started Git finish.
+    // In both cases the next real sync below must acquire the released lock,
+    // finish without an index/rebase conflict and publish the expected commit.
+    if (process.platform !== "linux") expect(await observe(() => git.events().some(e => e.phase === "end" && e.args.includes("rebase")), 3500), "orphan Git command finishes before retry").toBe(true)
     git.control({})
     const result = await syncChild(f, git.env)
     expect(result.code, "D-180a dead owner must not retain the lock").toBe(0)
+    if (process.platform === "linux") expect(git.events().filter(e => e.cwd === realpathSync(r.path) && e.phase === "end" && e.args.includes("rebase")).length, "only the successor rebase completes; the killed owner leaves no late orphan").toBe(1)
     expect(fixtureGit(f.root, "--git-dir", r.remote, "rev-parse", "main")).toBe(wanted)
     expect((await f.read.sheet("job_success")).some(row => row.id === f.id)).toBe(true)
   } finally { if (child?.exitCode === null) { child.kill(); await child.exited }; await f.stop() }
@@ -804,7 +809,9 @@ test("canned git failures are sorted into a reason by shape, unrecognised or for
         verb: "add", expected: { stage: "add", reason: "permission", exit: 128 } },
       { control: { fail: "commit", exit: 128, stderr: said("error: unable to write file: No space left on device"), stdout: said("On branch main") },
         verb: "commit", expected: { stage: "commit", reason: "no-space", exit: 128 } },
-      { control: { fail: "commit", signal: "SIGKILL" }, verb: "commit", expected: { stage: "commit", reason: "signal", signal: "SIGKILL" } },
+      // bubblewrap reports its killed child as exit137; the wrapper itself was
+      // not signalled, so diagnostics must not invent a direct SIGKILL cause.
+      { control: { fail: "commit", signal: "SIGKILL" }, verb: "commit", expected: process.platform === "linux" ? { stage: "commit", reason: "unknown", exit: 137 } : { stage: "commit", reason: "signal", signal: "SIGKILL" } },
     ]
     const seen: string[] = []
     const notices = async () => await f.read.sql(

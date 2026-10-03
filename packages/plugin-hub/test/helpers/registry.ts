@@ -246,10 +246,11 @@ export interface RepositorySpec {
   remote?: string;
   branch?: string;
   required?: boolean;
+  sync_local_remotes?: string[];
   zone?: boolean;
   /** Where this checkout is on a machine that is not the hub's (`path`, and `remote` or `ssh_command` where they differ). */
   on?: PlacementSpec;
-  [key: string]: string | number | boolean | PlacementSpec | undefined;
+  [key: string]: string | number | boolean | string[] | PlacementSpec | undefined;
 }
 
 /** The seven a repository entry renders first, in the order the file reads in. */
