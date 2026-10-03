@@ -38,6 +38,13 @@ import { MOVE_MAX_FILE_BYTES, blockMove, readMove, unblockMove, type MoveRow } f
 /** The only limits a native move uses: one transcript, at most the store's own file limit. */
 export const MOVE_NATIVE_LIMITS: BundleLimits = { maxFiles: 1, maxFileBytes: MOVE_MAX_FILE_BYTES, maxTotalBytes: MOVE_MAX_FILE_BYTES };
 
+/**
+ * The bound of the check after the first resumed turn (`checkResumed`). A port walks the session's native tree under it, where
+ * `maxFiles` caps the ENTRIES walked: a resumed Claude session has at least its project folder and its transcript there, so the
+ * one-file move bound refused every resume. A walk past this bound is still refused; the byte bounds are the move's.
+ */
+export const RESUME_CHECK_LIMITS: BundleLimits = { ...MOVE_NATIVE_LIMITS, maxFiles: 4096 };
+
 /** What one look did, and who has to move next: never a verdict on the move. `done` means nothing is owed by this side at this stage. */
 export interface HandoffStep {
   state: "done" | "waiting" | "blocked";

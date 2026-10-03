@@ -135,7 +135,7 @@ say('end',code); process.exit(code);
 }
 
 // A finite child lifetime also closes the store after an unsuccessful sync.
-export async function syncChild(f: SyncFixture, env: Record<string, string | undefined>, id = f.id, argv?: string[], now?: string) {
+export async function syncChild(f: SyncFixture, env: Record<string, string | undefined>, id = f.id, argv?: string[], now?: string, timeoutMs = 15000) {
   const proc = Bun.spawn(argv ?? [process.execPath, "-e", `
 const {loadRegistry}=await import(${JSON.stringify(hubPath("src/registry/load.ts"))});
 const {listRunEntries}=await import(${JSON.stringify(hubPath("src/registry/entries.ts"))});
@@ -144,11 +144,11 @@ const registry=loadRegistry(process.argv[1]);
 try { await runSync(listRunEntries(registry).find(e=>e.id===process.argv[2]),registry,${now ? `{now:()=>new Date(${JSON.stringify(now)})}` : "undefined"}); process.exit(0); }
 catch(e) { console.error(e.message); process.exit(1); }
 `, f.registryFile, id], { env, stdout: "pipe", stderr: "pipe" })
-  // The rehearsal sync measured max 2308 ms in 31 runs on the Linux box, so 15000 stays. One SD card stall took 10.4 s.
-  const timer = setTimeout(() => proc.kill("SIGKILL"), 15000)
+  // The rehearsal sync measured max 2308 ms in 31 runs on the Linux box; the default stays 15000. One SD card stall took 10.4 s.
+  const timer = setTimeout(() => proc.kill("SIGKILL"), timeoutMs)
   try {
     const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
-    if (proc.signalCode) throw new Error("sync did not finish within its 15 second acceptance bound")
+    if (proc.signalCode) throw new Error(`sync did not finish within its ${timeoutMs / 1000} second acceptance bound`)
     return { out, err, code }
   } finally { clearTimeout(timer); if (proc.exitCode === null) { proc.kill(); await proc.exited } }
 }

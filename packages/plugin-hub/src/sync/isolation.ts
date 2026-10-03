@@ -95,6 +95,40 @@ export function grantSyncRemotes(fetch: string, push: string[]): void {
   boundary.write.push(...push.filter(one => one.startsWith("/")));
 }
 
+/** Every granted local remote is still the canonical directory whose identity the grant pinned. */
+function unchanged(b: Boundary): void {
+  for (const [path, expected] of b.remoteIdentities) {
+    const actual = statSync(path);
+    if (realpathSync(path) !== path || actual.dev !== expected.dev || actual.ino !== expected.ino) throw new SyncIsolationUnavailable();
+  }
+}
+
+/**
+ * Git strips its command-line configuration from a local transport's
+ * upload-pack/receive-pack child, and that child refuses a repository another
+ * account owns unless protected configuration lists it in safe.directory. The
+ * child's own command line is protected configuration, so this names exactly
+ * one currently granted remote by its owner-declared canonical path, quoted for
+ * the shell Git runs the program through. Never a pattern, never the
+ * repository's words, never an ungranted or since-replaced directory.
+ */
+export function remoteTrust(path: string): string {
+  const b = active.getStore();
+  if (!b || !b.remoteIdentities.has(path) || !b.localRemotes.includes(path) || path.endsWith("/*")) throw new SyncIsolationUnavailable();
+  unchanged(b);
+  return `-c '${`safe.directory=${path}`.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * The upload-pack/receive-pack program for a granted local remote. Anyone who
+ * can write that repository's config could name hooks, an fsmonitor or an
+ * alternate-refs command for this child; its own command line overrides all
+ * three mechanisms for this child without changing its filesystem grants.
+ */
+export function localRemoteProgram(path: string, service: "upload-pack" | "receive-pack"): string {
+  return `git ${remoteTrust(path)} -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.alternateRefsCommand= ${service}`;
+}
+
 /** Trusted inherited process configuration only; no tokens, sockets, loaders or Git environment overrides enter the child. */
 function environment(scratch: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -109,10 +143,7 @@ function environment(scratch: string): Record<string, string> {
 export function isolatedGit(args: string[]): { argv: string[]; env: Record<string, string> } {
   const b = active.getStore();
   if (!b) throw new SyncIsolationUnavailable();
-  for (const [path, expected] of b.remoteIdentities) {
-    const actual = statSync(path);
-    if (realpathSync(path) !== path || actual.dev !== expected.dev || actual.ino !== expected.ino) throw new SyncIsolationUnavailable();
-  }
+  unchanged(b);
   const system = process.platform === "darwin"
     ? ["/usr", "/bin", "/sbin", "/System", "/Library/Developer", "/Library/Apple", "/private/etc", "/private/var/db", "/private/var/select", ...["bin","opt","Cellar","lib","libexec","share","etc/openssl@3", "etc/ca-certificates"].map(dir=>`/opt/homebrew/${dir}`)]
     : ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc/ssl", "/etc/ssh", "/etc/hosts", "/etc/resolv.conf", "/etc/nsswitch.conf", "/etc/passwd", "/etc/group", "/etc/ld.so.cache"];

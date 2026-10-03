@@ -139,6 +139,11 @@ test("ROLL-07 ordered fetch rebase push preserves divergent commits and rejects 
         expect(args).toContain(realpathSync(r.remote))
         expect(args.some(a => verb === "fetch" ? a === "+refs/heads/main:refs/remotes/origin/main" : /^[0-9a-f]+:refs\/heads\/main$/.test(a))).toBe(true)
         expect(args.some(a => a === "--force" || a === "-f" || verb === "push" && a.startsWith("+"))).toBe(false)
+        // The child program trusts exactly this declared remote, never a pattern.
+        const program = args.find(a => a.startsWith(verb === "fetch" ? "--upload-pack=" : "--receive-pack="))!
+        expect(program).toContain(`-c 'safe.directory=${realpathSync(r.remote)}'`)
+        expect(program.match(/safe\.directory=/g)).toHaveLength(1)
+        expect(program).toContain(" -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.alternateRefsCommand= ")
       }
     }
   } finally { await f.stop() }
@@ -147,6 +152,9 @@ test("ROLL-07 ordered fetch rebase push preserves divergent commits and rejects 
 for (const refusal of ["wrong branch", "absent remote", "conflict", "fetch", "push", "absent path", "wrong person"] as const) {
   test(`ROLL-07 ${refusal} names the repository cause preserves work and succeeds after repair`, async () => {
     const f = await syncFixture(cluster)
+    // Pi measured four absent-path refusal/repair runs: successful repair peaked at 17544 ms.
+    // Allow that case 30 s; every other case and platform retains the 15 s child bound.
+    const childTimeoutMs = refusal === "absent path" && process.platform === "linux" ? 30000 : 15000
     try {
       const git = observeGit(f.root)
       const r = f.repos[0]
@@ -167,7 +175,7 @@ for (const refusal of ["wrong branch", "absent remote", "conflict", "fetch", "pu
       const bytes = readFileSync(join(oldPath, "base.txt"), "utf8")
       f.registry()
       await seam("src/sync/run.ts")
-      await syncChild(f, git.env)
+      await syncChild(f, git.env, f.id, undefined, undefined, childTimeoutMs)
       expect((await f.read.sheet("job_success")).find(row => row.id === f.id)).toBeUndefined()
       const result = (await f.read.sheet("sync")).find(row => row.id === f.id)
       expect(result).toBeDefined()
@@ -203,7 +211,7 @@ for (const refusal of ["wrong branch", "absent remote", "conflict", "fetch", "pu
       r.person = "p1"
       git.control({})
       f.registry()
-      expect((await syncChild(f, git.env)).code).toBe(0)
+      expect((await syncChild(f, git.env, f.id, undefined, undefined, childTimeoutMs)).code).toBe(0)
       expect(fixtureGit(f.root, "--git-dir", r.remote, "show", "main:local.txt")).toBe("synthetic local change")
       expect((await f.read.sheet("job_success")).find(row => row.id === f.id)).toBeDefined()
     } finally { await f.stop() }

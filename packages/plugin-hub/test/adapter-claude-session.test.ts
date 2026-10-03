@@ -22,6 +22,7 @@ import {
 import { NativeRefusal, type NativeExport, type NativeManifest, type NativeSessionPort } from "../src/adapters/types.ts";
 import { buildBundle, sha256Hex, TransferError, type Bundle, type BundleLimits } from "../src/transfer/bundle.ts";
 import { stageBundle } from "../src/transfer/workspace.ts";
+import { MOVE_NATIVE_LIMITS, RESUME_CHECK_LIMITS } from "../src/runner/move-handoff.ts";
 
 const L: BundleLimits = { maxFiles: 50, maxFileBytes: 4096, maxTotalBytes: 16384 };
 const SESSION = "1e261f87-06a7-4242-b039-ec2a6c7173aa";
@@ -585,6 +586,22 @@ test("a resume that does not leave the measured layout is refused by name: an un
   fails("the transcript is a link", i => { rmSync(i.transcript); symlinkSync(join(i.dst, "elsewhere"), i.transcript); writeFileSync(join(i.dst, "elsewhere"), TRANSCRIPT); }, i => i.done.transcript.path);
   fails("the engine reported no id", () => {}, undefined, null);
   fails("the engine reported another id", () => {}, undefined, OTHER);
+});
+
+test("the runner's resume-check bound admits a resumed session; the one-file move bound refused every one; past the bound is still refused", () => {
+  const { check, transcript, folder } = imported();
+  appendFileSync(transcript, '{"type":"user","n":3}\n{"type":"assistant","n":4}\n');
+  // The walk counts entries: the project folder and the transcript are two, so the move's own bound refused a genuine resume.
+  expect(MOVE_NATIVE_LIMITS.maxFiles).toBe(1);
+  expect(codeOf(check(SESSION, { limits: MOVE_NATIVE_LIMITS }))).toBe("native_resume_unverified");
+  expect(codeOf(check(SESSION, { limits: RESUME_CHECK_LIMITS }))).toBe("none");
+  // Only the entry cap differs; the byte bounds are the move's.
+  expect(RESUME_CHECK_LIMITS).toEqual({ ...MOVE_NATIVE_LIMITS, maxFiles: RESUME_CHECK_LIMITS.maxFiles });
+  // Folder + transcript + fillers: exactly at the bound passes, one more entry is refused.
+  for (let n = 0; n < RESUME_CHECK_LIMITS.maxFiles - 2; n++) writeFileSync(join(folder, `f${n}.txt`), "");
+  expect(codeOf(check(SESSION, { limits: RESUME_CHECK_LIMITS }))).toBe("none");
+  writeFileSync(join(folder, "over.txt"), "");
+  expect(codeOf(check(SESSION, { limits: RESUME_CHECK_LIMITS }))).toBe("native_resume_unverified");
 });
 
 test("a check that is handed something other than the import is refused: a path that is not the mapped one, another session, a moved directory", () => {
