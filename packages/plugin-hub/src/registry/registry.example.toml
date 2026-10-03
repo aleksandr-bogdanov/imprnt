@@ -279,6 +279,7 @@ window_hold_at = 100
 # `deepgram` one is dialled, so it names a [[credentials]] entry of kind
 # `api-key` instead and has no directory. `chunk_seconds` is how much audio goes
 # in one request, and 0 means the whole note goes in one.
+# Fresh local runtime setup: docs/voice-install.md (optional; never replaces an existing runtime).
 [recognizers.local]
 provider = "sherpa-onnx"
 model = "a-speech-model-directory"
