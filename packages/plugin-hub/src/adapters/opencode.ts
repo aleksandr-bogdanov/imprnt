@@ -486,9 +486,11 @@ export function createOpenCode(options: OpenCodeOptions = {}): Adapter {
  * tools in pinned1.18.34. No supported cross-platform isolation is established.
  * Never fall back to the diagnostic protocol harness for a configured agent. */
 export const OPENCODE_ISOLATION_REFUSAL = "opencode-credential-control-isolation-unavailable";
+export const OPENCODE_ISOLATION_REMEDY = "OpenCode is unavailable until provider credentials and its control API are isolated from tools on this machine. Keep affected work queued and provision a validated isolation-capable runtime before retrying; rotating the key or restarting cannot resolve this. Existing conversations keep their engine and recovery holds.";
 const refuseActivation = async (): Promise<never> => { throw new Error(OPENCODE_ISOLATION_REFUSAL); };
 export const openCode: Adapter = {
   name: "opencode",
+  activationBlock: { cause: OPENCODE_ISOLATION_REFUSAL, remedy: OPENCODE_ISOLATION_REMEDY },
   capabilities: refuseActivation,
   prepareLaunch: refuseActivation,
   start: refuseActivation,

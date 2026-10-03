@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createCodex } from "../src/adapters/codex.ts";
+import { createCodex, codexSessionMapPath } from "../src/adapters/codex.ts";
 import { FeedNotWritten, type Adapter, type AdapterSession, type TurnEnd } from "../src/adapters/types.ts";
 const dirs: string[] = [], sessions: AdapterSession[] = [];
 afterEach(async () => { for (const s of sessions.splice(0)) await s.close(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -59,7 +59,7 @@ test("Codex lost connection and failed turn retain dirty marker, never replay; c
     const result = await done;
     if (mode === "failed") expect(result).toMatchObject({ text: "", refused: { cause: "other" } });
     await s.close();
-    expect(JSON.parse(readFileSync(join(args.cwd!, "codex/hub-session.json"), "utf8")).dirty).toBe(true);
+    expect(JSON.parse(readFileSync(codexSessionMapPath(args.cwd!, args.session!.id), "utf8")).dirty).toBe(true);
     await expect(start({ ...args, session: { id: "hub-job-1", resume: true } })).rejects.toThrow("resume-unverified");
     await expect(s.feed({ id: "retry", text: "one" })).rejects.toBeInstanceOf(FeedNotWritten);
   }
@@ -70,20 +70,35 @@ test("Codex explicit stop asks turn/interrupt and retains uncertain turn rather 
   await s.interrupt!({ graceMs: 100 });
   const wire = readFileSync(join(args.cwd!, "wire.jsonl"), "utf8");
   expect(wire).toContain('"method":"turn/interrupt"');
-  expect(JSON.parse(readFileSync(join(args.cwd!, "codex/hub-session.json"), "utf8")).dirty).toBe(true);
+  expect(JSON.parse(readFileSync(codexSessionMapPath(args.cwd!, args.session!.id), "utf8")).dirty).toBe(true);
 });
 
-test("only an unused clean mapping can accept the runner's replacement identity", async () => {
-  const args = options(), first = await start(args);
-  await first.close();
-  const replacement = { ...args, session: { id: "replacement", resume: false } };
-  const second = await start(replacement);
-  expect(JSON.parse(readFileSync(join(args.cwd!, "codex/hub-session.json"), "utf8"))).toMatchObject({ hub: "replacement", dirty: false, sent: false });
-  const end = next(second); await second.feed({ id: "one", text: "one" }); await end; await second.close();
-  await expect(start({ ...args, session: { id: "foreign", resume: false } })).rejects.toThrow("identity-mismatch");
-  const empty = options(), unused = await start(empty); await unused.close();
-  const file = join(empty.cwd!, "codex/hub-session.json");
-  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), dirty: true }));
-  await expect(start({ ...empty, session: { id: "foreign", resume: false } })).rejects.toThrow("identity-mismatch");
-  await expect(start({ ...empty, session: { id: "foreign", resume: true } })).rejects.toThrow("identity-mismatch");
+test("fresh native identities keep prior dirty maps and never resume or replay them", async () => {
+  const args = options("failed"), first = await start(args), failed = next(first);
+  await first.feed({ id: "failed-input", text: "old input" }); await failed; await first.close();
+  const oldPath = codexSessionMapPath(args.cwd!, args.session!.id), oldBytes = readFileSync(oldPath, "utf8");
+  const replacement = { ...args, env: { ...args.env, CODEX_FIXTURE_MODE: "normal" }, session: { id: "replacement", resume: false } };
+  const second = await start(replacement), done = next(second);
+  await second.feed({ id: "fresh-input", text: "new input" }); await done; await second.close();
+  expect(readFileSync(oldPath, "utf8")).toBe(oldBytes);
+  expect(JSON.parse(oldBytes).dirty).toBe(true);
+  expect(JSON.parse(readFileSync(codexSessionMapPath(args.cwd!, "replacement"), "utf8"))).toMatchObject({ hub: "replacement", dirty: false, sent: true });
+  await expect(start({ ...args, session: { id: args.session!.id, resume: true } })).rejects.toThrow("resume-unverified");
+  await expect(start({ ...args, session: { id: "missing", resume: true } })).rejects.toThrow("map-mismatch");
+  await expect(start(replacement)).rejects.toThrow("map-mismatch");
+  const wire = readFileSync(join(args.cwd!, "wire.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+  expect(wire.filter(x => x.method === "thread/start")).toHaveLength(2);
+  expect(wire.filter(x => x.method === "thread/resume")).toHaveLength(0);
+  expect(wire.filter(x => x.method === "turn/start").map(x => x.params.clientUserMessageId)).toEqual(["failed-input", "fresh-input"]);
+});
+
+test("legacy maps remain readable only for their own identity and survive fresh context", async () => {
+  const args = options(), first = await start(args), done = next(first);
+  await first.feed({ id: "legacy", text: "legacy input" }); await done; await first.close();
+  const keyed = codexSessionMapPath(args.cwd!, args.session!.id), legacy = join(args.cwd!, "codex/hub-session.json");
+  const bytes = readFileSync(keyed, "utf8"); writeFileSync(legacy, bytes); rmSync(keyed);
+  const resumed = await start({ ...args, session: { id: args.session!.id, resume: true } }); await resumed.close();
+  const fresh = await start({ ...args, session: { id: "fresh-after-legacy", resume: false } }); await fresh.close();
+  expect(readFileSync(legacy, "utf8")).toBe(bytes);
+  await expect(start({ ...args, session: { id: "foreign", resume: true } })).rejects.toThrow("map-mismatch");
 });

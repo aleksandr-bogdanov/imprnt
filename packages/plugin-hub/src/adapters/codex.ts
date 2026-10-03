@@ -13,6 +13,10 @@ function includesConfig(actual: unknown, expected: unknown): boolean {
 }
 const nullUsage = (): AdapterUsage => ({ input_tokens: null, cached_input_tokens: null, output_tokens: null, plan_usage: null, raw: {} });
 
+/** A fresh runner-authorized native identity owns a separate map; old history is retained. */
+export const codexSessionMapPath = (cwd: string, id: string): string =>
+  join(cwd, "codex", `hub-session-${new Bun.CryptoHasher("sha256").update(id).digest("hex")}.json`);
+
 /** Codex's app-server owns the model/tool loop. The hub drives one thread and one turn at a time. */
 async function open(options: Parameters<Adapter["start"]>[0], timeoutMs: number): Promise<AdapterSession> {
   if (!options.cwd || !options.argv || !options.env?.[CODEX_CONFIG] || !options.wrap || !options.session || !options.privateModelKey) throw new Error("codex-launch-required");
@@ -24,19 +28,21 @@ async function open(options: Parameters<Adapter["start"]>[0], timeoutMs: number)
       config.model_providers?.[provider]?.env_key !== undefined) throw new Error("codex-identity-mismatch");
   const effort = options.preset.effort;
   if (typeof effort !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(effort)) throw new Error("codex-effort-unsupported");
-  const path = join(options.cwd, "codex", "hub-session.json");
+  let path = codexSessionMapPath(options.cwd, options.session.id);
+  // Keep older deployments' map usable for its exact identity, without moving
+  // or overwriting it when the runner authorizes a different fresh identity.
+  const legacy = join(options.cwd, "codex", "hub-session.json");
+  if (!existsSync(path) && existsSync(legacy)) {
+    let prior: Saved;
+    try { prior = JSON.parse(readFileSync(legacy, "utf8")); } catch { throw new Error("codex-session-map-unreadable"); }
+    if (prior?.hub === options.session.id) path = legacy;
+  }
   let saved: Saved | null = null;
   if (existsSync(path)) {
     try { saved = JSON.parse(readFileSync(path, "utf8")) as Saved; } catch { throw new Error("codex-session-map-unreadable"); }
     if (!saved || saved.version !== 1 || typeof saved.hub !== "string" || !saved.hub || typeof saved.thread !== "string" || !saved.thread || typeof saved.dirty !== "boolean" || typeof saved.sent !== "boolean" ||
         saved.model !== model || saved.provider !== provider || saved.endpoint !== endpoint) throw new Error("codex-session-identity-mismatch");
-    // The runner replaces a launched-but-unacknowledged native ID on restart.
-    // Only our durable pre-input state proves the old thread has no input or
-    // tool effects. A sent/dirty/foreign resume mapping is never discarded.
-    if (saved.hub !== options.session.id) {
-      if (!options.session.resume && !saved.dirty && !saved.sent) saved = null;
-      else throw new Error("codex-session-identity-mismatch");
-    }
+    if (saved.hub !== options.session.id) throw new Error("codex-session-identity-mismatch");
   }
   if (options.session.resume ? !saved : saved !== null) throw new Error("codex-session-map-mismatch");
   if (saved?.dirty) throw new Error("codex-resume-unverified");
@@ -214,8 +220,8 @@ export function createCodex(options: { timeoutMs?: number } = {}): Adapter {
       return { version, stableSession: version === CODEX_BUILD, delegationDisabled: version === CODEX_BUILD, safeResume: false };
     },
     async prepareLaunch(input, probe) {
-      const { probeCodexVersion, makeCodexLaunch } = await import("./codex-launch.ts");
-      if (probeCodexVersion(probe?.bin, probe?.timeoutMs) !== CODEX_BUILD) throw new Error("codex-build-unvalidated");
+      const { requireCodexBuild, makeCodexLaunch } = await import("./codex-launch.ts");
+      requireCodexBuild(probe?.bin, probe?.timeoutMs);
       return makeCodexLaunch(input, probe?.bin);
     },
     start: args => open(args, options.timeoutMs ?? 30_000),

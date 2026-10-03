@@ -1,5 +1,7 @@
 import { outboundFindings } from "./outbound.ts";
 import { checkLoopSource } from "../adapters/index.ts";
+import { OPENCODE_ISOLATION_REFUSAL, OPENCODE_ISOLATION_REMEDY } from "../adapters/opencode.ts";
+import { CODEX_BUILD } from "../adapters/codex-config.ts";
 import type { LoopProbeOptions, LoopProbeTimeout } from "../adapters/launch.ts";
 import { acceptRepair, finding as findingLine, syncRepair, unitNotStopped } from "../door/lines.ts";
 import { basename, dirname } from "node:path";
@@ -948,6 +950,20 @@ export async function runCheck(options: {
     for (const preset of presets) {
       try { await checkLoopSource(registry, preset, options.loopProbe); }
       catch (error) {
+        const message = (error as Error)?.message ?? "";
+        if (message === OPENCODE_ISOLATION_REFUSAL) {
+          const kind = "configured-engine-unavailable";
+          findings.push({ id: findingId(machine, kind, preset), kind, subject: preset, machine,
+            says: `${preset}: OpenCode activation is blocked (${message}).`, fix: OPENCODE_ISOLATION_REMEDY });
+          continue;
+        }
+        if (/^codex-(build-unvalidated|binary-missing|version-unavailable)(:|$)/.test(message)) {
+          const kind = "codex-runtime-unavailable";
+          findings.push({ id: findingId(machine, kind, preset), kind, subject: preset, machine,
+            says: `${preset}: ${message}. Required Codex CLI: ${CODEX_BUILD}.`,
+            fix: `Provision Codex ${CODEX_BUILD} on the runner service PATH, verify codex --version, then run imprnt hub check ${options.registryFile}. No binary is selected automatically.` });
+          continue;
+        }
         // A CLI that did not answer is a timeout, and the operator is
         // told so. "Unsupported" would send them after a login source that is
         // sound, when what needs looking at is a CLI that hangs.
@@ -1000,6 +1016,11 @@ export async function runCheck(options: {
       findings.push({ id: findingId(machine, "conversation-engine-mismatch", row.id), kind: "conversation-engine-mismatch", subject: row.id, machine,
         says: `Master conversation is bound to ${row.data.bound_engine}, but the preset configures ${row.data.configured_engine}.`,
         fix: String(row.data.remedy) });
+      continue;
+    }
+    if (row.data.status === "blocked" && row.data.cause === "configured-engine-unavailable") {
+      findings.push({ id: findingId(machine, "configured-engine-unavailable", row.id), kind: "configured-engine-unavailable", subject: row.id, machine,
+        says: `Configured engine work is blocked for ${row.id}; affected inputs and harvests remain queued.`, fix: String(row.data.remedy) });
       continue;
     }
     if (row.data.status !== "retry") continue;

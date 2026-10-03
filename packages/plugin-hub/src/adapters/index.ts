@@ -37,6 +37,8 @@ export async function checkLoopSource(registry: unknown, presetName: string, pro
   const { getPreset } = await import("../registry/presets.ts");
   const adapter = getPreset(registry, presetName).adapter;
   if (adapter === codex.name) {
+    const { requireCodexBuild } = await import("./codex-launch.ts");
+    requireCodexBuild(probe.bin, probe.timeoutMs);
     await codex.capabilities!({ registry, agent: { id: "check", preset: presetName }, preset: presetName, probe });
     return;
   }

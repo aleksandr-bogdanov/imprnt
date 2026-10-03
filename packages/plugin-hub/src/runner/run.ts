@@ -30,6 +30,7 @@ import {
 import {
   agentsFor,
   chatStateFor,
+  harvestFor,
   lifetimeFor,
   runnerAdmission,
   languageOf,
@@ -1144,6 +1145,31 @@ export async function runRunner(options: {
     const [engineHealth] = await store.sql`select data from state_row where sheet = 'agent_health' and id = ${agent.id}
       and data ->> 'cause' = 'conversation.engine-mismatch'`;
     let refusedEngine: string | null = typeof engineHealth?.data?.configured_engine === "string" ? engineHealth.data.configured_engine : null;
+    let activationBlocked = false;
+    let activationSignature: string | null = null;
+    const activationBlocks = async (registry: Registry) => {
+      const ordinary = adapterFor(options.adapters, getPreset(registry, agent.preset).adapter).activationBlock;
+      const harvestPreset = harvestFor(registry, agent.person)?.harvester;
+      const harvest = harvestPreset ? adapterFor(options.adapters, getPreset(registry, harvestPreset).adapter).activationBlock : undefined;
+      const blocks = [...new Map([ordinary, harvest].filter((one): one is NonNullable<typeof one> => Boolean(one)).map(one => [one.cause, one])).values()];
+      activationBlocked = blocks.length > 0;
+      const signature = JSON.stringify({ preset: agent.preset, harvestPreset, ordinary, harvest });
+      if (signature !== activationSignature) {
+        if (activationBlocked) {
+          const remedy = blocks.map(one => one.remedy).join(" ");
+          await putRow(store, "agent_health", agent.id, { status: "blocked", cause: "configured-engine-unavailable", remedy,
+            ordinary_preset: ordinary ? agent.preset : null, harvest_preset: harvest ? harvestPreset : null,
+            blockers: blocks.map(one => one.cause) });
+          const route = noticeRoute(registry, agent.id);
+          if (route) for (const block of blocks) await appendNotice(store, { person: agent.person, agent: agent.id, ...route,
+            noticeKey: `engine-unavailable:${agent.id}:${block.cause}`, body: `Work using this configured engine, including affected harvests, remains queued. ${block.remedy}` });
+        } else {
+          await store.sql`delete from state_row where sheet = 'agent_health' and id = ${agent.id} and data ->> 'cause' = 'configured-engine-unavailable'`;
+        }
+        activationSignature = signature;
+      }
+      return { ordinary: Boolean(ordinary), harvest: Boolean(harvest) };
+    };
     const engineMismatch = async (configured: string, registry: Registry): Promise<void> => {
       refusedEngine = configured;
       const [master] = await store.sql`select adapter from conversation where agent = ${agent.id} and kind = 'master'`;
@@ -1450,7 +1476,7 @@ export async function runRunner(options: {
         await sayCatchUp(about.registry, credential);
       }
 
-      if (unhealthy && refusedEngine === null) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
+      if (unhealthy && refusedEngine === null && !activationBlocked) { await removeRow(store, "agent_health", agent.id); unhealthy = false; retries.delete(agent.id); }
       // A job's answer is the whole report and reaches no chat, so it is
       // never cut to a platform's size.
       const chunks = about.kind === "job" ? [end.text]
@@ -1817,6 +1843,7 @@ export async function runRunner(options: {
       waiter = await openWorkWaiter(store, { agent: agent.id });
       const initial = load();
       preflight(initial, agent);
+      const initialBlocks = await activationBlocks(initial);
       // A CLAIM IS NOT A RETRY BARRIER. A council member's job that an earlier loop of this runner (or the process before it) claimed and never got an
       // attempt for is a launch that did not finish, and the claim it left is what this very loop would take again first (`claimNext` takes the runner's
       // own claim back without waiting out a lease). Whether the failure was ever written down does not matter here: the store is asked, and every such
@@ -1869,7 +1896,7 @@ export async function runRunner(options: {
         exists (select 1 from claim_gate g where g.state = 'open' and g.scope_kind = 'agent' and g.scope_id = ${agent.id} and g.cause = 'move') as moving`) as unknown as
         { blocked: boolean; held: boolean; moving: boolean }[];
       if (lifetimeFor(initial, agent.id).mode === "resident" && !lifetimeFor(initial, agent.id).sleeping && agent.chat !== undefined
-          && !standing.blocked && !standing.held && !standing.moving && !moveFences.has(agent.id)) {
+          && !initialBlocks.ordinary && !standing.blocked && !standing.held && !standing.moving && !moveFences.has(agent.id)) {
         if (!await admitChild(initial, own)) return;
         // A copy that fell behind during the admission wait spawns nothing:
         // the reservation goes back and the supervisor serves this agent
@@ -1993,6 +2020,8 @@ export async function runRunner(options: {
             and data ->> 'cause' = 'conversation.engine-mismatch'`;
         }
         const masterBlocked = refusedEngine !== null;
+        const configuredBlocks = await activationBlocks(registry);
+        if (configuredBlocks.ordinary && (configuredBlocks.harvest || !harvestFor(registry, agent.person))) { await sleep(); continue; }
 
         // THE WINDOW IS READ HERE AND NOWHERE ELSE: beside the claim,
         // on a wake the runner was already having, and never on a timer of its
@@ -2051,6 +2080,8 @@ export async function runRunner(options: {
           for (const one of agentsFor(registry, { runner: options.runner })) {
             const life = lifetimeFor(registry, one.id);
             if (life.mode !== "resident" || life.sleeping) continue;
+            const harvesting = harvestFor(registry, one.person)?.harvester;
+            if (harvesting && options.adapters[getPreset(registry, harvesting).adapter]?.activationBlock) continue;
             const limits = windowThresholds(registry, one.preset);
             if (limits) {
               const key = credentialFor(registry, one);
@@ -2092,6 +2123,8 @@ export async function runRunner(options: {
             ) as harvest_waiting from inbound where agent = ${agent.id}
               and log_ready and state not in ('answered', 'delivered') and rank <= ${maxRank}
               and (not ${masterBlocked}::boolean or kind in ('job', 'harvest'))
+              and (not ${configuredBlocks.ordinary}::boolean or kind = 'harvest')
+              and (not ${configuredBlocks.harvest}::boolean or kind <> 'harvest')
               and (claimed_by is null or claimed_by = ${options.runner}
                    or (claim_deadline is not null and claim_deadline <= now()))
               and (retry_at is null or retry_at <= now())
@@ -2164,6 +2197,8 @@ export async function runRunner(options: {
           rowId: next.id,
           resumeOk,
           masterBlocked,
+          ordinaryBlocked: configuredBlocks.ordinary,
+          harvestBlocked: configuredBlocks.harvest,
         });
         if (!row) {
           if (extra) releaseCapacity();

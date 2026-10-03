@@ -5,7 +5,7 @@ import { credentialSource, effectiveMcp, effectivePrompt, effectiveSettings, ses
 import { personOf, vaultRootOf } from "./instructions.ts";
 import { readModelKey } from "./opencode-launch.ts";
 
-import { CODEX_CONFIG } from "./codex-config.ts";
+import { CODEX_BUILD, CODEX_CONFIG } from "./codex-config.ts";
 const versions = new Map<string, { stamp: string; version: string }>();
 export function probeCodexVersion(bin = "codex", timeout = 10_000): string {
   const executable = Bun.which(bin);
@@ -22,6 +22,13 @@ export function probeCodexVersion(bin = "codex", timeout = 10_000): string {
     versions.set(executable, { stamp, version });
     return version;
   } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+/** Source checks and launches share this exact executable prerequisite. */
+export function requireCodexBuild(bin?: string, timeout?: number): string {
+  const version = probeCodexVersion(bin, timeout);
+  if (version !== CODEX_BUILD) throw new Error(`codex-build-unvalidated: installed ${version}; required ${CODEX_BUILD}`);
+  return version;
 }
 
 function toml(value: unknown): string {
