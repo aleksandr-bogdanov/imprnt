@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ADAPTERS, adapterFor, checkLoopSource, loopLaunch } from "../src/adapters/index.ts"
-import { VALIDATED, createOpenCode, openCode } from "../src/adapters/opencode.ts"
+import { VALIDATED, createOpenCode, openCode, OPENCODE_ISOLATION_REFUSAL } from "../src/adapters/opencode.ts"
 import { OPENCODE_CONFIG_ENV, OPENCODE_KEY_ENV } from "../src/adapters/opencode-config.ts"
 import { makeOpenCodeLaunch, probeOpenCodeVersion, readModelKey } from "../src/adapters/opencode-launch.ts"
 import { makeLoopLaunch } from "../src/adapters/launch.ts"
@@ -204,7 +204,7 @@ test("a Claude launch is not given a model key, and the Claude launch is not the
 })
 
 test("the adapter is registered beside Claude's, has no native session port, and an ordinary launch needs a build whose restrictions were read back", async () => {
-  expect(Object.keys(ADAPTERS).sort()).toEqual(["claude-code", "opencode"])
+  expect(Object.keys(ADAPTERS).sort()).toEqual(["claude-code", "codex", "opencode"])
   expect(adapterFor(ADAPTERS, "opencode")).toBe(openCode)
   expect(openCode.session).toBeUndefined()
   expect(ADAPTERS["claude-code"].session).toBeDefined()
@@ -212,9 +212,8 @@ test("the adapter is registered beside Claude's, has no native session port, and
   const probe = { bin: f.bin }
   expect(probeOpenCodeVersion(f.bin)).toBe("9.9.9")
   // A build nobody measured (the stand-in's 9.9.9): an ordinary launch is refused by name and version, a restricted one is not.
-  await expect(loopLaunch(f.input(), probe)).rejects.toThrow("native-tool-control-unvalidated: opencode 9.9.9")
-  const restricted = await loopLaunch(fixture("harvest").input(), { bin: f.bin }) as any
-  expect(restricted.argv[0]).toBe(f.bin)
+  await expect(loopLaunch(f.input(), probe)).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+  await expect(loopLaunch(fixture("harvest").input(), { bin: f.bin })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
   // Once a build is named as read back, the same launch is made.
   const measured = createOpenCode({ validated: { ...VALIDATED, delegationControl: ["9.9.9"] } })
   const made = await measured.prepareLaunch!(f.input(), probe) as any
@@ -235,7 +234,7 @@ test("capabilities are false for a build nobody measured and true only for what 
   })
   const registry = loadRegistry(registryFile)
   const context = { registry, agent: { id: "p1-lair", preset: "opencode-daily" }, preset: "opencode-daily", probe: { bin: f.bin } }
-  expect(await openCode.capabilities!(context)).toEqual({ stableSession: false, delegationDisabled: false, safeResume: false, version: "9.9.9" })
+  expect(await createOpenCode().capabilities!(context)).toEqual({ stableSession: false, delegationDisabled: false, safeResume: false, version: "9.9.9" })
   const some = createOpenCode({ validated: { sessionStore: ["9.9.9"], delegationControl: ["9.9.9"], safeResume: [] } })
   expect(await some.capabilities!(context)).toEqual({ stableSession: true, delegationDisabled: true, safeResume: false, version: "9.9.9" })
   const all = createOpenCode({ validated: { sessionStore: ["9.9.9"], delegationControl: ["9.9.9"], safeResume: ["9.9.9"] } })
@@ -265,16 +264,16 @@ test("the pinned 1.18.34 is the build that was measured: its session store and r
   }))
   const context = { registry, agent: { id: "p1-lair", preset: "opencode-daily" }, preset: "opencode-daily", probe: { bin: pinned } }
   // `delegationDisabled` here is the configuration as the running server reports it, which `start` re-reads every launch.
-  expect(await openCode.capabilities!(context)).toEqual({ stableSession: true, delegationDisabled: true, safeResume: false, version: "1.18.34" })
+  expect(await createOpenCode().capabilities!(context)).toEqual({ stableSession: true, delegationDisabled: true, safeResume: false, version: "1.18.34" })
   // An ordinary launch is made on the pinned build, and is still refused on a build that was never measured.
-  const made = await openCode.prepareLaunch!(f.input(), { bin: pinned }) as any
+  const made = await createOpenCode().prepareLaunch!(f.input(), { bin: pinned }) as any
   expect(made.argv[0]).toBe(pinned)
-  await expect(openCode.prepareLaunch!(f.input(), { bin: f.bin })).rejects.toThrow("native-tool-control-unvalidated: opencode 9.9.9")
+  await expect(createOpenCode().prepareLaunch!(f.input(), { bin: f.bin })).rejects.toThrow("native-tool-control-unvalidated: opencode 9.9.9")
   for (const list of Object.values(VALIDATED)) expect(list.every((version: string) => version === "1.18.34")).toBe(true)
   expect(VALIDATED.safeResume).toEqual([])
 })
 
-test("the source check opens the key and asks the binary its version, and an absent binary is named", async () => {
+test("the production source check refuses unsafe activation before key or binary access", async () => {
   const f = fixture()
   const registry = loadRegistry(writeRegistry(f.dir, {
     hub: { state_dir: join(f.dir, "state") },
@@ -282,8 +281,23 @@ test("the source check opens the key and asks the binary its version, and an abs
     credentials: [{ id: "provider-key", kind: "model-key", file: f.keyFile, owner: "p1" }],
     presets: { "opencode-daily": { ...PRESET, credential: "provider-key" } },
   }))
-  await expect(checkLoopSource(registry, "opencode-daily", { bin: f.bin })).resolves.toBeUndefined()
-  await expect(checkLoopSource(registry, "opencode-daily", { bin: join(f.dir, "no-such-binary") })).rejects.toThrow("opencode-binary-missing")
+  await expect(checkLoopSource(registry, "opencode-daily", { bin: f.bin })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+  await expect(checkLoopSource(registry, "opencode-daily", { bin: join(f.dir, "no-such-binary") })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
   writeFileSync(join(f.dir, "bin", "broken"), "#!/bin/sh\nexit 3\n", { mode: 0o755 })
-  await expect(checkLoopSource(registry, "opencode-daily", { bin: join(f.dir, "bin", "broken") })).rejects.toThrow("opencode-binary-unusable")
+  await expect(checkLoopSource(registry, "opencode-daily", { bin: join(f.dir, "bin", "broken") })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+})
+
+
+test("production OpenCode entry points refuse before reading launch data and preserve configured tools", async () => {
+  const input = new Proxy({}, { get() { throw new Error("unsafe-launch-data-read"); } }) as any
+  await expect(openCode.capabilities!(input)).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+  await expect(openCode.prepareLaunch!(input)).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+  await expect(openCode.start(input)).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+  for (const purpose of ["ordinary", "harvest", "triage"]) {
+    const f = fixture(purpose), tools = [...f.agent.tools as string[]]
+    rmSync(f.keyFile)
+    await expect(loopLaunch(f.input(), { bin: join(f.dir, "missing-binary") })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+    expect(f.agent.tools).toEqual(tools)
+    expect(existsSync(f.sessionDir)).toBe(false)
+  }
 })

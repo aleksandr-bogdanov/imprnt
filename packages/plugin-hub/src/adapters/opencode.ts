@@ -440,6 +440,8 @@ async function open(options: Parameters<Adapter["start"]>[0], settings: { startT
   };
 }
 
+/** Low-level protocol harness retained for disposable synthetic proofs only.
+ * Production registry routing uses the fail-closed openCode adapter below. */
 export function createOpenCode(options: OpenCodeOptions = {}): Adapter {
   const validated = options.validated ?? VALIDATED;
   const startTimeoutMs = options.startTimeoutMs ?? 30_000;
@@ -480,4 +482,14 @@ export function createOpenCode(options: OpenCodeOptions = {}): Adapter {
   };
 }
 
-export const openCode: Adapter = createOpenCode();
+/** Both raw provider credentials and control API authentication are exposed to
+ * tools in pinned1.18.34. No supported cross-platform isolation is established.
+ * Never fall back to the diagnostic protocol harness for a configured agent. */
+export const OPENCODE_ISOLATION_REFUSAL = "opencode-credential-control-isolation-unavailable";
+const refuseActivation = async (): Promise<never> => { throw new Error(OPENCODE_ISOLATION_REFUSAL); };
+export const openCode: Adapter = {
+  name: "opencode",
+  capabilities: refuseActivation,
+  prepareLaunch: refuseActivation,
+  start: refuseActivation,
+};

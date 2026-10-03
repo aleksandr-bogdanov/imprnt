@@ -41,12 +41,9 @@ export async function checkLoopSource(registry: unknown, presetName: string, pro
     return;
   }
   if (adapter === openCode.name) {
-    // The key is a model key and the binary answers `--version`. Nothing is dialled and no model runs;
-    // what the build restricts is read back from a running server at launch, never from here.
-    const { credentialSource } = await import("./launch.ts");
-    const own = await import("./opencode-launch.ts");
-    own.readModelKey(credentialSource(registry, presetName));
-    own.probeOpenCodeVersion(probe.bin, probe.timeoutMs);
+    // The production activation prerequisite is checked before any credential
+    // read or version process. The diagnostic harness is not a source-check bypass.
+    await openCode.capabilities!({ registry, agent: { id: "check", preset: presetName }, preset: presetName, probe });
     return;
   }
   if (adapter !== claudeCode.name) return;
