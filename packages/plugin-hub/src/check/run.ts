@@ -49,7 +49,7 @@ import { allowlistFindings, deniedSenderFindings, readDeniedSenders } from "./se
 import { readStampRows, stampFindings } from "./stamps.ts";
 import { readVoiceState, transcribingFindings, voiceFindings } from "./voice.ts";
 import { kernelFindings, type KernelView } from "./kernel.ts";
-import { readJobStamps, staleJobs } from "./schedule.ts";
+import { intervalOf, readJobStamps, staleJobs } from "./schedule.ts";
 import { readOpenJobs, staleDispatchJobs } from "./jobs.ts";
 import { holdFindings, readOpenHolds } from "./holds.ts";
 import { topicFindings } from "./topics.ts";
@@ -352,7 +352,11 @@ export async function runCheck(options: {
     for (const unit of found) {
       const id = entryIdOf(unit.name);
       if (id === null || !isOurs(unit.name)) continue;
-      if (!entries.some((entry) => entry.id === id)) continue;
+      const entry = entries.find((entry) => entry.id === id);
+      if (!entry) continue;
+      // launchd reports lifetime runs, including successful scheduled launches.
+      // Scheduled freshness is checked against the job's own success stamp below.
+      if (os.flavour === "launchd" && intervalOf(entry.schedule) !== null) continue;
       const restarts = Number(unit.restarts ?? 0);
       if (!Number.isFinite(restarts)) continue;
       const already = worst.get(id);

@@ -557,3 +557,30 @@ test(
   },
   SLOW,
 );
+
+
+test("IMP215 scheduled launchd run counts use freshness while resident crashes remain visible", async () => {
+  const it = await stage([RUNNER, JOB]);
+  const store = await superStore(cluster, it.db);
+  const os = plantedOs(ownDir("hub-check-scheduled-count-"));
+  let observedOs: OsSeam = { ...os.os, flavour: "launchd" };
+  os.plant(JOB.id, { restarts: 200, lastExit: 0 });
+  os.plant(RUNNER.id, { restarts: 5 });
+  const now = new Date();
+  try {
+    const { runCheck } = await seam("src/check/run.ts");
+    const check = runCheck as Check;
+    await store.sql`insert into state_row (sheet,id,data) values ('job_success',${JOB.id},${{at: now.toISOString(), machine: MACHINE}})`;
+    const ask = () => check({machine: MACHINE, registryFile: it.registryFile, store, os: observedOs, kernel: null, credentials: CREDENTIALS, now});
+    let found = await ask();
+    expect(found.some(f => f.kind === "crash-loop" && f.subject === JOB.id)).toBe(false);
+    expect(found.some(f => f.kind === "job-stale" && f.subject === JOB.id)).toBe(false);
+    expect(found.some(f => f.kind === "crash-loop" && f.subject === RUNNER.id)).toBe(true);
+    await store.sql`update state_row set data = ${{at: new Date(now.getTime()-3600_000).toISOString(), machine: MACHINE}} where sheet='job_success' and id=${JOB.id}`;
+    found = await ask();
+    expect(found.some(f => f.kind === "job-stale" && f.subject === JOB.id)).toBe(true);
+    observedOs = { ...os.os, flavour: "systemd" };
+    found = await ask();
+    expect(found.some(f => f.kind === "crash-loop" && f.subject === JOB.id)).toBe(true);
+  } finally { await store.close(); await it.stop(); }
+});

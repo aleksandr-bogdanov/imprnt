@@ -1749,6 +1749,18 @@ export async function runRunner(options: {
       // include what a configured seat's chat said before this job; a resumed
       // session already has what it had.
       contextOwed = agent.chat !== undefined && conversation.kind === "master" && !plan?.resume;
+      // A replacement session resolves only the old child-exit diagnosis. It
+      // proves neither credential recovery nor that held work may be replayed.
+      if (conversation.kind === "master" && refusedEngine === null && !stopping && !own.leaving) {
+        const cleared = await store.sql`delete from state_row
+          where sheet = 'agent_health' and id = ${agent.id}
+            and data->>'status' = 'retry' and data->>'cause' = 'Error: child-exited'
+            and not exists (select 1 from replay_hold h join conversation c on c.id = h.conversation_id
+                            where c.agent = ${agent.id} and h.state <> 'released')
+          returning id`;
+        if (cleared.length) { unhealthy = false; retries.delete(agent.id); }
+      }
+
     };
 
     /**
